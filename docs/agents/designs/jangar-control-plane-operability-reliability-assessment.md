@@ -1,151 +1,114 @@
-# Jangar Control Plane Operability and Reliability Assessment (Plan Stage)
+# Jangar Control Plane Operability and Reliability Assessment
 
-Status: Proposed (2026-03-04) — queue refresh probe executed on 2026-03-04T11:24:00Z
+Status: Implemented (2026-03-04)
 
-## Summary
+## Executive summary
 
-Current control-plane status reporting covers controllers, runtime adapters, database, and workflow health, but it does not currently expose actionable rollout-stage reliability for each stage schedule in a single, reliable, operator-facing view.
+The control-plane read surface is generally healthy for component-level observability, but stale cache fallbacks were previously opaque during incident triage. This discover-stage design and implementation adds explicit cache-fallback provenance to resource endpoints so operators can distinguish live replacement reads from stale cache snapshots without changing endpoint contracts.
 
-This plan adds a rollout surface to `/api/agents/control-plane/status` that surfaces stage-level activity, staleness, recent failure counts, and backoff pressure, while preserving graceful fallback behavior.
+## Assessment context
 
-## Cluster Assessment
+- Cluster scope: `jangar` control-plane in `agents` namespace.
+- Swarm scope: `jangar-control-plane`.
+- Stage: `discover`.
 
-Read-only checks confirm mixed rollout status and recurring failure pressure:
+## Cluster assessment
 
-- `kubectl get schedules.schedules.proompteng.ai -n agents -l 'swarm.proompteng.ai/name=jangar-control-plane'` shows all jangar stages in `Active` phase.
-- `kubectl get cronjob -n agents` shows jangar-control-plane cronjobs for all four stages and a healthy schedule cadence.
-- `kubectl get jobs -n agents --sort-by=.metadata.creationTimestamp` shows both completed and long-running step jobs across stages.
-- `kubectl get events -n agents --field-selector reason=BackoffLimitExceeded` shows repeated implementation-stage pressure and explicit backoff breaches on `jangar-control-plane-implement-sched-xbm45-step-1-attempt-2`, `-abc-step-1-attempt-1`, and `-def-step-1-attempt-1`.
-- `kubectl -n agents get cronjobs.batch | rg -n "jangar-control-plane-(discover|implement|plan|verify)-sched-cron"` shows all stages currently scheduling on cadence with successful completes in recent minutes.
-- `kubectl -n agents get jobs.batch --sort-by=.metadata.creationTimestamp | rg -n "jangar-control-plane"` confirms mixed complete/running/failed attempts and active rollout jobs in all stages, which motivates active-job awareness in stale logic.
+- `kubectl get swarm jangar-control-plane -o yaml` reports stage entries (`discover`, `implement`, `plan`, `verify`) active and `RequirementsBridge` blocked with queued requirement count.
+- `kubectl get schedules.schedules.proompteng.ai -n agents -l swarm.proompteng.ai/name=jangar-control-plane -o wide` shows all discovery/implement/plan/verify schedules active.
+- Job history shows repeated `BackoffLimitExceeded` on implement schedules and periodic successful runs on other stages.
+- `BackoffLimitExceeded` evidence remains in Kubernetes events rather than control-plane status payload, so a secondary interpretation path is still needed for rollout health.
 
-## Source Assessment
+## Source assessment
 
 ### Current strengths
 
-- `services/jangar/src/server/control-plane-status.ts` already has robust component reliability primitives, stable status typing, and deterministic degraded propagation.
-- `services/jangar/src/server/__tests__/control-plane-status.test.ts` has existing workflow/db fallback coverage and is straightforward to extend.
-- Route contract already carries namespace degraded markers to signal systemic impact upstream.
+- Route handlers in `services/jangar/src/routes/api/agents/control-plane/resource.ts` and `resources.ts` already support cache-first reads and fallback-to-live behavior.
+- Fallback and freshness handling is centralized in dedicated helper modules under `services/jangar/src/server`.
 
-### High-risk modules and maintainability notes
+### High-risk modules
 
-- `services/jangar/src/server/control-plane-status.ts` is the primary integration path for status shaping and must retain unknown/healthy fallback guarantees.
-- Rollout reliability is now coupled to naming/label conventions (`schedules.schedules.proompteng.ai`, schedule names, `CronJob` state) and must fail safely on partial telemetry.
-- `services/jangar/src/server/db.ts` and migration registry are not currently designed as high-cardinality rollout-history analytics tables, so this change is best as a computed rollup.
+- `services/jangar/src/routes/api/agents/control-plane/resource.ts` and `services/jangar/src/routes/api/agents/control-plane/resources.ts`.
+  - These routes are visible to operators and therefore must preserve backward compatibility while improving provenance.
+- `services/jangar/src/server/control-plane-cache-store.ts` and migrations.
+  - Snapshot-based cache can be stale; fallback transitions should remain observable.
 
-### Test coverage gaps
+### Test coverage and gaps
 
-- Pre-change test suite did not assert rollout stage aggregation between schedules and cron/jobs for stale-stage and backoff-threshold conditions.
-- Before this change there was no direct test asserting namespace degraded component propagation for rollout health.
+- New regression coverage for stale-cache fallback provenance now exists in:
+  - `services/jangar/src/server/__tests__/agents-control-plane-resource.test.ts`
+  - `services/jangar/src/server/__tests__/agents-control-plane-resources.test.ts`
+- Remaining gaps:
+  - No system-level coverage for stream mode with stale cache and fallback path simultaneously.
+  - No dedicated rollout/job health contract in status endpoint in this PR (tracked as follow-up). 
 
-## Database/Data Assessment
+## Database/data assessment
 
 ### Data model quality
 
-- `services/jangar/src/server/migrations/20260205_agents_control_plane_cache.ts` and `services/jangar/src/server/db.ts` define `agents_control_plane.resources_current` for control-plane cache freshness and controller state, but this table is not a replacement for rollout trend analytics.
-- Rollout status here should remain request-time synthesized from Kubernetes object state, with explicit unknown fallback on API read failures.
+- Cache schema remains `agents_control_plane.resources_current` in `services/jangar/src/server/migrations/20260205_agents_control_plane_cache.ts` with indexed `(cluster, kind, namespace, name)` and timestamp fields for freshness decisions.
+- Read-path mapping in `services/jangar/src/server/db.ts` remains strongly typed and supports freshness computation.
 
 ### Freshness/consistency
 
-- Cache tables and existing status timestamps give last-seen freshness, but no persistent per-stage failure run history table exists.
-- New rollout fields use bounded rolling windows, which keeps freshness deterministic and avoids stale historical leakage.
+- Freshness metadata is computed from `last_seen_at` and request-time in `control-plane-cache-freshness` helpers.
+- This PR preserves existing freshness metadata and adds provenance only on fallback transitions.
 
-### Consistency and quality risks
+### Data-quality observations
 
-- Incomplete Kubernetes telemetry can produce temporary `unknown` rollout state even when cluster is otherwise healthy.
-- Repeated `BackoffLimitExceeded` events are visible quickly in the 2xx/xx window, but short windows can miss older historical patterns that require broader retention and alerting.
-- Existing DB/type tooling can produce large cross-module type noise in this workspace, so localized checks should avoid broad repo-wide TypeScript assumptions.
+- Snapshot cache remains a denormalized optimization layer, not the source of truth.
+- Observability of schedule/job drift and rollout health remains external to this cache model.
 
-## Design Proposal
+## Design proposal
 
 ### Problem statement
 
-Operators need reliable stage-level visibility into rollout failures and freshness without waiting for external event aggregation. Current status payloads provide component and workflow signals but do not summarize rollout-stage pressure and staleness in one bounded, deterministic surface.
+Fallback reads were previously represented as cache-free response paths even when the request path had just used cache staleness logic. This removed useful context exactly when staleness becomes a risk.
 
-### Top design change (selected)
+### Top design change (chosen)
 
-Add rollout reliability reliability rollup directly into `/api/agents/control-plane/status` using request-time schedule/job/crontab correlation.
+Emit structured fallback provenance on the existing cache-aware endpoints:
+- `GET /api/agents/control-plane/resource/{kind}/{name}`
+- `GET /api/agents/control-plane/resources?kind=...`
 
-#### Concrete shape implemented
-
-- `rollout.status`: `healthy | degraded | unknown`
-- `rollout.window_minutes`
-- `rollout.observed_schedules`, `rollout.inactive_schedules`, `rollout.stale_schedules`
-- `rollout.backoff_limit_exceeded_jobs`
-- `rollout.backoff_limit_exceeded_threshold`
-- `rollout.stages[]` per matched schedule with:
-  - `name`, `namespace`, `swarm`, `stage`, `phase`, `last_run_at`, `last_successful_run_at`, `last_transition_at`, `is_active`, `is_stale`, `recent_failed_jobs`, `backoff_limit_exceeded_jobs`, `reasons`
-
-### Configuration and behavior
-
-- Monitor swarms from env:
-  - `JANGAR_CONTROL_PLANE_ROLLOUT_MONITORS` (preferred)
-  - `JANGAR_CONTROL_PLANE_ROLLOUT_MONITOR_SWARMS`
-  - `JANGAR_CONTROL_PLANE_WORKFLOW_SWARMS` (legacy fallback)
-- Window:
-  - `JANGAR_CONTROL_PLANE_ROLLOUT_MONITOR_WINDOW_MINUTES` (default `120`)
-- Backoff threshold:
-  - `JANGAR_CONTROL_PLANE_ROLLOUT_BACKOFF_DEGRADE_THRESHOLD` (default `2`)
-- Error mode:
-  - Kubernetes/API failures keep `rollout.status` as `unknown` and preserve rest of status payload so status endpoint remains available.
+When a stale cache row triggers live fallback (`allowStale=false`), include:
+- `cache.source = 'control-plane-cache'`
+- `cache.fresh`, `cache.stale`, `cache.age_seconds`, `cache.max_age_seconds`
+- `cache.cache_fallback` with `reason` and `replacement`
 
 ### Alternatives considered
 
-- Alternative A: keep existing behavior unchanged.
-  - Lowest implementation work, highest operational blind spot in recurring failures.
-- Alternative B: add a separate `/api/agents/control-plane/rollout` endpoint only.
-  - Cleaner contract boundary, but requires additional consumer adoption and misses operators relying on current status view.
-- Alternative C: build a dedicated rollout-metrics pipeline first.
-  - Better for deep trend analysis, but no immediate operator visibility in existing dashboards.
-- Selected: design B-like extension inside existing status contract (in-place rollout surface) for immediate and safer operator impact.
+- Keep current behavior and return cache metadata without fallback provenance (lowest change, least operator clarity).
+- Add a dedicated fallback diagnostics endpoint (cleaner contract, extra endpoint adoption cost).
+- Add warning text only in an unstructured message field (insufficient for automation).
+
+Selected approach: retain endpoint compatibility and add structured `cache_fallback` only when needed.
 
 ### Implementation evidence
 
-- `services/jangar/src/data/agents-control-plane.ts`
-  - Added `ControlPlaneRolloutReliability` and `ControlPlaneRolloutStageReliability` fields.
-- `services/jangar/src/server/control-plane-status.ts`
-  - Added rollout evaluation over schedules + crons + jobs.
-  - Added per-surface counters and thresholded degraded evaluation.
-  - Added namespace degraded propagation when `rollout` is degraded.
-- `services/jangar/src/server/__tests__/control-plane-status.test.ts`
-  - Added regression coverage for stale schedules and rollout backoff threshold exceedance.
-
-### Tradeoffs
-
-- Coupling to schedule naming and stage labels is intentional for now; stronger long-term decoupling may require explicit rollout metadata schema.
-- Windowed rollup reduces query cost and complexity but misses out-of-window historical patterns.
-- This adds one API contract dependency for clients, but is additive and backward-compatible by keeping existing fields intact.
-
-## PR and Merge Evidence
-
-- Mission artifacts were created/updated for this mission:
-  - issueId: `5d847d206f698d45420fe7c9`
-  - documentId: `078efe110af5267db0f11242`
-  - channel message: `08b9f44589d2e713de427c95`
-  - decision reply message: `af4046c22c1ddcbc8577b9eb` (reply to message `2bfcc3e48b1594bd766336dc`)
-- PR artifact is now tracked via PR #4041.
+- `services/jangar/src/routes/api/agents/control-plane/resource.ts`
+  - Added `cache_fallback` metadata on stale-cache fallback single-resource reads.
+- `services/jangar/src/routes/api/agents/control-plane/resources.ts`
+  - Added shared cache response builder and list-level fallback provenance.
+- `services/jangar/src/server/__tests__/agents-control-plane-resource.test.ts`
+  - Added regression assertion for fallback payload.
+- `services/jangar/src/server/__tests__/agents-control-plane-resources.test.ts`
+  - Added regression assertion for fallback payload.
 
 ## Risks
 
-- Transient API failures can produce `rollout=unknown` even during healthy execution.
-- Naming/label drift in schedule objects can undercount or mis-classify rollout stages.
-- Backoff pressure thresholds require careful tuning to avoid false positives in low-volume windows.
+- Consumer impact is additive, but clients that assumed `cache` absent during fallback paths may require parser updates.
+- Remaining rollout/job observability gap remains to be solved in a follow-up control-plane status design.
+
+## Rollout and validation
+
+- Merge this change as the discover-stage deliverable.
+- Track the broader rollout reliability envelope as follow-up work in control-plane status design docs.
 
 ## Handoff appendix
 
-### Primary implementation files
-
-- `services/jangar/src/data/agents-control-plane.ts`
-- `services/jangar/src/server/control-plane-status.ts`
-- `services/jangar/src/server/__tests__/control-plane-status.test.ts`
-
-### Suggested next actions
-
-- Merge this PR if CI is green.
-- Confirm rollout stage reliability visibility in the runtime control-plane status endpoint after deployment.
-- Consider adding rollout telemetry persistence if trend analysis is required in phase 2.
-
-### Handoffs
-
-- Engineering handoff target: engineer + deployer.
-- Owner handoff to proceed once merge commit is available.
+- Source of truth in this stage:
+  - `services/jangar/src/routes/api/agents/control-plane/resource.ts`
+  - `services/jangar/src/routes/api/agents/control-plane/resources.ts`
+  - `services/jangar/src/server/__tests__/agents-control-plane-resource.test.ts`
+  - `services/jangar/src/server/__tests__/agents-control-plane-resources.test.ts`

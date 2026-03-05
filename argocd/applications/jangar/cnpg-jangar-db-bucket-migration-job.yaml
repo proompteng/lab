@@ -60,7 +60,7 @@ spec:
               set -euo pipefail
 
               SRC_ROOT="src/argo-workflows/cnpg/jangar"
-              DST_ROOT="dst/cnpg/jangar-db"
+              DST_ROOT="dst/cnpg/jangar-db-live"
 
               until mc alias set src "$RGW_ENDPOINT_URL" "$SOURCE_ACCESS_KEY" "$SOURCE_SECRET_KEY" --api S3v4; do
                 echo "waiting for source RGW auth..."

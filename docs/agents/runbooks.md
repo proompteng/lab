@@ -127,7 +127,6 @@ Confirm the workflow adapter is healthy and no Argo Workflows are required:
 ```bash
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.runtime_adapters'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.workflows'
-curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.rollout'
 kubectl api-resources --api-group=argoproj.io --no-headers || true
 kubectl -n agents get workflows.argoproj.io 2>/dev/null || true
 ```
@@ -135,17 +134,8 @@ kubectl -n agents get workflows.argoproj.io 2>/dev/null || true
 Expected outcomes:
 
 - `runtime_adapters` contains `workflow` with `status: healthy` and a native runtime message.
-- `workflows` includes a bounded rollup with:
-  - `status` (`healthy` / `degraded` / `unknown`)
-  - `message`
-  - `active_job_runs`, `recent_failed_jobs`, and `backoff_limit_exceeded_jobs`
-  - `top_failure_reasons`
-- `rollout` includes rollout-stage reliability with:
-  - `status` (`healthy` / `degraded` / `unknown`)
-  - `observed_schedules`, `inactive_schedules`, and `stale_schedules`
-  - `stages[]` including `name`, `phase`, `is_active`, `is_stale`, and timestamps
-- `status: unknown` is expected if workflow/Kubernetes list calls fail; the status endpoint must
-  remain available and still return the rest of the control-plane health snapshot.
+- `workflows` includes a bounded rollup with `active_job_runs`, `recent_failed_jobs`,
+  `backoff_limit_exceeded_jobs`, and `top_failure_reasons`.
 - The Argo Workflows resource check returns empty output (no CRD or no workflows).
 
 ## Native workflow e2e proof

@@ -28,6 +28,7 @@ FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "trading_autonomy_allow_live_promotion": "torghut_trading_autonomy_allow_live_promotion",
     "trading_evidence_continuity_enabled": "torghut_trading_evidence_continuity_enabled",
     "trading_universe_require_non_empty_jangar": "torghut_trading_universe_require_non_empty_jangar",
+    "trading_universe_static_fallback_enabled": "torghut_trading_universe_static_fallback_enabled",
     "trading_readiness_dependency_cache_enabled": (
         "torghut_trading_readiness_dependency_cache_enabled"
     ),
@@ -673,6 +674,22 @@ class Settings(BaseSettings):
         default=True,
         alias="TRADING_UNIVERSE_REQUIRE_NON_EMPTY_JANGAR",
         description="Fail closed when Jangar-backed universe cannot be resolved to a non-empty symbol set.",
+    )
+    trading_universe_static_fallback_enabled: bool = Field(
+        default=False,
+        alias="TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED",
+        description=(
+            "When enabled, Jangar resolution failures may fall back to static symbols if configured. "
+            "Fail-closed behavior remains in effect when no fallback symbols are available."
+        ),
+    )
+    trading_universe_static_fallback_symbols_raw: Optional[str] = Field(
+        default=None,
+        alias="TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS",
+        description=(
+            "Optional comma-separated fallback symbols used only when "
+            "TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED=true and Jangar resolution is unavailable."
+        ),
     )
     trading_universe_max_stale_seconds: int = Field(
         default=900,
@@ -2124,6 +2141,18 @@ class Settings(BaseSettings):
             for symbol in self.trading_static_symbols_raw.split(",")
             if symbol.strip()
         ]
+
+    @property
+    def trading_universe_static_fallback_symbols(self) -> list[str]:
+        if self.trading_universe_static_fallback_symbols_raw:
+            return [
+                symbol.strip()
+                for symbol in self.trading_universe_static_fallback_symbols_raw.split(
+                    ","
+                )
+                if symbol.strip()
+            ]
+        return self.trading_static_symbols
 
     @property
     def trading_execution_adapter_symbols(self) -> set[str]:

@@ -113,6 +113,25 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(settings.llm_fail_mode_enforcement, "strict_veto")
         self.assertFalse(settings.llm_fail_open_live_approved)
         self.assertFalse(settings.posthog_enabled)
+        self.assertTrue(settings.trading_fractional_equities_enabled)
+        self.assertTrue(settings.trading_universe_static_fallback_enabled)
+        self.assertEqual(
+            set(settings.trading_universe_static_fallback_symbols),
+            {
+                "AAPL",
+                "AMAT",
+                "AMD",
+                "AVGO",
+                "GOOG",
+                "INTC",
+                "META",
+                "MSFT",
+                "NVDA",
+                "QQQ",
+                "SPY",
+                "TSLA",
+            },
+        )
         self.assertFalse(settings.llm_live_fail_open_requested_for_stage("stage3"))
         self.assertEqual(settings.llm_effective_fail_mode_for_current_rollout(), "veto")
         cutover_allowed, cutover_reasons = settings.llm_dspy_cutover_migration_guard()

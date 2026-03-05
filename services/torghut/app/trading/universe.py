@@ -273,7 +273,29 @@ class UniverseResolver:
         cause: Exception | None = None,
     ) -> UniverseResolution:
         """Return a structured fallback result when authoritative Jangar fetch is unavailable."""
+        static_fallback_symbols = self._resolve_static_fallback_symbols()
         if self._cache is None:
+            if static_fallback_symbols:
+                fallback_reason = f"{reason}_using_static_fallback"
+                if self._should_emit_stale_cache_warning(fallback_reason, now):
+                    logger.warning(
+                        "No cached Jangar universe available; using static fallback reason=%s symbols=%s",
+                        reason,
+                        len(static_fallback_symbols),
+                    )
+                else:
+                    logger.debug(
+                        "Suppressing repeated Jangar static-fallback warning reason=%s",
+                        reason,
+                    )
+                return UniverseResolution(
+                    symbols=static_fallback_symbols,
+                    source='jangar',
+                    status='degraded',
+                    reason=fallback_reason,
+                    fetched_at=None,
+                    cache_age_seconds=None,
+                )
             if self._should_emit_stale_cache_warning(reason, now):
                 logger.warning(
                     "No cached Jangar universe available; cannot satisfy request reason=%s error=%s",
@@ -324,6 +346,29 @@ class UniverseResolver:
             age_seconds,
             max_stale_seconds,
         )
+        if static_fallback_symbols:
+            fallback_reason = f"{reason}_cache_stale_using_static_fallback"
+            if self._should_emit_stale_cache_warning(fallback_reason, now):
+                logger.warning(
+                    "Using static fallback universe after stale-cache block reason=%s age_seconds=%s symbols=%s",
+                    reason,
+                    age_seconds,
+                    len(static_fallback_symbols),
+                )
+            else:
+                logger.debug(
+                    "Suppressing repeated stale-cache static-fallback warning reason=%s age_seconds=%s",
+                    reason,
+                    age_seconds,
+                )
+            return UniverseResolution(
+                symbols=static_fallback_symbols,
+                source='jangar',
+                status='degraded',
+                reason=fallback_reason,
+                fetched_at=self._cache.fetched_at,
+                cache_age_seconds=age_seconds,
+            )
         return UniverseResolution(
             symbols=set(),
             source='jangar',
@@ -332,6 +377,12 @@ class UniverseResolver:
             fetched_at=self._cache.fetched_at,
             cache_age_seconds=age_seconds,
         )
+
+    def _resolve_static_fallback_symbols(self) -> set[str]:
+        if not settings.trading_universe_static_fallback_enabled:
+            return set()
+        configured = set(settings.trading_universe_static_fallback_symbols)
+        return _filter_symbols(configured)
 
 
 def _parse_symbols(payload: object) -> set[str]:

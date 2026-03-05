@@ -15,6 +15,21 @@ spec:
       owner: torghut_app
       encoding: "UTF8"
       dataChecksums: true
+  backup:
+    barmanObjectStore:
+      destinationPath: s3://cnpg-torghut
+      serverName: torghut-db-live
+      endpointURL: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
+      s3Credentials:
+        accessKeyId:
+          name: cnpg-torghut-db
+          key: AWS_ACCESS_KEY_ID
+        secretAccessKey:
+          name: cnpg-torghut-db
+          key: AWS_SECRET_ACCESS_KEY
+      wal:
+        maxParallel: 8
+    retentionPolicy: "14d"
   inheritedMetadata:
     annotations:
       reflector.v1.k8s.emberstack.com/reflection-allowed: "true"

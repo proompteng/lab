@@ -542,9 +542,12 @@ def _evaluate_universe_dependency(
         }
 
     if universe_status == "degraded":
+        degraded_detail = "jangar stale cache in use"
+        if isinstance(universe_reason, str) and "static_fallback" in universe_reason:
+            degraded_detail = "jangar static fallback in use"
         return {
             "ok": not universe_fail_safe_blocked,
-            "detail": "jangar stale cache in use",
+            "detail": degraded_detail,
             "source": settings.trading_universe_source,
             "status": universe_status,
             "reason": universe_reason,

@@ -19,6 +19,8 @@ resources:
   - codex-spark-agentprovider.yaml
   - torghut-fundamentals-agent.yaml
   - torghut-news-agent.yaml
+  - torghut-fundamentals-agent-system-prompt-configmap.yaml
+  - torghut-news-agent-system-prompt-configmap.yaml
   - codex-agent-system-prompt-configmap.yaml
   - codex-whitepaper-agent-system-prompt-configmap.yaml
   - codex-research-secretbinding.yaml

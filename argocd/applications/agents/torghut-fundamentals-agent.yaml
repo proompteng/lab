@@ -5,3 +5,8 @@ metadata:
 spec:
   providerRef:
     name: codex-spark
+  defaults:
+    systemPromptRef:
+      kind: ConfigMap
+      name: torghut-fundamentals-agent-system-prompt
+      key: system-prompt.md

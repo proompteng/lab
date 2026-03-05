@@ -6,10 +6,13 @@
 - Date: `2026-03-01`
 - Maturity: `production design`
 - Scope: canonical end-to-end operating system for profitable autonomous quant + LLM trading in Torghut
-- Implementation status: `Planned`
+- Implementation status: `Implemented`
 - Evidence:
-  - `docs/torghut/design-system/v6/08-profitability-research-validation-execution-governance-system.md` (design-level contract)
-- Rollout gap: Torghut currently has strong partial controls, but does not yet enforce one canonical stage-gated profitability contract across research, validation, execution, and governance.
+  - `services/torghut/app/trading/autonomy/lane.py` (manifest generation + contract payload wiring)
+  - `services/torghut/app/trading/autonomy/policy_checks.py` (manifest and stage validation checks)
+  - `services/torghut/tests/test_autonomous_lane.py` (manifest generation and governance propagation)
+  - `services/torghut/tests/test_policy_checks.py` (hard-fail reason-path coverage)
+- Rollout gap: Closeout. Stage-gated profitability evidence is now required for promotions; remaining closure risk is controlled by SLO monitoring and rollback gate policy in the runtime contract.
 
 ## Objective
 

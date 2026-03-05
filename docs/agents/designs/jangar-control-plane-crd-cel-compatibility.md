@@ -5,7 +5,7 @@ Status: Draft (2026-03-04)
 ## Current State
 
 - The `AgentRun` CRD defines a CEL rule that disallows `workflow.step.parameters.prompt` and top-level `spec.parameters.prompt`.
-- The existing rule used an expression form (`'prompt' in self.parameters`) that is valid in some tooling contexts but rejected by Kubernetes CEL validation in our CI chart installation path.
+- The existing rule used `has(self.parameters, 'prompt')`, which is rejected by Kubernetes CEL validation in our CI chart installation path.
 - This rejection appears during CRD validation in the `agents-ci` pipeline and blocks chart application.
 
 ## Problem
@@ -24,8 +24,8 @@ Status: Draft (2026-03-04)
 - Option A: remove both `parameters.prompt` CEL validations.
   - Pros: immediate compatibility with all CEL parsers.
   - Cons: loses protection against invalid `prompt` usage and increases risk of runtime validation drift.
-- Option B: retain intent and switch to explicit `has(self.parameters, 'prompt')` checks (selected).
-  - Pros: preserves validation intent and aligns with Kubernetes CEL function form.
+- Option B: retain intent and switch to map-safe key membership checks (selected).
+  - Pros: preserves validation intent and aligns with Kubernetes CEL macro support.
   - Cons: requires manual propagation to every schema/CRD artifact that carries the same rule.
 - Option C: move the constraint out of CRD CEL into admission webhook or controller-side validation.
   - Pros: more custom error semantics and easier complex logic.
@@ -33,8 +33,9 @@ Status: Draft (2026-03-04)
 
 ## Decision
 
-- Choose Option B: replace object-membership checks with explicit `has` function syntax in both chart CRD and all generated schema mirrors:
-  - `!has(self.parameters) || !has(self.parameters, 'prompt')`
+- Choose Option B: replace invalid two-argument `has` usage with map-safe key membership checks in both chart CRD and all generated schema mirrors:
+  - `!has(self.parameters) || !('prompt' in self.parameters)` (top-level `spec.parameters`)
+  - `!('prompt' in self)` (field-scoped `workflow[].parameters`)
 - This keeps behavior stable, blocks bad payloads at the API layer, and removes install-time CRD parsing failures.
 
 ## Implementation

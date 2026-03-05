@@ -176,61 +176,9 @@ export const ControlPlaneStatusPanel = ({
               <span>Window: {renderSummaryValue(status.workflows.window_minutes)}m</span>
             </div>
             <div className="text-muted-foreground">
-              Top failure reasons: {formatFailureReasons(status.workflows.top_failure_reasons)}
+              Top failure reasons:{' '}
+              {status.workflows.top_failure_reasons.length > 0 ? status.workflows.top_failure_reasons.join(', ') : '—'}
             </div>
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Rollout reliability
-          </div>
-          <div className="rounded-none border p-3 border-border/60 bg-muted/30 space-y-2">
-            <div className="flex flex-wrap gap-4">
-              <div className="flex items-center gap-1">
-                <span className="text-muted-foreground">Status:</span>
-                <StatusBadge label={status.rollout.status} />
-              </div>
-              <span>Observed schedules: {renderSummaryValue(status.rollout.observed_schedules)}</span>
-              <span>Inactive: {renderSummaryValue(status.rollout.inactive_schedules)}</span>
-              <span>Stale: {renderSummaryValue(status.rollout.stale_schedules)}</span>
-              <span>Window: {renderSummaryValue(status.rollout.window_minutes)}m</span>
-            </div>
-            <div className="text-muted-foreground">{status.rollout.message || 'No rollout issues detected'}</div>
-            {status.rollout.stages.length > 0 ? (
-              <div className="space-y-2">
-                <div className="text-[11px] text-muted-foreground">Stages</div>
-                <ul className="space-y-2">
-                  {status.rollout.stages.map((stage) => (
-                    <li
-                      key={`${stage.namespace}:${stage.name}`}
-                      className="rounded-none border p-2 border-border/60 bg-muted/30"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="font-medium text-foreground">
-                          {stage.namespace}/{stage.name} ({stage.stage})
-                        </span>
-                        <span className="text-xs text-muted-foreground">phase {stage.phase}</span>
-                      </div>
-                      <div className="mt-1 text-muted-foreground text-[11px]">
-                        Active: {stage.is_active ? 'yes' : 'no'} · Stale: {stage.is_stale ? 'yes' : 'no'}
-                      </div>
-                      <div className="text-muted-foreground text-[11px]">
-                        Last run: {renderSummaryValue(stage.last_run_at)} · Last successful:{' '}
-                        {renderSummaryValue(stage.last_successful_run_at)} · Transition:{' '}
-                        {renderSummaryValue(stage.last_transition_at)}
-                      </div>
-                      <div className="text-muted-foreground text-[11px]">
-                        Reasons: {stage.reasons.length > 0 ? stage.reasons.join(', ') : '—'}
-                      </div>
-                      <div className="text-muted-foreground text-[11px]">
-                        Failure trend: {formatFailureReasons(stage.top_failure_reasons)}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
           </div>
         </div>
 

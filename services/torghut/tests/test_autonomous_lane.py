@@ -687,7 +687,7 @@ class TestAutonomousLane(TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "lane-design-doc"
-            design_doc = "docs/torghut/design-system/v6/08-profitability-operating-system.md"
+            design_doc = "docs/torghut/design-system/v6/08-profitability-research-validation-execution-governance-system.md"
             result = run_autonomous_lane(
                 signals_path=fixture_path,
                 strategy_config_path=strategy_config_path,
