@@ -10,15 +10,18 @@ persistence:
 ingress:
   enabled: true
   className: traefik
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
   hosts:
-    - host: git.proompteng.ai
+    - host: code.proompteng.ai
       paths:
         - path: /
           pathType: Prefix
           port: http
   tls:
     - hosts:
-        - git.proompteng.ai
+        - code.proompteng.ai
+      secretName: code-proompteng-ai-tls
 
 service:
   ssh:
@@ -33,8 +36,8 @@ gitea:
     passwordMode: initialOnlyNoReset
   config:
     server:
-      ROOT_URL: https://git.proompteng.ai
-      DOMAIN: git.proompteng.ai
+      ROOT_URL: https://code.proompteng.ai
+      DOMAIN: code.proompteng.ai
       SSH_DOMAIN: git.proompteng.ai
       SSH_PORT: 22
     database:

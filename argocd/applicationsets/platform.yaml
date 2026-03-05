@@ -162,7 +162,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "0"
                 automation: auto
-                enabled: "false"
+                enabled: "true"
               - name: istio-system
                 path: argocd/applications/istio-system
                 namespace: istio-system
