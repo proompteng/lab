@@ -1244,6 +1244,12 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
           })
         })
 
+        recordTorghutMarketContextBatchRun({ domain, outcome: 'skipped_market_closed' })
+        recordTorghutMarketContextBatchRunDurationMs(Date.now() - batchStartMs, { domain })
+        recordTorghutMarketContextBatchRunSymbols(0, { domain, category: 'processed' })
+        recordTorghutMarketContextBatchRunSymbols(0, { domain, category: 'updated' })
+        recordTorghutMarketContextBatchRunSymbols(0, { domain, category: 'failed' })
+
         return {
           ok: true,
           domain,

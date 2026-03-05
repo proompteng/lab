@@ -442,6 +442,9 @@ describe('ingestMarketContextProviderResult', () => {
   it('skips batch persistence when market session is closed', async () => {
     const tracker = buildInsertTracker()
     const clearMarketContextCache = vi.fn()
+    const recordBatchRun = vi.fn()
+    const recordBatchRunDurationMs = vi.fn()
+    const recordBatchRunSymbols = vi.fn()
 
     vi.doMock('~/server/db', () => ({
       getDb: () => tracker.db,
@@ -451,6 +454,12 @@ describe('ingestMarketContextProviderResult', () => {
     }))
     vi.doMock('~/server/torghut-market-context', () => ({
       clearMarketContextCache,
+    }))
+    vi.doMock('~/server/metrics', () => ({
+      recordTorghutMarketContextBatchFreshnessLagSeconds: vi.fn(),
+      recordTorghutMarketContextBatchRun: recordBatchRun,
+      recordTorghutMarketContextBatchRunDurationMs: recordBatchRunDurationMs,
+      recordTorghutMarketContextBatchRunSymbols: recordBatchRunSymbols,
     }))
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ market_session_open: false }) }))
 
@@ -478,5 +487,11 @@ describe('ingestMarketContextProviderResult', () => {
     })
     expect(tracker.tableCalls).toEqual(['torghut_market_context_runs', 'torghut_market_context_run_events'])
     expect(clearMarketContextCache).not.toHaveBeenCalled()
+    expect(recordBatchRun).toHaveBeenCalledWith({
+      domain: 'news',
+      outcome: 'skipped_market_closed',
+    })
+    expect(recordBatchRunDurationMs).toHaveBeenCalledOnce()
+    expect(recordBatchRunSymbols).toHaveBeenCalledTimes(3)
   })
 })

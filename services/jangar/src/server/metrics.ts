@@ -203,7 +203,7 @@ export const recordTorghutMarketContextRunEvent = (params: {
 
 export const recordTorghutMarketContextBatchRun = (params: {
   domain: 'fundamentals' | 'news'
-  outcome: 'succeeded' | 'partial' | 'failed'
+  outcome: 'succeeded' | 'partial' | 'failed' | 'skipped_market_closed'
 }) => {
   if (!metricsState.enabled) return
   recordCounter(metricsState.metrics?.torghutMarketContextBatchRuns, 1, params)
