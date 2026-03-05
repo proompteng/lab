@@ -20,6 +20,12 @@ class TestUniverseResolver(TestCase):
         self._original_crypto_enabled = config.settings.trading_crypto_enabled
         self._original_max_stale_seconds = config.settings.trading_universe_max_stale_seconds
         self._original_cache_seconds = config.settings.trading_universe_cache_seconds
+        self._original_static_fallback_enabled = (
+            config.settings.trading_universe_static_fallback_enabled
+        )
+        self._original_static_fallback_symbols = (
+            config.settings.trading_universe_static_fallback_symbols_raw
+        )
 
     def tearDown(self) -> None:
         config.settings.trading_universe_source = self._original_source
@@ -31,6 +37,12 @@ class TestUniverseResolver(TestCase):
         config.settings.trading_crypto_enabled = self._original_crypto_enabled
         config.settings.trading_universe_max_stale_seconds = self._original_max_stale_seconds
         config.settings.trading_universe_cache_seconds = self._original_cache_seconds
+        config.settings.trading_universe_static_fallback_enabled = (
+            self._original_static_fallback_enabled
+        )
+        config.settings.trading_universe_static_fallback_symbols_raw = (
+            self._original_static_fallback_symbols
+        )
 
     def test_static_universe_fails_closed_on_empty(self) -> None:
         config.settings.trading_universe_source = "static"
@@ -119,6 +131,47 @@ class TestUniverseResolver(TestCase):
             self.assertEqual(resolution.status, "error")
             self.assertEqual(resolution.reason, "jangar_fetch_failed_cache_stale")
             self.assertEqual(resolution.symbols, set())
+
+    def test_jangar_failure_without_cache_uses_static_fallback_when_enabled(self) -> None:
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_jangar_symbols_url = "http://example"
+        config.settings.trading_universe_static_fallback_enabled = True
+        config.settings.trading_universe_static_fallback_symbols_raw = (
+            "AAPL, MSFT, INVALID!, BTC/USD"
+        )
+        config.settings.trading_crypto_enabled = False
+        resolver = UniverseResolver()
+
+        with patch("app.trading.universe.urlopen", side_effect=RuntimeError("boom")):
+            resolution = resolver.get_resolution()
+            self.assertEqual(resolution.status, "degraded")
+            self.assertEqual(
+                resolution.reason,
+                "jangar_fetch_failed_using_static_fallback",
+            )
+            self.assertEqual(resolution.symbols, {"AAPL", "MSFT"})
+
+    def test_jangar_failure_with_stale_cache_uses_static_fallback_when_enabled(self) -> None:
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_jangar_symbols_url = "http://example"
+        config.settings.trading_universe_static_fallback_enabled = True
+        config.settings.trading_universe_static_fallback_symbols_raw = "AAPL, MSFT"
+        config.settings.trading_universe_max_stale_seconds = 5
+        config.settings.trading_universe_cache_seconds = 1
+        resolver = UniverseResolver()
+        resolver._cache = UniverseCache(
+            symbols={"NVDA"},
+            fetched_at=datetime.now(timezone.utc) - timedelta(seconds=60),
+        )
+
+        with patch("app.trading.universe.urlopen", side_effect=RuntimeError("boom")):
+            resolution = resolver.get_resolution()
+            self.assertEqual(resolution.status, "degraded")
+            self.assertEqual(
+                resolution.reason,
+                "jangar_fetch_failed_cache_stale_using_static_fallback",
+            )
+            self.assertEqual(resolution.symbols, {"AAPL", "MSFT"})
 
     def test_jangar_empty_payload_with_no_cache_fails_closed(self) -> None:
         config.settings.trading_universe_source = "jangar"

@@ -95,6 +95,11 @@ flags:
     description: Fails closed when Jangar-backed universe is empty.
     type: BOOLEAN_FLAG_TYPE
     enabled: true
+  - key: torghut_trading_universe_static_fallback_enabled
+    name: Torghut Trading Universe Static Fallback Enabled
+    description: Allows bounded static-symbol fallback when Jangar universe resolution is unavailable.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
   - key: torghut_trading_execution_prefer_limit
     name: Torghut Trading Execution Prefer Limit
     description: Prefers limit order execution when supported.
