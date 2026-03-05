@@ -658,6 +658,60 @@ class TestTradingApi(TestCase):
 
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
+    @patch(
+        "app.main.check_account_scope_invariants",
+        return_value={"account_scope_ready": True, "account_scope_errors": []},
+    )
+    @patch(
+        "app.main.check_schema_current",
+        return_value={
+            "schema_current": True,
+            "current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
+        },
+    )
+    def test_trading_health_reports_static_fallback_universe_as_degraded_not_blocked(
+        self,
+        _mock_schema: object,
+        _mock_account_scope: object,
+        _mock_postgres: object,
+        _mock_clickhouse: object,
+        _mock_alpaca: object,
+    ) -> None:
+        original = settings.trading_enabled
+        original_source = settings.trading_universe_source
+        settings.trading_enabled = True
+        settings.trading_universe_source = "jangar"
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            scheduler.state.universe_source_status = "degraded"
+            scheduler.state.universe_source_reason = (
+                "jangar_fetch_failed_cache_stale_using_static_fallback"
+            )
+            scheduler.state.universe_symbols_count = 8
+            scheduler.state.universe_cache_age_seconds = 900
+            scheduler.state.universe_fail_safe_blocked = False
+            app.state.trading_scheduler = scheduler
+            response = self.client.get("/trading/health")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["status"], "ok")
+            universe_dependency = payload["dependencies"]["universe"]
+            self.assertTrue(universe_dependency["ok"])
+            self.assertEqual(universe_dependency["status"], "degraded")
+            self.assertEqual(
+                universe_dependency["detail"], "jangar static fallback in use"
+            )
+        finally:
+            settings.trading_enabled = original
+            settings.trading_universe_source = original_source
+
+    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
     @patch(
         "app.main.check_account_scope_invariants",
         return_value={"account_scope_ready": True, "account_scope_errors": []},

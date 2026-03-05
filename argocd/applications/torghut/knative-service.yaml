@@ -100,6 +100,8 @@ spec:
                 [{"label":"PA3SX7FYNUTF","mode":"live","enabled":true}]
             - name: TRADING_ALLOW_SHORTS
               value: "true"
+            - name: TRADING_FRACTIONAL_EQUITIES_ENABLED
+              value: "true"
             - name: TRADING_SIGNAL_SOURCE
               value: clickhouse
             - name: TRADING_SIGNAL_TABLE
@@ -176,6 +178,10 @@ spec:
               value: jangar
             - name: TRADING_UNIVERSE_REQUIRE_NON_EMPTY_JANGAR
               value: "true"
+            - name: TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED
+              value: "true"
+            - name: TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS
+              value: AAPL,AMAT,AMD,AVGO,GOOG,INTC,META,MSFT,NVDA,QQQ,SPY,TSLA
             - name: TRADING_UNIVERSE_MAX_STALE_SECONDS
               value: "900"
             - name: JANGAR_SYMBOLS_URL
