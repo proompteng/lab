@@ -11,8 +11,8 @@ This app deploys [Forgejo](https://forgejo.org/) using the official OCI Helm cha
 - Single-pod baseline (`replicaCount: 1`)
 - Persistent storage enabled (`50Gi`) on `rook-ceph-block`
 - External Postgres on CNPG (`forgejo-db`, `10Gi` on `rook-ceph-block`)
-- Traefik ingress enabled for `git.proompteng.ai`
-- SSH service exposed as `LoadBalancer` on port `22`
+- Traefik ingress enabled for `code.proompteng.ai`
+- SSH service exposed as `LoadBalancer` on port `22` with SSH clone domain `git.proompteng.ai`
 - Public user registration disabled
 - Admin user: `kalmyk` (password generated into `forgejo-admin` secret)
 
