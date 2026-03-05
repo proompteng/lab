@@ -1,0 +1,560 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentProvider
+metadata:
+  name: torghut-market-context
+spec:
+  binary: /usr/local/bin/agent-runner
+  argsTemplate: []
+  envTemplate:
+    CODEX_LOG_LEVEL: info
+    NATS_URL: nats://nats.nats.svc.cluster.local:4222
+    AGENT_PROVIDER_PATH: /root/.codex/provider-torghut-market-context.json
+    CODEX_MARKET_CONTEXT_PROVIDER_CHAIN: codex-spark:gpt-5.3-codex-spark,codex:gpt-5.3-codex
+    CODEX_MARKET_CONTEXT_ATTEMPT_TIMEOUT_SECONDS: "600"
+    CODEX_MARKET_CONTEXT_OVERALL_TIMEOUT_SECONDS: "1200"
+    CODEX_MARKET_CONTEXT_PROGRESS_TIMEOUT_SECONDS: "10"
+    CODEX_DISABLE_RESUME: "1"
+    CODEX_MAX_SESSION_ATTEMPTS: "1"
+    CODEX_IDLE_TIMEOUT_MS: "600000"
+    CODEX_EXIT_GRACE_MS: "30000"
+  inputFiles:
+    - path: /root/.codex/config.toml
+      content: |-
+        model = "gpt-5.3-codex-spark"
+        model_reasoning_summary = "none"
+        model_reasoning_effort = "xhigh"
+        model_verbosity = "medium"
+        approval_policy = "never"
+        sandbox_mode = "danger-full-access"
+        web_search = "live"
+        suppress_unstable_features_warning = true
+
+        [features]
+        undo = true
+        enable_request_compression = true
+        apply_patch_freeform = true
+        unified_exec = true
+        shell_snapshot = true
+        steer = true
+        multi_agent = true
+        child_agents_md = true
+        collaboration_modes = true
+        responses_websockets = false
+
+        [shell_environment_policy]
+        ignore_default_excludes = true
+
+        [projects."/workspace/lab"]
+        trust_level = "trusted"
+
+        [projects."/root"]
+        trust_level = "trusted"
+    - path: /root/.codex/provider-torghut-market-context.json
+      content: |-
+        {
+          "name": "torghut-market-context",
+          "binary": "/bin/bash",
+          "argsTemplate": [
+            "-lc",
+            "exec python3 /root/.codex/market-context-provider-runner.py \"$1\"",
+            "--",
+            "{{payloads.eventFilePath}}"
+          ],
+          "envTemplate": {
+            "WORKFLOW_STAGE": "{{inputs.stage}}",
+            "CODEX_STAGE": "{{inputs.stage}}"
+          }
+        }
+    - path: /root/.codex/ensure-market-context-issue-number.py
+      content: |-
+        #!/usr/bin/env python3
+        import hashlib
+        import json
+        import re
+        import sys
+        from pathlib import Path
+
+        PLACEHOLDER_PATTERN = re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}')
+
+        def _is_nonempty_scalar(value) -> bool:
+          if isinstance(value, str):
+            return bool(value.strip())
+          return isinstance(value, (int, float))
+
+        def _scalar_to_text(value):
+          if isinstance(value, str):
+            return value
+          if isinstance(value, bool):
+            return 'true' if value else 'false'
+          if isinstance(value, (int, float)):
+            return str(value)
+          return ''
+
+        def _hydrate_top_level(payload: dict) -> None:
+          for container_key in ('parameters',):
+            container = payload.get(container_key)
+            if not isinstance(container, dict):
+              continue
+            for key, raw_value in container.items():
+              if not isinstance(key, str) or not key:
+                continue
+              if not _is_nonempty_scalar(raw_value):
+                continue
+              existing = payload.get(key)
+              if _is_nonempty_scalar(existing):
+                continue
+              payload[key] = _scalar_to_text(raw_value)
+
+        def _interpolate(value: str, values: dict[str, str]) -> str:
+          def repl(match):
+            key = match.group(1)
+            replacement = values.get(key)
+            if replacement is None or replacement == '':
+              return match.group(0)
+            return replacement
+          return PLACEHOLDER_PATTERN.sub(repl, value)
+
+        def _interpolate_prompt_fields(payload: dict) -> None:
+          values: dict[str, str] = {}
+          for key, raw_value in payload.items():
+            if isinstance(raw_value, (str, int, float, bool)):
+              text = _scalar_to_text(raw_value).strip()
+              if text:
+                values[key] = text
+          if not values:
+            return
+
+          for field in ('prompt', 'issueBody'):
+            raw_field = payload.get(field)
+            if isinstance(raw_field, str):
+              payload[field] = _interpolate(raw_field, values)
+
+          implementation = payload.get('implementation')
+          if isinstance(implementation, dict):
+            raw_text = implementation.get('text')
+            if isinstance(raw_text, str):
+              implementation['text'] = _interpolate(raw_text, values)
+
+        def main() -> int:
+          if len(sys.argv) < 2:
+            return 0
+          event_path = Path(sys.argv[1])
+          if not event_path.exists():
+            return 0
+          try:
+            payload = json.loads(event_path.read_text(encoding='utf-8'))
+          except Exception:
+            return 0
+          if not isinstance(payload, dict):
+            return 0
+
+          _hydrate_top_level(payload)
+
+          issue_number = payload.get('issueNumber')
+          if isinstance(issue_number, (int, float)):
+            payload['issueNumber'] = str(int(issue_number))
+          elif isinstance(issue_number, str) and issue_number.strip():
+            payload['issueNumber'] = issue_number.strip()
+          else:
+            seed = '|'.join(
+              [
+                str(payload.get('repository', '')).strip(),
+                str(payload.get('domain', '')).strip(),
+                str(payload.get('symbol', '')).strip(),
+                str(payload.get('requestId', '')).strip(),
+                str(payload.get('head', '')).strip(),
+                str(payload.get('base', '')).strip(),
+                str(payload.get('stage', '')).strip(),
+              ]
+            )
+            if not seed.strip('|'):
+              seed = 'codex-issue-fallback'
+            digest = hashlib.sha256(seed.encode('utf-8')).hexdigest()[:10]
+            normalized = (int(digest, 16) % 900_000_000) + 100_000_000
+            payload['issueNumber'] = str(normalized)
+
+          payload['issue_number'] = str(payload.get('issueNumber', '')).strip()
+          _interpolate_prompt_fields(payload)
+          event_path.write_text(json.dumps(payload), encoding='utf-8')
+          return 0
+
+        if __name__ == '__main__':
+          raise SystemExit(main())
+    - path: /root/.codex/market-context-provider-runner.py
+      content: |-
+        #!/usr/bin/env python3
+        import json
+        import os
+        import shutil
+        import subprocess
+        import sys
+        import tempfile
+        import time
+        import urllib.error
+        import urllib.request
+        from pathlib import Path
+
+        def _parse_positive_int(value: str | None, fallback: int) -> int:
+          try:
+            parsed = int((value or '').strip())
+          except Exception:
+            return fallback
+          return parsed if parsed > 0 else fallback
+
+        def _parse_provider_chain(raw: str | None) -> list[tuple[str, str]]:
+          providers: list[tuple[str, str]] = []
+          for segment in (raw or '').split(','):
+            normalized = segment.strip()
+            if not normalized:
+              continue
+            provider, _, model = normalized.partition(':')
+            provider = provider.strip()
+            model = (model or provider).strip()
+            if provider:
+              providers.append((provider, model))
+          return providers or [('codex-spark', 'gpt-5.3-codex-spark'), ('codex', 'gpt-5.3-codex')]
+
+        def _read_json(path: Path) -> dict:
+          payload = json.loads(path.read_text(encoding='utf-8'))
+          return payload if isinstance(payload, dict) else {}
+
+        def _coerce_string(value) -> str | None:
+          if isinstance(value, str):
+            normalized = value.strip()
+            return normalized or None
+          if isinstance(value, (int, float)):
+            return str(value)
+          return None
+
+        def _resolve_field(payload: dict, key: str) -> str | None:
+          direct = _coerce_string(payload.get(key))
+          if direct:
+            return direct
+          parameters = payload.get('parameters')
+          if isinstance(parameters, dict):
+            return _coerce_string(parameters.get(key))
+          return None
+
+        def _resolve_runs_base(callback_url: str | None) -> str | None:
+          if not callback_url:
+            return None
+          normalized = callback_url.rstrip('/')
+          suffix = '/api/torghut/market-context/ingest'
+          if normalized.endswith(suffix):
+            return normalized[: -len('/ingest')]
+          return None
+
+        def _parse_json_bytes(raw: bytes):
+          if not raw:
+            return None
+          try:
+            return json.loads(raw.decode('utf-8'))
+          except Exception:
+            return raw.decode('utf-8', errors='replace').strip() or None
+
+        def _extract_response_message(payload, fallback: str) -> str:
+          if isinstance(payload, dict):
+            for key in ('message', 'error', 'errorCode'):
+              value = _coerce_string(payload.get(key))
+              if value:
+                return value
+          if isinstance(payload, str) and payload.strip():
+            return payload.strip()
+          return fallback
+
+        def _post_json(url: str, payload: dict, timeout_seconds: int) -> tuple[int, object | None]:
+          body = json.dumps(payload).encode('utf-8')
+          request = urllib.request.Request(url, data=body, headers={'content-type': 'application/json'})
+          try:
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+              return response.getcode() or 200, _parse_json_bytes(response.read())
+          except urllib.error.HTTPError as error:
+            return error.code, _parse_json_bytes(error.read())
+
+        def _build_attempt_metadata(
+          payload: dict,
+          provider: str,
+          model: str,
+          attempt_index: int,
+          attempts: list[dict],
+          failure_category: str | None = None,
+          failure_message: str | None = None,
+        ) -> dict:
+          metadata = dict(payload.get('metadata') or {})
+          metadata['providerAttempts'] = attempts
+          metadata['providerChain'] = [entry['provider'] for entry in attempts] or [provider]
+          metadata['activeProvider'] = provider
+          metadata['activeModel'] = model
+          metadata['activeAttempt'] = attempt_index
+          if failure_category:
+            metadata['failureCategory'] = failure_category
+          if failure_message:
+            metadata['failureMessage'] = failure_message
+          return metadata
+
+        def _emit_progress_event(
+          payload: dict,
+          provider: str,
+          model: str,
+          attempt_index: int,
+          status: str,
+          message: str,
+          attempts: list[dict],
+          timeout_seconds: int,
+          failure_category: str | None = None,
+        ) -> None:
+          callback_url = _resolve_field(payload, 'callbackUrl')
+          request_id = _resolve_field(payload, 'requestId')
+          symbol = _resolve_field(payload, 'symbol')
+          domain = _resolve_field(payload, 'domain')
+          runs_base = _resolve_runs_base(callback_url)
+          if not runs_base or not request_id or not domain or not symbol:
+            return
+          metadata = _build_attempt_metadata(
+            payload,
+            provider,
+            model,
+            attempt_index,
+            attempts,
+            failure_category=failure_category,
+            failure_message=message,
+          )
+          progress_payload = {
+            'requestId': request_id,
+            'seq': attempt_index * 100,
+            'status': status,
+            'message': message,
+            'metadata': metadata,
+          }
+          try:
+            _post_json(f'{runs_base}/runs/progress', progress_payload, timeout_seconds)
+          except Exception:
+            pass
+
+        def _start_attempt(
+          payload: dict,
+          provider: str,
+          model: str,
+          attempt_index: int,
+          attempts: list[dict],
+          timeout_seconds: int,
+        ) -> tuple[bool, str | None, str]:
+          callback_url = _resolve_field(payload, 'callbackUrl')
+          request_id = _resolve_field(payload, 'requestId')
+          symbol = _resolve_field(payload, 'symbol')
+          domain = _resolve_field(payload, 'domain')
+          reason = _resolve_field(payload, 'reason')
+          runs_base = _resolve_runs_base(callback_url)
+          if not runs_base or not request_id or not domain or not symbol:
+            return True, None, ''
+
+          metadata = _build_attempt_metadata(payload, provider, model, attempt_index, attempts)
+          start_payload = {
+            'requestId': request_id,
+            'symbol': symbol,
+            'domain': domain,
+            'reason': reason,
+            'provider': provider,
+            'metadata': metadata,
+          }
+          try:
+            status_code, response_payload = _post_json(f'{runs_base}/runs/start', start_payload, timeout_seconds)
+          except Exception as error:
+            return False, 'provider_bootstrap_failure', str(error).strip() or 'provider_bootstrap_failure'
+
+          if 200 <= status_code < 300:
+            _emit_progress_event(
+              payload,
+              provider,
+              model,
+              attempt_index,
+              'running',
+              f'{provider}_attempt_started',
+              attempts,
+              timeout_seconds,
+            )
+            return True, None, ''
+
+          error_code = None
+          if isinstance(response_payload, dict):
+            error_code = _coerce_string(response_payload.get('errorCode'))
+          failure_category = 'provider_bootstrap_failure'
+          if error_code == 'provider_circuit_open':
+            failure_category = 'provider_circuit_open'
+          message = _extract_response_message(response_payload, failure_category)
+          return False, failure_category, message
+
+        def _rewrite_event(original: dict, provider: str, attempts: list[dict]) -> Path:
+          payload = json.loads(json.dumps(original))
+          payload['provider'] = provider
+          payload['metadata'] = dict(payload.get('metadata') or {})
+          payload['metadata']['providerAttempts'] = attempts
+          payload['metadata']['providerChain'] = [entry['provider'] for entry in attempts] or [provider]
+          parameters = payload.get('parameters')
+          if isinstance(parameters, dict):
+            parameters['provider'] = provider
+          handle = tempfile.NamedTemporaryFile(prefix='market-context-event.', suffix='.json', delete=False)
+          handle.close()
+          path = Path(handle.name)
+          path.write_text(json.dumps(payload), encoding='utf-8')
+          subprocess.run(['python3', '/root/.codex/ensure-market-context-issue-number.py', str(path)], check=False)
+          return path
+
+        def _classify_attempt_failure(exit_code: int, message: str) -> str:
+          normalized = message.lower()
+          if exit_code == 124 or 'provider_attempt_timeout' in normalized:
+            return 'provider_attempt_timeout'
+          if 'payload' in normalized and any(token in normalized for token in ('invalid', 'validation', 'schema')):
+            return 'payload_validation_failure'
+          if 'finalize' in normalized or ('callback' in normalized and 'failed' in normalized):
+            return 'finalize_callback_failure'
+          if any(
+            token in normalized
+            for token in ('unauthorized', 'forbidden', 'token', 'auth', 'api key', 'bootstrap', 'transport', 'connection refused')
+          ):
+            return 'provider_bootstrap_failure'
+          return 'provider_turn_failed'
+
+        def _run_attempt(event_path: Path, provider: str, model: str, timeout_seconds: int) -> tuple[int, str, str]:
+          env = os.environ.copy()
+          env['CODEX_MODEL'] = model
+          env['CODEX_DISABLE_RESUME'] = '1'
+          env['CODEX_MAX_SESSION_ATTEMPTS'] = '1'
+          env['CODEX_IDLE_TIMEOUT_MS'] = str(timeout_seconds * 1000)
+          env['CODEX_MARKET_CONTEXT_ACTIVE_PROVIDER'] = provider
+          env['CODEX_MARKET_CONTEXT_ACTIVE_MODEL'] = model
+          try:
+            result = subprocess.run(
+              ['/usr/local/bin/codex-implement', str(event_path)],
+              env=env,
+              capture_output=True,
+              text=True,
+              timeout=timeout_seconds,
+            )
+            if result.stdout:
+              sys.stdout.write(result.stdout)
+            if result.stderr:
+              sys.stderr.write(result.stderr)
+            message = (result.stderr or result.stdout or '').strip()
+            last_line = message.splitlines()[-1] if message else ''
+            return result.returncode, _classify_attempt_failure(result.returncode, last_line), last_line
+          except subprocess.TimeoutExpired as error:
+            if error.stdout:
+              sys.stdout.write(error.stdout)
+            if error.stderr:
+              sys.stderr.write(error.stderr)
+            return 124, 'provider_attempt_timeout', 'provider_attempt_timeout'
+
+        def main() -> int:
+          if len(sys.argv) < 2:
+            print('usage: market-context-provider-runner.py <event.json>', file=sys.stderr)
+            return 2
+
+          source_path = Path(sys.argv[1])
+          if not source_path.exists():
+            print(f'event payload missing: {source_path}', file=sys.stderr)
+            return 2
+
+          original_payload = _read_json(source_path)
+          provider_chain = _parse_provider_chain(os.environ.get('CODEX_MARKET_CONTEXT_PROVIDER_CHAIN'))
+          per_attempt_timeout = _parse_positive_int(os.environ.get('CODEX_MARKET_CONTEXT_ATTEMPT_TIMEOUT_SECONDS'), 600)
+          overall_timeout = _parse_positive_int(os.environ.get('CODEX_MARKET_CONTEXT_OVERALL_TIMEOUT_SECONDS'), 1200)
+          progress_timeout = _parse_positive_int(os.environ.get('CODEX_MARKET_CONTEXT_PROGRESS_TIMEOUT_SECONDS'), 10)
+          deadline = time.monotonic() + overall_timeout
+          attempts: list[dict] = []
+          last_exit_code = 1
+
+          for attempt_index, (provider, model) in enumerate(provider_chain, start=1):
+            remaining = max(1, int(deadline - time.monotonic()))
+            attempt_timeout = min(per_attempt_timeout, remaining)
+            attempt_record = {
+              'provider': provider,
+              'model': model,
+              'attempt': attempt_index,
+              'status': 'running',
+              'startedAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+            }
+            attempts.append(attempt_record)
+            started, failure_category, failure_message = _start_attempt(
+              original_payload,
+              provider,
+              model,
+              attempt_index,
+              attempts,
+              progress_timeout,
+            )
+            if not started:
+              last_exit_code = 1
+              attempt_record['status'] = 'failed'
+              attempt_record['failureCategory'] = failure_category or 'provider_bootstrap_failure'
+              attempt_record['error'] = failure_message or attempt_record['failureCategory']
+              attempt_record['finishedAt'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+              _emit_progress_event(
+                original_payload,
+                provider,
+                model,
+                attempt_index,
+                'failed',
+                attempt_record['error'],
+                attempts,
+                progress_timeout,
+                attempt_record['failureCategory'],
+              )
+              if time.monotonic() >= deadline:
+                break
+              continue
+            event_path = _rewrite_event(original_payload, provider, attempts)
+            try:
+              exit_code, failure_category, error_message = _run_attempt(event_path, provider, model, attempt_timeout)
+            finally:
+              try:
+                event_path.unlink(missing_ok=True)
+              except Exception:
+                pass
+
+            last_exit_code = exit_code
+            if exit_code == 0:
+              attempt_record['status'] = 'succeeded'
+              attempt_record['finishedAt'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+              return 0
+
+            attempt_record['status'] = 'failed'
+            attempt_record['failureCategory'] = failure_category
+            attempt_record['error'] = error_message or f'{provider}_attempt_failed'
+            attempt_record['finishedAt'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+            _emit_progress_event(
+              original_payload,
+              provider,
+              model,
+              attempt_index,
+              'failed',
+              attempt_record['error'],
+              attempts,
+              progress_timeout,
+              failure_category,
+            )
+            if time.monotonic() >= deadline:
+              break
+
+          final_provider = attempts[-1]['provider'] if attempts else 'unknown'
+          final_model = attempts[-1]['model'] if attempts else 'unknown'
+          _emit_progress_event(
+            original_payload,
+            final_provider,
+            final_model,
+            len(attempts) + 1,
+            'failed',
+            'all_provider_attempts_failed',
+            attempts,
+            progress_timeout,
+            'attempt_budget_exhausted',
+          )
+          return last_exit_code if last_exit_code != 0 else 1
+
+        if __name__ == '__main__':
+          raise SystemExit(main())
+  outputArtifacts:
+    - name: runner-log
+      path: /workspace/.agent/runner.log
+    - name: runner-status
+      path: /workspace/.agent/status.json

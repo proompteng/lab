@@ -190,7 +190,7 @@ export const recordTorghutMarketContextIngestRequest = (params: {
 
 export const recordTorghutMarketContextRunEvent = (params: {
   endpoint: 'start' | 'progress' | 'evidence' | 'finalize' | 'status'
-  outcome: 'accepted' | 'unauthorized' | 'invalid_payload' | 'not_found' | 'error'
+  outcome: 'accepted' | 'unauthorized' | 'invalid_payload' | 'not_found' | 'rejected' | 'error'
   domain?: string
 }) => {
   if (!metricsState.enabled) return

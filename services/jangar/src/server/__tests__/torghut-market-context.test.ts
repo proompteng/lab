@@ -12,6 +12,7 @@ const restoreEnv = () => {
   delete process.env.JANGAR_MARKET_CONTEXT_CACHE_SECONDS
   delete process.env.JANGAR_MARKET_CONTEXT_MAX_STALENESS_SECONDS
   delete process.env.JANGAR_MARKET_CONTEXT_PROVIDER_TIMEOUT_MS
+  delete process.env.JANGAR_MARKET_CONTEXT_PROVIDER_CHAIN
   delete process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_URL
   delete process.env.JANGAR_MARKET_CONTEXT_NEWS_URL
   delete process.env.JANGAR_MARKET_CONTEXT_REQUIRE_TECHNICALS_SOURCE_HEALTH
@@ -259,6 +260,58 @@ describe('torghut market context', () => {
     expect(health.domainHealth.find((d) => d.domain === 'news')?.state).toBe('error')
     expect(health.providerHealth.find((d) => d.provider === 'fundamentals')?.lastError).toBe('upstream timeout')
     expect(health.providerHealth.find((d) => d.provider === 'news')?.consecutiveFailures).toBe(1)
+  })
+
+  it('preserves degraded last-good provider metadata in the bundle', async () => {
+    process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_URL = 'https://fundamentals.test/context'
+    process.env.JANGAR_MARKET_CONTEXT_NEWS_URL = 'https://news.test/context'
+    process.env.JANGAR_MARKET_CONTEXT_PROVIDER_CHAIN = 'codex-spark,codex'
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          asOfUtc: '2026-02-19T11:00:00.000Z',
+          sourceCount: 1,
+          qualityScore: 0.9,
+          payload: { peRatio: 28.1, provider: 'codex-spark' },
+          citations: [],
+          riskFlags: [],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          asOfUtc: '2026-02-19T11:40:00.000Z',
+          sourceCount: 2,
+          qualityScore: 0.35,
+          payload: {
+            provider: 'codex',
+            providerChain: ['codex-spark', 'codex'],
+            fallbackUsed: true,
+            generationFailed: true,
+            degradedReason: 'all_provider_attempts_failed',
+            lastSuccessfulAsOfUtc: '2026-02-19T11:40:00.000Z',
+          },
+          citations: [],
+          riskFlags: ['news_generation_failed_all_models', 'market_context_degraded_last_good'],
+        }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const context = await getTorghutMarketContext('AAPL', {
+      asOf: new Date('2026-02-19T12:00:00.000Z'),
+      client: {
+        queryJson: async <T>() => [{ event_ts: '2026-02-19 11:59:30.000', c: '210.02' }] as T[],
+      },
+    })
+
+    expect(context.domains.news.payload.provider).toBe('codex')
+    expect(context.domains.news.payload.fallbackUsed).toBe(true)
+    expect(context.domains.news.payload.generationFailed).toBe(true)
+    expect(context.domains.news.riskFlags).toContain('news_generation_failed_all_models')
+    expect(context.riskFlags).toContain('market_context_degraded_last_good')
   })
 
   it('uses 10-minute news freshness during US regular trading hours', async () => {

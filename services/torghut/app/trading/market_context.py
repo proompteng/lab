@@ -27,6 +27,12 @@ _BLOCKING_RISK_FLAGS = {
     "market_context_domain_error",
 }
 
+_DEGRADED_LAST_GOOD_FLAGS = {
+    "market_context_degraded_last_good",
+    "fundamentals_generation_failed_all_models",
+    "news_generation_failed_all_models",
+}
+
 _REASON_PRIORITY = [
     "market_context_required_missing",
     "market_context_fetch_error",
@@ -42,6 +48,35 @@ class MarketContextStatus:
     allow_llm: bool
     reason: Optional[str]
     risk_flags: list[str]
+
+
+def _degraded_domains_within_hard_caps(bundle: MarketContextBundle) -> bool:
+    degraded_domains: list[tuple[str, Any, int]] = []
+    risk_flags = set(bundle.risk_flags)
+    if "fundamentals_generation_failed_all_models" in risk_flags:
+        degraded_domains.append(
+            (
+                "fundamentals",
+                bundle.domains.fundamentals,
+                settings.trading_market_context_fundamentals_degraded_max_staleness_seconds,
+            )
+        )
+    if "news_generation_failed_all_models" in risk_flags:
+        degraded_domains.append(
+            (
+                "news",
+                bundle.domains.news,
+                settings.trading_market_context_news_degraded_max_staleness_seconds,
+            )
+        )
+    if not degraded_domains:
+        return False
+    for _, domain, hard_cap_seconds in degraded_domains:
+        if domain.state in {"missing", "error"}:
+            return False
+        if domain.freshness_seconds is None or domain.freshness_seconds > hard_cap_seconds:
+            return False
+    return True
 
 
 class _HttpRequest:
@@ -158,14 +193,22 @@ def evaluate_market_context(bundle: Optional[MarketContextBundle]) -> MarketCont
         "news": bundle.domains.news.state,
         "regime": bundle.domains.regime.state,
     }
+    degraded_last_good_allowed = (
+        settings.trading_market_context_allow_degraded_last_good
+        and any(flag in _DEGRADED_LAST_GOOD_FLAGS for flag in risk_flags)
+        and _degraded_domains_within_hard_caps(bundle)
+    )
     blocking_flags = [flag for flag in risk_flags if flag in _BLOCKING_RISK_FLAGS]
     if any(state == "error" for state in domain_states.values()):
         risk_flags.append("market_context_domain_error")
         blocking_flags.append("market_context_domain_error")
-    if bundle.freshness_seconds > settings.trading_market_context_max_staleness_seconds:
+    if (
+        bundle.freshness_seconds > settings.trading_market_context_max_staleness_seconds
+        and not degraded_last_good_allowed
+    ):
         risk_flags.append("market_context_stale")
         blocking_flags.append("market_context_stale")
-    if bundle.quality_score < settings.trading_market_context_min_quality:
+    if bundle.quality_score < settings.trading_market_context_min_quality and not degraded_last_good_allowed:
         risk_flags.append("market_context_quality_low")
         blocking_flags.append("market_context_quality_low")
 

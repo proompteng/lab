@@ -17,6 +17,7 @@ resources:
   - codex-whitepaper-agent.yaml
   - codex-agentprovider.yaml
   - codex-spark-agentprovider.yaml
+  - torghut-market-context-agentprovider.yaml
   - torghut-fundamentals-agent.yaml
   - torghut-news-agent.yaml
   - torghut-fundamentals-agent-system-prompt-configmap.yaml

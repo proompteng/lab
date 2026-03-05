@@ -47,6 +47,9 @@ FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "trading_kill_switch_enabled": "torghut_trading_kill_switch_enabled",
     "trading_emergency_stop_enabled": "torghut_trading_emergency_stop_enabled",
     "trading_market_context_required": "torghut_trading_market_context_required",
+    "trading_market_context_allow_degraded_last_good": (
+        "torghut_trading_market_context_allow_degraded_last_good"
+    ),
     "llm_enabled": "torghut_llm_enabled",
     "llm_fail_open_live_approved": "torghut_llm_fail_open_live_approved",
     "llm_adjustment_allowed": "torghut_llm_adjustment_allowed",
@@ -1208,7 +1211,7 @@ class Settings(BaseSettings):
         description="Jangar market-context endpoint consumed by LLM review.",
     )
     trading_market_context_timeout_seconds: int = Field(
-        default=3,
+        default=300,
         alias="TRADING_MARKET_CONTEXT_TIMEOUT_SECONDS",
         description="Timeout for market-context fetches.",
     )
@@ -1231,6 +1234,21 @@ class Settings(BaseSettings):
         default=300,
         alias="TRADING_MARKET_CONTEXT_MAX_STALENESS_SECONDS",
         description="Maximum accepted market-context staleness.",
+    )
+    trading_market_context_allow_degraded_last_good: bool = Field(
+        default=True,
+        alias="TRADING_MARKET_CONTEXT_ALLOW_DEGRADED_LAST_GOOD",
+        description="Allow degraded last-good market context when generation failed but a bounded stale snapshot exists.",
+    )
+    trading_market_context_fundamentals_degraded_max_staleness_seconds: int = Field(
+        default=86400,
+        alias="TRADING_MARKET_CONTEXT_FUNDAMENTALS_DEGRADED_MAX_STALENESS_SECONDS",
+        description="Hard stale cap for degraded last-good fundamentals context.",
+    )
+    trading_market_context_news_degraded_max_staleness_seconds: int = Field(
+        default=1800,
+        alias="TRADING_MARKET_CONTEXT_NEWS_DEGRADED_MAX_STALENESS_SECONDS",
+        description="Hard stale cap for degraded last-good news context.",
     )
     trading_clickhouse_url: Optional[str] = Field(
         default=None, alias="TA_CLICKHOUSE_URL"

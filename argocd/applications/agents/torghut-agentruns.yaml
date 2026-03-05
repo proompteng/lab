@@ -197,7 +197,7 @@ spec:
     - Keep qualityScore in [0, 1].
 
     Inputs:
-    - symbol, domain, asOfUtc, reason
+    - symbol, domain, asOfUtc, reason, provider
     - callbackUrl, requestId
 
     Required output payload shape:
@@ -219,7 +219,7 @@ spec:
         { "source": "<publisher>", "publishedAt": "<ISO timestamp>", "url": "<https url or null>" }
       ],
       "riskFlags": [ ... ],
-      "provider": "codex-spark",
+      "provider": "${provider}",
       "runStatus": "succeeded",
       "requestId": "<requestId>"
     }
@@ -230,7 +230,7 @@ spec:
        - `if [ ! -f "${SCRIPT_ROOT}/market_context_run_api.py" ]; then if [ -f "/workspace/lab/skills/market-context/scripts/market_context_run_api.py" ]; then SCRIPT_ROOT=/workspace/lab/skills/market-context/scripts; elif [ -f "/tmp/proompt-lab/skills/market-context/scripts/market_context_run_api.py" ]; then SCRIPT_ROOT=/tmp/proompt-lab/skills/market-context/scripts; else echo "market-context scripts not found" >&2; exit 1; fi; fi`
        - `test -f "${SCRIPT_ROOT}/market_context_run_api.py"`
     2) Start lifecycle tracking (required before research):
-       - `python3 "${SCRIPT_ROOT}/market_context_run_api.py" start --callback-url "${callbackUrl}" --request-id "${requestId}" --symbol "${symbol}" --domain fundamentals --reason "${reason}" --provider codex-spark --expect-status 200`
+       - `python3 "${SCRIPT_ROOT}/market_context_run_api.py" start --callback-url "${callbackUrl}" --request-id "${requestId}" --symbol "${symbol}" --domain fundamentals --reason "${reason}" --provider "${provider}" --expect-status 200`
        - `python3 "${SCRIPT_ROOT}/market_context_run_api.py" progress --callback-url "${callbackUrl}" --request-id "${requestId}" --seq 1 --status running --message fundamentals_collection_started --expect-status 200`
     3) Research current fundamentals for `${symbol}` (valuation, growth, profitability, balance-sheet/capital structure, near-term catalysts).
     4) Write the payload to `/tmp/market-context-fundamentals.json` using Python `json` serialization (do not handcraft shell-escaped JSON).
@@ -270,7 +270,7 @@ spec:
     - Keep qualityScore in [0, 1].
 
     Inputs:
-    - symbol, domain, asOfUtc, reason
+    - symbol, domain, asOfUtc, reason, provider
     - callbackUrl, requestId
 
     Required output payload shape:
@@ -297,7 +297,7 @@ spec:
         { "source": "<publisher>", "publishedAt": "<ISO timestamp>", "url": "<https url or null>" }
       ],
       "riskFlags": [ ... ],
-      "provider": "codex-spark",
+      "provider": "${provider}",
       "runStatus": "succeeded",
       "requestId": "<requestId>"
     }
@@ -308,7 +308,7 @@ spec:
        - `if [ ! -f "${SCRIPT_ROOT}/market_context_run_api.py" ]; then if [ -f "/workspace/lab/skills/market-context/scripts/market_context_run_api.py" ]; then SCRIPT_ROOT=/workspace/lab/skills/market-context/scripts; elif [ -f "/tmp/proompt-lab/skills/market-context/scripts/market_context_run_api.py" ]; then SCRIPT_ROOT=/tmp/proompt-lab/skills/market-context/scripts; else echo "market-context scripts not found" >&2; exit 1; fi; fi`
        - `test -f "${SCRIPT_ROOT}/market_context_run_api.py"`
     2) Start lifecycle tracking (required before research):
-       - `python3 "${SCRIPT_ROOT}/market_context_run_api.py" start --callback-url "${callbackUrl}" --request-id "${requestId}" --symbol "${symbol}" --domain news --reason "${reason}" --provider codex-spark --expect-status 200`
+       - `python3 "${SCRIPT_ROOT}/market_context_run_api.py" start --callback-url "${callbackUrl}" --request-id "${requestId}" --symbol "${symbol}" --domain news --reason "${reason}" --provider "${provider}" --expect-status 200`
        - `python3 "${SCRIPT_ROOT}/market_context_run_api.py" progress --callback-url "${callbackUrl}" --request-id "${requestId}" --seq 1 --status running --message news_collection_started --expect-status 200`
     3) Gather recent high-signal company/sector/macro news relevant to `${symbol}`.
     4) Write the payload to `/tmp/market-context-news.json` using Python `json` serialization (do not handcraft shell-escaped JSON).
