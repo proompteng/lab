@@ -41,7 +41,7 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: assess cluster/source/database state and create+merge a design PR that improves, maintains, and innovates the Jangar control plane
+    objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate the Jangar control plane
   vcsRef:
     name: github
   vcsPolicy:
@@ -95,7 +95,7 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: assess cluster/source/database state and create+merge a design PR that improves, maintains, and innovates the Jangar control plane
+    objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate the Jangar control plane
   vcsRef:
     name: github
   vcsPolicy:
@@ -206,7 +206,7 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: merge Jangar PRs only when all checks pass with no failures; if checks fail, fix them first, then roll out merged changes in-cluster via GitOps with health verification
+    objective: as release engineer, make Jangar PRs production-ready by fixing blockers until all required checks are green, then squash-merge and verify in-cluster GitOps rollout health
   vcsRef:
     name: github
   vcsPolicy:
@@ -260,7 +260,7 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: assess cluster/source/database state and create+merge a design PR that improves, maintains, and innovates Torghut quant
+    objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate Torghut quant
   vcsRef:
     name: github
   vcsPolicy:
@@ -314,7 +314,7 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: assess cluster/source/database state and create+merge a design PR that improves, maintains, and innovates Torghut quant
+    objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate Torghut quant
   vcsRef:
     name: github
   vcsPolicy:
@@ -425,7 +425,7 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: merge Torghut PRs only when all checks pass with no failures; if checks fail, fix them first, then roll out merged changes in-cluster via GitOps with health verification
+    objective: as release engineer, make Torghut PRs production-ready by fixing blockers until all required checks are green, then squash-merge and verify in-cluster GitOps rollout health
   vcsRef:
     name: github
   vcsPolicy:
