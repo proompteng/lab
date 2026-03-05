@@ -105,6 +105,7 @@ export type ControlPlaneRolloutStageReliability = {
   reasons: string[]
   recent_failed_jobs: number
   backoff_limit_exceeded_jobs: number
+  top_failure_reasons: WorkflowFailureReason[]
 }
 
 export type ControlPlaneRolloutReliability = {
@@ -631,6 +632,7 @@ const buildRolloutReliability = async (deps: {
       failedJobs: number
       backoffLimitExceededJobs: number
       activeJobs: number
+      failureReasons: Map<string, number>
     }
   >()
 
@@ -657,6 +659,7 @@ const buildRolloutReliability = async (deps: {
       failedJobs: 0,
       backoffLimitExceededJobs: 0,
       activeJobs: 0,
+      failureReasons: new Map<string, number>(),
     }
     if (active > 0) {
       summary.activeJobs += active
@@ -677,8 +680,10 @@ const buildRolloutReliability = async (deps: {
     }
 
     summary.failedJobs += 1
+    const failureReason = asString(failedCondition?.reason) ?? 'Failed'
+    summary.failureReasons.set(failureReason, (summary.failureReasons.get(failureReason) ?? 0) + 1)
 
-    if (asString(failedCondition?.reason) === 'BackoffLimitExceeded') {
+    if (failureReason === 'BackoffLimitExceeded') {
       summary.backoffLimitExceededJobs += 1
     }
 
@@ -763,6 +768,7 @@ const buildRolloutReliability = async (deps: {
       const failureSummary = rolloutFailureBySchedule.get(name)
       const recentActiveJobs = failureSummary?.activeJobs ?? 0
       const hasRecentRolloutActivity = recentScheduleRun || recentActiveJobs > 0
+      const topFailureReasons = toTopFailureReasons(failureSummary?.failureReasons ?? new Map<string, number>())
 
       const isActive = phase === 'Active'
       const isStale = !recentSuccessfulRun && !hasRecentRolloutActivity
@@ -797,6 +803,7 @@ const buildRolloutReliability = async (deps: {
         is_stale: isStale,
         recent_failed_jobs: recentFailedJobs,
         backoff_limit_exceeded_jobs: backoffLimitExceededJobs,
+        top_failure_reasons: topFailureReasons,
         reasons,
       }
       return stageObj

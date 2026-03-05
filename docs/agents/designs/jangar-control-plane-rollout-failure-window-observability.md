@@ -1,6 +1,6 @@
-# Jangar Control-Plane Rollout Failure-Window Observability (Discover)
+# Jangar Control-Plane Rollout Failure-Window Observability (Implemented)
 
-Status: Discover (2026-03-04)
+Status: Implemented (2026-03-05)
 
 ## Summary
 
@@ -18,10 +18,10 @@ That limits triage when a stage keeps failing with transient reasons while still
 
 ## Proposed design
 
-Extend `ControlPlaneRolloutStageReliability` and its producer in `services/jangar/src/server/control-plane-status.ts` with three new fields:
+Extend `ControlPlaneRolloutStageReliability` and its producer in `services/jangar/src/server/control-plane-status.ts` with three fields:
 
-- `failed_runs_last_window`
-- `backoff_failures_last_window`
+- `recent_failed_jobs`
+- `backoff_limit_exceeded_jobs`
 - `top_failure_reasons` (`reason`, `count`)
 
 These fields are computed from Kubernetes `jobs` in the control-plane namespace for schedules matching names in the current stage list and filtered to the rollout observation window (currently 120m by default).
@@ -68,7 +68,15 @@ Contract mapping:
 ### Test coverage gaps and additions
 
 - Added regression test for rollout failure-window metrics in `services/jangar/src/server/__tests__/control-plane-status.test.ts`.
+- Added stage-level `top_failure_reasons` coverage in this mission’s rollout failure test (`services/jangar/src/server/__tests__/control-plane-status.test.ts`).
 - Remaining gap: long-tail stability under mixed job-name formats and cross-namespace schedule fanout; recommend follow-up fuzz coverage if naming evolves.
+
+## Rollout evidence
+
+- Data contract updates landed in this cycle:
+  - `services/jangar/src/data/agents-control-plane.ts` (rollout stage contract field alignment)
+  - `services/jangar/src/server/control-plane-status.ts` (per-stage reason rollup)
+  - `services/jangar/src/server/__tests__/control-plane-status.test.ts` (contract validation)
 
 ## Cluster assessment context for design choice
 
@@ -90,4 +98,3 @@ Contract mapping:
 2. Add/extend server tests around reason windows and counts.
 3. Run targeted status/JS checks.
 4. Open PR and merge only when checks pass.
-

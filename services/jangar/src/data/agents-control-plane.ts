@@ -147,8 +147,8 @@ export type ControlPlaneRolloutStageReliability = {
   last_transition_at: string
   is_active: boolean
   is_stale: boolean
-  failed_runs_last_window: number
-  backoff_failures_last_window: number
+  recent_failed_jobs: number
+  backoff_limit_exceeded_jobs: number
   top_failure_reasons: RolloutFailureReason[]
   reasons: string[]
 }

@@ -710,6 +710,12 @@ describe('control-plane status', () => {
       name: 'jangar-control-plane-implement-sched',
       backoff_limit_exceeded_jobs: 2,
       recent_failed_jobs: 2,
+      top_failure_reasons: [
+        {
+          reason: 'BackoffLimitExceeded',
+          count: 2,
+        },
+      ],
     })
     expect(status.namespaces[0]?.degraded_components).toContain('rollout')
   })
