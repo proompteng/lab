@@ -23,7 +23,7 @@ spec:
     - If market session is closed according to `${tradingStatusUrl}`, exit 0 without publishing updates.
 
     Inputs:
-    - domain, reason
+    - domain, reason, provider
     - callbackUrl, symbolsUrl, tradingStatusUrl
 
     Required output payload shape:
@@ -31,7 +31,7 @@ spec:
       "domain": "fundamentals",
       "asOfUtc": "<ISO timestamp>",
       "runStatus": "succeeded|partial|failed",
-      "provider": "codex-spark",
+      "provider": "${provider}",
       "requestId": "<requestId>",
       "items": [
         {
@@ -105,7 +105,7 @@ spec:
     - If market session is closed according to `${tradingStatusUrl}`, exit 0 without publishing updates.
 
     Inputs:
-    - domain, reason
+    - domain, reason, provider
     - callbackUrl, symbolsUrl, tradingStatusUrl
 
     Required output payload shape:
@@ -113,7 +113,7 @@ spec:
       "domain": "news",
       "asOfUtc": "<ISO timestamp>",
       "runStatus": "succeeded|partial|failed",
-      "provider": "codex-spark",
+      "provider": "${provider}",
       "requestId": "<requestId>",
       "items": [
         {
@@ -193,6 +193,7 @@ spec:
   parameters:
     domain: fundamentals
     reason: scheduled_trading_session_refresh
+    provider: codex-spark
     callbackUrl: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/ingest
     symbolsUrl: http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=equity&format=compact
     tradingStatusUrl: http://torghut.torghut.svc.cluster.local/trading/status
@@ -224,6 +225,7 @@ spec:
   parameters:
     domain: news
     reason: scheduled_trading_session_refresh
+    provider: codex-spark
     callbackUrl: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/ingest
     symbolsUrl: http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=equity&format=compact
     tradingStatusUrl: http://torghut.torghut.svc.cluster.local/trading/status

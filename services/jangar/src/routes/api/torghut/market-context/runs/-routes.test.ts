@@ -74,6 +74,44 @@ describe('market-context run lifecycle routes', () => {
     })
   })
 
+  it('start returns rejected response when provider circuit is open', async () => {
+    isMarketContextIngestAuthorized.mockResolvedValueOnce(true)
+    const error = Object.assign(new Error('provider circuit open for codex-spark'), {
+      statusCode: 409,
+      errorCode: 'provider_circuit_open',
+      details: {
+        domain: 'news',
+        provider: 'codex-spark',
+        cooldownRemainingSeconds: 600,
+      },
+    })
+    startMarketContextProviderRun.mockRejectedValueOnce(error)
+
+    const { postMarketContextRunStartHandler } = await import('./start')
+    const response = await postMarketContextRunStartHandler(
+      new Request('http://localhost/api/torghut/market-context/runs/start', {
+        method: 'POST',
+        body: JSON.stringify({ symbol: 'AAPL', domain: 'news', provider: 'codex-spark' }),
+      }),
+    )
+
+    expect(response.status).toBe(409)
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'provider_circuit_open',
+      details: {
+        domain: 'news',
+        provider: 'codex-spark',
+        cooldownRemainingSeconds: 600,
+      },
+    })
+    expect(recordTorghutMarketContextRunEvent).toHaveBeenCalledWith({
+      endpoint: 'start',
+      outcome: 'rejected',
+      domain: 'news',
+    })
+  })
+
   it('progress returns 404 when run is not found', async () => {
     isMarketContextIngestAuthorized.mockResolvedValueOnce(true)
     recordMarketContextProviderRunProgress.mockRejectedValueOnce(new Error('run not found for requestId req-x'))

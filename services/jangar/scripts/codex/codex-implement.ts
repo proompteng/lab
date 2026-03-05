@@ -2735,7 +2735,8 @@ export const runCodexImplementation = async (eventPath: string) => {
   }
 
   const normalizedIssueNumber = issueNumber
-  const supportsResume = stage === 'implementation'
+  const disableResume = parseBoolean(process.env.CODEX_DISABLE_RESUME, false)
+  const supportsResume = stage === 'implementation' && !disableResume
   let resumeContext: ResumeContext | undefined
   let resumeSessionId: string | undefined
   let capturedSessionId: string | undefined

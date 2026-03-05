@@ -272,8 +272,14 @@ spec:
               value: "60"
             - name: JANGAR_MARKET_CONTEXT_MAX_STALENESS_SECONDS
               value: "300"
+            - name: JANGAR_MARKET_CONTEXT_PROVIDER_CHAIN
+              value: codex-spark,codex
             - name: JANGAR_MARKET_CONTEXT_PROVIDER_TIMEOUT_MS
-              value: "2000"
+              value: "10000"
+            - name: JANGAR_MARKET_CONTEXT_PROVIDER_FAILURE_THRESHOLD
+              value: "3"
+            - name: JANGAR_MARKET_CONTEXT_PROVIDER_COOLDOWN_SECONDS
+              value: "900"
             - name: JANGAR_MARKET_CONTEXT_REQUIRE_TECHNICALS_SOURCE_HEALTH
               value: "true"
             - name: JANGAR_MARKET_CONTEXT_TECHNICALS_MAX_FRESHNESS_SECONDS
@@ -293,7 +299,7 @@ spec:
             - name: JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_URL
               value: http://torghut.torghut.svc.cluster.local/trading/status
             - name: JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_TIMEOUT_MS
-              value: "2000"
+              value: "5000"
             - name: JANGAR_MARKET_CONTEXT_INGEST_ALLOW_SERVICE_ACCOUNT_TOKEN
               value: "true"
             - name: JANGAR_MARKET_CONTEXT_INGEST_ALLOWED_SERVICE_ACCOUNT_PREFIXES
