@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: forgejo-runners-config
+data:
+  config.yaml: |
+    log:
+      level: info
+      job_level: info
+
+    runner:
+      file: /data/.runner
+      capacity: 2
+      timeout: 3h
+      shutdown_timeout: 5m
+      insecure: false
+      fetch_timeout: 5s
+      fetch_interval: 2s
+      report_interval: 1s
+      labels:
+        - ubuntu-latest:docker://ghcr.io/catthehacker/ubuntu:act-latest
+        - docker:docker://ghcr.io/catthehacker/ubuntu:act-latest
+        - ubuntu-24.04-arm64:docker://ghcr.io/catthehacker/ubuntu:act-latest
+        - docker-arm64:docker://ghcr.io/catthehacker/ubuntu:act-latest
+
+    cache:
+      enabled: true
+      dir: /data/cache
+      host: ''
+      external_server: ''
+      secret: ''
+      actions_cache_url_override: ''
+
+    container:
+      network: ''
+      enable_ipv6: false
+      privileged: false
+      options: ''
+      workdir_parent: /data/workspace
+      valid_volumes:
+        - '**'
+      docker_host: unix:///var/run/docker.sock
+      force_pull: false
+      force_rebuild: false
