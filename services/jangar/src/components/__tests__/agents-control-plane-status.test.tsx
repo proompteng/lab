@@ -43,15 +43,6 @@ const baseStatus: ControlPlaneStatus = {
       { reason: 'ImagePullBackOff', count: 1 },
     ],
   },
-  rollout: {
-    status: 'healthy',
-    window_minutes: 120,
-    observed_schedules: 0,
-    inactive_schedules: 0,
-    stale_schedules: 0,
-    message: '',
-    stages: [],
-  },
   database: {
     configured: true,
     connected: true,

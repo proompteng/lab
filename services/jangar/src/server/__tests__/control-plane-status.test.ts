@@ -409,13 +409,7 @@ describe('control-plane status', () => {
             message: 'temporal configuration resolved',
             endpoint: 'temporal:7233',
           }),
-          checkDatabase: async () => ({
-            configured: true,
-            connected: true,
-            status: 'healthy',
-            message: '',
-            latency_ms: 1,
-          }),
+          checkDatabase: async () => buildDatabaseStatus(),
         },
       ),
     ).rejects.toThrow('simulated kube client creation failure')
