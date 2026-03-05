@@ -1344,6 +1344,41 @@ exit 1
     expect(notify.prUrl).toBe('https://github.com/owner/repo/pull/4005')
   }, 40_000)
 
+  it('uses the PR number from URL tail when verifying engineer checks', async () => {
+    process.env.CODEX_VERIFY_MERGE_WITH_GH = 'false'
+    process.env.CODEX_VERIFY_PR_CHECKS_WITH_GH = 'true'
+    process.env.CODEX_PR_DISCOVERY_ENABLED = 'false'
+    const prUrlPath = join(workdir, '.codex-pr-url.txt')
+    await writeFile(prUrlPath, 'https://github.com/owner/repo2/pull/123\n', 'utf8')
+
+    const binDir = join(workdir, '.bin-gh-pr-checks-url-tail')
+    await mkdir(binDir, { recursive: true })
+    const ghPath = join(binDir, 'gh')
+    await writeFile(
+      ghPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == "pr" && "$2" == "checks" ]]; then
+  if [[ "$3" == "123" ]]; then
+    echo '[{"name":"ci","state":"SUCCESS"}]'
+    exit 0
+  fi
+  if [[ "$3" == "2" ]]; then
+    echo '[{"name":"ci","state":"FAILURE"}]'
+    exit 0
+  fi
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 1
+`,
+      'utf8',
+    )
+    await chmod(ghPath, 0o755)
+    process.env.PATH = `${binDir}:${ORIGINAL_ENV.PATH ?? process.env.PATH ?? ''}`
+
+    await expect(runCodexImplementation(eventPath)).resolves.toBeDefined()
+  }, 40_000)
+
   it('allows implementation runs without PR_URL when CODEX_REQUIRE_PULL_REQUEST is false', async () => {
     process.env.VCS_PULL_REQUESTS_ENABLED = 'true'
     process.env.CODEX_REQUIRE_PULL_REQUEST = 'false'
@@ -1516,6 +1551,72 @@ exit 1
     await expect(runCodexImplementation(eventPath)).rejects.toThrow(
       'Release run completed without merge evidence (merged PR/commit required)',
     )
+  }, 40_000)
+
+  it('refreshes release PR metadata from GitHub before merge verification', async () => {
+    process.env.CODEX_VERIFY_RELEASE_ROLLOUT_WITH_CLUSTER = 'false'
+    process.env.CODEX_PR_DISCOVERY_ENABLED = 'true'
+    const prNumberPath = join(workdir, '.codex-pr-number.txt')
+    const prUrlPath = join(workdir, '.codex-pr-url.txt')
+    await writeFile(prNumberPath, '5010\n', 'utf8')
+    await writeFile(prUrlPath, 'https://github.com/owner/repo/pull/5010\n', 'utf8')
+
+    const binDir = join(workdir, '.bin-gh-release-refresh')
+    await mkdir(binDir, { recursive: true })
+    const ghPath = join(binDir, 'gh')
+    await writeFile(
+      ghPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == "pr" && "$2" == "list" ]]; then
+  echo '[{"number":6006,"url":"https://github.com/owner/repo/pull/6006"}]'
+  exit 0
+fi
+if [[ "$1" == "pr" && "$2" == "checks" ]]; then
+  echo '[{"name":"ci","state":"SUCCESS"}]'
+  exit 0
+fi
+if [[ "$1" == "pr" && "$2" == "view" ]]; then
+  if [[ "$3" == "6006" ]]; then
+    echo '{"state":"OPEN","mergedAt":null,"mergeCommit":null}'
+    exit 0
+  fi
+  if [[ "$3" == "5010" ]]; then
+    echo '{"state":"MERGED","mergedAt":"2026-03-05T00:00:00Z","mergeCommit":{"oid":"abc123"}}'
+    exit 0
+  fi
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 1
+`,
+      'utf8',
+    )
+    await chmod(ghPath, 0o755)
+    process.env.PATH = `${binDir}:${ORIGINAL_ENV.PATH ?? process.env.PATH ?? ''}`
+
+    await writeFile(
+      eventPath,
+      JSON.stringify({
+        prompt: 'Release verification run',
+        repository: 'owner/repo',
+        issueNumber: 42,
+        base: 'main',
+        head: 'codex/issue-42',
+        stage: 'implementation',
+        swarmAgentRole: 'deployer',
+        swarmHumanName: 'release-manager',
+        parameters: {
+          rolloutHealthy: true,
+        },
+      }),
+      'utf8',
+    )
+
+    await expect(runCodexImplementation(eventPath)).rejects.toThrow(
+      'Release run completed without merge evidence (merged PR/commit required)',
+    )
+    await expect(readFile(prNumberPath, 'utf8')).resolves.toContain('6006')
+    await expect(readFile(prUrlPath, 'utf8')).resolves.toContain('https://github.com/owner/repo/pull/6006')
   }, 40_000)
 
   it('fails architect lane when repository changes exist without merge evidence', async () => {

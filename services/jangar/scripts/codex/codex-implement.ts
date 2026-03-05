@@ -969,9 +969,32 @@ const exportScalarEventParametersToEnv = (event: ImplementationEventPayload) => 
 const sha256Hex = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex')
 
 const parseOptionalPrNumber = (value: string): number | null => {
-  const match = value.trim().match(/\d+/)
-  if (!match) return null
-  const parsed = Number.parseInt(match[0], 10)
+  const normalized = value.trim()
+  if (!normalized) {
+    return null
+  }
+  if (/^\d+$/.test(normalized)) {
+    const parsed = Number.parseInt(normalized, 10)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+  }
+
+  const pullPathMatch = normalized.match(/\/pull\/(\d+)(?:[/?#]|$)/i)
+  if (pullPathMatch?.[1]) {
+    const parsed = Number.parseInt(pullPathMatch[1], 10)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+  }
+
+  const hashReferenceMatch = normalized.match(/#(\d+)\b/)
+  if (hashReferenceMatch?.[1]) {
+    const parsed = Number.parseInt(hashReferenceMatch[1], 10)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+  }
+
+  const trailingNumberMatch = normalized.match(/(\d+)\D*$/)
+  if (!trailingNumberMatch?.[1]) {
+    return null
+  }
+  const parsed = Number.parseInt(trailingNumberMatch[1], 10)
   if (!Number.isFinite(parsed) || parsed <= 0) return null
   return parsed
 }
@@ -3712,9 +3735,16 @@ export const runCodexImplementation = async (eventPath: string) => {
     prUrl = prUrlRaw ? prUrlRaw : null
     const pullRequestsEnabled = parseBoolean(process.env.VCS_PULL_REQUESTS_ENABLED, false)
     const requirePullRequestConfigured = parseBoolean(process.env.CODEX_REQUIRE_PULL_REQUEST, pullRequestsEnabled)
-    const requirePullRequest = isReleaseManagerLikeExecution(requirementMetadata) ? false : requirePullRequestConfigured
+    const isReleaseLikeExecution = isReleaseManagerLikeExecution(requirementMetadata)
+    const requirePullRequest = isReleaseLikeExecution ? false : requirePullRequestConfigured
     const pullRequestDiscoveryEnabled = parseBoolean(process.env.CODEX_PR_DISCOVERY_ENABLED, true)
-    if (pullRequestDiscoveryEnabled && stage === 'implementation' && requirePullRequest && (!prUrl || !prNumber)) {
+    const shouldRecoverMissingPrMetadata = requirePullRequest && (!prUrl || !prNumber)
+    const shouldRefreshReleasePrMetadata = isReleaseLikeExecution
+    if (
+      pullRequestDiscoveryEnabled &&
+      stage === 'implementation' &&
+      (shouldRecoverMissingPrMetadata || shouldRefreshReleasePrMetadata)
+    ) {
       const discoveredPr = await discoverPullRequestMetadata({
         repository,
         headBranch,
@@ -3722,21 +3752,33 @@ export const runCodexImplementation = async (eventPath: string) => {
         logger,
       })
       if (discoveredPr) {
-        prNumber = prNumber ?? discoveredPr.number
-        prUrl = prUrl ?? discoveredPr.url
-        await persistDiscoveredPullRequestMetadata({
-          prNumber,
-          prUrl,
-          prNumberPath,
-          prUrlPath,
-          logger,
-        })
-        logger.info('Recovered pull request metadata from GitHub', {
-          prNumber,
-          prUrl,
-          repository,
-          headBranch,
-        })
+        const nextPrNumber = shouldRefreshReleasePrMetadata
+          ? (discoveredPr.number ?? prNumber)
+          : (prNumber ?? discoveredPr.number)
+        const nextPrUrl = shouldRefreshReleasePrMetadata ? (discoveredPr.url ?? prUrl) : (prUrl ?? discoveredPr.url)
+        const metadataChanged = nextPrNumber !== prNumber || nextPrUrl !== prUrl
+        prNumber = nextPrNumber
+        prUrl = nextPrUrl
+        if (metadataChanged) {
+          await persistDiscoveredPullRequestMetadata({
+            prNumber,
+            prUrl,
+            prNumberPath,
+            prUrlPath,
+            logger,
+          })
+        }
+        logger.info(
+          shouldRefreshReleasePrMetadata
+            ? 'Refreshed pull request metadata from GitHub for release verification'
+            : 'Recovered pull request metadata from GitHub',
+          {
+            prNumber,
+            prUrl,
+            repository,
+            headBranch,
+          },
+        )
       }
     }
     const roleCompletionEvidence = await evaluateRoleCompletionEvidence({
