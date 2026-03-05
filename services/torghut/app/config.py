@@ -1264,6 +1264,14 @@ class Settings(BaseSettings):
             "force synchronous checks on every request."
         ),
     )
+    trading_readiness_dependency_cache_stale_tolerance_seconds: int = Field(
+        default=20,
+        alias="TRADING_READINESS_DEPENDENCY_CACHE_STALE_TOLERANCE_SECONDS",
+        description=(
+            "Additional seconds allowed to reuse stale readiness dependency cache "
+            "on /readyz requests before a hard refresh is forced."
+        ),
+    )
     trading_startup_readiness_grace_seconds: int = Field(
         default=45,
         alias="TRADING_STARTUP_READINESS_GRACE_SECONDS",
@@ -1886,6 +1894,13 @@ class Settings(BaseSettings):
             (
                 self.trading_planned_decision_timeout_seconds,
                 "TRADING_PLANNED_DECISION_TIMEOUT_SECONDS must be >= 0",
+            ),
+            (
+                self.trading_readiness_dependency_cache_stale_tolerance_seconds,
+                (
+                    "TRADING_READINESS_DEPENDENCY_CACHE_STALE_TOLERANCE_SECONDS "
+                    "must be >= 0"
+                ),
             ),
         ]
         for value, message in checks:

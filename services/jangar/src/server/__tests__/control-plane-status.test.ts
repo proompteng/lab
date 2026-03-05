@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { buildControlPlaneStatus } from '~/server/control-plane-status'
-import type { ControlPlaneWatchReliability, WorkflowsReliabilityStatus } from '~/data/agents-control-plane'
+import {
+  buildControlPlaneStatus,
+  type DatabaseStatus as ControlPlaneDatabaseStatus,
+} from '~/server/control-plane-status'
+import type {
+  ControlPlaneWatchReliability,
+  DatabaseMigrationConsistency,
+  WorkflowsReliabilityStatus,
+} from '~/data/agents-control-plane'
+import { getRegisteredMigrationNames } from '~/server/kysely-migrations'
 
 const kubeClientMocks = vi.hoisted(() => ({
   createKubernetesClient: vi.fn(),
@@ -110,6 +118,43 @@ const watchReliabilityDegraded: ControlPlaneWatchReliability = {
   ],
 }
 
+const registeredMigrations = getRegisteredMigrationNames()
+const latestMigration = registeredMigrations.at(-1) ?? null
+
+const healthyMigrationConsistency: DatabaseMigrationConsistency = {
+  status: 'healthy',
+  migration_table: 'kysely_migration',
+  registered_count: registeredMigrations.length,
+  applied_count: registeredMigrations.length,
+  unapplied_count: 0,
+  unexpected_count: 0,
+  latest_registered: latestMigration,
+  latest_applied: latestMigration,
+  missing_migrations: [],
+  unexpected_migrations: [],
+  message: '',
+}
+
+const buildDatabaseStatus = (
+  overrides: Partial<ControlPlaneDatabaseStatus> = {},
+  migrationOverrides: Partial<DatabaseMigrationConsistency> = {},
+): ControlPlaneDatabaseStatus => {
+  const { migration_consistency: explicitMigrationConsistency, ...databaseOverrides } = overrides
+  return {
+    configured: true,
+    connected: true,
+    status: 'healthy',
+    message: '',
+    latency_ms: 1,
+    migration_consistency: {
+      ...healthyMigrationConsistency,
+      ...migrationOverrides,
+      ...explicitMigrationConsistency,
+    },
+    ...databaseOverrides,
+  }
+}
+
 describe('control-plane status', () => {
   afterEach(() => {
     kubeClientMocks.createKubernetesClient.mockReset()
@@ -145,10 +190,7 @@ describe('control-plane status', () => {
           endpoint: 'temporal:7233',
         }),
         checkDatabase: async () => ({
-          configured: true,
-          connected: true,
-          status: 'healthy',
-          message: '',
+          ...buildDatabaseStatus(),
           latency_ms: 4,
         }),
         getWatchReliabilitySummary: () => watchReliabilityHealthy,
@@ -174,6 +216,7 @@ describe('control-plane status', () => {
     expect(status.rollout_health.status).toBe('healthy')
     expect(status.rollout_health.observed_deployments).toBe(1)
     expect(status.rollout_health.degraded_deployments).toBe(0)
+    expect(status.database.migration_consistency).toEqual(healthyMigrationConsistency)
   })
 
   it('marks degraded components when controllers or database fail', async () => {
@@ -210,11 +253,13 @@ describe('control-plane status', () => {
           endpoint: 'temporal:7233',
         }),
         checkDatabase: async () => ({
-          configured: false,
-          connected: false,
-          status: 'disabled',
-          message: 'DATABASE_URL not set',
-          latency_ms: 0,
+          ...buildDatabaseStatus({
+            configured: false,
+            connected: false,
+            status: 'disabled',
+            message: 'DATABASE_URL not set',
+            latency_ms: 0,
+          }),
         }),
         getWatchReliabilitySummary: () => watchReliabilityDegraded,
         getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
@@ -260,11 +305,9 @@ describe('control-plane status', () => {
           endpoint: 'temporal:7233',
         }),
         checkDatabase: async () => ({
-          configured: true,
-          connected: true,
-          status: 'healthy',
-          message: '',
-          latency_ms: 1,
+          ...buildDatabaseStatus({
+            latency_ms: 1,
+          }),
         }),
         getWorkflowsReliabilityStatus: async () =>
           buildWorkflowsReliabilityStatus({
@@ -321,11 +364,9 @@ describe('control-plane status', () => {
           endpoint: 'temporal:7233',
         }),
         checkDatabase: async () => ({
-          configured: true,
-          connected: true,
-          status: 'healthy',
-          message: '',
-          latency_ms: 1,
+          ...buildDatabaseStatus({
+            latency_ms: 1,
+          }),
         }),
       },
     )
@@ -378,5 +419,56 @@ describe('control-plane status', () => {
         },
       ),
     ).rejects.toThrow('simulated kube client creation failure')
+  })
+
+  it('marks namespace degraded when migration consistency reports drift', async () => {
+    setRolloutDeploymentList([healthyRolloutDeployment])
+
+    const status = await buildControlPlaneStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:00:00Z'),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => ({
+          name: 'temporal',
+          available: true,
+          status: 'configured',
+          message: 'temporal configuration resolved',
+          endpoint: 'temporal:7233',
+        }),
+        checkDatabase: async () =>
+          buildDatabaseStatus(
+            {
+              status: 'degraded',
+              message: 'migration drift detected',
+            },
+            {
+              status: 'degraded',
+              unapplied_count: 1,
+              unexpected_count: 0,
+              missing_migrations: ['20260305_future_migration'],
+              unexpected_migrations: [],
+              message: 'migration drift detected',
+            },
+          ),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+      },
+    )
+
+    expect(status.database.migration_consistency.status).toBe('degraded')
+    expect(status.database.migration_consistency.unapplied_count).toBe(1)
+    expect(status.namespaces[0]?.degraded_components ?? []).toContain('database')
+    expect(status.namespaces[0]?.status).toBe('degraded')
   })
 })

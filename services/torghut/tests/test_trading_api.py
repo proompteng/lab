@@ -761,9 +761,141 @@ class TestTradingApi(TestCase):
             self.assertIn("checked_at", payload["dependencies"]["database"])
             self.assertIn("readiness_cache", payload["dependencies"])
             self.assertIn("cache_used", payload["dependencies"]["readiness_cache"])
+            self.assertFalse(payload["dependencies"]["readiness_cache"]["cache_stale"])
         finally:
             settings.trading_enabled = original
             settings.trading_universe_source = original_source
+
+    @patch(
+        "app.main._evaluate_database_contract",
+        return_value={
+            "ok": True,
+            "schema_current": True,
+            "schema_current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
+            "checked_at": "2026-03-04T00:00:00+00:00",
+            "account_scope_ready": True,
+            "account_scope_errors": [],
+        },
+    )
+    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    def test_readyz_reuses_stale_dependency_cache_within_stale_tolerance(
+        self,
+        _mock_alpaca: object,
+        _mock_clickhouse: object,
+        _mock_postgres: object,
+        _mock_contract: object,
+    ) -> None:
+        original = settings.trading_enabled
+        original_cache_enabled = settings.trading_readiness_dependency_cache_enabled
+        original_cache_ttl = settings.trading_readiness_dependency_cache_ttl_seconds
+        original_stale_tolerance = (
+            settings.trading_readiness_dependency_cache_stale_tolerance_seconds
+        )
+        settings.trading_enabled = True
+        settings.trading_readiness_dependency_cache_enabled = True
+        settings.trading_readiness_dependency_cache_ttl_seconds = 8
+        settings.trading_readiness_dependency_cache_stale_tolerance_seconds = 20
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            app.state.trading_scheduler = scheduler
+            response = self.client.get("/readyz")
+            self.assertEqual(response.status_code, 200)
+            cache_key = _readiness_dependency_cache_key(include_database_contract=True)
+            _TRADING_DEPENDENCY_HEALTH_CACHE[cache_key]["checked_at"] = datetime.now(
+                timezone.utc
+            ) - timedelta(seconds=22)
+            response = self.client.get("/readyz")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(_mock_postgres.call_count, 1)
+            self.assertEqual(_mock_clickhouse.call_count, 1)
+            self.assertEqual(_mock_alpaca.call_count, 1)
+            payload = response.json()
+            cache = payload["dependencies"]["readiness_cache"]
+            self.assertTrue(cache["cache_used"])
+            self.assertTrue(cache["cache_stale"])
+            self.assertGreater(cache["cache_age_seconds"], 8)
+            self.assertLessEqual(cache["cache_age_seconds"], 28)
+        finally:
+            settings.trading_enabled = original
+            settings.trading_readiness_dependency_cache_enabled = original_cache_enabled
+            settings.trading_readiness_dependency_cache_ttl_seconds = original_cache_ttl
+            settings.trading_readiness_dependency_cache_stale_tolerance_seconds = (
+                original_stale_tolerance
+            )
+            _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
+
+    @patch(
+        "app.main._evaluate_database_contract",
+        return_value={
+            "ok": True,
+            "schema_current": True,
+            "schema_current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
+            "checked_at": "2026-03-04T00:00:00+00:00",
+            "account_scope_ready": True,
+            "account_scope_errors": [],
+        },
+    )
+    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    def test_trading_health_refreshes_stale_readiness_cache_without_tolerance(
+        self,
+        _mock_alpaca: object,
+        _mock_clickhouse: object,
+        _mock_postgres: object,
+        _mock_contract: object,
+    ) -> None:
+        original = settings.trading_enabled
+        original_cache_enabled = settings.trading_readiness_dependency_cache_enabled
+        original_cache_ttl = settings.trading_readiness_dependency_cache_ttl_seconds
+        original_stale_tolerance = (
+            settings.trading_readiness_dependency_cache_stale_tolerance_seconds
+        )
+        original_source = settings.trading_universe_source
+        settings.trading_enabled = True
+        settings.trading_readiness_dependency_cache_enabled = True
+        settings.trading_readiness_dependency_cache_ttl_seconds = 8
+        settings.trading_readiness_dependency_cache_stale_tolerance_seconds = 20
+        settings.trading_universe_source = "jangar"
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            scheduler.state.universe_source_status = "ok"
+            scheduler.state.universe_source_reason = "jangar_fetch_ok"
+            scheduler.state.universe_symbols_count = 2
+            scheduler.state.universe_cache_age_seconds = 0
+            app.state.trading_scheduler = scheduler
+            response = self.client.get("/trading/health")
+            self.assertEqual(response.status_code, 200)
+            cache_key = _readiness_dependency_cache_key(include_database_contract=False)
+            _TRADING_DEPENDENCY_HEALTH_CACHE[cache_key]["checked_at"] = datetime.now(
+                timezone.utc
+            ) - timedelta(seconds=30)
+            response = self.client.get("/trading/health")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(_mock_postgres.call_count, 2)
+            self.assertEqual(_mock_clickhouse.call_count, 2)
+            self.assertEqual(_mock_alpaca.call_count, 2)
+            payload = response.json()
+            self.assertFalse(payload["dependencies"]["readiness_cache"]["cache_stale"])
+        finally:
+            settings.trading_enabled = original
+            settings.trading_readiness_dependency_cache_enabled = original_cache_enabled
+            settings.trading_readiness_dependency_cache_ttl_seconds = original_cache_ttl
+            settings.trading_readiness_dependency_cache_stale_tolerance_seconds = (
+                original_stale_tolerance
+            )
+            settings.trading_universe_source = original_source
+            _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
 
     @patch(
         "app.main._evaluate_database_contract",
