@@ -160,6 +160,55 @@ class TestExecutionPolicy(TestCase):
         self.assertFalse(outcome.approved)
         self.assertIn("qty_below_min", outcome.reasons)
 
+    def test_qty_below_min_uses_allocator_limiting_constraint_reason(self) -> None:
+        policy = ExecutionPolicy(config=_config())
+        decision = _decision(qty=Decimal("0.5"), price=Decimal("100"))
+        decision = decision.model_copy(
+            update={
+                "params": {
+                    "price": Decimal("100"),
+                    "portfolio_sizing": {
+                        "output": {
+                            "limiting_constraint": "symbol_capacity_exhausted",
+                        }
+                    },
+                }
+            }
+        )
+        outcome = policy.evaluate(
+            decision,
+            strategy=None,
+            positions=[],
+            market_snapshot=None,
+        )
+        self.assertFalse(outcome.approved)
+        self.assertIn("symbol_capacity_exhausted", outcome.reasons)
+        self.assertNotIn("qty_below_min", outcome.reasons)
+
+    def test_qty_below_min_falls_back_for_unknown_limiting_constraint(self) -> None:
+        policy = ExecutionPolicy(config=_config())
+        decision = _decision(qty=Decimal("0.5"), price=Decimal("100"))
+        decision = decision.model_copy(
+            update={
+                "params": {
+                    "price": Decimal("100"),
+                    "portfolio_sizing": {
+                        "output": {
+                            "limiting_constraint": "insufficient_edge",
+                        }
+                    },
+                }
+            }
+        )
+        outcome = policy.evaluate(
+            decision,
+            strategy=None,
+            positions=[],
+            market_snapshot=None,
+        )
+        self.assertFalse(outcome.approved)
+        self.assertIn("qty_below_min", outcome.reasons)
+
     def test_equity_fractional_qty_allowed_for_longs_when_enabled(self) -> None:
         config.settings.trading_fractional_equities_enabled = True
         policy = ExecutionPolicy(config=_config())
@@ -734,7 +783,9 @@ class TestExecutionPolicy(TestCase):
             outcome.microstructure_metadata["tightening_reasons"],
         )
 
-    def test_microstructure_pressure_extends_execution_seconds_and_prefers_limit(self) -> None:
+    def test_microstructure_pressure_extends_execution_seconds_and_prefers_limit(
+        self,
+    ) -> None:
         config.settings.trading_execution_advisor_enabled = False
         policy = ExecutionPolicy(
             config=_config(max_participation_rate=Decimal("0.25"), prefer_limit=False)
