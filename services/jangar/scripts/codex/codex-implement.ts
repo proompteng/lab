@@ -2079,24 +2079,49 @@ const detectProviderThrottle = (value: string | undefined) => {
   return /rate limit|too many requests|429|quota|insufficient_quota|capacity|overloaded|provider timeout/i.test(value)
 }
 
+const buildLaneCompletionReminders = (lane: SwarmExecutionLane) => {
+  if (lane === 'architect') {
+    return [
+      'Architect completion bar: merged architecture/design outputs with explicit implementation and rollout/rollback gates.',
+      'Do not stop at draft notes or unmerged PRs.',
+    ]
+  }
+  if (lane === 'release') {
+    return [
+      'Release completion bar: selected PRs merged with green required checks and healthy rollout evidence.',
+      'Do not claim done without merge + rollout verification.',
+    ]
+  }
+  return [
+    'Engineer completion bar: highest-priority runtime requirement implemented in a merge-ready PR with green required checks.',
+    'Do not stop at partial implementation or non-green checks.',
+  ]
+}
+
 const buildProviderFallbackPrompt = ({
   repository,
   issueNumber,
   stage,
+  lane,
   objective,
 }: {
   repository: string
   issueNumber: string
   stage: string
+  lane: SwarmExecutionLane
   objective?: string
 }) => {
+  const laneReminders = buildLaneCompletionReminders(lane)
   const lines = [
     'Previous attempt failed due to transient provider throttling/quota constraints.',
-    'Resume immediately from current workspace state and finish the task end-to-end.',
+    'Resume immediately from current workspace state and finish the same task end-to-end.',
     `Repository: ${repository}`,
     `Issue: ${issueNumber}`,
     `Stage: ${stage}`,
+    `Execution lane: ${lane}`,
     objective ? `Objective: ${objective}` : null,
+    ...laneReminders,
+    'Preserve thread-aware, human teammate communication in Huly updates.',
   ].filter((line): line is string => Boolean(line))
   return lines.join('\n')
 }
@@ -2573,6 +2598,7 @@ const buildContextWindowRecoveryPrompt = ({
   stage,
   baseBranch,
   headBranch,
+  lane,
   objective,
 }: {
   repository: string
@@ -2580,19 +2606,24 @@ const buildContextWindowRecoveryPrompt = ({
   stage: string
   baseBranch: string
   headBranch: string
+  lane: SwarmExecutionLane
   objective?: string
 }) => {
+  const laneReminders = buildLaneCompletionReminders(lane)
   const lines = [
     'Previous attempt failed because the model context window was exceeded.',
     'Restart cleanly from the current workspace state and finish this stage end-to-end.',
     `Repository: ${repository}`,
     `Issue: ${issueNumber}`,
     `Stage: ${stage}`,
+    `Execution lane: ${lane}`,
     `Branch: ${headBranch} (base ${baseBranch})`,
     objective ? `Objective: ${objective}` : '',
+    ...laneReminders,
     'Keep all command output concise (head/tail/snippets only).',
     'Do not paste long logs or large generated content into the response.',
     'If a long report file is required, keep it short and pragmatic.',
+    'Preserve thread-aware, human teammate communication in Huly updates.',
   ]
   return lines.filter((line) => line.length > 0).join('\n')
 }
@@ -3508,6 +3539,7 @@ export const runCodexImplementation = async (eventPath: string) => {
                 repository,
                 issueNumber,
                 stage,
+                lane: executionLane,
                 objective: recoveryObjective,
               }),
               maxChars: maxPromptChars,
@@ -3532,6 +3564,7 @@ export const runCodexImplementation = async (eventPath: string) => {
             stage,
             baseBranch,
             headBranch,
+            lane: executionLane,
             objective: recoveryObjective,
           }),
           maxChars: maxPromptChars,
@@ -3589,6 +3622,7 @@ export const runCodexImplementation = async (eventPath: string) => {
               repository,
               issueNumber,
               stage,
+              lane: executionLane,
               objective: recoveryObjective,
             }),
             maxChars: maxPromptChars,
@@ -3618,6 +3652,7 @@ export const runCodexImplementation = async (eventPath: string) => {
             stage,
             baseBranch,
             headBranch,
+            lane: executionLane,
             objective: recoveryObjective,
           }),
           maxChars: maxPromptChars,
