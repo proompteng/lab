@@ -248,9 +248,6 @@ jobs:
             return 1
           }
 
-          echo "BUILT_JANGAR_IMAGE_REPOSITORY=${IMAGE_REPOSITORY}" >> "${GITHUB_ENV}"
-          echo "BUILT_JANGAR_IMAGE_TAG=${IMAGE_TAG}" >> "${GITHUB_ENV}"
-
           OUTPUT_ENTRY="${WORKSPACE}/services/jangar/.output/server/index.mjs"
           OUTPUT_PROTO="${WORKSPACE}/services/jangar/.output/server/proto/proompteng/jangar/v1/agentctl.proto"
           BUILD_OUTPUT=0
@@ -374,6 +371,9 @@ jobs:
             IMAGE_TAG="${PUBLIC_IMAGE_TAG}"
             IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
           fi
+
+          echo "BUILT_JANGAR_IMAGE_REPOSITORY=${IMAGE_REPOSITORY}" >> "${GITHUB_ENV}"
+          echo "BUILT_JANGAR_IMAGE_TAG=${IMAGE_TAG}" >> "${GITHUB_ENV}"
 
       - name: Run agents integration smoke test
         env:
