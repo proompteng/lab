@@ -177,7 +177,9 @@ export const ControlPlaneStatusPanel = ({
             </div>
             <div className="text-muted-foreground">
               Top failure reasons:{' '}
-              {status.workflows.top_failure_reasons.length > 0 ? status.workflows.top_failure_reasons.join(', ') : '—'}
+              {status.workflows.top_failure_reasons.length > 0
+                ? formatFailureReasons(status.workflows.top_failure_reasons)
+                : '—'}
             </div>
           </div>
         </div>

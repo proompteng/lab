@@ -690,7 +690,7 @@ const resolveWorkflowsReliabilityStatus = async ({
       return left[0].localeCompare(right[0])
     })
     .slice(0, MAX_TOP_FAILURE_REASONS)
-    .map(([reason]) => reason)
+    .map(([reason, count]) => ({ reason, count }))
 
   // Keep payload bounded and deterministic.
   return {

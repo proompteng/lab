@@ -149,7 +149,7 @@ export type WorkflowsReliabilityStatus = {
   recent_failed_jobs: number
   backoff_limit_exceeded_jobs: number
   window_minutes: number
-  top_failure_reasons: string[]
+  top_failure_reasons: WorkflowFailureReason[]
 }
 
 export type DeploymentRolloutStatus = {

@@ -271,7 +271,10 @@ describe('control-plane status', () => {
             active_job_runs: 2,
             recent_failed_jobs: 4,
             backoff_limit_exceeded_jobs: 2,
-            top_failure_reasons: ['BackoffLimitExceeded', 'DeadlineExceeded'],
+            top_failure_reasons: [
+              { reason: 'BackoffLimitExceeded', count: 3 },
+              { reason: 'DeadlineExceeded', count: 1 },
+            ],
           }),
       },
     )
@@ -279,7 +282,10 @@ describe('control-plane status', () => {
     expect(status.workflows.active_job_runs).toBe(2)
     expect(status.workflows.recent_failed_jobs).toBe(4)
     expect(status.workflows.backoff_limit_exceeded_jobs).toBe(2)
-    expect(status.workflows.top_failure_reasons).toEqual(['BackoffLimitExceeded', 'DeadlineExceeded'])
+    expect(status.workflows.top_failure_reasons).toEqual([
+      { reason: 'BackoffLimitExceeded', count: 3 },
+      { reason: 'DeadlineExceeded', count: 1 },
+    ])
     expect(status.namespaces[0]?.status).toBe('degraded')
     expect(status.namespaces[0]?.degraded_components ?? []).toContain('workflows')
     expect(status.namespaces[0]?.degraded_components ?? []).not.toContain('runtime:workflows')
