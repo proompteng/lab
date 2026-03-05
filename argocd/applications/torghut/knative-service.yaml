@@ -430,14 +430,14 @@ spec:
               port: http1
           startupProbe:
             httpGet:
-              path: /readyz
+              path: /healthz
               port: http1
             failureThreshold: 18
             periodSeconds: 5
             timeoutSeconds: 2
           readinessProbe:
             httpGet:
-              path: /readyz
+              path: /healthz
               port: http1
           resources:
             requests:
