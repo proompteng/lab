@@ -288,44 +288,12 @@ spec:
               value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/providers/fundamentals
             - name: JANGAR_MARKET_CONTEXT_NEWS_URL
               value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/providers/news
-            - name: JANGAR_MARKET_CONTEXT_AGENT_DISPATCH_ENABLED
+            - name: JANGAR_MARKET_CONTEXT_BATCH_REQUIRE_OPEN_SESSION
               value: "true"
-            - name: JANGAR_MARKET_CONTEXT_AGENT_NAMESPACE
-              value: agents
-            - name: JANGAR_MARKET_CONTEXT_FUNDAMENTALS_AGENT_NAME
-              value: torghut-fundamentals-agent
-            - name: JANGAR_MARKET_CONTEXT_NEWS_AGENT_NAME
-              value: torghut-news-agent
-            - name: JANGAR_MARKET_CONTEXT_FUNDAMENTALS_IMPLEMENTATION_SPEC
-              value: torghut-market-context-fundamentals-v1
-            - name: JANGAR_MARKET_CONTEXT_NEWS_IMPLEMENTATION_SPEC
-              value: torghut-market-context-news-v1
-            - name: JANGAR_MARKET_CONTEXT_AGENT_SERVICE_ACCOUNT
-              value: agents-sa
-            - name: JANGAR_MARKET_CONTEXT_AGENT_VCS_MODE
-              value: read-only
-            - name: JANGAR_MARKET_CONTEXT_AGENT_VCS_REQUIRED
-              value: "true"
-            - name: JANGAR_MARKET_CONTEXT_AGENT_VCS_REF_NAME
-              value: github
-            - name: JANGAR_MARKET_CONTEXT_AGENT_REPOSITORY
-              value: proompteng/lab
-            - name: JANGAR_MARKET_CONTEXT_AGENT_VCS_BASE_REF
-              value: main
-            - name: JANGAR_MARKET_CONTEXT_AGENT_VCS_HEAD_PREFIX
-              value: codex/torghut-market-context
-            - name: JANGAR_MARKET_CONTEXT_FUNDAMENTALS_DISPATCH_COOLDOWN_SECONDS
-              value: "1800"
-            - name: JANGAR_MARKET_CONTEXT_NEWS_DISPATCH_COOLDOWN_SECONDS
-              value: "120"
-            - name: JANGAR_MARKET_CONTEXT_FUNDAMENTALS_DISPATCH_STUCK_SECONDS
-              value: "2700"
-            - name: JANGAR_MARKET_CONTEXT_NEWS_DISPATCH_STUCK_SECONDS
-              value: "600"
-            - name: JANGAR_MARKET_CONTEXT_AGENT_CALLBACK_BASE_URL
-              value: http://jangar.jangar.svc.cluster.local
-            - name: JANGAR_MARKET_CONTEXT_AGENT_TTL_SECONDS
-              value: "1800"
+            - name: JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_URL
+              value: http://torghut.torghut.svc.cluster.local/trading/status
+            - name: JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_TIMEOUT_MS
+              value: "2000"
             - name: JANGAR_MARKET_CONTEXT_INGEST_ALLOW_SERVICE_ACCOUNT_TOKEN
               value: "true"
             - name: JANGAR_MARKET_CONTEXT_INGEST_ALLOWED_SERVICE_ACCOUNT_PREFIXES

@@ -152,6 +152,40 @@ describe('market-context run lifecycle routes', () => {
     })
   })
 
+  it('finalize accepts batch payloads', async () => {
+    isMarketContextIngestAuthorized.mockResolvedValueOnce(true)
+    ingestMarketContextProviderResult.mockResolvedValueOnce({
+      ok: true,
+      domain: 'fundamentals',
+      runStatus: 'partial',
+      requestId: 'batch-req-4',
+      batch: {
+        processedSymbols: 3,
+        updatedSymbols: 2,
+        failedSymbols: 1,
+      },
+    })
+
+    const { postMarketContextRunFinalizeHandler } = await import('./finalize')
+    const response = await postMarketContextRunFinalizeHandler(
+      new Request('http://localhost/api/torghut/market-context/runs/finalize', {
+        method: 'POST',
+        body: JSON.stringify({
+          domain: 'fundamentals',
+          runStatus: 'partial',
+          items: [{ symbol: 'AAPL', payload: {} }],
+        }),
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    expect(recordTorghutMarketContextRunEvent).toHaveBeenCalledWith({
+      endpoint: 'finalize',
+      outcome: 'accepted',
+      domain: 'fundamentals',
+    })
+  })
+
   it('status returns 404 when run is not found', async () => {
     isMarketContextIngestAuthorized.mockResolvedValueOnce(true)
     getMarketContextProviderRunStatus.mockRejectedValueOnce(new Error('run not found for requestId req-missing'))

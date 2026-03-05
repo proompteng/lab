@@ -31,6 +31,8 @@ resources:
   - sample-budget.yaml
   - sample-signal.yaml
   - torghut-agentruns.yaml
+  - torghut-market-context-batch.yaml
+  - torghut-market-context-priorityclass.yaml
   - nats-service.yaml
   - tailscale-service.yaml
   - tailscale-networkpolicy.yaml

@@ -1,0 +1,255 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-market-context-fundamentals-batch-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - domain
+      - reason
+      - callbackUrl
+      - symbolsUrl
+      - tradingStatusUrl
+  text: |
+    Objective: Build a fundamentals market-context batch snapshot for all active symbols and publish one finalize payload.
+
+    Guardrails:
+    - Read-only research task; do not mutate cluster state.
+    - Process all active symbols in one run (no per-symbol AgentRun fan-out).
+    - Use at least 2 independent citations per symbol.
+    - All timestamps must be UTC ISO-8601 strings.
+    - Keep qualityScore in [0, 1].
+    - If market session is closed according to `${tradingStatusUrl}`, exit 0 without publishing updates.
+
+    Inputs:
+    - domain, reason
+    - callbackUrl, symbolsUrl, tradingStatusUrl
+
+    Required output payload shape:
+    {
+      "domain": "fundamentals",
+      "asOfUtc": "<ISO timestamp>",
+      "runStatus": "succeeded|partial|failed",
+      "provider": "codex-spark",
+      "requestId": "<requestId>",
+      "items": [
+        {
+          "symbol": "<symbol>",
+          "asOfUtc": "<ISO timestamp>",
+          "sourceCount": <integer>,
+          "qualityScore": <number 0..1>,
+          "payload": {
+            "thesis": "<short summary>",
+            "valuation": { ... },
+            "growth": { ... },
+            "profitability": { ... },
+            "balanceSheet": { ... },
+            "upcomingCatalysts": [ ... ]
+          },
+          "citations": [
+            { "source": "<publisher>", "publishedAt": "<ISO timestamp>", "url": "<https url or null>" }
+          ],
+          "riskFlags": [ ... ],
+          "error": "<optional per-symbol error>"
+        }
+      ]
+    }
+
+    Steps:
+    1) Resolve script root:
+       - `SCRIPT_ROOT=/root/.codex/skills/market-context/scripts`
+       - `if [ ! -f "${SCRIPT_ROOT}/market_context_run_api.py" ]; then if [ -f "/workspace/lab/skills/market-context/scripts/market_context_run_api.py" ]; then SCRIPT_ROOT=/workspace/lab/skills/market-context/scripts; elif [ -f "/tmp/proompt-lab/skills/market-context/scripts/market_context_run_api.py" ]; then SCRIPT_ROOT=/tmp/proompt-lab/skills/market-context/scripts; else echo "market-context scripts not found" >&2; exit 1; fi; fi`
+       - `test -f "${SCRIPT_ROOT}/market_context_run_api.py"`
+    2) Evaluate market session gate via `${tradingStatusUrl}`.
+       - Fetch JSON and inspect `market_session_open` (accept bool/int/string forms).
+       - If closed, print `market_session_closed_noop` and exit 0.
+    3) Fetch active symbols from `${symbolsUrl}` once.
+       - Expect compact response `{ "symbols": [ ... ] }`.
+       - If no symbols, print `no_active_symbols_noop` and exit 0.
+    4) Generate `REQUEST_ID` once for this run:
+       - `REQUEST_ID="market-context-fundamentals-batch-$(date -u +%Y%m%dT%H%M%SZ)-$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"`
+       Then gather fundamentals for every symbol in the active symbol list.
+    5) Write one batch payload JSON to `/tmp/market-context-fundamentals-batch.json`.
+       - Set top-level `runStatus` to `succeeded` when all symbols succeed.
+       - Set top-level `runStatus` to `partial` when one or more symbol entries include an `error`.
+    6) Validate JSON:
+       - `python3 -m json.tool /tmp/market-context-fundamentals-batch.json >/dev/null`
+    7) Finalize once:
+       - `python3 "${SCRIPT_ROOT}/market_context_run_api.py" finalize --callback-url "${callbackUrl}" --request-id "${REQUEST_ID}" --domain fundamentals --payload-file /tmp/market-context-fundamentals-batch.json --expect-status 200 --retries 1`
+       - Require response JSON to include `"ok": true`.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: torghut-market-context-news-batch-v1
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - domain
+      - reason
+      - callbackUrl
+      - symbolsUrl
+      - tradingStatusUrl
+  text: |
+    Objective: Build a news market-context batch snapshot for all active symbols and publish one finalize payload.
+
+    Guardrails:
+    - Read-only research task; do not mutate cluster state.
+    - Process all active symbols in one run (no per-symbol AgentRun fan-out).
+    - Prioritize the most recent high-signal news (last 24h, then 7d if sparse).
+    - Use at least 3 citations per symbol when available.
+    - All timestamps must be UTC ISO-8601 strings.
+    - Keep qualityScore in [0, 1].
+    - If market session is closed according to `${tradingStatusUrl}`, exit 0 without publishing updates.
+
+    Inputs:
+    - domain, reason
+    - callbackUrl, symbolsUrl, tradingStatusUrl
+
+    Required output payload shape:
+    {
+      "domain": "news",
+      "asOfUtc": "<ISO timestamp>",
+      "runStatus": "succeeded|partial|failed",
+      "provider": "codex-spark",
+      "requestId": "<requestId>",
+      "items": [
+        {
+          "symbol": "<symbol>",
+          "asOfUtc": "<ISO timestamp>",
+          "sourceCount": <integer>,
+          "qualityScore": <number 0..1>,
+          "payload": {
+            "summary": "<short summary>",
+            "headlines": [
+              {
+                "headline": "<title>",
+                "publisher": "<publisher>",
+                "publishedAt": "<ISO timestamp>",
+                "url": "<https url or null>",
+                "marketImpact": "positive|negative|mixed|neutral"
+              }
+            ],
+            "eventRisk": "low|medium|high"
+          },
+          "citations": [
+            { "source": "<publisher>", "publishedAt": "<ISO timestamp>", "url": "<https url or null>" }
+          ],
+          "riskFlags": [ ... ],
+          "error": "<optional per-symbol error>"
+        }
+      ]
+    }
+
+    Steps:
+    1) Resolve script root:
+       - `SCRIPT_ROOT=/root/.codex/skills/market-context/scripts`
+       - `if [ ! -f "${SCRIPT_ROOT}/market_context_run_api.py" ]; then if [ -f "/workspace/lab/skills/market-context/scripts/market_context_run_api.py" ]; then SCRIPT_ROOT=/workspace/lab/skills/market-context/scripts; elif [ -f "/tmp/proompt-lab/skills/market-context/scripts/market_context_run_api.py" ]; then SCRIPT_ROOT=/tmp/proompt-lab/skills/market-context/scripts; else echo "market-context scripts not found" >&2; exit 1; fi; fi`
+       - `test -f "${SCRIPT_ROOT}/market_context_run_api.py"`
+    2) Evaluate market session gate via `${tradingStatusUrl}`.
+       - Fetch JSON and inspect `market_session_open` (accept bool/int/string forms).
+       - If closed, print `market_session_closed_noop` and exit 0.
+    3) Fetch active symbols from `${symbolsUrl}` once.
+       - Expect compact response `{ "symbols": [ ... ] }`.
+       - If no symbols, print `no_active_symbols_noop` and exit 0.
+    4) Generate `REQUEST_ID` once for this run:
+       - `REQUEST_ID="market-context-news-batch-$(date -u +%Y%m%dT%H%M%SZ)-$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"`
+       Then gather news context for every symbol in the active symbol list.
+    5) Write one batch payload JSON to `/tmp/market-context-news-batch.json`.
+       - Set top-level `runStatus` to `succeeded` when all symbols succeed.
+       - Set top-level `runStatus` to `partial` when one or more symbol entries include an `error`.
+    6) Validate JSON:
+       - `python3 -m json.tool /tmp/market-context-news-batch.json >/dev/null`
+    7) Finalize once:
+       - `python3 "${SCRIPT_ROOT}/market_context_run_api.py" finalize --callback-url "${callbackUrl}" --request-id "${REQUEST_ID}" --domain news --payload-file /tmp/market-context-news-batch.json --expect-status 200 --retries 1`
+       - Require response JSON to include `"ok": true`.
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: torghut-market-context-fundamentals-batch-template
+  namespace: agents
+spec:
+  agentRef:
+    name: torghut-fundamentals-agent
+  implementationSpecRef:
+    name: torghut-market-context-fundamentals-batch-v1
+  runtime:
+    type: job
+    config:
+      serviceAccountName: agents-sa
+      priorityClassName: torghut-market-context-low
+  ttlSecondsAfterFinished: 1800
+  workload:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 750m
+        memory: 1Gi
+  parameters:
+    domain: fundamentals
+    reason: scheduled_trading_session_refresh
+    callbackUrl: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/ingest
+    symbolsUrl: http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=equity&format=compact
+    tradingStatusUrl: http://torghut.torghut.svc.cluster.local/trading/status
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: torghut-market-context-news-batch-template
+  namespace: agents
+spec:
+  agentRef:
+    name: torghut-news-agent
+  implementationSpecRef:
+    name: torghut-market-context-news-batch-v1
+  runtime:
+    type: job
+    config:
+      serviceAccountName: agents-sa
+      priorityClassName: torghut-market-context-low
+  ttlSecondsAfterFinished: 1800
+  workload:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 750m
+        memory: 1Gi
+  parameters:
+    domain: news
+    reason: scheduled_trading_session_refresh
+    callbackUrl: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/ingest
+    symbolsUrl: http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=equity&format=compact
+    tradingStatusUrl: http://torghut.torghut.svc.cluster.local/trading/status
+---
+apiVersion: schedules.proompteng.ai/v1alpha1
+kind: Schedule
+metadata:
+  name: torghut-market-context-fundamentals-batch
+  namespace: agents
+spec:
+  cron: "35 9 * * 1-5"
+  timezone: America/New_York
+  targetRef:
+    apiVersion: agents.proompteng.ai/v1alpha1
+    kind: AgentRun
+    name: torghut-market-context-fundamentals-batch-template
+---
+apiVersion: schedules.proompteng.ai/v1alpha1
+kind: Schedule
+metadata:
+  name: torghut-market-context-news-batch
+  namespace: agents
+spec:
+  cron: "35 9-15/2 * * 1-5"
+  timezone: America/New_York
+  targetRef:
+    apiVersion: agents.proompteng.ai/v1alpha1
+    kind: AgentRun
+    name: torghut-market-context-news-batch-template

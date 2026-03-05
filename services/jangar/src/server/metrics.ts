@@ -36,8 +36,10 @@ type JangarMetrics = {
   torghutQuantComputeDurationMs: Histogram
   torghutMarketContextIngestRequests: Counter
   torghutMarketContextRunEvents: Counter
-  torghutMarketContextDispatchAttempts: Counter
-  torghutMarketContextDispatchStuck: Counter
+  torghutMarketContextBatchRuns: Counter
+  torghutMarketContextBatchRunDurationMs: Histogram
+  torghutMarketContextBatchRunSymbols: Histogram
+  torghutMarketContextBatchFreshnessLagSeconds: Histogram
   kubeWatchEvents: Counter
   kubeWatchErrors: Counter
   kubeWatchRestarts: Counter
@@ -199,17 +201,45 @@ export const recordTorghutMarketContextRunEvent = (params: {
   })
 }
 
-export const recordTorghutMarketContextDispatchAttempt = (
-  domain: 'fundamentals' | 'news',
-  outcome: 'submitted' | 'dispatch_error' | 'cooldown_active' | 'dispatch_disabled',
-) => {
+export const recordTorghutMarketContextBatchRun = (params: {
+  domain: 'fundamentals' | 'news'
+  outcome: 'succeeded' | 'partial' | 'failed'
+}) => {
   if (!metricsState.enabled) return
-  recordCounter(metricsState.metrics?.torghutMarketContextDispatchAttempts, 1, { domain, outcome })
+  recordCounter(metricsState.metrics?.torghutMarketContextBatchRuns, 1, params)
 }
 
-export const recordTorghutMarketContextDispatchStuck = (domain: 'fundamentals' | 'news', status: 'submitted') => {
+export const recordTorghutMarketContextBatchRunDurationMs = (
+  durationMs: number,
+  params: { domain: 'fundamentals' | 'news' },
+) => {
   if (!metricsState.enabled) return
-  recordCounter(metricsState.metrics?.torghutMarketContextDispatchStuck, 1, { domain, status })
+  if (Number.isFinite(durationMs) && durationMs >= 0) {
+    recordHistogram(metricsState.metrics?.torghutMarketContextBatchRunDurationMs, durationMs, params)
+  }
+}
+
+export const recordTorghutMarketContextBatchRunSymbols = (
+  count: number,
+  params: {
+    domain: 'fundamentals' | 'news'
+    category: 'processed' | 'updated' | 'failed'
+  },
+) => {
+  if (!metricsState.enabled) return
+  if (Number.isFinite(count) && count >= 0) {
+    recordHistogram(metricsState.metrics?.torghutMarketContextBatchRunSymbols, count, params)
+  }
+}
+
+export const recordTorghutMarketContextBatchFreshnessLagSeconds = (
+  lagSeconds: number,
+  params: { domain: 'fundamentals' | 'news' },
+) => {
+  if (!metricsState.enabled) return
+  if (Number.isFinite(lagSeconds) && lagSeconds >= 0) {
+    recordHistogram(metricsState.metrics?.torghutMarketContextBatchFreshnessLagSeconds, lagSeconds, params)
+  }
 }
 
 export const recordKubeWatchEvent = (params: { resource: string; namespace: string; type: string }) => {
@@ -578,15 +608,26 @@ const createMetricsState = (): MetricsState => {
       torghutMarketContextRunEvents: meter.createCounter('jangar_torghut_market_context_run_events_total', {
         description: 'Count of market-context run lifecycle endpoint requests by endpoint/outcome/domain.',
       }),
-      torghutMarketContextDispatchAttempts: meter.createCounter(
-        'jangar_torghut_market_context_dispatch_attempts_total',
+      torghutMarketContextBatchRuns: meter.createCounter('jangar_torghut_market_context_batch_runs_total', {
+        description: 'Count of market-context batch runs by domain/outcome.',
+      }),
+      torghutMarketContextBatchRunDurationMs: meter.createHistogram(
+        'jangar_torghut_market_context_batch_run_duration_ms',
         {
-          description: 'Count of market-context provider dispatch attempts by domain/outcome.',
+          description: 'Duration of market-context batch runs.',
+          unit: 'ms',
         },
       ),
-      torghutMarketContextDispatchStuck: meter.createCounter('jangar_torghut_market_context_dispatch_stuck_total', {
-        description: 'Count of market-context dispatch states observed stuck in submitted status.',
+      torghutMarketContextBatchRunSymbols: meter.createHistogram('jangar_torghut_market_context_batch_run_symbols', {
+        description: 'Symbol counts per market-context batch run category.',
       }),
+      torghutMarketContextBatchFreshnessLagSeconds: meter.createHistogram(
+        'jangar_torghut_market_context_batch_freshness_lag_seconds',
+        {
+          description: 'Freshness lag seconds for symbols updated by market-context batch runs.',
+          unit: 's',
+        },
+      ),
       kubeWatchEvents: meter.createCounter('jangar_kube_watch_events_total', {
         description: 'Count of Kubernetes watch events observed by resource/namespace/type.',
       }),
