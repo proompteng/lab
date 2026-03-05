@@ -336,6 +336,18 @@ spec:
                     until:
                       format: date-time
                       type: string
+                    consecutiveFailures:
+                      type: integer
+                    threshold:
+                      type: integer
+                    enteredAt:
+                      format: date-time
+                      type: string
+                    durationMs:
+                      type: integer
+                    evidence:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
                 stageStates:
                   type: object
                   x-kubernetes-preserve-unknown-fields: true

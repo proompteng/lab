@@ -700,6 +700,13 @@ const STAGE_LAST_RUN_KEY: Record<StageName, string> = {
   verify: 'lastVerifyAt',
 }
 
+const STAGE_HOURLY_STAGGER_OFFSET: Record<StageName, number> = {
+  discover: 0,
+  plan: 15,
+  implement: 30,
+  verify: 45,
+}
+
 const TERMINAL_SUCCESS_PHASES = new Set(['succeeded', 'success', 'completed'])
 const TERMINAL_FAILURE_PHASES = new Set(['failed', 'error', 'cancelled'])
 const ACTIVE_PHASES = new Set(['pending', 'running', 'inprogress', 'progressing', 'queued'])
@@ -743,6 +750,99 @@ const SWARM_REQUIREMENT_MAX_ATTEMPTS = (() => {
   if (!Number.isFinite(raw) || raw < 1) return 3
   return Math.floor(raw)
 })()
+
+const deriveStageStaggerMinute = (swarmName: string, stage: StageName) => {
+  const base = Number.parseInt(hashNameSuffix(swarmName), 36)
+  const swarmOffset = Number.isFinite(base) ? base % 15 : 0
+  return (STAGE_HOURLY_STAGGER_OFFSET[stage] + swarmOffset) % 60
+}
+
+const normalizeRequirementPriority = (value: string | undefined) => {
+  const normalized = (value ?? '').trim().toLowerCase()
+  if (!normalized) return 2
+  if (
+    normalized === 'p0' ||
+    normalized === 'critical' ||
+    normalized === 'urgent' ||
+    normalized === 'blocker' ||
+    normalized === 'highest'
+  ) {
+    return 0
+  }
+  if (normalized === 'p1' || normalized === 'high') {
+    return 1
+  }
+  if (normalized === 'p2' || normalized === 'medium' || normalized === 'normal') {
+    return 2
+  }
+  if (normalized === 'p3' || normalized === 'low') {
+    return 3
+  }
+  return 2
+}
+
+const parseSignalPayloadRecord = (payload: unknown) => {
+  const directRecord = asRecord(payload)
+  if (directRecord) {
+    return directRecord
+  }
+  if (typeof payload === 'string') {
+    try {
+      const parsed = JSON.parse(payload) as unknown
+      return asRecord(parsed)
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+const resolveRequirementPriorityScore = (signal: Record<string, unknown>) => {
+  const signalSpec = asRecord(signal.spec) ?? {}
+  const signalMetadata = asRecord(signal.metadata) ?? {}
+  const payloadRecord = parseSignalPayloadRecord(signalSpec.payload)
+  const payloadContextRecord = payloadRecord ? asRecord(payloadRecord.context) : null
+  const candidates = [
+    asString(signalSpec.priority),
+    asString(signalSpec.severity),
+    asString(payloadRecord?.priority),
+    asString(payloadRecord?.severity),
+    asString(payloadContextRecord?.priority),
+    asString(asRecord(signalMetadata.labels)?.priority),
+  ]
+  for (const candidate of candidates) {
+    if (candidate && candidate.trim().length > 0) {
+      return normalizeRequirementPriority(candidate)
+    }
+  }
+  return 2
+}
+
+const sortRequirementSignalsForDispatch = (signals: Record<string, unknown>[]) => {
+  return signals
+    .map((signal) => {
+      const metadata = asRecord(signal.metadata) ?? {}
+      const signalName = asString(metadata.name) ?? ''
+      const createdAt = asString(metadata.creationTimestamp)
+      const createdAtMs = createdAt ? Date.parse(createdAt) : Number.NaN
+      return {
+        signal,
+        signalName,
+        createdAtMs: Number.isFinite(createdAtMs) ? createdAtMs : Number.MAX_SAFE_INTEGER,
+        priority: resolveRequirementPriorityScore(signal),
+      }
+    })
+    .sort((left, right) => {
+      if (left.priority !== right.priority) {
+        return left.priority - right.priority
+      }
+      if (left.createdAtMs !== right.createdAtMs) {
+        return left.createdAtMs - right.createdAtMs
+      }
+      return left.signalName.localeCompare(right.signalName)
+    })
+    .map((entry) => entry.signal)
+}
 
 type SwarmHulyIntegration = {
   baseUrl: string
@@ -950,7 +1050,7 @@ const parseDurationToMs = (raw: string) => {
   return amount * 24 * 60 * 60 * 1000
 }
 
-const cadenceToCron = (raw: string) => {
+const cadenceToCron = (raw: string, options?: { swarmName?: string; stage?: StageName }) => {
   const durationMs = parseDurationToMs(raw)
   if (!durationMs) return null
   const durationMinutes = durationMs / (60 * 1000)
@@ -966,6 +1066,13 @@ const cadenceToCron = (raw: string) => {
   if (durationMinutes % 60 === 0) {
     const hours = durationMinutes / 60
     if (hours >= 1 && hours <= 23 && Number.isInteger(hours)) {
+      if (options?.swarmName && options?.stage) {
+        const minute = deriveStageStaggerMinute(options.swarmName, options.stage)
+        if (hours === 1) {
+          return `${minute} * * * *`
+        }
+        return `${minute} */${hours} * * *`
+      }
       return `0 */${hours} * * *`
     }
   }
@@ -1108,10 +1215,24 @@ const sortByMostRecentRun = (resources: Record<string, unknown>[]) => {
   })
 }
 
+const isIdempotencyDuplicateRun = (resource: Record<string, unknown>) => {
+  const rawConditions = readNested(resource, ['status', 'conditions'])
+  const conditions = Array.isArray(rawConditions) ? rawConditions : []
+  if (conditions.length === 0) return false
+  return conditions.some((condition) => {
+    const record = asRecord(condition)
+    if (!record) return false
+    const reason = (asString(record.reason) ?? '').toLowerCase()
+    const type = (asString(record.type) ?? '').toLowerCase()
+    return reason === 'idempotencykeyinuse' || type === 'duplicate'
+  })
+}
+
 const countConsecutiveFailures = (resources: Record<string, unknown>[]) => {
   const sorted = sortByMostRecentRun(resources)
   let failures = 0
   for (const resource of sorted) {
+    if (isIdempotencyDuplicateRun(resource)) continue
     const phase = (asString(readNested(resource, ['status', 'phase'])) ?? '').toLowerCase()
     if (!phase) continue
     if (TERMINAL_FAILURE_PHASES.has(phase)) {
@@ -1128,6 +1249,7 @@ const collectRecentFailureRuns = (resources: Record<string, unknown>[], limit = 
   const sorted = sortByMostRecentRun(resources)
   const failures = sorted
     .filter((resource) => {
+      if (isIdempotencyDuplicateRun(resource)) return false
       const phase = (asString(readNested(resource, ['status', 'phase'])) ?? '').toLowerCase()
       return TERMINAL_FAILURE_PHASES.has(phase)
     })
@@ -1757,7 +1879,7 @@ const reconcileSwarm = async (
       continue
     }
 
-    const cron = cadenceToCron(every)
+    const cron = cadenceToCron(every, { swarmName, stage })
     if (!cron) {
       errors.push(`unsupported cadence for ${stage}: ${every}`)
       stageConfigs.push({ stage, enabled, scheduleName, every })
@@ -1944,7 +2066,9 @@ const reconcileSwarm = async (
       stageConfig.stage === 'implement' && stageConfig.enabled && Boolean(stageConfig.targetRef),
   )
   const requirementSelector = `${SWARM_REQUIREMENT_LABEL_TYPE}=requirement,${SWARM_REQUIREMENT_LABEL_TO}=${swarmLabel}`
-  const requirementSignals = listItems(await kube.list(RESOURCE_MAP.Signal, swarmNamespace, requirementSelector))
+  const requirementSignals = sortRequirementSignalsForDispatch(
+    listItems(await kube.list(RESOURCE_MAP.Signal, swarmNamespace, requirementSelector)),
+  )
   const requirementRunStates = new Map<
     string,
     {
@@ -1957,6 +2081,7 @@ const reconcileSwarm = async (
   for (const run of implementRuns) {
     const requirementId = asString(readNested(run, ['metadata', 'labels', SWARM_REQUIREMENT_LABEL_ID]))
     if (!requirementId) continue
+    if (isIdempotencyDuplicateRun(run)) continue
     const phase = (asString(readNested(run, ['status', 'phase'])) ?? '').toLowerCase()
     const current = requirementRunStates.get(requirementId) ?? { any: false, active: false, success: false, failed: 0 }
     current.any = true
@@ -2815,10 +2940,13 @@ export const __test__ = {
   applyResourceIfChanged,
   buildScheduleRunnerCommand,
   buildScheduleRunTemplate,
+  cadenceToCron,
+  deriveStageStaggerMinute,
   isSwarmStatusOnlyEvent,
   reconcileScheduleRunnerStatus,
   reconcileTool,
   reconcileSwarm,
+  resolveRequirementPriorityScore,
   resolveSwarmRunSecrets,
   resolveWatchedResourceForKind,
   shouldThrottleScheduleRunnerStatusReconcile,

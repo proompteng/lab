@@ -149,6 +149,38 @@ describe('supporting primitives controller', () => {
     expect(command).not.toContain('\\${DELIVERY_ID}')
   })
 
+  it('staggers hourly stage cadence deterministically per stage', () => {
+    const discoverCron = __test__.cadenceToCron('1h', { swarmName: 'jangar-control-plane', stage: 'discover' })
+    const planCron = __test__.cadenceToCron('1h', { swarmName: 'jangar-control-plane', stage: 'plan' })
+    const implementCron = __test__.cadenceToCron('1h', { swarmName: 'jangar-control-plane', stage: 'implement' })
+    const verifyCron = __test__.cadenceToCron('1h', { swarmName: 'jangar-control-plane', stage: 'verify' })
+
+    expect(discoverCron).toMatch(/^\d{1,2} \* \* \* \*$/)
+    expect(planCron).toMatch(/^\d{1,2} \* \* \* \*$/)
+    expect(implementCron).toMatch(/^\d{1,2} \* \* \* \*$/)
+    expect(verifyCron).toMatch(/^\d{1,2} \* \* \* \*$/)
+    expect(new Set([discoverCron, planCron, implementCron, verifyCron]).size).toBe(4)
+  })
+
+  it('normalizes requirement priority from payload and labels', () => {
+    expect(
+      __test__.resolveRequirementPriorityScore({
+        spec: { payload: { priority: 'critical' } },
+      } as Record<string, unknown>),
+    ).toBe(0)
+    expect(
+      __test__.resolveRequirementPriorityScore({
+        spec: { payload: { priority: 'low' } },
+      } as Record<string, unknown>),
+    ).toBe(3)
+    expect(
+      __test__.resolveRequirementPriorityScore({
+        metadata: { labels: { priority: 'high' } },
+        spec: {},
+      } as Record<string, unknown>),
+    ).toBe(1)
+  })
+
   it('strips global huly-api secret when building schedule run templates', () => {
     const schedule = {
       metadata: {
@@ -732,6 +764,122 @@ describe('supporting primitives controller', () => {
     const conditions = Array.isArray(status.conditions) ? status.conditions : []
     const bridge = conditions.find((condition) => condition.type === 'RequirementsBridge')
     expect(bridge?.status).toBe('True')
+  })
+
+  it('dispatches higher-priority requirement signals before lower-priority signals', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Schedule) {
+        return { status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' } }
+      }
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          kind: 'AgentRun',
+          metadata: { name: 'agentrun-implement-template', namespace: 'agents' },
+          spec: {
+            agentRef: { name: 'codex-spark-agent' },
+            runtime: { type: 'job' },
+            parameters: {
+              staticKey: 'static-value',
+            },
+            secrets: ['keep-me'],
+          },
+        }
+      }
+      return null
+    })
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Signal) {
+        return {
+          items: [
+            {
+              metadata: {
+                name: 'torghut-low-priority',
+                namespace: 'agents',
+                creationTimestamp: '2026-01-20T00:00:00Z',
+                labels: {
+                  'swarm.proompteng.ai/type': 'requirement',
+                  'swarm.proompteng.ai/from': 'torghut-quant',
+                  'swarm.proompteng.ai/to': 'jangar-control-plane',
+                },
+              },
+              spec: {
+                channel: 'huly://swarm-bridge/issues/TOR-LOW',
+                description: 'Low priority scope',
+                payload: {
+                  priority: 'low',
+                },
+              },
+            },
+            {
+              metadata: {
+                name: 'torghut-critical-priority',
+                namespace: 'agents',
+                creationTimestamp: '2026-01-20T00:10:00Z',
+                labels: {
+                  'swarm.proompteng.ai/type': 'requirement',
+                  'swarm.proompteng.ai/from': 'torghut-quant',
+                  'swarm.proompteng.ai/to': 'jangar-control-plane',
+                },
+              },
+              spec: {
+                channel: 'huly://swarm-bridge/issues/TOR-HIGH',
+                description: 'Critical priority scope',
+                payload: {
+                  priority: 'critical',
+                },
+              },
+            },
+          ],
+        }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'jangar-control-plane', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'swarm://owner/platform' },
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'AgentRun', name: 'agentrun-implement-template' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    const requirementRunPayloads = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
+      .filter((payload) => {
+        const metadata = payload.metadata as Record<string, unknown>
+        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
+      })
+    expect(requirementRunPayloads).toHaveLength(2)
+    const firstParameters = (requirementRunPayloads[0]?.spec as Record<string, unknown> | undefined)?.parameters as
+      | Record<string, string>
+      | undefined
+    const secondParameters = (requirementRunPayloads[1]?.spec as Record<string, unknown> | undefined)?.parameters as
+      | Record<string, string>
+      | undefined
+    expect(firstParameters?.swarmRequirementSignal).toBe('torghut-critical-priority')
+    expect(secondParameters?.swarmRequirementSignal).toBe('torghut-low-priority')
   })
 
   it('uses requirement payload as primary objective when description is missing', async () => {
