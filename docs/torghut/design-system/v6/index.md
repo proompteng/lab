@@ -52,11 +52,12 @@ This pack is positioned as the next architecture layer above:
 18. `17-emergency-stop-reason-normalization-and-recovery-stability-2026-03-04.md`
 19. `18-trading-readiness-and-rollout-stability-2026-03-04.md`
 20. `19-jangar-symbol-dependency-freshness-and-readiness-guard.md`
-20. `20-trading-allocator-config-surface-hardening-2026-03-04.md`
-21. `21-schema-fingerprint-and-freshness-for-database-readiness-2026-03-04.md`
-22. `22-trading-readiness-dependency-freshness-cache-2026-03-04.md`
-23. `23-readiness-schema-drift-diagnostics-2026-03-04.md`
-24. `23-trading-startup-readiness-warmup-2026-03-04.md`
+21. `20-trading-allocator-config-surface-hardening-2026-03-04.md`
+22. `21-schema-fingerprint-and-freshness-for-database-readiness-2026-03-04.md`
+23. `22-trading-readiness-dependency-freshness-cache-2026-03-04.md`
+24. `23-readiness-schema-drift-diagnostics-2026-03-04.md`
+25. `23-trading-startup-readiness-warmup-2026-03-04.md`
+26. `26-database-migration-lineage-and-readiness-contract-2026-03-05.md`
 
 ## Recommended Build Order
 
@@ -80,11 +81,12 @@ This pack is positioned as the next architecture layer above:
 18. `17-emergency-stop-reason-normalization-and-recovery-stability-2026-03-04.md`
 19. `18-trading-readiness-and-rollout-stability-2026-03-04.md`
 20. `19-jangar-symbol-dependency-freshness-and-readiness-guard.md`
-20. `20-trading-allocator-config-surface-hardening-2026-03-04.md`
-21. `21-schema-fingerprint-and-freshness-for-database-readiness-2026-03-04.md`
-22. `22-trading-readiness-dependency-freshness-cache-2026-03-04.md`
-23. `23-readiness-schema-drift-diagnostics-2026-03-04.md`
-24. `23-trading-startup-readiness-warmup-2026-03-04.md`
+21. `20-trading-allocator-config-surface-hardening-2026-03-04.md`
+22. `21-schema-fingerprint-and-freshness-for-database-readiness-2026-03-04.md`
+23. `22-trading-readiness-dependency-freshness-cache-2026-03-04.md`
+24. `23-readiness-schema-drift-diagnostics-2026-03-04.md`
+25. `23-trading-startup-readiness-warmup-2026-03-04.md`
+26. `26-database-migration-lineage-and-readiness-contract-2026-03-05.md`
 
 ## Why This Sequence
 
