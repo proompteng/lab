@@ -427,18 +427,18 @@ spec:
           livenessProbe:
             httpGet:
               path: /healthz
-              port: http1
+              port: 8181
           startupProbe:
             httpGet:
               path: /healthz
-              port: http1
+              port: 8181
             failureThreshold: 18
             periodSeconds: 5
             timeoutSeconds: 2
           readinessProbe:
             httpGet:
               path: /healthz
-              port: http1
+              port: 8181
           resources:
             requests:
               cpu: 100m
