@@ -359,6 +359,7 @@ def _readiness_dependency_snapshot(
     session: Session,
     *,
     include_database_contract: bool,
+    allow_stale_dependency_cache: bool = False,
 ) -> tuple[dict[str, object], datetime, bool]:
     if (
         not settings.trading_readiness_dependency_cache_enabled
@@ -373,6 +374,10 @@ def _readiness_dependency_snapshot(
     cache_ttl = timedelta(
         seconds=settings.trading_readiness_dependency_cache_ttl_seconds
     )
+    stale_tolerance = max(
+        0,
+        int(settings.trading_readiness_dependency_cache_stale_tolerance_seconds),
+    )
     now = datetime.now(timezone.utc)
     cache_key = _readiness_dependency_cache_key(include_database_contract)
 
@@ -380,7 +385,18 @@ def _readiness_dependency_snapshot(
         cache_entry = _TRADING_DEPENDENCY_HEALTH_CACHE.get(cache_key)
         if cache_entry:
             cache_checked_at = cast(datetime, cache_entry["checked_at"])
-            if now - cache_checked_at < cache_ttl:
+            cache_age = now - cache_checked_at
+            if cache_age < cache_ttl:
+                return (
+                    cast(dict[str, object], cache_entry["dependencies"]),
+                    cache_checked_at,
+                    True,
+                )
+            if (
+                allow_stale_dependency_cache
+                and stale_tolerance > 0
+                and cache_age <= cache_ttl + timedelta(seconds=stale_tolerance)
+            ):
                 return (
                     cast(dict[str, object], cache_entry["dependencies"]),
                     cache_checked_at,
@@ -403,6 +419,7 @@ def _evaluate_trading_health_payload(
     session: Session,
     *,
     include_database_contract: bool = False,
+    allow_stale_dependency_cache: bool = False,
 ) -> tuple[dict[str, object], int]:
     """Build shared trading health payload and status code."""
 
@@ -447,12 +464,25 @@ def _evaluate_trading_health_payload(
         scheduler_payload["startup_readiness_grace_seconds"] = startup_grace_seconds
         scheduler_payload["startup_readiness_grace_active"] = in_startup_grace
 
+    now = datetime.now(timezone.utc)
     dependencies, checked_at, cache_used = _readiness_dependency_snapshot(
         session,
         include_database_contract=include_database_contract,
+        allow_stale_dependency_cache=allow_stale_dependency_cache,
     )
     dependencies = dict(dependencies)
     dependencies["universe"] = _evaluate_universe_dependency(scheduler)
+    cache_age_seconds = (
+        (now - checked_at).total_seconds() if checked_at else 0.0
+    )
+    cache_age_seconds = (
+        0.0 if cache_age_seconds < 0 else round(cache_age_seconds, 3)
+    )
+    cache_stale = (
+        cache_used
+        and cache_age_seconds
+        > settings.trading_readiness_dependency_cache_ttl_seconds
+    )
     dependency_statuses = [
         cast(dict[str, object], checks).get("ok", True)
         for name, checks in dependencies.items()
@@ -461,7 +491,10 @@ def _evaluate_trading_health_payload(
     dependencies["readiness_cache"] = {
         "checked_at": checked_at.isoformat(),
         "cache_ttl_seconds": settings.trading_readiness_dependency_cache_ttl_seconds,
+        "cache_stale_tolerance_seconds": settings.trading_readiness_dependency_cache_stale_tolerance_seconds,
         "cache_used": cache_used,
+        "cache_age_seconds": cache_age_seconds,
+        "cache_stale": cache_stale,
     }
 
     overall_ok = scheduler_ok and all(bool(dep) for dep in dependency_statuses)
@@ -680,6 +713,7 @@ def readyz(session: Session = Depends(get_session)) -> JSONResponse:
     payload, status_code = _evaluate_trading_health_payload(
         session,
         include_database_contract=True,
+        allow_stale_dependency_cache=True,
     )
     return JSONResponse(
         status_code=status_code,
