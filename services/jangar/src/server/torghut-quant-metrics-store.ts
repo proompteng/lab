@@ -294,11 +294,24 @@ export const listQuantAlerts = async (params: { strategyId?: string; state?: 'op
   })) satisfies QuantAlert[]
 }
 
-export const getQuantLatestStoreStatus = async (): Promise<QuantLatestStoreStatus> => {
+export const getQuantLatestStoreStatus = async (
+  params: {
+    strategyId?: string
+    account?: string
+    window?: string
+  } = {},
+): Promise<QuantLatestStoreStatus> => {
   const db = await ensureQuantStoreReady()
+  const filters: Array<unknown> = []
+  if (params.strategyId) filters.push(sql`strategy_id = ${params.strategyId}::uuid`)
+  if (params.account) filters.push(sql`account = ${params.account}`)
+  if (params.window) filters.push(sql`window = ${params.window}`)
+  const whereSql = filters.length > 0 ? sql`where ${sql.join(filters, sql` and `)}` : sql``
+
   const result = await sql<{ updated_at: Date | string | null; count: number | string | null }>`
     select max(updated_at) as updated_at, count(*) as count
     from torghut_control_plane.quant_metrics_latest
+    ${whereSql}
   `.execute(db)
 
   const row = result.rows[0]
@@ -334,7 +347,7 @@ export const listLatestQuantPipelineHealth = async (params: {
   window?: string
 }) => {
   const db = await ensureQuantStoreReady()
-  const filters = []
+  const filters: Array<unknown> = []
   if (params.strategyId) filters.push(sql`strategy_id = ${params.strategyId}::uuid`)
   if (params.account) filters.push(sql`account = ${params.account}`)
   if (params.window) filters.push(sql`details->>'window' = ${params.window}`)
