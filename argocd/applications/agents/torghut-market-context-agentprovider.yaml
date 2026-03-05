@@ -194,6 +194,8 @@ spec:
         import urllib.request
         from pathlib import Path
 
+        DEFAULT_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token'
+
         def _parse_positive_int(value: str | None, fallback: int) -> int:
           try:
             parsed = int((value or '').strip())
@@ -262,9 +264,26 @@ spec:
             return payload.strip()
           return fallback
 
+        def _load_bearer_token() -> str | None:
+          token_path = (os.environ.get('CODEX_MARKET_CONTEXT_TOKEN_PATH') or DEFAULT_TOKEN_PATH).strip()
+          if not token_path:
+            return None
+          try:
+            token = Path(token_path).read_text(encoding='utf-8').strip()
+          except OSError:
+            return None
+          return token or None
+
         def _post_json(url: str, payload: dict, timeout_seconds: int) -> tuple[int, object | None]:
           body = json.dumps(payload).encode('utf-8')
-          request = urllib.request.Request(url, data=body, headers={'content-type': 'application/json'})
+          headers = {
+            'accept': 'application/json',
+            'content-type': 'application/json',
+          }
+          token = _load_bearer_token()
+          if token:
+            headers['authorization'] = f'Bearer {token}'
+          request = urllib.request.Request(url, data=body, headers=headers)
           try:
             with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
               return response.getcode() or 200, _parse_json_bytes(response.read())
