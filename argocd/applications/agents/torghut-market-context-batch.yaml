@@ -20,6 +20,8 @@ spec:
     - Use at least 2 independent citations per symbol.
     - All timestamps must be UTC ISO-8601 strings.
     - Keep qualityScore in [0, 1].
+    - `reason` must be one of `scheduled_trading_session_refresh`, `pre_open_probe`, or `manual_recovery_probe`.
+    - Do not use run-level prompt overrides; rely only on this ImplementationSpec contract.
     - If market session is closed according to `${tradingStatusUrl}`, exit 0 without publishing updates.
 
     Inputs:
@@ -102,6 +104,8 @@ spec:
     - Use at least 3 citations per symbol when available.
     - All timestamps must be UTC ISO-8601 strings.
     - Keep qualityScore in [0, 1].
+    - `reason` must be one of `scheduled_trading_session_refresh`, `pre_open_probe`, or `manual_recovery_probe`.
+    - Do not use run-level prompt overrides; rely only on this ImplementationSpec contract.
     - If market session is closed according to `${tradingStatusUrl}`, exit 0 without publishing updates.
 
     Inputs:
@@ -200,6 +204,68 @@ spec:
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
+  name: torghut-market-context-fundamentals-preopen-probe-template
+  namespace: agents
+spec:
+  agentRef:
+    name: torghut-fundamentals-agent
+  implementationSpecRef:
+    name: torghut-market-context-fundamentals-batch-v1
+  runtime:
+    type: job
+    config:
+      serviceAccountName: agents-sa
+      priorityClassName: torghut-market-context-low
+  ttlSecondsAfterFinished: 900
+  workload:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 750m
+        memory: 1Gi
+  parameters:
+    domain: fundamentals
+    reason: pre_open_probe
+    callbackUrl: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/ingest
+    symbolsUrl: http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=equity&format=compact
+    tradingStatusUrl: http://torghut.torghut.svc.cluster.local/trading/status
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: torghut-market-context-news-preopen-probe-template
+  namespace: agents
+spec:
+  agentRef:
+    name: torghut-news-agent
+  implementationSpecRef:
+    name: torghut-market-context-news-batch-v1
+  runtime:
+    type: job
+    config:
+      serviceAccountName: agents-sa
+      priorityClassName: torghut-market-context-low
+  ttlSecondsAfterFinished: 900
+  workload:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 750m
+        memory: 1Gi
+  parameters:
+    domain: news
+    reason: pre_open_probe
+    callbackUrl: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/ingest
+    symbolsUrl: http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=equity&format=compact
+    tradingStatusUrl: http://torghut.torghut.svc.cluster.local/trading/status
+---
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
   name: torghut-market-context-news-batch-template
   namespace: agents
 spec:
@@ -240,6 +306,32 @@ spec:
     apiVersion: agents.proompteng.ai/v1alpha1
     kind: AgentRun
     name: torghut-market-context-fundamentals-batch-template
+---
+apiVersion: schedules.proompteng.ai/v1alpha1
+kind: Schedule
+metadata:
+  name: torghut-market-context-fundamentals-preopen-probe
+  namespace: agents
+spec:
+  cron: "20 9 * * 1-5"
+  timezone: America/New_York
+  targetRef:
+    apiVersion: agents.proompteng.ai/v1alpha1
+    kind: AgentRun
+    name: torghut-market-context-fundamentals-preopen-probe-template
+---
+apiVersion: schedules.proompteng.ai/v1alpha1
+kind: Schedule
+metadata:
+  name: torghut-market-context-news-preopen-probe
+  namespace: agents
+spec:
+  cron: "25 9 * * 1-5"
+  timezone: America/New_York
+  targetRef:
+    apiVersion: agents.proompteng.ai/v1alpha1
+    kind: AgentRun
+    name: torghut-market-context-news-preopen-probe-template
 ---
 apiVersion: schedules.proompteng.ai/v1alpha1
 kind: Schedule
