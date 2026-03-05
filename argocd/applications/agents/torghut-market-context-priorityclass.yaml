@@ -2,7 +2,7 @@ apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
   name: torghut-market-context-low
-value: 10
+value: -10
 globalDefault: false
 preemptionPolicy: Never
 description: Low-priority class for scheduled Torghut market-context batch refresh jobs.
