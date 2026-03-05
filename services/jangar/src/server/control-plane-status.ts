@@ -14,6 +14,7 @@ import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { parseNamespaceScopeEnv } from '~/server/namespace-scope'
 import { createKubernetesClient, type KubernetesClient } from '~/server/primitives-kube'
 import { parseEnvStringList, parseOptionalNumber } from '~/server/agents-controller/env-config'
+import type { WorkflowsReliabilityStatus } from '~/data/agents-control-plane'
 
 const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
 const DEFAULT_TEMPORAL_PORT = 7233
@@ -63,14 +64,6 @@ export type RuntimeAdapterStatus = {
   status: 'healthy' | 'configured' | 'degraded' | 'disabled' | 'unknown'
   message: string
   endpoint: string
-}
-
-export type WorkflowsReliabilityStatus = {
-  active_job_runs: number
-  recent_failed_jobs: number
-  backoff_limit_exceeded_jobs: number
-  window_minutes: number
-  top_failure_reasons: string[]
 }
 
 type DeploymentRolloutStatus = {

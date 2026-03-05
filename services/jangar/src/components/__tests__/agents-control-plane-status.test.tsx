@@ -34,7 +34,6 @@ const baseStatus: ControlPlaneStatus = {
   ],
   runtime_adapters: [],
   workflows: {
-    status: 'healthy',
     window_minutes: 15,
     active_job_runs: 1,
     recent_failed_jobs: 2,
@@ -43,7 +42,6 @@ const baseStatus: ControlPlaneStatus = {
       { reason: 'BackoffLimitExceeded', count: 2 },
       { reason: 'ImagePullBackOff', count: 1 },
     ],
-    message: 'stable',
   },
   rollout: {
     status: 'healthy',
