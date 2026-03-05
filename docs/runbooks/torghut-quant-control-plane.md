@@ -31,6 +31,8 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
 1. Confirm control-plane API health.
    - `kubectl -n agents port-forward svc/agents 8080:80`
    - `curl -fsS "http://127.0.0.1:8080/api/agents/control-plane/status?namespace=agents" | jq .`
+   - For lane-scoped health checks, include explicit strategy/account/window filters on Jangar quant health:
+     `curl -fsS "http://127.0.0.1:8080/api/torghut/trading/control-plane/quant/health?strategy_id=<UUID>&account=paper&window=1d" | jq .`
 2. Confirm Torghut trading pipeline is running.
    - `kubectl -n torghut get ksvc torghut`
    - `kubectl -n torghut port-forward svc/torghut 8081:80`

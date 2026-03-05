@@ -38,7 +38,11 @@ export const getQuantHealthHandler = async (request: Request) => {
     if (!windowResult.ok) return jsonResponse({ ok: false, message: windowResult.message }, 400)
 
     const nowIso = new Date().toISOString()
-    const latestStore = await getQuantLatestStoreStatus()
+    const latestStore = await getQuantLatestStoreStatus({
+      strategyId: strategyIdResult.value,
+      account: account.length > 0 ? account : undefined,
+      window: windowResult.value,
+    })
     const updatedAt = latestStore.updatedAt
     const count = latestStore.count
     const lagSeconds = updatedAt ? Math.max(0, Math.floor((Date.now() - Date.parse(updatedAt)) / 1000)) : null
