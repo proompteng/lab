@@ -69,6 +69,8 @@ class ExperimentSpec:
     ablations: list[dict[str, Any]]
     stress_scenarios: list[str]
     llm_provenance: dict[str, Any]
+    lineage: dict[str, Any]
+    research_memory: dict[str, Any]
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -85,6 +87,8 @@ class ExperimentSpec:
             'ablations': [dict(item) for item in self.ablations],
             'stress_scenarios': list(self.stress_scenarios),
             'llm_provenance': dict(self.llm_provenance),
+            'lineage': dict(self.lineage),
+            'research_memory': dict(self.research_memory),
         }
 
 
@@ -228,6 +232,8 @@ def build_experiment_spec_from_strategy(
     strategy_spec: StrategySpecV2,
     parent_experiment_ids: list[str] | None = None,
     llm_provenance: Mapping[str, Any] | None = None,
+    lineage: Mapping[str, Any] | None = None,
+    research_memory: Mapping[str, Any] | None = None,
 ) -> ExperimentSpec:
     return ExperimentSpec(
         experiment_id=experiment_id,
@@ -260,6 +266,14 @@ def build_experiment_spec_from_strategy(
         ],
         stress_scenarios=['spread', 'volatility', 'liquidity', 'halt'],
         llm_provenance=dict(llm_provenance or {'mode': 'none'}),
+        lineage=dict(lineage or {'source': 'strategy_spec_v2'}),
+        research_memory=dict(
+            research_memory
+            or {
+                'summary': f'{strategy_spec.strategy_id}:{strategy_spec.semantic_version}',
+                'source': strategy_spec.source,
+            }
+        ),
     )
 
 

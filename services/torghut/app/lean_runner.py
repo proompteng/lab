@@ -16,6 +16,8 @@ from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional, cast
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 from uuid import UUID, uuid4
 
 from alpaca.trading.client import TradingClient
@@ -134,6 +136,126 @@ _cache_lock = threading.Lock()
 _IDEMPOTENCY_TTL_SECONDS = 300
 _idempotency_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _backtests: dict[str, _BacktestRecord] = {}
+
+
+def _upstream_headers(*, correlation_id: str | None = None) -> dict[str, str]:
+    headers = {'accept': 'application/json'}
+    if correlation_id:
+        headers['X-Correlation-ID'] = correlation_id
+    return headers
+
+
+def _join_upstream_url(base_url: str, suffix: str = '') -> str:
+    root = base_url.rstrip('/')
+    if not suffix:
+        return root
+    return f'{root}/{suffix.lstrip("/")}'
+
+
+def _proxy_json_request(
+    *,
+    method: str,
+    url: str,
+    timeout_seconds: int,
+    payload: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    request_headers = dict(headers or {})
+    body: bytes | None = None
+    if payload is not None:
+        body = json.dumps(payload, separators=(',', ':')).encode('utf-8')
+        request_headers['content-type'] = 'application/json'
+    request = Request(url, data=body, headers=request_headers, method=method)
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            raw_body = response.read().decode('utf-8')
+    except HTTPError as exc:
+        detail = exc.read().decode('utf-8', errors='ignore')[:200]
+        raise RuntimeError(f'lean_upstream_http_{exc.code}:{detail}') from exc
+    except URLError as exc:
+        raise RuntimeError(f'lean_upstream_network_error:{exc.reason}') from exc
+    except TimeoutError as exc:
+        raise RuntimeError('lean_upstream_timeout') from exc
+    if not raw_body:
+        return {}
+    try:
+        decoded = json.loads(raw_body)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f'lean_upstream_invalid_json:{raw_body[:200]}') from exc
+    if not isinstance(decoded, dict):
+        raise RuntimeError('lean_upstream_invalid_payload')
+    return cast(dict[str, Any], decoded)
+
+
+def _proxy_backtest_submit(
+    *,
+    body: BacktestSubmitBody,
+    correlation_id: str,
+) -> dict[str, Any] | None:
+    upstream_url = (settings.trading_lean_backtest_upstream_url or '').strip()
+    if not upstream_url:
+        return None
+    return _proxy_json_request(
+        method='POST',
+        url=_join_upstream_url(upstream_url, 'submit'),
+        timeout_seconds=settings.trading_lean_runner_upstream_timeout_seconds,
+        payload=body.model_dump(mode='json'),
+        headers=_upstream_headers(correlation_id=correlation_id),
+    )
+
+
+def _proxy_backtest_get(backtest_id: str) -> dict[str, Any] | None:
+    upstream_url = (settings.trading_lean_backtest_upstream_url or '').strip()
+    if not upstream_url:
+        return None
+    payload = _proxy_json_request(
+        method='GET',
+        url=_join_upstream_url(upstream_url, backtest_id),
+        timeout_seconds=settings.trading_lean_runner_upstream_timeout_seconds,
+        headers=_upstream_headers(),
+    )
+    result = payload.get('result')
+    if isinstance(result, dict) and 'artifact_authority' not in result:
+        cast(dict[str, Any], result)['artifact_authority'] = evidence_contract_payload(
+            provenance=ArtifactProvenance.HISTORICAL_MARKET_REPLAY,
+            maturity=EvidenceMaturity.EMPIRICALLY_VALIDATED,
+            notes='LEAN backtest result returned from configured upstream integration.',
+        )
+    return payload
+
+
+def _proxy_shadow_simulate(
+    *,
+    body: ShadowSimulateBody,
+    correlation_id: str,
+) -> dict[str, Any] | None:
+    upstream_url = (settings.trading_lean_shadow_upstream_url or '').strip()
+    if not upstream_url:
+        return None
+    return _proxy_json_request(
+        method='POST',
+        url=upstream_url.rstrip('/'),
+        timeout_seconds=settings.trading_lean_runner_upstream_timeout_seconds,
+        payload=body.model_dump(mode='json'),
+        headers=_upstream_headers(correlation_id=correlation_id),
+    )
+
+
+def _proxy_strategy_shadow(
+    *,
+    body: StrategyShadowBody,
+    correlation_id: str,
+) -> dict[str, Any] | None:
+    upstream_url = (settings.trading_lean_strategy_shadow_upstream_url or '').strip()
+    if not upstream_url:
+        return None
+    return _proxy_json_request(
+        method='POST',
+        url=upstream_url.rstrip('/'),
+        timeout_seconds=settings.trading_lean_runner_upstream_timeout_seconds,
+        payload=body.model_dump(mode='json'),
+        headers=_upstream_headers(correlation_id=correlation_id),
+    )
 
 
 def _now_utc() -> datetime:
@@ -308,6 +430,10 @@ def submit_backtest(
     started = time.perf_counter()
     operation = 'submit_backtest'
     correlation_id = _resolve_correlation_id(x_correlation_id)
+    proxied = _proxy_backtest_submit(body=body, correlation_id=correlation_id)
+    if proxied is not None:
+        _metrics.record(operation=operation, latency_ms=_latency_ms(started))
+        return proxied
     canonical = _canonical_json(body.config)
     reproducibility_hash = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
     backtest_id = hashlib.sha256(f'{body.lane}:{reproducibility_hash}'.encode('utf-8')).hexdigest()[:20]
@@ -337,6 +463,10 @@ def submit_backtest(
 def get_backtest(backtest_id: str) -> dict[str, Any]:
     started = time.perf_counter()
     operation = 'get_backtest'
+    proxied = _proxy_backtest_get(backtest_id)
+    if proxied is not None:
+        _metrics.record(operation=operation, latency_ms=_latency_ms(started))
+        return proxied
     with _cache_lock:
         record = _backtests.get(backtest_id)
         if record is None:
@@ -367,6 +497,10 @@ def shadow_simulate(
     started = time.perf_counter()
     operation = 'shadow_simulate'
     correlation_id = _resolve_correlation_id(x_correlation_id)
+    proxied = _proxy_shadow_simulate(body=body, correlation_id=correlation_id)
+    if proxied is not None:
+        _metrics.record(operation=operation, latency_ms=_latency_ms(started))
+        return proxied
     seed = hashlib.sha256(f'{body.symbol}:{body.side}:{body.qty}:{body.order_type}'.encode('utf-8')).hexdigest()
     basis = int(seed[:8], 16)
     slippage_bps = ((basis % 29) - 14) / 10.0
@@ -394,6 +528,10 @@ def evaluate_strategy_shadow(
     started = time.perf_counter()
     operation = 'strategy_shadow'
     correlation_id = _resolve_correlation_id(x_correlation_id)
+    proxied = _proxy_strategy_shadow(body=body, correlation_id=correlation_id)
+    if proxied is not None:
+        _metrics.record(operation=operation, latency_ms=_latency_ms(started))
+        return proxied
     signature = hashlib.sha256(
         f'{body.strategy_id}:{body.symbol}:{_canonical_json(body.intent)}'.encode('utf-8')
     ).hexdigest()
@@ -641,6 +779,8 @@ def _deterministic_backtest_result(record: _BacktestRecord) -> dict[str, Any]:
         f'{record.reproducibility_hash}:{gross_pnl}:{drawdown}:{trades}'.encode('utf-8')
     ).hexdigest()
     return {
+        'integration_mode': 'deterministic_scaffold',
+        'promotion_authority_eligible': False,
         'summary': {
             'gross_pnl': gross_pnl,
             'net_pnl': round(gross_pnl * 0.93, 4),

@@ -10,7 +10,10 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Protocol, cast
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
+from ..config import settings
 from .evidence_contracts import (
     ArtifactProvenance,
     EvidenceMaturity,
@@ -66,7 +69,13 @@ def _coerce_model_family(value: str) -> str:
     return aliases.get(normalized, normalized)
 
 
-def _forecast_artifact_authority(model_family: str) -> dict[str, Any]:
+def _forecast_artifact_authority(
+    model_family: str,
+    *,
+    override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if override:
+        return dict(override)
     normalized = _coerce_model_family(model_family)
     if normalized in {'chronos', 'moment', 'financial_tsfm', 'baseline'}:
         return evidence_contract_payload(
@@ -134,6 +143,7 @@ class ForecastContractV1:
     regime_entropy: str
     regime_predicted_next: str
     regime_inference_version: str
+    artifact_authority: dict[str, Any] | None = None
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -155,7 +165,10 @@ class ForecastContractV1:
             'regime_entropy': self.regime_entropy,
             'regime_predicted_next': self.regime_predicted_next,
             'regime_inference_version': self.regime_inference_version,
-            'artifact_authority': _forecast_artifact_authority(self.model_family),
+            'artifact_authority': _forecast_artifact_authority(
+                self.model_family,
+                override=self.artifact_authority,
+            ),
         }
 
 
@@ -178,6 +191,7 @@ class ForecastDecisionAudit:
     regime_entropy: str
     regime_predicted_next: str
     regime_inference_version: str
+    artifact_authority: dict[str, Any] | None = None
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -198,7 +212,10 @@ class ForecastDecisionAudit:
             'regime_entropy': self.regime_entropy,
             'regime_predicted_next': self.regime_predicted_next,
             'regime_inference_version': self.regime_inference_version,
-            'artifact_authority': _forecast_artifact_authority(self.final_model_family),
+            'artifact_authority': _forecast_artifact_authority(
+                self.final_model_family,
+                override=self.artifact_authority,
+            ),
         }
 
 
@@ -325,6 +342,7 @@ class ForecastAdapterOutput:
     interval: ForecastInterval
     uncertainty: ForecastUncertainty
     inference_latency_ms: int
+    artifact_authority: dict[str, Any] | None = None
 
 
 class ForecastAdapter(Protocol):
@@ -430,6 +448,126 @@ class DeterministicBaselineAdapter(_DeterministicAdapter):
     _bias = Decimal('0')
     _volatility_scale = Decimal('0.60')
     _epistemic_offset = Decimal('0.10')
+
+
+class HttpForecastAdapter:
+    def __init__(
+        self,
+        *,
+        model_family: str,
+        base_url: str,
+        timeout_seconds: int,
+        api_key: str | None,
+    ) -> None:
+        self.model_family = _coerce_model_family(model_family)
+        self.model_version = 'external-http'
+        self._base_url = base_url.rstrip('/')
+        self._timeout_seconds = max(timeout_seconds, 1)
+        self._api_key = (api_key or '').strip() or None
+
+    def forecast(
+        self,
+        *,
+        feature_vector: FeatureVectorV3,
+        horizon: str,
+    ) -> ForecastAdapterOutput:
+        payload = {
+            'symbol': feature_vector.symbol,
+            'horizon': horizon,
+            'timeframe': feature_vector.timeframe,
+            'event_ts': feature_vector.event_ts.astimezone(timezone.utc).isoformat(),
+            'model_family': self.model_family,
+            'normalization_hash': feature_vector.normalization_hash,
+            'values': dict(feature_vector.values),
+        }
+        raw = _post_forecast_request(
+            base_url=self._base_url,
+            timeout_seconds=self._timeout_seconds,
+            api_key=self._api_key,
+            payload=payload,
+        )
+        return _coerce_http_forecast_output(
+            response=raw,
+            requested_model_family=self.model_family,
+        )
+
+
+def _post_forecast_request(
+    *,
+    base_url: str,
+    timeout_seconds: int,
+    api_key: str | None,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    body = json.dumps(payload, separators=(',', ':')).encode('utf-8')
+    headers = {
+        'accept': 'application/json',
+        'content-type': 'application/json',
+    }
+    if api_key:
+        headers['authorization'] = f'Bearer {api_key}'
+    request = Request(
+        f'{base_url}/v1/forecast',
+        data=body,
+        headers=headers,
+        method='POST',
+    )
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            raw_body = response.read().decode('utf-8')
+    except HTTPError as exc:
+        detail = exc.read().decode('utf-8', errors='ignore')[:200]
+        raise RuntimeError(f'forecast_provider_http_{exc.code}:{detail}') from exc
+    except URLError as exc:
+        raise RuntimeError(f'forecast_provider_network_error:{exc.reason}') from exc
+    except TimeoutError as exc:
+        raise RuntimeError('forecast_provider_timeout') from exc
+    try:
+        loaded = json.loads(raw_body)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f'forecast_provider_invalid_json:{raw_body[:200]}') from exc
+    if not isinstance(loaded, dict):
+        raise RuntimeError('forecast_provider_invalid_payload')
+    return cast(dict[str, Any], loaded)
+
+
+def _coerce_http_forecast_output(
+    *,
+    response: dict[str, Any],
+    requested_model_family: str,
+) -> ForecastAdapterOutput:
+    interval_payload = cast(dict[str, Any], response.get('interval') or {})
+    uncertainty_payload = cast(dict[str, Any], response.get('uncertainty') or {})
+    artifact_authority_raw = response.get('artifact_authority')
+    artifact_authority = (
+        cast(dict[str, Any], artifact_authority_raw)
+        if isinstance(artifact_authority_raw, dict)
+        else evidence_contract_payload(
+            provenance=ArtifactProvenance.HISTORICAL_MARKET_REPLAY,
+            maturity=EvidenceMaturity.EMPIRICALLY_VALIDATED,
+            calibration_summary={'status': 'externally_validated'},
+            notes='Forecast output loaded from configured external empirical provider.',
+        )
+    )
+    return ForecastAdapterOutput(
+        model_family=_coerce_model_family(
+            str(response.get('model_family') or requested_model_family)
+        ),
+        model_version=str(response.get('model_version') or 'external-http').strip()
+        or 'external-http',
+        point_forecast=_decimal_or_default(response.get('point_forecast'), Decimal('0')),
+        interval=ForecastInterval(
+            p05=_decimal_or_default(interval_payload.get('p05'), Decimal('0')),
+            p50=_decimal_or_default(interval_payload.get('p50'), Decimal('0')),
+            p95=_decimal_or_default(interval_payload.get('p95'), Decimal('0')),
+        ),
+        uncertainty=ForecastUncertainty(
+            epistemic=_decimal_or_default(uncertainty_payload.get('epistemic'), Decimal('0.5')),
+            aleatoric=_decimal_or_default(uncertainty_payload.get('aleatoric'), Decimal('0.5')),
+        ),
+        inference_latency_ms=max(1, int(response.get('inference_latency_ms', 1))),
+        artifact_authority=artifact_authority,
+    )
 
 
 @dataclass(frozen=True)
@@ -603,6 +741,7 @@ class ForecastRouterV5:
             regime_entropy=regime_context.entropy,
             regime_predicted_next=regime_context.predicted_next,
             regime_inference_version=regime_context.artifact_model_id,
+            artifact_authority=output.artifact_authority,
         )
         selected_version = selected_adapter.model_version if selected_adapter is not None else 'missing'
         audit = ForecastDecisionAudit(
@@ -623,6 +762,7 @@ class ForecastRouterV5:
             regime_entropy=regime_context.entropy,
             regime_predicted_next=regime_context.predicted_next,
             regime_inference_version=regime_context.artifact_model_id,
+            artifact_authority=output.artifact_authority,
         )
         telemetry = ForecastRoutingTelemetry(
             model_family=output.model_family,
@@ -687,12 +827,38 @@ def build_default_forecast_router(*, policy_path: str | None, refinement_enabled
 
     policy = ForecastRouterPolicyV1.from_payload(policy_payload)
     calibration_store = ForecastCalibrationStore.from_payload(policy_payload)
-    adapters: dict[str, ForecastAdapter] = {
-        'chronos': ChronosForecastAdapter(),
-        'moment': MomentForecastAdapter(),
-        'financial_tsfm': FinancialTsfmForecastAdapter(),
-        'baseline': DeterministicBaselineAdapter(),
-    }
+    if (
+        settings.trading_forecast_router_provider_mode == 'http'
+        and settings.trading_forecast_router_provider_url
+    ):
+        adapters: dict[str, ForecastAdapter] = {
+            'chronos': HttpForecastAdapter(
+                model_family='chronos',
+                base_url=settings.trading_forecast_router_provider_url,
+                timeout_seconds=settings.trading_forecast_router_provider_timeout_seconds,
+                api_key=settings.trading_forecast_router_provider_api_key,
+            ),
+            'moment': HttpForecastAdapter(
+                model_family='moment',
+                base_url=settings.trading_forecast_router_provider_url,
+                timeout_seconds=settings.trading_forecast_router_provider_timeout_seconds,
+                api_key=settings.trading_forecast_router_provider_api_key,
+            ),
+            'financial_tsfm': HttpForecastAdapter(
+                model_family='financial_tsfm',
+                base_url=settings.trading_forecast_router_provider_url,
+                timeout_seconds=settings.trading_forecast_router_provider_timeout_seconds,
+                api_key=settings.trading_forecast_router_provider_api_key,
+            ),
+            'baseline': DeterministicBaselineAdapter(),
+        }
+    else:
+        adapters = {
+            'chronos': ChronosForecastAdapter(),
+            'moment': MomentForecastAdapter(),
+            'financial_tsfm': FinancialTsfmForecastAdapter(),
+            'baseline': DeterministicBaselineAdapter(),
+        }
     refiner = ForecastRefinerV5() if refinement_enabled else None
     return ForecastRouterV5(
         policy=policy,

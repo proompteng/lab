@@ -522,6 +522,26 @@ class Settings(BaseSettings):
         alias="TRADING_FORECAST_ROUTER_POLICY_PATH",
         description="Optional path to forecast router policy JSON.",
     )
+    trading_forecast_router_provider_mode: Literal["deterministic", "http"] = Field(
+        default="deterministic",
+        alias="TRADING_FORECAST_ROUTER_PROVIDER_MODE",
+        description="Forecast producer mode. http enables external empirical inference service integration.",
+    )
+    trading_forecast_router_provider_url: Optional[str] = Field(
+        default=None,
+        alias="TRADING_FORECAST_ROUTER_PROVIDER_URL",
+        description="Optional base URL for external forecast inference service.",
+    )
+    trading_forecast_router_provider_timeout_seconds: int = Field(
+        default=5,
+        alias="TRADING_FORECAST_ROUTER_PROVIDER_TIMEOUT_SECONDS",
+        description="HTTP timeout for external forecast inference requests.",
+    )
+    trading_forecast_router_provider_api_key: Optional[str] = Field(
+        default=None,
+        alias="TRADING_FORECAST_ROUTER_PROVIDER_API_KEY",
+        description="Optional API key forwarded to external forecast inference service.",
+    )
     trading_forecast_router_refinement_enabled: bool = Field(
         default=True,
         alias="TRADING_FORECAST_ROUTER_REFINEMENT_ENABLED",
@@ -577,6 +597,36 @@ class Settings(BaseSettings):
         default=str(Path(tempfile.gettempdir()) / "torghut-autonomy"),
         alias="TRADING_AUTONOMY_ARTIFACT_DIR",
         description="Output directory for autonomous lane artifacts.",
+    )
+    trading_empirical_benchmark_parity_report_path: Optional[str] = Field(
+        default=None,
+        alias="TRADING_EMPIRICAL_BENCHMARK_PARITY_REPORT_PATH",
+        description="Optional path to externally generated benchmark parity report JSON.",
+    )
+    trading_empirical_foundation_router_parity_report_path: Optional[str] = Field(
+        default=None,
+        alias="TRADING_EMPIRICAL_FOUNDATION_ROUTER_PARITY_REPORT_PATH",
+        description="Optional path to externally generated foundation-router parity report JSON.",
+    )
+    trading_empirical_deeplob_bdlob_report_path: Optional[str] = Field(
+        default=None,
+        alias="TRADING_EMPIRICAL_DEEPLOB_BDLOB_REPORT_PATH",
+        description="Optional path to externally generated DeepLOB/BDLOB report JSON.",
+    )
+    trading_empirical_advisor_fallback_slo_report_path: Optional[str] = Field(
+        default=None,
+        alias="TRADING_EMPIRICAL_ADVISOR_FALLBACK_SLO_REPORT_PATH",
+        description="Optional path to externally generated advisor fallback SLO report JSON.",
+    )
+    trading_empirical_janus_event_car_path: Optional[str] = Field(
+        default=None,
+        alias="TRADING_EMPIRICAL_JANUS_EVENT_CAR_PATH",
+        description="Optional path to externally generated Janus event/CAR artifact JSON.",
+    )
+    trading_empirical_janus_hgrm_reward_path: Optional[str] = Field(
+        default=None,
+        alias="TRADING_EMPIRICAL_JANUS_HGRM_REWARD_PATH",
+        description="Optional path to externally generated Janus HGRM reward artifact JSON.",
     )
     trading_drift_governance_enabled: bool = Field(
         default=True,
@@ -854,6 +904,26 @@ class Settings(BaseSettings):
         default=5,
         alias="TRADING_LEAN_RUNNER_TIMEOUT_SECONDS",
         description="HTTP timeout for LEAN runner calls.",
+    )
+    trading_lean_runner_upstream_timeout_seconds: int = Field(
+        default=10,
+        alias="TRADING_LEAN_RUNNER_UPSTREAM_TIMEOUT_SECONDS",
+        description="HTTP timeout for LEAN runner upstream proxy calls.",
+    )
+    trading_lean_backtest_upstream_url: Optional[str] = Field(
+        default=None,
+        alias="TRADING_LEAN_BACKTEST_UPSTREAM_URL",
+        description="Optional upstream URL for authoritative LEAN backtest submission and polling.",
+    )
+    trading_lean_shadow_upstream_url: Optional[str] = Field(
+        default=None,
+        alias="TRADING_LEAN_SHADOW_UPSTREAM_URL",
+        description="Optional upstream URL for authoritative LEAN shadow simulation.",
+    )
+    trading_lean_strategy_shadow_upstream_url: Optional[str] = Field(
+        default=None,
+        alias="TRADING_LEAN_STRATEGY_SHADOW_UPSTREAM_URL",
+        description="Optional upstream URL for authoritative LEAN strategy shadow evaluation.",
     )
     trading_lean_runner_healthcheck_enabled: bool = Field(
         default=True,
@@ -1651,6 +1721,10 @@ class Settings(BaseSettings):
             "trading_jangar_control_plane_status_url",
             "trading_market_context_url",
             "trading_lean_runner_url",
+            "trading_forecast_router_provider_url",
+            "trading_lean_backtest_upstream_url",
+            "trading_lean_shadow_upstream_url",
+            "trading_lean_strategy_shadow_upstream_url",
             "posthog_host",
         ):
             raw_value = cast(str | None, getattr(self, field_name))
@@ -1667,6 +1741,7 @@ class Settings(BaseSettings):
             "trading_order_feed_sasl_password",
             "trading_accounts_json",
             "trading_autonomy_approval_token",
+            "trading_forecast_router_provider_api_key",
             "trading_simulation_run_id",
             "trading_simulation_dataset_id",
             "trading_simulation_order_updates_bootstrap_servers",
@@ -1674,6 +1749,12 @@ class Settings(BaseSettings):
             "trading_simulation_order_updates_sasl_mechanism",
             "trading_simulation_order_updates_sasl_username",
             "trading_simulation_order_updates_sasl_password",
+            "trading_empirical_benchmark_parity_report_path",
+            "trading_empirical_foundation_router_parity_report_path",
+            "trading_empirical_deeplob_bdlob_report_path",
+            "trading_empirical_advisor_fallback_slo_report_path",
+            "trading_empirical_janus_event_car_path",
+            "trading_empirical_janus_hgrm_reward_path",
             "posthog_api_key",
             "posthog_project_id",
         ):
@@ -1687,6 +1768,10 @@ class Settings(BaseSettings):
         if self.trading_hypothesis_registry_path is not None:
             self.trading_hypothesis_registry_path = (
                 self.trading_hypothesis_registry_path.strip() or None
+            )
+        if self.trading_forecast_router_policy_path is not None:
+            self.trading_forecast_router_policy_path = (
+                self.trading_forecast_router_policy_path.strip() or None
             )
 
     def _normalize_trading_csv_settings(self) -> None:

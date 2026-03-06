@@ -14,6 +14,38 @@ from app.trading.evidence_contracts import (
 
 
 class TestPromotionTruthfulness(TestCase):
+    def test_promotion_prerequisites_fail_closed_on_deterministic_evidence_without_policy_toggle(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_root = Path(tmpdir)
+            result = evaluate_promotion_prerequisites(
+                policy_payload={},
+                gate_report_payload={
+                    'promotion_allowed': True,
+                    'recommended_mode': 'paper',
+                    'promotion_evidence': {
+                        'janus_q': {
+                            'artifact_ref': 'research/janus-q-evidence.json',
+                            'artifact_authority': evidence_contract_payload(
+                                provenance=ArtifactProvenance.SYNTHETIC_GENERATED,
+                                maturity=EvidenceMaturity.STUB,
+                                authoritative=False,
+                                placeholder=True,
+                            ),
+                        }
+                    },
+                },
+                candidate_state_payload={},
+                promotion_target='paper',
+                artifact_root=artifact_root,
+            )
+
+        self.assertIn(
+            'promotion_evidence_deterministic_authority_blocked',
+            result.reasons,
+        )
+
     def test_promotion_prerequisites_fail_on_non_authoritative_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             artifact_root = Path(tmpdir)
@@ -178,3 +210,145 @@ class TestPromotionTruthfulness(TestCase):
             'shadow_live_deviation_avg_abs_slippage_bps_exceeds_threshold',
             result.reasons,
         )
+
+    def test_promotion_prerequisites_fail_when_multi_strategy_portfolio_is_not_fully_compiled(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_root = Path(tmpdir)
+            result = evaluate_promotion_prerequisites(
+                policy_payload={},
+                gate_report_payload={
+                    'promotion_allowed': True,
+                    'recommended_mode': 'paper',
+                    'vnext': {
+                        'portfolio_promotion': {
+                            'strategy_count': 2,
+                            'spec_compiled_count': 1,
+                            'missing_policy_refs': [
+                                'legacy-a:promotion_policy_ref',
+                            ],
+                        }
+                    },
+                },
+                candidate_state_payload={},
+                promotion_target='paper',
+                artifact_root=artifact_root,
+            )
+
+        self.assertIn(
+            'portfolio_promotion_strategy_compilation_incomplete',
+            result.reasons,
+        )
+        self.assertIn('portfolio_promotion_policy_refs_missing', result.reasons)
+
+    def test_promotion_prerequisites_fail_when_dependency_quorum_is_not_allow(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_root = Path(tmpdir)
+            result = evaluate_promotion_prerequisites(
+                policy_payload={
+                    'promotion_required_artifacts': [],
+                    'promotion_require_patch_targets': [],
+                    'gate6_require_profitability_evidence': False,
+                    'promotion_require_janus_evidence': False,
+                    'gate6_require_janus_evidence': False,
+                    'promotion_require_jangar_dependency_quorum': True,
+                    'promotion_jangar_dependency_quorum_required_targets': [
+                        'paper',
+                        'live',
+                    ],
+                },
+                gate_report_payload={
+                    'promotion_allowed': True,
+                    'recommended_mode': 'paper',
+                },
+                candidate_state_payload={
+                    'dependencyQuorum': {
+                        'decision': 'delay',
+                        'reasons': ['workflow_backoff_warning'],
+                        'message': 'Delay capital promotion until workflows recover.',
+                    }
+                },
+                promotion_target='paper',
+                artifact_root=artifact_root,
+            )
+
+        self.assertIn('jangar_dependency_quorum_delay', result.reasons)
+
+    def test_promotion_prerequisites_fail_when_alpha_readiness_contract_is_unmapped(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_root = Path(tmpdir)
+            result = evaluate_promotion_prerequisites(
+                policy_payload={
+                    'promotion_required_artifacts': [],
+                    'promotion_require_patch_targets': [],
+                    'gate6_require_profitability_evidence': False,
+                    'promotion_require_janus_evidence': False,
+                    'gate6_require_janus_evidence': False,
+                    'promotion_require_alpha_readiness_contract': True,
+                    'promotion_alpha_readiness_required_targets': [
+                        'paper',
+                        'live',
+                    ],
+                },
+                gate_report_payload={
+                    'promotion_allowed': True,
+                    'recommended_mode': 'paper',
+                },
+                candidate_state_payload={
+                    'alphaReadiness': {
+                        'mode': 'candidate_alignment_v1',
+                        'registry_loaded': True,
+                        'registry_errors': [],
+                        'strategy_families': ['legacy_macd_rsi'],
+                        'matched_hypothesis_ids': [],
+                        'missing_strategy_families': ['legacy_macd_rsi'],
+                        'promotion_eligible': False,
+                        'reasons': ['strategy_family_hypothesis_unmapped'],
+                        'dependency_quorum': {
+                            'decision': 'allow',
+                            'reasons': [],
+                            'message': 'ok',
+                        },
+                    }
+                },
+                promotion_target='paper',
+                artifact_root=artifact_root,
+            )
+
+        self.assertIn('alpha_readiness_strategy_family_unmapped', result.reasons)
+        self.assertIn('alpha_readiness_not_promotion_eligible', result.reasons)
+
+    def test_promotion_prerequisites_fail_when_alpha_readiness_or_dependency_quorum_block(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_root = Path(tmpdir)
+            result = evaluate_promotion_prerequisites(
+                policy_payload={},
+                gate_report_payload={
+                    'promotion_allowed': True,
+                    'recommended_mode': 'paper',
+                    'alpha_readiness': {
+                        'promotion_eligible': False,
+                        'strategy_families': ['intraday_tsmom_v1'],
+                        'matched_hypothesis_ids': [],
+                        'reasons': ['strategy_family_hypothesis_unmapped'],
+                    },
+                    'dependency_quorum': {
+                        'decision': 'delay',
+                        'reasons': ['workflows_degraded'],
+                        'message': 'Jangar workflow reliability is degraded.',
+                    },
+                },
+                candidate_state_payload={},
+                promotion_target='paper',
+                artifact_root=artifact_root,
+            )
+
+        self.assertIn('alpha_readiness_not_promotion_eligible', result.reasons)
+        self.assertIn('jangar_dependency_quorum_delay', result.reasons)

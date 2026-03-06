@@ -1805,6 +1805,17 @@ class TestTradingApi(TestCase):
                                 },
                             },
                         },
+                        "dependency_quorum": {
+                            "decision": "allow",
+                            "reasons": [],
+                            "message": "All upstream dependencies are healthy.",
+                        },
+                        "alpha_readiness": {
+                            "promotion_eligible": True,
+                            "strategy_families": ["intraday_tsmom_v1"],
+                            "matched_hypothesis_ids": ["intraday-tsmom"],
+                            "reasons": [],
+                        },
                         "vnext": {
                             "strategy_compilation": [
                                 {
@@ -1843,6 +1854,13 @@ class TestTradingApi(TestCase):
                 self.assertEqual(
                     payload["bridge_status"]["evidence_authority"]["authoritative_count"],
                     2,
+                )
+                self.assertEqual(
+                    payload["bridge_status"]["dependency_quorum"]["decision"],
+                    "allow",
+                )
+                self.assertTrue(
+                    payload["bridge_status"]["alpha_readiness"]["promotion_eligible"]
                 )
             finally:
                 if original_scheduler is None:

@@ -9,6 +9,11 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, cast
 
+from ..evidence_contracts import (
+    ArtifactProvenance,
+    EvidenceMaturity,
+    evidence_contract_payload,
+)
 from ..evaluation import WalkForwardDecision
 from ..features import extract_price
 from ..models import SignalEnvelope
@@ -221,6 +226,16 @@ def _strength_label(car: Decimal, *, threshold: Decimal) -> str:
     return "weak"
 
 
+def _janus_scaffold_authority(*, notes: str) -> dict[str, object]:
+    return evidence_contract_payload(
+        provenance=ArtifactProvenance.SYNTHETIC_GENERATED,
+        maturity=EvidenceMaturity.STUB,
+        authoritative=False,
+        placeholder=True,
+        notes=notes,
+    )
+
+
 @dataclass(frozen=True)
 class JanusEventCarRecordV1:
     event_id: str
@@ -269,6 +284,7 @@ class JanusEventCarArtifactV1:
     records: list[JanusEventCarRecordV1]
     summary: dict[str, object]
     manifest_hash: str
+    artifact_authority: dict[str, object]
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -280,6 +296,7 @@ class JanusEventCarArtifactV1:
             "records": [item.to_payload() for item in self.records],
             "summary": dict(self.summary),
             "manifest_hash": self.manifest_hash,
+            "artifact_authority": dict(self.artifact_authority),
         }
 
 
@@ -369,6 +386,7 @@ class JanusHgrmRewardArtifactV1:
     rewards: list[JanusHgrmRewardRecordV1]
     summary: dict[str, object]
     manifest_hash: str
+    artifact_authority: dict[str, object]
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -382,6 +400,7 @@ class JanusHgrmRewardArtifactV1:
             "rewards": [item.to_payload() for item in self.rewards],
             "summary": dict(self.summary),
             "manifest_hash": self.manifest_hash,
+            "artifact_authority": dict(self.artifact_authority),
         }
 
 
@@ -565,6 +584,9 @@ def build_janus_event_car_artifact_v1(
         records=records,
         summary=summary,
         manifest_hash=manifest,
+        artifact_authority=_janus_scaffold_authority(
+            notes="Janus event/CAR artifact is currently deterministic scaffold output."
+        ),
     )
 
 
@@ -762,6 +784,9 @@ def build_janus_hgrm_reward_artifact_v1(
         rewards=rewards,
         summary=summary,
         manifest_hash=manifest,
+        artifact_authority=_janus_scaffold_authority(
+            notes="Janus HGRM reward artifact is currently deterministic scaffold output."
+        ),
     )
 
 
@@ -791,6 +816,7 @@ def build_janus_q_evidence_summary_v1(
             "event_count": event_count,
             "manifest_hash": event_car.manifest_hash,
             "artifact_ref": event_car_artifact_ref,
+            "artifact_authority": dict(event_car.artifact_authority),
         },
         "hgrm_reward": {
             "schema_version": hgrm_reward.schema_version,
@@ -801,7 +827,11 @@ def build_janus_q_evidence_summary_v1(
             ),
             "manifest_hash": hgrm_reward.manifest_hash,
             "artifact_ref": hgrm_reward_artifact_ref,
+            "artifact_authority": dict(hgrm_reward.artifact_authority),
         },
+        "artifact_authority": _janus_scaffold_authority(
+            notes="Janus-Q evidence summary is currently assembled from deterministic scaffold artifacts."
+        ),
     }
 
 

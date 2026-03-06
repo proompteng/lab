@@ -515,6 +515,215 @@ class ResearchPromotion(Base, CreatedAtMixin):
     )
 
 
+class VNextDatasetSnapshot(Base, TimestampMixin):
+    """Normalized dataset snapshot records for vNext research/promotion evidence."""
+
+    __tablename__ = "vnext_dataset_snapshots"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    dataset_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    source: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    dataset_version: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    dataset_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    dataset_to: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    artifact_ref: Mapped[Optional[str]] = mapped_column(String(length=255), nullable=True)
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("ix_vnext_dataset_snapshots_run_id", "run_id"),
+        Index("ix_vnext_dataset_snapshots_candidate_id", "candidate_id"),
+        Index("ix_vnext_dataset_snapshots_dataset_id", "dataset_id"),
+        Index(
+            "uq_vnext_dataset_snapshots_run_dataset_id",
+            "run_id",
+            "dataset_id",
+            unique=True,
+        ),
+    )
+
+
+class VNextFeatureViewSpec(Base, TimestampMixin):
+    """Normalized feature view specs referenced by a vNext candidate."""
+
+    __tablename__ = "vnext_feature_view_specs"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    strategy_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    feature_view_spec_ref: Mapped[str] = mapped_column(String(length=255), nullable=False)
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("ix_vnext_feature_view_specs_run_id", "run_id"),
+        Index("ix_vnext_feature_view_specs_candidate_id", "candidate_id"),
+        Index("ix_vnext_feature_view_specs_strategy_id", "strategy_id"),
+        Index(
+            "uq_vnext_feature_view_specs_candidate_strategy",
+            "candidate_id",
+            "strategy_id",
+            unique=True,
+        ),
+    )
+
+
+class VNextModelArtifact(Base, TimestampMixin):
+    """Normalized model/rule artifacts behind a compiled vNext strategy."""
+
+    __tablename__ = "vnext_model_artifacts"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    strategy_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    artifact_ref: Mapped[str] = mapped_column(String(length=255), nullable=False)
+    artifact_kind: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("ix_vnext_model_artifacts_run_id", "run_id"),
+        Index("ix_vnext_model_artifacts_candidate_id", "candidate_id"),
+        Index("ix_vnext_model_artifacts_strategy_id", "strategy_id"),
+        Index(
+            "uq_vnext_model_artifacts_candidate_strategy_ref",
+            "candidate_id",
+            "strategy_id",
+            "artifact_ref",
+            unique=True,
+        ),
+    )
+
+
+class VNextExperimentSpec(Base, TimestampMixin):
+    """Normalized typed experiment spec records for vNext research automation."""
+
+    __tablename__ = "vnext_experiment_specs"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    experiment_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("ix_vnext_experiment_specs_run_id", "run_id"),
+        Index("ix_vnext_experiment_specs_candidate_id", "candidate_id"),
+        Index("ix_vnext_experiment_specs_experiment_id", "experiment_id"),
+        Index(
+            "uq_vnext_experiment_specs_candidate_experiment",
+            "candidate_id",
+            "experiment_id",
+            unique=True,
+        ),
+    )
+
+
+class VNextExperimentRun(Base, TimestampMixin):
+    """Normalized experiment-run lineage records for vNext research execution."""
+
+    __tablename__ = "vnext_experiment_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    experiment_id: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    stage_lineage_root: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("ix_vnext_experiment_runs_run_id", "run_id"),
+        Index("ix_vnext_experiment_runs_candidate_id", "candidate_id"),
+        Index("ix_vnext_experiment_runs_experiment_id", "experiment_id"),
+        Index(
+            "uq_vnext_experiment_runs_candidate_run",
+            "candidate_id",
+            "run_id",
+            unique=True,
+        ),
+    )
+
+
+class VNextSimulationCalibration(Base, TimestampMixin):
+    """Normalized simulator calibration evidence for vNext promotion."""
+
+    __tablename__ = "vnext_simulation_calibrations"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    artifact_ref: Mapped[str] = mapped_column(String(length=255), nullable=False)
+    status: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    order_count: Mapped[Optional[int]] = mapped_column(BigInteger(), nullable=True)
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("ix_vnext_simulation_calibrations_run_id", "run_id"),
+        Index("ix_vnext_simulation_calibrations_candidate_id", "candidate_id"),
+        Index(
+            "uq_vnext_simulation_calibrations_candidate_artifact",
+            "candidate_id",
+            "artifact_ref",
+            unique=True,
+        ),
+    )
+
+
+class VNextShadowLiveDeviation(Base, TimestampMixin):
+    """Normalized shadow/live deviation evidence for vNext promotion."""
+
+    __tablename__ = "vnext_shadow_live_deviations"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    artifact_ref: Mapped[str] = mapped_column(String(length=255), nullable=False)
+    status: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    order_count: Mapped[Optional[int]] = mapped_column(BigInteger(), nullable=True)
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("ix_vnext_shadow_live_deviations_run_id", "run_id"),
+        Index("ix_vnext_shadow_live_deviations_candidate_id", "candidate_id"),
+        Index(
+            "uq_vnext_shadow_live_deviations_candidate_artifact",
+            "candidate_id",
+            "artifact_ref",
+            unique=True,
+        ),
+    )
+
+
+class VNextPromotionDecision(Base, TimestampMixin):
+    """Normalized promotion decision rows for vNext portfolio-aware governance."""
+
+    __tablename__ = "vnext_promotion_decisions"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    candidate_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    promotion_target: Mapped[str] = mapped_column(String(length=16), nullable=False)
+    recommended_mode: Mapped[Optional[str]] = mapped_column(String(length=16), nullable=True)
+    decision_action: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
+    allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    gate_report_trace_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    recommendation_trace_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("ix_vnext_promotion_decisions_run_id", "run_id"),
+        Index("ix_vnext_promotion_decisions_candidate_id", "candidate_id"),
+        Index("ix_vnext_promotion_decisions_target", "promotion_target"),
+        Index(
+            "uq_vnext_promotion_decisions_candidate_target",
+            "candidate_id",
+            "promotion_target",
+            unique=True,
+        ),
+    )
+
+
 class WhitepaperDocument(Base, TimestampMixin):
     """Logical whitepaper record with source metadata and lifecycle status."""
 
@@ -1688,6 +1897,14 @@ __all__ = [
     "ResearchFoldMetrics",
     "ResearchStressMetrics",
     "ResearchPromotion",
+    "VNextDatasetSnapshot",
+    "VNextFeatureViewSpec",
+    "VNextModelArtifact",
+    "VNextExperimentSpec",
+    "VNextExperimentRun",
+    "VNextSimulationCalibration",
+    "VNextShadowLiveDeviation",
+    "VNextPromotionDecision",
     "LeanBacktestRun",
     "LeanExecutionShadowEvent",
     "LeanCanaryIncident",

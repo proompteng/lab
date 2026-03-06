@@ -32,6 +32,14 @@ from .models import (
     ExecutionTCAMetric,
     Strategy,
     TradeDecision,
+    VNextDatasetSnapshot,
+    VNextExperimentRun,
+    VNextExperimentSpec,
+    VNextFeatureViewSpec,
+    VNextModelArtifact,
+    VNextPromotionDecision,
+    VNextShadowLiveDeviation,
+    VNextSimulationCalibration,
     WhitepaperAnalysisRun,
     WhitepaperCodexAgentRun,
     WhitepaperDesignPullRequest,
@@ -2930,14 +2938,15 @@ def _build_autonomy_bridge_status(
             },
             "simulation_calibration": None,
             "shadow_live_deviation": None,
-            "evidence_authority": {
-                "gate_report_trace_id": None,
-                "recommendation_trace_id": None,
-                "authoritative_count": 0,
-                "total_count": 0,
-                "missing": [],
-            },
-        }
+        "evidence_authority": {
+            "gate_report_trace_id": None,
+            "recommendation_trace_id": None,
+            "authoritative_count": 0,
+            "total_count": 0,
+            "missing": [],
+        },
+        "persisted_vnext_objects": None,
+    }
 
     source = "gate_report"
     if (
@@ -2953,6 +2962,16 @@ def _build_autonomy_bridge_status(
         if isinstance(promotion_evidence_raw, dict)
         else {}
     )
+    dependency_quorum_payload = (
+        cast(dict[str, object], gate_payload.get("dependency_quorum"))
+        if isinstance(gate_payload.get("dependency_quorum"), dict)
+        else {}
+    )
+    alpha_readiness_payload = (
+        cast(dict[str, object], gate_payload.get("alpha_readiness"))
+        if isinstance(gate_payload.get("alpha_readiness"), dict)
+        else {}
+    )
     authority_raw = provenance_payload.get("promotion_evidence_authority")
     authority_payload = (
         cast(dict[str, object], authority_raw)
@@ -2962,6 +2981,7 @@ def _build_autonomy_bridge_status(
     vnext_raw = gate_payload.get("vnext")
     vnext_payload = cast(dict[str, object], vnext_raw) if isinstance(vnext_raw, dict) else {}
     strategy_compilation_raw = vnext_payload.get("strategy_compilation")
+    portfolio_promotion_raw = vnext_payload.get("portfolio_promotion")
     strategy_compilation_items = (
         [
             cast(dict[str, object], item)
@@ -3001,6 +3021,17 @@ def _build_autonomy_bridge_status(
             "spec_compiled": spec_compiled,
             "compiler_sources": compiler_sources,
         },
+        "dependency_quorum": (
+            dependency_quorum_payload if dependency_quorum_payload else None
+        ),
+        "alpha_readiness": (
+            alpha_readiness_payload if alpha_readiness_payload else None
+        ),
+        "portfolio_promotion": (
+            cast(dict[str, object], portfolio_promotion_raw)
+            if isinstance(portfolio_promotion_raw, dict)
+            else None
+        ),
         "simulation_calibration": (
             promotion_evidence.get("simulation_calibration")
             if isinstance(promotion_evidence.get("simulation_calibration"), dict)
@@ -3055,6 +3086,69 @@ def _build_autonomy_bridge_status(
             "total_count": len(promotion_evidence),
             "missing": sorted(set(missing_authority)),
         },
+        "persisted_vnext_objects": _build_persisted_vnext_status(
+            str(gate_payload.get("run_id") or "").strip() or None
+        ),
+    }
+
+
+def _build_persisted_vnext_status(run_id: str | None) -> dict[str, object] | None:
+    if not run_id:
+        return None
+    try:
+        with SessionLocal() as session:
+            dataset_snapshots = session.execute(
+                select(func.count(VNextDatasetSnapshot.id)).where(
+                    VNextDatasetSnapshot.run_id == run_id
+                )
+            ).scalar_one()
+            feature_view_specs = session.execute(
+                select(func.count(VNextFeatureViewSpec.id)).where(
+                    VNextFeatureViewSpec.run_id == run_id
+                )
+            ).scalar_one()
+            model_artifacts = session.execute(
+                select(func.count(VNextModelArtifact.id)).where(
+                    VNextModelArtifact.run_id == run_id
+                )
+            ).scalar_one()
+            experiment_specs = session.execute(
+                select(func.count(VNextExperimentSpec.id)).where(
+                    VNextExperimentSpec.run_id == run_id
+                )
+            ).scalar_one()
+            experiment_runs = session.execute(
+                select(func.count(VNextExperimentRun.id)).where(
+                    VNextExperimentRun.run_id == run_id
+                )
+            ).scalar_one()
+            simulation_calibrations = session.execute(
+                select(func.count(VNextSimulationCalibration.id)).where(
+                    VNextSimulationCalibration.run_id == run_id
+                )
+            ).scalar_one()
+            shadow_live_deviations = session.execute(
+                select(func.count(VNextShadowLiveDeviation.id)).where(
+                    VNextShadowLiveDeviation.run_id == run_id
+                )
+            ).scalar_one()
+            promotion_decisions = session.execute(
+                select(func.count(VNextPromotionDecision.id)).where(
+                    VNextPromotionDecision.run_id == run_id
+                )
+            ).scalar_one()
+    except Exception:
+        return None
+
+    return {
+        "dataset_snapshots": int(dataset_snapshots),
+        "feature_view_specs": int(feature_view_specs),
+        "model_artifacts": int(model_artifacts),
+        "experiment_specs": int(experiment_specs),
+        "experiment_runs": int(experiment_runs),
+        "simulation_calibrations": int(simulation_calibrations),
+        "shadow_live_deviations": int(shadow_live_deviations),
+        "promotion_decisions_v2": int(promotion_decisions),
     }
 
 
