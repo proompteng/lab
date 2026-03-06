@@ -19,6 +19,9 @@ runner:
     digest: sha256:ba6fda8f75cdebcd9c6fae1dfee8a77067e6d11432491c94be0a7ffebf1380f3
 argocdHooks:
   enabled: true
+  image:
+    repository: alpine/k8s
+    tag: 1.30.11
   smoke:
     agentRun:
       apiVersion: agents.proompteng.ai/v1alpha1
