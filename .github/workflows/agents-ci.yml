@@ -248,6 +248,14 @@ jobs:
             return 1
           }
 
+          recreate_kind_cluster() {
+            echo "Recreating kind cluster ${KIND_CLUSTER_NAME} before smoke fallback validation."
+            kind delete cluster --name "${KIND_CLUSTER_NAME}" >/dev/null 2>&1 || true
+            if ! run_with_progress "kind recreate cluster" 6 env KIND_EXPERIMENTAL_DOCKER_NETWORK="${KIND_DOCKER_NETWORK_NAME}" kind create cluster --name "${KIND_CLUSTER_NAME}" --image kindest/node:v1.29.4 --wait 180s; then
+              run_step_failure "Failed to recreate kind cluster ${KIND_CLUSTER_NAME} after public image fallback" "$?"
+            fi
+          }
+
           OUTPUT_ENTRY="${WORKSPACE}/services/jangar/.output/server/index.mjs"
           OUTPUT_PROTO="${WORKSPACE}/services/jangar/.output/server/proto/proompteng/jangar/v1/agentctl.proto"
           BUILD_OUTPUT=0
@@ -370,6 +378,7 @@ jobs:
             IMAGE_REPOSITORY="${PUBLIC_IMAGE_REPOSITORY}"
             IMAGE_TAG="${PUBLIC_IMAGE_TAG}"
             IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+            recreate_kind_cluster
           fi
 
           echo "BUILT_JANGAR_IMAGE_REPOSITORY=${IMAGE_REPOSITORY}" >> "${GITHUB_ENV}"
