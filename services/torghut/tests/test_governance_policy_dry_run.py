@@ -13,6 +13,22 @@ def _default_gate_report(now: datetime) -> dict[str, object]:
         "run_id": "run-dry-run",
         "promotion_allowed": True,
         "recommended_mode": "paper",
+        "dependency_quorum": {
+            "decision": "allow",
+            "reasons": [],
+            "message": "Control-plane admission dependencies are healthy.",
+        },
+        "alpha_readiness": {
+            "mode": "candidate_alignment_v1",
+            "registry_loaded": True,
+            "registry_path": "config/hypotheses",
+            "registry_errors": [],
+            "strategy_families": ["deterministic"],
+            "matched_hypothesis_ids": ["H-DRY-RUN-01"],
+            "missing_strategy_families": [],
+            "promotion_eligible": True,
+            "reasons": [],
+        },
         "throughput": {
             "signal_count": 10,
             "decision_count": 6,

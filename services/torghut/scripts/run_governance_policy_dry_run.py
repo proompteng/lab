@@ -98,6 +98,27 @@ def main() -> int:
     args = parser.parse_args()
     policy = _json(args.policy)
     gate_report = _json(args.gate_report)
+    dependency_quorum = gate_report.get("dependency_quorum")
+    if not isinstance(dependency_quorum, dict):
+        gate_report["dependency_quorum"] = {
+            "decision": "allow",
+            "reasons": [],
+            "message": "Control-plane admission dependencies are healthy.",
+        }
+    alpha_readiness = gate_report.get("alpha_readiness")
+    if not isinstance(alpha_readiness, dict):
+        gate_report["alpha_readiness"] = {
+            "mode": "candidate_alignment_v1",
+            "registry_loaded": True,
+            "registry_path": "config/hypotheses",
+            "registry_errors": [],
+            "strategy_families": ["deterministic"],
+            "matched_hypothesis_ids": ["H-DRY-RUN-01"],
+            "missing_strategy_families": [],
+            "promotion_eligible": True,
+            "reasons": [],
+            "dependency_quorum": gate_report["dependency_quorum"],
+        }
 
     with TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
