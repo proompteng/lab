@@ -10,7 +10,7 @@ spec:
   template:
     spec:
       restartPolicy: OnFailure
-      serviceAccountName: torghut
+      serviceAccountName: torghut-runtime
       containers:
         - name: backfill
           image: registry.ide-newton.ts.net/lab/torghut@sha256:5fb50a1948ccf6960b8bede3dc1f0cddfb76275ad962c909ce5ee7f79dcbfd0c

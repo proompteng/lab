@@ -6,7 +6,7 @@ metadata:
   labels:
     app.kubernetes.io/name: torghut
 spec:
-  serviceAccountName: torghut
+  serviceAccountName: torghut-runtime
   entrypoint: run
   arguments:
     parameters:
