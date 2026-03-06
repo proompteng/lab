@@ -1,22 +1,22 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: 6dbe344d
-  digest: sha256:a5e6619500fb97a49e5c4a403f74bbd00fae006e57ad01b70e5fbca02956d2af
+  tag: c55d0c94
+  digest: sha256:ba6fda8f75cdebcd9c6fae1dfee8a77067e6d11432491c94be0a7ffebf1380f3
   pullPolicy: IfNotPresent
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar-control-plane
-    tag: 6dbe344d
-    digest: sha256:a6e4564f8cbfdcbfb91ef70e6c523945cdfa3ffdd235f441fca4e918f59d2c5f
+    tag: c55d0c94
+    digest: sha256:fb150742819466012b619a496ae0ce51bbb5cebabd20d1e0173d3093fa3fd2e0
   env:
     vars:
       JANGAR_CONTROL_PLANE_CACHE_ENABLED: "true"
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar
-    tag: 6dbe344d
-    digest: sha256:a5e6619500fb97a49e5c4a403f74bbd00fae006e57ad01b70e5fbca02956d2af
+    tag: c55d0c94
+    digest: sha256:ba6fda8f75cdebcd9c6fae1dfee8a77067e6d11432491c94be0a7ffebf1380f3
 argocdHooks:
   enabled: true
   smoke:
@@ -47,7 +47,8 @@ argocdHooks:
           head: codex/swarm-smoke
           issueNumber: swarm-codex-smoke
           issueTitle: Codex Spark smoke validation
-          objective: verify api-backed codex auth, provider startup, and the promoted runner image without VCS or external side effects
+          objective: verify api-backed codex auth, provider startup, and the promoted runner image without VCS or external side
+            effects
         vcsRef:
           name: github
         vcsPolicy:
