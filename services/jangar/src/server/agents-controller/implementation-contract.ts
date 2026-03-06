@@ -88,8 +88,9 @@ const renderParameterTemplate = (template: string, context: Record<string, unkno
   const rendered = renderTemplate(template, context)
   return rendered.replace(/\$\{\s*([^}]+)\s*\}/g, (_match, rawPath) => {
     const path = String(rawPath).trim()
-    if (!path) return ''
+    if (!path) return _match
     const value = resolvePath(context, path) ?? context[path]
+    if (value == null) return _match
     return stringifyTemplateValue(value)
   })
 }

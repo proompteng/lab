@@ -217,6 +217,12 @@ def _register_whitepaper_inngest_routes(app: FastAPI) -> inngest.Inngest | None:
 
     app.state.whitepaper_inngest_registered = True
     WHITEPAPER_WORKFLOW.set_inngest_client(client)
+    logger.info(
+        "Registered whitepaper Inngest routes app_id=%s requested_fn_id=%s finalized_fn_id=%s",
+        app_id,
+        requested_fn_id,
+        finalized_fn_id,
+    )
     return client
 
 
@@ -228,6 +234,16 @@ async def lifespan(app: FastAPI):
     whitepaper_worker = WhitepaperKafkaWorker(session_factory=SessionLocal)
     app.state.trading_scheduler = scheduler
     app.state.whitepaper_worker = whitepaper_worker
+    logger.info(
+        "Torghut startup initiated build_version=%s build_commit=%s app_env=%s log_level=%s log_format=%s trading_enabled=%s whitepaper_workflow_enabled=%s",
+        BUILD_VERSION,
+        BUILD_COMMIT,
+        settings.app_env,
+        settings.log_level,
+        settings.log_format,
+        settings.trading_enabled,
+        whitepaper_workflow_enabled(),
+    )
 
     try:
         ensure_schema()
@@ -243,11 +259,20 @@ async def lifespan(app: FastAPI):
     if whitepaper_workflow_enabled():
         await whitepaper_worker.start()
 
+    logger.info(
+        "Torghut startup complete trading_scheduler_started=%s whitepaper_worker_started=%s inngest_registered=%s",
+        bool(getattr(scheduler, "_task", None)),
+        bool(getattr(whitepaper_worker, "_task", None)),
+        bool(getattr(app.state, "whitepaper_inngest_registered", False)),
+    )
+
     yield
 
+    logger.info("Torghut shutdown initiated")
     await whitepaper_worker.stop()
     await scheduler.stop()
     shutdown_posthog_telemetry()
+    logger.info("Torghut shutdown complete")
 
 
 app = FastAPI(title="torghut", lifespan=lifespan)
@@ -1244,6 +1269,9 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
     llm_evaluation = _load_llm_evaluation(session)
     tca_summary = _load_tca_summary(session)
     control_plane_contract = _build_control_plane_contract(state)
+    market_context_status = scheduler.market_context_status()
+    shorting_metadata_status = scheduler.shorting_metadata_status()
+    rejection_alert_status = scheduler.rejection_alert_status()
     return {
         "enabled": settings.trading_enabled,
         "autonomy_enabled": settings.trading_autonomy_enabled,
@@ -1304,6 +1332,34 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
             "no_signal_streak_alert_threshold": settings.trading_signal_no_signal_streak_alert_threshold,
             "signal_lag_alert_threshold_seconds": settings.trading_signal_stale_lag_alert_seconds,
             "signal_continuity_recovery_cycles": settings.trading_signal_continuity_recovery_cycles,
+        },
+        "market_context": market_context_status,
+        "shorting_metadata": shorting_metadata_status,
+        "rejections": {
+            "policy_veto_total": state.metrics.llm_policy_veto_total,
+            "runtime_fallback_total": state.metrics.llm_runtime_fallback_total,
+            "market_context_block_total": state.metrics.llm_market_context_block_total,
+            "pre_llm_capacity_reject_total": state.metrics.pre_llm_capacity_reject_total,
+            "pre_llm_qty_below_min_total": state.metrics.pre_llm_qty_below_min_total,
+            "runtime_fallback_ratio": rejection_alert_status[
+                "runtime_fallback_ratio"
+            ],
+            "runtime_fallback_alert_ratio_threshold": rejection_alert_status[
+                "runtime_fallback_alert_ratio_threshold"
+            ],
+            "runtime_fallback_alert_active": rejection_alert_status[
+                "runtime_fallback_alert_active"
+            ],
+        },
+        "alerts": {
+            "market_context_alert_active": market_context_status["alert_active"],
+            "market_context_alert_reason": market_context_status["alert_reason"],
+            "runtime_fallback_alert_active": rejection_alert_status[
+                "runtime_fallback_alert_active"
+            ],
+            "shorting_metadata_alert_active": rejection_alert_status[
+                "shorting_metadata_alert_active"
+            ],
         },
         "rollback": {
             "emergency_stop_active": state.emergency_stop_active,
@@ -1553,11 +1609,35 @@ def prometheus_metrics(session: Session = Depends(get_session)) -> Response:
         scheduler = TradingScheduler()
         app.state.trading_scheduler = scheduler
     metrics = scheduler.state.metrics
+    market_context_status = scheduler.market_context_status()
+    shorting_metadata_status = scheduler.shorting_metadata_status()
+    rejection_alert_status = scheduler.rejection_alert_status()
     payload = render_trading_metrics(
         {
             **metrics.__dict__,
             "tca_summary": _load_tca_summary(session),
             "route_provenance": _load_route_provenance_summary(session),
+            "market_context_alert_active": int(
+                bool(market_context_status.get("alert_active"))
+            ),
+            "market_context_last_freshness_seconds": _safe_int(
+                market_context_status.get("last_freshness_seconds")
+            ),
+            "market_context_last_quality_score": _safe_float(
+                market_context_status.get("last_quality_score")
+            ),
+            "llm_runtime_fallback_ratio": _safe_float(
+                rejection_alert_status.get("runtime_fallback_ratio")
+            ),
+            "llm_runtime_fallback_alert_active": int(
+                bool(rejection_alert_status.get("runtime_fallback_alert_active"))
+            ),
+            "shorting_metadata_account_ready": int(
+                shorting_metadata_status.get("account_ready") is True
+            ),
+            "shorting_metadata_alert_active": int(
+                bool(rejection_alert_status.get("shorting_metadata_alert_active"))
+            ),
         }
     )
     return Response(content=payload, media_type="text/plain; version=0.0.4")
@@ -2560,6 +2640,14 @@ def _safe_int(value: object) -> int:
     if isinstance(value, float):
         return int(value)
     return 0
+
+
+def _safe_float(value: object) -> float:
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    return 0.0
 
 
 def _load_llm_evaluation(session: Session) -> dict[str, object]:

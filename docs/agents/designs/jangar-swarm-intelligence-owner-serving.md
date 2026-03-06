@@ -87,7 +87,7 @@ Group/version/kind:
 ### `spec` (required fields)
 
 - `owner.id`: stable owner identity for accountability and routing.
-- `owner.channel`: primary conversation channel.
+- `owner.channel`: primary conversation channel URI, not a transport base URL.
 - `domains[]`: mission domains (for example `platform-reliability`, `quant-strategy`, `docs-automation`).
 - `objectives[]`: outcome statements (not task lists).
 - `mode`: `assisted` or `lights-out`.
@@ -534,6 +534,7 @@ spec:
     - continuously improve reliability and operational quality for managed services
     - continuously improve risk-adjusted outcomes under strict policy limits
   mode: lights-out
+  # Example/demo cadence. The production overlay runs all stages hourly.
   cadence:
     discoverEvery: 1m
     planEvery: 5m
@@ -595,6 +596,7 @@ spec:
     - continuously discover and implement control-plane improvements
     - autonomously construct and expand internal platform capabilities
   mode: lights-out
+  # Example/demo cadence. The production overlay runs all stages hourly.
   cadence:
     discoverEvery: 5m
     planEvery: 10m
@@ -624,6 +626,7 @@ spec:
     - continuously discover and implement alpha/risk improvements
     - optimize risk-adjusted outcomes under strict drawdown policy
   mode: lights-out
+  # Example/demo cadence. The production overlay runs all stages hourly.
   cadence:
     discoverEvery: 1m
     planEvery: 5m

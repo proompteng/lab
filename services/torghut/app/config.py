@@ -14,6 +14,10 @@ from urllib.parse import urlsplit
 from pydantic import AliasChoices, BaseModel, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .logging_config import configure_logging
+
+configure_logging()
+
 logger = logging.getLogger(__name__)
 
 FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
@@ -47,6 +51,9 @@ FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "trading_kill_switch_enabled": "torghut_trading_kill_switch_enabled",
     "trading_emergency_stop_enabled": "torghut_trading_emergency_stop_enabled",
     "trading_market_context_required": "torghut_trading_market_context_required",
+    "trading_market_context_allow_degraded_last_good": (
+        "torghut_trading_market_context_allow_degraded_last_good"
+    ),
     "llm_enabled": "torghut_llm_enabled",
     "llm_fail_open_live_approved": "torghut_llm_fail_open_live_approved",
     "llm_adjustment_allowed": "torghut_llm_adjustment_allowed",
@@ -237,6 +244,21 @@ class Settings(BaseSettings):
 
     app_env: Literal["dev", "stage", "prod"] = Field(
         default="dev", alias="APP_ENV", description="Deployment environment."
+    )
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
+        default="INFO",
+        alias="LOG_LEVEL",
+        description="Root application log level.",
+    )
+    log_format: Literal["json", "text"] = Field(
+        default="text",
+        alias="LOG_FORMAT",
+        description="Application log output format.",
+    )
+    log_access_log: bool = Field(
+        default=True,
+        alias="LOG_ACCESS_LOG",
+        description="Emit Uvicorn access logs.",
     )
     db_dsn: str = Field(
         default="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
@@ -1208,7 +1230,7 @@ class Settings(BaseSettings):
         description="Jangar market-context endpoint consumed by LLM review.",
     )
     trading_market_context_timeout_seconds: int = Field(
-        default=3,
+        default=300,
         alias="TRADING_MARKET_CONTEXT_TIMEOUT_SECONDS",
         description="Timeout for market-context fetches.",
     )
@@ -1231,6 +1253,21 @@ class Settings(BaseSettings):
         default=300,
         alias="TRADING_MARKET_CONTEXT_MAX_STALENESS_SECONDS",
         description="Maximum accepted market-context staleness.",
+    )
+    trading_market_context_allow_degraded_last_good: bool = Field(
+        default=True,
+        alias="TRADING_MARKET_CONTEXT_ALLOW_DEGRADED_LAST_GOOD",
+        description="Allow degraded last-good market context when generation failed but a bounded stale snapshot exists.",
+    )
+    trading_market_context_fundamentals_degraded_max_staleness_seconds: int = Field(
+        default=86400,
+        alias="TRADING_MARKET_CONTEXT_FUNDAMENTALS_DEGRADED_MAX_STALENESS_SECONDS",
+        description="Hard stale cap for degraded last-good fundamentals context.",
+    )
+    trading_market_context_news_degraded_max_staleness_seconds: int = Field(
+        default=1800,
+        alias="TRADING_MARKET_CONTEXT_NEWS_DEGRADED_MAX_STALENESS_SECONDS",
+        description="Hard stale cap for degraded last-good news context.",
     )
     trading_clickhouse_url: Optional[str] = Field(
         default=None, alias="TA_CLICKHOUSE_URL"
@@ -1435,6 +1472,10 @@ class Settings(BaseSettings):
     llm_dspy_live_runtime_block_qty_multiplier: float = Field(
         default=0.5,
         alias="LLM_DSPY_LIVE_RUNTIME_BLOCK_QTY_MULTIPLIER",
+    )
+    llm_dspy_runtime_fallback_alert_ratio: float = Field(
+        default=0.01,
+        alias="LLM_DSPY_RUNTIME_FALLBACK_ALERT_RATIO",
     )
     llm_dspy_compile_metrics_policy_ref: str = Field(
         default="config/trading/llm/dspy-metrics.yaml",
@@ -2109,6 +2150,10 @@ class Settings(BaseSettings):
             raise ValueError("POSTHOG_API_KEY is required when POSTHOG_ENABLED=true")
 
     def model_post_init(self, __context: Any) -> None:
+        if not os.getenv("LOG_FORMAT"):
+            self.log_format = "json" if self.app_env in {"stage", "prod"} else "text"
+        if not os.getenv("LOG_LEVEL"):
+            self.log_level = "INFO"
         self._validate_allocator_alias_environment_parity()
         self._apply_feature_flag_overrides()
         self._apply_trading_defaults()

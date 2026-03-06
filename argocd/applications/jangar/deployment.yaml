@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: "2026-03-05T08:07:50Z"
+    deploy.knative.dev/rollout: "2026-03-06T05:55:23Z"
 spec:
   replicas: 1
   strategy:
@@ -108,9 +108,9 @@ spec:
             - name: JANGAR_CI_EVENT_STREAM_ENABLED_FLAG_KEY
               value: jangar_ci_event_stream_enabled
             - name: JANGAR_MODELS
-              value: gpt-5.3-codex,gpt-5.3-codex-spark
+              value: gpt-5.4,gpt-5.3-codex-spark
             - name: JANGAR_DEFAULT_MODEL
-              value: gpt-5.3-codex
+              value: gpt-5.4
             - name: JANGAR_GIT_LOCK_RETRY_ATTEMPTS
               value: "6"
             - name: JANGAR_GIT_LOCK_RETRY_DELAY_MS
@@ -272,8 +272,14 @@ spec:
               value: "60"
             - name: JANGAR_MARKET_CONTEXT_MAX_STALENESS_SECONDS
               value: "300"
+            - name: JANGAR_MARKET_CONTEXT_PROVIDER_CHAIN
+              value: codex-spark,codex
             - name: JANGAR_MARKET_CONTEXT_PROVIDER_TIMEOUT_MS
-              value: "2000"
+              value: "10000"
+            - name: JANGAR_MARKET_CONTEXT_PROVIDER_FAILURE_THRESHOLD
+              value: "3"
+            - name: JANGAR_MARKET_CONTEXT_PROVIDER_COOLDOWN_SECONDS
+              value: "900"
             - name: JANGAR_MARKET_CONTEXT_REQUIRE_TECHNICALS_SOURCE_HEALTH
               value: "true"
             - name: JANGAR_MARKET_CONTEXT_TECHNICALS_MAX_FRESHNESS_SECONDS
@@ -293,7 +299,7 @@ spec:
             - name: JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_URL
               value: http://torghut.torghut.svc.cluster.local/trading/status
             - name: JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_TIMEOUT_MS
-              value: "2000"
+              value: "5000"
             - name: JANGAR_MARKET_CONTEXT_INGEST_ALLOW_SERVICE_ACCOUNT_TOKEN
               value: "true"
             - name: JANGAR_MARKET_CONTEXT_INGEST_ALLOWED_SERVICE_ACCOUNT_PREFIXES

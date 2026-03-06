@@ -56,6 +56,55 @@ type SnapshotRow = {
   payload: Record<string, unknown>
   citations: MarketContextProviderCitation[]
   riskFlags: string[]
+  provider: string | null
+  runName: string | null
+  updatedAt: Date | null
+}
+
+type LatestRunRow = {
+  symbol: string
+  domain: MarketContextProviderDomain
+  provider: string
+  status: string
+  metadata: Record<string, unknown>
+  error: string | null
+  updatedAt: Date
+  finishedAt: Date | null
+}
+
+export type MarketContextFailureCategory =
+  | 'provider_circuit_open'
+  | 'provider_bootstrap_failure'
+  | 'provider_attempt_timeout'
+  | 'provider_turn_failed'
+  | 'payload_validation_failure'
+  | 'finalize_callback_failure'
+  | 'attempt_budget_exhausted'
+  | 'unknown_failure'
+
+type ProviderCircuitState = {
+  provider: string
+  consecutiveFailures: number
+  threshold: number
+  cooldownSeconds: number
+  cooldownOpen: boolean
+  cooldownRemainingSeconds: number
+  lastFailureAt: Date | null
+  lastError: string | null
+}
+
+class MarketContextRunStartRejectedError extends Error {
+  readonly statusCode: number
+  readonly errorCode: string
+  readonly details: Record<string, unknown>
+
+  constructor(params: { message: string; statusCode: number; errorCode: string; details?: Record<string, unknown> }) {
+    super(params.message)
+    this.name = 'MarketContextRunStartRejectedError'
+    this.statusCode = params.statusCode
+    this.errorCode = params.errorCode
+    this.details = params.details ?? {}
+  }
 }
 
 type IngestPayload = {
@@ -171,6 +220,15 @@ const parsePositiveInt = (value: string | undefined, fallback: number) => {
   const parsed = Number.parseInt(value, 10)
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback
   return parsed
+}
+
+const parseProviderChain = (value: string | undefined, fallback: string[]) => {
+  if (!value) return fallback
+  const providers = value
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+  return providers.length > 0 ? providers : fallback
 }
 
 const parseTimestamp = (value: unknown): Date | null => {
@@ -306,6 +364,9 @@ const resolveSettings = () => {
       process.env.JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_TIMEOUT_MS,
       2000,
     ),
+    providerChain: parseProviderChain(process.env.JANGAR_MARKET_CONTEXT_PROVIDER_CHAIN, ['codex-spark', 'codex']),
+    providerFailureThreshold: parsePositiveInt(process.env.JANGAR_MARKET_CONTEXT_PROVIDER_FAILURE_THRESHOLD, 3),
+    providerCooldownSeconds: parsePositiveInt(process.env.JANGAR_MARKET_CONTEXT_PROVIDER_COOLDOWN_SECONDS, 900),
   }
 }
 
@@ -324,7 +385,7 @@ const buildMissingContext = (params: { domain: MarketContextProviderDomain; symb
     payload: {
       symbol: params.symbol,
       domain: params.domain,
-      provider: 'codex-spark',
+      provider: resolveSettings().providerChain[0] ?? 'codex-spark',
       status: 'missing',
     },
     citations: [] as MarketContextProviderCitation[],
@@ -375,8 +436,11 @@ const readLatestSnapshot = async (params: {
     payload: unknown
     citations: unknown
     risk_flags: unknown
+    provider: string | null
+    run_name: string | null
+    updated_at: unknown
   }>`
-    SELECT symbol, domain, as_of, source_count, quality_score, payload, citations, risk_flags
+    SELECT symbol, domain, as_of, source_count, quality_score, payload, citations, risk_flags, provider, run_name, updated_at
     FROM torghut_market_context_snapshots
     WHERE symbol = ${params.symbol}
       AND domain = ${params.domain}
@@ -398,7 +462,215 @@ const readLatestSnapshot = async (params: {
     payload: coercePayload(row.payload),
     citations: coerceCitations(row.citations),
     riskFlags: coerceRiskFlags(row.risk_flags),
+    provider: parseNonEmptyString(row.provider),
+    runName: parseNonEmptyString(row.run_name),
+    updatedAt: parseTimestamp(row.updated_at),
   }
+}
+
+const readLatestRun = async (params: {
+  symbol: string
+  domain: MarketContextProviderDomain
+}): Promise<LatestRunRow | null> => {
+  const db = await resolveDbWithMigrations()
+  if (!db) return null
+
+  const result = await sql<{
+    symbol: string
+    domain: string
+    provider: string
+    status: string
+    metadata: unknown
+    error: string | null
+    updated_at: Date
+    finished_at: Date | null
+  }>`
+    SELECT symbol, domain, provider, status, metadata, error, updated_at, finished_at
+    FROM torghut_market_context_runs
+    WHERE domain = ${params.domain}
+      AND symbol IN (${params.symbol}, '*')
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `.execute(db)
+
+  const row = result.rows[0]
+  if (!row) return null
+  const domain = asDomain(row.domain)
+  if (!domain) return null
+  return {
+    symbol: row.symbol,
+    domain,
+    provider: row.provider,
+    status: row.status,
+    metadata: coercePayload(row.metadata),
+    error: row.error,
+    updatedAt: row.updated_at,
+    finishedAt: row.finished_at,
+  }
+}
+
+const parseFailureCategory = (value: unknown): MarketContextFailureCategory | null => {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim()
+  if (
+    normalized === 'provider_circuit_open' ||
+    normalized === 'provider_bootstrap_failure' ||
+    normalized === 'provider_attempt_timeout' ||
+    normalized === 'provider_turn_failed' ||
+    normalized === 'payload_validation_failure' ||
+    normalized === 'finalize_callback_failure' ||
+    normalized === 'attempt_budget_exhausted' ||
+    normalized === 'unknown_failure'
+  ) {
+    return normalized
+  }
+  return null
+}
+
+const resolveFailureCategoryFromMetadata = (metadata: Record<string, unknown>): MarketContextFailureCategory | null => {
+  const direct = parseFailureCategory(metadata.failureCategory)
+  if (direct) return direct
+  const attempts = Array.isArray(metadata.providerAttempts) ? metadata.providerAttempts : []
+  for (let index = attempts.length - 1; index >= 0; index -= 1) {
+    const attempt = attempts[index]
+    if (!attempt || typeof attempt !== 'object' || Array.isArray(attempt)) continue
+    const category = parseFailureCategory((attempt as Record<string, unknown>).failureCategory)
+    if (category) return category
+  }
+  return null
+}
+
+export const resolveFailureSignal = (params: {
+  metadata: Record<string, unknown>
+  message?: string | null
+  error?: string | null
+}): { category: MarketContextFailureCategory | null; error: string | null; message: string | null } => {
+  const category = resolveFailureCategoryFromMetadata(params.metadata)
+  const message = parseNonEmptyString(params.message ?? params.error)
+  return {
+    category,
+    error: category ?? message,
+    message,
+  }
+}
+
+const readProviderCircuitState = async (params: {
+  db: MarketContextDb
+  domain: MarketContextProviderDomain
+  provider: string
+  threshold: number
+  cooldownSeconds: number
+  now: Date
+}): Promise<ProviderCircuitState> => {
+  const threshold = Math.max(1, params.threshold)
+  const cooldownSeconds = Math.max(1, params.cooldownSeconds)
+  const result = await sql<{
+    status: string
+    error: string | null
+    updated_at: Date
+  }>`
+    SELECT status, error, updated_at
+    FROM torghut_market_context_runs
+    WHERE domain = ${params.domain}
+      AND provider = ${params.provider}
+      AND status IN ('succeeded', 'partial', 'failed', 'cancelled')
+      AND COALESCE(error, '') <> 'provider_circuit_open'
+    ORDER BY updated_at DESC
+    LIMIT ${threshold};
+  `.execute(params.db)
+
+  return resolveProviderCircuitStateFromRows({
+    provider: params.provider,
+    rows: result.rows.map((row) => ({
+      status: row.status,
+      error: row.error,
+      updatedAt: row.updated_at,
+    })),
+    threshold,
+    cooldownSeconds,
+    now: params.now,
+  })
+}
+
+export const resolveProviderCircuitStateFromRows = (params: {
+  provider: string
+  rows: Array<{ status: string; error: string | null; updatedAt: Date }>
+  threshold: number
+  cooldownSeconds: number
+  now: Date
+}): ProviderCircuitState => {
+  const threshold = Math.max(1, params.threshold)
+  const cooldownSeconds = Math.max(1, params.cooldownSeconds)
+  let consecutiveFailures = 0
+  let lastFailureAt: Date | null = null
+  let lastError: string | null = null
+
+  for (const row of params.rows) {
+    const status = row.status.trim().toLowerCase()
+    if (status === 'succeeded' || status === 'partial') break
+    if (status !== 'failed' && status !== 'cancelled') break
+    consecutiveFailures += 1
+    if (!lastFailureAt) {
+      lastFailureAt = row.updatedAt
+      lastError = parseNonEmptyString(row.error)
+    }
+  }
+
+  let cooldownRemainingSeconds = 0
+  let cooldownOpen = false
+  if (consecutiveFailures >= threshold && lastFailureAt) {
+    const elapsedSeconds = Math.max(0, Math.floor((params.now.getTime() - lastFailureAt.getTime()) / 1000))
+    cooldownRemainingSeconds = Math.max(0, cooldownSeconds - elapsedSeconds)
+    cooldownOpen = cooldownRemainingSeconds > 0
+  }
+
+  return {
+    provider: params.provider,
+    consecutiveFailures,
+    threshold,
+    cooldownSeconds,
+    cooldownOpen,
+    cooldownRemainingSeconds,
+    lastFailureAt,
+    lastError,
+  }
+}
+
+const buildDegradedSnapshotMetadata = (params: {
+  domain: MarketContextProviderDomain
+  snapshot: SnapshotRow
+  latestRun: LatestRunRow | null
+  providerChain: string[]
+}) => {
+  const payload = { ...params.snapshot.payload }
+  const riskFlags = new Set(params.snapshot.riskFlags)
+  const preferredProvider = params.providerChain[0] ?? 'codex-spark'
+  payload.provider = params.snapshot.provider ?? payload.provider ?? preferredProvider
+  payload.providerChain = params.providerChain
+  payload.lastSuccessfulAsOfUtc = toIso(params.snapshot.asOf)
+  payload.runName = params.snapshot.runName
+  if (!params.latestRun) {
+    payload.fallbackUsed = payload.provider !== preferredProvider
+    return { payload, riskFlags: Array.from(riskFlags) }
+  }
+
+  payload.lastRunStatus = params.latestRun.status
+  payload.lastRunProvider = params.latestRun.provider
+  payload.lastRunUpdatedAt = toIso(params.latestRun.updatedAt)
+  payload.lastRunError = params.latestRun.error
+  payload.lastFailureCategory = resolveFailureCategoryFromMetadata(params.latestRun.metadata)
+  payload.providerCircuit = coercePayload(params.latestRun.metadata.providerCircuit)
+  payload.fallbackUsed = payload.provider !== preferredProvider
+
+  if (params.latestRun.status === 'failed' || params.latestRun.status === 'cancelled') {
+    payload.generationFailed = true
+    payload.degradedReason =
+      payload.lastFailureCategory ?? params.latestRun.error ?? `${params.domain}_generation_failed_all_models`
+    riskFlags.add(`${params.domain}_generation_failed_all_models`)
+    riskFlags.add('market_context_degraded_last_good')
+  }
+
+  return { payload, riskFlags: Array.from(riskFlags) }
 }
 
 export const getMarketContextProviderResult = async (params: {
@@ -410,15 +682,29 @@ export const getMarketContextProviderResult = async (params: {
   const settings = resolveSettings()
   const maxFreshnessSeconds = resolveDomainMaxFreshness(params.domain, settings)
   const db = await resolveDbWithMigrations()
+  const latestRun = await readLatestRun({ symbol, domain: params.domain })
 
   if (!db) {
+    const riskFlags = [`${params.domain}_missing`, `${params.domain}_database_unavailable`]
+    if (latestRun?.status === 'failed' || latestRun?.status === 'cancelled') {
+      riskFlags.push(`${params.domain}_generation_failed_all_models`, 'market_context_degraded_last_good')
+    }
     return {
       symbol,
       domain: params.domain,
       snapshotState: 'missing',
       context: {
         ...buildMissingContext({ domain: params.domain, symbol }),
-        riskFlags: [`${params.domain}_missing`, `${params.domain}_database_unavailable`],
+        payload: {
+          ...buildMissingContext({ domain: params.domain, symbol }).payload,
+          providerChain: settings.providerChain,
+          lastRunStatus: latestRun?.status ?? null,
+          lastRunProvider: latestRun?.provider ?? null,
+          lastRunError: latestRun?.error ?? null,
+          lastFailureCategory: latestRun ? resolveFailureCategoryFromMetadata(latestRun.metadata) : null,
+          providerCircuit: latestRun ? coercePayload(latestRun.metadata.providerCircuit) : {},
+        },
+        riskFlags,
       },
       dispatch: {
         attempted: false,
@@ -432,11 +718,29 @@ export const getMarketContextProviderResult = async (params: {
 
   const snapshot = await readLatestSnapshot({ symbol, domain: params.domain })
   if (!snapshot) {
+    const missingContext = buildMissingContext({ domain: params.domain, symbol })
+    const riskFlags = new Set(missingContext.riskFlags)
+    if (latestRun?.status === 'failed' || latestRun?.status === 'cancelled') {
+      riskFlags.add(`${params.domain}_generation_failed_all_models`)
+      riskFlags.add('market_context_degraded_last_good')
+    }
     return {
       symbol,
       domain: params.domain,
       snapshotState: 'missing',
-      context: buildMissingContext({ domain: params.domain, symbol }),
+      context: {
+        ...missingContext,
+        payload: {
+          ...missingContext.payload,
+          providerChain: settings.providerChain,
+          lastRunStatus: latestRun?.status ?? null,
+          lastRunProvider: latestRun?.provider ?? null,
+          lastRunError: latestRun?.error ?? null,
+          lastFailureCategory: latestRun ? resolveFailureCategoryFromMetadata(latestRun.metadata) : null,
+          providerCircuit: latestRun ? coercePayload(latestRun.metadata.providerCircuit) : {},
+        },
+        riskFlags: Array.from(riskFlags),
+      },
       dispatch: {
         attempted: false,
         dispatched: false,
@@ -452,6 +756,13 @@ export const getMarketContextProviderResult = async (params: {
 
   const riskFlags = new Set(snapshot.riskFlags)
   if (isStale) riskFlags.add(`${params.domain}_stale`)
+  const degradedSnapshot = buildDegradedSnapshotMetadata({
+    domain: params.domain,
+    snapshot,
+    latestRun,
+    providerChain: settings.providerChain,
+  })
+  degradedSnapshot.riskFlags.forEach((flag) => riskFlags.add(flag))
 
   return {
     symbol,
@@ -461,7 +772,7 @@ export const getMarketContextProviderResult = async (params: {
       asOfUtc: toIso(snapshot.asOf),
       sourceCount: snapshot.sourceCount,
       qualityScore: snapshot.qualityScore,
-      payload: snapshot.payload,
+      payload: degradedSnapshot.payload,
       citations: snapshot.citations,
       riskFlags: Array.from(riskFlags),
     },
@@ -645,6 +956,59 @@ export const startMarketContextProviderRun = async (input: RunStartPayload) => {
   const metadata = coercePayload(input.metadata)
   const status = coerceLifecycleStatus('started', 'started')
   const now = new Date()
+  const settings = resolveSettings()
+
+  if (settings.providerFailureThreshold > 0 && settings.providerCooldownSeconds > 0) {
+    const circuitState = await readProviderCircuitState({
+      db,
+      domain,
+      provider,
+      threshold: settings.providerFailureThreshold,
+      cooldownSeconds: settings.providerCooldownSeconds,
+      now,
+    })
+    if (circuitState.cooldownOpen) {
+      await upsertRunLifecycle({
+        db,
+        requestId,
+        symbol,
+        domain,
+        runName,
+        provider,
+        reason,
+        status: 'cancelled',
+        error: 'provider_circuit_open',
+        metadata: {
+          ...metadata,
+          failureCategory: 'provider_circuit_open',
+          providerCircuit: {
+            consecutiveFailures: circuitState.consecutiveFailures,
+            threshold: circuitState.threshold,
+            cooldownSeconds: circuitState.cooldownSeconds,
+            cooldownRemainingSeconds: circuitState.cooldownRemainingSeconds,
+            lastFailureAt: circuitState.lastFailureAt ? toIso(circuitState.lastFailureAt) : null,
+            lastError: circuitState.lastError,
+          },
+        },
+        now,
+      })
+      throw new MarketContextRunStartRejectedError({
+        message: `provider circuit open for ${provider}`,
+        statusCode: 409,
+        errorCode: 'provider_circuit_open',
+        details: {
+          domain,
+          provider,
+          consecutiveFailures: circuitState.consecutiveFailures,
+          threshold: circuitState.threshold,
+          cooldownSeconds: circuitState.cooldownSeconds,
+          cooldownRemainingSeconds: circuitState.cooldownRemainingSeconds,
+          lastFailureAt: circuitState.lastFailureAt ? toIso(circuitState.lastFailureAt) : null,
+          lastError: circuitState.lastError,
+        },
+      })
+    }
+  }
 
   await upsertRunLifecycle({
     db,
@@ -695,7 +1059,8 @@ export const recordMarketContextProviderRunProgress = async (input: RunProgressP
   const now = new Date()
 
   const context = await loadRunContext({ requestId })
-  const runError = status === 'failed' ? message : null
+  const failureSignal = status === 'failed' ? resolveFailureSignal({ metadata, message }) : null
+  const runError = failureSignal?.error ?? null
   const finishedAt = isLifecycleStatusTerminal(status) ? now : null
 
   await sql`
@@ -1004,7 +1369,7 @@ const upsertRunLifecycleFromIngest = async (params: {
         run_name: params.runName,
         provider: params.provider,
         status: params.lifecycleStatus,
-        metadata: params.metadata,
+        metadata: sql`torghut_market_context_runs.metadata || ${params.metadata}`,
         error: params.runError,
         last_heartbeat_at: params.now,
         finished_at: finishedAt,
@@ -1194,9 +1559,13 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
   const runName = typeof input.runName === 'string' && input.runName.trim().length > 0 ? input.runName.trim() : null
   const runStatus = coerceRunStatus(input.runStatus)
   const lifecycleStatus = coerceLifecycleStatus(input.runStatus, runStatus)
-  const runError = typeof input.error === 'string' && input.error.trim().length > 0 ? input.error.trim() : null
   const requestId = parseNonEmptyString(input.requestId) ?? randomUUID()
   const metadata = coercePayload(input.metadata)
+  const failureSignal =
+    lifecycleStatus === 'failed' || lifecycleStatus === 'cancelled'
+      ? resolveFailureSignal({ metadata, error: parseNonEmptyString(input.error) })
+      : null
+  const runError = failureSignal?.error ?? null
   const now = new Date()
   const batchStartMs = Date.now()
 

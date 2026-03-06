@@ -354,6 +354,20 @@ spec:
                     pod-security.kubernetes.io/warn: privileged
                 automation: auto
                 enabled: "true"
+              - name: forgejo-runners
+                path: argocd/applications/forgejo-runners
+                namespace: forgejo-runners
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false
+                automation: manual
+                enabled: "true"
               - name: backstage
                 path: argocd/applications/backstage
                 namespace: backstage

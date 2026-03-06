@@ -578,10 +578,14 @@ spec:
               finishedAt:
                 format: date-time
                 type: string
+              message:
+                type: string
               observedGeneration:
                 format: int64
                 type: integer
               phase:
+                type: string
+              reason:
                 type: string
               runtimeRef:
                 additionalProperties:

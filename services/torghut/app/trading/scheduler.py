@@ -363,6 +363,8 @@ class TradingMetrics:
     llm_requests_total: int = 0
     llm_approve_total: int = 0
     llm_veto_total: int = 0
+    llm_policy_veto_total: int = 0
+    llm_runtime_fallback_total: int = 0
     llm_adjust_total: int = 0
     llm_abstain_total: int = 0
     llm_escalate_total: int = 0
@@ -394,6 +396,8 @@ class TradingMetrics:
     llm_market_context_shadow_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
+    pre_llm_capacity_reject_total: int = 0
+    pre_llm_qty_below_min_total: int = 0
     llm_tokens_prompt_total: int = 0
     llm_tokens_completion_total: int = 0
     llm_committee_requests_total: dict[str, int] = field(
@@ -1125,6 +1129,22 @@ class TradingState:
     signal_continuity_alert_started_at: Optional[datetime] = None
     signal_continuity_alert_last_seen_at: Optional[datetime] = None
     signal_continuity_recovery_streak: int = 0
+    last_market_context_symbol: Optional[str] = None
+    last_market_context_checked_at: Optional[datetime] = None
+    last_market_context_as_of: Optional[datetime] = None
+    last_market_context_freshness_seconds: Optional[int] = None
+    last_market_context_quality_score: Optional[float] = None
+    last_market_context_domain_states: dict[str, str] = field(
+        default_factory=lambda: cast(dict[str, str], {})
+    )
+    last_market_context_risk_flags: list[str] = field(
+        default_factory=lambda: cast(list[str], [])
+    )
+    last_market_context_allow_llm: Optional[bool] = None
+    last_market_context_reason: Optional[str] = None
+    last_market_context_fetch_error: Optional[str] = None
+    market_context_alert_active: bool = False
+    market_context_alert_reason: Optional[str] = None
     autonomy_no_signal_streak: int = 0
     last_evidence_continuity_report: Optional[dict[str, Any]] = None
     autonomy_failure_streak: int = 0
@@ -3184,7 +3204,15 @@ class TradingPipeline:
                     account=account,
                     positions=positions,
                     reason="llm_dspy_live_runtime_gate_blocked",
+                    reject_reason="llm_runtime_fallback",
                     risk_flags=list(dspy_live_gate_reasons),
+                    response_payload_extra={
+                        "llm_runtime": {
+                            "reject_reason": "llm_runtime_fallback",
+                            "subtype": "dspy_live_runtime_gate",
+                            "error": "llm_dspy_live_runtime_gate_blocked",
+                        }
+                    },
                     policy_resolution=_build_llm_policy_resolution(
                         rollout_stage=guardrails.rollout_stage,
                         effective_fail_mode="veto",
@@ -3213,7 +3241,15 @@ class TradingPipeline:
                     account=account,
                     positions=positions,
                     reason="llm_dspy_live_runtime_gate_blocked",
+                    reject_reason="llm_runtime_fallback",
                     risk_flags=list(dspy_live_readiness_reasons),
+                    response_payload_extra={
+                        "llm_runtime": {
+                            "reject_reason": "llm_runtime_fallback",
+                            "subtype": "dspy_live_runtime_gate",
+                            "error": "llm_dspy_live_runtime_gate_blocked",
+                        }
+                    },
                     policy_resolution=_build_llm_policy_resolution(
                         rollout_stage=guardrails.rollout_stage,
                         effective_fail_mode="veto",
@@ -3354,10 +3390,14 @@ class TradingPipeline:
         account: dict[str, str],
         positions: list[dict[str, Any]],
         reason: str,
+        reject_reason: str,
         risk_flags: list[str],
+        response_payload_extra: Optional[dict[str, Any]] = None,
         policy_resolution: Optional[dict[str, Any]] = None,
     ) -> tuple[StrategyDecision, Optional[str]]:
         block_fail_mode = settings.llm_dspy_live_runtime_block_fail_mode
+        if reject_reason == "llm_runtime_fallback":
+            self.state.metrics.llm_runtime_fallback_total += 1
         effective_fail_mode = "veto" if block_fail_mode == "veto" else "pass_through"
         passthrough_decision = decision
         if block_fail_mode == "pass_through_reduced_size":
@@ -3374,10 +3414,12 @@ class TradingPipeline:
             account,
             positions,
             reason=reason,
+            reject_reason=reject_reason,
             shadow_mode=False,
             effective_fail_mode=effective_fail_mode,
             risk_flags=risk_flags,
             market_context=None,
+            response_payload_extra=response_payload_extra,
             policy_resolution=policy_resolution,
         )
 
@@ -3458,9 +3500,22 @@ class TradingPipeline:
         engine: LLMReviewEngine,
         request_json: dict[str, Any],
     ) -> tuple[StrategyDecision, Optional[str]]:
+        pre_llm_reject_reason = self._resolve_pre_llm_executability_reject(decision)
+        if pre_llm_reject_reason == "symbol_capacity_exhausted":
+            self.state.metrics.pre_llm_capacity_reject_total += 1
+            return decision, pre_llm_reject_reason
+        if pre_llm_reject_reason == "qty_below_min":
+            self.state.metrics.pre_llm_qty_below_min_total += 1
+            return decision, pre_llm_reject_reason
+
         self.state.metrics.llm_requests_total += 1
         market_context, market_context_error = self._fetch_market_context(
             decision.symbol
+        )
+        self._record_market_context_observation(
+            symbol=decision.symbol,
+            market_context=market_context,
+            market_context_error=market_context_error,
         )
         if market_context_error is not None:
             self.state.metrics.llm_market_context_error_total += 1
@@ -3507,6 +3562,34 @@ class TradingPipeline:
             market_context=market_context,
             recent_decisions=recent_decisions,
         )
+        if outcome.runtime_fallback is not None:
+            self.executor.update_decision_json(
+                session,
+                decision_row,
+                {"llm_runtime": outcome.runtime_fallback},
+            )
+            runtime_error = str(outcome.runtime_fallback.get("error") or "dspy_runtime_error")
+            runtime_subtype = str(
+                outcome.runtime_fallback.get("subtype") or "dspy_runtime_error"
+            )
+            return self._handle_llm_dspy_live_runtime_block(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+                account=account,
+                positions=positions,
+                reason=runtime_error,
+                reject_reason=str(
+                    outcome.runtime_fallback.get("reject_reason")
+                    or "llm_runtime_fallback"
+                ),
+                risk_flags=[runtime_subtype, runtime_error],
+                response_payload_extra={
+                    "llm_runtime": outcome.runtime_fallback,
+                    "dspy": outcome.response_json.get("dspy"),
+                },
+                policy_resolution=policy_resolution,
+            )
         self._record_llm_verdict_counter(outcome.response.verdict)
         policy_outcome = apply_policy(
             decision,
@@ -3589,11 +3672,79 @@ class TradingPipeline:
             account,
             positions,
             reason=market_context_status.reason or "market_context_unavailable",
+            reject_reason="market_context_block",
             shadow_mode=market_context_shadow_mode,
             effective_fail_mode=guardrails.effective_fail_mode,
             risk_flags=market_context_status.risk_flags,
             market_context=market_context,
+            response_payload_extra={
+                "market_context": {
+                    "reason": market_context_status.reason,
+                    "risk_flags": list(market_context_status.risk_flags),
+                }
+            },
             policy_resolution=policy_resolution,
+        )
+
+    def _record_market_context_observation(
+        self,
+        *,
+        symbol: str,
+        market_context: Optional[MarketContextBundle],
+        market_context_error: Optional[str],
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        self.state.last_market_context_symbol = symbol
+        self.state.last_market_context_checked_at = now
+        self.state.last_market_context_fetch_error = market_context_error
+        if market_context is None:
+            self.state.last_market_context_as_of = None
+            self.state.last_market_context_freshness_seconds = None
+            self.state.last_market_context_quality_score = None
+            self.state.last_market_context_domain_states = {}
+            self.state.last_market_context_risk_flags = []
+            allow_llm = not settings.trading_market_context_required
+            reason = (
+                market_context_error
+                or (
+                    "market_context_required_missing"
+                    if settings.trading_market_context_required
+                    else None
+                )
+            )
+            self.state.last_market_context_allow_llm = allow_llm
+            self.state.last_market_context_reason = reason
+            self.state.market_context_alert_active = market_context_error is not None or (
+                settings.trading_market_context_required and not allow_llm
+            )
+            self.state.market_context_alert_reason = reason
+            return
+
+        market_context_status = evaluate_market_context(market_context)
+        as_of = market_context.as_of_utc
+        self.state.last_market_context_as_of = as_of
+        self.state.last_market_context_freshness_seconds = int(
+            market_context.freshness_seconds
+        )
+        self.state.last_market_context_quality_score = float(
+            market_context.quality_score
+        )
+        self.state.last_market_context_domain_states = {
+            "technicals": market_context.domains.technicals.state,
+            "fundamentals": market_context.domains.fundamentals.state,
+            "news": market_context.domains.news.state,
+            "regime": market_context.domains.regime.state,
+        }
+        self.state.last_market_context_risk_flags = list(market_context.risk_flags)
+        self.state.last_market_context_allow_llm = market_context_status.allow_llm
+        self.state.last_market_context_reason = (
+            market_context_error or market_context_status.reason
+        )
+        self.state.market_context_alert_active = market_context_error is not None or (
+            not market_context_status.allow_llm
+        )
+        self.state.market_context_alert_reason = (
+            market_context_error or market_context_status.reason
         )
 
     def _record_llm_verdict_counter(self, verdict: str) -> None:
@@ -3685,6 +3836,8 @@ class TradingPipeline:
             return None, None
         if policy_outcome.verdict == "veto":
             self.state.metrics.llm_veto_total += 1
+            if policy_outcome.reason == "llm_policy_veto":
+                self.state.metrics.llm_policy_veto_total += 1
         return None, None
 
     def _finalize_llm_review_outcome(
@@ -3708,7 +3861,7 @@ class TradingPipeline:
             return decision, None
         if policy_outcome.verdict != "veto":
             return policy_outcome.decision, None
-        return decision, policy_outcome.reason or "llm_veto"
+        return decision, policy_outcome.reason or "llm_policy_veto"
 
     def _handle_llm_review_error(
         self,
@@ -3812,6 +3965,8 @@ class TradingPipeline:
         effective_fail_mode: Optional[str] = None,
         risk_flags: Optional[list[str]] = None,
         market_context: Optional[MarketContextBundle] = None,
+        reject_reason: Optional[str] = None,
+        response_payload_extra: Optional[dict[str, Any]] = None,
         policy_resolution: Optional[dict[str, Any]] = None,
     ) -> tuple[StrategyDecision, Optional[str]]:
         fallback = self._resolve_llm_fallback(effective_fail_mode)
@@ -3880,6 +4035,26 @@ class TradingPipeline:
             ),
             "advisory_only": True,
         }
+        if response_payload_extra:
+            response_payload.update(response_payload_extra)
+        decision_metadata_update: dict[str, Any] = {}
+        if response_payload_extra:
+            llm_runtime_payload = response_payload_extra.get("llm_runtime")
+            if isinstance(llm_runtime_payload, Mapping):
+                decision_metadata_update["llm_runtime"] = dict(
+                    cast(Mapping[str, Any], llm_runtime_payload)
+                )
+            market_context_payload = response_payload_extra.get("market_context")
+            if isinstance(market_context_payload, Mapping):
+                decision_metadata_update["market_context"] = dict(
+                    cast(Mapping[str, Any], market_context_payload)
+                )
+        if decision_metadata_update:
+            self.executor.update_decision_json(
+                session,
+                decision_row,
+                decision_metadata_update,
+            )
         response_payload["request_hash"] = _hash_payload(request_payload)
         response_payload["response_hash"] = _hash_payload(response_payload)
         self._persist_llm_review(
@@ -3889,16 +4064,7 @@ class TradingPipeline:
             prompt_version=self._llm_runtime_prompt_identifier(),
             request_json=request_payload,
             response_json={
-                "error": reason,
-                "fallback": fallback,
-                "effective_verdict": effective_verdict,
-                "reject_reason": reject_reason,
-                "policy_resolution": policy_resolution
-                or _build_llm_policy_resolution(
-                    rollout_stage=_normalize_rollout_stage(settings.llm_rollout_stage),
-                    effective_fail_mode=fallback,
-                    guardrail_reasons=risk_flags or [],
-                ),
+                **response_payload,
                 "guardrail_controls": _llm_guardrail_controls_snapshot(),
             },
             verdict="error",
@@ -3966,6 +4132,44 @@ class TradingPipeline:
             spread=snapshot.spread,
             source=snapshot.source,
         )
+
+    @staticmethod
+    def _resolve_pre_llm_executability_reject(
+        decision: StrategyDecision,
+    ) -> Optional[str]:
+        portfolio_sizing = decision.params.get("portfolio_sizing")
+        if not isinstance(portfolio_sizing, Mapping):
+            return None
+        portfolio_sizing_mapping = cast(Mapping[str, Any], portfolio_sizing)
+        output = portfolio_sizing_mapping.get("output")
+        if not isinstance(output, Mapping):
+            return None
+        output_mapping = cast(Mapping[str, Any], output)
+
+        limiting_constraint = str(output_mapping.get("limiting_constraint") or "").strip()
+        caps = output_mapping.get("caps")
+        per_symbol_cap = None
+        if isinstance(caps, Mapping):
+            per_symbol_cap = _optional_decimal(
+                cast(Mapping[str, Any], caps).get("per_symbol")
+            )
+        if limiting_constraint == "symbol_capacity_exhausted" or (
+            per_symbol_cap is not None and per_symbol_cap <= 0
+        ):
+            return "symbol_capacity_exhausted"
+
+        fractional_allowed = output_mapping.get("fractional_allowed")
+        final_qty = _optional_decimal(output_mapping.get("final_qty"))
+        min_executable_qty = _optional_decimal(output_mapping.get("min_executable_qty"))
+        if (
+            fractional_allowed is False
+            and final_qty is not None
+            and final_qty <= 0
+            and min_executable_qty == Decimal("1")
+        ):
+            return "qty_below_min"
+
+        return None
 
     def _ensure_decision_price(
         self, decision: StrategyDecision, signal_price: Any
@@ -4787,9 +4991,13 @@ class TradingScheduler:
 
     def llm_status(self) -> dict[str, object]:
         circuit_snapshot = None
-        if self._pipeline and self._pipeline.llm_review_engine:
+        pipeline = self._pipeline
+        llm_review_engine = (
+            getattr(pipeline, "llm_review_engine", None) if pipeline is not None else None
+        )
+        if llm_review_engine:
             circuit_snapshot = (
-                self._pipeline.llm_review_engine.circuit_breaker.snapshot()
+                llm_review_engine.circuit_breaker.snapshot()
             )
         guardrails = evaluate_llm_guardrails()
         policy_resolution = _build_llm_policy_resolution(
@@ -4812,6 +5020,13 @@ class TradingScheduler:
             "policy_resolution_counters": dict(
                 self.state.metrics.llm_policy_resolution_total
             ),
+            "policy_veto_total": self.state.metrics.llm_policy_veto_total,
+            "runtime_fallback_total": self.state.metrics.llm_runtime_fallback_total,
+            "runtime_fallback_ratio": self.rejection_alert_status()[
+                "runtime_fallback_ratio"
+            ],
+            "dspy_live_runtime_block_fail_mode": settings.llm_dspy_live_runtime_block_fail_mode,
+            "dspy_live_runtime_block_qty_multiplier": settings.llm_dspy_live_runtime_block_qty_multiplier,
             "circuit": circuit_snapshot,
             "guardrails": {
                 "allow_requests": guardrails.allow_requests,
@@ -4820,6 +5035,96 @@ class TradingScheduler:
                 "committee_enabled": guardrails.committee_enabled,
                 "reasons": list(guardrails.reasons),
             },
+        }
+
+    def shorting_metadata_status(self) -> dict[str, object]:
+        pipeline = self._pipeline
+        executor = getattr(pipeline, "executor", None) if pipeline is not None else None
+        alert_active = False
+        if self.state.market_session_open is True:
+            raw_status = None
+            if isinstance(executor, OrderExecutor):
+                raw_status = executor.shorting_metadata_status()
+            account_ready = raw_status.get("account_ready") if isinstance(raw_status, Mapping) else None
+            alert_active = account_ready is False
+        if isinstance(executor, OrderExecutor):
+            status = cast(dict[str, object], executor.shorting_metadata_status())
+            status["alert_active"] = alert_active
+            return status
+        return {
+            "account_ready": None,
+            "last_refresh_at": None,
+            "last_error": None,
+            "alert_active": False,
+        }
+
+    def market_context_status(self) -> dict[str, object]:
+        health: dict[str, Any] | None = None
+        health_error: str | None = None
+        pipeline = self._pipeline
+        market_context_client = (
+            getattr(pipeline, "market_context_client", None)
+            if pipeline is not None
+            else None
+        )
+        if not isinstance(market_context_client, MarketContextClient):
+            market_context_client = MarketContextClient()
+        if self.state.last_market_context_symbol:
+            try:
+                health = market_context_client.fetch_health(
+                    self.state.last_market_context_symbol
+                )
+            except Exception as exc:
+                health_error = str(exc)
+        return {
+            "required": settings.trading_market_context_required,
+            "fail_mode": settings.trading_market_context_fail_mode,
+            "allow_degraded_last_good": settings.trading_market_context_allow_degraded_last_good,
+            "min_quality": settings.trading_market_context_min_quality,
+            "max_staleness_seconds": settings.trading_market_context_max_staleness_seconds,
+            "fundamentals_degraded_max_staleness_seconds": settings.trading_market_context_fundamentals_degraded_max_staleness_seconds,
+            "news_degraded_max_staleness_seconds": settings.trading_market_context_news_degraded_max_staleness_seconds,
+            "last_symbol": self.state.last_market_context_symbol,
+            "last_checked_at": self.state.last_market_context_checked_at,
+            "last_as_of": self.state.last_market_context_as_of,
+            "last_freshness_seconds": self.state.last_market_context_freshness_seconds,
+            "last_quality_score": self.state.last_market_context_quality_score,
+            "last_domain_states": dict(self.state.last_market_context_domain_states),
+            "last_risk_flags": list(self.state.last_market_context_risk_flags),
+            "last_allow_llm": self.state.last_market_context_allow_llm,
+            "last_reason": self.state.last_market_context_reason,
+            "last_fetch_error": self.state.last_market_context_fetch_error,
+            "reason_total": dict(self.state.metrics.llm_market_context_reason_total),
+            "shadow_total": dict(self.state.metrics.llm_market_context_shadow_total),
+            "alert_active": self.state.market_context_alert_active,
+            "alert_reason": self.state.market_context_alert_reason,
+            "health": health,
+            "health_error": health_error,
+        }
+
+    def rejection_alert_status(self) -> dict[str, object]:
+        llm_requests_total = max(0, int(self.state.metrics.llm_requests_total))
+        runtime_fallback_total = max(
+            0, int(self.state.metrics.llm_runtime_fallback_total)
+        )
+        runtime_fallback_ratio = (
+            float(runtime_fallback_total) / float(llm_requests_total)
+            if llm_requests_total > 0
+            else 0.0
+        )
+        runtime_fallback_alert_active = (
+            llm_requests_total > 0
+            and runtime_fallback_ratio
+            > settings.llm_dspy_runtime_fallback_alert_ratio
+        )
+        shorting_status = self.shorting_metadata_status()
+        return {
+            "runtime_fallback_ratio": runtime_fallback_ratio,
+            "runtime_fallback_alert_ratio_threshold": settings.llm_dspy_runtime_fallback_alert_ratio,
+            "runtime_fallback_alert_active": runtime_fallback_alert_active,
+            "shorting_metadata_alert_active": bool(
+                shorting_status.get("alert_active", False)
+            ),
         }
 
     def _build_pipeline_for_account(self, lane: TradingAccountLane) -> TradingPipeline:
@@ -4834,13 +5139,15 @@ class TradingScheduler:
         execution_adapter = build_execution_adapter(
             alpaca_client=alpaca_client, order_firewall=order_firewall
         )
+        executor = OrderExecutor()
+        executor.prime_shorting_metadata_cache(alpaca_client)
         return TradingPipeline(
             alpaca_client=alpaca_client,
             order_firewall=order_firewall,
             ingestor=ClickHouseSignalIngestor(account_label=lane.label),
             decision_engine=DecisionEngine(price_fetcher=price_fetcher),
             risk_engine=RiskEngine(),
-            executor=OrderExecutor(),
+            executor=executor,
             execution_adapter=execution_adapter,
             reconciler=Reconciler(account_label=lane.label),
             universe_resolver=UniverseResolver(),
@@ -5510,6 +5817,17 @@ class TradingScheduler:
             lanes = settings.trading_accounts
             self._pipelines = [self._build_pipeline_for_account(lane) for lane in lanes]
             self._pipeline = self._pipelines[0] if self._pipelines else None
+        account_labels = ",".join(pipeline.account_label for pipeline in self._pipelines)
+        logger.info(
+            "Trading scheduler starting accounts=%s poll_interval_seconds=%s reconcile_interval_seconds=%s autonomy_enabled=%s autonomy_interval_seconds=%s evidence_enabled=%s evidence_interval_seconds=%s",
+            account_labels or "none",
+            settings.trading_poll_ms / 1000,
+            settings.trading_reconcile_ms / 1000,
+            settings.trading_autonomy_enabled,
+            max(30, settings.trading_autonomy_interval_seconds),
+            settings.trading_evidence_continuity_enabled,
+            max(300, settings.trading_evidence_continuity_interval_seconds),
+        )
         self._stop_event.clear()
         self.state.startup_started_at = datetime.now(timezone.utc)
         self.state.running = False
@@ -5518,6 +5836,11 @@ class TradingScheduler:
     async def stop(self) -> None:
         if not self._task:
             return
+        account_labels = ",".join(
+            pipeline.account_label
+            for pipeline in (self._pipelines or ([self._pipeline] if self._pipeline else []))
+        )
+        logger.info("Trading scheduler stopping accounts=%s", account_labels or "none")
         self._stop_event.set()
         self._task.cancel()
         try:
@@ -5534,6 +5857,7 @@ class TradingScheduler:
             pipeline.order_feed_ingestor.close()
         self._pipelines = []
         self._pipeline = None
+        logger.info("Trading scheduler stopped")
 
     async def _run_loop(self) -> None:
         self.state.running = True
@@ -5546,27 +5870,37 @@ class TradingScheduler:
         last_reconcile = datetime.now(timezone.utc)
         last_autonomy = datetime.now(timezone.utc)
         last_evidence_check = datetime.now(timezone.utc)
+        logger.info(
+            "Trading scheduler loop running poll_interval_seconds=%s reconcile_interval_seconds=%s autonomy_interval_seconds=%s evidence_interval_seconds=%s",
+            poll_interval,
+            reconcile_interval,
+            autonomy_interval,
+            evidence_interval,
+        )
+        try:
+            while not self._stop_event.is_set():
+                await self._run_trading_iteration()
+                now = datetime.now(timezone.utc)
+                if self._interval_elapsed(last_reconcile, reconcile_interval, now=now):
+                    await self._run_reconcile_iteration()
+                    last_reconcile = now
 
-        while not self._stop_event.is_set():
-            await self._run_trading_iteration()
-            now = datetime.now(timezone.utc)
-            if self._interval_elapsed(last_reconcile, reconcile_interval, now=now):
-                await self._run_reconcile_iteration()
-                last_reconcile = now
+                if settings.trading_autonomy_enabled and self._interval_elapsed(
+                    last_autonomy, autonomy_interval, now=now
+                ):
+                    await self._run_autonomy_iteration()
+                    last_autonomy = now
 
-            if settings.trading_autonomy_enabled and self._interval_elapsed(
-                last_autonomy, autonomy_interval, now=now
-            ):
-                await self._run_autonomy_iteration()
-                last_autonomy = now
+                if settings.trading_evidence_continuity_enabled and self._interval_elapsed(
+                    last_evidence_check, evidence_interval, now=now
+                ):
+                    await self._run_evidence_iteration()
+                    last_evidence_check = now
 
-            if settings.trading_evidence_continuity_enabled and self._interval_elapsed(
-                last_evidence_check, evidence_interval, now=now
-            ):
-                await self._run_evidence_iteration()
-                last_evidence_check = now
-
-            await asyncio.sleep(poll_interval)
+                await asyncio.sleep(poll_interval)
+        finally:
+            self.state.running = False
+            logger.info("Trading scheduler loop exited")
 
     @staticmethod
     def _interval_elapsed(

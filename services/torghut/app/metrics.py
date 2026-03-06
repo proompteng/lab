@@ -368,6 +368,34 @@ _DIRECT_GAUGES: dict[str, tuple[str, str]] = {
         "torghut_trading_feature_duplicate_ratio",
         "Duplicate event ratio in the latest ingest batch.",
     ),
+    "market_context_alert_active": (
+        "torghut_trading_market_context_alert_active",
+        "Whether a market-context alert is currently active (1=yes, 0=no).",
+    ),
+    "market_context_last_freshness_seconds": (
+        "torghut_trading_market_context_last_freshness_seconds",
+        "Freshness in seconds of the last observed market-context bundle.",
+    ),
+    "market_context_last_quality_score": (
+        "torghut_trading_market_context_last_quality_score",
+        "Quality score of the last observed market-context bundle.",
+    ),
+    "llm_runtime_fallback_ratio": (
+        "torghut_trading_llm_runtime_fallback_ratio",
+        "Ratio of LLM runtime fallbacks to total LLM requests.",
+    ),
+    "llm_runtime_fallback_alert_active": (
+        "torghut_trading_llm_runtime_fallback_alert_active",
+        "Whether the LLM runtime fallback alert threshold is currently breached (1=yes, 0=no).",
+    ),
+    "shorting_metadata_account_ready": (
+        "torghut_trading_shorting_metadata_account_ready",
+        "Whether cached account shorting metadata is currently ready (1=yes, 0=no).",
+    ),
+    "shorting_metadata_alert_active": (
+        "torghut_trading_shorting_metadata_alert_active",
+        "Whether shorting metadata readiness is currently alerting during market hours (1=yes, 0=no).",
+    ),
 }
 
 _AUTONOMY_WINDOW_GAUGES: dict[str, tuple[str, str]] = {

@@ -40,7 +40,30 @@ export const postMarketContextRunStartHandler = async (request: Request) => {
     return jsonResponse(result, 200)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'failed to start market-context run'
-    recordTorghutMarketContextRunEvent({ endpoint: 'start', outcome: 'error' })
-    return jsonResponse({ ok: false, message }, 400)
+    const statusCode =
+      typeof error === 'object' && error !== null && typeof Reflect.get(error, 'statusCode') === 'number'
+        ? Number(Reflect.get(error, 'statusCode'))
+        : 400
+    const errorCode =
+      typeof error === 'object' && error !== null && typeof Reflect.get(error, 'errorCode') === 'string'
+        ? String(Reflect.get(error, 'errorCode'))
+        : null
+    const details =
+      typeof error === 'object' &&
+      error !== null &&
+      Reflect.get(error, 'details') &&
+      typeof Reflect.get(error, 'details') === 'object'
+        ? Reflect.get(error, 'details')
+        : undefined
+    const domain =
+      details && typeof details === 'object' && details !== null && typeof Reflect.get(details, 'domain') === 'string'
+        ? String(Reflect.get(details, 'domain'))
+        : undefined
+    recordTorghutMarketContextRunEvent({
+      endpoint: 'start',
+      outcome: statusCode >= 400 && statusCode < 500 && errorCode ? 'rejected' : 'error',
+      domain,
+    })
+    return jsonResponse({ ok: false, message, errorCode, details }, statusCode)
   }
 }

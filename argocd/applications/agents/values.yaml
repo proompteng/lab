@@ -1,22 +1,65 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: 897e176c
-  digest: sha256:41a32b6c467914545bdcc859bce09ddf995b278226ea07cabd665814cf196e8f
+  tag: a9cf41e1
+  digest: sha256:7ce5d3540ac2ee60f1a67a0b8d00cb8a4a5e28f3814180b14667e8178efdf5f4
   pullPolicy: IfNotPresent
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar-control-plane
-    tag: 897e176c
-    digest: sha256:94b929377a46a26a25f92621a76f4eb52a0eb0f340f1ee95f9cb5dd9b5f5c9cf
+    tag: a9cf41e1
+    digest: sha256:41bcf75cd3432169af4ae37b219c71d04b580d0d157c508ea332eed2399fed94
   env:
     vars:
       JANGAR_CONTROL_PLANE_CACHE_ENABLED: "true"
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar
-    tag: 897e176c
-    digest: sha256:41a32b6c467914545bdcc859bce09ddf995b278226ea07cabd665814cf196e8f
+    tag: a9cf41e1
+    digest: sha256:7ce5d3540ac2ee60f1a67a0b8d00cb8a4a5e28f3814180b14667e8178efdf5f4
+argocdHooks:
+  enabled: true
+  image:
+    repository: alpine/k8s
+    tag: 1.30.11
+  smoke:
+    agentRun:
+      apiVersion: agents.proompteng.ai/v1alpha1
+      kind: AgentRun
+      metadata:
+        name: codex-spark-smoke
+      spec:
+        agentRef:
+          name: codex-spark-smoke-agent
+        implementationSpecRef:
+          name: codex-spark-smoke-implspec
+        runtime:
+          type: workflow
+          config:
+            serviceAccountName: agents-sa
+        ttlSecondsAfterFinished: 1800
+        workflow:
+          steps:
+            - name: smoke
+              timeoutSeconds: 900
+              parameters:
+                stage: implementation
+        parameters:
+          repository: proompteng/lab
+          base: main
+          head: codex/swarm-smoke
+          issueNumber: swarm-codex-smoke
+          issueTitle: Codex Spark smoke validation
+          objective: verify codex auth.json startup, provider startup, and the promoted runner image without VCS or external side
+            effects
+        vcsRef:
+          name: github
+        vcsPolicy:
+          required: true
+          mode: read-write
+        secrets:
+          - github-token
+          - codex-auth
 controllers:
   enabled: true
   replicaCount: 2

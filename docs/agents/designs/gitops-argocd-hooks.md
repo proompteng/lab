@@ -7,7 +7,8 @@ Docs index: [README](../README.md)
 ## Current State
 
 - Chart: argocdHooks templates support PreSync cleanup and PostSync smoke AgentRun.
-- Cluster: argocd app values do not enable argocdHooks; no hook jobs present.
+- Cluster: the `agents` production overlay now enables a PostSync Codex smoke AgentRun to validate provider startup
+  before normal swarm cadence resumes.
 - Kustomize renders the chart with includeCRDs: true.
 
 ## Problem
@@ -56,6 +57,8 @@ GitOps deployments need deterministic pre/post-sync behavior.
 
 - Exercise the primary flow and confirm expected status, logs, or metrics.
 - Confirm no regression in existing workflows, CI checks, or chart rendering.
+- For the production overlay, confirm the PostSync smoke AgentRun reaches `Succeeded` and that its logs do not contain
+  ChatGPT auth-mode, quota-limit, or unknown-model failures.
 
 ## Acceptance Criteria
 

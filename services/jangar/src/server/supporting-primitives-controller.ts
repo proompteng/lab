@@ -928,9 +928,7 @@ const resolveSwarmHulyIntegration = (
   const integrations = asRecord(spec.integrations) ?? {}
   const huly = asRecord(integrations.huly) ?? {}
   const authSecretRef = asRecord(huly.authSecretRef) ?? {}
-  const ownerChannel = asString(owner.channel)
-  const baseUrl =
-    normalizeHulyBaseUrl(asString(huly.baseUrl)) || normalizeHulyBaseUrl(ownerChannel) || SWARM_DEFAULT_HULY_BASE_URL
+  const baseUrl = normalizeHulyBaseUrl(asString(huly.baseUrl)) || SWARM_DEFAULT_HULY_BASE_URL
   // Avoid implicit global secret fallback; swarm runs should use explicit per-swarm auth secret refs.
   const secretName = asString(authSecretRef.name)?.trim() ?? ''
   const workspace = asString(huly.workspace)?.trim() || undefined
@@ -1260,8 +1258,26 @@ const collectRecentFailureRuns = (resources: Record<string, unknown>[], limit = 
     const phase = (asString(readNested(resource, ['status', 'phase'])) ?? '').toLowerCase()
     const timestamp = getRunTimestamp(resource)
     const conclusion = asString(readNested(resource, ['status', 'conclusion']))
+    const failedCondition = (
+      Array.isArray(readNested(resource, ['status', 'conditions']))
+        ? (readNested(resource, ['status', 'conditions']) as unknown[])
+        : []
+    )
+      .map((entry) => asRecord(entry))
+      .find((condition) => asString(condition?.type) === 'Failed' && asString(condition?.status) === 'True')
+    const failedStep = (
+      Array.isArray(readNested(resource, ['status', 'workflow', 'steps']))
+        ? (readNested(resource, ['status', 'workflow', 'steps']) as unknown[])
+        : []
+    )
+      .map((entry) => asRecord(entry))
+      .find((step) => asString(step?.phase) === 'Failed')
     const reason =
-      asString(readNested(resource, ['status', 'message'])) ?? asString(readNested(resource, ['status', 'reason']))
+      asString(readNested(resource, ['status', 'message'])) ??
+      asString(readNested(resource, ['status', 'reason'])) ??
+      asString(failedCondition?.message) ??
+      asString(failedCondition?.reason) ??
+      asString(failedStep?.message)
     return {
       name,
       namespace,
@@ -2408,6 +2424,8 @@ const reconcileSwarm = async (
     }
   }
 
+  const inactiveFreezeUntil = freezeUntil ?? existingFreezeUntil ?? nowIso()
+  const inactiveFreezeEnteredAt = freezeEnteredAt ?? existingFreezeEnteredAt ?? nowIso()
   let conditions = conditionsBase
   if (freezeActive) {
     if (freezeUntil) {
@@ -2446,6 +2464,23 @@ const reconcileSwarm = async (
       reason: 'NotFrozen',
       message: 'swarm operating normally',
     })
+    // Keep a concrete object here so server-side apply updates the existing freeze status
+    // instead of attempting to delete it with null values that violate the CRD schema.
+    nextStatus.freeze = {
+      reason: 'NotFrozen',
+      until: inactiveFreezeUntil,
+      consecutiveFailures,
+      threshold: freezeAfterFailures,
+      enteredAt: inactiveFreezeEnteredAt,
+      durationMs: freezeDurationMs,
+      evidence: {
+        triggeringRuns: freezeFailureEvidence,
+        recentRunWindowMs: freezeAfterFailures * freezeDurationMs,
+        freezeWindowStartedAt: failureWindowStartMs === null ? null : new Date(failureWindowStartMs).toISOString(),
+        stageStaleness: staleStageSignals,
+        triggers: freezeTriggerReasons,
+      },
+    }
   }
 
   if (requirementStats.invalidChannel > 0) {

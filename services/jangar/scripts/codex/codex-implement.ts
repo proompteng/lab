@@ -64,6 +64,7 @@ interface ImplementationEventPayload {
   systemPrompt?: string | null
   repository?: string
   issueNumber?: number | string
+  executionMode?: string | null
   objective?: string
   swarmRequirementObjective?: string
   issueTitle?: string | null
@@ -3094,18 +3095,26 @@ export const runCodexImplementation = async (eventPath: string) => {
     ...extractedRequirementMetadata,
     channel: extractedRequirementMetadata.channel ?? resolvedHulyChannel,
   }
+  const parameters = asStringMap(event.parameters)
+  const executionMode =
+    normalizeNullableStringValue(event.executionMode) ?? normalizeNullableStringValue(parameters.executionMode)
+  const isBatchTask = executionMode?.toLowerCase() === 'batch_task'
   const basePrompt = event.prompt?.trim() ?? ''
   let prompt = buildCrossSwarmRequirementScopePrompt(basePrompt, requirementMetadata)
   const crossSwarmHulyChannel = resolveActiveHulyChannel(requirementMetadata)
 
-  const repository = event.repository?.trim()
-  if (!repository) {
+  const repository =
+    event.repository?.trim() || normalizeNullableStringValue(parameters.repository) || (isBatchTask ? 'batch-task' : '')
+  if (!repository && !isBatchTask) {
     throw new Error('Missing repository metadata in event payload')
   }
 
   const issueNumberRaw = event.issueNumber
-  const issueNumber = issueNumberRaw !== undefined && issueNumberRaw !== null ? String(issueNumberRaw) : ''
-  if (!issueNumber) {
+  const issueNumber =
+    (issueNumberRaw !== undefined && issueNumberRaw !== null ? String(issueNumberRaw) : '') ||
+    normalizeNullableStringValue(parameters.issueNumber) ||
+    (isBatchTask ? '0' : '')
+  if (!issueNumber && !isBatchTask) {
     throw new Error('Missing issue number metadata in event payload')
   }
 
@@ -3142,9 +3151,9 @@ export const runCodexImplementation = async (eventPath: string) => {
   const lokiBasicAuth = process.env.LGTM_LOKI_BASIC_AUTH
 
   const baseBranch = sanitizeNullableString(event.base) || process.env.BASE_BRANCH || 'main'
-  const headBranch = sanitizeNullableString(event.head) || process.env.HEAD_BRANCH || ''
+  const headBranch = sanitizeNullableString(event.head) || process.env.HEAD_BRANCH || (isBatchTask ? 'batch-task' : '')
 
-  if (!headBranch) {
+  if (!headBranch && !isBatchTask) {
     throw new Error('Missing head branch metadata in event payload')
   }
 
@@ -3155,46 +3164,52 @@ export const runCodexImplementation = async (eventPath: string) => {
     }
   }
 
-  await ensureWorktreeCheckout({ worktree, repository, logger: consoleLogger })
+  if (!isBatchTask) {
+    await ensureWorktreeCheckout({ worktree, repository, logger: consoleLogger })
 
-  // Ensure worktree tracks the requested head branch (not just base).
-  assertCommandSuccess(await runCommand('git', ['fetch', '--all', '--prune'], { cwd: worktree }), 'git fetch')
+    // Ensure worktree tracks the requested head branch (not just base).
+    assertCommandSuccess(await runCommand('git', ['fetch', '--all', '--prune'], { cwd: worktree }), 'git fetch')
 
-  const syncWorktreeToHead = async () => {
-    const remoteHeadExists =
-      (
-        await runCommand('git', ['rev-parse', '--verify', '--quiet', `origin/${headBranch}`], {
-          cwd: worktree,
-        })
-      ).exitCode === 0
+    const syncWorktreeToHead = async () => {
+      const remoteHeadExists =
+        (
+          await runCommand('git', ['rev-parse', '--verify', '--quiet', `origin/${headBranch}`], {
+            cwd: worktree,
+          })
+        ).exitCode === 0
 
-    const checkoutResult = await runCommand('git', ['checkout', headBranch], { cwd: worktree })
-    if (checkoutResult.exitCode !== 0) {
-      const fromRef = remoteHeadExists ? `origin/${headBranch}` : `origin/${baseBranch}`
-      assertCommandSuccess(
-        await runCommand('git', ['checkout', '-B', headBranch, fromRef], { cwd: worktree }),
-        'git checkout -B head',
-      )
-    } else {
-      assertCommandSuccess(checkoutResult, 'git checkout head')
-    }
-
-    const candidateRefs = remoteHeadExists ? [`origin/${headBranch}`, `origin/${baseBranch}`] : [`origin/${baseBranch}`]
-
-    const resetErrors: string[] = []
-    for (const ref of candidateRefs) {
-      const resetResult = await runCommand('git', ['reset', '--hard', ref], { cwd: worktree })
-      if (resetResult.exitCode === 0) {
-        assertCommandSuccess(resetResult, `git reset --hard ${ref}`)
-        return
+      const checkoutResult = await runCommand('git', ['checkout', headBranch], { cwd: worktree })
+      if (checkoutResult.exitCode !== 0) {
+        const fromRef = remoteHeadExists ? `origin/${headBranch}` : `origin/${baseBranch}`
+        assertCommandSuccess(
+          await runCommand('git', ['checkout', '-B', headBranch, fromRef], { cwd: worktree }),
+          'git checkout -B head',
+        )
+      } else {
+        assertCommandSuccess(checkoutResult, 'git checkout head')
       }
-      resetErrors.push(`reset ${ref} failed (exit ${resetResult.exitCode}) ${resetResult.stderr || resetResult.stdout}`)
+
+      const candidateRefs = remoteHeadExists
+        ? [`origin/${headBranch}`, `origin/${baseBranch}`]
+        : [`origin/${baseBranch}`]
+
+      const resetErrors: string[] = []
+      for (const ref of candidateRefs) {
+        const resetResult = await runCommand('git', ['reset', '--hard', ref], { cwd: worktree })
+        if (resetResult.exitCode === 0) {
+          assertCommandSuccess(resetResult, `git reset --hard ${ref}`)
+          return
+        }
+        resetErrors.push(
+          `reset ${ref} failed (exit ${resetResult.exitCode}) ${resetResult.stderr || resetResult.stdout}`,
+        )
+      }
+
+      throw new Error(`git reset --hard failed; attempts: ${resetErrors.join('; ')}`)
     }
 
-    throw new Error(`git reset --hard failed; attempts: ${resetErrors.join('; ')}`)
+    await syncWorktreeToHead()
   }
-
-  await syncWorktreeToHead()
 
   const planCommentId =
     event.planCommentId !== undefined && event.planCommentId !== null ? String(event.planCommentId) : ''
@@ -3235,10 +3250,6 @@ export const runCodexImplementation = async (eventPath: string) => {
   exportScalarEventParametersToEnv(event)
 
   process.env.CODEX_STAGE = stage
-  const configuredModel = normalizeOptionalString(sanitizeNullableString(process.env.CODEX_MODEL))
-  if (!configuredModel) {
-    process.env.CODEX_MODEL = 'codex-spark'
-  }
   process.env.RUST_LOG = process.env.RUST_LOG ?? 'codex_core=info,codex_exec=info'
   process.env.RUST_BACKTRACE = process.env.RUST_BACKTRACE ?? '1'
 
@@ -3283,22 +3294,24 @@ export const runCodexImplementation = async (eventPath: string) => {
       run_id: channelRunId || undefined,
     },
   })
-  await postProgressComment({
-    logger,
-    repository,
-    issueNumber,
-    stage,
-    headBranch,
-    baseBranch,
-    phase: 'started',
-    requirementMetadata,
-  })
+  if (!isBatchTask) {
+    await postProgressComment({
+      logger,
+      repository,
+      issueNumber,
+      stage,
+      headBranch,
+      baseBranch,
+      phase: 'started',
+      requirementMetadata,
+    })
+  }
 
   const hulyWorkerContext = resolveHulyWorkerContext(requirementMetadata)
   let hulyArtifacts: HulyRequirementArtifacts | undefined
   const hulyAccessMessage = `Hi team, I am starting ${stage} for ${repository}#${issueNumber} and will post progress here.`
 
-  if (crossSwarmHulyChannel) {
+  if (!isBatchTask && crossSwarmHulyChannel) {
     try {
       const listResult = await listChannelMessages({
         channel: crossSwarmHulyChannel,
@@ -3388,7 +3401,8 @@ export const runCodexImplementation = async (eventPath: string) => {
     (process.env.CODEX_NATS_SOAK_REQUIRED ?? 'true').trim().toLowerCase() !== 'false' &&
     (process.env.CODEX_NATS_SOAK_REQUIRED ?? 'true').trim() !== '0'
 
-  const shouldRequireMemories = stage === 'implementation' && ((iteration ?? 1) >= 2 || (iterationCycle ?? 1) >= 2)
+  const shouldRequireMemories =
+    !isBatchTask && stage === 'implementation' && ((iteration ?? 1) >= 2 || (iterationCycle ?? 1) >= 2)
   const memoryNamespace = `codex:${repository}:${issueNumber}`
   const memoryQuery = `issue ${issueNumber} ${issueTitle || repository} codex run summary`
   const memorySoak = await fetchJangarMemories({
@@ -3438,7 +3452,8 @@ export const runCodexImplementation = async (eventPath: string) => {
   }
 
   const normalizedIssueNumber = issueNumber
-  const supportsResume = stage === 'implementation'
+  const disableResume = parseBoolean(process.env.CODEX_DISABLE_RESUME, false)
+  const supportsResume = stage === 'implementation' && !disableResume
   let resumeContext: ResumeContext | undefined
   let resumeSessionId: string | undefined
   let capturedSessionId: string | undefined
@@ -3510,10 +3525,10 @@ export const runCodexImplementation = async (eventPath: string) => {
 
     const maxSessionAttempts = parsePositiveIntEnv(process.env.CODEX_MAX_SESSION_ATTEMPTS, 3)
     let sessionResult: RunCodexSessionResult = { agentMessages: [], sessionId: undefined, exitCode: 0 }
-    const primaryModel = process.env.CODEX_MODEL?.trim() || 'codex-spark'
-    const modelFallbackQueue = parseModelCandidates(
-      process.env.CODEX_MODEL_FALLBACKS ?? (primaryModel === 'codex-spark' ? 'codex' : ''),
-    ).filter((candidate) => candidate !== primaryModel)
+    const primaryModel = normalizeOptionalString(sanitizeNullableString(process.env.CODEX_MODEL))
+    const modelFallbackQueue = parseModelCandidates(process.env.CODEX_MODEL_FALLBACKS ?? '').filter(
+      (candidate) => candidate !== primaryModel,
+    )
     const runSession = async (sessionPrompt: string) => {
       return await runCodexSession({
         stage: stage as Parameters<typeof runCodexSession>[0]['stage'],
@@ -3733,89 +3748,91 @@ export const runCodexImplementation = async (eventPath: string) => {
     const prUrlRaw = await readOptionalTextFile(prUrlPath, logger)
     let prNumber = prNumberRaw ? parseOptionalPrNumber(prNumberRaw) : null
     prUrl = prUrlRaw ? prUrlRaw : null
-    const pullRequestsEnabled = parseBoolean(process.env.VCS_PULL_REQUESTS_ENABLED, false)
-    const requirePullRequestConfigured = parseBoolean(process.env.CODEX_REQUIRE_PULL_REQUEST, pullRequestsEnabled)
-    const isReleaseLikeExecution = isReleaseManagerLikeExecution(requirementMetadata)
-    const requirePullRequest = isReleaseLikeExecution ? false : requirePullRequestConfigured
-    const pullRequestDiscoveryEnabled = parseBoolean(process.env.CODEX_PR_DISCOVERY_ENABLED, true)
-    const shouldRecoverMissingPrMetadata = requirePullRequest && (!prUrl || !prNumber)
-    const shouldRefreshReleasePrMetadata = isReleaseLikeExecution
-    if (
-      pullRequestDiscoveryEnabled &&
-      stage === 'implementation' &&
-      (shouldRecoverMissingPrMetadata || shouldRefreshReleasePrMetadata)
-    ) {
-      const discoveredPr = await discoverPullRequestMetadata({
+    if (!isBatchTask) {
+      const pullRequestsEnabled = parseBoolean(process.env.VCS_PULL_REQUESTS_ENABLED, false)
+      const requirePullRequestConfigured = parseBoolean(process.env.CODEX_REQUIRE_PULL_REQUEST, pullRequestsEnabled)
+      const isReleaseLikeExecution = isReleaseManagerLikeExecution(requirementMetadata)
+      const requirePullRequest = isReleaseLikeExecution ? false : requirePullRequestConfigured
+      const pullRequestDiscoveryEnabled = parseBoolean(process.env.CODEX_PR_DISCOVERY_ENABLED, true)
+      const shouldRecoverMissingPrMetadata = requirePullRequest && (!prUrl || !prNumber)
+      const shouldRefreshReleasePrMetadata = isReleaseLikeExecution
+      if (
+        pullRequestDiscoveryEnabled &&
+        stage === 'implementation' &&
+        (shouldRecoverMissingPrMetadata || shouldRefreshReleasePrMetadata)
+      ) {
+        const discoveredPr = await discoverPullRequestMetadata({
+          repository,
+          headBranch,
+          worktree,
+          logger,
+        })
+        if (discoveredPr) {
+          const nextPrNumber = shouldRefreshReleasePrMetadata
+            ? (discoveredPr.number ?? prNumber)
+            : (prNumber ?? discoveredPr.number)
+          const nextPrUrl = shouldRefreshReleasePrMetadata ? (discoveredPr.url ?? prUrl) : (prUrl ?? discoveredPr.url)
+          const metadataChanged = nextPrNumber !== prNumber || nextPrUrl !== prUrl
+          prNumber = nextPrNumber
+          prUrl = nextPrUrl
+          if (metadataChanged) {
+            await persistDiscoveredPullRequestMetadata({
+              prNumber,
+              prUrl,
+              prNumberPath,
+              prUrlPath,
+              logger,
+            })
+          }
+          logger.info(
+            shouldRefreshReleasePrMetadata
+              ? 'Refreshed pull request metadata from GitHub for release verification'
+              : 'Recovered pull request metadata from GitHub',
+            {
+              prNumber,
+              prUrl,
+              repository,
+              headBranch,
+            },
+          )
+        }
+      }
+      const roleCompletionEvidence = await evaluateRoleCompletionEvidence({
+        lane: executionLane,
+        event,
         repository,
-        headBranch,
+        prUrl,
         worktree,
+        baseBranch,
+        lastAssistantMessage,
         logger,
       })
-      if (discoveredPr) {
-        const nextPrNumber = shouldRefreshReleasePrMetadata
-          ? (discoveredPr.number ?? prNumber)
-          : (prNumber ?? discoveredPr.number)
-        const nextPrUrl = shouldRefreshReleasePrMetadata ? (discoveredPr.url ?? prUrl) : (prUrl ?? discoveredPr.url)
-        const metadataChanged = nextPrNumber !== prNumber || nextPrUrl !== prUrl
-        prNumber = nextPrNumber
-        prUrl = nextPrUrl
-        if (metadataChanged) {
-          await persistDiscoveredPullRequestMetadata({
-            prNumber,
-            prUrl,
-            prNumberPath,
-            prUrlPath,
-            logger,
-          })
-        }
-        logger.info(
-          shouldRefreshReleasePrMetadata
-            ? 'Refreshed pull request metadata from GitHub for release verification'
-            : 'Recovered pull request metadata from GitHub',
-          {
-            prNumber,
-            prUrl,
-            repository,
-            headBranch,
-          },
-        )
+      const requireArchitectMergeEvidence =
+        executionLane === 'architect' && roleCompletionEvidence.changedFiles.length > 0
+      const pullRequestPolicyDecision = Effect.runSync(
+        evaluatePullRequestPolicy({
+          stage,
+          requirePullRequest,
+          prUrl,
+          swarmAgentRole: requirementMetadata.workerRole ?? null,
+          swarmHumanName: requirementMetadata.workerHumanName ?? null,
+          requireArchitectMergeEvidence,
+          hasArchitectMergeEvidence: roleCompletionEvidence.architectMergeEvidence,
+        }),
+      )
+      if (!pullRequestPolicyDecision.ok) {
+        throw new Error(pullRequestPolicyDecision.message)
       }
-    }
-    const roleCompletionEvidence = await evaluateRoleCompletionEvidence({
-      lane: executionLane,
-      event,
-      repository,
-      prUrl,
-      worktree,
-      baseBranch,
-      lastAssistantMessage,
-      logger,
-    })
-    const requireArchitectMergeEvidence =
-      executionLane === 'architect' && roleCompletionEvidence.changedFiles.length > 0
-    const pullRequestPolicyDecision = Effect.runSync(
-      evaluatePullRequestPolicy({
-        stage,
-        requirePullRequest,
-        prUrl,
-        swarmAgentRole: requirementMetadata.workerRole ?? null,
-        swarmHumanName: requirementMetadata.workerHumanName ?? null,
-        requireArchitectMergeEvidence,
-        hasArchitectMergeEvidence: roleCompletionEvidence.architectMergeEvidence,
-      }),
-    )
-    if (!pullRequestPolicyDecision.ok) {
-      throw new Error(pullRequestPolicyDecision.message)
-    }
-    const shouldEnforceEngineerChecks = executionLane === 'engineer' && stage === 'implementation' && Boolean(prUrl)
-    if (shouldEnforceEngineerChecks && !roleCompletionEvidence.engineerChecksGreen) {
-      throw new Error('Engineer run completed without verified green required checks for the active pull request')
-    }
-    if (executionLane === 'release' && !roleCompletionEvidence.releaseMergeEvidence) {
-      throw new Error('Release run completed without merge evidence (merged PR/commit required)')
-    }
-    if (executionLane === 'release' && !roleCompletionEvidence.releaseRolloutEvidence) {
-      throw new Error('Release run completed without healthy rollout evidence')
+      const shouldEnforceEngineerChecks = executionLane === 'engineer' && stage === 'implementation' && Boolean(prUrl)
+      if (shouldEnforceEngineerChecks && !roleCompletionEvidence.engineerChecksGreen) {
+        throw new Error('Engineer run completed without verified green required checks for the active pull request')
+      }
+      if (executionLane === 'release' && !roleCompletionEvidence.releaseMergeEvidence) {
+        throw new Error('Release run completed without merge evidence (merged PR/commit required)')
+      }
+      if (executionLane === 'release' && !roleCompletionEvidence.releaseRolloutEvidence) {
+        throw new Error('Release run completed without healthy rollout evidence')
+      }
     }
     const headSha = commitSha ?? null
     try {
@@ -3850,7 +3867,7 @@ export const runCodexImplementation = async (eventPath: string) => {
     const hulyDecision = 'completed' as const
     const natsDecision = 'pass'
 
-    if (hulyArtifacts && crossSwarmHulyChannel) {
+    if (!isBatchTask && hulyArtifacts && crossSwarmHulyChannel) {
       hulyArtifacts = await buildHulyArtifactsFromRun({
         artifacts: hulyArtifacts,
         logger,
@@ -3964,18 +3981,20 @@ export const runCodexImplementation = async (eventPath: string) => {
     }
     await postNotifyPayload(notifyPayload, logger)
 
-    await postProgressComment({
-      logger,
-      repository,
-      issueNumber,
-      stage,
-      headBranch,
-      baseBranch,
-      phase: 'completed',
-      prUrl,
-      lastAssistantMessage,
-      requirementMetadata,
-    })
+    if (!isBatchTask) {
+      await postProgressComment({
+        logger,
+        repository,
+        issueNumber,
+        stage,
+        headBranch,
+        baseBranch,
+        phase: 'completed',
+        prUrl,
+        lastAssistantMessage,
+        requirementMetadata,
+      })
+    }
 
     runSucceeded = true
     return {
@@ -3991,7 +4010,7 @@ export const runCodexImplementation = async (eventPath: string) => {
     }
   } finally {
     if (!runSucceeded) {
-      if (crossSwarmHulyChannel && hulyArtifacts) {
+      if (!isBatchTask && crossSwarmHulyChannel && hulyArtifacts) {
         const summary = extractSummary(lastAssistantMessage)
         const tests = extractTests(lastAssistantMessage)
         const gaps = extractKnownGaps(lastAssistantMessage)
@@ -4019,18 +4038,20 @@ export const runCodexImplementation = async (eventPath: string) => {
         }
       }
 
-      await postProgressComment({
-        logger,
-        repository,
-        issueNumber,
-        stage,
-        headBranch,
-        baseBranch,
-        phase: 'failed',
-        prUrl,
-        lastAssistantMessage,
-        requirementMetadata,
-      })
+      if (!isBatchTask) {
+        await postProgressComment({
+          logger,
+          repository,
+          issueNumber,
+          stage,
+          headBranch,
+          baseBranch,
+          phase: 'failed',
+          prUrl,
+          lastAssistantMessage,
+          requirementMetadata,
+        })
+      }
       await publishNatsEvent(logger, {
         kind: 'run-gaps',
         content: 'Run failed before emitting gaps; inspect logs and artifacts.',
@@ -4047,7 +4068,7 @@ export const runCodexImplementation = async (eventPath: string) => {
     }
     await ensureNotifyPlaceholder(notifyPath, logger)
     try {
-      if (stage === 'implementation') {
+      if (stage === 'implementation' && !isBatchTask) {
         const baseRef = await resolveBaseRef(worktree, baseBranch, logger)
         await captureImplementationArtifacts({
           worktree,

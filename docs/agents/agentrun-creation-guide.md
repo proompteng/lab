@@ -84,6 +84,37 @@ Notes:
   `agents.proompteng.ai/agent-run=<run-name>` labels, so names longer than 63 characters can fail reconciliation.
 - Prefer omitting `spec.workload.image` unless you intentionally pin a known-good runner image.
 
+## Preflight: Validate References Before `kubectl apply`
+
+Run this check before creating an AgentRun:
+
+```bash
+RUN_NS=agents
+AGENT_NAME=codex-agent
+VCS_PROVIDER=github
+SECRETS=(codex-github-token codex-openai-key)
+
+kubectl -n "$RUN_NS" get agent "$AGENT_NAME"
+kubectl -n "$RUN_NS" get versioncontrolprovider "$VCS_PROVIDER"
+
+for s in "${SECRETS[@]}"; do
+  kubectl -n "$RUN_NS" get secret "$s" >/dev/null || echo "missing secret: $s"
+done
+```
+
+Rules:
+
+- Every entry listed under `spec.secrets` must exist in the target namespace.
+- If a secret is missing and not required for your current provider/runtime path, remove it from `spec.secrets`
+  before apply.
+- If a secret is required, create it first; otherwise pod startup will fail with `CreateContainerConfigError`.
+
+Common failure signature:
+
+```bash
+kubectl -n agents describe pod <agent-run-pod> | rg -n 'CreateContainerConfigError|secret ".*" not found'
+```
+
 ## Runner Image Selection (Avoid Accidental Overrides)
 
 Image resolution order (highest first):
@@ -174,6 +205,10 @@ Treat `${key}` tokens in `ImplementationSpec.spec.text` as literal unless you ha
 kubectl get agentrun -n agents leader-election-implementation-20260207-run
 kubectl get job -n agents -l agents.proompteng.ai/agent-run=leader-election-implementation-20260207-run -o name
 kubectl logs -n agents job/<job-name> -f
+
+# If no logs are available yet, inspect pod startup errors:
+kubectl -n agents get pod -l job-name=<job-name>
+kubectl -n agents describe pod <pod-name>
 ```
 
 ## Loop Workflow Examples
@@ -220,5 +255,6 @@ Do not use system prompt customization to compensate for an incorrect user promp
 - Your `AgentRun.metadata.name` exceeded 63 chars and failed when propagated into Kubernetes label values.
 - You set `spec.workload.image` to a stale/incompatible image instead of inheriting controller defaults.
 - Required secrets were not allowlisted or not included in `spec.secrets`.
+- A secret referenced in `spec.secrets` does not exist in the run namespace (`CreateContainerConfigError`).
 - The repo is not in the allowlist configured for the controllers deployment.
 - You expected “followers not-ready” behavior without having implemented leader election in code and chart.

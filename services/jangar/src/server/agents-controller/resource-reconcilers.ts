@@ -25,7 +25,15 @@ export const createResourceReconcilers = (deps: {
   resolveVcsAuthMethod: (auth: Record<string, unknown>) => string
   validateVcsAuthConfig: (providerType: string, auth: Record<string, unknown>) => VcsAuthValidation
   parseIntOrString: (value: unknown) => string | null
+  resolveAuthSecretConfig: () => { name: string; key: string; mountPath: string } | null
+  resolveSecretValue: (secret: Record<string, unknown>, key: string) => string | null
   secretHasKey: (secret: Record<string, unknown>, key: string) => boolean
+  validateAutonomousCodexAuthSecret: (input: {
+    provider: Record<string, unknown>
+    authSecret: { name: string; key?: string } | null
+    secret: Record<string, unknown> | null
+    secretValue: string | null
+  }) => { ok: boolean; reason?: string; message?: string }
 }) => {
   const buildConditions = (resource: Record<string, unknown>) =>
     normalizeConditions(readNested(resource, ['status', 'conditions']))
@@ -58,7 +66,17 @@ export const createResourceReconcilers = (deps: {
           message: `agent provider ${providerName} not found`,
         })
       } else {
-        updated = upsertCondition(updated, { type: 'Ready', status: 'True', reason: 'ValidSpec' })
+        const providerReady = buildConditions(provider).find((condition) => condition.type === 'Ready')
+        if (providerReady?.status === 'False') {
+          updated = upsertCondition(updated, {
+            type: 'Ready',
+            status: 'False',
+            reason: 'ProviderNotReady',
+            message: providerReady.message || `agent provider ${providerName} is not ready`,
+          })
+        } else {
+          updated = upsertCondition(updated, { type: 'Ready', status: 'True', reason: 'ValidSpec' })
+        }
       }
     }
 
@@ -85,6 +103,7 @@ export const createResourceReconcilers = (deps: {
     const spec = asRecord(provider.spec) ?? {}
     const conditions = buildConditions(provider)
     const binary = asString(spec.binary)
+    const namespace = asString(readNested(provider, ['metadata', 'namespace'])) ?? 'default'
     let updated = conditions
     if (!binary) {
       updated = upsertCondition(updated, {
@@ -94,7 +113,34 @@ export const createResourceReconcilers = (deps: {
         message: 'spec.binary is required',
       })
     } else {
-      updated = upsertCondition(updated, { type: 'Ready', status: 'True', reason: 'ValidSpec' })
+      const authSecret = deps.resolveAuthSecretConfig()
+      const secret = authSecret ? await (kube as KubeClient).get('secret', authSecret.name, namespace) : null
+      const secretValue = authSecret && secret ? deps.resolveSecretValue(secret, authSecret.key) : null
+      const authValidation = deps.validateAutonomousCodexAuthSecret({
+        provider,
+        authSecret,
+        secret,
+        secretValue,
+      })
+      if (!authValidation.ok) {
+        const conditionType = authValidation.reason === 'AuthSecretNotFound' ? 'Unreachable' : 'InvalidSpec'
+        updated = upsertCondition(updated, {
+          type: conditionType,
+          status: 'True',
+          reason: authValidation.reason ?? 'InvalidAuthSecret',
+          message: authValidation.message ?? 'autonomous Codex auth validation failed',
+        })
+        updated = upsertCondition(updated, {
+          type: 'Ready',
+          status: 'False',
+          reason: authValidation.reason ?? 'InvalidAuthSecret',
+          message: authValidation.message ?? 'autonomous Codex auth validation failed',
+        })
+      } else {
+        updated = upsertCondition(updated, { type: 'InvalidSpec', status: 'False', reason: 'ValidSpec', message: '' })
+        updated = upsertCondition(updated, { type: 'Unreachable', status: 'False', reason: 'Reachable', message: '' })
+        updated = upsertCondition(updated, { type: 'Ready', status: 'True', reason: 'ValidSpec' })
+      }
     }
     await deps.setStatus(kube, provider, {
       observedGeneration: asRecord(provider.metadata)?.generation ?? 0,

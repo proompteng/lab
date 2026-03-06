@@ -22,6 +22,7 @@ from app.main import (
     app,
 )
 from app.trading.scheduler import TradingScheduler
+from app.trading.execution import OrderExecutor
 from app.config import settings
 from app.models import (
     Base,
@@ -1248,6 +1249,83 @@ class TestTradingApi(TestCase):
         self.assertIn("domain_telemetry_event_total", control_plane_contract)
         self.assertIn("domain_telemetry_dropped_total", control_plane_contract)
 
+    def test_trading_status_exposes_rejection_and_market_context_controls(self) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.metrics.llm_policy_veto_total = 3
+            scheduler.state.metrics.llm_runtime_fallback_total = 5
+            scheduler.state.metrics.llm_requests_total = 100
+            scheduler.state.metrics.llm_market_context_block_total = 7
+            scheduler.state.metrics.pre_llm_capacity_reject_total = 11
+            scheduler.state.metrics.pre_llm_qty_below_min_total = 13
+            scheduler.state.market_session_open = True
+            scheduler.state.last_market_context_symbol = "AAPL"
+            scheduler.state.last_market_context_checked_at = datetime(
+                2026, 3, 5, 15, 30, tzinfo=timezone.utc
+            )
+            scheduler.state.last_market_context_freshness_seconds = 120
+            scheduler.state.last_market_context_quality_score = 0.92
+            scheduler.state.last_market_context_domain_states = {
+                "technicals": "ok",
+                "fundamentals": "stale",
+                "news": "ok",
+                "regime": "ok",
+            }
+            scheduler.state.last_market_context_risk_flags = ["fundamentals_stale"]
+            scheduler.state.last_market_context_allow_llm = False
+            scheduler.state.last_market_context_reason = "market_context_stale"
+            scheduler.state.market_context_alert_active = True
+            scheduler.state.market_context_alert_reason = "market_context_stale"
+            executor = OrderExecutor()
+            executor._shorting_metadata_status.update(  # noqa: SLF001
+                {
+                    "account_ready": False,
+                    "last_refresh_at": "2026-03-05T15:30:00+00:00",
+                    "last_error": "account lookup unavailable",
+                }
+            )
+            scheduler._pipeline = type(  # noqa: SLF001
+                "PipelineStub",
+                (),
+                {"executor": executor, "llm_review_engine": None},
+            )()
+            app.state.trading_scheduler = scheduler
+
+            response = self.client.get("/trading/status")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["market_context"]["fail_mode"], "shadow_only")
+            self.assertFalse(payload["market_context"]["required"])
+            self.assertEqual(payload["market_context"]["last_symbol"], "AAPL")
+            self.assertEqual(payload["market_context"]["last_reason"], "market_context_stale")
+            self.assertTrue(payload["market_context"]["alert_active"])
+            self.assertEqual(payload["rejections"]["policy_veto_total"], 3)
+            self.assertEqual(payload["rejections"]["runtime_fallback_total"], 5)
+            self.assertAlmostEqual(payload["rejections"]["runtime_fallback_ratio"], 0.05)
+            self.assertEqual(
+                payload["rejections"]["runtime_fallback_alert_ratio_threshold"], 0.01
+            )
+            self.assertTrue(payload["rejections"]["runtime_fallback_alert_active"])
+            self.assertEqual(payload["rejections"]["market_context_block_total"], 7)
+            self.assertEqual(payload["rejections"]["pre_llm_capacity_reject_total"], 11)
+            self.assertEqual(payload["rejections"]["pre_llm_qty_below_min_total"], 13)
+            self.assertFalse(payload["shorting_metadata"]["account_ready"])
+            self.assertTrue(payload["shorting_metadata"]["alert_active"])
+            self.assertEqual(
+                payload["shorting_metadata"]["last_error"],
+                "account lookup unavailable",
+            )
+            self.assertTrue(payload["alerts"]["market_context_alert_active"])
+            self.assertTrue(payload["alerts"]["runtime_fallback_alert_active"])
+            self.assertTrue(payload["alerts"]["shorting_metadata_alert_active"])
+        finally:
+            if original_scheduler is None:
+                if hasattr(app.state, "trading_scheduler"):
+                    del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
     def test_trading_metrics_includes_control_plane_contract(self) -> None:
         response = self.client.get("/trading/metrics")
         self.assertEqual(response.status_code, 200)
@@ -1293,6 +1371,8 @@ class TestTradingApi(TestCase):
                 'torghut_trading_execution_advisor_fallback_total{reason="advisor_disabled"} 1',
                 metrics_payload,
             )
+            self.assertIn("torghut_trading_llm_runtime_fallback_ratio", metrics_payload)
+            self.assertIn("torghut_trading_market_context_alert_active", metrics_payload)
         finally:
             if original_scheduler is None:
                 del app.state.trading_scheduler

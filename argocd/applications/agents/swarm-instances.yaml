@@ -6,7 +6,7 @@ metadata:
 spec:
   owner:
     id: platform-owner
-    channel: http://transactor.huly.svc.cluster.local
+    channel: swarm://owner/platform
   domains:
     - platform-reliability
     - platform-evolution
@@ -79,7 +79,7 @@ metadata:
 spec:
   owner:
     id: trading-owner
-    channel: http://transactor.huly.svc.cluster.local
+    channel: swarm://owner/trading
   domains:
     - quant-research
     - autonomous-trading

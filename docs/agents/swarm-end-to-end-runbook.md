@@ -36,6 +36,9 @@ Channel selection is dynamic at runtime:
 2. `hulyChannelName`.
 3. `hulyChannelUrl`.
 
+`owner.channel` remains a logical conversation URI for swarm ownership and routing. Huly transport uses explicit
+`hulyApiBaseUrl` wiring and must not be inferred from `owner.channel`.
+
 ## Execution Loop
 
 ```mermaid
@@ -90,6 +93,18 @@ Expected:
 - `agents` app is `Synced` and `Healthy`.
 - `jangar-control-plane` and `torghut-quant` swarms are `Active` and `Ready=True`.
 - All stage schedules are `Active`.
+
+### 2a. Post-sync smoke
+
+```bash
+kubectl -n agents get agentrun codex-spark-smoke -o json | jq '{phase:.status.phase,reason:.status.reason,message:.status.message}'
+kubectl -n agents logs job/$(kubectl -n agents get job -l agents.proompteng.ai/agent-run=codex-spark-smoke -o jsonpath='{.items[0].metadata.name}') --tail=200
+```
+
+Expected:
+
+- `phase` is `Succeeded`.
+- No ChatGPT auth-mode, usage-limit, or unknown-model errors appear in the job logs.
 
 ### 3. Cross-swarm handoff proof
 
@@ -147,18 +162,10 @@ Expected evidence:
 - `upsert-mission` called with explicit `--message`.
 - Returned Huly artifact ids (`issueId`, `documentId`, `messageId`).
 
-## Current Known State (2026-03-02)
+## Current Known State
 
-- `agents` Argo CD app: `Synced` + `Healthy` on revision `d455ba84e1e80c3f04a4c7e736a5c26dc59018c1`.
-- Both swarms: `Active` + `Ready=True`.
-- Cross-swarm handoff run observed: `jangar-control-plane-torghut-quant-req-00gbjlqs-1-n2l4r` (active).
-- Post-merge channel-behavior probe run succeeded:
-  `e2e-jangar-verify-human-msg-1772441402`.
-- Probe logs confirm required interaction contract:
-  - `list-channel-messages` executed before mission decisions.
-  - `verify-chat-access` executed with explicit worker-authored `--message`.
-  - `upsert-mission` executed with explicit worker-authored `--message`.
-  - Huly artifact ids returned (`issueId`, `documentId`, `messageId`).
+Check live cluster state before using this runbook. Swarm readiness, freeze status, and smoke outcomes are operational
+signals, not static documentation.
 
 ## Failure Criteria
 

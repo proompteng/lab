@@ -48,6 +48,9 @@ gitea:
       SSL_MODE: disable
     service:
       DISABLE_REGISTRATION: true
+    actions:
+      ENABLED: true
+      DEFAULT_ACTIONS_URL: https://code.proompteng.ai
   additionalConfigFromEnvs:
     - name: FORGEJO__DATABASE__PASSWD
       valueFrom:

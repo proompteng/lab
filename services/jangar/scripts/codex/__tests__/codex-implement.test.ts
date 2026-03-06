@@ -1758,6 +1758,24 @@ exit 1
     await expect(runCodexImplementation(eventPath)).rejects.toThrow('Missing issue number metadata in event payload')
   }, 40_000)
 
+  it('allows batch_task execution without repository, issue number, or head branch metadata', async () => {
+    await writeFile(
+      eventPath,
+      JSON.stringify({
+        prompt: 'Batch prompt',
+        executionMode: 'batch_task',
+        stage: 'implementation',
+      }),
+      'utf8',
+    )
+
+    const result = await runCodexImplementation(eventPath)
+
+    expect(result.repository).toBe('batch-task')
+    expect(result.issueNumber).toBe('0')
+    expect(runCodexProgressCommentMock).not.toHaveBeenCalled()
+  }, 40_000)
+
   it('falls back to base when the head branch does not exist on the remote', async () => {
     // Remove head from remote and local to simulate new branches that are not yet pushed.
     await new Promise<void>((resolve, reject) => {
@@ -1850,6 +1868,68 @@ exit 1
       const resumeMetadata = JSON.parse(resumeMetadataRaw) as Record<string, unknown>
       expect(resumeMetadata.state).toBe('cleared')
     } finally {
+      await rm(resumeSourceDir, { recursive: true, force: true })
+    }
+  }, 40_000)
+
+  it('skips resume state when CODEX_DISABLE_RESUME is enabled', async () => {
+    process.env.CODEX_DISABLE_RESUME = '1'
+    const resumeSourceDir = await mkdtemp(join(tmpdir(), 'codex-impl-no-resume-src-'))
+    const manifest = {
+      version: 1,
+      generatedAt: new Date().toISOString(),
+      worktree: workdir,
+      repository: 'owner/repo',
+      issueNumber: '42',
+      prompt: 'Implementation prompt',
+      sessionId: 'resume-session-disabled',
+      trackedFiles: ['src/real.ts'],
+      deletedFiles: [] as string[],
+    }
+
+    await mkdir(join(resumeSourceDir, 'metadata'), { recursive: true })
+    await mkdir(join(resumeSourceDir, 'files', 'src'), { recursive: true })
+    await writeFile(join(resumeSourceDir, 'metadata', 'manifest.json'), JSON.stringify(manifest), 'utf8')
+    await writeFile(join(resumeSourceDir, 'files', 'src', 'real.ts'), 'console.log(\"resume\");\n', 'utf8')
+
+    const archivePath = join(workdir, '.codex-implementation-changes.tar.gz')
+    await new Promise<void>((resolve, reject) => {
+      const tarProcess = spawn('tar', ['-czf', archivePath, '-C', resumeSourceDir, '.'])
+      tarProcess.on('error', reject)
+      tarProcess.on('close', (code) => {
+        if (code === 0) {
+          resolve()
+        } else {
+          reject(new Error(`tar exited with status ${code}`))
+        }
+      })
+    })
+
+    await mkdir(join(workdir, '.codex'), { recursive: true })
+    await writeFile(
+      join(workdir, '.codex', 'implementation-resume.json'),
+      JSON.stringify({
+        ...manifest,
+        archivePath,
+        patchPath: join(workdir, '.codex-implementation.patch'),
+        statusPath: join(workdir, '.codex-implementation-status.txt'),
+        state: 'pending' as const,
+      }),
+      'utf8',
+    )
+
+    runCodexSessionMock.mockImplementationOnce(async (options) => {
+      expect(options.resumeSessionId).toBeUndefined()
+      return { agentMessages: ['fresh run'], sessionId: 'fresh-session', exitCode: 0, forcedTermination: false }
+    })
+
+    try {
+      const result = await runCodexImplementation(eventPath)
+      expect(result.sessionId).toBe('fresh-session')
+      const invocation = runCodexSessionMock.mock.calls[0]?.[0]
+      expect(invocation?.resumeSessionId).toBeUndefined()
+    } finally {
+      delete process.env.CODEX_DISABLE_RESUME
       await rm(resumeSourceDir, { recursive: true, force: true })
     }
   }, 40_000)
@@ -1983,4 +2063,35 @@ exit 1
     expect(runCodexSessionMock).toHaveBeenCalledTimes(2)
     expect(process.env.CODEX_MODEL).toBe('codex')
   }, 40_000)
+
+  it('does not inject a default CODEX_MODEL when provider config is the source of truth', async () => {
+    delete process.env.CODEX_MODEL
+    delete process.env.CODEX_MODEL_FALLBACKS
+
+    runCodexSessionMock.mockImplementationOnce(async () => {
+      expect(process.env.CODEX_MODEL).toBeUndefined()
+      return {
+        agentMessages: ['done'],
+        sessionId: 'provider-model-session',
+        exitCode: 0,
+        forcedTermination: false,
+      }
+    })
+
+    const result = await runCodexImplementation(eventPath)
+    expect(result.sessionId).toBe('provider-model-session')
+    expect(process.env.CODEX_MODEL).toBeUndefined()
+  })
+
+  it('does not enable implicit fallback models when CODEX_MODEL_FALLBACKS is unset', async () => {
+    process.env.CODEX_MODEL = 'gpt-5.4'
+    delete process.env.CODEX_MODEL_FALLBACKS
+    process.env.CODEX_MAX_SESSION_ATTEMPTS = '2'
+
+    runCodexSessionMock.mockRejectedValueOnce(new Error('429 rate limit exceeded for gpt-5.4'))
+
+    await expect(runCodexImplementation(eventPath)).rejects.toThrow('429 rate limit exceeded for gpt-5.4')
+    expect(runCodexSessionMock).toHaveBeenCalledTimes(1)
+    expect(process.env.CODEX_MODEL).toBe('gpt-5.4')
+  })
 })

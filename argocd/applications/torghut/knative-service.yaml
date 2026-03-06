@@ -16,7 +16,7 @@ spec:
   template:
     metadata:
       annotations:
-        client.knative.dev/updateTimestamp: "2026-03-05T05:13:15Z"
+        client.knative.dev/updateTimestamp: "2026-03-06T06:01:34Z"
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/target: "80"
@@ -26,13 +26,19 @@ spec:
       containers:
         - name: user-container
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:6f3df8ce0229757e2219c5ecb566b749aa2f92a0830f8dd447ca8f3ec723d63e
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:5563a1531e5619f907f32201cec67abca69069a97bba949628932dabab48d407
           ports:
             - name: http1
               containerPort: 8181
           env:
             - name: APP_ENV
               value: prod
+            - name: LOG_LEVEL
+              value: INFO
+            - name: LOG_FORMAT
+              value: json
+            - name: LOG_ACCESS_LOG
+              value: "true"
             - name: DB_DSN
               valueFrom:
                 secretKeyRef:
@@ -319,7 +325,7 @@ spec:
             - name: TRADING_MARKET_CONTEXT_URL
               value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/
             - name: TRADING_MARKET_CONTEXT_TIMEOUT_SECONDS
-              value: "3"
+              value: "300"
             - name: TRADING_MARKET_CONTEXT_REQUIRED
               value: "false"
             - name: TRADING_MARKET_CONTEXT_FAIL_MODE
@@ -328,6 +334,12 @@ spec:
               value: "0.55"
             - name: TRADING_MARKET_CONTEXT_MAX_STALENESS_SECONDS
               value: "300"
+            - name: TRADING_MARKET_CONTEXT_ALLOW_DEGRADED_LAST_GOOD
+              value: "true"
+            - name: TRADING_MARKET_CONTEXT_FUNDAMENTALS_DEGRADED_MAX_STALENESS_SECONDS
+              value: "86400"
+            - name: TRADING_MARKET_CONTEXT_NEWS_DEGRADED_MAX_STALENESS_SECONDS
+              value: "1800"
             - name: TRADING_ALLOCATOR_REGIME_LOW_CONFIDENCE_THRESHOLD
               value: "0.60"
             - name: TRADING_ALLOCATOR_REGIME_LOW_CONFIDENCE_MULTIPLIER
@@ -418,9 +430,9 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.562.0-282-gacbb4997
+              value: v0.562.0-331-gf0570875
             - name: TORGHUT_COMMIT
-              value: acbb4997de0772916afaec22fd876db8848f341e
+              value: f05708755910183d8d108a5b6a23a028f02881fb
           envFrom:
             - configMapRef:
                 name: torghut-autonomy-config

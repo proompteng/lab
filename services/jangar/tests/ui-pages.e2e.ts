@@ -33,6 +33,10 @@ test.describe('ui pages', () => {
   test('torghut symbols', async ({ page }) => {
     await page.goto('/torghut/symbols')
     await expect(page.getByRole('heading', { name: 'Symbols', level: 1 })).toBeVisible()
+    const assetClassSelect = page.locator('#torghut-symbol-asset-class')
+    await expect(assetClassSelect).toBeVisible()
+    const colorScheme = await assetClassSelect.evaluate((element) => getComputedStyle(element).colorScheme)
+    expect(colorScheme).toContain('dark')
   })
 
   test('torghut charts', async ({ page }) => {
@@ -40,7 +44,7 @@ test.describe('ui pages', () => {
     await expect(page.getByRole('heading', { name: 'Charts', level: 1 })).toBeVisible()
     const symbolSelect = page.locator('#torghut-symbol')
     await expect(symbolSelect).toBeVisible()
-    const colorScheme = await symbolSelect.evaluate((element) => getComputedStyle(element).colorScheme)
-    expect(colorScheme).toContain('light')
+    const tagName = await symbolSelect.evaluate((element) => element.tagName)
+    expect(tagName).toBe('BUTTON')
   })
 })

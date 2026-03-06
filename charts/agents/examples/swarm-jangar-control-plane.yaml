@@ -15,6 +15,7 @@ spec:
     - autonomously construct and expand internal platform capabilities
   mode: lights-out
   timezone: UTC
+  # Example/demo cadence. The production overlay runs all stages hourly.
   cadence:
     discoverEvery: 5m
     planEvery: 10m

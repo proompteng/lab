@@ -87,6 +87,27 @@ describe('agents controller implementation-contract module', () => {
     expect(context.payload.issueTitle).toBe('Compile proompteng/lab')
   })
 
+  it('preserves unknown shell placeholders while interpolating known parameters', () => {
+    const implementation = {
+      source: {
+        provider: 'github',
+      },
+      text: 'SCRIPT_ROOT=/root/.codex && test -f "${SCRIPT_ROOT}/run.py" && echo ${symbol}',
+      contract: {
+        requiredKeys: ['symbol'],
+      },
+    }
+
+    const parameters = {
+      symbol: 'AAPL',
+    }
+
+    const context = buildEventContext(implementation, parameters)
+    expect(context.missingRequiredKeys).toEqual([])
+    expect(context.payload.prompt).toBe('SCRIPT_ROOT=/root/.codex && test -f "${SCRIPT_ROOT}/run.py" && echo AAPL')
+    expect(context.payload.issueBody).toBe('SCRIPT_ROOT=/root/.codex && test -f "${SCRIPT_ROOT}/run.py" && echo AAPL')
+  })
+
   it('falls back to github external id when repository metadata is missing', () => {
     const implementation = {
       source: {
