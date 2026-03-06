@@ -195,6 +195,12 @@ class TestTradingApi(TestCase):
             "current_heads": ["0011_execution_tca_simulator_divergence"],
             "expected_heads": ["0011_execution_tca_simulator_divergence"],
             "schema_head_signature": "7f8e4d0",
+            "schema_graph_signature": "graph-signature-demo",
+            "schema_graph_roots": ["0001_initial_torghut_schema"],
+            "schema_graph_branch_count": 1,
+            "schema_graph_parent_forks": {},
+            "schema_graph_duplicate_revisions": {},
+            "schema_graph_orphan_parents": [],
             "schema_missing_heads": [],
             "schema_unexpected_heads": [],
             "schema_head_count_expected": 1,
@@ -224,7 +230,126 @@ class TestTradingApi(TestCase):
         self.assertEqual(payload["schema_head_count_expected"], 1)
         self.assertEqual(payload["schema_head_count_current"], 1)
         self.assertEqual(payload["schema_head_delta_count"], 0)
+        self.assertEqual(payload["schema_graph_signature"], "graph-signature-demo")
+        self.assertEqual(payload["schema_graph_roots"], ["0001_initial_torghut_schema"])
+        self.assertEqual(payload["schema_graph_branch_count"], 1)
+        self.assertEqual(payload["schema_graph_parent_forks"], {})
+        self.assertEqual(payload["schema_graph_lineage_errors"], [])
         self.assertIn("checked_at", payload)
+
+    @patch(
+        "app.main.check_schema_current",
+        return_value={
+            "schema_current": True,
+            "current_heads": ["0017_whitepaper_semantic_indexing"],
+            "expected_heads": ["0017_whitepaper_semantic_indexing"],
+            "schema_head_signature": "sig-divergent",
+            "schema_graph_signature": "graph-divergent",
+            "schema_graph_roots": ["0001_initial_torghut_schema"],
+            "schema_graph_branch_count": 3,
+            "schema_graph_parent_forks": {
+                "0015_whitepaper_workflow_tables": [
+                    "0016_llm_dspy_workflow_artifacts",
+                    "0016_whitepaper_engineering_triggers_and_rollout",
+                ]
+            },
+            "schema_graph_duplicate_revisions": {},
+            "schema_graph_orphan_parents": [],
+            "schema_missing_heads": [],
+            "schema_unexpected_heads": [],
+            "schema_head_count_expected": 1,
+            "schema_head_count_current": 1,
+            "schema_head_delta_count": 0,
+        },
+    )
+    @patch(
+        "app.main.check_account_scope_invariants",
+        return_value={"account_scope_ready": True},
+    )
+    def test_db_check_schema_lineage_divergence_returns_503_when_override_disabled(
+        self,
+        _mock_account_scope: object,
+        _mock_schema: object,
+    ) -> None:
+        original_tolerance = settings.trading_db_schema_graph_branch_tolerance
+        original_allow = settings.trading_db_schema_graph_allow_divergence_roots
+        settings.trading_db_schema_graph_branch_tolerance = 1
+        settings.trading_db_schema_graph_allow_divergence_roots = False
+        try:
+            response = self.client.get("/db-check")
+        finally:
+            settings.trading_db_schema_graph_branch_tolerance = original_tolerance
+            settings.trading_db_schema_graph_allow_divergence_roots = original_allow
+
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()
+        self.assertEqual(payload["detail"]["error"], "database schema lineage divergence")
+        self.assertFalse(payload["detail"]["schema_graph_lineage_ready"])
+        self.assertIn("schema_graph_lineage_errors", payload["detail"])
+        self.assertIn("schema_graph_branch_count", payload["detail"])
+
+    @patch(
+        "app.main.check_schema_current",
+        return_value={
+            "schema_current": True,
+            "current_heads": ["0017_whitepaper_semantic_indexing"],
+            "expected_heads": ["0017_whitepaper_semantic_indexing"],
+            "schema_head_signature": "sig-override",
+            "schema_graph_signature": "graph-override",
+            "schema_graph_roots": ["0001_initial_torghut_schema"],
+            "schema_graph_branch_count": 2,
+            "schema_graph_parent_forks": {
+                "0015_whitepaper_workflow_tables": [
+                    "0016_llm_dspy_workflow_artifacts",
+                    "0017_whitepaper_semantic_indexing",
+                ]
+            },
+            "schema_graph_duplicate_revisions": {},
+            "schema_graph_orphan_parents": [],
+            "schema_missing_heads": [],
+            "schema_unexpected_heads": [],
+            "schema_head_count_expected": 1,
+            "schema_head_count_current": 1,
+            "schema_head_delta_count": 0,
+        },
+    )
+    @patch(
+        "app.main.check_account_scope_invariants",
+        return_value={"account_scope_ready": True},
+    )
+    def test_db_check_schema_lineage_warning_returns_200_when_override_enabled(
+        self,
+        _mock_account_scope: object,
+        _mock_schema: object,
+    ) -> None:
+        original_tolerance = settings.trading_db_schema_graph_branch_tolerance
+        original_allow = settings.trading_db_schema_graph_allow_divergence_roots
+        settings.trading_db_schema_graph_branch_tolerance = 1
+        settings.trading_db_schema_graph_allow_divergence_roots = True
+        try:
+            response = self.client.get("/db-check")
+        finally:
+            settings.trading_db_schema_graph_branch_tolerance = original_tolerance
+            settings.trading_db_schema_graph_allow_divergence_roots = original_allow
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["schema_graph_lineage_ready"])
+        self.assertEqual(payload["schema_graph_branch_count"], 2)
+        self.assertEqual(
+            payload["schema_graph_lineage_errors"],
+            [],
+        )
+        self.assertEqual(
+            payload["schema_graph_lineage_warnings"],
+            [
+                "migration parent forks detected: 0015_whitepaper_workflow_tables -> "
+                "[0016_llm_dspy_workflow_artifacts, 0017_whitepaper_semantic_indexing]",
+                "migration graph branch count 2 exceeds tolerance 1; allowed by "
+                "TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS=true",
+            ],
+        )
 
     @patch(
         "app.main.check_schema_current",
@@ -763,6 +888,80 @@ class TestTradingApi(TestCase):
             self.assertIn("readiness_cache", payload["dependencies"])
             self.assertIn("cache_used", payload["dependencies"]["readiness_cache"])
             self.assertFalse(payload["dependencies"]["readiness_cache"]["cache_stale"])
+        finally:
+            settings.trading_enabled = original
+            settings.trading_universe_source = original_source
+
+    @patch(
+        "app.main._evaluate_database_contract",
+        return_value={
+            "ok": True,
+            "schema_current": True,
+            "schema_current_heads": ["0017_whitepaper_semantic_indexing"],
+            "expected_heads": ["0017_whitepaper_semantic_indexing"],
+            "schema_head_signature": "sig-override",
+            "schema_graph_signature": "graph-override",
+            "schema_graph_roots": ["0001_initial_torghut_schema"],
+            "schema_graph_branch_count": 2,
+            "schema_graph_branch_tolerance": 1,
+            "schema_graph_allow_divergence_roots": True,
+            "schema_graph_parent_forks": {
+                "0015_whitepaper_workflow_tables": [
+                    "0016_llm_dspy_workflow_artifacts",
+                    "0017_whitepaper_semantic_indexing",
+                ]
+            },
+            "schema_graph_duplicate_revisions": {},
+            "schema_graph_orphan_parents": [],
+            "schema_graph_lineage_ready": True,
+            "schema_graph_lineage_errors": [],
+            "schema_graph_lineage_warnings": [
+                "migration graph branch count 2 exceeds tolerance 1; allowed by "
+                "TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS=true"
+            ],
+            "checked_at": "2026-03-06T00:00:00+00:00",
+            "account_scope_ready": True,
+            "account_scope_errors": [],
+            "account_scope_warnings": [],
+        },
+    )
+    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    def test_readyz_returns_200_with_schema_lineage_warning_override(
+        self,
+        _mock_alpaca: object,
+        _mock_clickhouse: object,
+        _mock_postgres: object,
+        _mock_contract: object,
+    ) -> None:
+        original = settings.trading_enabled
+        original_source = settings.trading_universe_source
+        settings.trading_enabled = True
+        settings.trading_universe_source = "jangar"
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            scheduler.state.universe_source_status = "ok"
+            scheduler.state.universe_source_reason = "jangar_fetch_ok"
+            scheduler.state.universe_symbols_count = 2
+            scheduler.state.universe_cache_age_seconds = 0
+            app.state.trading_scheduler = scheduler
+            response = self.client.get("/readyz")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["status"], "ok")
+            self.assertTrue(payload["dependencies"]["database"]["ok"])
+            self.assertTrue(payload["dependencies"]["database"]["schema_graph_lineage_ready"])
+            self.assertEqual(
+                payload["dependencies"]["database"]["schema_graph_lineage_warnings"],
+                [
+                    "migration graph branch count 2 exceeds tolerance 1; allowed by "
+                    "TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS=true"
+                ],
+            )
+            self.assertEqual(payload["dependencies"]["database"]["detail"], "ok")
         finally:
             settings.trading_enabled = original
             settings.trading_universe_source = original_source

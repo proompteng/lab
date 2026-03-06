@@ -1,10 +1,12 @@
 """Database utilities for torghut."""
 
+import ast
 from functools import lru_cache
 from collections.abc import Generator
 import hashlib
+import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from alembic.config import Config as AlembicConfig
 from alembic.runtime.migration import MigrationContext
@@ -278,6 +280,158 @@ def _alembic_config() -> AlembicConfig:
     return config
 
 
+def _extract_assignment_literal(tree: ast.Module, *, name: str, path: Path) -> object:
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            if any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
+                try:
+                    return ast.literal_eval(node.value)
+                except (ValueError, SyntaxError) as exc:
+                    raise RuntimeError(
+                        f"failed to parse '{name}' literal from migration file {path.name}"
+                    ) from exc
+        if isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name) and node.target.id == name and node.value is not None:
+                try:
+                    return ast.literal_eval(node.value)
+                except (ValueError, SyntaxError) as exc:
+                    raise RuntimeError(
+                        f"failed to parse '{name}' literal from migration file {path.name}"
+                    ) from exc
+    return None
+
+
+def _normalize_down_revisions(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized or normalized.lower() in {"none", "null", "n/a"}:
+            return ()
+        return (normalized,)
+    if isinstance(value, tuple | list | set):
+        iterable = cast(tuple[object, ...] | list[object] | set[object], value)
+        revisions: list[str] = []
+        for item in iterable:
+            revisions.extend(_normalize_down_revisions(item))
+        return tuple(sorted(set(revisions)))
+    raise RuntimeError(
+        f"unsupported down_revision value type: {type(value).__name__}; expected string/list/tuple/None"
+    )
+
+
+def _parse_migration_revision(path: Path) -> tuple[str, tuple[str, ...]]:
+    try:
+        source = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(f"failed reading migration file {path}") from exc
+    try:
+        tree = ast.parse(source, filename=str(path))
+    except SyntaxError as exc:
+        raise RuntimeError(f"failed parsing migration file {path}") from exc
+
+    revision_raw = _extract_assignment_literal(tree, name="revision", path=path)
+    if not isinstance(revision_raw, str):
+        raise RuntimeError(f"migration file {path.name} missing string revision identifier")
+    revision = revision_raw.strip()
+    if not revision:
+        raise RuntimeError(f"migration file {path.name} has an empty revision identifier")
+
+    down_revision_raw = _extract_assignment_literal(tree, name="down_revision", path=path)
+    down_revisions = _normalize_down_revisions(down_revision_raw)
+    return revision, down_revisions
+
+
+def _schema_graph_signature(
+    revisions: set[str],
+    roots: list[str],
+    heads: list[str],
+    edges: list[tuple[str, str]],
+    duplicate_revisions: dict[str, list[str]],
+    orphan_parents: list[str],
+) -> str:
+    payload = {
+        "revisions": sorted(revisions),
+        "roots": roots,
+        "heads": heads,
+        "edges": [f"{parent}->{child}" for parent, child in sorted(edges)],
+        "duplicates": duplicate_revisions,
+        "orphan_parents": orphan_parents,
+    }
+    encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _parse_migration_graph(versions_dir: Path) -> dict[str, object]:
+    if not versions_dir.exists():
+        raise RuntimeError(f"migration versions directory not found at {versions_dir}")
+    if not versions_dir.is_dir():
+        raise RuntimeError(f"migration versions path is not a directory: {versions_dir}")
+
+    revision_to_files: dict[str, list[str]] = {}
+    revision_to_parents: dict[str, tuple[str, ...]] = {}
+    parsed_revisions: list[tuple[str, tuple[str, ...]]] = []
+
+    migration_files = sorted(path for path in versions_dir.glob("*.py") if path.is_file())
+    if not migration_files:
+        raise RuntimeError(f"no migration files found in {versions_dir}")
+
+    for migration_file in migration_files:
+        revision, down_revisions = _parse_migration_revision(migration_file)
+        parsed_revisions.append((revision, down_revisions))
+        file_list = revision_to_files.setdefault(revision, [])
+        file_list.append(migration_file.name)
+        # Keep first parse for topology, but still track duplicates in revision_to_files.
+        revision_to_parents.setdefault(revision, down_revisions)
+
+    revisions = set(revision_to_parents)
+    parent_to_children: dict[str, set[str]] = {}
+    edges: list[tuple[str, str]] = []
+    for child, parents in parsed_revisions:
+        for parent in parents:
+            parent_to_children.setdefault(parent, set()).add(child)
+            edges.append((parent, child))
+
+    roots = sorted(revision for revision, parents in revision_to_parents.items() if not parents)
+    heads = sorted(revision for revision in revisions if revision not in parent_to_children)
+    orphan_parents = sorted(parent for parent in parent_to_children if parent not in revisions)
+    duplicate_revisions = {
+        revision: sorted(files)
+        for revision, files in revision_to_files.items()
+        if len(files) > 1
+    }
+    parent_forks = {
+        parent: sorted(children)
+        for parent, children in parent_to_children.items()
+        if len(children) > 1
+    }
+
+    signature = _schema_graph_signature(
+        revisions,
+        roots,
+        heads,
+        edges,
+        duplicate_revisions,
+        orphan_parents,
+    )
+
+    return {
+        "expected_migration_heads": heads,
+        "expected_migration_roots": roots,
+        "expected_migration_branch_count": len(heads),
+        "expected_migration_parent_forks": parent_forks,
+        "expected_migration_duplicate_revisions": duplicate_revisions,
+        "expected_migration_orphan_parents": orphan_parents,
+        "expected_schema_graph_signature": signature,
+    }
+
+
+@lru_cache(maxsize=1)
+def _get_expected_schema_graph() -> dict[str, object]:
+    versions_dir = _ALEMBIC_MIGRATIONS_PATH / "versions"
+    return _parse_migration_graph(versions_dir)
+
+
 @lru_cache(maxsize=1)
 def _get_expected_schema_heads() -> tuple[str, ...]:
     """Return deterministic Alembic heads for schema-contract comparisons."""
@@ -295,6 +449,7 @@ def check_schema_current(session: Session) -> dict[str, object]:
 
     ping(session)
     expected_heads = _get_expected_schema_heads()
+    expected_graph = _get_expected_schema_graph()
     context = MigrationContext.configure(connection=session.connection())
     current_heads = sorted(context.get_current_heads())
     expected_heads_set = set(expected_heads)
@@ -310,4 +465,19 @@ def check_schema_current(session: Session) -> dict[str, object]:
         "schema_head_count_current": len(current_heads),
         "schema_head_delta_count": len(expected_heads_set - current_heads_set)
         + len(current_heads_set - expected_heads_set),
+        "schema_graph_signature": expected_graph.get("expected_schema_graph_signature"),
+        "schema_graph_roots": expected_graph.get("expected_migration_roots", []),
+        "schema_graph_branch_count": expected_graph.get("expected_migration_branch_count"),
+        "schema_graph_parent_forks": expected_graph.get(
+            "expected_migration_parent_forks",
+            {},
+        ),
+        "schema_graph_duplicate_revisions": expected_graph.get(
+            "expected_migration_duplicate_revisions",
+            {},
+        ),
+        "schema_graph_orphan_parents": expected_graph.get(
+            "expected_migration_orphan_parents",
+            [],
+        ),
     }

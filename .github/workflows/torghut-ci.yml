@@ -78,6 +78,10 @@ jobs:
         working-directory: services/torghut
         run: uv run --frozen ruff check app tests scripts migrations
 
+      - name: Migration lineage guardrail
+        working-directory: services/torghut
+        run: uv run --frozen python scripts/check_migration_graph.py
+
       - name: Unit tests
         working-directory: services/torghut
         run: uv run --frozen python -m unittest discover -s tests -p "test_*.py"

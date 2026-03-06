@@ -106,7 +106,14 @@ class TestLiveConfigManifestContract(TestCase):
         settings = Settings(**env)
 
         self.assertEqual(settings.trading_mode, "live")
+        self.assertEqual(env.get("TRADING_DB_SCHEMA_GRAPH_BRANCH_TOLERANCE"), "1")
+        self.assertEqual(
+            env.get("TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS"),
+            "true",
+        )
         self.assertFalse(settings.trading_feature_flags_enabled)
+        self.assertEqual(settings.trading_db_schema_graph_branch_tolerance, 1)
+        self.assertTrue(settings.trading_db_schema_graph_allow_divergence_roots)
         self.assertEqual(settings.llm_rollout_stage, "stage3_controlled_live")
         self.assertEqual(settings.llm_dspy_runtime_mode, "active")
         self.assertEqual(settings.llm_fail_mode, "veto")
@@ -167,6 +174,7 @@ class TestLiveConfigManifestContract(TestCase):
 
         _require_flag_enabled_false("torghut_trading_execution_advisor_enabled")
         _require_flag_enabled_false("torghut_trading_execution_advisor_live_apply_enabled")
+        _require_flag_enabled_false("torghut_trading_db_schema_graph_allow_divergence_roots")
         _require_flag_enabled_false("torghut_llm_fail_open_live_approved")
         _require_flag_enabled_false("torghut_llm_shadow_mode")
 

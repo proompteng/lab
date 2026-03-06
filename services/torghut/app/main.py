@@ -342,11 +342,16 @@ def _readiness_dependency_checks(
 
     if include_database_contract:
         database_contract = _evaluate_database_contract(session)
+        lineage_errors = cast(
+            list[str],
+            database_contract.get("schema_graph_lineage_errors", []),
+        )
+        detail = "ok" if bool(database_contract.get("ok")) else "database contract failed"
+        if lineage_errors:
+            detail = lineage_errors[0]
         dependencies["database"] = {
             "ok": bool(database_contract.get("ok")),
-            "detail": "ok"
-            if bool(database_contract.get("ok"))
-            else "database contract failed",
+            "detail": detail,
             "schema_current": bool(database_contract.get("schema_current")),
             "schema_current_heads": database_contract.get("schema_current_heads"),
             "expected_heads": database_contract.get("expected_heads"),
@@ -368,6 +373,37 @@ def _readiness_dependency_checks(
                 "schema_head_delta_count",
             ),
             "schema_head_signature": database_contract.get("schema_head_signature"),
+            "schema_graph_signature": database_contract.get("schema_graph_signature"),
+            "schema_graph_roots": database_contract.get("schema_graph_roots", []),
+            "schema_graph_branch_count": database_contract.get(
+                "schema_graph_branch_count",
+            ),
+            "schema_graph_branch_tolerance": database_contract.get(
+                "schema_graph_branch_tolerance",
+            ),
+            "schema_graph_allow_divergence_roots": database_contract.get(
+                "schema_graph_allow_divergence_roots",
+            ),
+            "schema_graph_parent_forks": database_contract.get(
+                "schema_graph_parent_forks",
+                {},
+            ),
+            "schema_graph_duplicate_revisions": database_contract.get(
+                "schema_graph_duplicate_revisions",
+                {},
+            ),
+            "schema_graph_orphan_parents": database_contract.get(
+                "schema_graph_orphan_parents",
+                [],
+            ),
+            "schema_graph_lineage_ready": database_contract.get(
+                "schema_graph_lineage_ready",
+            ),
+            "schema_graph_lineage_errors": lineage_errors,
+            "schema_graph_lineage_warnings": database_contract.get(
+                "schema_graph_lineage_warnings",
+                [],
+            ),
             "checked_at": database_contract.get("checked_at"),
             "account_scope_ready": bool(database_contract.get("account_scope_ready")),
             "account_scope_errors": database_contract.get("account_scope_errors", []),
@@ -710,8 +746,98 @@ def _evaluate_database_contract(session: Session) -> dict[str, object]:
 
     schema_current = bool(schema_status.get("schema_current"))
     account_scope_ready = bool(account_scope_checks.get("account_scope_ready"))
+    schema_graph_roots = [
+        str(root)
+        for root in cast(list[object], schema_status.get("schema_graph_roots", []))
+    ]
+    schema_graph_parent_forks = {
+        str(parent): sorted(str(child) for child in cast(list[object], children))
+        for parent, children in cast(
+            Mapping[object, object],
+            schema_status.get("schema_graph_parent_forks", {}),
+        ).items()
+        if isinstance(children, list)
+    }
+    schema_graph_duplicate_revisions = {
+        str(revision): sorted(str(path) for path in cast(list[object], files))
+        for revision, files in cast(
+            Mapping[object, object],
+            schema_status.get("schema_graph_duplicate_revisions", {}),
+        ).items()
+        if isinstance(files, list)
+    }
+    schema_graph_orphan_parents = [
+        str(parent)
+        for parent in cast(
+            list[object],
+            schema_status.get("schema_graph_orphan_parents", []),
+        )
+    ]
+    schema_graph_branch_tolerance = max(
+        0,
+        int(settings.trading_db_schema_graph_branch_tolerance),
+    )
+    schema_graph_allow_divergence_roots = bool(
+        settings.trading_db_schema_graph_allow_divergence_roots,
+    )
+
+    raw_branch_count = schema_status.get("schema_graph_branch_count")
+    schema_graph_branch_count: int
+    if isinstance(raw_branch_count, bool):
+        schema_graph_branch_count = int(raw_branch_count)
+    elif isinstance(raw_branch_count, int):
+        schema_graph_branch_count = raw_branch_count
+    elif isinstance(raw_branch_count, str):
+        try:
+            schema_graph_branch_count = int(raw_branch_count)
+        except ValueError:
+            schema_graph_branch_count = 0
+    else:
+        schema_graph_branch_count = 0
+
+    schema_graph_lineage_errors: list[str] = []
+    schema_graph_lineage_warnings: list[str] = []
+
+    if schema_graph_duplicate_revisions:
+        duplicate_summary = ", ".join(sorted(schema_graph_duplicate_revisions))
+        schema_graph_lineage_errors.append(
+            f"duplicate migration revision identifiers detected: {duplicate_summary}"
+        )
+
+    if schema_graph_orphan_parents:
+        schema_graph_lineage_errors.append(
+            "orphan migration parents detected: "
+            + ", ".join(schema_graph_orphan_parents)
+        )
+
+    if schema_graph_parent_forks:
+        parent_summary = ", ".join(
+            f"{parent} -> [{', '.join(children)}]"
+            for parent, children in sorted(schema_graph_parent_forks.items())
+        )
+        schema_graph_lineage_warnings.append(
+            f"migration parent forks detected: {parent_summary}"
+        )
+
+    if schema_graph_branch_count > schema_graph_branch_tolerance:
+        divergence_message = (
+            "migration graph branch count "
+            f"{schema_graph_branch_count} exceeds tolerance {schema_graph_branch_tolerance}"
+        )
+        if schema_graph_allow_divergence_roots:
+            schema_graph_lineage_warnings.append(
+                divergence_message
+                + "; allowed by TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS=true"
+            )
+        else:
+            schema_graph_lineage_errors.append(
+                divergence_message
+                + "; set TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS=true for temporary override"
+            )
+
+    schema_graph_lineage_ready = len(schema_graph_lineage_errors) == 0
     return {
-        "ok": schema_current and account_scope_ready,
+        "ok": schema_current and account_scope_ready and schema_graph_lineage_ready,
         "schema_current": schema_current,
         "schema_current_heads": schema_status.get("current_heads", []),
         "expected_heads": schema_status.get("expected_heads", []),
@@ -724,6 +850,17 @@ def _evaluate_database_contract(session: Session) -> dict[str, object]:
             "expected_heads_signature",
             schema_status.get("schema_head_signature"),
         ),
+        "schema_graph_signature": schema_status.get("schema_graph_signature"),
+        "schema_graph_roots": schema_graph_roots,
+        "schema_graph_branch_count": schema_graph_branch_count,
+        "schema_graph_parent_forks": schema_graph_parent_forks,
+        "schema_graph_duplicate_revisions": schema_graph_duplicate_revisions,
+        "schema_graph_orphan_parents": schema_graph_orphan_parents,
+        "schema_graph_branch_tolerance": schema_graph_branch_tolerance,
+        "schema_graph_allow_divergence_roots": schema_graph_allow_divergence_roots,
+        "schema_graph_lineage_ready": schema_graph_lineage_ready,
+        "schema_graph_lineage_errors": schema_graph_lineage_errors,
+        "schema_graph_lineage_warnings": schema_graph_lineage_warnings,
         "checked_at": checked_at,
         "account_scope_ready": account_scope_ready,
         "account_scope_errors": account_scope_checks.get("account_scope_errors", []),
@@ -769,6 +906,40 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
             "current_heads": database_contract.get("schema_current_heads"),
             "expected_heads": database_contract.get("expected_heads"),
             "schema_head_signature": database_contract.get("schema_head_signature"),
+            "schema_graph_signature": database_contract.get("schema_graph_signature"),
+            "schema_graph_roots": database_contract.get("schema_graph_roots", []),
+            "schema_graph_branch_count": database_contract.get(
+                "schema_graph_branch_count",
+            ),
+            "schema_graph_branch_tolerance": database_contract.get(
+                "schema_graph_branch_tolerance",
+            ),
+            "schema_graph_allow_divergence_roots": database_contract.get(
+                "schema_graph_allow_divergence_roots",
+            ),
+            "schema_graph_parent_forks": database_contract.get(
+                "schema_graph_parent_forks",
+                {},
+            ),
+            "schema_graph_duplicate_revisions": database_contract.get(
+                "schema_graph_duplicate_revisions",
+                {},
+            ),
+            "schema_graph_orphan_parents": database_contract.get(
+                "schema_graph_orphan_parents",
+                [],
+            ),
+            "schema_graph_lineage_ready": database_contract.get(
+                "schema_graph_lineage_ready",
+            ),
+            "schema_graph_lineage_errors": database_contract.get(
+                "schema_graph_lineage_errors",
+                [],
+            ),
+            "schema_graph_lineage_warnings": database_contract.get(
+                "schema_graph_lineage_warnings",
+                [],
+            ),
             "schema_missing_heads": database_contract.get("schema_missing_heads", []),
             "schema_unexpected_heads": database_contract.get("schema_unexpected_heads", []),
             "schema_head_count_expected": database_contract.get(
@@ -802,6 +973,17 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
                 "schema_current": False,
                 "schema_missing_heads": database_contract.get("schema_missing_heads", []),
                 "schema_unexpected_heads": database_contract.get("schema_unexpected_heads", []),
+                "schema_graph_lineage_ready": database_contract.get(
+                    "schema_graph_lineage_ready",
+                ),
+                "schema_graph_lineage_errors": database_contract.get(
+                    "schema_graph_lineage_errors",
+                    [],
+                ),
+                "schema_graph_lineage_warnings": database_contract.get(
+                    "schema_graph_lineage_warnings",
+                    [],
+                ),
                 "checked_at": database_contract.get("checked_at"),
                 "account_scope_ready": account_scope_status.get("account_scope_ready"),
                 "account_scope_warnings": account_scope_status.get(
@@ -831,6 +1013,23 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
                 **schema_status,
             },
         )
+    if not bool(database_contract.get("schema_graph_lineage_ready", True)):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "database schema lineage divergence",
+                "checked_at": database_contract.get("checked_at"),
+                "schema_graph_lineage_errors": database_contract.get(
+                    "schema_graph_lineage_errors",
+                    [],
+                ),
+                "schema_graph_lineage_warnings": database_contract.get(
+                    "schema_graph_lineage_warnings",
+                    [],
+                ),
+                **schema_status,
+            },
+        )
     if settings.trading_multi_account_enabled and not bool(
         account_scope_status.get("account_scope_ready")
     ):
@@ -840,6 +1039,14 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
                 "error": "database account scope schema mismatch",
                 "checked_at": database_contract.get("checked_at"),
                 "schema_head_signature": database_contract.get("schema_head_signature"),
+                "schema_graph_signature": database_contract.get("schema_graph_signature"),
+                "schema_graph_branch_count": database_contract.get(
+                    "schema_graph_branch_count",
+                ),
+                "schema_graph_lineage_warnings": database_contract.get(
+                    "schema_graph_lineage_warnings",
+                    [],
+                ),
                 "account_scope_warnings": database_contract.get(
                     "account_scope_warnings",
                     [],
