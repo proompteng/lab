@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { resolve } from 'node:path'
 
-import { buildHelmArgs } from '../smoke-agents'
+import { buildHelmArgs, buildKubectlApplyArgs } from '../smoke-agents'
 
 describe('buildHelmArgs', () => {
   it('applies image repository, tag, and empty digest overrides', () => {
@@ -53,5 +53,34 @@ describe('buildHelmArgs', () => {
 
     expect(args).not.toContain('image.digest=')
     expect(args).not.toContain('--create-namespace')
+  })
+})
+
+describe('buildKubectlApplyArgs', () => {
+  it('disables validation for runtime-generated stdin manifests', () => {
+    expect(buildKubectlApplyArgs({ namespace: 'agents-ci' })).toEqual([
+      '-n',
+      'agents-ci',
+      'apply',
+      '--validate=false',
+      '-f',
+      '-',
+    ])
+  })
+
+  it('disables validation for file-based smoke manifests', () => {
+    expect(
+      buildKubectlApplyArgs({
+        namespace: 'agents-ci',
+        file: resolve(process.cwd(), 'charts/agents/examples/agent-smoke.yaml'),
+      }),
+    ).toEqual([
+      '-n',
+      'agents-ci',
+      'apply',
+      '--validate=false',
+      '-f',
+      resolve(process.cwd(), 'charts/agents/examples/agent-smoke.yaml'),
+    ])
   })
 })

@@ -136,6 +136,19 @@ export const buildHelmArgs = ({
   return helmArgs
 }
 
+type BuildKubectlApplyArgsInput = {
+  namespace: string
+  file?: string
+}
+
+export const buildKubectlApplyArgs = ({ namespace, file }: BuildKubectlApplyArgsInput) => {
+  // Smoke manifests are generated at runtime; skip OpenAPI validation so fresh kind API servers
+  // do not fail the test on transient schema fetch EOFs.
+  const kubectlArgs = ['-n', namespace, 'apply', '--validate=false', '-f']
+  kubectlArgs.push(file ?? '-')
+  return kubectlArgs
+}
+
 const listPodNames = async (namespace: string) => {
   const result = await execCapture([
     'kubectl',
@@ -168,7 +181,7 @@ const dumpNamespaceDiagnostics = async (namespace: string, releaseName: string) 
 }
 
 const applyYaml = async (namespace: string, manifest: string) => {
-  const subprocess = Bun.spawn(['kubectl', '-n', namespace, 'apply', '-f', '-'], {
+  const subprocess = Bun.spawn(['kubectl', ...buildKubectlApplyArgs({ namespace })], {
     stdin: 'pipe',
     stdout: 'inherit',
     stderr: 'inherit',
@@ -464,21 +477,27 @@ spec:
     }
   }
 
-  await run('kubectl', [
-    '-n',
-    namespace,
-    'apply',
-    '-f',
-    resolve(repoRoot, 'charts/agents/examples/agentprovider-smoke.yaml'),
-  ])
-  await run('kubectl', ['-n', namespace, 'apply', '-f', resolve(repoRoot, 'charts/agents/examples/agent-smoke.yaml')])
-  await run('kubectl', [
-    '-n',
-    namespace,
-    'apply',
-    '-f',
-    resolve(repoRoot, 'charts/agents/examples/implementationspec-smoke.yaml'),
-  ])
+  await run(
+    'kubectl',
+    buildKubectlApplyArgs({
+      namespace,
+      file: resolve(repoRoot, 'charts/agents/examples/agentprovider-smoke.yaml'),
+    }),
+  )
+  await run(
+    'kubectl',
+    buildKubectlApplyArgs({
+      namespace,
+      file: resolve(repoRoot, 'charts/agents/examples/agent-smoke.yaml'),
+    }),
+  )
+  await run(
+    'kubectl',
+    buildKubectlApplyArgs({
+      namespace,
+      file: resolve(repoRoot, 'charts/agents/examples/implementationspec-smoke.yaml'),
+    }),
+  )
 
   await run('kubectl', ['-n', namespace, 'delete', 'agentrun', agentRunName, '--ignore-not-found'])
 
