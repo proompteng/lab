@@ -12,7 +12,7 @@ type AuthSecretLike = {
   key?: string
 }
 
-const CODEX_API_AUTH_MODES = new Set(['api', 'api_key', 'openai_api'])
+const CODEX_API_AUTH_MODES = new Set(['apikey'])
 
 const normalizeOptionalString = (value: unknown) => {
   if (typeof value !== 'string') return null
