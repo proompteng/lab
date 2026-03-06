@@ -41,11 +41,16 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
    - `kubectl -n torghut port-forward svc/torghut 8081:80`
    - `curl -fsS "http://127.0.0.1:8081/db-check" | jq '{ok, schema_current, schema_graph_branch_count, schema_graph_branch_tolerance, schema_graph_lineage_errors, schema_graph_lineage_warnings}'`
    - `curl -fsS "http://127.0.0.1:8081/trading/status" | jq .`
+   - `curl -fsS "http://127.0.0.1:8081/trading/status" | jq '{dependency_quorum: .hypotheses.dependency_quorum, alpha_readiness: .control_plane_contract | {alpha_readiness_hypotheses_total, alpha_readiness_blocked_total, alpha_readiness_shadow_total, alpha_readiness_canary_live_total, alpha_readiness_scaled_live_total, alpha_readiness_dependency_quorum_decision}}'`
+   - `curl -fsS "http://127.0.0.1:8081/trading/status" | jq '.hypotheses.items[] | {hypothesis_id, state, capital_stage, promotion_eligible, rollback_required, reasons}'`
    - `curl -fsS "http://127.0.0.1:8081/metrics" | rg '^torghut_trading_'`
    - `curl -fsS "http://127.0.0.1:8081/metrics" | rg 'torghut_trading_(signal_continuity_actionable|signal_continuity_alert_active|signal_actionable_staleness_total|signal_expected_staleness_total|universe_fail_safe_reason_total|universe_symbols_count|universe_cache_age_seconds)'`
+   - `curl -fsS "http://127.0.0.1:8081/metrics" | rg 'torghut_trading_(hypothesis_state_total|hypothesis_capital_stage_total|alpha_readiness_hypotheses_total|alpha_readiness_promotion_eligible_total|alpha_readiness_rollback_required_total)'`
    - `kubectl cnpg psql -n torghut torghut-db -- -d torghut -c "select alpaca_account_label, status, count(*) from trade_decisions where created_at >= now() - interval '1 day' group by alpaca_account_label, status order by alpaca_account_label, status;"`
    - Treat account lanes independently; stale legacy lanes can hide active-lane degradation.
    - If `schema_graph_lineage_errors` is non-empty, treat as migration-lineage divergence and pause rollout promotion until migration governance review is complete.
+   - If `hypotheses.dependency_quorum.decision != "allow"`, treat Jangar control-plane instability as a promotion blocker even if core Torghut HTTP health is still green.
+   - If a single hypothesis is `blocked` or `shadow`, do not disable the whole service by default; verify the specific blocker reasons and keep unaffected lanes observable.
    - If rollout must tolerate the current branched graph, verify the PR also updated `scripts/check_migration_graph.py`
      allowlist evidence for the new signature; temporary GitOps overrides are not sufficient for CI.
    - After merge migrations reduce the graph back within tolerance, remove
@@ -140,6 +145,9 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
      - `--control-plane-contract <status-control-plane-contract.json>`
      - `--model-risk-evidence-package <model-risk-evidence-package.json>`
    - Require `ok=true` before closing the drill.
+   - Confirm the saved control-plane contract includes `alpha_readiness_hypotheses_total`,
+     `alpha_readiness_shadow_total`, `alpha_readiness_blocked_total`, and
+     `alpha_readiness_dependency_quorum_decision`.
 
 ## Notes
 

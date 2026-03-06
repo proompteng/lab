@@ -123,6 +123,18 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertTrue(settings.trading_fractional_equities_enabled)
         self.assertTrue(settings.trading_universe_static_fallback_enabled)
         self.assertEqual(
+            settings.trading_hypothesis_registry_path,
+            "config/trading/hypotheses",
+        )
+        self.assertEqual(
+            settings.trading_jangar_control_plane_status_url,
+            "http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?namespace=agents",
+        )
+        self.assertEqual(
+            settings.trading_jangar_control_plane_cache_ttl_seconds,
+            15,
+        )
+        self.assertEqual(
             set(settings.trading_universe_static_fallback_symbols),
             {
                 "AAPL",
@@ -138,6 +150,14 @@ class TestLiveConfigManifestContract(TestCase):
                 "SPY",
                 "TSLA",
             },
+        )
+        self.assertEqual(
+            env.get("TRADING_HYPOTHESIS_REGISTRY_PATH"),
+            "config/trading/hypotheses",
+        )
+        self.assertEqual(
+            env.get("TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS"),
+            "15",
         )
         self.assertFalse(settings.llm_live_fail_open_requested_for_stage("stage3"))
         self.assertEqual(settings.llm_effective_fail_mode_for_current_rollout(), "veto")

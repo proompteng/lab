@@ -159,6 +159,14 @@ export type WorkflowsReliabilityStatus = {
   message: string
 }
 
+export type DependencyQuorumDecision = 'allow' | 'delay' | 'block' | 'unknown'
+
+export type DependencyQuorumStatus = {
+  decision: DependencyQuorumDecision
+  reasons: string[]
+  message: string
+}
+
 export type DeploymentRolloutStatus = {
   name: string
   namespace: string
@@ -232,6 +240,7 @@ export type ControlPlaneStatus = {
    * Keep this field in sync with generated CRD annotations for CEL checks.
    */
   workflows: WorkflowsReliabilityStatus
+  dependency_quorum: DependencyQuorumStatus
   database: DatabaseStatus
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability

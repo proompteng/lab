@@ -139,6 +139,10 @@ class TestVerifyQuantReadiness(TestCase):
             'last_autonomy_recommendation_trace_id': 'trace-1',
             'domain_telemetry_event_total': {'torghut.autonomy.cycle_completed': 2},
             'domain_telemetry_dropped_total': {'disabled': 2},
+            'alpha_readiness_hypotheses_total': 3,
+            'alpha_readiness_shadow_total': 2,
+            'alpha_readiness_blocked_total': 1,
+            'alpha_readiness_dependency_quorum_decision': 'unknown',
         }
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / 'control-plane-contract.json'

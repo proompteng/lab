@@ -44,6 +44,14 @@ from .trading.autonomy import (
     assert_runtime_gate_policy_contract,
     evaluate_evidence_continuity,
 )
+from .trading.hypotheses import (
+    JangarDependencyQuorumStatus,
+    compile_hypothesis_runtime_statuses,
+    load_hypothesis_registry,
+    load_jangar_dependency_quorum,
+    summarize_hypothesis_runtime_statuses,
+    validate_hypothesis_registry_from_settings,
+)
 from .trading.lean_lanes import LeanLaneManager
 from .trading.llm.evaluation import build_llm_evaluation_metrics
 from .trading.tca import build_tca_gate_inputs
@@ -255,6 +263,7 @@ async def lifespan(app: FastAPI):
 
     if settings.trading_enabled:
         _assert_dspy_cutover_migration_guard()
+        validate_hypothesis_registry_from_settings()
         await scheduler.start()
     if whitepaper_workflow_enabled():
         await whitepaper_worker.start()
@@ -562,11 +571,45 @@ def _evaluate_trading_health_payload(
     status = "ok" if overall_ok else "degraded"
     status_code = 200 if overall_ok else 503
 
+    alpha_readiness: dict[str, object]
+    try:
+        _hypothesis_payload, hypothesis_summary, _dependency_quorum = (
+            _build_hypothesis_runtime_payload(
+                scheduler,
+                tca_summary=_load_tca_summary(session),
+                market_context_status=scheduler.market_context_status(),
+            )
+        )
+        alpha_readiness = {
+            "hypotheses_total": hypothesis_summary.get("hypotheses_total", 0),
+            "state_totals": hypothesis_summary.get("state_totals", {}),
+            "promotion_eligible_total": hypothesis_summary.get(
+                "promotion_eligible_total", 0
+            ),
+            "rollback_required_total": hypothesis_summary.get(
+                "rollback_required_total", 0
+            ),
+            "dependency_quorum": hypothesis_summary.get("dependency_quorum", {}),
+        }
+    except Exception as exc:  # pragma: no cover - additive status surface only
+        alpha_readiness = {
+            "hypotheses_total": 0,
+            "state_totals": {},
+            "promotion_eligible_total": 0,
+            "rollback_required_total": 0,
+            "dependency_quorum": {
+                "decision": "unknown",
+                "reasons": ["alpha_readiness_unavailable"],
+                "message": str(exc),
+            },
+        }
+
     return (
         {
             "status": status,
             "scheduler": scheduler_payload,
             "dependencies": dependencies,
+            "alpha_readiness": alpha_readiness,
         },
         status_code,
     )
@@ -1475,8 +1518,19 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
     state = scheduler.state
     llm_evaluation = _load_llm_evaluation(session)
     tca_summary = _load_tca_summary(session)
-    control_plane_contract = _build_control_plane_contract(state)
     market_context_status = scheduler.market_context_status()
+    hypothesis_payload, hypothesis_summary, hypothesis_dependency_quorum = (
+        _build_hypothesis_runtime_payload(
+            scheduler,
+            tca_summary=tca_summary,
+            market_context_status=market_context_status,
+        )
+    )
+    control_plane_contract = _build_control_plane_contract(
+        state,
+        hypothesis_summary=hypothesis_summary,
+        dependency_quorum=hypothesis_dependency_quorum,
+    )
     shorting_metadata_status = scheduler.shorting_metadata_status()
     rejection_alert_status = scheduler.rejection_alert_status()
     return {
@@ -1588,6 +1642,7 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
         "llm": scheduler.llm_status(),
         "llm_evaluation": llm_evaluation,
         "tca": tca_summary,
+        "hypotheses": hypothesis_payload,
         "control_plane_contract": control_plane_contract,
         "evidence_continuity": state.last_evidence_continuity_report,
     }
@@ -1602,10 +1657,23 @@ def trading_metrics(session: Session = Depends(get_session)) -> dict[str, object
         scheduler = TradingScheduler()
         app.state.trading_scheduler = scheduler
     metrics = scheduler.state.metrics
+    market_context_status = scheduler.market_context_status()
+    tca_summary = _load_tca_summary(session)
+    _hypothesis_payload, hypothesis_summary, hypothesis_dependency_quorum = (
+        _build_hypothesis_runtime_payload(
+            scheduler,
+            tca_summary=tca_summary,
+            market_context_status=market_context_status,
+        )
+    )
     return {
         "metrics": metrics.__dict__,
-        "tca": _load_tca_summary(session),
-        "control_plane_contract": _build_control_plane_contract(scheduler.state),
+        "tca": tca_summary,
+        "control_plane_contract": _build_control_plane_contract(
+            scheduler.state,
+            hypothesis_summary=hypothesis_summary,
+            dependency_quorum=hypothesis_dependency_quorum,
+        ),
     }
 
 
@@ -1819,11 +1887,32 @@ def prometheus_metrics(session: Session = Depends(get_session)) -> Response:
     market_context_status = scheduler.market_context_status()
     shorting_metadata_status = scheduler.shorting_metadata_status()
     rejection_alert_status = scheduler.rejection_alert_status()
+    tca_summary = _load_tca_summary(session)
+    _hypothesis_payload, hypothesis_summary, _hypothesis_dependency_quorum = (
+        _build_hypothesis_runtime_payload(
+            scheduler,
+            tca_summary=tca_summary,
+            market_context_status=market_context_status,
+        )
+    )
     payload = render_trading_metrics(
         {
             **metrics.__dict__,
-            "tca_summary": _load_tca_summary(session),
+            "tca_summary": tca_summary,
             "route_provenance": _load_route_provenance_summary(session),
+            "hypothesis_state_total": hypothesis_summary.get("state_totals", {}),
+            "hypothesis_capital_stage_total": hypothesis_summary.get(
+                "capital_stage_totals", {}
+            ),
+            "alpha_readiness_hypotheses_total": _safe_int(
+                hypothesis_summary.get("hypotheses_total")
+            ),
+            "alpha_readiness_promotion_eligible_total": _safe_int(
+                hypothesis_summary.get("promotion_eligible_total")
+            ),
+            "alpha_readiness_rollback_required_total": _safe_int(
+                hypothesis_summary.get("rollback_required_total")
+            ),
             "market_context_alert_active": int(
                 bool(market_context_status.get("alert_active"))
             ),
@@ -2080,7 +2169,12 @@ def _check_postgres(session: Session) -> dict[str, object]:
     return {"ok": True, "detail": "ok"}
 
 
-def _build_control_plane_contract(state: object) -> dict[str, object]:
+def _build_control_plane_contract(
+    state: object,
+    *,
+    hypothesis_summary: Mapping[str, Any] | None = None,
+    dependency_quorum: JangarDependencyQuorumStatus | None = None,
+) -> dict[str, object]:
     metrics = getattr(state, "metrics", None)
     signal_lag_seconds = getattr(metrics, "signal_lag_seconds", None)
     no_signal_reason_streak = getattr(metrics, "no_signal_reason_streak", None)
@@ -2093,6 +2187,13 @@ def _build_control_plane_contract(state: object) -> dict[str, object]:
     market_session_open = getattr(state, "market_session_open", None)
     last_run_at = getattr(state, "last_run_at", None)
     last_reconcile_at = getattr(state, "last_reconcile_at", None)
+    summary: dict[str, Any] = dict(hypothesis_summary) if hypothesis_summary is not None else {}
+    raw_state_totals = summary.get("state_totals")
+    state_totals: dict[str, Any] = (
+        dict(cast(Mapping[str, Any], raw_state_totals))
+        if isinstance(raw_state_totals, Mapping)
+        else {}
+    )
     return {
         "contract_version": "torghut.quant-producer.v1",
         "signal_lag_seconds": signal_lag_seconds,
@@ -2151,6 +2252,20 @@ def _build_control_plane_contract(state: object) -> dict[str, object]:
         ),
         "domain_telemetry_dropped_total": getattr(
             metrics, "domain_telemetry_dropped_total", None
+        ),
+        "alpha_readiness_hypotheses_total": summary.get("hypotheses_total", 0),
+        "alpha_readiness_blocked_total": state_totals.get("blocked", 0),
+        "alpha_readiness_shadow_total": state_totals.get("shadow", 0),
+        "alpha_readiness_canary_live_total": state_totals.get("canary_live", 0),
+        "alpha_readiness_scaled_live_total": state_totals.get("scaled_live", 0),
+        "alpha_readiness_promotion_eligible_total": summary.get(
+            "promotion_eligible_total", 0
+        ),
+        "alpha_readiness_rollback_required_total": summary.get(
+            "rollback_required_total", 0
+        ),
+        "alpha_readiness_dependency_quorum_decision": (
+            dependency_quorum.decision if dependency_quorum is not None else "unknown"
         ),
         "market_context_required": settings.trading_market_context_required,
         "market_context_max_staleness_seconds": settings.trading_market_context_max_staleness_seconds,
@@ -2241,6 +2356,40 @@ def _tca_row_payload(row: ExecutionTCAMetric | None) -> dict[str, object] | None
 
 def _load_tca_summary(session: Session) -> dict[str, object]:
     return build_tca_gate_inputs(session=session)
+
+
+def _build_hypothesis_runtime_payload(
+    scheduler: TradingScheduler,
+    *,
+    tca_summary: Mapping[str, Any],
+    market_context_status: Mapping[str, Any],
+) -> tuple[dict[str, object], dict[str, object], JangarDependencyQuorumStatus]:
+    registry = load_hypothesis_registry()
+    dependency_quorum = load_jangar_dependency_quorum()
+    items = compile_hypothesis_runtime_statuses(
+        registry=registry,
+        state=scheduler.state,
+        tca_summary=tca_summary,
+        market_context_status=market_context_status,
+        jangar_dependency_quorum=dependency_quorum,
+    )
+    summary = summarize_hypothesis_runtime_statuses(
+        items,
+        registry=registry,
+        dependency_quorum=dependency_quorum,
+    )
+    return (
+        {
+            "registry_loaded": registry.loaded,
+            "registry_path": registry.path,
+            "registry_errors": list(registry.errors),
+            "dependency_quorum": dependency_quorum.as_payload(),
+            "summary": summary,
+            "items": items,
+        },
+        summary,
+        dependency_quorum,
+    )
 
 
 def _load_route_provenance_summary(session: Session) -> dict[str, object]:

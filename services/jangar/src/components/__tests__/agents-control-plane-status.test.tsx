@@ -48,6 +48,11 @@ const baseStatus: ControlPlaneStatus = {
       { reason: 'ImagePullBackOff', count: 1 },
     ],
   },
+  dependency_quorum: {
+    decision: 'delay',
+    reasons: ['workflow_backoff_warning'],
+    message: 'Control-plane dependency quorum is degraded; delay capital promotion.',
+  },
   database: {
     configured: true,
     connected: true,

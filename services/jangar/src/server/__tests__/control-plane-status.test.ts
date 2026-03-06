@@ -218,6 +218,11 @@ describe('control-plane status', () => {
       target_namespaces: 1,
       message: '',
     })
+    expect(status.dependency_quorum).toEqual({
+      decision: 'allow',
+      reasons: [],
+      message: 'Control-plane admission dependencies are healthy.',
+    })
     expect(status.namespaces).toHaveLength(1)
     expect(status.namespaces[0]?.status).toBe('healthy')
     expect(status.namespaces[0]?.degraded_components ?? []).toHaveLength(0)
@@ -339,6 +344,12 @@ describe('control-plane status', () => {
       { reason: 'BackoffLimitExceeded', count: 3 },
       { reason: 'DeadlineExceeded', count: 1 },
     ])
+    expect(status.dependency_quorum).toEqual({
+      decision: 'delay',
+      reasons: ['workflow_backoff_warning'],
+      message:
+        'Control-plane dependency quorum is degraded; delay capital promotion. recent workflow reasons: BackoffLimitExceeded, DeadlineExceeded',
+    })
     expect(status.namespaces[0]?.status).toBe('degraded')
     expect(status.namespaces[0]?.degraded_components ?? []).toContain('workflows')
     expect(status.namespaces[0]?.degraded_components ?? []).not.toContain('runtime:workflows')
@@ -393,6 +404,12 @@ describe('control-plane status', () => {
       target_namespaces: 1,
       message:
         'workflow reliability unavailable (1/1 namespace queries failed); sample errors: agents: simulated kubernetes failure',
+    })
+    expect(status.dependency_quorum).toEqual({
+      decision: 'block',
+      reasons: ['workflows_data_unknown'],
+      message:
+        'Control-plane dependency quorum is blocked. workflow reliability unavailable (1/1 namespace queries failed); sample errors: agents: simulated kubernetes failure',
     })
     expect(status.namespaces[0]?.status).toBe('degraded')
     expect(status.namespaces[0]?.degraded_components ?? []).toContain('workflows')

@@ -1429,11 +1429,16 @@ class TestTradingApi(TestCase):
         response = self.client.get("/trading/status")
         self.assertEqual(response.status_code, 200)
         payload = response.json()
+        self.assertIn("hypotheses", payload)
         self.assertIn("llm_evaluation", payload)
         self.assertIn("control_plane_contract", payload)
         evaluation = payload["llm_evaluation"]
         self.assertTrue(evaluation["ok"])
         self.assertGreaterEqual(evaluation["metrics"]["total_reviews"], 1)
+        hypotheses = payload["hypotheses"]
+        self.assertTrue(hypotheses["registry_loaded"])
+        self.assertEqual(len(hypotheses["items"]), 3)
+        self.assertEqual(hypotheses["dependency_quorum"]["decision"], "unknown")
         control_plane_contract = payload["control_plane_contract"]
         self.assertEqual(
             control_plane_contract["contract_version"], "torghut.quant-producer.v1"
@@ -1447,6 +1452,13 @@ class TestTradingApi(TestCase):
         self.assertIn("universe_fail_safe_blocked", control_plane_contract)
         self.assertIn("domain_telemetry_event_total", control_plane_contract)
         self.assertIn("domain_telemetry_dropped_total", control_plane_contract)
+        self.assertEqual(control_plane_contract["alpha_readiness_hypotheses_total"], 3)
+        self.assertEqual(control_plane_contract["alpha_readiness_blocked_total"], 1)
+        self.assertEqual(control_plane_contract["alpha_readiness_shadow_total"], 2)
+        self.assertEqual(
+            control_plane_contract["alpha_readiness_dependency_quorum_decision"],
+            "unknown",
+        )
 
     def test_trading_status_exposes_rejection_and_market_context_controls(self) -> None:
         original_scheduler = getattr(app.state, "trading_scheduler", None)
@@ -1534,6 +1546,15 @@ class TestTradingApi(TestCase):
             payload["control_plane_contract"]["contract_version"],
             "torghut.quant-producer.v1",
         )
+        self.assertEqual(
+            payload["control_plane_contract"]["alpha_readiness_hypotheses_total"], 3
+        )
+        self.assertEqual(
+            payload["control_plane_contract"]["alpha_readiness_blocked_total"], 1
+        )
+        self.assertEqual(
+            payload["control_plane_contract"]["alpha_readiness_shadow_total"], 2
+        )
 
     def test_trading_status_and_metrics_expose_execution_advisor_counters(self) -> None:
         original_scheduler = getattr(app.state, "trading_scheduler", None)
@@ -1568,6 +1589,22 @@ class TestTradingApi(TestCase):
             )
             self.assertIn(
                 'torghut_trading_execution_advisor_fallback_total{reason="advisor_disabled"} 1',
+                metrics_payload,
+            )
+            self.assertIn(
+                'torghut_trading_hypothesis_state_total{state="blocked"} 1',
+                metrics_payload,
+            )
+            self.assertIn(
+                'torghut_trading_hypothesis_state_total{state="shadow"} 2',
+                metrics_payload,
+            )
+            self.assertIn(
+                'torghut_trading_hypothesis_capital_stage_total{stage="shadow"} 3',
+                metrics_payload,
+            )
+            self.assertIn(
+                "torghut_trading_alpha_readiness_hypotheses_total 3",
                 metrics_payload,
             )
             self.assertIn("torghut_trading_llm_runtime_fallback_ratio", metrics_payload)

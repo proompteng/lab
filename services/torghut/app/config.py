@@ -471,6 +471,11 @@ class Settings(BaseSettings):
         alias="TRADING_STRATEGY_RELOAD_SECONDS",
         description="Seconds between strategy catalog reload checks.",
     )
+    trading_hypothesis_registry_path: Optional[str] = Field(
+        default="config/trading/hypotheses",
+        alias="TRADING_HYPOTHESIS_REGISTRY_PATH",
+        description="Path to the source-controlled hypothesis manifest directory or file.",
+    )
     trading_strategy_runtime_mode: Literal["legacy", "plugin_v3", "scheduler_v3"] = (
         Field(
             default="scheduler_v3",
@@ -1227,6 +1232,23 @@ class Settings(BaseSettings):
     trading_jangar_symbols_url: Optional[str] = Field(
         default=None, alias="JANGAR_SYMBOLS_URL"
     )
+    trading_jangar_control_plane_status_url: Optional[str] = Field(
+        default=None,
+        alias="TRADING_JANGAR_CONTROL_PLANE_STATUS_URL",
+        description=(
+            "Optional Jangar control-plane status endpoint used for hypothesis dependency quorum checks."
+        ),
+    )
+    trading_jangar_control_plane_timeout_seconds: float = Field(
+        default=2.0,
+        alias="TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS",
+        description="Timeout for Jangar control-plane status fetches.",
+    )
+    trading_jangar_control_plane_cache_ttl_seconds: int = Field(
+        default=15,
+        alias="TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS",
+        description="Cache TTL for Jangar control-plane status used by hypothesis readiness.",
+    )
     trading_market_context_url: Optional[str] = Field(
         default=None,
         alias="TRADING_MARKET_CONTEXT_URL",
@@ -1626,6 +1648,7 @@ class Settings(BaseSettings):
     def _normalize_optional_url_settings(self) -> None:
         for field_name in (
             "jangar_base_url",
+            "trading_jangar_control_plane_status_url",
             "trading_market_context_url",
             "trading_lean_runner_url",
             "posthog_host",
@@ -1661,6 +1684,10 @@ class Settings(BaseSettings):
             setattr(self, field_name, normalized_value or None)
 
         self.posthog_distinct_id = self.posthog_distinct_id.strip() or "torghut-service"
+        if self.trading_hypothesis_registry_path is not None:
+            self.trading_hypothesis_registry_path = (
+                self.trading_hypothesis_registry_path.strip() or None
+            )
 
     def _normalize_trading_csv_settings(self) -> None:
         for field_name in (
@@ -1961,6 +1988,14 @@ class Settings(BaseSettings):
                     "TRADING_READINESS_DEPENDENCY_CACHE_STALE_TOLERANCE_SECONDS "
                     "must be >= 0"
                 ),
+            ),
+            (
+                self.trading_jangar_control_plane_timeout_seconds,
+                "TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS must be >= 0",
+            ),
+            (
+                self.trading_jangar_control_plane_cache_ttl_seconds,
+                "TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS must be >= 0",
             ),
         ]
         for value, message in checks:
