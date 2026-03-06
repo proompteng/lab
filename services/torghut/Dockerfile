@@ -2,6 +2,7 @@
 # check=error=true
 
 ARG PYTHON_VERSION=3.11
+ARG TORGHUT_COMMIT=unknown
 
 FROM python:${PYTHON_VERSION}-slim AS builder
 
@@ -22,8 +23,10 @@ RUN apt-get update \
 
 COPY pyproject.toml uv.lock README.md ./
 COPY alembic.ini ./
+ARG TORGHUT_COMMIT
 COPY app ./app
 COPY migrations ./migrations
+RUN test -f /app/app/forecast_service.py
 RUN /opt/venv/bin/uv sync --frozen --no-dev
 
 
@@ -54,11 +57,13 @@ RUN apt-get update \
 
 COPY --from=builder /opt/venv /opt/venv
 COPY alembic.ini ./
+ARG TORGHUT_COMMIT
 COPY app ./app
 COPY config ./config
 COPY migrations ./migrations
 COPY scripts ./scripts
 COPY README.md .
+RUN test -f /app/app/forecast_service.py
 
 RUN groupadd --system torghut && useradd --system --create-home --gid torghut torghut
 USER torghut
