@@ -4554,7 +4554,7 @@ class TestTradingPipeline(TestCase):
                 )
                 self.assertEqual(len(executions), 0)
                 self.assertEqual(
-                    reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked"
+                    reviews[0].rationale, "llm_runtime_fallback"
                 )
                 self.assertEqual(engine.review_calls, 0)
         finally:
@@ -4845,7 +4845,7 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(len(reviews), 1)
                 self.assertEqual(reviews[0].verdict, "error")
                 self.assertEqual(
-                    reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked"
+                    reviews[0].rationale, "llm_runtime_fallback"
                 )
                 self.assertEqual(len(executions), 0)
                 self.assertEqual(engine.review_calls, 0)
@@ -4983,7 +4983,11 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(reviews[0].verdict, "error")
                 self.assertEqual(reviews[0].response_json.get("fallback"), "veto")
                 self.assertEqual(
-                    reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked"
+                    reviews[0].rationale, "llm_runtime_fallback"
+                )
+                self.assertEqual(
+                    reviews[0].response_json.get("llm_runtime", {}).get("subtype"),
+                    "dspy_live_runtime_gate",
                 )
                 self.assertEqual(len(executions), 0)
                 self.assertEqual(engine.review_calls, 0)
@@ -5120,7 +5124,7 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(reviews[0].verdict, "error")
                 self.assertEqual(reviews[0].response_json.get("fallback"), "veto")
                 self.assertEqual(
-                    reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked"
+                    reviews[0].rationale, "llm_runtime_fallback"
                 )
                 self.assertEqual(len(executions), 0)
                 self.assertEqual(engine.review_calls, 0)
@@ -5256,7 +5260,7 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(len(reviews), 1)
                 self.assertEqual(reviews[0].verdict, "error")
                 self.assertEqual(
-                    reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked"
+                    reviews[0].rationale, "llm_runtime_fallback"
                 )
                 self.assertEqual(len(executions), 0)
         finally:
@@ -5394,7 +5398,7 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(reviews[0].verdict, "error")
                 self.assertEqual(
                     reviews[0].rationale,
-                    "llm_dspy_live_runtime_gate_blocked",
+                    "llm_runtime_fallback",
                 )
                 self.assertEqual(len(executions), 0)
                 self.assertEqual(engine.review_calls, 0)
@@ -5532,7 +5536,7 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(len(reviews), 1)
                 self.assertEqual(reviews[0].verdict, "error")
                 self.assertEqual(
-                    reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked"
+                    reviews[0].rationale, "llm_runtime_fallback"
                 )
                 self.assertEqual(reviews[0].response_json.get("fallback"), "veto")
                 self.assertEqual(len(executions), 0)
@@ -5682,7 +5686,7 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(reviews[0].verdict, "error")
                 self.assertEqual(
                     reviews[0].rationale,
-                    "llm_dspy_live_runtime_gate_blocked",
+                    "llm_runtime_fallback",
                 )
                 self.assertEqual(
                     reviews[0].response_json.get("fallback"), "pass_through"
@@ -5833,7 +5837,7 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(len(reviews), 1)
                 self.assertEqual(reviews[0].verdict, "error")
                 self.assertEqual(
-                    reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked"
+                    reviews[0].rationale, "llm_runtime_fallback"
                 )
                 self.assertEqual(reviews[0].response_json.get("fallback"), "veto")
                 self.assertEqual(len(executions), 0)
@@ -5981,7 +5985,7 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(reviews[0].verdict, "error")
                 self.assertEqual(
                     reviews[0].rationale,
-                    "llm_dspy_live_runtime_gate_blocked",
+                    "llm_runtime_fallback",
                 )
                 self.assertEqual(len(executions), 0)
                 self.assertEqual(engine.review_calls, 0)

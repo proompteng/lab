@@ -62,7 +62,7 @@ def apply_policy(
         return committee_outcome
 
     if review.verdict == "veto":
-        return PolicyOutcome("veto", decision, "llm_veto")
+        return PolicyOutcome("veto", decision, "llm_policy_veto")
     if review.verdict == "approve":
         return PolicyOutcome("approve", decision)
 

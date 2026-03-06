@@ -22,6 +22,7 @@ from app.main import (
     app,
 )
 from app.trading.scheduler import TradingScheduler
+from app.trading.execution import OrderExecutor
 from app.config import settings
 from app.models import (
     Base,
@@ -1247,6 +1248,52 @@ class TestTradingApi(TestCase):
         self.assertIn("universe_fail_safe_blocked", control_plane_contract)
         self.assertIn("domain_telemetry_event_total", control_plane_contract)
         self.assertIn("domain_telemetry_dropped_total", control_plane_contract)
+
+    def test_trading_status_exposes_rejection_and_market_context_controls(self) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.metrics.llm_policy_veto_total = 3
+            scheduler.state.metrics.llm_runtime_fallback_total = 5
+            scheduler.state.metrics.llm_market_context_block_total = 7
+            scheduler.state.metrics.pre_llm_capacity_reject_total = 11
+            scheduler.state.metrics.pre_llm_qty_below_min_total = 13
+            executor = OrderExecutor()
+            executor._shorting_metadata_status.update(  # noqa: SLF001
+                {
+                    "account_ready": False,
+                    "last_refresh_at": "2026-03-05T15:30:00+00:00",
+                    "last_error": "account lookup unavailable",
+                }
+            )
+            scheduler._pipeline = type(  # noqa: SLF001
+                "PipelineStub",
+                (),
+                {"executor": executor, "llm_review_engine": None},
+            )()
+            app.state.trading_scheduler = scheduler
+
+            response = self.client.get("/trading/status")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["market_context"]["fail_mode"], "shadow_only")
+            self.assertFalse(payload["market_context"]["required"])
+            self.assertEqual(payload["rejections"]["policy_veto_total"], 3)
+            self.assertEqual(payload["rejections"]["runtime_fallback_total"], 5)
+            self.assertEqual(payload["rejections"]["market_context_block_total"], 7)
+            self.assertEqual(payload["rejections"]["pre_llm_capacity_reject_total"], 11)
+            self.assertEqual(payload["rejections"]["pre_llm_qty_below_min_total"], 13)
+            self.assertFalse(payload["shorting_metadata"]["account_ready"])
+            self.assertEqual(
+                payload["shorting_metadata"]["last_error"],
+                "account lookup unavailable",
+            )
+        finally:
+            if original_scheduler is None:
+                if hasattr(app.state, "trading_scheduler"):
+                    del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
 
     def test_trading_metrics_includes_control_plane_contract(self) -> None:
         response = self.client.get("/trading/metrics")

@@ -1758,6 +1758,24 @@ exit 1
     await expect(runCodexImplementation(eventPath)).rejects.toThrow('Missing issue number metadata in event payload')
   }, 40_000)
 
+  it('allows batch_task execution without repository, issue number, or head branch metadata', async () => {
+    await writeFile(
+      eventPath,
+      JSON.stringify({
+        prompt: 'Batch prompt',
+        executionMode: 'batch_task',
+        stage: 'implementation',
+      }),
+      'utf8',
+    )
+
+    const result = await runCodexImplementation(eventPath)
+
+    expect(result.repository).toBe('batch-task')
+    expect(result.issueNumber).toBe('0')
+    expect(runCodexProgressCommentMock).not.toHaveBeenCalled()
+  }, 40_000)
+
   it('falls back to base when the head branch does not exist on the remote', async () => {
     // Remove head from remote and local to simulate new branches that are not yet pushed.
     await new Promise<void>((resolve, reject) => {

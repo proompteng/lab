@@ -191,6 +191,7 @@ spec:
         cpu: 750m
         memory: 1Gi
   parameters:
+    executionMode: batch_task
     domain: fundamentals
     reason: scheduled_trading_session_refresh
     provider: codex-spark
@@ -223,6 +224,7 @@ spec:
         cpu: 750m
         memory: 1Gi
   parameters:
+    executionMode: batch_task
     domain: news
     reason: scheduled_trading_session_refresh
     provider: codex-spark
