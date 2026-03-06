@@ -4554,7 +4554,7 @@ class TestTradingPipeline(TestCase):
                 )
                 self.assertEqual(len(executions), 0)
                 self.assertEqual(
-                    reviews[0].rationale, "llm_runtime_fallback"
+                    reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked"
                 )
                 self.assertEqual(engine.review_calls, 0)
         finally:
@@ -4845,7 +4845,7 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(len(reviews), 1)
                 self.assertEqual(reviews[0].verdict, "error")
                 self.assertEqual(
-                    reviews[0].rationale, "llm_runtime_fallback"
+                    reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked"
                 )
                 self.assertEqual(len(executions), 0)
                 self.assertEqual(engine.review_calls, 0)
@@ -4985,7 +4985,7 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(reviews[0].verdict, "error")
                 self.assertEqual(reviews[0].response_json.get("fallback"), "veto")
                 self.assertEqual(
-                    reviews[0].rationale, "llm_runtime_fallback"
+                    reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked"
                 )
                 self.assertEqual(
                     reviews[0].response_json.get("llm_runtime", {}).get("subtype"),
@@ -5266,7 +5266,7 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(len(reviews), 1)
                 self.assertEqual(reviews[0].verdict, "error")
                 self.assertEqual(
-                    reviews[0].rationale, "llm_runtime_fallback"
+                    reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked"
                 )
                 self.assertEqual(len(executions), 0)
         finally:
@@ -5404,7 +5404,7 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(reviews[0].verdict, "error")
                 self.assertEqual(
                     reviews[0].rationale,
-                    "llm_runtime_fallback",
+                    "llm_dspy_live_runtime_gate_blocked",
                 )
                 self.assertEqual(len(executions), 0)
                 self.assertEqual(engine.review_calls, 0)
@@ -5542,7 +5542,7 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(len(reviews), 1)
                 self.assertEqual(reviews[0].verdict, "error")
                 self.assertEqual(
-                    reviews[0].rationale, "llm_runtime_fallback"
+                    reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked"
                 )
                 self.assertEqual(reviews[0].response_json.get("fallback"), "veto")
                 self.assertEqual(len(executions), 0)
@@ -5692,7 +5692,7 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(reviews[0].verdict, "error")
                 self.assertEqual(
                     reviews[0].rationale,
-                    "llm_runtime_fallback",
+                    "llm_dspy_live_runtime_gate_blocked",
                 )
                 self.assertEqual(
                     reviews[0].response_json.get("fallback"), "pass_through"
@@ -5843,7 +5843,7 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(len(reviews), 1)
                 self.assertEqual(reviews[0].verdict, "error")
                 self.assertEqual(
-                    reviews[0].rationale, "llm_runtime_fallback"
+                    reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked"
                 )
                 self.assertEqual(reviews[0].response_json.get("fallback"), "veto")
                 self.assertEqual(len(executions), 0)
@@ -5991,7 +5991,7 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(reviews[0].verdict, "error")
                 self.assertEqual(
                     reviews[0].rationale,
-                    "llm_runtime_fallback",
+                    "llm_dspy_live_runtime_gate_blocked",
                 )
                 self.assertEqual(len(executions), 0)
                 self.assertEqual(engine.review_calls, 0)
