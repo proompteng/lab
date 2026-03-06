@@ -94,6 +94,8 @@ interface ImplementationEventPayload {
   swarmAgentIdentity?: string | null
   swarmAgentRole?: string | null
   swarmHumanName?: string | null
+  swarmAgentTokenKey?: string | null
+  swarmAgentExpectedActorIdKey?: string | null
 }
 
 const readEventPayload = async (path: string): Promise<ImplementationEventPayload> => {
@@ -124,6 +126,16 @@ type RequirementMetadata = {
   workerIdentity?: string
   workerRole?: string
   workerHumanName?: string
+  workerTokenKey?: string
+  workerExpectedActorIdKey?: string
+}
+
+type ModelExecutionMetadata = {
+  modelRequested?: string | null
+  modelUsed?: string | null
+  fallbackUsed: boolean
+  fallbackReason?: string | null
+  attemptCount: number
 }
 
 type HulyRequirementArtifacts = {
@@ -499,6 +511,8 @@ const resolveHulyMissionId = ({
 const resolveHulyWorkerContext = (requirementMetadata: RequirementMetadata) => ({
   workerId: requirementMetadata.workerId,
   workerIdentity: requirementMetadata.workerIdentity,
+  tokenEnvKey: requirementMetadata.workerTokenKey,
+  expectedActorEnvKey: requirementMetadata.workerExpectedActorIdKey,
 })
 
 const collectHulyArtifactsForNotify = (artifacts?: HulyRequirementArtifacts): HulyArtifactsForNotify | undefined => {
@@ -582,6 +596,9 @@ const buildHulyArtifactsFromRun = async ({
         replyToMessageId: latestPeerMessageId,
         workerId: workerContext.workerId,
         workerIdentity: workerContext.workerIdentity,
+        tokenEnvKey: workerContext.tokenEnvKey,
+        expectedActorEnvKey: workerContext.expectedActorEnvKey,
+        requireExpectedActorId: true,
       })
     } catch (error) {
       logger.warn('Failed to post Huly reply message for requirement handoff', error)
@@ -606,6 +623,9 @@ const buildHulyArtifactsFromRun = async ({
       message: ownerUpdateMessage,
       workerId: workerContext.workerId,
       workerIdentity: workerContext.workerIdentity,
+      tokenEnvKey: workerContext.tokenEnvKey,
+      expectedActorEnvKey: workerContext.expectedActorEnvKey,
+      requireExpectedActorId: true,
     })
   } catch (error) {
     logger.warn('Failed to post Huly owner update for requirement handoff', error)
@@ -625,6 +645,9 @@ const buildHulyArtifactsFromRun = async ({
       status: decision === 'completed' ? 'completed' : 'failed',
       workerId: workerContext.workerId,
       workerIdentity: workerContext.workerIdentity,
+      tokenEnvKey: workerContext.tokenEnvKey,
+      expectedActorEnvKey: workerContext.expectedActorEnvKey,
+      requireExpectedActorId: true,
     })
   } catch (error) {
     logger.warn('Failed to upsert Huly mission for requirement handoff', error)
@@ -665,6 +688,8 @@ const extractSwarmRequirementMetadata = (event: ImplementationEventPayload): Req
     workerIdentity: resolve('swarmAgentIdentity', 'swarmAgentIdentity'),
     workerRole: resolve('swarmAgentRole', 'swarmAgentRole'),
     workerHumanName: resolve('swarmHumanName', 'swarmHumanName'),
+    workerTokenKey: resolve('swarmAgentTokenKey', 'swarmAgentTokenKey'),
+    workerExpectedActorIdKey: resolve('swarmAgentExpectedActorIdKey', 'swarmAgentExpectedActorIdKey'),
     objective: payloadObjective ?? resolve('objective') ?? resolve('swarmRequirementObjective'),
     payload,
     acceptance: parsedPayload.acceptance,
@@ -1200,6 +1225,13 @@ type CodexNotifyPayload = {
   swarmAgentIdentity?: string | null
   swarmAgentRole?: string | null
   swarmHumanName?: string | null
+  swarmAgentTokenKey?: string | null
+  swarmAgentExpectedActorIdKey?: string | null
+  modelRequested?: string | null
+  modelUsed?: string | null
+  fallbackUsed?: boolean | null
+  fallbackReason?: string | null
+  attemptCount?: number | null
 }
 
 const MAX_NOTIFY_LOG_CHARS = 12_000
@@ -1342,6 +1374,7 @@ const buildNotifyPayload = ({
   iterations,
   requirementMetadata,
   hulyArtifacts,
+  modelExecution,
 }: {
   repository: string
   issueNumber: string
@@ -1376,6 +1409,7 @@ const buildNotifyPayload = ({
   iterations?: number | null
   requirementMetadata?: RequirementMetadata
   hulyArtifacts?: HulyRequirementArtifacts
+  modelExecution?: ModelExecutionMetadata
 }): CodexNotifyPayload => {
   return {
     type: 'agent-turn-complete',
@@ -1452,6 +1486,13 @@ const buildNotifyPayload = ({
     swarmAgentIdentity: requirementMetadata?.workerIdentity ?? null,
     swarmAgentRole: requirementMetadata?.workerRole ?? null,
     swarmHumanName: requirementMetadata?.workerHumanName ?? null,
+    swarmAgentTokenKey: requirementMetadata?.workerTokenKey ?? null,
+    swarmAgentExpectedActorIdKey: requirementMetadata?.workerExpectedActorIdKey ?? null,
+    modelRequested: modelExecution?.modelRequested ?? null,
+    modelUsed: modelExecution?.modelUsed ?? null,
+    fallbackUsed: modelExecution?.fallbackUsed ?? null,
+    fallbackReason: modelExecution?.fallbackReason ?? null,
+    attemptCount: modelExecution?.attemptCount ?? null,
     hulyArtifacts: collectHulyArtifactsForNotify(hulyArtifacts),
   }
 }
@@ -2100,7 +2141,9 @@ const detectProviderThrottle = (value: string | undefined) => {
   if (!value) {
     return false
   }
-  return /rate limit|too many requests|429|quota|insufficient_quota|capacity|overloaded|provider timeout/i.test(value)
+  return /rate limit|too many requests|429|quota|insufficient_quota|capacity|overloaded|provider timeout|unknown model|not supported when using codex|model is not supported|model unavailable|unsupported model/i.test(
+    value,
+  )
 }
 
 const buildLaneCompletionReminders = (lane: SwarmExecutionLane) => {
@@ -3318,6 +3361,9 @@ export const runCodexImplementation = async (eventPath: string) => {
         workerId: hulyWorkerContext.workerId,
         workerIdentity: hulyWorkerContext.workerIdentity,
         requireWorkerToken: true,
+        tokenEnvKey: hulyWorkerContext.tokenEnvKey,
+        expectedActorEnvKey: hulyWorkerContext.expectedActorEnvKey,
+        requireExpectedActorId: true,
       })
 
       const accessResult = await verifyChatAccess({
@@ -3326,6 +3372,9 @@ export const runCodexImplementation = async (eventPath: string) => {
         workerId: hulyWorkerContext.workerId,
         workerIdentity: hulyWorkerContext.workerIdentity,
         requireWorkerToken: true,
+        tokenEnvKey: hulyWorkerContext.tokenEnvKey,
+        expectedActorEnvKey: hulyWorkerContext.expectedActorEnvKey,
+        requireExpectedActorId: true,
       })
 
       const actorId =
@@ -3526,6 +3575,13 @@ export const runCodexImplementation = async (eventPath: string) => {
     const maxSessionAttempts = parsePositiveIntEnv(process.env.CODEX_MAX_SESSION_ATTEMPTS, 3)
     let sessionResult: RunCodexSessionResult = { agentMessages: [], sessionId: undefined, exitCode: 0 }
     const primaryModel = normalizeOptionalString(sanitizeNullableString(process.env.CODEX_MODEL))
+    const modelExecution: ModelExecutionMetadata = {
+      modelRequested: primaryModel ?? null,
+      modelUsed: primaryModel ?? null,
+      fallbackUsed: false,
+      fallbackReason: null,
+      attemptCount: 0,
+    }
     const modelFallbackQueue = parseModelCandidates(process.env.CODEX_MODEL_FALLBACKS ?? '').filter(
       (candidate) => candidate !== primaryModel,
     )
@@ -3559,6 +3615,9 @@ export const runCodexImplementation = async (eventPath: string) => {
     }
     const recoveryObjective = requirementMetadata.objective ?? event.objective ?? event.swarmRequirementObjective
     for (let attempt = 1; attempt <= maxSessionAttempts; attempt += 1) {
+      modelExecution.attemptCount = attempt
+      modelExecution.modelUsed =
+        normalizeOptionalString(sanitizeNullableString(process.env.CODEX_MODEL)) ?? primaryModel ?? null
       try {
         sessionResult = await runSession(sessionPrompt)
       } catch (error) {
@@ -3566,10 +3625,13 @@ export const runCodexImplementation = async (eventPath: string) => {
         if (detectProviderThrottle(message) && modelFallbackQueue.length > 0 && attempt < maxSessionAttempts) {
           const nextModel = modelFallbackQueue.shift()
           if (nextModel) {
+            modelExecution.fallbackUsed = true
+            modelExecution.fallbackReason = message
             logger.warn(
               `Codex session attempt ${attempt}/${maxSessionAttempts} hit transient provider throttling; switching model from ${process.env.CODEX_MODEL ?? 'unset'} to ${nextModel}`,
             )
             process.env.CODEX_MODEL = nextModel
+            modelExecution.modelUsed = nextModel
             resumeSessionId = undefined
             capturedSessionId = undefined
             sessionPrompt = fitPromptToBudget({
@@ -3649,10 +3711,13 @@ export const runCodexImplementation = async (eventPath: string) => {
       if (detectProviderThrottle(lastAssistantMessage ?? undefined) && modelFallbackQueue.length > 0) {
         const nextModel = modelFallbackQueue.shift()
         if (nextModel) {
+          modelExecution.fallbackUsed = true
+          modelExecution.fallbackReason = lastAssistantMessage ?? 'provider fallback'
           logger.warn(
             `Codex session attempt ${attempt}/${maxSessionAttempts} produced transient provider throttle signals; switching model from ${process.env.CODEX_MODEL ?? 'unset'} to ${nextModel}`,
           )
           process.env.CODEX_MODEL = nextModel
+          modelExecution.modelUsed = nextModel
           resumeSessionId = undefined
           capturedSessionId = undefined
           sessionPrompt = fitPromptToBudget({
@@ -3972,6 +4037,7 @@ export const runCodexImplementation = async (eventPath: string) => {
       iterations,
       requirementMetadata,
       hulyArtifacts,
+      modelExecution,
     })
     try {
       await ensureFileDirectory(notifyPath)

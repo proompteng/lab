@@ -66,6 +66,9 @@ const hulyApiMocks = vi.hoisted(() => ({
       workerIdentity?: string
       limit?: number
       requireWorkerToken?: boolean
+      tokenEnvKey?: string
+      expectedActorEnvKey?: string
+      requireExpectedActorId?: boolean
     }) => Promise<{
       messages: Array<{
         messageId: string
@@ -96,6 +99,9 @@ const hulyApiMocks = vi.hoisted(() => ({
       workerId?: string
       workerIdentity?: string
       requireWorkerToken?: boolean
+      tokenEnvKey?: string
+      expectedActorEnvKey?: string
+      requireExpectedActorId?: boolean
     }) => Promise<{
       actorId: string
       channelMessage?: { messageId?: string }
@@ -113,6 +119,9 @@ const hulyApiMocks = vi.hoisted(() => ({
       workerId?: string
       workerIdentity?: string
       requireWorkerToken?: boolean
+      tokenEnvKey?: string
+      expectedActorEnvKey?: string
+      requireExpectedActorId?: boolean
     }) => Promise<{
       messageId: string
     }>
@@ -133,6 +142,9 @@ const hulyApiMocks = vi.hoisted(() => ({
       workerId?: string
       workerIdentity?: string
       requireWorkerToken?: boolean
+      tokenEnvKey?: string
+      expectedActorEnvKey?: string
+      requireExpectedActorId?: boolean
     }) => Promise<{
       missionId: string
       stage?: string
@@ -727,6 +739,8 @@ describe('runCodexImplementation', () => {
       swarmAgentWorkerId: 'worker-0027ilba',
       swarmAgentIdentity: 'vw-jangar-control-plane-implement-worker-0027ilba',
       swarmAgentRole: 'implement',
+      swarmAgentTokenKey: 'HULY_API_TOKEN_ELISE_NOVAK_JANGAR_ENGINEER',
+      swarmAgentExpectedActorIdKey: 'HULY_EXPECTED_ACTOR_ID_ELISE_NOVAK_JANGAR_ENGINEER',
     }
     await writeFile(eventPath, JSON.stringify(payload))
 
@@ -734,6 +748,13 @@ describe('runCodexImplementation', () => {
 
     expect(listChannelMessagesMock).toHaveBeenCalledTimes(1)
     expect(verifyChatAccessMock).toHaveBeenCalledTimes(1)
+    expect(verifyChatAccessMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requireExpectedActorId: true,
+        tokenEnvKey: 'HULY_API_TOKEN_ELISE_NOVAK_JANGAR_ENGINEER',
+        expectedActorEnvKey: 'HULY_EXPECTED_ACTOR_ID_ELISE_NOVAK_JANGAR_ENGINEER',
+      }),
+    )
     expect(postChannelMessageMock).toHaveBeenCalledTimes(2)
     const replyCall = postChannelMessageMock.mock.calls.find((call) => {
       const args = call?.[0] as
@@ -2041,12 +2062,12 @@ exit 1
   }, 40_000)
 
   it('falls back to secondary model on transient provider quota/rate-limit failures', async () => {
-    process.env.CODEX_MODEL = 'codex-spark'
-    process.env.CODEX_MODEL_FALLBACKS = 'codex'
+    process.env.CODEX_MODEL = 'gpt-5.3-codex-spark'
+    process.env.CODEX_MODEL_FALLBACKS = 'gpt-5.4'
     process.env.CODEX_MAX_SESSION_ATTEMPTS = '2'
 
     runCodexSessionMock
-      .mockRejectedValueOnce(new Error('429 rate limit exceeded for codex-spark'))
+      .mockRejectedValueOnce(new Error('429 rate limit exceeded for gpt-5.3-codex-spark'))
       .mockImplementationOnce(async (options) => {
         expect(options.resumeSessionId).toBeUndefined()
         expect(options.prompt).toContain('transient provider throttling/quota constraints')
@@ -2061,7 +2082,18 @@ exit 1
     const result = await runCodexImplementation(eventPath)
     expect(result.sessionId).toBe('fallback-session')
     expect(runCodexSessionMock).toHaveBeenCalledTimes(2)
-    expect(process.env.CODEX_MODEL).toBe('codex')
+    expect(process.env.CODEX_MODEL).toBe('gpt-5.4')
+    const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
+    const notify = JSON.parse(notifyRaw) as {
+      modelRequested?: string | null
+      modelUsed?: string | null
+      fallbackUsed?: boolean | null
+      attemptCount?: number | null
+    }
+    expect(notify.modelRequested).toBe('gpt-5.3-codex-spark')
+    expect(notify.modelUsed).toBe('gpt-5.4')
+    expect(notify.fallbackUsed).toBe(true)
+    expect(notify.attemptCount).toBe(2)
   }, 40_000)
 
   it('does not inject a default CODEX_MODEL when provider config is the source of truth', async () => {

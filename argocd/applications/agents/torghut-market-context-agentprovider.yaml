@@ -9,7 +9,7 @@ spec:
     CODEX_LOG_LEVEL: info
     NATS_URL: nats://nats.nats.svc.cluster.local:4222
     AGENT_PROVIDER_PATH: /root/.codex/provider-torghut-market-context.json
-    CODEX_MARKET_CONTEXT_PROVIDER_CHAIN: codex-spark:gpt-5.3-codex-spark
+    CODEX_MARKET_CONTEXT_PROVIDER_CHAIN: codex-spark:gpt-5.3-codex-spark,codex:gpt-5.4
     CODEX_MARKET_CONTEXT_ATTEMPT_TIMEOUT_SECONDS: "600"
     CODEX_MARKET_CONTEXT_OVERALL_TIMEOUT_SECONDS: "1200"
     CODEX_MARKET_CONTEXT_PROGRESS_TIMEOUT_SECONDS: "10"
@@ -429,10 +429,26 @@ spec:
             return 'finalize_callback_failure'
           if any(
             token in normalized
+            for token in (
+              'usage limit',
+              'quota',
+              'insufficient_quota',
+              'unknown model',
+              'model is not supported',
+              'not supported when using codex',
+              'model unavailable',
+            )
+          ):
+            return 'provider_fallback_eligible'
+          if any(
+            token in normalized
             for token in ('unauthorized', 'forbidden', 'token', 'auth', 'api key', 'bootstrap', 'transport', 'connection refused')
           ):
             return 'provider_bootstrap_failure'
           return 'provider_turn_failed'
+
+        def _can_retry_with_next_provider(failure_category: str) -> bool:
+          return failure_category in {'provider_attempt_timeout', 'provider_fallback_eligible'}
 
         def _run_attempt(event_path: Path, provider: str, model: str, timeout_seconds: int) -> tuple[int, str, str]:
           env = os.environ.copy()
@@ -553,6 +569,8 @@ spec:
               failure_category,
             )
             if time.monotonic() >= deadline:
+              break
+            if not _can_retry_with_next_provider(failure_category):
               break
 
           final_provider = attempts[-1]['provider'] if attempts else 'unknown'

@@ -220,6 +220,8 @@ def resolve_expected_actor_id(args: argparse.Namespace) -> str:
         explicit_value = env_if_set(explicit_env_key)
         if explicit_value:
             return explicit_value
+        if args.require_expected_actor_id:
+            return ''
 
     worker_identity = args.worker_identity.strip() or env_if_set('SWARM_AGENT_IDENTITY')
     if worker_identity:
@@ -248,6 +250,8 @@ def resolve_token(args: argparse.Namespace) -> tuple[str, str]:
         candidate = env_if_set(token_env_key)
         if candidate:
             return candidate, token_env_key
+        if args.require_worker_token:
+            return '', ''
 
     worker_identity = args.worker_identity.strip() or env_if_set('SWARM_AGENT_IDENTITY')
     if worker_identity:
