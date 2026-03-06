@@ -61,6 +61,7 @@ This pack is positioned as the next architecture layer above:
 27. `27-live-hypothesis-ledger-and-capital-allocation-contract-2026-03-06.md`
 28. `28-hypothesis-led-alpha-readiness-and-profit-circuit-2026-03-06.md`
 29. `29-code-investigated-vnext-architecture-reset-2026-03-06.md`
+30. `30-live-state-disposition-and-implementation-rollout-gates-2026-03-06.md`
 
 ## Recommended Build Order
 
@@ -93,6 +94,7 @@ This pack is positioned as the next architecture layer above:
 27. `27-live-hypothesis-ledger-and-capital-allocation-contract-2026-03-06.md`
 28. `28-hypothesis-led-alpha-readiness-and-profit-circuit-2026-03-06.md`
 29. `29-code-investigated-vnext-architecture-reset-2026-03-06.md`
+30. `30-live-state-disposition-and-implementation-rollout-gates-2026-03-06.md`
 
 ## Why This Sequence
 
@@ -109,3 +111,5 @@ This pack is positioned as the next architecture layer above:
 - The code-investigated vNext architecture reset is sequenced last because it reframes the pack around the now-visible
   gap between control-plane completion and empirical alpha readiness, and it defines the contract for the next wave of
   implementation work.
+- The live-state disposition comes after the reset because it converts the March 6 designs into an execution order for
+  the current cluster and source state, separating what must be maintained from what can safely be implemented next.
