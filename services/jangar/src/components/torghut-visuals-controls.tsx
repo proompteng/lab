@@ -1,9 +1,14 @@
-import { Button } from '@proompteng/design/ui'
+import { Button, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@proompteng/design/ui'
 import { cn } from '@/lib/utils'
 import type { IndicatorState, RangeOption, ResolutionOption } from './torghut-visuals-types'
 
-const selectClassName =
-  'border-input focus-visible:border-ring focus-visible:ring-ring/50 rounded-none border bg-transparent px-2.5 py-1 text-xs text-foreground focus-visible:ring-1 outline-none'
+const selectTriggerClassName =
+  'h-auto w-full rounded-none border border-input bg-transparent px-2.5 py-1 text-xs text-foreground shadow-none hover:bg-accent/10 focus-visible:ring-1'
+
+const selectContentClassName =
+  'rounded-none border border-border bg-popover/95 p-1 text-popover-foreground backdrop-blur-sm'
+
+const selectItemClassName = 'rounded-none'
 
 type TorghutVisualsControlsProps = {
   symbols: string[]
@@ -68,58 +73,77 @@ export function TorghutVisualsControls({
           <label className="text-xs font-medium text-muted-foreground" htmlFor="torghut-symbol">
             Symbol
           </label>
-          <select
-            id="torghut-symbol"
-            className={cn(selectClassName, 'w-full')}
-            value={selectedSymbol}
-            onChange={(event) => onSymbolChange(event.target.value)}
+          <Select
+            value={selectedSymbol || undefined}
+            onValueChange={(value) => {
+              if (value) onSymbolChange(value)
+            }}
             disabled={disabled || symbols.length === 0}
           >
-            {symbols.length === 0 ? <option value="">No symbols enabled</option> : null}
-            {symbols.map((symbol) => (
-              <option key={symbol} value={symbol}>
-                {symbol}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger id="torghut-symbol" className={selectTriggerClassName}>
+              <SelectValue placeholder={symbols.length === 0 ? 'No symbols enabled' : 'Select symbol'} />
+            </SelectTrigger>
+            <SelectContent align="start" className={selectContentClassName}>
+              {symbols.length === 0 ? (
+                <SelectItem value="none" disabled className={selectItemClassName}>
+                  No symbols enabled
+                </SelectItem>
+              ) : null}
+              {symbols.map((symbol) => (
+                <SelectItem key={symbol} value={symbol} className={selectItemClassName}>
+                  {symbol}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         <div className="space-y-1">
           <label className="text-xs font-medium text-muted-foreground" htmlFor="torghut-range">
             Time range
           </label>
-          <select
-            id="torghut-range"
-            className={cn(selectClassName, 'w-full')}
+          <Select
             value={range.id}
-            onChange={(event) => onRangeChange(event.target.value)}
+            onValueChange={(value) => {
+              if (value) onRangeChange(value)
+            }}
             disabled={disabled}
           >
-            {rangeOptions.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger id="torghut-range" className={selectTriggerClassName}>
+              <SelectValue placeholder="Select time range" />
+            </SelectTrigger>
+            <SelectContent align="start" className={selectContentClassName}>
+              {rangeOptions.map((option) => (
+                <SelectItem key={option.id} value={option.id} className={selectItemClassName}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         <div className="space-y-1">
           <label className="text-xs font-medium text-muted-foreground" htmlFor="torghut-resolution">
             Resolution
           </label>
-          <select
-            id="torghut-resolution"
-            className={cn(selectClassName, 'w-full')}
+          <Select
             value={resolution.id}
-            onChange={(event) => onResolutionChange(event.target.value)}
+            onValueChange={(value) => {
+              if (value) onResolutionChange(value)
+            }}
             disabled={disabled}
           >
-            {resolutionOptions.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger id="torghut-resolution" className={selectTriggerClassName}>
+              <SelectValue placeholder="Select resolution" />
+            </SelectTrigger>
+            <SelectContent align="start" className={selectContentClassName}>
+              {resolutionOptions.map((option) => (
+                <SelectItem key={option.id} value={option.id} className={selectItemClassName}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
