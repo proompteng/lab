@@ -2424,6 +2424,8 @@ const reconcileSwarm = async (
     }
   }
 
+  const inactiveFreezeUntil = freezeUntil ?? existingFreezeUntil ?? nowIso()
+  const inactiveFreezeEnteredAt = freezeEnteredAt ?? existingFreezeEnteredAt ?? nowIso()
   let conditions = conditionsBase
   if (freezeActive) {
     if (freezeUntil) {
@@ -2462,6 +2464,23 @@ const reconcileSwarm = async (
       reason: 'NotFrozen',
       message: 'swarm operating normally',
     })
+    // Keep a concrete object here so server-side apply updates the existing freeze status
+    // instead of attempting to delete it with null values that violate the CRD schema.
+    nextStatus.freeze = {
+      reason: 'NotFrozen',
+      until: inactiveFreezeUntil,
+      consecutiveFailures,
+      threshold: freezeAfterFailures,
+      enteredAt: inactiveFreezeEnteredAt,
+      durationMs: freezeDurationMs,
+      evidence: {
+        triggeringRuns: freezeFailureEvidence,
+        recentRunWindowMs: freezeAfterFailures * freezeDurationMs,
+        freezeWindowStartedAt: failureWindowStartMs === null ? null : new Date(failureWindowStartMs).toISOString(),
+        stageStaleness: staleStageSignals,
+        triggers: freezeTriggerReasons,
+      },
+    }
   }
 
   if (requirementStats.invalidChannel > 0) {
