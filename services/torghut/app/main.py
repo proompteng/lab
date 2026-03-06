@@ -1269,6 +1269,9 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
     llm_evaluation = _load_llm_evaluation(session)
     tca_summary = _load_tca_summary(session)
     control_plane_contract = _build_control_plane_contract(state)
+    market_context_status = scheduler.market_context_status()
+    shorting_metadata_status = scheduler.shorting_metadata_status()
+    rejection_alert_status = scheduler.rejection_alert_status()
     return {
         "enabled": settings.trading_enabled,
         "autonomy_enabled": settings.trading_autonomy_enabled,
@@ -1330,22 +1333,33 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
             "signal_lag_alert_threshold_seconds": settings.trading_signal_stale_lag_alert_seconds,
             "signal_continuity_recovery_cycles": settings.trading_signal_continuity_recovery_cycles,
         },
-        "market_context": {
-            "required": settings.trading_market_context_required,
-            "fail_mode": settings.trading_market_context_fail_mode,
-            "allow_degraded_last_good": settings.trading_market_context_allow_degraded_last_good,
-            "min_quality": settings.trading_market_context_min_quality,
-            "max_staleness_seconds": settings.trading_market_context_max_staleness_seconds,
-            "fundamentals_degraded_max_staleness_seconds": settings.trading_market_context_fundamentals_degraded_max_staleness_seconds,
-            "news_degraded_max_staleness_seconds": settings.trading_market_context_news_degraded_max_staleness_seconds,
-        },
-        "shorting_metadata": scheduler.shorting_metadata_status(),
+        "market_context": market_context_status,
+        "shorting_metadata": shorting_metadata_status,
         "rejections": {
             "policy_veto_total": state.metrics.llm_policy_veto_total,
             "runtime_fallback_total": state.metrics.llm_runtime_fallback_total,
             "market_context_block_total": state.metrics.llm_market_context_block_total,
             "pre_llm_capacity_reject_total": state.metrics.pre_llm_capacity_reject_total,
             "pre_llm_qty_below_min_total": state.metrics.pre_llm_qty_below_min_total,
+            "runtime_fallback_ratio": rejection_alert_status[
+                "runtime_fallback_ratio"
+            ],
+            "runtime_fallback_alert_ratio_threshold": rejection_alert_status[
+                "runtime_fallback_alert_ratio_threshold"
+            ],
+            "runtime_fallback_alert_active": rejection_alert_status[
+                "runtime_fallback_alert_active"
+            ],
+        },
+        "alerts": {
+            "market_context_alert_active": market_context_status["alert_active"],
+            "market_context_alert_reason": market_context_status["alert_reason"],
+            "runtime_fallback_alert_active": rejection_alert_status[
+                "runtime_fallback_alert_active"
+            ],
+            "shorting_metadata_alert_active": rejection_alert_status[
+                "shorting_metadata_alert_active"
+            ],
         },
         "rollback": {
             "emergency_stop_active": state.emergency_stop_active,
@@ -1595,11 +1609,35 @@ def prometheus_metrics(session: Session = Depends(get_session)) -> Response:
         scheduler = TradingScheduler()
         app.state.trading_scheduler = scheduler
     metrics = scheduler.state.metrics
+    market_context_status = scheduler.market_context_status()
+    shorting_metadata_status = scheduler.shorting_metadata_status()
+    rejection_alert_status = scheduler.rejection_alert_status()
     payload = render_trading_metrics(
         {
             **metrics.__dict__,
             "tca_summary": _load_tca_summary(session),
             "route_provenance": _load_route_provenance_summary(session),
+            "market_context_alert_active": int(
+                bool(market_context_status.get("alert_active"))
+            ),
+            "market_context_last_freshness_seconds": _safe_int(
+                market_context_status.get("last_freshness_seconds")
+            ),
+            "market_context_last_quality_score": _safe_float(
+                market_context_status.get("last_quality_score")
+            ),
+            "llm_runtime_fallback_ratio": _safe_float(
+                rejection_alert_status.get("runtime_fallback_ratio")
+            ),
+            "llm_runtime_fallback_alert_active": int(
+                bool(rejection_alert_status.get("runtime_fallback_alert_active"))
+            ),
+            "shorting_metadata_account_ready": int(
+                shorting_metadata_status.get("account_ready") is True
+            ),
+            "shorting_metadata_alert_active": int(
+                bool(rejection_alert_status.get("shorting_metadata_alert_active"))
+            ),
         }
     )
     return Response(content=payload, media_type="text/plain; version=0.0.4")
@@ -2602,6 +2640,14 @@ def _safe_int(value: object) -> int:
     if isinstance(value, float):
         return int(value)
     return 0
+
+
+def _safe_float(value: object) -> float:
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    return 0.0
 
 
 def _load_llm_evaluation(session: Session) -> dict[str, object]:

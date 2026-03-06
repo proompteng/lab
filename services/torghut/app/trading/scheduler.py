@@ -1069,6 +1069,22 @@ class TradingState:
     signal_continuity_alert_started_at: Optional[datetime] = None
     signal_continuity_alert_last_seen_at: Optional[datetime] = None
     signal_continuity_recovery_streak: int = 0
+    last_market_context_symbol: Optional[str] = None
+    last_market_context_checked_at: Optional[datetime] = None
+    last_market_context_as_of: Optional[datetime] = None
+    last_market_context_freshness_seconds: Optional[int] = None
+    last_market_context_quality_score: Optional[float] = None
+    last_market_context_domain_states: dict[str, str] = field(
+        default_factory=lambda: cast(dict[str, str], {})
+    )
+    last_market_context_risk_flags: list[str] = field(
+        default_factory=lambda: cast(list[str], [])
+    )
+    last_market_context_allow_llm: Optional[bool] = None
+    last_market_context_reason: Optional[str] = None
+    last_market_context_fetch_error: Optional[str] = None
+    market_context_alert_active: bool = False
+    market_context_alert_reason: Optional[str] = None
     autonomy_no_signal_streak: int = 0
     last_evidence_continuity_report: Optional[dict[str, Any]] = None
     autonomy_failure_streak: int = 0
@@ -3424,6 +3440,11 @@ class TradingPipeline:
         market_context, market_context_error = self._fetch_market_context(
             decision.symbol
         )
+        self._record_market_context_observation(
+            symbol=decision.symbol,
+            market_context=market_context,
+            market_context_error=market_context_error,
+        )
         if market_context_error is not None:
             self.state.metrics.llm_market_context_error_total += 1
 
@@ -3591,6 +3612,67 @@ class TradingPipeline:
                 }
             },
             policy_resolution=policy_resolution,
+        )
+
+    def _record_market_context_observation(
+        self,
+        *,
+        symbol: str,
+        market_context: Optional[MarketContextBundle],
+        market_context_error: Optional[str],
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        self.state.last_market_context_symbol = symbol
+        self.state.last_market_context_checked_at = now
+        self.state.last_market_context_fetch_error = market_context_error
+        if market_context is None:
+            self.state.last_market_context_as_of = None
+            self.state.last_market_context_freshness_seconds = None
+            self.state.last_market_context_quality_score = None
+            self.state.last_market_context_domain_states = {}
+            self.state.last_market_context_risk_flags = []
+            allow_llm = not settings.trading_market_context_required
+            reason = (
+                market_context_error
+                or (
+                    "market_context_required_missing"
+                    if settings.trading_market_context_required
+                    else None
+                )
+            )
+            self.state.last_market_context_allow_llm = allow_llm
+            self.state.last_market_context_reason = reason
+            self.state.market_context_alert_active = market_context_error is not None or (
+                settings.trading_market_context_required and not allow_llm
+            )
+            self.state.market_context_alert_reason = reason
+            return
+
+        market_context_status = evaluate_market_context(market_context)
+        as_of = market_context.as_of_utc
+        self.state.last_market_context_as_of = as_of
+        self.state.last_market_context_freshness_seconds = int(
+            market_context.freshness_seconds
+        )
+        self.state.last_market_context_quality_score = float(
+            market_context.quality_score
+        )
+        self.state.last_market_context_domain_states = {
+            "technicals": market_context.domains.technicals.state,
+            "fundamentals": market_context.domains.fundamentals.state,
+            "news": market_context.domains.news.state,
+            "regime": market_context.domains.regime.state,
+        }
+        self.state.last_market_context_risk_flags = list(market_context.risk_flags)
+        self.state.last_market_context_allow_llm = market_context_status.allow_llm
+        self.state.last_market_context_reason = (
+            market_context_error or market_context_status.reason
+        )
+        self.state.market_context_alert_active = market_context_error is not None or (
+            not market_context_status.allow_llm
+        )
+        self.state.market_context_alert_reason = (
+            market_context_error or market_context_status.reason
         )
 
     def _record_llm_verdict_counter(self, verdict: str) -> None:
@@ -3874,6 +3956,24 @@ class TradingPipeline:
         }
         if response_payload_extra:
             response_payload.update(response_payload_extra)
+        decision_metadata_update: dict[str, Any] = {}
+        if response_payload_extra:
+            llm_runtime_payload = response_payload_extra.get("llm_runtime")
+            if isinstance(llm_runtime_payload, Mapping):
+                decision_metadata_update["llm_runtime"] = dict(
+                    cast(Mapping[str, Any], llm_runtime_payload)
+                )
+            market_context_payload = response_payload_extra.get("market_context")
+            if isinstance(market_context_payload, Mapping):
+                decision_metadata_update["market_context"] = dict(
+                    cast(Mapping[str, Any], market_context_payload)
+                )
+        if decision_metadata_update:
+            self.executor.update_decision_json(
+                session,
+                decision_row,
+                decision_metadata_update,
+            )
         response_payload["request_hash"] = _hash_payload(request_payload)
         response_payload["response_hash"] = _hash_payload(response_payload)
         self._persist_llm_review(
@@ -4810,9 +4910,13 @@ class TradingScheduler:
 
     def llm_status(self) -> dict[str, object]:
         circuit_snapshot = None
-        if self._pipeline and self._pipeline.llm_review_engine:
+        pipeline = self._pipeline
+        llm_review_engine = (
+            getattr(pipeline, "llm_review_engine", None) if pipeline is not None else None
+        )
+        if llm_review_engine:
             circuit_snapshot = (
-                self._pipeline.llm_review_engine.circuit_breaker.snapshot()
+                llm_review_engine.circuit_breaker.snapshot()
             )
         guardrails = evaluate_llm_guardrails()
         policy_resolution = _build_llm_policy_resolution(
@@ -4837,6 +4941,9 @@ class TradingScheduler:
             ),
             "policy_veto_total": self.state.metrics.llm_policy_veto_total,
             "runtime_fallback_total": self.state.metrics.llm_runtime_fallback_total,
+            "runtime_fallback_ratio": self.rejection_alert_status()[
+                "runtime_fallback_ratio"
+            ],
             "dspy_live_runtime_block_fail_mode": settings.llm_dspy_live_runtime_block_fail_mode,
             "dspy_live_runtime_block_qty_multiplier": settings.llm_dspy_live_runtime_block_qty_multiplier,
             "circuit": circuit_snapshot,
@@ -4850,13 +4957,93 @@ class TradingScheduler:
         }
 
     def shorting_metadata_status(self) -> dict[str, object]:
-        executor = self._pipeline.executor if self._pipeline is not None else None
+        pipeline = self._pipeline
+        executor = getattr(pipeline, "executor", None) if pipeline is not None else None
+        alert_active = False
+        if self.state.market_session_open is True:
+            raw_status = None
+            if isinstance(executor, OrderExecutor):
+                raw_status = executor.shorting_metadata_status()
+            account_ready = raw_status.get("account_ready") if isinstance(raw_status, Mapping) else None
+            alert_active = account_ready is False
         if isinstance(executor, OrderExecutor):
-            return cast(dict[str, object], executor.shorting_metadata_status())
+            status = cast(dict[str, object], executor.shorting_metadata_status())
+            status["alert_active"] = alert_active
+            return status
         return {
             "account_ready": None,
             "last_refresh_at": None,
             "last_error": None,
+            "alert_active": False,
+        }
+
+    def market_context_status(self) -> dict[str, object]:
+        health: dict[str, Any] | None = None
+        health_error: str | None = None
+        pipeline = self._pipeline
+        market_context_client = (
+            getattr(pipeline, "market_context_client", None)
+            if pipeline is not None
+            else None
+        )
+        if not isinstance(market_context_client, MarketContextClient):
+            market_context_client = MarketContextClient()
+        if self.state.last_market_context_symbol:
+            try:
+                health = market_context_client.fetch_health(
+                    self.state.last_market_context_symbol
+                )
+            except Exception as exc:
+                health_error = str(exc)
+        return {
+            "required": settings.trading_market_context_required,
+            "fail_mode": settings.trading_market_context_fail_mode,
+            "allow_degraded_last_good": settings.trading_market_context_allow_degraded_last_good,
+            "min_quality": settings.trading_market_context_min_quality,
+            "max_staleness_seconds": settings.trading_market_context_max_staleness_seconds,
+            "fundamentals_degraded_max_staleness_seconds": settings.trading_market_context_fundamentals_degraded_max_staleness_seconds,
+            "news_degraded_max_staleness_seconds": settings.trading_market_context_news_degraded_max_staleness_seconds,
+            "last_symbol": self.state.last_market_context_symbol,
+            "last_checked_at": self.state.last_market_context_checked_at,
+            "last_as_of": self.state.last_market_context_as_of,
+            "last_freshness_seconds": self.state.last_market_context_freshness_seconds,
+            "last_quality_score": self.state.last_market_context_quality_score,
+            "last_domain_states": dict(self.state.last_market_context_domain_states),
+            "last_risk_flags": list(self.state.last_market_context_risk_flags),
+            "last_allow_llm": self.state.last_market_context_allow_llm,
+            "last_reason": self.state.last_market_context_reason,
+            "last_fetch_error": self.state.last_market_context_fetch_error,
+            "reason_total": dict(self.state.metrics.llm_market_context_reason_total),
+            "shadow_total": dict(self.state.metrics.llm_market_context_shadow_total),
+            "alert_active": self.state.market_context_alert_active,
+            "alert_reason": self.state.market_context_alert_reason,
+            "health": health,
+            "health_error": health_error,
+        }
+
+    def rejection_alert_status(self) -> dict[str, object]:
+        llm_requests_total = max(0, int(self.state.metrics.llm_requests_total))
+        runtime_fallback_total = max(
+            0, int(self.state.metrics.llm_runtime_fallback_total)
+        )
+        runtime_fallback_ratio = (
+            float(runtime_fallback_total) / float(llm_requests_total)
+            if llm_requests_total > 0
+            else 0.0
+        )
+        runtime_fallback_alert_active = (
+            llm_requests_total > 0
+            and runtime_fallback_ratio
+            > settings.llm_dspy_runtime_fallback_alert_ratio
+        )
+        shorting_status = self.shorting_metadata_status()
+        return {
+            "runtime_fallback_ratio": runtime_fallback_ratio,
+            "runtime_fallback_alert_ratio_threshold": settings.llm_dspy_runtime_fallback_alert_ratio,
+            "runtime_fallback_alert_active": runtime_fallback_alert_active,
+            "shorting_metadata_alert_active": bool(
+                shorting_status.get("alert_active", False)
+            ),
         }
 
     def _build_pipeline_for_account(self, lane: TradingAccountLane) -> TradingPipeline:
