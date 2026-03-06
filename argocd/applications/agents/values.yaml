@@ -50,7 +50,7 @@ argocdHooks:
           head: codex/swarm-smoke
           issueNumber: swarm-codex-smoke
           issueTitle: Codex Spark smoke validation
-          objective: verify api-backed codex auth, provider startup, and the promoted runner image without VCS or external side
+          objective: verify codex auth.json startup, provider startup, and the promoted runner image without VCS or external side
             effects
         vcsRef:
           name: github
