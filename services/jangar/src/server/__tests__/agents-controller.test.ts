@@ -3362,6 +3362,7 @@ describe('agents controller reconcileAgentRun', () => {
     const steps = Array.isArray(workflow.steps) ? (workflow.steps as Record<string, unknown>[]) : []
     expect(steps[0]?.phase).toBe('Running')
     expect(steps[0]?.message).toBe('Waiting for job to be created')
+    expect(typeof steps[0]?.jobObservedAt).toBe('string')
   })
 
   it('warns when workflow jobs disappear after observation', async () => {

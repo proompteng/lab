@@ -801,6 +801,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         const job = prefetchedJobForTimeout ?? (await kube.get('job', jobName, jobNamespace))
         if (!job) {
           if (!stepStatus.jobObservedAt) {
+            stepStatus.jobObservedAt = deps.nowIso()
             setWorkflowStepPhase(stepStatus, 'Running', 'Waiting for job to be created')
             runtimeRefUpdate = buildRuntimeRef('workflow', jobName, jobNamespace, {
               runName,
