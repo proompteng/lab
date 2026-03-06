@@ -1,0 +1,210 @@
+{
+  "run_id": "wp-b68a0dd440bd84dd8b3baa0f",
+  "paper": {
+    "title": "AlphaPROBE: Alpha Mining via Principled Retrieval and On-graph Biased Evolution",
+    "arxiv_id": "2602.11917",
+    "pdf_url": "https://arxiv.org/pdf/2602.11917.pdf",
+    "version": "v1",
+    "date": "2026-02-12"
+  },
+  "synthesis_version": "v1",
+  "generated_by": "codex",
+  "model_name": "gpt-5-codex",
+  "prompt_version": "whitepaper-analysis-v1",
+  "full_paper_reviewed": true,
+  "review_scope": {
+    "pages_reviewed": 20,
+    "included_sections": [
+      "main_text",
+      "references",
+      "appendix"
+    ]
+  },
+  "executive_summary": "AlphaPROBE reframes formulaic alpha mining as navigation over a factor-lineage DAG instead of isolated sampling or narrow parent-child chains. Its key contribution is a Bayesian parent retriever that mixes factor quality with topology-aware diversity signals, paired with a DAG-aware multi-agent generator that conditions on full ancestry traces. For this repository, the paper is implementable as a new research subsystem in Torghut, but not as a small extension of the existing alpha lane. Production viability remains limited by statistical, reproducibility, and execution-realism gaps.",
+  "problem_statement": "Existing automated alpha mining approaches either generate factors independently or refine them through local chains, but neither family uses the global structure of the discovered factor pool to decide where to search next. AlphaPROBE targets this gap by representing factor evolution as a DAG and using topology-aware retrieval and generation to improve search efficiency and diversity.",
+  "methodology_summary": "AlphaPROBE builds a DAG whose nodes are factors and whose edges are parent-child derivations. Retrieval ranks candidate parents with a posterior-style score: a prior based on normalized quality plus depth and retrieval-count penalties (Eq. 5), and a likelihood that differs for leaf vs non-leaf nodes (Eq. 6-13). Generation then runs a three-stage LLM workflow over the selected parent's full ancestry trace: strategy proposal, expression synthesis, and validator admission. Portfolio construction uses a dynamic factor integrator inherited from AlphaForge.",
+  "key_findings": [
+    {
+      "id": "KF-1",
+      "finding": "AlphaPROBE reports the strongest predictive metrics among all listed baselines on CSI 300, CSI 500, and CSI 1000.",
+      "evidence": [
+        "Section 5.2",
+        "Table 1"
+      ],
+      "details": {
+        "csi300": {
+          "ic": 5.84,
+          "icir": 39.02,
+          "ric": 7.2,
+          "ricir": 46.94
+        },
+        "csi500": {
+          "ic": 6.26,
+          "icir": 52.39,
+          "ric": 8.78,
+          "ricir": 73.18
+        },
+        "csi1000": {
+          "ic": 9.04,
+          "icir": 70.49,
+          "ric": 11.35,
+          "ricir": 88.02
+        }
+      }
+    },
+    {
+      "id": "KF-2",
+      "finding": "Portfolio-level results also lead on reported annualized return and Sharpe across all three datasets while keeping drawdowns competitive.",
+      "evidence": [
+        "Section 5.2",
+        "Section 5.3",
+        "Table 1",
+        "Figure 3",
+        "Appendix A.1.3",
+        "Figure 6",
+        "Figure 7"
+      ],
+      "details": {
+        "csi300": {
+          "ar": "7.50%",
+          "mdd": "22.25%",
+          "sr": 0.4411
+        },
+        "csi500": {
+          "ar": "17.45%",
+          "mdd": "22.98%",
+          "sr": 0.8262
+        },
+        "csi1000": {
+          "ar": "16.68%",
+          "mdd": "31.95%",
+          "sr": 0.6475
+        }
+      }
+    },
+    {
+      "id": "KF-3",
+      "finding": "Retriever ablations show that topology-aware retrieval matters; random, heuristic, and local-view replacements all degrade predictive performance.",
+      "evidence": [
+        "Section 5.4",
+        "Table 2"
+      ]
+    },
+    {
+      "id": "KF-4",
+      "finding": "The DAG-aware generator contributes materially; replacing it with a simpler chain-of-thought generator lowers IC-family metrics on every dataset.",
+      "evidence": [
+        "Section 5.4",
+        "Table 2"
+      ]
+    },
+    {
+      "id": "KF-5",
+      "finding": "Sensitivity and efficiency analyses suggest the framework is stable across moderate topology-penalty settings and reaches stronger results in fewer factor-evaluation iterations than the compared LLM methods.",
+      "evidence": [
+        "Section 5.5",
+        "Figure 4",
+        "Section 5.7",
+        "Figure 5"
+      ]
+    }
+  ],
+  "novelty_claims": [
+    {
+      "claim": "Alpha mining should be modeled as navigation over a factor-lineage DAG rather than an unstructured pool or isolated chains.",
+      "assessment": "supported_in_scope",
+      "notes": "The main novelty is architectural: retrieval and generation are explicitly conditioned on graph topology and lineage, not just local factor scores."
+    },
+    {
+      "claim": "Posterior-style retrieval over leaf and non-leaf factors yields better search behavior than heuristic or local alternatives.",
+      "assessment": "supported_in_scope",
+      "notes": "Retriever ablations are consistent with the claimed value of topology-aware selection, although the evidence remains limited to the reported markets and split."
+    },
+    {
+      "claim": "Full ancestry traces reduce redundant mutations and encourage more diverse factor proposals.",
+      "assessment": "partially_supported",
+      "notes": "The mechanism is coherent and appendix prompts make it concrete, but the paper does not isolate lineage conditioning with a direct quantitative diversity study."
+    }
+  ],
+  "risk_assessment": [
+    {
+      "risk": "statistical_rigor",
+      "severity": "high",
+      "detail": "Primary result tables provide point estimates only; no confidence intervals, significance tests, or repeated-run variance are reported."
+    },
+    {
+      "risk": "reproducibility_gap",
+      "severity": "high",
+      "detail": "The appendix includes prompt and operator details, but the paper does not supply a full deterministic artifact bundle with seeds, exact code snapshot, and immutable data manifests."
+    },
+    {
+      "risk": "external_validity",
+      "severity": "high",
+      "detail": "Evaluation is limited to Chinese equity universes and one main chronological split."
+    },
+    {
+      "risk": "execution_realism",
+      "severity": "medium_high",
+      "detail": "Backtesting uses a simple long-only top-20 percent / hold-20-days setup with 0.1 percent round-trip cost, leaving capacity, impact, borrow, and richer slippage stress mostly unaddressed."
+    },
+    {
+      "risk": "implementation_ambiguity",
+      "severity": "medium",
+      "detail": "Appendix operator definitions contain small inconsistencies such as TsRatio versus TsDiv and the presence of Inv in one table but not the prompt contract."
+    }
+  ],
+  "citations": [
+    {
+      "section": "1",
+      "pointer": "Introduction",
+      "claim": "Frames DFG and IFE as incomplete because neither uses a global structural view of the factor pool."
+    },
+    {
+      "section": "4",
+      "pointer": "Eq. 2-4",
+      "claim": "Defines alpha mining as strategic retrieval and targeted generation over a DAG."
+    },
+    {
+      "section": "4.1.1",
+      "pointer": "Eq. 5",
+      "claim": "Prior score mixes normalized quality with depth and retrieval penalties."
+    },
+    {
+      "section": "4.1.2",
+      "pointer": "Eq. 6-13",
+      "claim": "Likelihood differs for leaf and non-leaf factors and is based on diversity, percent gain, and sparsity."
+    },
+    {
+      "section": "4.2",
+      "pointer": "Eq. 14-15",
+      "claim": "Generator uses ancestry traces and a staged strategy -> synthesis -> validation workflow."
+    },
+    {
+      "section": "4.3",
+      "pointer": "Dynamic Factor Integrator",
+      "claim": "Portfolio construction depends on dynamic re-selection of recently effective factors."
+    },
+    {
+      "section": "5.1",
+      "pointer": "Experiment Setup",
+      "claim": "Defines datasets, splits, model choices, and shared implementation details."
+    },
+    {
+      "section": "5.2",
+      "pointer": "Table 1",
+      "claim": "Main predictive and portfolio results place AlphaPROBE ahead of the listed baselines."
+    },
+    {
+      "section": "5.4",
+      "pointer": "Table 2",
+      "claim": "Retriever and generator ablations support the contribution of topology-aware retrieval and DAG-aware generation."
+    },
+    {
+      "section": "Appendix A.2.1-A.3",
+      "pointer": "Prompts, validator rule, and operator table",
+      "claim": "Provides the implementation-level contracts needed to reproduce the generator loop."
+    }
+  ],
+  "implementation_plan_md": "## Phase 0: Symbolic factor contracts\n1. Add a formula AST / operator registry / canonical serializer aligned to Appendix A.3.\n2. Define node and edge schemas for factor-lineage DAG storage.\n3. Reuse Torghut's existing stage-manifest discipline for deterministic replay.\n\n## Phase 1: Retrieval and generation\n1. Implement Bayesian retrieval with explicit leaf and non-leaf score paths from Eq. 5-13.\n2. Add explanation generation plus embedding-backed semantic diversity.\n3. Implement strategy, execution, and validator prompt contracts with prompt/config hashing.\n\n## Phase 2: Evaluation and integration\n1. Add factor-level IC, ICIR, RIC, and RICIR computation.\n2. Implement the paper's top-20 percent / hold-20-days backtest variant as a research-only evaluator.\n3. Build factor-pool capacity management, retrieval counters, and DAG persistence.\n\n## Phase 3: Robustness hardening\n1. Add repeated-run variance reports and significance tests.\n2. Add walk-forward and regime-sliced evaluation on top of Torghut's current evaluation primitives.\n3. Add stronger slippage, impact, and capacity stress before any paper-trading promotion.",
+  "confidence": 0.8
+}
