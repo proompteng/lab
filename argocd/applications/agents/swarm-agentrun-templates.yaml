@@ -12,8 +12,6 @@ spec:
     type: workflow
     config:
       serviceAccountName: agents-sa
-  workload:
-    image: registry.ide-newton.ts.net/lab/jangar:fab5cdf4@sha256:1db0eb6d389b94bd34f4be2f1f7574c11219742d63d17d363851e0ee6c197195
   ttlSecondsAfterFinished: 43200
   workflow:
     steps:
@@ -70,8 +68,6 @@ spec:
     type: workflow
     config:
       serviceAccountName: agents-sa
-  workload:
-    image: registry.ide-newton.ts.net/lab/jangar:fab5cdf4@sha256:1db0eb6d389b94bd34f4be2f1f7574c11219742d63d17d363851e0ee6c197195
   ttlSecondsAfterFinished: 43200
   workflow:
     steps:
@@ -128,8 +124,6 @@ spec:
     type: workflow
     config:
       serviceAccountName: agents-sa
-  workload:
-    image: registry.ide-newton.ts.net/lab/jangar:fab5cdf4@sha256:1db0eb6d389b94bd34f4be2f1f7574c11219742d63d17d363851e0ee6c197195
   ttlSecondsAfterFinished: 172800
   workflow:
     steps:
@@ -189,8 +183,6 @@ spec:
     type: workflow
     config:
       serviceAccountName: agents-sa
-  workload:
-    image: registry.ide-newton.ts.net/lab/jangar:fab5cdf4@sha256:1db0eb6d389b94bd34f4be2f1f7574c11219742d63d17d363851e0ee6c197195
   ttlSecondsAfterFinished: 43200
   workflow:
     steps:
@@ -247,8 +239,6 @@ spec:
     type: workflow
     config:
       serviceAccountName: agents-sa
-  workload:
-    image: registry.ide-newton.ts.net/lab/jangar:fab5cdf4@sha256:1db0eb6d389b94bd34f4be2f1f7574c11219742d63d17d363851e0ee6c197195
   ttlSecondsAfterFinished: 43200
   workflow:
     steps:
@@ -305,8 +295,6 @@ spec:
     type: workflow
     config:
       serviceAccountName: agents-sa
-  workload:
-    image: registry.ide-newton.ts.net/lab/jangar:fab5cdf4@sha256:1db0eb6d389b94bd34f4be2f1f7574c11219742d63d17d363851e0ee6c197195
   ttlSecondsAfterFinished: 43200
   workflow:
     steps:
@@ -363,8 +351,6 @@ spec:
     type: workflow
     config:
       serviceAccountName: agents-sa
-  workload:
-    image: registry.ide-newton.ts.net/lab/jangar:fab5cdf4@sha256:1db0eb6d389b94bd34f4be2f1f7574c11219742d63d17d363851e0ee6c197195
   ttlSecondsAfterFinished: 172800
   workflow:
     steps:
@@ -424,8 +410,6 @@ spec:
     type: workflow
     config:
       serviceAccountName: agents-sa
-  workload:
-    image: registry.ide-newton.ts.net/lab/jangar:fab5cdf4@sha256:1db0eb6d389b94bd34f4be2f1f7574c11219742d63d17d363851e0ee6c197195
   ttlSecondsAfterFinished: 43200
   workflow:
     steps:
