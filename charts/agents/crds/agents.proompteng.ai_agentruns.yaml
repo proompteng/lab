@@ -578,6 +578,8 @@ spec:
               finishedAt:
                 format: date-time
                 type: string
+              message:
+                type: string
               observedGeneration:
                 format: int64
                 type: integer
@@ -594,8 +596,6 @@ spec:
                 type: string
               startedAt:
                 format: date-time
-                type: string
-              message:
                 type: string
               systemPromptHash:
                 type: string
