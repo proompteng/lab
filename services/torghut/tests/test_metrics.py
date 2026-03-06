@@ -114,6 +114,10 @@ class TestTradingMetrics(TestCase):
         metrics.record_market_context_result(
             "market_context_domain_error", shadow_mode=True
         )
+        metrics.record_llm_unavailable(
+            reason="llm_dspy_live_runtime_gate_blocked",
+            reject_reason="llm_unavailable_llm_dspy_live_runtime_gate_blocked",
+        )
         metrics.record_llm_policy_resolution("compliant")
         metrics.record_llm_policy_resolution("intentional_exception")
         metrics.record_llm_policy_resolution("violation")
@@ -133,6 +137,14 @@ class TestTradingMetrics(TestCase):
             payload,
         )
         self.assertIn(
+            'torghut_trading_llm_unavailable_reason_total{reason="llm_dspy_live_runtime_gate_blocked"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_llm_unavailable_reject_reason_total{reason="llm_unavailable_llm_dspy_live_runtime_gate_blocked"} 1',
+            payload,
+        )
+        self.assertIn(
             'torghut_trading_llm_policy_resolution_total{classification="compliant"} 1',
             payload,
         )
@@ -148,6 +160,27 @@ class TestTradingMetrics(TestCase):
         self.assertIn("torghut_trading_llm_abstain_total 1", payload)
         self.assertIn("torghut_trading_llm_escalate_total 1", payload)
         self.assertIn("torghut_trading_llm_policy_fallback_total 2", payload)
+
+    def test_reject_reason_and_clean_execution_ratios_are_exported(self) -> None:
+        metrics = TradingMetrics()
+        metrics.orders_submitted_total = 8
+        metrics.orders_rejected_total = 2
+        metrics.record_decision_rejection_reasons(
+            ["qty_below_min", "llm_unavailable_llm_circuit_open"]
+        )
+
+        payload = render_trading_metrics(metrics.__dict__)
+
+        self.assertIn(
+            'torghut_trading_decision_reject_reason_total{reason="qty_below_min"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_decision_reject_reason_total{reason="llm_unavailable_llm_circuit_open"} 1',
+            payload,
+        )
+        self.assertIn("torghut_trading_execution_clean_ratio 0.8", payload)
+        self.assertIn("torghut_trading_execution_reject_ratio 0.2", payload)
 
     def test_committee_metrics_are_exported(self) -> None:
         metrics = TradingMetrics()

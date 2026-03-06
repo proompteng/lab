@@ -66,6 +66,13 @@ _SIMPLE_MAP_METRICS: dict[str, tuple[str, str, str, str, str]] = {
         "reason",
         "int",
     ),
+    "decision_reject_reason_total": (
+        "torghut_trading_decision_reject_reason_total",
+        "Count of rejected decision reason codes.",
+        "counter",
+        "reason",
+        "int",
+    ),
     "domain_telemetry_event_total": (
         "torghut_trading_domain_telemetry_event_total",
         "Count of attempted domain telemetry events by event name.",
@@ -181,6 +188,20 @@ _SIMPLE_MAP_METRICS: dict[str, tuple[str, str, str, str, str]] = {
     "llm_market_context_reason_total": (
         "torghut_trading_llm_market_context_reason_total",
         "Count of LLM market-context fallbacks by reason.",
+        "counter",
+        "reason",
+        "int",
+    ),
+    "llm_unavailable_reason_total": (
+        "torghut_trading_llm_unavailable_reason_total",
+        "Count of LLM unavailable events by source reason.",
+        "counter",
+        "reason",
+        "int",
+    ),
+    "llm_unavailable_reject_reason_total": (
+        "torghut_trading_llm_unavailable_reject_reason_total",
+        "Count of vetoed LLM unavailable events by reject reason.",
         "counter",
         "reason",
         "int",
@@ -846,6 +867,35 @@ def _render_scalar_metric(
         )
         rate = float(value) / veto_total if veto_total > 0 else 1.0
         lines.append(f"{rate_name} {rate}")
+        return lines
+
+    if key == "orders_rejected_total":
+        submitted_total = _coerce_int(metrics.get("orders_submitted_total"))
+        total = submitted_total + int(value)
+        clean_ratio = float(submitted_total) / total if total > 0 else 1.0
+        reject_ratio = float(value) / total if total > 0 else 0.0
+        lines = _metric_headers(
+            "torghut_trading_execution_clean_ratio",
+            "Ratio of submitted orders to total submit/reject outcomes.",
+            "gauge",
+        )
+        lines.append(f"torghut_trading_execution_clean_ratio {clean_ratio}")
+        lines.extend(
+            _metric_headers(
+                "torghut_trading_execution_reject_ratio",
+                "Ratio of rejected orders to total submit/reject outcomes.",
+                "gauge",
+            )
+        )
+        lines.append(f"torghut_trading_execution_reject_ratio {reject_ratio}")
+        lines.extend(
+            _metric_headers(
+                "torghut_trading_orders_rejected_total",
+                "Torghut trading metric orders rejected total.",
+                "counter",
+            )
+        )
+        lines.append(f"torghut_trading_orders_rejected_total {value}")
         return lines
 
     metric_name = f"torghut_trading_{key}"

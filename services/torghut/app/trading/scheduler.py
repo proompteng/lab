@@ -214,6 +214,30 @@ def _normalize_reason_metric(reason: str | None) -> str:
     return normalized or "unknown"
 
 
+def _split_reason_codes(reason: str | None) -> list[str]:
+    if not isinstance(reason, str):
+        return []
+    return [part.strip() for part in reason.split(";") if part.strip()]
+
+
+def _resolve_llm_unavailable_reject_reason(reason: str | None) -> str:
+    normalized = _normalize_reason_metric(reason)
+    if normalized == "unknown":
+        return "llm_unavailable_unknown"
+    if normalized.startswith("llm_unavailable_"):
+        return normalized
+    return f"llm_unavailable_{normalized}"
+
+
+def _resolve_llm_review_error_reject_reason(error: Exception) -> str:
+    label = _classify_llm_error(error)
+    if label == "llm_response_not_json":
+        return "llm_review_error_response_not_json"
+    if label == "llm_response_invalid":
+        return "llm_review_error_response_invalid"
+    return f"llm_review_error_{type(error).__name__}"
+
+
 def _is_market_session_open(
     trading_client: Any | None,
     *,
@@ -361,6 +385,12 @@ class TradingMetrics:
     llm_market_context_block_total: int = 0
     llm_market_context_error_total: int = 0
     llm_market_context_reason_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    llm_unavailable_reason_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    llm_unavailable_reject_reason_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
     llm_market_context_shadow_total: dict[str, int] = field(
@@ -598,6 +628,9 @@ class TradingMetrics:
     recalibration_runs_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
+    decision_reject_reason_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
 
     def record_execution_request(self, adapter: str | None) -> None:
         adapter_name = coerce_route_text(adapter)
@@ -765,6 +798,33 @@ class TradingMetrics:
         if shadow_mode:
             current_shadow = self.llm_market_context_shadow_total.get(normalized, 0)
             self.llm_market_context_shadow_total[normalized] = current_shadow + 1
+
+    def record_llm_unavailable(
+        self,
+        *,
+        reason: str | None,
+        reject_reason: str | None,
+    ) -> None:
+        normalized_reason = _normalize_reason_metric(reason)
+        self.llm_unavailable_reason_total[normalized_reason] = (
+            self.llm_unavailable_reason_total.get(normalized_reason, 0) + 1
+        )
+        if reject_reason:
+            normalized_reject = _normalize_reason_metric(reject_reason)
+            self.llm_unavailable_reject_reason_total[normalized_reject] = (
+                self.llm_unavailable_reject_reason_total.get(normalized_reject, 0) + 1
+            )
+
+    def record_decision_rejection_reasons(self, reasons: Sequence[str]) -> None:
+        for reason in reasons:
+            reason_parts = _split_reason_codes(reason)
+            if not reason_parts:
+                reason_parts = [_normalize_reason_metric(reason)]
+            for reason_part in reason_parts:
+                normalized = _normalize_reason_metric(reason_part)
+                self.decision_reject_reason_total[normalized] = (
+                    self.decision_reject_reason_total.get(normalized, 0) + 1
+                )
 
     def record_llm_policy_resolution(self, classification: str | None) -> None:
         normalized = classification.strip() if isinstance(classification, str) else ""
@@ -1423,6 +1483,9 @@ class TradingPipeline:
                     decision.timeframe,
                 )
                 self.state.metrics.orders_rejected_total += 1
+                self.state.metrics.record_decision_rejection_reasons(
+                    ["decision_handling_failed"]
+                )
 
     def _ingest_order_feed(self, session: Session) -> None:
         counters = self.order_feed_ingestor.ingest_once(session)
@@ -1641,10 +1704,12 @@ class TradingPipeline:
             )
             if decision_row is not None and decision_row.status == "planned":
                 self.state.metrics.orders_rejected_total += 1
+                reason_code = f"decision_handler_error_{type(exc).__name__}"
+                self.state.metrics.record_decision_rejection_reasons([reason_code])
                 self.executor.mark_rejected(
                     session,
                     decision_row,
-                    f"decision_handler_error {type(exc).__name__}",
+                    reason_code,
                 )
             return None
 
@@ -1715,6 +1780,7 @@ class TradingPipeline:
         self.state.metrics.planned_decisions_timeout_rejected_total += 1
         self.state.metrics.orders_rejected_total += 1
         reason = f"decision_timeout_unsubmitted:{age_seconds}s"
+        self.state.metrics.record_decision_rejection_reasons([reason])
         self.executor.mark_rejected(session, decision_row, reason)
         logger.error(
             "Rejected stale planned decision decision_id=%s strategy_id=%s symbol=%s age_seconds=%s timeout_seconds=%s",
@@ -2002,6 +2068,7 @@ class TradingPipeline:
         if not reasons:
             return
         self.state.metrics.orders_rejected_total += 1
+        self.state.metrics.record_decision_rejection_reasons(reasons)
         for reason in reasons:
             logger.info(log_template, decision.strategy_id, decision.symbol, reason)
         self.executor.mark_rejected(session, decision_row, ";".join(reasons))
@@ -2177,6 +2244,7 @@ class TradingPipeline:
             return True
         self.state.metrics.orders_rejected_total += 1
         reason = self.state.emergency_stop_reason or "emergency_stop_active"
+        self.state.metrics.record_decision_rejection_reasons([reason])
         self.executor.mark_rejected(session, decision_row, reason)
         logger.error(
             "Decision blocked by emergency stop strategy_id=%s decision_id=%s symbol=%s reason=%s",
@@ -2369,6 +2437,7 @@ class TradingPipeline:
             return execution, False
         except OrderFirewallBlocked as exc:
             self.state.metrics.orders_rejected_total += 1
+            self.state.metrics.record_decision_rejection_reasons([str(exc)])
             self.executor.mark_rejected(session, decision_row, str(exc))
             self._emit_domain_telemetry(
                 event_name="torghut.execution.rejected",
@@ -2388,6 +2457,9 @@ class TradingPipeline:
             return None, True
         except Exception as exc:
             self.state.metrics.orders_rejected_total += 1
+            self.state.metrics.record_decision_rejection_reasons(
+                [f"order_submit_error_{type(exc).__name__}"]
+            )
             payload = _extract_json_error_payload(exc) or {}
             existing_order_id = payload.get("existing_order_id")
             if existing_order_id:
@@ -3861,7 +3933,7 @@ class TradingPipeline:
                 decision_row.id,
                 error,
             )
-            return decision, "llm_error"
+            return decision, "llm_unavailable_dspy_runtime_unsupported_state"
         if guardrails.shadow_mode:
             self.state.metrics.llm_shadow_total += 1
             if not settings.llm_shadow_mode:
@@ -3873,7 +3945,7 @@ class TradingPipeline:
                 decision_row.id,
                 error,
             )
-            return decision, "llm_error"
+            return decision, _resolve_llm_review_error_reject_reason(error)
         logger.warning(
             "LLM review failed; pass-through decision_id=%s error=%s",
             decision_row.id,
@@ -3899,6 +3971,14 @@ class TradingPipeline:
     ) -> tuple[StrategyDecision, Optional[str]]:
         fallback = self._resolve_llm_fallback(effective_fail_mode)
         effective_verdict = "veto" if fallback == "veto" else "approve"
+        reject_reason = (
+            _resolve_llm_unavailable_reject_reason(reason)
+            if fallback == "veto" and not shadow_mode
+            else None
+        )
+        self.state.metrics.record_llm_unavailable(
+            reason=reason, reject_reason=reject_reason
+        )
         portfolio_snapshot = _build_portfolio_snapshot(account, positions)
         market_snapshot = self._build_market_snapshot(decision)
         recent_decisions = _load_recent_decisions(
@@ -3946,6 +4026,7 @@ class TradingPipeline:
             "error": reason,
             "fallback": fallback,
             "effective_verdict": effective_verdict,
+            "reject_reason": reject_reason,
             "policy_resolution": policy_resolution
             or _build_llm_policy_resolution(
                 rollout_stage=_normalize_rollout_stage(settings.llm_rollout_stage),
@@ -3990,8 +4071,8 @@ class TradingPipeline:
             confidence=None,
             adjusted_qty=None,
             adjusted_order_type=None,
-            rationale=reject_reason or reason,
-            risk_flags=[reject_reason or reason] + (risk_flags or []),
+            rationale=reason,
+            risk_flags=[reason] + (risk_flags or []),
             tokens_prompt=None,
             tokens_completion=None,
         )
@@ -4001,7 +4082,7 @@ class TradingPipeline:
                 self.state.metrics.llm_guardrail_shadow_total += 1
             return decision, None
         if fallback == "veto":
-            return decision, reject_reason or "llm_error"
+            return decision, reject_reason or "llm_unavailable_unknown"
         return decision, None
 
     def _build_market_snapshot(
@@ -5591,6 +5672,9 @@ class TradingScheduler:
             f"emergency_stop_triggered reasons={self.state.emergency_stop_reason}"
         )
         self.state.metrics.orders_rejected_total += 1
+        self.state.metrics.record_decision_rejection_reasons(
+            ["emergency_stop_triggered"]
+        )
         firewall_status = self._pipeline.order_firewall.status()
         try:
             canceled = self._pipeline.order_firewall.cancel_all_orders()
