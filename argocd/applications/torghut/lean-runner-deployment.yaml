@@ -38,6 +38,26 @@ spec:
           env:
             - name: APP_ENV
               value: prod
+            - name: TRADING_UNIVERSE_SOURCE
+              value: jangar
+            - name: TRADING_UNIVERSE_REQUIRE_NON_EMPTY_JANGAR
+              value: "true"
+            - name: TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED
+              value: "true"
+            - name: TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS
+              value: AAPL,AMAT,AMD,AVGO,GOOG,INTC,META,MSFT,NVDA,QQQ,SPY,TSLA
+            - name: TRADING_UNIVERSE_MAX_STALE_SECONDS
+              value: "900"
+            - name: JANGAR_SYMBOLS_URL
+              value: http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=equity
+            - name: JANGAR_BASE_URL
+              value: http://jangar.jangar.svc.cluster.local
+            - name: JANGAR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: jangar-api-key
+                  key: key
+                  optional: true
             - name: TRADING_MODE
               value: live
             - name: TRADING_LIVE_ENABLED
