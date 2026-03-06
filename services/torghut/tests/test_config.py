@@ -917,6 +917,7 @@ class TestConfig(TestCase):
         }
         control_fields = {
             "trading_feature_flags_enabled",
+            "log_access_log",
             "trading_live_enabled",
             "trading_ws_crypto_enabled",
             "trading_universe_crypto_enabled",

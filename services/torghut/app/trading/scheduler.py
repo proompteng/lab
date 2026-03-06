@@ -5425,6 +5425,17 @@ class TradingScheduler:
             lanes = settings.trading_accounts
             self._pipelines = [self._build_pipeline_for_account(lane) for lane in lanes]
             self._pipeline = self._pipelines[0] if self._pipelines else None
+        account_labels = ",".join(pipeline.account_label for pipeline in self._pipelines)
+        logger.info(
+            "Trading scheduler starting accounts=%s poll_interval_seconds=%s reconcile_interval_seconds=%s autonomy_enabled=%s autonomy_interval_seconds=%s evidence_enabled=%s evidence_interval_seconds=%s",
+            account_labels or "none",
+            settings.trading_poll_ms / 1000,
+            settings.trading_reconcile_ms / 1000,
+            settings.trading_autonomy_enabled,
+            max(30, settings.trading_autonomy_interval_seconds),
+            settings.trading_evidence_continuity_enabled,
+            max(300, settings.trading_evidence_continuity_interval_seconds),
+        )
         self._stop_event.clear()
         self.state.startup_started_at = datetime.now(timezone.utc)
         self.state.running = False
@@ -5433,6 +5444,11 @@ class TradingScheduler:
     async def stop(self) -> None:
         if not self._task:
             return
+        account_labels = ",".join(
+            pipeline.account_label
+            for pipeline in (self._pipelines or ([self._pipeline] if self._pipeline else []))
+        )
+        logger.info("Trading scheduler stopping accounts=%s", account_labels or "none")
         self._stop_event.set()
         self._task.cancel()
         try:
@@ -5449,6 +5465,7 @@ class TradingScheduler:
             pipeline.order_feed_ingestor.close()
         self._pipelines = []
         self._pipeline = None
+        logger.info("Trading scheduler stopped")
 
     async def _run_loop(self) -> None:
         self.state.running = True
@@ -5461,27 +5478,37 @@ class TradingScheduler:
         last_reconcile = datetime.now(timezone.utc)
         last_autonomy = datetime.now(timezone.utc)
         last_evidence_check = datetime.now(timezone.utc)
+        logger.info(
+            "Trading scheduler loop running poll_interval_seconds=%s reconcile_interval_seconds=%s autonomy_interval_seconds=%s evidence_interval_seconds=%s",
+            poll_interval,
+            reconcile_interval,
+            autonomy_interval,
+            evidence_interval,
+        )
+        try:
+            while not self._stop_event.is_set():
+                await self._run_trading_iteration()
+                now = datetime.now(timezone.utc)
+                if self._interval_elapsed(last_reconcile, reconcile_interval, now=now):
+                    await self._run_reconcile_iteration()
+                    last_reconcile = now
 
-        while not self._stop_event.is_set():
-            await self._run_trading_iteration()
-            now = datetime.now(timezone.utc)
-            if self._interval_elapsed(last_reconcile, reconcile_interval, now=now):
-                await self._run_reconcile_iteration()
-                last_reconcile = now
+                if settings.trading_autonomy_enabled and self._interval_elapsed(
+                    last_autonomy, autonomy_interval, now=now
+                ):
+                    await self._run_autonomy_iteration()
+                    last_autonomy = now
 
-            if settings.trading_autonomy_enabled and self._interval_elapsed(
-                last_autonomy, autonomy_interval, now=now
-            ):
-                await self._run_autonomy_iteration()
-                last_autonomy = now
+                if settings.trading_evidence_continuity_enabled and self._interval_elapsed(
+                    last_evidence_check, evidence_interval, now=now
+                ):
+                    await self._run_evidence_iteration()
+                    last_evidence_check = now
 
-            if settings.trading_evidence_continuity_enabled and self._interval_elapsed(
-                last_evidence_check, evidence_interval, now=now
-            ):
-                await self._run_evidence_iteration()
-                last_evidence_check = now
-
-            await asyncio.sleep(poll_interval)
+                await asyncio.sleep(poll_interval)
+        finally:
+            self.state.running = False
+            logger.info("Trading scheduler loop exited")
 
     @staticmethod
     def _interval_elapsed(

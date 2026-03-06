@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: "2026-03-06T02:37:28Z"
+    deploy.knative.dev/rollout: "2026-03-06T03:22:58Z"
 spec:
   replicas: 1
   strategy:
@@ -108,9 +108,9 @@ spec:
             - name: JANGAR_CI_EVENT_STREAM_ENABLED_FLAG_KEY
               value: jangar_ci_event_stream_enabled
             - name: JANGAR_MODELS
-              value: gpt-5.3-codex,gpt-5.3-codex-spark
+              value: gpt-5.4,gpt-5.3-codex-spark
             - name: JANGAR_DEFAULT_MODEL
-              value: gpt-5.3-codex
+              value: gpt-5.4
             - name: JANGAR_GIT_LOCK_RETRY_ATTEMPTS
               value: "6"
             - name: JANGAR_GIT_LOCK_RETRY_DELAY_MS

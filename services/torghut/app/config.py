@@ -14,6 +14,10 @@ from urllib.parse import urlsplit
 from pydantic import AliasChoices, BaseModel, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .logging_config import configure_logging
+
+configure_logging()
+
 logger = logging.getLogger(__name__)
 
 FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
@@ -240,6 +244,21 @@ class Settings(BaseSettings):
 
     app_env: Literal["dev", "stage", "prod"] = Field(
         default="dev", alias="APP_ENV", description="Deployment environment."
+    )
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
+        default="INFO",
+        alias="LOG_LEVEL",
+        description="Root application log level.",
+    )
+    log_format: Literal["json", "text"] = Field(
+        default="text",
+        alias="LOG_FORMAT",
+        description="Application log output format.",
+    )
+    log_access_log: bool = Field(
+        default=True,
+        alias="LOG_ACCESS_LOG",
+        description="Emit Uvicorn access logs.",
     )
     db_dsn: str = Field(
         default="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
@@ -2127,6 +2146,10 @@ class Settings(BaseSettings):
             raise ValueError("POSTHOG_API_KEY is required when POSTHOG_ENABLED=true")
 
     def model_post_init(self, __context: Any) -> None:
+        if not os.getenv("LOG_FORMAT"):
+            self.log_format = "json" if self.app_env in {"stage", "prod"} else "text"
+        if not os.getenv("LOG_LEVEL"):
+            self.log_level = "INFO"
         self._validate_allocator_alias_environment_parity()
         self._apply_feature_flag_overrides()
         self._apply_trading_defaults()
