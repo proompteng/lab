@@ -6,6 +6,7 @@ import { type createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-k
 import { type Condition, upsertCondition } from './conditions'
 import { parseStringList } from './env-config'
 import { hashAgentRunImmutableSpec } from './immutable-spec'
+import { extractJobFailureDetail } from './job-status'
 import { resolveMemory } from './namespace-state'
 import { type ImagePolicyCandidate, validateAuthSecretPolicy, validateImagePolicy } from './policy'
 import { resolveImplementation, resolveParameters } from './run-utils'
@@ -521,12 +522,15 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
       const maxAttempts = stepSpec.retries + 1
 
       if (stepStatus.phase === 'Failed') {
+        const persistedFailureMessage = asString(stepStatus.message) ?? 'workflow step failed'
         if (loopStatus && !loopStatus.stopReason) {
           loopStatus.stopReason = 'LoopIterationFailed'
         }
         workflowFailure = {
           reason: 'WorkflowStepFailed',
-          message: `workflow step ${stepSpec.name} failed`,
+          message: persistedFailureMessage.startsWith('workflow step')
+            ? persistedFailureMessage
+            : `workflow step ${stepSpec.name}: ${persistedFailureMessage}`,
         }
         break
       }
@@ -980,8 +984,16 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
           continue
         }
         if (failed > 0 && deps.isJobFailed(job)) {
+          const failureDetail = extractJobFailureDetail(job, {
+            reason: 'WorkflowStepFailed',
+            message: `workflow step ${stepSpec.name} failed`,
+          })
           if (stepStatus.attempt < maxAttempts) {
-            setWorkflowStepPhase(stepStatus, 'Retrying', 'Step failed; retrying')
+            const retryMessage =
+              failureDetail.message === `workflow step ${stepSpec.name} failed`
+                ? 'Step failed; retrying'
+                : `${failureDetail.message}; retrying`
+            setWorkflowStepPhase(stepStatus, 'Retrying', retryMessage)
             stepStatus.finishedAt = deps.nowIso()
             stepStatus.nextRetryAt =
               stepSpec.retryBackoffSeconds > 0
@@ -993,7 +1005,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
                 attempts: stepStatus.attempt,
                 startedAt: stepStatus.startedAt,
                 finishedAt: stepStatus.finishedAt,
-                message: 'Step failed; retrying',
+                message: retryMessage,
                 jobRef: stepStatus.jobRef,
               })
             }
@@ -1001,7 +1013,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
             workflowRunning = true
             break
           }
-          setWorkflowStepPhase(stepStatus, 'Failed', 'Step failed')
+          setWorkflowStepPhase(stepStatus, 'Failed', failureDetail.message)
           stepStatus.finishedAt = deps.nowIso()
           if (loopStatus) {
             upsertWorkflowLoopIteration(loopStatus, iterationIndex, {
@@ -1009,15 +1021,15 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
               attempts: stepStatus.attempt,
               startedAt: stepStatus.startedAt,
               finishedAt: stepStatus.finishedAt,
-              message: 'Step failed',
+              message: failureDetail.message,
               jobRef: stepStatus.jobRef,
             })
             loopStatus.stopReason = 'LoopIterationFailed'
           }
           completedJobs.push({ job, namespace: jobNamespace })
           workflowFailure = {
-            reason: 'WorkflowStepFailed',
-            message: `workflow step ${stepSpec.name} failed`,
+            reason: failureDetail.reason,
+            message: `workflow step ${stepSpec.name}: ${failureDetail.message}`,
           }
           break
         }
@@ -1046,6 +1058,8 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
       await deps.setStatus(kube, agentRun, {
         observedGeneration,
         phase: 'Failed',
+        reason: workflowFailure.reason,
+        message: workflowFailure.message,
         finishedAt: deps.nowIso(),
         runtimeRef: runtimeRefUpdate ?? parseRuntimeRef(status.runtimeRef) ?? undefined,
         workflow: workflowStatus,
@@ -1071,6 +1085,8 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
       await deps.setStatus(kube, agentRun, {
         observedGeneration,
         phase: 'Succeeded',
+        reason: undefined,
+        message: undefined,
         finishedAt: deps.nowIso(),
         runtimeRef: runtimeRefUpdate ?? parseRuntimeRef(status.runtimeRef) ?? undefined,
         workflow: workflowStatus,
@@ -1094,6 +1110,8 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
       await deps.setStatus(kube, agentRun, {
         observedGeneration,
         phase: 'Running',
+        reason: undefined,
+        message: undefined,
         startedAt: asString(status.startedAt) ?? deps.nowIso(),
         runtimeRef: runtimeRefUpdate ?? parseRuntimeRef(status.runtimeRef) ?? undefined,
         workflow: workflowStatus,

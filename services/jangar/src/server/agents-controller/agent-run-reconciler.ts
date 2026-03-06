@@ -6,6 +6,7 @@ import type { createPrimitivesStore } from '~/server/primitives-store'
 import { type Condition, upsertCondition } from './conditions'
 import { parseStringList } from './env-config'
 import { hashAgentRunImmutableSpec } from './immutable-spec'
+import { extractJobFailureDetail } from './job-status'
 import { resolveMemory } from './namespace-state'
 import { normalizeLabelMap, validateAuthSecretPolicy, validateImagePolicy, validateLabelPolicy } from './policy'
 import {
@@ -1005,6 +1006,8 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         await setStatus(kube, agentRun, {
           observedGeneration,
           phase: 'Succeeded',
+          reason: undefined,
+          message: undefined,
           startedAt: asString(jobStatus.startTime) ?? asString(status.startedAt) ?? undefined,
           finishedAt: asString(jobStatus.completionTime) ?? nowIso(),
           runtimeRef,
@@ -1013,14 +1016,21 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         })
         await applyJobTtlAfterStatus(kube, job, asString(runtimeRef.namespace) ?? namespace, runtimeConfig)
       } else if (failed > 0 && isJobFailed(job)) {
+        const failureDetail = extractJobFailureDetail(job, {
+          reason: 'JobFailed',
+          message: `job ${asString(runtimeRef.name) ?? 'unknown'} failed`,
+        })
         const updated = upsertCondition(conditions, {
           type: 'Failed',
           status: 'True',
-          reason: 'JobFailed',
+          reason: failureDetail.reason,
+          message: failureDetail.message,
         })
         await setStatus(kube, agentRun, {
           observedGeneration,
           phase: 'Failed',
+          reason: failureDetail.reason,
+          message: failureDetail.message,
           finishedAt: nowIso(),
           runtimeRef,
           conditions: updated,
@@ -1031,6 +1041,8 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         await setStatus(kube, agentRun, {
           observedGeneration,
           phase: 'Running',
+          reason: undefined,
+          message: undefined,
           startedAt: asString(status.startedAt) ?? nowIso(),
           runtimeRef: {
             ...runtimeRef,

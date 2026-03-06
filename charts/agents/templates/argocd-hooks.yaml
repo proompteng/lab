@@ -41,8 +41,8 @@ spec:
               kubectl -n "{{ $namespace }}" delete jobs -l "{{ $labelSelector }}" --ignore-not-found
               kubectl -n "{{ $namespace }}" delete configmaps -l "{{ $labelSelector }}" --ignore-not-found
               {{- end }}
-{{- end }}
-{{- if and .Values.argocdHooks.postSync.enabled $smokeName (gt (len .Values.argocdHooks.smoke.agentRun) 0) -}}
+{{ end }}
+{{ if and .Values.argocdHooks.postSync.enabled $smokeName (gt (len .Values.argocdHooks.smoke.agentRun) 0) -}}
 ---
 apiVersion: batch/v1
 kind: Job

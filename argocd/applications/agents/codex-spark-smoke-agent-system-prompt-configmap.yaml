@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: codex-spark-smoke-agent-system-prompt
+data:
+  system-prompt.md: |-
+    Execute a read-only Codex runtime smoke validation.
+
+    Requirements:
+    - Do not modify repository state, branches, commits, pull requests, issues, Huly artifacts, or cluster resources.
+    - Verify that the configured Codex provider, model, auth secret, and runner image can start successfully.
+    - Write a short success note to `/workspace/.agentrun/smoke/result.md`.
+    - If startup fails, exit with the exact auth/model/runtime error.
+    - Finish after the smoke note is written. Do not continue into implementation work.

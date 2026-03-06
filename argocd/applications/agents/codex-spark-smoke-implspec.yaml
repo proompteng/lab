@@ -1,0 +1,30 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: codex-spark-smoke-implspec
+  namespace: agents
+spec:
+  contract:
+    requiredKeys:
+      - repository
+      - base
+      - head
+      - objective
+  summary: 'Read-only Codex runtime smoke check.'
+  text: |
+    Run a read-only Codex startup smoke for ${repository} on ${head} from ${base}.
+
+    Goal:
+    - verify the configured provider, model, auth secret, and runner image can execute one no-op task successfully.
+
+    Constraints:
+    - Do not change files.
+    - Do not commit, push, open a PR, or post external updates.
+    - Keep the run short and deterministic.
+
+    Deliverables:
+    - `/workspace/.agentrun/smoke/result.md` containing:
+      - startup status
+      - resolved repository/base/head
+      - resolved stage
+      - one-line confirmation that no repo or external side effects were performed
