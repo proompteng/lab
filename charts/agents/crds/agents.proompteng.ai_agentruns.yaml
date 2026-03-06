@@ -583,6 +583,8 @@ spec:
                 type: integer
               phase:
                 type: string
+              reason:
+                type: string
               runtimeRef:
                 additionalProperties:
                   x-kubernetes-preserve-unknown-fields: true
@@ -592,6 +594,8 @@ spec:
                 type: string
               startedAt:
                 format: date-time
+                type: string
+              message:
                 type: string
               systemPromptHash:
                 type: string
