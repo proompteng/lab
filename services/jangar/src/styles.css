@@ -61,9 +61,19 @@
     outline-offset: 2px;
   }
 
-  /* Preserve native option contrast across Chromium dark-theme dropdown renderers. */
+  /*
+   * Native dropdown menus in Jangar render via the OS/browser picker UI.
+   * Keep them in dark mode so menu chrome and inherited option text stay legible.
+   */
   select {
-    color-scheme: light;
+    color-scheme: dark;
+  }
+
+  select,
+  option,
+  optgroup {
+    color: var(--popover-foreground);
+    background-color: var(--popover);
   }
 }
 
