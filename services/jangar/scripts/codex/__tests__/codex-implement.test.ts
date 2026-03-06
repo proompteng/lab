@@ -2066,14 +2066,14 @@ exit 1
   })
 
   it('does not enable implicit fallback models when CODEX_MODEL_FALLBACKS is unset', async () => {
-    process.env.CODEX_MODEL = 'gpt-5.3-codex'
+    process.env.CODEX_MODEL = 'gpt-5.4'
     delete process.env.CODEX_MODEL_FALLBACKS
     process.env.CODEX_MAX_SESSION_ATTEMPTS = '2'
 
-    runCodexSessionMock.mockRejectedValueOnce(new Error('429 rate limit exceeded for gpt-5.3-codex'))
+    runCodexSessionMock.mockRejectedValueOnce(new Error('429 rate limit exceeded for gpt-5.4'))
 
-    await expect(runCodexImplementation(eventPath)).rejects.toThrow('429 rate limit exceeded for gpt-5.3-codex')
+    await expect(runCodexImplementation(eventPath)).rejects.toThrow('429 rate limit exceeded for gpt-5.4')
     expect(runCodexSessionMock).toHaveBeenCalledTimes(1)
-    expect(process.env.CODEX_MODEL).toBe('gpt-5.3-codex')
+    expect(process.env.CODEX_MODEL).toBe('gpt-5.4')
   })
 })
