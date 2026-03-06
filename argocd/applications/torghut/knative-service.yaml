@@ -95,6 +95,10 @@ spec:
               value: torghut
             - name: TRADING_MULTI_ACCOUNT_ENABLED
               value: "false"
+            - name: TRADING_DB_SCHEMA_GRAPH_BRANCH_TOLERANCE
+              value: "1"
+            - name: TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS
+              value: "true"
             - name: TRADING_MODE
               value: live
             - name: TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION

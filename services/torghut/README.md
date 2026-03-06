@@ -32,7 +32,20 @@ uv run pyright
 Health checks:
 
 - `GET /healthz` – liveness (default port 8181)
-- `GET /db-check` – requires reachable Postgres at `DB_DSN` and matching Alembic heads (default port 8181)
+- `GET /db-check` – requires reachable Postgres at `DB_DSN`, matching Alembic heads, and schema-lineage policy checks
+  (`schema_graph_*` diagnostics + lineage warnings/errors) (default port 8181)
+
+Migration lineage guardrail (CI-local parity):
+
+```bash
+cd services/torghut
+uv run --frozen python scripts/check_migration_graph.py
+```
+
+Optional migration-lineage controls:
+
+- `TRADING_DB_SCHEMA_GRAPH_BRANCH_TOLERANCE` (default `1`)
+- `TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS` (default `false`; use `true` for controlled override windows)
 
 ## Whitepaper workflow (GitHub issue -> Kafka -> AgentRun)
 
