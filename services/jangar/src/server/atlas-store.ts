@@ -1,6 +1,6 @@
 import { sql } from 'kysely'
 
-import { createKyselyDb, type Db } from '~/server/db'
+import { resolveStoreDb, type Db } from '~/server/db'
 import { ensureMigrations } from '~/server/kysely-migrations'
 
 export type RepositoryRecord = {
@@ -602,12 +602,11 @@ const toIso = (value: string | Date | null | undefined) => {
 }
 
 export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}): AtlasStore => {
-  const url = options.url ?? process.env.DATABASE_URL
-  if (!url) {
+  const resolved = resolveStoreDb(options)
+  if (!resolved.db) {
     throw new Error('DATABASE_URL is required for Atlas storage')
   }
-
-  const db = (options.createDb ?? createKyselyDb)(url)
+  const db = resolved.db
   let schemaReady: Promise<void> | null = null
   const defaults = resolveEmbeddingDefaults(
     process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? DEFAULT_OPENAI_API_BASE_URL,

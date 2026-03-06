@@ -2,7 +2,7 @@ import { sql } from 'kysely'
 
 import { type AuditEventContext, buildAuditPayload } from '~/server/audit-logging'
 import { emitAuditEventToOptionalSink } from '~/server/audit-sink'
-import { createKyselyDb, type Db, getDb } from '~/server/db'
+import { resolveStoreDb, type Db } from '~/server/db'
 import { ensureMigrations } from '~/server/kysely-migrations'
 
 type Timestamp = string | Date
@@ -275,14 +275,15 @@ const toAuditEventRecord = (row: {
 })
 
 export const createPrimitivesStore = (options: PrimitivesStoreOptions = {}): PrimitivesStore => {
-  const url = options.url ?? process.env.DATABASE_URL
-  const db = url && options.createDb ? options.createDb(url) : url ? createKyselyDb(url) : getDb()
-  if (!db) {
+  const resolved = resolveStoreDb(options)
+  if (!resolved.db) {
     throw new Error('DATABASE_URL is required for Jangar primitives storage')
   }
+  const db = resolved.db
   const ready = ensureMigrations(db)
 
   const close = async () => {
+    if (resolved.shared) return
     await db.destroy()
   }
 

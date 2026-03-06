@@ -1,6 +1,6 @@
 import { sql } from 'kysely'
 
-import { createKyselyDb, type Db } from '~/server/db'
+import { resolveStoreDb, type Db } from '~/server/db'
 import { ensureMigrations } from '~/server/kysely-migrations'
 
 export type CodexRunRecord = {
@@ -521,12 +521,11 @@ const rowToRerunSubmission = (row: Record<string, unknown>): CodexRerunSubmissio
 export const createCodexJudgeStore = (
   options: { url?: string; createDb?: (url: string) => Db } = {},
 ): CodexJudgeStore => {
-  const url = options.url ?? process.env.DATABASE_URL
-  if (!url) {
+  const resolved = resolveStoreDb(options)
+  if (!resolved.db) {
     throw new Error('DATABASE_URL is required for Codex judge storage')
   }
-
-  const db = (options.createDb ?? createKyselyDb)(url)
+  const db = resolved.db
   const ready = ensureSchema(db)
 
   const getRunByWorkflow = async (workflowName: string, namespace?: string | null) => {
@@ -1286,6 +1285,7 @@ export const createCodexJudgeStore = (
   }
 
   const close = async () => {
+    if (resolved.shared) return
     await db.destroy()
   }
 
