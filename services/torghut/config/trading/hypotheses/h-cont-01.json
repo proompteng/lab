@@ -1,0 +1,46 @@
+{
+  "schema_version": "torghut.hypothesis-manifest.v1",
+  "hypothesis_id": "H-CONT-01",
+  "lane_id": "continuation",
+  "strategy_family": "intraday_continuation",
+  "initial_state": "shadow",
+  "market_regimes": [
+    "R2",
+    "R3"
+  ],
+  "required_feature_sets": [
+    "signal_feed",
+    "tca"
+  ],
+  "required_dependency_capabilities": [
+    "jangar_dependency_quorum",
+    "signal_continuity"
+  ],
+  "expected_gross_edge_bps": "6",
+  "max_allowed_slippage_bps": "12",
+  "min_sample_count_for_live_canary": 40,
+  "min_sample_count_for_scale_up": 80,
+  "max_rolling_drawdown_bps": "150",
+  "rollback_triggers": [
+    "signal_continuity_alert_active",
+    "jangar_dependency_block",
+    "slippage_budget_exceeded",
+    "post_cost_expectancy_non_positive"
+  ],
+  "promotion_gates": [
+    "fresh_signal_continuity",
+    "feature_rows_present",
+    "evidence_continuity_recent",
+    "drift_checks_recent",
+    "positive_post_cost_expectancy"
+  ],
+  "entry_requirements": {
+    "max_signal_lag_seconds": 90,
+    "max_evidence_age_minutes": 30,
+    "min_feature_batch_rows": 1,
+    "require_feature_rows": true,
+    "require_drift_checks": true,
+    "require_evidence_continuity": true,
+    "required_dependency_quorum": "allow"
+  }
+}

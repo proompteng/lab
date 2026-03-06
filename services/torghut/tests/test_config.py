@@ -97,6 +97,30 @@ class TestConfig(TestCase):
         self.assertTrue(settings.posthog_enabled)
         self.assertEqual(settings.posthog_host, "https://posthog.example")
 
+    def test_hypothesis_registry_and_jangar_quorum_settings_are_normalized(self) -> None:
+        settings = Settings(
+            TRADING_ENABLED=False,
+            TRADING_AUTONOMY_ENABLED=False,
+            TRADING_LIVE_ENABLED=False,
+            TRADING_UNIVERSE_SOURCE="static",
+            TRADING_HYPOTHESIS_REGISTRY_PATH=" config/trading/hypotheses ",
+            TRADING_JANGAR_CONTROL_PLANE_STATUS_URL=" https://jangar.example/status ",
+            TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS=2.5,
+            TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS=30,
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+
+        self.assertEqual(
+            settings.trading_hypothesis_registry_path,
+            "config/trading/hypotheses",
+        )
+        self.assertEqual(
+            settings.trading_jangar_control_plane_status_url,
+            "https://jangar.example/status",
+        )
+        self.assertEqual(settings.trading_jangar_control_plane_timeout_seconds, 2.5)
+        self.assertEqual(settings.trading_jangar_control_plane_cache_ttl_seconds, 30)
+
     def test_allows_configured_live_pass_through_with_explicit_approval(self) -> None:
         settings = Settings(
             TRADING_MODE="live",

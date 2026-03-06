@@ -1,0 +1,47 @@
+{
+  "schema_version": "torghut.hypothesis-manifest.v1",
+  "hypothesis_id": "H-REV-01",
+  "lane_id": "event-reversion",
+  "strategy_family": "event_reversion",
+  "initial_state": "shadow",
+  "market_regimes": [
+    "R1",
+    "R4"
+  ],
+  "required_feature_sets": [
+    "signal_feed",
+    "market_context"
+  ],
+  "required_dependency_capabilities": [
+    "jangar_dependency_quorum",
+    "market_context_freshness"
+  ],
+  "expected_gross_edge_bps": "8",
+  "max_allowed_slippage_bps": "12",
+  "min_sample_count_for_live_canary": 30,
+  "min_sample_count_for_scale_up": 60,
+  "max_rolling_drawdown_bps": "120",
+  "rollback_triggers": [
+    "market_context_stale",
+    "jangar_dependency_delay",
+    "jangar_dependency_block",
+    "post_cost_expectancy_non_positive"
+  ],
+  "promotion_gates": [
+    "market_context_fresh",
+    "fresh_signal_continuity",
+    "feature_rows_present",
+    "evidence_continuity_recent",
+    "positive_post_cost_expectancy"
+  ],
+  "entry_requirements": {
+    "max_signal_lag_seconds": 90,
+    "max_market_context_freshness_seconds": 120,
+    "max_evidence_age_minutes": 30,
+    "min_feature_batch_rows": 1,
+    "require_feature_rows": true,
+    "require_drift_checks": true,
+    "require_evidence_continuity": true,
+    "required_dependency_quorum": "allow"
+  }
+}

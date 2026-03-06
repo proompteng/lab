@@ -55,6 +55,7 @@ RUN apt-get update \
 COPY --from=builder /opt/venv /opt/venv
 COPY alembic.ini ./
 COPY app ./app
+COPY config ./config
 COPY migrations ./migrations
 COPY scripts ./scripts
 COPY README.md .

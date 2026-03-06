@@ -40,14 +40,17 @@ const makeResourceEvent = (): ControlPlaneStreamEvent => ({
 
 describe('useControlPlaneStream', () => {
   const originalEventSource = globalThis.EventSource
+  const originalWindowEventSource = window.EventSource
 
   beforeEach(() => {
     MockEventSource.instances = []
     globalThis.EventSource = MockEventSource as unknown as typeof EventSource
+    window.EventSource = MockEventSource as unknown as typeof EventSource
   })
 
   afterEach(() => {
     globalThis.EventSource = originalEventSource
+    window.EventSource = originalWindowEventSource
   })
 
   it('avoids rerenders when emitState is false', () => {

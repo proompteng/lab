@@ -311,6 +311,20 @@ _SIMPLE_MAP_METRICS: dict[str, tuple[str, str, str, str, str]] = {
         "reason",
         "int",
     ),
+    "hypothesis_state_total": (
+        "torghut_trading_hypothesis_state_total",
+        "Current hypothesis readiness states by state.",
+        "gauge",
+        "state",
+        "int",
+    ),
+    "hypothesis_capital_stage_total": (
+        "torghut_trading_hypothesis_capital_stage_total",
+        "Current hypothesis capital stages by stage.",
+        "gauge",
+        "stage",
+        "int",
+    ),
 }
 
 _STRATEGY_RUNTIME_METRICS: dict[str, tuple[str, str]] = {
@@ -395,6 +409,18 @@ _DIRECT_GAUGES: dict[str, tuple[str, str]] = {
     "shorting_metadata_alert_active": (
         "torghut_trading_shorting_metadata_alert_active",
         "Whether shorting metadata readiness is currently alerting during market hours (1=yes, 0=no).",
+    ),
+    "alpha_readiness_hypotheses_total": (
+        "torghut_trading_alpha_readiness_hypotheses_total",
+        "Total hypotheses loaded into the runtime readiness compiler.",
+    ),
+    "alpha_readiness_promotion_eligible_total": (
+        "torghut_trading_alpha_readiness_promotion_eligible_total",
+        "Current hypotheses eligible for promotion based on runtime readiness.",
+    ),
+    "alpha_readiness_rollback_required_total": (
+        "torghut_trading_alpha_readiness_rollback_required_total",
+        "Current hypotheses requiring rollback or demotion review.",
     ),
 }
 

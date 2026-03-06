@@ -1,0 +1,47 @@
+{
+  "schema_version": "torghut.hypothesis-manifest.v1",
+  "hypothesis_id": "H-MICRO-01",
+  "lane_id": "microstructure-breakout",
+  "strategy_family": "microstructure_breakout",
+  "initial_state": "blocked",
+  "market_regimes": [
+    "R3",
+    "R5"
+  ],
+  "required_feature_sets": [
+    "order_book_liquidity",
+    "microstructure"
+  ],
+  "required_dependency_capabilities": [
+    "jangar_dependency_quorum",
+    "drift_governance",
+    "feature_coverage"
+  ],
+  "expected_gross_edge_bps": "10",
+  "max_allowed_slippage_bps": "8",
+  "min_sample_count_for_live_canary": 60,
+  "min_sample_count_for_scale_up": 120,
+  "max_rolling_drawdown_bps": "90",
+  "rollback_triggers": [
+    "required_feature_set_unavailable",
+    "drift_checks_missing",
+    "slippage_budget_exceeded",
+    "jangar_dependency_block"
+  ],
+  "promotion_gates": [
+    "microstructure_features_present",
+    "fresh_signal_continuity",
+    "evidence_continuity_recent",
+    "drift_checks_recent",
+    "positive_post_cost_expectancy"
+  ],
+  "entry_requirements": {
+    "max_signal_lag_seconds": 90,
+    "max_evidence_age_minutes": 30,
+    "min_feature_batch_rows": 1,
+    "require_feature_rows": true,
+    "require_drift_checks": true,
+    "require_evidence_continuity": true,
+    "required_dependency_quorum": "allow"
+  }
+}

@@ -11,7 +11,7 @@ import {
   getWatchReliabilitySummary,
   type ControlPlaneWatchReliabilitySummary,
 } from '~/server/control-plane-watch-reliability'
-import type { DatabaseMigrationConsistency } from '~/data/agents-control-plane'
+import type { DatabaseMigrationConsistency, DependencyQuorumStatus } from '~/data/agents-control-plane'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { parseNamespaceScopeEnv } from '~/server/namespace-scope'
 import { createKubernetesClient, type KubernetesClient } from '~/server/primitives-kube'
@@ -143,6 +143,7 @@ export type ControlPlaneStatus = {
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
   workflows: WorkflowsReliabilityStatus
+  dependency_quorum: DependencyQuorumStatus
   rollout_health: ControlPlaneRolloutHealth
   namespaces: NamespaceStatus[]
 }
@@ -846,6 +847,83 @@ const resolveWorkflowsReliabilityStatus = async ({
   }
 }
 
+const buildDependencyQuorum = (input: {
+  controllers: ControllerStatus[]
+  runtimeAdapters: RuntimeAdapterStatus[]
+  database: DatabaseStatus
+  watchReliability: ControlPlaneWatchReliabilitySummary
+  workflows: WorkflowsReliabilityStatus
+  rolloutHealth: ControlPlaneRolloutHealth
+  warningBackoffThreshold: number
+  degradedBackoffThreshold: number
+}): DependencyQuorumStatus => {
+  const blockReasons: string[] = []
+  const delayReasons: string[] = []
+  const workflowTopReasons = input.workflows.top_failure_reasons
+    .map((item) => item.reason)
+    .filter((reason) => reason.length > 0)
+
+  for (const controller of input.controllers) {
+    if (controller.status === 'healthy') continue
+    if (controller.name === 'agents-controller') {
+      blockReasons.push('agents_controller_unavailable')
+      continue
+    }
+    delayReasons.push(`${controller.name.replace(/-/g, '_')}_degraded`)
+  }
+
+  const workflowAdapter = input.runtimeAdapters.find((adapter) => adapter.name === 'workflow')
+  if (!workflowAdapter || workflowAdapter.available === false || workflowAdapter.status === 'degraded') {
+    blockReasons.push('workflow_runtime_unavailable')
+  }
+
+  if (input.database.status !== 'healthy') {
+    blockReasons.push('control_plane_database_unhealthy')
+  }
+
+  if (input.workflows.data_confidence === 'unknown') {
+    blockReasons.push('workflows_data_unknown')
+  } else if (input.workflows.data_confidence === 'degraded') {
+    delayReasons.push('workflows_data_degraded')
+  }
+
+  if (input.workflows.backoff_limit_exceeded_jobs >= input.degradedBackoffThreshold) {
+    blockReasons.push('workflow_backoff_limit_exceeded')
+  } else if (input.workflows.backoff_limit_exceeded_jobs >= input.warningBackoffThreshold) {
+    delayReasons.push('workflow_backoff_warning')
+  }
+
+  if (input.watchReliability.status === 'degraded') {
+    delayReasons.push('watch_reliability_degraded')
+  }
+
+  if (input.rolloutHealth.status === 'degraded') {
+    delayReasons.push('rollout_health_degraded')
+  }
+
+  const reasons = uniqueStrings(blockReasons.length > 0 ? blockReasons : delayReasons)
+  const decision: DependencyQuorumStatus['decision'] =
+    blockReasons.length > 0 ? 'block' : delayReasons.length > 0 ? 'delay' : 'allow'
+  const message =
+    decision === 'allow'
+      ? 'Control-plane admission dependencies are healthy.'
+      : [
+          decision === 'block'
+            ? 'Control-plane dependency quorum is blocked.'
+            : 'Control-plane dependency quorum is degraded; delay capital promotion.',
+          workflowTopReasons.length > 0 ? `recent workflow reasons: ${workflowTopReasons.join(', ')}` : '',
+          input.workflows.message.length > 0 ? input.workflows.message : '',
+        ]
+          .filter((value) => value.length > 0)
+          .join(' ')
+
+  return {
+    decision,
+    reasons,
+    message,
+  }
+}
+
 export const buildControlPlaneStatus = async (
   options: ControlPlaneStatusOptions,
   deps: ControlPlaneStatusDeps = {},
@@ -930,6 +1008,16 @@ export const buildControlPlaneStatus = async (
   const isWorkflowsDataUnavailable = isWorkflowsDataUnknown || isWorkflowsDataDegraded
   const isWorkflowsWarning = workflows.backoff_limit_exceeded_jobs >= warningBackoffThreshold
   const isWorkflowsDegraded = workflows.backoff_limit_exceeded_jobs >= degradedBackoffThreshold
+  const dependencyQuorum = buildDependencyQuorum({
+    controllers,
+    runtimeAdapters,
+    database,
+    watchReliability,
+    workflows,
+    rolloutHealth,
+    warningBackoffThreshold,
+    degradedBackoffThreshold,
+  })
 
   const leaderElection = getLeaderElectionStatus()
 
@@ -976,6 +1064,7 @@ export const buildControlPlaneStatus = async (
     },
     rollout_health: rolloutHealth,
     workflows,
+    dependency_quorum: dependencyQuorum,
     namespaces: [
       {
         namespace: options.namespace,

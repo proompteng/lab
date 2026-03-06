@@ -166,6 +166,10 @@ def _load_control_plane_contract(path: Path) -> dict[str, Any]:
         'last_autonomy_recommendation_trace_id',
         'domain_telemetry_event_total',
         'domain_telemetry_dropped_total',
+        'alpha_readiness_hypotheses_total',
+        'alpha_readiness_shadow_total',
+        'alpha_readiness_blocked_total',
+        'alpha_readiness_dependency_quorum_decision',
     )
     missing = [key for key in required_keys if key not in payload_map]
     if missing:
@@ -178,6 +182,11 @@ def _load_control_plane_contract(path: Path) -> dict[str, Any]:
     telemetry_drops = payload_map.get('domain_telemetry_dropped_total')
     if not isinstance(telemetry_drops, dict):
         raise ValueError('control_plane_contract_domain_telemetry_dropped_invalid')
+    dependency_quorum_decision = str(
+        payload_map.get('alpha_readiness_dependency_quorum_decision', '')
+    ).strip()
+    if dependency_quorum_decision not in {'allow', 'delay', 'block', 'unknown'}:
+        raise ValueError('control_plane_contract_alpha_readiness_dependency_quorum_invalid')
     return payload_map
 
 

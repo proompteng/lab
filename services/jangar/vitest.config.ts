@@ -6,6 +6,7 @@ const root = fileURLToPath(new URL('./src', import.meta.url))
 const codexStub = fileURLToPath(new URL('./src/test-utils/codex-stub.ts', import.meta.url))
 const bunStub = fileURLToPath(new URL('./src/test-utils/bun-stub.ts', import.meta.url))
 const temporalBunSdkStub = fileURLToPath(new URL('./src/test-utils/temporal-bun-sdk-stub.ts', import.meta.url))
+const jsdomEnvSetup = fileURLToPath(new URL('./src/test-utils/vitest-jsdom-env.ts', import.meta.url))
 const discordSource = fileURLToPath(new URL('../../packages/discord/src/index.ts', import.meta.url))
 
 export default defineConfig({
@@ -42,6 +43,7 @@ export default defineConfig({
       '@proompteng/temporal-bun-sdk/*': temporalBunSdkStub,
       bun: bunStub,
     },
+    setupFiles: [jsdomEnvSetup],
     include: ['src/**/*.{test,spec}.{ts,tsx}', 'scripts/**/*.{test,spec}.{ts,tsx}'],
     exclude: ['tests/ui/**', '**/node_modules/**'],
     coverage: {

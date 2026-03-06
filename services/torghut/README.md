@@ -52,6 +52,26 @@ Optional migration-lineage controls:
 - Remove the runtime override from GitOps after merge migrations collapse the graph back to the tolerated branch count;
   keep the feature flag default disabled outside explicit rollout windows.
 
+## Hypothesis readiness and dependency quorum
+
+- Hypothesis manifests live under `config/trading/hypotheses/` and are loaded at startup from
+  `TRADING_HYPOTHESIS_REGISTRY_PATH` (default: `config/trading/hypotheses`).
+- `GET /trading/status` now exposes:
+  - `hypotheses.registry_loaded`, `hypotheses.registry_errors`, and `hypotheses.items`
+  - per-hypothesis `state`, `capital_stage`, `promotion_eligible`, `rollback_required`, and blocker `reasons`
+  - `control_plane_contract.alpha_readiness_*` summary counts for blocked, shadow, canary-live, and scaled-live lanes
+- `GET /trading/health` includes an additive `alpha_readiness` block summarizing readiness totals and Jangar quorum state.
+- `GET /metrics` exports:
+  - `torghut_trading_hypothesis_state_total`
+  - `torghut_trading_hypothesis_capital_stage_total`
+  - `torghut_trading_alpha_readiness_hypotheses_total`
+  - `torghut_trading_alpha_readiness_promotion_eligible_total`
+  - `torghut_trading_alpha_readiness_rollback_required_total`
+- To enable cross-service dependency quorum checks, set
+  `TRADING_JANGAR_CONTROL_PLANE_STATUS_URL=http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?namespace=agents`.
+  Torghut treats Jangar `dependency_quorum=delay|block` as additive promotion blockers and fails closed when the status
+  payload is unavailable.
+
 ## Whitepaper workflow (GitHub issue -> Kafka -> AgentRun)
 
 - Kickoff contract in issue body:

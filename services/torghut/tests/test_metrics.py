@@ -161,6 +161,42 @@ class TestTradingMetrics(TestCase):
         self.assertIn("torghut_trading_llm_escalate_total 1", payload)
         self.assertIn("torghut_trading_llm_policy_fallback_total 2", payload)
 
+    def test_hypothesis_alpha_readiness_metrics_are_exported(self) -> None:
+        metrics = TradingMetrics()
+
+        payload = render_trading_metrics(
+            {
+                **metrics.__dict__,
+                "hypothesis_state_total": {"blocked": 1, "shadow": 2},
+                "hypothesis_capital_stage_total": {"shadow": 3},
+                "alpha_readiness_hypotheses_total": 3,
+                "alpha_readiness_promotion_eligible_total": 0,
+                "alpha_readiness_rollback_required_total": 0,
+            }
+        )
+
+        self.assertIn(
+            'torghut_trading_hypothesis_state_total{state="blocked"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_hypothesis_state_total{state="shadow"} 2',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_hypothesis_capital_stage_total{stage="shadow"} 3',
+            payload,
+        )
+        self.assertIn("torghut_trading_alpha_readiness_hypotheses_total 3", payload)
+        self.assertIn(
+            "torghut_trading_alpha_readiness_promotion_eligible_total 0",
+            payload,
+        )
+        self.assertIn(
+            "torghut_trading_alpha_readiness_rollback_required_total 0",
+            payload,
+        )
+
     def test_reject_reason_and_clean_execution_ratios_are_exported(self) -> None:
         metrics = TradingMetrics()
         metrics.orders_submitted_total = 8
