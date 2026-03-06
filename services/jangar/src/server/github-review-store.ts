@@ -1,6 +1,6 @@
 import { sql } from 'kysely'
 
-import { createKyselyDb, type Db, getDb } from '~/server/db'
+import { resolveStoreDb, type Db } from '~/server/db'
 import { ensureMigrations } from '~/server/kysely-migrations'
 
 export type GithubCheckRun = {
@@ -373,16 +373,16 @@ const mergeRuns = (existing: GithubCheckRun[], incoming: GithubCheckRun) => {
 }
 
 export const createGithubReviewStore = (options: StoreOptions = {}): GithubReviewStore => {
-  const url = options.url ?? process.env.DATABASE_URL ?? ''
-  const createDb = options.createDb ?? createKyselyDb
-  const db = url ? createDb(url) : getDb()
-  if (!db) {
+  const resolved = resolveStoreDb(options)
+  if (!resolved.db) {
     throw new Error('DATABASE_URL is required')
   }
+  const db = resolved.db
 
   const ready = ensureMigrations(db)
 
   const close = async () => {
+    if (resolved.shared) return
     await db.destroy()
   }
 

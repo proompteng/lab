@@ -80,7 +80,7 @@ const isServerSideApplyConflict = (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error)
   return (
     message.includes('Apply failed with') &&
-    message.includes('conflicts with') &&
+    (message.includes('conflicts with') || message.includes('conflict with')) &&
     message.includes('subresource "status"')
   )
 }

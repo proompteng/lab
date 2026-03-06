@@ -1,6 +1,6 @@
 # Jangar Control Plane Migration Consistency Status
 
-Status: Draft (2026-03-04)
+Status: Implemented (2026-03-05)
 
 Docs index: [README](../README.md)
 
@@ -88,7 +88,16 @@ Choose option 3 (runtime status-consistency signal).
 
 ## Rollout plan
 
-1. Merge as plan-stage design + implementation.
-2. Monitor `/api/agents/control-plane/status` migration_consistency fields during next rollout.
+1. Implementation is merged in `services/jangar/src/server/control-plane-status.ts` and validated by unit tests.
+2. Monitor `/api/agents/control-plane/status` `database.migration_consistency` during the next `jangar-control-plane` rollout.
 3. Escalate to startup gate only if frequent mismatches indicate recurring deployment breakage.
 
+## Implementation status
+
+- Added migration consistency read path in `control-plane-status.ts`:
+  - non-blocking drift check via `kysely_migration` first, with fallback to `kysely_migrations`
+  - registered-vs-applied migration diff and `unapplied`/`unexpected` counters
+  - degraded status + message when drift or missing migration table is detected
+- Added regression coverage in `services/jangar/src/server/__tests__/control-plane-status.test.ts`:
+  - healthy base status includes `database.migration_consistency`
+  - namespace degradation when `migration_consistency.status === 'degraded'`

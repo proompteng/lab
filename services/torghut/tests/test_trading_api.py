@@ -22,6 +22,7 @@ from app.main import (
     app,
 )
 from app.trading.scheduler import TradingScheduler
+from app.trading.execution import OrderExecutor
 from app.config import settings
 from app.models import (
     Base,
@@ -194,6 +195,12 @@ class TestTradingApi(TestCase):
             "current_heads": ["0011_execution_tca_simulator_divergence"],
             "expected_heads": ["0011_execution_tca_simulator_divergence"],
             "schema_head_signature": "7f8e4d0",
+            "schema_graph_signature": "graph-signature-demo",
+            "schema_graph_roots": ["0001_initial_torghut_schema"],
+            "schema_graph_branch_count": 1,
+            "schema_graph_parent_forks": {},
+            "schema_graph_duplicate_revisions": {},
+            "schema_graph_orphan_parents": [],
             "schema_missing_heads": [],
             "schema_unexpected_heads": [],
             "schema_head_count_expected": 1,
@@ -223,7 +230,126 @@ class TestTradingApi(TestCase):
         self.assertEqual(payload["schema_head_count_expected"], 1)
         self.assertEqual(payload["schema_head_count_current"], 1)
         self.assertEqual(payload["schema_head_delta_count"], 0)
+        self.assertEqual(payload["schema_graph_signature"], "graph-signature-demo")
+        self.assertEqual(payload["schema_graph_roots"], ["0001_initial_torghut_schema"])
+        self.assertEqual(payload["schema_graph_branch_count"], 1)
+        self.assertEqual(payload["schema_graph_parent_forks"], {})
+        self.assertEqual(payload["schema_graph_lineage_errors"], [])
         self.assertIn("checked_at", payload)
+
+    @patch(
+        "app.main.check_schema_current",
+        return_value={
+            "schema_current": True,
+            "current_heads": ["0017_whitepaper_semantic_indexing"],
+            "expected_heads": ["0017_whitepaper_semantic_indexing"],
+            "schema_head_signature": "sig-divergent",
+            "schema_graph_signature": "graph-divergent",
+            "schema_graph_roots": ["0001_initial_torghut_schema"],
+            "schema_graph_branch_count": 3,
+            "schema_graph_parent_forks": {
+                "0015_whitepaper_workflow_tables": [
+                    "0016_llm_dspy_workflow_artifacts",
+                    "0016_whitepaper_engineering_triggers_and_rollout",
+                ]
+            },
+            "schema_graph_duplicate_revisions": {},
+            "schema_graph_orphan_parents": [],
+            "schema_missing_heads": [],
+            "schema_unexpected_heads": [],
+            "schema_head_count_expected": 1,
+            "schema_head_count_current": 1,
+            "schema_head_delta_count": 0,
+        },
+    )
+    @patch(
+        "app.main.check_account_scope_invariants",
+        return_value={"account_scope_ready": True},
+    )
+    def test_db_check_schema_lineage_divergence_returns_503_when_override_disabled(
+        self,
+        _mock_account_scope: object,
+        _mock_schema: object,
+    ) -> None:
+        original_tolerance = settings.trading_db_schema_graph_branch_tolerance
+        original_allow = settings.trading_db_schema_graph_allow_divergence_roots
+        settings.trading_db_schema_graph_branch_tolerance = 1
+        settings.trading_db_schema_graph_allow_divergence_roots = False
+        try:
+            response = self.client.get("/db-check")
+        finally:
+            settings.trading_db_schema_graph_branch_tolerance = original_tolerance
+            settings.trading_db_schema_graph_allow_divergence_roots = original_allow
+
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()
+        self.assertEqual(payload["detail"]["error"], "database schema lineage divergence")
+        self.assertFalse(payload["detail"]["schema_graph_lineage_ready"])
+        self.assertIn("schema_graph_lineage_errors", payload["detail"])
+        self.assertIn("schema_graph_branch_count", payload["detail"])
+
+    @patch(
+        "app.main.check_schema_current",
+        return_value={
+            "schema_current": True,
+            "current_heads": ["0017_whitepaper_semantic_indexing"],
+            "expected_heads": ["0017_whitepaper_semantic_indexing"],
+            "schema_head_signature": "sig-override",
+            "schema_graph_signature": "graph-override",
+            "schema_graph_roots": ["0001_initial_torghut_schema"],
+            "schema_graph_branch_count": 2,
+            "schema_graph_parent_forks": {
+                "0015_whitepaper_workflow_tables": [
+                    "0016_llm_dspy_workflow_artifacts",
+                    "0017_whitepaper_semantic_indexing",
+                ]
+            },
+            "schema_graph_duplicate_revisions": {},
+            "schema_graph_orphan_parents": [],
+            "schema_missing_heads": [],
+            "schema_unexpected_heads": [],
+            "schema_head_count_expected": 1,
+            "schema_head_count_current": 1,
+            "schema_head_delta_count": 0,
+        },
+    )
+    @patch(
+        "app.main.check_account_scope_invariants",
+        return_value={"account_scope_ready": True},
+    )
+    def test_db_check_schema_lineage_warning_returns_200_when_override_enabled(
+        self,
+        _mock_account_scope: object,
+        _mock_schema: object,
+    ) -> None:
+        original_tolerance = settings.trading_db_schema_graph_branch_tolerance
+        original_allow = settings.trading_db_schema_graph_allow_divergence_roots
+        settings.trading_db_schema_graph_branch_tolerance = 1
+        settings.trading_db_schema_graph_allow_divergence_roots = True
+        try:
+            response = self.client.get("/db-check")
+        finally:
+            settings.trading_db_schema_graph_branch_tolerance = original_tolerance
+            settings.trading_db_schema_graph_allow_divergence_roots = original_allow
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["schema_graph_lineage_ready"])
+        self.assertEqual(payload["schema_graph_branch_count"], 2)
+        self.assertEqual(
+            payload["schema_graph_lineage_errors"],
+            [],
+        )
+        self.assertEqual(
+            payload["schema_graph_lineage_warnings"],
+            [
+                "migration parent forks detected: 0015_whitepaper_workflow_tables -> "
+                "[0016_llm_dspy_workflow_artifacts, 0017_whitepaper_semantic_indexing]",
+                "migration graph branch count 2 exceeds tolerance 1; allowed by "
+                "TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS=true",
+            ],
+        )
 
     @patch(
         "app.main.check_schema_current",
@@ -658,6 +784,60 @@ class TestTradingApi(TestCase):
 
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
+    @patch(
+        "app.main.check_account_scope_invariants",
+        return_value={"account_scope_ready": True, "account_scope_errors": []},
+    )
+    @patch(
+        "app.main.check_schema_current",
+        return_value={
+            "schema_current": True,
+            "current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
+        },
+    )
+    def test_trading_health_reports_static_fallback_universe_as_degraded_not_blocked(
+        self,
+        _mock_schema: object,
+        _mock_account_scope: object,
+        _mock_postgres: object,
+        _mock_clickhouse: object,
+        _mock_alpaca: object,
+    ) -> None:
+        original = settings.trading_enabled
+        original_source = settings.trading_universe_source
+        settings.trading_enabled = True
+        settings.trading_universe_source = "jangar"
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            scheduler.state.universe_source_status = "degraded"
+            scheduler.state.universe_source_reason = (
+                "jangar_fetch_failed_cache_stale_using_static_fallback"
+            )
+            scheduler.state.universe_symbols_count = 8
+            scheduler.state.universe_cache_age_seconds = 900
+            scheduler.state.universe_fail_safe_blocked = False
+            app.state.trading_scheduler = scheduler
+            response = self.client.get("/trading/health")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["status"], "ok")
+            universe_dependency = payload["dependencies"]["universe"]
+            self.assertTrue(universe_dependency["ok"])
+            self.assertEqual(universe_dependency["status"], "degraded")
+            self.assertEqual(
+                universe_dependency["detail"], "jangar static fallback in use"
+            )
+        finally:
+            settings.trading_enabled = original
+            settings.trading_universe_source = original_source
+
+    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
     @patch(
         "app.main.check_account_scope_invariants",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
@@ -707,9 +887,215 @@ class TestTradingApi(TestCase):
             self.assertIn("checked_at", payload["dependencies"]["database"])
             self.assertIn("readiness_cache", payload["dependencies"])
             self.assertIn("cache_used", payload["dependencies"]["readiness_cache"])
+            self.assertFalse(payload["dependencies"]["readiness_cache"]["cache_stale"])
         finally:
             settings.trading_enabled = original
             settings.trading_universe_source = original_source
+
+    @patch(
+        "app.main._evaluate_database_contract",
+        return_value={
+            "ok": True,
+            "schema_current": True,
+            "schema_current_heads": ["0017_whitepaper_semantic_indexing"],
+            "expected_heads": ["0017_whitepaper_semantic_indexing"],
+            "schema_head_signature": "sig-override",
+            "schema_graph_signature": "graph-override",
+            "schema_graph_roots": ["0001_initial_torghut_schema"],
+            "schema_graph_branch_count": 2,
+            "schema_graph_branch_tolerance": 1,
+            "schema_graph_allow_divergence_roots": True,
+            "schema_graph_parent_forks": {
+                "0015_whitepaper_workflow_tables": [
+                    "0016_llm_dspy_workflow_artifacts",
+                    "0017_whitepaper_semantic_indexing",
+                ]
+            },
+            "schema_graph_duplicate_revisions": {},
+            "schema_graph_orphan_parents": [],
+            "schema_graph_lineage_ready": True,
+            "schema_graph_lineage_errors": [],
+            "schema_graph_lineage_warnings": [
+                "migration graph branch count 2 exceeds tolerance 1; allowed by "
+                "TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS=true"
+            ],
+            "checked_at": "2026-03-06T00:00:00+00:00",
+            "account_scope_ready": True,
+            "account_scope_errors": [],
+            "account_scope_warnings": [],
+        },
+    )
+    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    def test_readyz_returns_200_with_schema_lineage_warning_override(
+        self,
+        _mock_alpaca: object,
+        _mock_clickhouse: object,
+        _mock_postgres: object,
+        _mock_contract: object,
+    ) -> None:
+        original = settings.trading_enabled
+        original_source = settings.trading_universe_source
+        settings.trading_enabled = True
+        settings.trading_universe_source = "jangar"
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            scheduler.state.universe_source_status = "ok"
+            scheduler.state.universe_source_reason = "jangar_fetch_ok"
+            scheduler.state.universe_symbols_count = 2
+            scheduler.state.universe_cache_age_seconds = 0
+            app.state.trading_scheduler = scheduler
+            response = self.client.get("/readyz")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["status"], "ok")
+            self.assertTrue(payload["dependencies"]["database"]["ok"])
+            self.assertTrue(payload["dependencies"]["database"]["schema_graph_lineage_ready"])
+            self.assertEqual(
+                payload["dependencies"]["database"]["schema_graph_lineage_warnings"],
+                [
+                    "migration graph branch count 2 exceeds tolerance 1; allowed by "
+                    "TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS=true"
+                ],
+            )
+            self.assertEqual(payload["dependencies"]["database"]["detail"], "ok")
+        finally:
+            settings.trading_enabled = original
+            settings.trading_universe_source = original_source
+
+    @patch(
+        "app.main._evaluate_database_contract",
+        return_value={
+            "ok": True,
+            "schema_current": True,
+            "schema_current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
+            "checked_at": "2026-03-04T00:00:00+00:00",
+            "account_scope_ready": True,
+            "account_scope_errors": [],
+        },
+    )
+    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    def test_readyz_reuses_stale_dependency_cache_within_stale_tolerance(
+        self,
+        _mock_alpaca: object,
+        _mock_clickhouse: object,
+        _mock_postgres: object,
+        _mock_contract: object,
+    ) -> None:
+        original = settings.trading_enabled
+        original_cache_enabled = settings.trading_readiness_dependency_cache_enabled
+        original_cache_ttl = settings.trading_readiness_dependency_cache_ttl_seconds
+        original_stale_tolerance = (
+            settings.trading_readiness_dependency_cache_stale_tolerance_seconds
+        )
+        settings.trading_enabled = True
+        settings.trading_readiness_dependency_cache_enabled = True
+        settings.trading_readiness_dependency_cache_ttl_seconds = 8
+        settings.trading_readiness_dependency_cache_stale_tolerance_seconds = 20
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            app.state.trading_scheduler = scheduler
+            response = self.client.get("/readyz")
+            self.assertEqual(response.status_code, 200)
+            cache_key = _readiness_dependency_cache_key(include_database_contract=True)
+            _TRADING_DEPENDENCY_HEALTH_CACHE[cache_key]["checked_at"] = datetime.now(
+                timezone.utc
+            ) - timedelta(seconds=22)
+            response = self.client.get("/readyz")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(_mock_postgres.call_count, 1)
+            self.assertEqual(_mock_clickhouse.call_count, 1)
+            self.assertEqual(_mock_alpaca.call_count, 1)
+            payload = response.json()
+            cache = payload["dependencies"]["readiness_cache"]
+            self.assertTrue(cache["cache_used"])
+            self.assertTrue(cache["cache_stale"])
+            self.assertGreater(cache["cache_age_seconds"], 8)
+            self.assertLessEqual(cache["cache_age_seconds"], 28)
+        finally:
+            settings.trading_enabled = original
+            settings.trading_readiness_dependency_cache_enabled = original_cache_enabled
+            settings.trading_readiness_dependency_cache_ttl_seconds = original_cache_ttl
+            settings.trading_readiness_dependency_cache_stale_tolerance_seconds = (
+                original_stale_tolerance
+            )
+            _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
+
+    @patch(
+        "app.main._evaluate_database_contract",
+        return_value={
+            "ok": True,
+            "schema_current": True,
+            "schema_current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
+            "checked_at": "2026-03-04T00:00:00+00:00",
+            "account_scope_ready": True,
+            "account_scope_errors": [],
+        },
+    )
+    @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    def test_trading_health_refreshes_stale_readiness_cache_without_tolerance(
+        self,
+        _mock_alpaca: object,
+        _mock_clickhouse: object,
+        _mock_postgres: object,
+        _mock_contract: object,
+    ) -> None:
+        original = settings.trading_enabled
+        original_cache_enabled = settings.trading_readiness_dependency_cache_enabled
+        original_cache_ttl = settings.trading_readiness_dependency_cache_ttl_seconds
+        original_stale_tolerance = (
+            settings.trading_readiness_dependency_cache_stale_tolerance_seconds
+        )
+        original_source = settings.trading_universe_source
+        settings.trading_enabled = True
+        settings.trading_readiness_dependency_cache_enabled = True
+        settings.trading_readiness_dependency_cache_ttl_seconds = 8
+        settings.trading_readiness_dependency_cache_stale_tolerance_seconds = 20
+        settings.trading_universe_source = "jangar"
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            scheduler.state.universe_source_status = "ok"
+            scheduler.state.universe_source_reason = "jangar_fetch_ok"
+            scheduler.state.universe_symbols_count = 2
+            scheduler.state.universe_cache_age_seconds = 0
+            app.state.trading_scheduler = scheduler
+            response = self.client.get("/trading/health")
+            self.assertEqual(response.status_code, 200)
+            cache_key = _readiness_dependency_cache_key(include_database_contract=False)
+            _TRADING_DEPENDENCY_HEALTH_CACHE[cache_key]["checked_at"] = datetime.now(
+                timezone.utc
+            ) - timedelta(seconds=30)
+            response = self.client.get("/trading/health")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(_mock_postgres.call_count, 2)
+            self.assertEqual(_mock_clickhouse.call_count, 2)
+            self.assertEqual(_mock_alpaca.call_count, 2)
+            payload = response.json()
+            self.assertFalse(payload["dependencies"]["readiness_cache"]["cache_stale"])
+        finally:
+            settings.trading_enabled = original
+            settings.trading_readiness_dependency_cache_enabled = original_cache_enabled
+            settings.trading_readiness_dependency_cache_ttl_seconds = original_cache_ttl
+            settings.trading_readiness_dependency_cache_stale_tolerance_seconds = (
+                original_stale_tolerance
+            )
+            settings.trading_universe_source = original_source
+            _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
 
     @patch(
         "app.main._evaluate_database_contract",
@@ -1062,6 +1448,83 @@ class TestTradingApi(TestCase):
         self.assertIn("domain_telemetry_event_total", control_plane_contract)
         self.assertIn("domain_telemetry_dropped_total", control_plane_contract)
 
+    def test_trading_status_exposes_rejection_and_market_context_controls(self) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.metrics.llm_policy_veto_total = 3
+            scheduler.state.metrics.llm_runtime_fallback_total = 5
+            scheduler.state.metrics.llm_requests_total = 100
+            scheduler.state.metrics.llm_market_context_block_total = 7
+            scheduler.state.metrics.pre_llm_capacity_reject_total = 11
+            scheduler.state.metrics.pre_llm_qty_below_min_total = 13
+            scheduler.state.market_session_open = True
+            scheduler.state.last_market_context_symbol = "AAPL"
+            scheduler.state.last_market_context_checked_at = datetime(
+                2026, 3, 5, 15, 30, tzinfo=timezone.utc
+            )
+            scheduler.state.last_market_context_freshness_seconds = 120
+            scheduler.state.last_market_context_quality_score = 0.92
+            scheduler.state.last_market_context_domain_states = {
+                "technicals": "ok",
+                "fundamentals": "stale",
+                "news": "ok",
+                "regime": "ok",
+            }
+            scheduler.state.last_market_context_risk_flags = ["fundamentals_stale"]
+            scheduler.state.last_market_context_allow_llm = False
+            scheduler.state.last_market_context_reason = "market_context_stale"
+            scheduler.state.market_context_alert_active = True
+            scheduler.state.market_context_alert_reason = "market_context_stale"
+            executor = OrderExecutor()
+            executor._shorting_metadata_status.update(  # noqa: SLF001
+                {
+                    "account_ready": False,
+                    "last_refresh_at": "2026-03-05T15:30:00+00:00",
+                    "last_error": "account lookup unavailable",
+                }
+            )
+            scheduler._pipeline = type(  # noqa: SLF001
+                "PipelineStub",
+                (),
+                {"executor": executor, "llm_review_engine": None},
+            )()
+            app.state.trading_scheduler = scheduler
+
+            response = self.client.get("/trading/status")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["market_context"]["fail_mode"], "shadow_only")
+            self.assertFalse(payload["market_context"]["required"])
+            self.assertEqual(payload["market_context"]["last_symbol"], "AAPL")
+            self.assertEqual(payload["market_context"]["last_reason"], "market_context_stale")
+            self.assertTrue(payload["market_context"]["alert_active"])
+            self.assertEqual(payload["rejections"]["policy_veto_total"], 3)
+            self.assertEqual(payload["rejections"]["runtime_fallback_total"], 5)
+            self.assertAlmostEqual(payload["rejections"]["runtime_fallback_ratio"], 0.05)
+            self.assertEqual(
+                payload["rejections"]["runtime_fallback_alert_ratio_threshold"], 0.01
+            )
+            self.assertTrue(payload["rejections"]["runtime_fallback_alert_active"])
+            self.assertEqual(payload["rejections"]["market_context_block_total"], 7)
+            self.assertEqual(payload["rejections"]["pre_llm_capacity_reject_total"], 11)
+            self.assertEqual(payload["rejections"]["pre_llm_qty_below_min_total"], 13)
+            self.assertFalse(payload["shorting_metadata"]["account_ready"])
+            self.assertTrue(payload["shorting_metadata"]["alert_active"])
+            self.assertEqual(
+                payload["shorting_metadata"]["last_error"],
+                "account lookup unavailable",
+            )
+            self.assertTrue(payload["alerts"]["market_context_alert_active"])
+            self.assertTrue(payload["alerts"]["runtime_fallback_alert_active"])
+            self.assertTrue(payload["alerts"]["shorting_metadata_alert_active"])
+        finally:
+            if original_scheduler is None:
+                if hasattr(app.state, "trading_scheduler"):
+                    del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
     def test_trading_metrics_includes_control_plane_contract(self) -> None:
         response = self.client.get("/trading/metrics")
         self.assertEqual(response.status_code, 200)
@@ -1107,6 +1570,8 @@ class TestTradingApi(TestCase):
                 'torghut_trading_execution_advisor_fallback_total{reason="advisor_disabled"} 1',
                 metrics_payload,
             )
+            self.assertIn("torghut_trading_llm_runtime_fallback_ratio", metrics_payload)
+            self.assertIn("torghut_trading_market_context_alert_active", metrics_payload)
         finally:
             if original_scheduler is None:
                 del app.state.trading_scheduler

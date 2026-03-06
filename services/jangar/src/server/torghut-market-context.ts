@@ -149,7 +149,7 @@ const resolveSettings = () => {
       process.env.JANGAR_MARKET_CONTEXT_ENABLED_FLAG_KEY?.trim() || DEFAULT_MARKET_CONTEXT_ENABLED_FLAG_KEY,
     cacheSeconds: parsePositiveInt(process.env.JANGAR_MARKET_CONTEXT_CACHE_SECONDS, 60),
     maxStalenessSeconds: parsePositiveInt(process.env.JANGAR_MARKET_CONTEXT_MAX_STALENESS_SECONDS, 300),
-    providerTimeoutMs: parsePositiveInt(process.env.JANGAR_MARKET_CONTEXT_PROVIDER_TIMEOUT_MS, 2000),
+    providerTimeoutMs: parsePositiveInt(process.env.JANGAR_MARKET_CONTEXT_PROVIDER_TIMEOUT_MS, 10000),
     fundamentalsSourceUrl: process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_URL?.trim() || '',
     newsSourceUrl: process.env.JANGAR_MARKET_CONTEXT_NEWS_URL?.trim() || '',
     technicalsMaxFreshnessSeconds,

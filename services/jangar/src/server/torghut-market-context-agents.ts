@@ -7,8 +7,12 @@ import { sql } from 'kysely'
 
 import { getDb } from '~/server/db'
 import { ensureMigrations } from '~/server/kysely-migrations'
-import { recordTorghutMarketContextDispatchAttempt, recordTorghutMarketContextDispatchStuck } from '~/server/metrics'
-import { createKubernetesClient } from '~/server/primitives-kube'
+import {
+  recordTorghutMarketContextBatchFreshnessLagSeconds,
+  recordTorghutMarketContextBatchRun,
+  recordTorghutMarketContextBatchRunDurationMs,
+  recordTorghutMarketContextBatchRunSymbols,
+} from '~/server/metrics'
 import { clearMarketContextCache } from '~/server/torghut-market-context'
 import { normalizeTorghutSymbol } from '~/server/torghut-symbols'
 
@@ -52,13 +56,55 @@ type SnapshotRow = {
   payload: Record<string, unknown>
   citations: MarketContextProviderCitation[]
   riskFlags: string[]
+  provider: string | null
+  runName: string | null
+  updatedAt: Date | null
 }
 
-type DispatchStateRow = {
-  lastDispatchedAt: Date | null
-  lastRunName: string | null
-  lastStatus: string | null
+type LatestRunRow = {
+  symbol: string
+  domain: MarketContextProviderDomain
+  provider: string
+  status: string
+  metadata: Record<string, unknown>
+  error: string | null
+  updatedAt: Date
+  finishedAt: Date | null
+}
+
+export type MarketContextFailureCategory =
+  | 'provider_circuit_open'
+  | 'provider_bootstrap_failure'
+  | 'provider_attempt_timeout'
+  | 'provider_turn_failed'
+  | 'payload_validation_failure'
+  | 'finalize_callback_failure'
+  | 'attempt_budget_exhausted'
+  | 'unknown_failure'
+
+type ProviderCircuitState = {
+  provider: string
+  consecutiveFailures: number
+  threshold: number
+  cooldownSeconds: number
+  cooldownOpen: boolean
+  cooldownRemainingSeconds: number
+  lastFailureAt: Date | null
   lastError: string | null
+}
+
+class MarketContextRunStartRejectedError extends Error {
+  readonly statusCode: number
+  readonly errorCode: string
+  readonly details: Record<string, unknown>
+
+  constructor(params: { message: string; statusCode: number; errorCode: string; details?: Record<string, unknown> }) {
+    super(params.message)
+    this.name = 'MarketContextRunStartRejectedError'
+    this.statusCode = params.statusCode
+    this.errorCode = params.errorCode
+    this.details = params.details ?? {}
+  }
 }
 
 type IngestPayload = {
@@ -80,6 +126,18 @@ type IngestPayload = {
   error?: unknown
   requestId?: unknown
   metadata?: unknown
+  items?: unknown
+}
+
+type IngestBatchItem = {
+  symbol: string
+  asOf: Date
+  sourceCount: number
+  qualityScore: number
+  payload: Record<string, unknown>
+  citations: MarketContextProviderCitation[]
+  riskFlags: string[]
+  error: string | null
 }
 
 type RunStartPayload = {
@@ -145,15 +203,7 @@ type MarketContextRunStatusPayload = {
 
 const DEFAULT_FUNDAMENTALS_MAX_FRESHNESS_SECONDS = 24 * 60 * 60
 const DEFAULT_NEWS_MAX_FRESHNESS_SECONDS = 5 * 60
-const DEFAULT_FUNDAMENTALS_DISPATCH_COOLDOWN_SECONDS = 30 * 60
-const DEFAULT_NEWS_DISPATCH_COOLDOWN_SECONDS = 2 * 60
-const DEFAULT_FUNDAMENTALS_DISPATCH_STUCK_SECONDS = 45 * 60
-const DEFAULT_NEWS_DISPATCH_STUCK_SECONDS = 10 * 60
-const DEFAULT_AGENT_RUN_TTL_SECONDS = 30 * 60
 const DEFAULT_ALLOWED_SERVICE_ACCOUNT_PREFIX = 'system:serviceaccount:agents:'
-const DEFAULT_AGENT_REPOSITORY = 'proompteng/lab'
-const DEFAULT_AGENT_BASE_REF = 'main'
-const DEFAULT_AGENT_HEAD_PREFIX = 'codex/torghut-market-context'
 const IN_CLUSTER_SERVICE_ACCOUNT_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token'
 const IN_CLUSTER_SERVICE_ACCOUNT_CA_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
 
@@ -172,13 +222,13 @@ const parsePositiveInt = (value: string | undefined, fallback: number) => {
   return parsed
 }
 
-type AgentRunVcsMode = 'read-write' | 'read-only' | 'none'
-
-const parseVcsMode = (value: string | undefined, fallback: AgentRunVcsMode): AgentRunVcsMode => {
+const parseProviderChain = (value: string | undefined, fallback: string[]) => {
   if (!value) return fallback
-  const normalized = value.trim().toLowerCase()
-  if (normalized === 'read-write' || normalized === 'read-only' || normalized === 'none') return normalized
-  return fallback
+  const providers = value
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+  return providers.length > 0 ? providers : fallback
 }
 
 const parseTimestamp = (value: unknown): Date | null => {
@@ -296,75 +346,8 @@ const coerceEvidenceItems = (value: unknown): RunEvidenceItem[] => {
   return items
 }
 
-const KUBERNETES_LABEL_MAX_LENGTH = 63
-const toKubernetesLabelValue = (raw: string, fallback = 'unknown') => {
-  const normalized = raw
-    .trim()
-    .replace(/[^A-Za-z0-9_.-]+/g, '-')
-    .replace(/^[^A-Za-z0-9]+/, '')
-    .replace(/[^A-Za-z0-9]+$/, '')
-  if (!normalized) return fallback
-  const truncated = normalized.slice(0, KUBERNETES_LABEL_MAX_LENGTH).replace(/[^A-Za-z0-9]+$/, '')
-  return truncated || fallback
-}
-
-const toGitBranchSegment = (raw: string, fallback = 'unknown') => {
-  const normalized = raw
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_.-]+/g, '-')
-    .replace(/^[^a-z0-9]+/, '')
-    .replace(/[^a-z0-9]+$/, '')
-  if (!normalized) return fallback
-  return normalized.slice(0, 40).replace(/[^a-z0-9]+$/, '') || fallback
-}
-
-export const buildMarketContextHeadRef = (params: {
-  prefix: string
-  domain: MarketContextProviderDomain
-  symbol: string
-  now: Date
-}) => {
-  const prefix = params.prefix.trim().replace(/\/+$/, '') || DEFAULT_AGENT_HEAD_PREFIX
-  const symbol = toGitBranchSegment(params.symbol, 'symbol')
-  const timestamp = params.now
-    .toISOString()
-    .replace(/[-:TZ.]/g, '')
-    .slice(0, 14)
-  const entropy = randomUUID().slice(0, 8)
-  return `${prefix}/${params.domain}-${symbol}-${timestamp}-${entropy}`
-}
-
-export const buildMarketContextIssueNumber = (params: { domain: MarketContextProviderDomain; symbol: string }) => {
-  const digest = createHash('sha256').update(`${params.domain}:${params.symbol}`).digest('hex').slice(0, 10)
-  const parsed = BigInt(`0x${digest}`)
-  // Keep the value numeric and bounded so downstream tooling that expects an issue-like identifier can parse it.
-  const normalized = (parsed % 900_000_000n) + 100_000_000n
-  return String(normalized)
-}
-
 const resolveSettings = () => {
-  const callbackBaseUrl =
-    process.env.JANGAR_MARKET_CONTEXT_AGENT_CALLBACK_BASE_URL?.trim() || 'http://jangar.jangar.svc.cluster.local'
-  const callbackIngestUrl = `${callbackBaseUrl.replace(/\/+$/, '')}/api/torghut/market-context/ingest`
-  const vcsMode = parseVcsMode(process.env.JANGAR_MARKET_CONTEXT_AGENT_VCS_MODE, 'none')
-  const vcsRefName = process.env.JANGAR_MARKET_CONTEXT_AGENT_VCS_REF_NAME?.trim() || ''
-  const vcsRepository = process.env.JANGAR_MARKET_CONTEXT_AGENT_REPOSITORY?.trim() || DEFAULT_AGENT_REPOSITORY
-  const vcsBaseRef = process.env.JANGAR_MARKET_CONTEXT_AGENT_VCS_BASE_REF?.trim() || DEFAULT_AGENT_BASE_REF
-  const vcsHeadPrefix = process.env.JANGAR_MARKET_CONTEXT_AGENT_VCS_HEAD_PREFIX?.trim() || DEFAULT_AGENT_HEAD_PREFIX
   return {
-    dispatchEnabled: parseBoolean(process.env.JANGAR_MARKET_CONTEXT_AGENT_DISPATCH_ENABLED, true),
-    dispatchNamespace: process.env.JANGAR_MARKET_CONTEXT_AGENT_NAMESPACE?.trim() || 'agents',
-    fundamentalsAgentName:
-      process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_AGENT_NAME?.trim() || 'torghut-fundamentals-agent',
-    newsAgentName: process.env.JANGAR_MARKET_CONTEXT_NEWS_AGENT_NAME?.trim() || 'torghut-news-agent',
-    fundamentalsImplementationSpec:
-      process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_IMPLEMENTATION_SPEC?.trim() ||
-      'torghut-market-context-fundamentals-v1',
-    newsImplementationSpec:
-      process.env.JANGAR_MARKET_CONTEXT_NEWS_IMPLEMENTATION_SPEC?.trim() || 'torghut-market-context-news-v1',
-    runtimeType: process.env.JANGAR_MARKET_CONTEXT_AGENT_RUNTIME_TYPE?.trim() || 'job',
-    runtimeServiceAccount: process.env.JANGAR_MARKET_CONTEXT_AGENT_SERVICE_ACCOUNT?.trim() || '',
     fundamentalsMaxFreshnessSeconds: parsePositiveInt(
       process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_MAX_FRESHNESS_SECONDS,
       DEFAULT_FUNDAMENTALS_MAX_FRESHNESS_SECONDS,
@@ -373,66 +356,28 @@ const resolveSettings = () => {
       process.env.JANGAR_MARKET_CONTEXT_NEWS_MAX_FRESHNESS_SECONDS,
       DEFAULT_NEWS_MAX_FRESHNESS_SECONDS,
     ),
-    fundamentalsDispatchCooldownSeconds: parsePositiveInt(
-      process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_DISPATCH_COOLDOWN_SECONDS,
-      DEFAULT_FUNDAMENTALS_DISPATCH_COOLDOWN_SECONDS,
+    batchRequireOpenSession: parseBoolean(process.env.JANGAR_MARKET_CONTEXT_BATCH_REQUIRE_OPEN_SESSION, true),
+    batchTradingStatusUrl:
+      process.env.JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_URL?.trim() ||
+      'http://torghut.torghut.svc.cluster.local/trading/status',
+    batchTradingStatusTimeoutMs: parsePositiveInt(
+      process.env.JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_TIMEOUT_MS,
+      2000,
     ),
-    newsDispatchCooldownSeconds: parsePositiveInt(
-      process.env.JANGAR_MARKET_CONTEXT_NEWS_DISPATCH_COOLDOWN_SECONDS,
-      DEFAULT_NEWS_DISPATCH_COOLDOWN_SECONDS,
-    ),
-    fundamentalsDispatchStuckSeconds: parsePositiveInt(
-      process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_DISPATCH_STUCK_SECONDS,
-      DEFAULT_FUNDAMENTALS_DISPATCH_STUCK_SECONDS,
-    ),
-    newsDispatchStuckSeconds: parsePositiveInt(
-      process.env.JANGAR_MARKET_CONTEXT_NEWS_DISPATCH_STUCK_SECONDS,
-      DEFAULT_NEWS_DISPATCH_STUCK_SECONDS,
-    ),
-    callbackIngestUrl,
-    agentRunTtlSeconds: parsePositiveInt(
-      process.env.JANGAR_MARKET_CONTEXT_AGENT_TTL_SECONDS,
-      DEFAULT_AGENT_RUN_TTL_SECONDS,
-    ),
-    agentIssueNumber: process.env.JANGAR_MARKET_CONTEXT_AGENT_ISSUE_NUMBER?.trim() || '',
-    vcsMode,
-    vcsRequired: parseBoolean(process.env.JANGAR_MARKET_CONTEXT_AGENT_VCS_REQUIRED, true),
-    vcsRefName,
-    vcsRepository,
-    vcsBaseRef,
-    vcsHeadPrefix,
+    providerChain: parseProviderChain(process.env.JANGAR_MARKET_CONTEXT_PROVIDER_CHAIN, ['codex-spark', 'codex']),
+    providerFailureThreshold: parsePositiveInt(process.env.JANGAR_MARKET_CONTEXT_PROVIDER_FAILURE_THRESHOLD, 3),
+    providerCooldownSeconds: parsePositiveInt(process.env.JANGAR_MARKET_CONTEXT_PROVIDER_COOLDOWN_SECONDS, 900),
   }
 }
 
 const resolveDomainMaxFreshness = (domain: MarketContextProviderDomain, settings: ReturnType<typeof resolveSettings>) =>
   domain === 'fundamentals' ? settings.fundamentalsMaxFreshnessSeconds : settings.newsMaxFreshnessSeconds
 
-const resolveDomainCooldown = (domain: MarketContextProviderDomain, settings: ReturnType<typeof resolveSettings>) =>
-  domain === 'fundamentals' ? settings.fundamentalsDispatchCooldownSeconds : settings.newsDispatchCooldownSeconds
-
-const resolveDomainDispatchStuckThreshold = (
-  domain: MarketContextProviderDomain,
-  settings: ReturnType<typeof resolveSettings>,
-) => (domain === 'fundamentals' ? settings.fundamentalsDispatchStuckSeconds : settings.newsDispatchStuckSeconds)
-
-const resolveAgentName = (domain: MarketContextProviderDomain, settings: ReturnType<typeof resolveSettings>) =>
-  domain === 'fundamentals' ? settings.fundamentalsAgentName : settings.newsAgentName
-
-const resolveImplementationSpec = (domain: MarketContextProviderDomain, settings: ReturnType<typeof resolveSettings>) =>
-  domain === 'fundamentals' ? settings.fundamentalsImplementationSpec : settings.newsImplementationSpec
-
 const resolveFreshnessSeconds = (now: Date, asOf: Date) =>
   Math.max(0, Math.floor((now.getTime() - asOf.getTime()) / 1000))
 
-const buildMissingContext = (params: {
-  domain: MarketContextProviderDomain
-  symbol: string
-  dispatchQueued: boolean
-  dispatchError: string | null
-}) => {
+const buildMissingContext = (params: { domain: MarketContextProviderDomain; symbol: string }) => {
   const riskFlags = [`${params.domain}_missing`]
-  if (params.dispatchQueued) riskFlags.push(`${params.domain}_dispatch_queued`)
-  if (params.dispatchError) riskFlags.push(`${params.domain}_dispatch_error`)
   return {
     asOfUtc: '',
     sourceCount: 0,
@@ -440,7 +385,7 @@ const buildMissingContext = (params: {
     payload: {
       symbol: params.symbol,
       domain: params.domain,
-      provider: 'codex-spark',
+      provider: resolveSettings().providerChain[0] ?? 'codex-spark',
       status: 'missing',
     },
     citations: [] as MarketContextProviderCitation[],
@@ -491,8 +436,11 @@ const readLatestSnapshot = async (params: {
     payload: unknown
     citations: unknown
     risk_flags: unknown
+    provider: string | null
+    run_name: string | null
+    updated_at: unknown
   }>`
-    SELECT symbol, domain, as_of, source_count, quality_score, payload, citations, risk_flags
+    SELECT symbol, domain, as_of, source_count, quality_score, payload, citations, risk_flags, provider, run_name, updated_at
     FROM torghut_market_context_snapshots
     WHERE symbol = ${params.symbol}
       AND domain = ${params.domain}
@@ -514,259 +462,215 @@ const readLatestSnapshot = async (params: {
     payload: coercePayload(row.payload),
     citations: coerceCitations(row.citations),
     riskFlags: coerceRiskFlags(row.risk_flags),
+    provider: parseNonEmptyString(row.provider),
+    runName: parseNonEmptyString(row.run_name),
+    updatedAt: parseTimestamp(row.updated_at),
   }
 }
 
-const readDispatchState = async (params: {
+const readLatestRun = async (params: {
   symbol: string
   domain: MarketContextProviderDomain
-}): Promise<DispatchStateRow | null> => {
+}): Promise<LatestRunRow | null> => {
   const db = await resolveDbWithMigrations()
   if (!db) return null
 
   const result = await sql<{
-    last_dispatched_at: unknown
-    last_run_name: unknown
-    last_status: unknown
-    last_error: unknown
+    symbol: string
+    domain: string
+    provider: string
+    status: string
+    metadata: unknown
+    error: string | null
+    updated_at: Date
+    finished_at: Date | null
   }>`
-    SELECT last_dispatched_at, last_run_name, last_status, last_error
-    FROM torghut_market_context_dispatch_state
-    WHERE symbol = ${params.symbol}
-      AND domain = ${params.domain}
+    SELECT symbol, domain, provider, status, metadata, error, updated_at, finished_at
+    FROM torghut_market_context_runs
+    WHERE domain = ${params.domain}
+      AND symbol IN (${params.symbol}, '*')
+    ORDER BY updated_at DESC
     LIMIT 1
   `.execute(db)
 
   const row = result.rows[0]
   if (!row) return null
+  const domain = asDomain(row.domain)
+  if (!domain) return null
+  return {
+    symbol: row.symbol,
+    domain,
+    provider: row.provider,
+    status: row.status,
+    metadata: coercePayload(row.metadata),
+    error: row.error,
+    updatedAt: row.updated_at,
+    finishedAt: row.finished_at,
+  }
+}
+
+const parseFailureCategory = (value: unknown): MarketContextFailureCategory | null => {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim()
+  if (
+    normalized === 'provider_circuit_open' ||
+    normalized === 'provider_bootstrap_failure' ||
+    normalized === 'provider_attempt_timeout' ||
+    normalized === 'provider_turn_failed' ||
+    normalized === 'payload_validation_failure' ||
+    normalized === 'finalize_callback_failure' ||
+    normalized === 'attempt_budget_exhausted' ||
+    normalized === 'unknown_failure'
+  ) {
+    return normalized
+  }
+  return null
+}
+
+const resolveFailureCategoryFromMetadata = (metadata: Record<string, unknown>): MarketContextFailureCategory | null => {
+  const direct = parseFailureCategory(metadata.failureCategory)
+  if (direct) return direct
+  const attempts = Array.isArray(metadata.providerAttempts) ? metadata.providerAttempts : []
+  for (let index = attempts.length - 1; index >= 0; index -= 1) {
+    const attempt = attempts[index]
+    if (!attempt || typeof attempt !== 'object' || Array.isArray(attempt)) continue
+    const category = parseFailureCategory((attempt as Record<string, unknown>).failureCategory)
+    if (category) return category
+  }
+  return null
+}
+
+export const resolveFailureSignal = (params: {
+  metadata: Record<string, unknown>
+  message?: string | null
+  error?: string | null
+}): { category: MarketContextFailureCategory | null; error: string | null; message: string | null } => {
+  const category = resolveFailureCategoryFromMetadata(params.metadata)
+  const message = parseNonEmptyString(params.message ?? params.error)
+  return {
+    category,
+    error: category ?? message,
+    message,
+  }
+}
+
+const readProviderCircuitState = async (params: {
+  db: MarketContextDb
+  domain: MarketContextProviderDomain
+  provider: string
+  threshold: number
+  cooldownSeconds: number
+  now: Date
+}): Promise<ProviderCircuitState> => {
+  const threshold = Math.max(1, params.threshold)
+  const cooldownSeconds = Math.max(1, params.cooldownSeconds)
+  const result = await sql<{
+    status: string
+    error: string | null
+    updated_at: Date
+  }>`
+    SELECT status, error, updated_at
+    FROM torghut_market_context_runs
+    WHERE domain = ${params.domain}
+      AND provider = ${params.provider}
+      AND status IN ('succeeded', 'partial', 'failed', 'cancelled')
+      AND COALESCE(error, '') <> 'provider_circuit_open'
+    ORDER BY updated_at DESC
+    LIMIT ${threshold};
+  `.execute(params.db)
+
+  return resolveProviderCircuitStateFromRows({
+    provider: params.provider,
+    rows: result.rows.map((row) => ({
+      status: row.status,
+      error: row.error,
+      updatedAt: row.updated_at,
+    })),
+    threshold,
+    cooldownSeconds,
+    now: params.now,
+  })
+}
+
+export const resolveProviderCircuitStateFromRows = (params: {
+  provider: string
+  rows: Array<{ status: string; error: string | null; updatedAt: Date }>
+  threshold: number
+  cooldownSeconds: number
+  now: Date
+}): ProviderCircuitState => {
+  const threshold = Math.max(1, params.threshold)
+  const cooldownSeconds = Math.max(1, params.cooldownSeconds)
+  let consecutiveFailures = 0
+  let lastFailureAt: Date | null = null
+  let lastError: string | null = null
+
+  for (const row of params.rows) {
+    const status = row.status.trim().toLowerCase()
+    if (status === 'succeeded' || status === 'partial') break
+    if (status !== 'failed' && status !== 'cancelled') break
+    consecutiveFailures += 1
+    if (!lastFailureAt) {
+      lastFailureAt = row.updatedAt
+      lastError = parseNonEmptyString(row.error)
+    }
+  }
+
+  let cooldownRemainingSeconds = 0
+  let cooldownOpen = false
+  if (consecutiveFailures >= threshold && lastFailureAt) {
+    const elapsedSeconds = Math.max(0, Math.floor((params.now.getTime() - lastFailureAt.getTime()) / 1000))
+    cooldownRemainingSeconds = Math.max(0, cooldownSeconds - elapsedSeconds)
+    cooldownOpen = cooldownRemainingSeconds > 0
+  }
 
   return {
-    lastDispatchedAt: parseTimestamp(row.last_dispatched_at),
-    lastRunName:
-      typeof row.last_run_name === 'string' && row.last_run_name.trim().length > 0 ? row.last_run_name : null,
-    lastStatus: typeof row.last_status === 'string' && row.last_status.trim().length > 0 ? row.last_status : null,
-    lastError: typeof row.last_error === 'string' && row.last_error.trim().length > 0 ? row.last_error : null,
-  }
-}
-
-const reserveDispatchSlot = async (params: {
-  symbol: string
-  domain: MarketContextProviderDomain
-  now: Date
-  cooldownSeconds: number
-}) => {
-  const db = await resolveDbWithMigrations()
-  if (!db) return false
-
-  const threshold = new Date(params.now.getTime() - params.cooldownSeconds * 1000)
-  const result = await sql<{
-    symbol: string
-  }>`
-    INSERT INTO torghut_market_context_dispatch_state (
-      symbol,
-      domain,
-      last_dispatched_at,
-      last_status,
-      last_error,
-      updated_at
-    )
-    VALUES (${params.symbol}, ${params.domain}, ${params.now}, 'queued', NULL, now())
-    ON CONFLICT (symbol, domain) DO UPDATE
-      SET
-        last_dispatched_at = EXCLUDED.last_dispatched_at,
-        last_status = 'queued',
-        last_error = NULL,
-        updated_at = now()
-    WHERE
-      torghut_market_context_dispatch_state.last_dispatched_at IS NULL OR
-      torghut_market_context_dispatch_state.last_dispatched_at < ${threshold}
-    RETURNING symbol;
-  `.execute(db)
-
-  return result.rows.length > 0
-}
-
-const updateDispatchState = async (params: {
-  symbol: string
-  domain: MarketContextProviderDomain
-  status: string
-  runName: string | null
-  error: string | null
-  now: Date
-}) => {
-  const db = await resolveDbWithMigrations()
-  if (!db) return
-
-  await sql`
-    INSERT INTO torghut_market_context_dispatch_state (
-      symbol,
-      domain,
-      last_dispatched_at,
-      last_run_name,
-      last_status,
-      last_error,
-      updated_at
-    )
-    VALUES (
-      ${params.symbol},
-      ${params.domain},
-      ${params.now},
-      ${params.runName},
-      ${params.status},
-      ${params.error},
-      ${params.now}
-    )
-    ON CONFLICT (symbol, domain) DO UPDATE
-      SET
-        last_dispatched_at = EXCLUDED.last_dispatched_at,
-        last_run_name = EXCLUDED.last_run_name,
-        last_status = EXCLUDED.last_status,
-        last_error = EXCLUDED.last_error,
-        updated_at = EXCLUDED.updated_at;
-  `.execute(db)
-}
-
-export const buildMarketContextAgentRunRuntime = (params: { runtimeType: string; runtimeServiceAccount: string }) => {
-  const runtimeConfig: Record<string, string> = {}
-  if (params.runtimeServiceAccount.trim()) {
-    runtimeConfig.serviceAccount = params.runtimeServiceAccount.trim()
-  }
-  return Object.keys(runtimeConfig).length > 0
-    ? { type: params.runtimeType, config: runtimeConfig }
-    : { type: params.runtimeType }
-}
-
-const dispatchDomainAgentRun = async (params: {
-  domain: MarketContextProviderDomain
-  symbol: string
-  now: Date
-  reason: string
-}): Promise<MarketContextDispatchResult> => {
-  const settings = resolveSettings()
-  const cooldownSeconds = resolveDomainCooldown(params.domain, settings)
-  const reserved = await reserveDispatchSlot({
-    symbol: params.symbol,
-    domain: params.domain,
-    now: params.now,
+    provider: params.provider,
+    consecutiveFailures,
+    threshold,
     cooldownSeconds,
-  })
+    cooldownOpen,
+    cooldownRemainingSeconds,
+    lastFailureAt,
+    lastError,
+  }
+}
 
-  if (!reserved) {
-    recordTorghutMarketContextDispatchAttempt(params.domain, 'cooldown_active')
-    return {
-      attempted: true,
-      dispatched: false,
-      reason: 'dispatch_cooldown_active',
-      runName: null,
-      error: null,
-    }
+const buildDegradedSnapshotMetadata = (params: {
+  domain: MarketContextProviderDomain
+  snapshot: SnapshotRow
+  latestRun: LatestRunRow | null
+  providerChain: string[]
+}) => {
+  const payload = { ...params.snapshot.payload }
+  const riskFlags = new Set(params.snapshot.riskFlags)
+  const preferredProvider = params.providerChain[0] ?? 'codex-spark'
+  payload.provider = params.snapshot.provider ?? payload.provider ?? preferredProvider
+  payload.providerChain = params.providerChain
+  payload.lastSuccessfulAsOfUtc = toIso(params.snapshot.asOf)
+  payload.runName = params.snapshot.runName
+  if (!params.latestRun) {
+    payload.fallbackUsed = payload.provider !== preferredProvider
+    return { payload, riskFlags: Array.from(riskFlags) }
   }
 
-  const windowBucket = Math.floor(params.now.getTime() / (cooldownSeconds * 1000))
-  const idempotencyKey = `torghut-market-context:${params.domain}:${params.symbol}:${windowBucket}`
-  const requestId = randomUUID()
-  const runParameters: Record<string, unknown> = {
-    symbol: params.symbol,
-    domain: params.domain,
-    asOfUtc: toIso(params.now),
-    reason: params.reason,
-    callbackUrl: settings.callbackIngestUrl,
-    requestId,
-    issueNumber:
-      settings.agentIssueNumber || buildMarketContextIssueNumber({ domain: params.domain, symbol: params.symbol }),
+  payload.lastRunStatus = params.latestRun.status
+  payload.lastRunProvider = params.latestRun.provider
+  payload.lastRunUpdatedAt = toIso(params.latestRun.updatedAt)
+  payload.lastRunError = params.latestRun.error
+  payload.lastFailureCategory = resolveFailureCategoryFromMetadata(params.latestRun.metadata)
+  payload.providerCircuit = coercePayload(params.latestRun.metadata.providerCircuit)
+  payload.fallbackUsed = payload.provider !== preferredProvider
+
+  if (params.latestRun.status === 'failed' || params.latestRun.status === 'cancelled') {
+    payload.generationFailed = true
+    payload.degradedReason =
+      payload.lastFailureCategory ?? params.latestRun.error ?? `${params.domain}_generation_failed_all_models`
+    riskFlags.add(`${params.domain}_generation_failed_all_models`)
+    riskFlags.add('market_context_degraded_last_good')
   }
 
-  const runSpec: Record<string, unknown> = {
-    agentRef: { name: resolveAgentName(params.domain, settings) },
-    implementationSpecRef: { name: resolveImplementationSpec(params.domain, settings) },
-    parameters: runParameters,
-    runtime: buildMarketContextAgentRunRuntime({
-      runtimeType: settings.runtimeType,
-      runtimeServiceAccount: settings.runtimeServiceAccount,
-    }),
-    ttlSecondsAfterFinished: settings.agentRunTtlSeconds,
-    idempotencyKey,
-  }
-
-  if (settings.vcsMode !== 'none' && settings.vcsRefName && settings.vcsRepository) {
-    runParameters.repository = settings.vcsRepository
-    runParameters.base = settings.vcsBaseRef
-    runParameters.head = buildMarketContextHeadRef({
-      prefix: settings.vcsHeadPrefix,
-      domain: params.domain,
-      symbol: params.symbol,
-      now: params.now,
-    })
-    runSpec.vcsRef = { name: settings.vcsRefName }
-    runSpec.vcsPolicy = {
-      required: settings.vcsRequired,
-      mode: settings.vcsMode,
-    }
-  }
-
-  const resource: Record<string, unknown> = {
-    apiVersion: 'agents.proompteng.ai/v1alpha1',
-    kind: 'AgentRun',
-    metadata: {
-      generateName: `torghut-market-context-${params.domain}-`,
-      namespace: settings.dispatchNamespace,
-      labels: {
-        'torghut.proompteng.ai/symbol': toKubernetesLabelValue(params.symbol),
-        'torghut.proompteng.ai/domain': params.domain,
-        'jangar.proompteng.ai/source': 'torghut-market-context',
-      },
-    },
-    spec: runSpec,
-  }
-
-  try {
-    const kube = createKubernetesClient()
-    const applied = await kube.apply(resource)
-    const metadata =
-      applied.metadata && typeof applied.metadata === 'object'
-        ? (applied.metadata as Record<string, unknown>)
-        : ({} as Record<string, unknown>)
-    const runName = typeof metadata.name === 'string' ? metadata.name : null
-
-    await updateDispatchState({
-      symbol: params.symbol,
-      domain: params.domain,
-      status: 'submitted',
-      runName,
-      error: null,
-      now: params.now,
-    })
-
-    recordTorghutMarketContextDispatchAttempt(params.domain, 'submitted')
-
-    return {
-      attempted: true,
-      dispatched: true,
-      reason: null,
-      runName,
-      error: null,
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    await updateDispatchState({
-      symbol: params.symbol,
-      domain: params.domain,
-      status: 'dispatch_error',
-      runName: null,
-      error: message.slice(0, 500),
-      now: params.now,
-    })
-
-    recordTorghutMarketContextDispatchAttempt(params.domain, 'dispatch_error')
-
-    return {
-      attempted: true,
-      dispatched: false,
-      reason: 'dispatch_failed',
-      runName: null,
-      error: message,
-    }
-  }
+  return { payload, riskFlags: Array.from(riskFlags) }
 }
 
 export const getMarketContextProviderResult = async (params: {
@@ -778,25 +682,34 @@ export const getMarketContextProviderResult = async (params: {
   const settings = resolveSettings()
   const maxFreshnessSeconds = resolveDomainMaxFreshness(params.domain, settings)
   const db = await resolveDbWithMigrations()
+  const latestRun = await readLatestRun({ symbol, domain: params.domain })
 
   if (!db) {
+    const riskFlags = [`${params.domain}_missing`, `${params.domain}_database_unavailable`]
+    if (latestRun?.status === 'failed' || latestRun?.status === 'cancelled') {
+      riskFlags.push(`${params.domain}_generation_failed_all_models`, 'market_context_degraded_last_good')
+    }
     return {
       symbol,
       domain: params.domain,
       snapshotState: 'missing',
       context: {
-        ...buildMissingContext({
-          domain: params.domain,
-          symbol,
-          dispatchQueued: false,
-          dispatchError: null,
-        }),
-        riskFlags: [`${params.domain}_missing`, `${params.domain}_database_unavailable`],
+        ...buildMissingContext({ domain: params.domain, symbol }),
+        payload: {
+          ...buildMissingContext({ domain: params.domain, symbol }).payload,
+          providerChain: settings.providerChain,
+          lastRunStatus: latestRun?.status ?? null,
+          lastRunProvider: latestRun?.provider ?? null,
+          lastRunError: latestRun?.error ?? null,
+          lastFailureCategory: latestRun ? resolveFailureCategoryFromMetadata(latestRun.metadata) : null,
+          providerCircuit: latestRun ? coercePayload(latestRun.metadata.providerCircuit) : {},
+        },
+        riskFlags,
       },
       dispatch: {
         attempted: false,
         dispatched: false,
-        reason: 'database_unavailable',
+        reason: null,
         runName: null,
         error: null,
       },
@@ -804,100 +717,52 @@ export const getMarketContextProviderResult = async (params: {
   }
 
   const snapshot = await readLatestSnapshot({ symbol, domain: params.domain })
-  const dispatchState = await readDispatchState({ symbol, domain: params.domain })
-  const dispatchAgeSeconds = dispatchState?.lastDispatchedAt
-    ? resolveFreshnessSeconds(now, dispatchState.lastDispatchedAt)
-    : null
-  const dispatchStuckThresholdSeconds = resolveDomainDispatchStuckThreshold(params.domain, settings)
-  const dispatchStateStuck =
-    dispatchState?.lastStatus === 'submitted' &&
-    dispatchAgeSeconds !== null &&
-    dispatchAgeSeconds >= dispatchStuckThresholdSeconds
-
-  if (dispatchStateStuck) {
-    recordTorghutMarketContextDispatchStuck(params.domain, 'submitted')
-  }
-
   if (!snapshot) {
-    const dispatch = settings.dispatchEnabled
-      ? await dispatchDomainAgentRun({
-          domain: params.domain,
-          symbol,
-          now,
-          reason: 'missing_snapshot',
-        })
-      : {
-          attempted: false,
-          dispatched: false,
-          reason: 'dispatch_disabled',
-          runName: null,
-          error: null,
-        }
-
-    if (!settings.dispatchEnabled) {
-      recordTorghutMarketContextDispatchAttempt(params.domain, 'dispatch_disabled')
+    const missingContext = buildMissingContext({ domain: params.domain, symbol })
+    const riskFlags = new Set(missingContext.riskFlags)
+    if (latestRun?.status === 'failed' || latestRun?.status === 'cancelled') {
+      riskFlags.add(`${params.domain}_generation_failed_all_models`)
+      riskFlags.add('market_context_degraded_last_good')
     }
-
-    const effectiveDispatch = {
-      ...dispatch,
-      runName: dispatch.runName ?? dispatchState?.lastRunName ?? null,
-      error: dispatch.error ?? dispatchState?.lastError ?? null,
-    }
-
-    const context = buildMissingContext({
-      domain: params.domain,
-      symbol,
-      dispatchQueued: effectiveDispatch.dispatched || dispatchState?.lastStatus === 'submitted',
-      dispatchError: effectiveDispatch.error,
-    })
-    if (dispatchStateStuck) {
-      context.riskFlags.push(`${params.domain}_dispatch_stuck`)
-    }
-
     return {
       symbol,
       domain: params.domain,
       snapshotState: 'missing',
-      context,
-      dispatch: effectiveDispatch,
+      context: {
+        ...missingContext,
+        payload: {
+          ...missingContext.payload,
+          providerChain: settings.providerChain,
+          lastRunStatus: latestRun?.status ?? null,
+          lastRunProvider: latestRun?.provider ?? null,
+          lastRunError: latestRun?.error ?? null,
+          lastFailureCategory: latestRun ? resolveFailureCategoryFromMetadata(latestRun.metadata) : null,
+          providerCircuit: latestRun ? coercePayload(latestRun.metadata.providerCircuit) : {},
+        },
+        riskFlags: Array.from(riskFlags),
+      },
+      dispatch: {
+        attempted: false,
+        dispatched: false,
+        reason: null,
+        runName: null,
+        error: null,
+      },
     }
   }
 
   const freshnessSeconds = resolveFreshnessSeconds(now, snapshot.asOf)
   const isStale = freshnessSeconds > maxFreshnessSeconds
 
-  const dispatch =
-    settings.dispatchEnabled && isStale
-      ? await dispatchDomainAgentRun({
-          domain: params.domain,
-          symbol,
-          now,
-          reason: 'stale_snapshot',
-        })
-      : {
-          attempted: false,
-          dispatched: false,
-          reason: isStale ? 'dispatch_disabled' : null,
-          runName: null,
-          error: null,
-        }
-
-  if (isStale && !settings.dispatchEnabled) {
-    recordTorghutMarketContextDispatchAttempt(params.domain, 'dispatch_disabled')
-  }
-
-  const effectiveDispatch = {
-    ...dispatch,
-    runName: dispatch.runName ?? dispatchState?.lastRunName ?? null,
-    error: dispatch.error ?? dispatchState?.lastError ?? null,
-  }
-
   const riskFlags = new Set(snapshot.riskFlags)
   if (isStale) riskFlags.add(`${params.domain}_stale`)
-  if (effectiveDispatch.dispatched || dispatchState?.lastStatus === 'submitted')
-    riskFlags.add(`${params.domain}_dispatch_queued`)
-  if (effectiveDispatch.error) riskFlags.add(`${params.domain}_dispatch_error`)
-  if (dispatchStateStuck) riskFlags.add(`${params.domain}_dispatch_stuck`)
+  const degradedSnapshot = buildDegradedSnapshotMetadata({
+    domain: params.domain,
+    snapshot,
+    latestRun,
+    providerChain: settings.providerChain,
+  })
+  degradedSnapshot.riskFlags.forEach((flag) => riskFlags.add(flag))
 
   return {
     symbol,
@@ -907,11 +772,17 @@ export const getMarketContextProviderResult = async (params: {
       asOfUtc: toIso(snapshot.asOf),
       sourceCount: snapshot.sourceCount,
       qualityScore: snapshot.qualityScore,
-      payload: snapshot.payload,
+      payload: degradedSnapshot.payload,
       citations: snapshot.citations,
       riskFlags: Array.from(riskFlags),
     },
-    dispatch: effectiveDispatch,
+    dispatch: {
+      attempted: false,
+      dispatched: false,
+      reason: null,
+      runName: null,
+      error: null,
+    },
   }
 }
 
@@ -1085,6 +956,59 @@ export const startMarketContextProviderRun = async (input: RunStartPayload) => {
   const metadata = coercePayload(input.metadata)
   const status = coerceLifecycleStatus('started', 'started')
   const now = new Date()
+  const settings = resolveSettings()
+
+  if (settings.providerFailureThreshold > 0 && settings.providerCooldownSeconds > 0) {
+    const circuitState = await readProviderCircuitState({
+      db,
+      domain,
+      provider,
+      threshold: settings.providerFailureThreshold,
+      cooldownSeconds: settings.providerCooldownSeconds,
+      now,
+    })
+    if (circuitState.cooldownOpen) {
+      await upsertRunLifecycle({
+        db,
+        requestId,
+        symbol,
+        domain,
+        runName,
+        provider,
+        reason,
+        status: 'cancelled',
+        error: 'provider_circuit_open',
+        metadata: {
+          ...metadata,
+          failureCategory: 'provider_circuit_open',
+          providerCircuit: {
+            consecutiveFailures: circuitState.consecutiveFailures,
+            threshold: circuitState.threshold,
+            cooldownSeconds: circuitState.cooldownSeconds,
+            cooldownRemainingSeconds: circuitState.cooldownRemainingSeconds,
+            lastFailureAt: circuitState.lastFailureAt ? toIso(circuitState.lastFailureAt) : null,
+            lastError: circuitState.lastError,
+          },
+        },
+        now,
+      })
+      throw new MarketContextRunStartRejectedError({
+        message: `provider circuit open for ${provider}`,
+        statusCode: 409,
+        errorCode: 'provider_circuit_open',
+        details: {
+          domain,
+          provider,
+          consecutiveFailures: circuitState.consecutiveFailures,
+          threshold: circuitState.threshold,
+          cooldownSeconds: circuitState.cooldownSeconds,
+          cooldownRemainingSeconds: circuitState.cooldownRemainingSeconds,
+          lastFailureAt: circuitState.lastFailureAt ? toIso(circuitState.lastFailureAt) : null,
+          lastError: circuitState.lastError,
+        },
+      })
+    }
+  }
 
   await upsertRunLifecycle({
     db,
@@ -1135,7 +1059,8 @@ export const recordMarketContextProviderRunProgress = async (input: RunProgressP
   const now = new Date()
 
   const context = await loadRunContext({ requestId })
-  const runError = status === 'failed' ? message : null
+  const failureSignal = status === 'failed' ? resolveFailureSignal({ metadata, message }) : null
+  const runError = failureSignal?.error ?? null
   const finishedAt = isLifecycleStatusTerminal(status) ? now : null
 
   await sql`
@@ -1358,12 +1283,453 @@ export const getMarketContextProviderRunStatus = async (
   }
 }
 
+const upsertSnapshotFromIngest = async (params: {
+  trx: MarketContextDb
+  symbol: string
+  domain: MarketContextProviderDomain
+  asOf: Date
+  sourceCount: number
+  qualityScore: number
+  payload: Record<string, unknown>
+  citations: MarketContextProviderCitation[]
+  riskFlags: string[]
+  provider: string
+  runName: string | null
+  now: Date
+}) => {
+  const citationsValue = sql`${JSON.stringify(params.citations)}::jsonb` as unknown as MarketContextProviderCitation[]
+  await params.trx
+    .insertInto('torghut_market_context_snapshots')
+    .values({
+      symbol: params.symbol,
+      domain: params.domain,
+      as_of: params.asOf,
+      source_count: params.sourceCount,
+      quality_score: params.qualityScore,
+      payload: params.payload,
+      citations: citationsValue,
+      risk_flags: params.riskFlags,
+      provider: params.provider,
+      run_name: params.runName,
+      updated_at: params.now,
+    })
+    .onConflict((conflict) =>
+      conflict
+        .columns(['symbol', 'domain'])
+        .doUpdateSet({
+          as_of: params.asOf,
+          source_count: params.sourceCount,
+          quality_score: params.qualityScore,
+          payload: params.payload,
+          citations: citationsValue,
+          risk_flags: params.riskFlags,
+          provider: params.provider,
+          run_name: params.runName,
+          updated_at: params.now,
+        })
+        .where('torghut_market_context_snapshots.as_of', '<=', params.asOf),
+    )
+    .execute()
+}
+
+const upsertRunLifecycleFromIngest = async (params: {
+  trx: MarketContextDb
+  requestId: string
+  symbol: string
+  domain: MarketContextProviderDomain
+  runName: string | null
+  provider: string
+  lifecycleStatus: string
+  metadata: Record<string, unknown>
+  runError: string | null
+  now: Date
+}) => {
+  const finishedAt = isLifecycleStatusTerminal(params.lifecycleStatus) ? params.now : null
+  await params.trx
+    .insertInto('torghut_market_context_runs')
+    .values({
+      request_id: params.requestId,
+      symbol: params.symbol,
+      domain: params.domain,
+      run_name: params.runName,
+      provider: params.provider,
+      reason: null,
+      status: params.lifecycleStatus,
+      metadata: params.metadata,
+      error: params.runError,
+      started_at: params.now,
+      last_heartbeat_at: params.now,
+      finished_at: finishedAt,
+      updated_at: params.now,
+    })
+    .onConflict((conflict) =>
+      conflict.columns(['request_id']).doUpdateSet({
+        symbol: params.symbol,
+        domain: params.domain,
+        run_name: params.runName,
+        provider: params.provider,
+        status: params.lifecycleStatus,
+        metadata: sql`torghut_market_context_runs.metadata || ${params.metadata}`,
+        error: params.runError,
+        last_heartbeat_at: params.now,
+        finished_at: finishedAt,
+        updated_at: params.now,
+      }),
+    )
+    .execute()
+}
+
+const upsertFinalizeEventFromIngest = async (params: {
+  trx: MarketContextDb
+  requestId: string
+  now: Date
+  payload: Record<string, unknown>
+}) => {
+  await params.trx
+    .insertInto('torghut_market_context_run_events')
+    .values({
+      request_id: params.requestId,
+      seq: Math.max(1, Math.floor(params.now.getTime() / 1000)),
+      event_type: 'finalize',
+      payload: params.payload,
+    })
+    .onConflict((conflict) =>
+      conflict.columns(['request_id', 'seq']).doUpdateSet({
+        event_type: 'finalize',
+        payload: params.payload,
+      }),
+    )
+    .execute()
+}
+
+const coerceBatchIngestItems = (input: IngestPayload): IngestBatchItem[] | null => {
+  if (!Array.isArray(input.items)) return null
+  if (input.items.length === 0) throw new Error('items must contain at least one symbol entry')
+
+  const defaultAsOf = parseTimestamp(input.asOfUtc ?? input.asOf ?? input.publishedAt)
+
+  return input.items.map((row, index) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      throw new Error(`items[${index}] must be an object`)
+    }
+    const entry = row as Record<string, unknown>
+    const symbolRaw = parseNonEmptyString(entry.symbol)
+    if (!symbolRaw) throw new Error(`items[${index}].symbol is required`)
+    const symbol = normalizeTorghutSymbol(symbolRaw)
+    if (!symbol) throw new Error(`items[${index}].symbol is invalid`)
+
+    const asOf = parseTimestamp(entry.asOfUtc ?? entry.asOf) ?? defaultAsOf
+    if (!asOf) {
+      throw new Error(`items[${index}].asOfUtc is required and must be a valid timestamp`)
+    }
+
+    const sourceCountRaw = parseNumber(entry.sourceCount ?? entry.itemCount)
+    if (sourceCountRaw === null || !Number.isInteger(sourceCountRaw) || sourceCountRaw < 0) {
+      throw new Error(`items[${index}].sourceCount must be a non-negative integer`)
+    }
+
+    const qualityScoreRaw = parseNumber(entry.qualityScore)
+    if (qualityScoreRaw === null || qualityScoreRaw < 0 || qualityScoreRaw > 1) {
+      throw new Error(`items[${index}].qualityScore must be a number between 0 and 1`)
+    }
+
+    const payloadCandidate = entry.payload ?? entry.context
+    if (!payloadCandidate || typeof payloadCandidate !== 'object' || Array.isArray(payloadCandidate)) {
+      throw new Error(`items[${index}].payload must be an object`)
+    }
+
+    if (entry.citations !== undefined && !Array.isArray(entry.citations)) {
+      throw new Error(`items[${index}].citations must be an array`)
+    }
+    const citations = (entry.citations ?? []) as unknown[]
+    const normalizedCitations: MarketContextProviderCitation[] = citations.map((citation, citationIndex) => {
+      if (!citation || typeof citation !== 'object' || Array.isArray(citation)) {
+        throw new Error(`items[${index}].citations[${citationIndex}] must be an object`)
+      }
+      const citationRow = citation as Record<string, unknown>
+      const source = parseNonEmptyString(citationRow.source)
+      if (!source) {
+        throw new Error(`items[${index}].citations[${citationIndex}].source is required`)
+      }
+      const publishedAt = parseTimestamp(citationRow.publishedAt)
+      if (!publishedAt) {
+        throw new Error(`items[${index}].citations[${citationIndex}].publishedAt must be a valid timestamp`)
+      }
+      const rawUrl = citationRow.url
+      if (rawUrl !== undefined && rawUrl !== null && typeof rawUrl !== 'string') {
+        throw new Error(`items[${index}].citations[${citationIndex}].url must be a string or null`)
+      }
+      return {
+        source,
+        publishedAt: toIso(publishedAt),
+        url: typeof rawUrl === 'string' && rawUrl.trim().length > 0 ? rawUrl.trim() : null,
+      }
+    })
+
+    if (entry.riskFlags !== undefined && !Array.isArray(entry.riskFlags)) {
+      throw new Error(`items[${index}].riskFlags must be an array`)
+    }
+    const riskFlags = (entry.riskFlags ?? []) as unknown[]
+    const normalizedRiskFlags = riskFlags.map((flag, flagIndex) => {
+      const normalized = parseNonEmptyString(flag)
+      if (!normalized) {
+        throw new Error(`items[${index}].riskFlags[${flagIndex}] must be a non-empty string`)
+      }
+      return normalized
+    })
+
+    const rawError = entry.error
+    if (rawError !== undefined && rawError !== null && typeof rawError !== 'string') {
+      throw new Error(`items[${index}].error must be a string when provided`)
+    }
+    const error = parseNonEmptyString(rawError)
+
+    return {
+      symbol,
+      asOf,
+      sourceCount: sourceCountRaw,
+      qualityScore: qualityScoreRaw,
+      payload: payloadCandidate as Record<string, unknown>,
+      citations: normalizedCitations,
+      riskFlags: normalizedRiskFlags,
+      error,
+    }
+  })
+}
+
+const parseMarketOpenValue = (value: unknown): boolean | null => {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') {
+    if (value === 1) return true
+    if (value === 0) return false
+    return null
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (['true', '1', 'yes', 'on', 'open'].includes(normalized)) return true
+    if (['false', '0', 'no', 'off', 'closed'].includes(normalized)) return false
+  }
+  return null
+}
+
+const resolveMarketSessionOpenFromPayload = (value: unknown): boolean | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const row = value as Record<string, unknown>
+  const direct = parseMarketOpenValue(row.market_session_open)
+  if (direct !== null) return direct
+  const continuity =
+    row.signal_continuity && typeof row.signal_continuity === 'object' && !Array.isArray(row.signal_continuity)
+      ? (row.signal_continuity as Record<string, unknown>)
+      : null
+  if (!continuity) return null
+  return parseMarketOpenValue(continuity.market_session_open)
+}
+
+const resolveTradingSessionOpen = async (settings: ReturnType<typeof resolveSettings>): Promise<boolean | null> => {
+  const url = settings.batchTradingStatusUrl.trim()
+  if (!url) return null
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), settings.batchTradingStatusTimeoutMs)
+  try {
+    const response = await fetch(url, {
+      headers: { accept: 'application/json' },
+      signal: controller.signal,
+    })
+    if (!response.ok) return null
+    const payload = (await response.json().catch(() => null)) as unknown
+    return resolveMarketSessionOpenFromPayload(payload)
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 export const ingestMarketContextProviderResult = async (input: IngestPayload) => {
   const db = await resolveDbWithMigrations()
   if (!db) throw new Error('DATABASE_URL is not configured')
 
+  const settings = resolveSettings()
   const domain = asDomain(input.domain)
   if (!domain) throw new Error('domain must be fundamentals or news')
+
+  const provider =
+    typeof input.provider === 'string' && input.provider.trim().length > 0 ? input.provider.trim() : 'codex-spark'
+  const runName = typeof input.runName === 'string' && input.runName.trim().length > 0 ? input.runName.trim() : null
+  const runStatus = coerceRunStatus(input.runStatus)
+  const lifecycleStatus = coerceLifecycleStatus(input.runStatus, runStatus)
+  const requestId = parseNonEmptyString(input.requestId) ?? randomUUID()
+  const metadata = coercePayload(input.metadata)
+  const failureSignal =
+    lifecycleStatus === 'failed' || lifecycleStatus === 'cancelled'
+      ? resolveFailureSignal({ metadata, error: parseNonEmptyString(input.error) })
+      : null
+  const runError = failureSignal?.error ?? null
+  const now = new Date()
+  const batchStartMs = Date.now()
+
+  const batchItems = coerceBatchIngestItems(input)
+  if (batchItems) {
+    if (settings.batchRequireOpenSession) {
+      const marketOpen = await resolveTradingSessionOpen(settings)
+      if (marketOpen === false) {
+        await executeDbTransaction(db, async (trx) => {
+          await upsertRunLifecycleFromIngest({
+            trx,
+            requestId,
+            symbol: '*',
+            domain,
+            runName,
+            provider,
+            lifecycleStatus: 'cancelled',
+            metadata: {
+              ...metadata,
+              batch: {
+                processedSymbols: 0,
+                updatedSymbols: 0,
+                failedSymbols: 0,
+              },
+              skipped: 'market_closed',
+            },
+            runError: null,
+            now,
+          })
+
+          await upsertFinalizeEventFromIngest({
+            trx,
+            requestId,
+            now,
+            payload: {
+              runStatus: 'cancelled',
+              batch: {
+                processedSymbols: 0,
+                updatedSymbols: 0,
+                failedSymbols: 0,
+              },
+              skipped: 'market_closed',
+              metadata,
+            },
+          })
+        })
+
+        recordTorghutMarketContextBatchRun({ domain, outcome: 'skipped_market_closed' })
+        recordTorghutMarketContextBatchRunDurationMs(Date.now() - batchStartMs, { domain })
+        recordTorghutMarketContextBatchRunSymbols(0, { domain, category: 'processed' })
+        recordTorghutMarketContextBatchRunSymbols(0, { domain, category: 'updated' })
+        recordTorghutMarketContextBatchRunSymbols(0, { domain, category: 'failed' })
+
+        return {
+          ok: true,
+          domain,
+          runStatus,
+          requestId,
+          batch: {
+            processedSymbols: 0,
+            updatedSymbols: 0,
+            failedSymbols: 0,
+          },
+          skipped: 'market_closed',
+        }
+      }
+    }
+
+    const shouldPersistBatchSnapshot = runStatus === 'succeeded' || runStatus === 'partial'
+    let processedSymbols = 0
+    let updatedSymbols = 0
+    let failedSymbols = 0
+    const freshnessLagsSeconds: number[] = []
+
+    await executeDbTransaction(db, async (trx) => {
+      for (const item of batchItems) {
+        processedSymbols += 1
+        const itemShouldPersist = shouldPersistBatchSnapshot && !item.error
+
+        if (itemShouldPersist) {
+          await upsertSnapshotFromIngest({
+            trx,
+            symbol: item.symbol,
+            domain,
+            asOf: item.asOf,
+            sourceCount: item.sourceCount,
+            qualityScore: item.qualityScore,
+            payload: item.payload,
+            citations: item.citations,
+            riskFlags: item.riskFlags,
+            provider,
+            runName,
+            now,
+          })
+          updatedSymbols += 1
+          freshnessLagsSeconds.push(resolveFreshnessSeconds(now, item.asOf))
+        } else {
+          failedSymbols += 1
+        }
+      }
+
+      await upsertRunLifecycleFromIngest({
+        trx,
+        requestId,
+        symbol: '*',
+        domain,
+        runName,
+        provider,
+        lifecycleStatus,
+        metadata: {
+          ...metadata,
+          batch: {
+            processedSymbols,
+            updatedSymbols,
+            failedSymbols,
+          },
+        },
+        runError,
+        now,
+      })
+
+      await upsertFinalizeEventFromIngest({
+        trx,
+        requestId,
+        now,
+        payload: {
+          runStatus: lifecycleStatus,
+          batch: {
+            processedSymbols,
+            updatedSymbols,
+            failedSymbols,
+          },
+          metadata,
+        },
+      })
+    })
+
+    if (updatedSymbols > 0) {
+      clearMarketContextCache()
+    }
+
+    const outcome: 'succeeded' | 'partial' | 'failed' =
+      failedSymbols === 0 ? 'succeeded' : updatedSymbols > 0 ? 'partial' : 'failed'
+    recordTorghutMarketContextBatchRun({ domain, outcome })
+    recordTorghutMarketContextBatchRunDurationMs(Date.now() - batchStartMs, { domain })
+    recordTorghutMarketContextBatchRunSymbols(processedSymbols, { domain, category: 'processed' })
+    recordTorghutMarketContextBatchRunSymbols(updatedSymbols, { domain, category: 'updated' })
+    recordTorghutMarketContextBatchRunSymbols(failedSymbols, { domain, category: 'failed' })
+    for (const lagSeconds of freshnessLagsSeconds) {
+      recordTorghutMarketContextBatchFreshnessLagSeconds(lagSeconds, { domain })
+    }
+
+    return {
+      ok: true,
+      domain,
+      runStatus,
+      requestId,
+      batch: {
+        processedSymbols,
+        updatedSymbols,
+        failedSymbols,
+      },
+    }
+  }
 
   const symbolRaw = typeof input.symbol === 'string' ? input.symbol.trim() : ''
   if (!symbolRaw) throw new Error('symbol is required')
@@ -1374,139 +1740,52 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
   const qualityScore = coerceQualityScore(input.qualityScore)
   const payload = coercePayload(input.payload ?? input.context)
   const citations = coerceCitations(input.citations)
-  const citationsValue = sql`${JSON.stringify(citations)}::jsonb` as unknown as MarketContextProviderCitation[]
   const riskFlags = coerceRiskFlags(input.riskFlags)
-  const provider =
-    typeof input.provider === 'string' && input.provider.trim().length > 0 ? input.provider.trim() : 'codex-spark'
-  const runName = typeof input.runName === 'string' && input.runName.trim().length > 0 ? input.runName.trim() : null
-  const runStatus = coerceRunStatus(input.runStatus)
-  const lifecycleStatus = coerceLifecycleStatus(input.runStatus, runStatus)
-  const runError = typeof input.error === 'string' && input.error.trim().length > 0 ? input.error.trim() : null
-  const requestId = parseNonEmptyString(input.requestId) ?? randomUUID()
-  const metadata = coercePayload(input.metadata)
-  const now = new Date()
-
   const shouldPersistSnapshot = runStatus === 'succeeded' || runStatus === 'partial'
 
   await executeDbTransaction(db, async (trx) => {
     if (shouldPersistSnapshot) {
-      await trx
-        .insertInto('torghut_market_context_snapshots')
-        .values({
-          symbol,
-          domain,
-          as_of: asOf,
-          source_count: sourceCount,
-          quality_score: qualityScore,
-          payload,
-          citations: citationsValue,
-          risk_flags: riskFlags,
-          provider,
-          run_name: runName,
-          updated_at: now,
-        })
-        .onConflict((conflict) =>
-          conflict
-            .columns(['symbol', 'domain'])
-            .doUpdateSet({
-              as_of: asOf,
-              source_count: sourceCount,
-              quality_score: qualityScore,
-              payload,
-              citations: citationsValue,
-              risk_flags: riskFlags,
-              provider,
-              run_name: runName,
-              updated_at: now,
-            })
-            .where('torghut_market_context_snapshots.as_of', '<=', asOf),
-        )
-        .execute()
+      await upsertSnapshotFromIngest({
+        trx,
+        symbol,
+        domain,
+        asOf,
+        sourceCount,
+        qualityScore,
+        payload,
+        citations,
+        riskFlags,
+        provider,
+        runName,
+        now,
+      })
     }
 
-    await trx
-      .insertInto('torghut_market_context_dispatch_state')
-      .values({
-        symbol,
-        domain,
-        last_dispatched_at: now,
-        last_run_name: runName,
-        last_status: runStatus,
-        last_error: runError,
-        updated_at: now,
-      })
-      .onConflict((conflict) =>
-        conflict.columns(['symbol', 'domain']).doUpdateSet({
-          last_dispatched_at: now,
-          last_run_name: runName,
-          last_status: runStatus,
-          last_error: runError,
-          updated_at: now,
-        }),
-      )
-      .execute()
+    await upsertRunLifecycleFromIngest({
+      trx,
+      requestId,
+      symbol,
+      domain,
+      runName,
+      provider,
+      lifecycleStatus,
+      metadata,
+      runError,
+      now,
+    })
 
-    const finishedAt = isLifecycleStatusTerminal(lifecycleStatus) ? now : null
-    await trx
-      .insertInto('torghut_market_context_runs')
-      .values({
-        request_id: requestId,
-        symbol,
-        domain,
-        run_name: runName,
-        provider,
-        reason: null,
-        status: lifecycleStatus,
+    await upsertFinalizeEventFromIngest({
+      trx,
+      requestId,
+      now,
+      payload: {
+        runStatus: lifecycleStatus,
+        sourceCount,
+        qualityScore,
+        shouldPersistSnapshot,
         metadata,
-        error: runError,
-        started_at: now,
-        last_heartbeat_at: now,
-        finished_at: finishedAt,
-        updated_at: now,
-      })
-      .onConflict((conflict) =>
-        conflict.columns(['request_id']).doUpdateSet({
-          symbol,
-          domain,
-          run_name: runName,
-          provider,
-          status: lifecycleStatus,
-          metadata,
-          error: runError,
-          last_heartbeat_at: now,
-          finished_at: finishedAt,
-          updated_at: now,
-        }),
-      )
-      .execute()
-
-    await trx
-      .insertInto('torghut_market_context_run_events')
-      .values({
-        request_id: requestId,
-        seq: Math.max(1, Math.floor(now.getTime() / 1000)),
-        event_type: 'finalize',
-        payload: {
-          runStatus: lifecycleStatus,
-          sourceCount,
-          qualityScore,
-          shouldPersistSnapshot,
-          metadata,
-        },
-      })
-      .onConflict((conflict) =>
-        conflict.columns(['request_id', 'seq']).doUpdateSet({
-          event_type: 'finalize',
-          payload: {
-            runStatus: lifecycleStatus,
-            sourceCount,
-            qualityScore,
-            shouldPersistSnapshot,
-            metadata,
-          },
-        }),
-      )
-      .execute()
+      },
+    })
   })
 
   if (shouldPersistSnapshot) {

@@ -191,7 +191,9 @@ type WorkloadVolume struct {
 }
 
 type AgentRunStatus struct {
-	Phase string `json:"phase,omitempty"`
+	Phase   string `json:"phase,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+	Message string `json:"message,omitempty"`
 	// +kubebuilder:pruning:PreserveUnknownFields
 	RuntimeRef map[string]apiextensionsv1.JSON `json:"runtimeRef,omitempty"`
 	Workflow   *WorkflowStatus                 `json:"workflow,omitempty"`

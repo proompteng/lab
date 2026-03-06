@@ -19,6 +19,9 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
 - **TorghutUniverseFailSafeBlocksDuringMarketHours**: Authoritative Jangar universe fail-safe blocks trading/autonomy.
 - **TorghutWSDesiredSymbolsFetchFailing**: WS forwarder is stuck on cached symbols (desired-symbol polling degraded) for 15 minutes in market hours.
 - **TorghutQuantOrderRejectionRateHigh**: Rejected orders >20% of submitted orders for 10 minutes.
+- **TorghutQuantExecutionCleanRatioLow**: Clean execution ratio <75% for 10 minutes with active decision traffic.
+- **TorghutQuantQtyBelowMinRatioHigh**: `qty_below_min` >3% of decisions over 30 minutes.
+- **TorghutQuantLlmUnavailableRejectRatioHigh**: `llm_unavailable_*` reject share >2% over 30 minutes.
 - **TorghutQuantLLMErrorRateHigh**: Trading LLM errors >10% of requests for 10 minutes.
 - **TorghutClickHouseFreshnessQueryFallbacks**: ClickHouse guardrails freshness checks repeatedly fall back to low-memory mode for 15 minutes.
 - **JangarQuantControlPlaneStreamErrors**: Control-plane SSE errors >0.05/sec for 10 minutes.
@@ -31,14 +34,22 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
 1. Confirm control-plane API health.
    - `kubectl -n agents port-forward svc/agents 8080:80`
    - `curl -fsS "http://127.0.0.1:8080/api/agents/control-plane/status?namespace=agents" | jq .`
+   - For lane-scoped health checks, include explicit strategy/account/window filters on Jangar quant health:
+     `curl -fsS "http://127.0.0.1:8080/api/torghut/trading/control-plane/quant/health?strategy_id=<UUID>&account=paper&window=1d" | jq .`
 2. Confirm Torghut trading pipeline is running.
    - `kubectl -n torghut get ksvc torghut`
    - `kubectl -n torghut port-forward svc/torghut 8081:80`
+   - `curl -fsS "http://127.0.0.1:8081/db-check" | jq '{ok, schema_current, schema_graph_branch_count, schema_graph_branch_tolerance, schema_graph_lineage_errors, schema_graph_lineage_warnings}'`
    - `curl -fsS "http://127.0.0.1:8081/trading/status" | jq .`
    - `curl -fsS "http://127.0.0.1:8081/metrics" | rg '^torghut_trading_'`
    - `curl -fsS "http://127.0.0.1:8081/metrics" | rg 'torghut_trading_(signal_continuity_actionable|signal_continuity_alert_active|signal_actionable_staleness_total|signal_expected_staleness_total|universe_fail_safe_reason_total|universe_symbols_count|universe_cache_age_seconds)'`
    - `kubectl cnpg psql -n torghut torghut-db -- -d torghut -c "select alpaca_account_label, status, count(*) from trade_decisions where created_at >= now() - interval '1 day' group by alpaca_account_label, status order by alpaca_account_label, status;"`
    - Treat account lanes independently; stale legacy lanes can hide active-lane degradation.
+   - If `schema_graph_lineage_errors` is non-empty, treat as migration-lineage divergence and pause rollout promotion until migration governance review is complete.
+   - If rollout must tolerate the current branched graph, verify the PR also updated `scripts/check_migration_graph.py`
+     allowlist evidence for the new signature; temporary GitOps overrides are not sufficient for CI.
+   - After merge migrations reduce the graph back within tolerance, remove
+     `TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS=true` from GitOps and confirm warnings clear from `/db-check`.
 3. Validate signal freshness and TA pipeline health.
    - `kubectl -n torghut get deploy torghut-clickhouse-guardrails-exporter torghut-ws torghut-ta`
    - `kubectl -n torghut port-forward svc/torghut-ws 19090:9090`
@@ -73,6 +84,16 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
    - Fail criteria:
      - correlation IDs are absent on newly-created execution rows.
      - telemetry drops grow with reasons other than expected operational modes (for example `disabled` during planned disablement).
+7. Verify recovery gate thresholds before canary progression.
+   - `curl -fsS "http://127.0.0.1:8081/metrics" | rg 'torghut_trading_(execution_clean_ratio|execution_reject_ratio|decision_reject_reason_total|llm_unavailable_reject_reason_total)'`
+   - Acceptance thresholds for progression:
+     - `torghut_trading_execution_clean_ratio >= 0.75`
+     - `qty_below_min` share <= `0.03` of recent decisions
+     - `llm_unavailable_*` reject share <= `0.02` of recent decisions
+   - Hard rollback triggers:
+     - clean ratio < `0.70` for 15 minutes
+     - `qty_below_min` share > `0.05` for 30 minutes
+     - `llm_unavailable_*` reject share > `0.03` for 30 minutes
 
 ## Mitigations
 
@@ -92,8 +113,18 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
   - Compare open sell order qty vs current position qty (`qty_available` / held inventory).
   - Cancel stale duplicate sell orders; verify new rejects shift to local precheck (`precheck_sell_qty_exceeds_available`) instead of broker reject.
 - If reject rate is high with `qty_below_min`:
-  - Check `decision_json.params.allocator.approved_notional` against decision price; residual-cap notionals can quantize below minimum share step.
+  - Check `decision_json.params.portfolio_sizing.output` for `limiting_constraint`, `remaining_room_notional`,
+    `min_executable_notional`, and `min_executable_qty`.
+  - Capacity/inventory constraints should surface as explicit reject classes (`symbol_capacity_exhausted`,
+    `sell_inventory_unavailable`, `gross_exposure_capacity_exhausted`, `net_exposure_capacity_exhausted`) rather than generic `qty_below_min`.
   - For equities, enable long-only fractional quantities (`TRADING_FRACTIONAL_EQUITIES_ENABLED=true`) and verify reject reduction.
+- If `TorghutQuantLlmUnavailableRejectRatioHigh` is active:
+  - Inspect `torghut_trading_llm_unavailable_reason_total` and `torghut_trading_llm_unavailable_reject_reason_total`
+    to isolate unavailable source classes.
+  - Keep deterministic risk/firewall controls as final authority; do not bypass veto paths while investigating.
+- Canary rollback gate:
+  - Revert Torghut/Jangar manifests via GitOps if any hard rollback trigger persists beyond alert window.
+  - Keep rollout paused until all three gate metrics recover for at least one full market session.
 - If SSE errors persist, restart Jangar and verify `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` connectivity.
 - As a rollback, disable quant control-plane compute:
   - Set `JANGAR_TORGHUT_QUANT_CONTROL_PLANE_ENABLED=false` in GitOps and sync the Jangar app.

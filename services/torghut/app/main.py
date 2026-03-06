@@ -217,6 +217,12 @@ def _register_whitepaper_inngest_routes(app: FastAPI) -> inngest.Inngest | None:
 
     app.state.whitepaper_inngest_registered = True
     WHITEPAPER_WORKFLOW.set_inngest_client(client)
+    logger.info(
+        "Registered whitepaper Inngest routes app_id=%s requested_fn_id=%s finalized_fn_id=%s",
+        app_id,
+        requested_fn_id,
+        finalized_fn_id,
+    )
     return client
 
 
@@ -228,6 +234,16 @@ async def lifespan(app: FastAPI):
     whitepaper_worker = WhitepaperKafkaWorker(session_factory=SessionLocal)
     app.state.trading_scheduler = scheduler
     app.state.whitepaper_worker = whitepaper_worker
+    logger.info(
+        "Torghut startup initiated build_version=%s build_commit=%s app_env=%s log_level=%s log_format=%s trading_enabled=%s whitepaper_workflow_enabled=%s",
+        BUILD_VERSION,
+        BUILD_COMMIT,
+        settings.app_env,
+        settings.log_level,
+        settings.log_format,
+        settings.trading_enabled,
+        whitepaper_workflow_enabled(),
+    )
 
     try:
         ensure_schema()
@@ -243,11 +259,20 @@ async def lifespan(app: FastAPI):
     if whitepaper_workflow_enabled():
         await whitepaper_worker.start()
 
+    logger.info(
+        "Torghut startup complete trading_scheduler_started=%s whitepaper_worker_started=%s inngest_registered=%s",
+        bool(getattr(scheduler, "_task", None)),
+        bool(getattr(whitepaper_worker, "_task", None)),
+        bool(getattr(app.state, "whitepaper_inngest_registered", False)),
+    )
+
     yield
 
+    logger.info("Torghut shutdown initiated")
     await whitepaper_worker.stop()
     await scheduler.stop()
     shutdown_posthog_telemetry()
+    logger.info("Torghut shutdown complete")
 
 
 app = FastAPI(title="torghut", lifespan=lifespan)
@@ -317,11 +342,16 @@ def _readiness_dependency_checks(
 
     if include_database_contract:
         database_contract = _evaluate_database_contract(session)
+        lineage_errors = cast(
+            list[str],
+            database_contract.get("schema_graph_lineage_errors", []),
+        )
+        detail = "ok" if bool(database_contract.get("ok")) else "database contract failed"
+        if lineage_errors:
+            detail = lineage_errors[0]
         dependencies["database"] = {
             "ok": bool(database_contract.get("ok")),
-            "detail": "ok"
-            if bool(database_contract.get("ok"))
-            else "database contract failed",
+            "detail": detail,
             "schema_current": bool(database_contract.get("schema_current")),
             "schema_current_heads": database_contract.get("schema_current_heads"),
             "expected_heads": database_contract.get("expected_heads"),
@@ -343,6 +373,37 @@ def _readiness_dependency_checks(
                 "schema_head_delta_count",
             ),
             "schema_head_signature": database_contract.get("schema_head_signature"),
+            "schema_graph_signature": database_contract.get("schema_graph_signature"),
+            "schema_graph_roots": database_contract.get("schema_graph_roots", []),
+            "schema_graph_branch_count": database_contract.get(
+                "schema_graph_branch_count",
+            ),
+            "schema_graph_branch_tolerance": database_contract.get(
+                "schema_graph_branch_tolerance",
+            ),
+            "schema_graph_allow_divergence_roots": database_contract.get(
+                "schema_graph_allow_divergence_roots",
+            ),
+            "schema_graph_parent_forks": database_contract.get(
+                "schema_graph_parent_forks",
+                {},
+            ),
+            "schema_graph_duplicate_revisions": database_contract.get(
+                "schema_graph_duplicate_revisions",
+                {},
+            ),
+            "schema_graph_orphan_parents": database_contract.get(
+                "schema_graph_orphan_parents",
+                [],
+            ),
+            "schema_graph_lineage_ready": database_contract.get(
+                "schema_graph_lineage_ready",
+            ),
+            "schema_graph_lineage_errors": lineage_errors,
+            "schema_graph_lineage_warnings": database_contract.get(
+                "schema_graph_lineage_warnings",
+                [],
+            ),
             "checked_at": database_contract.get("checked_at"),
             "account_scope_ready": bool(database_contract.get("account_scope_ready")),
             "account_scope_errors": database_contract.get("account_scope_errors", []),
@@ -359,6 +420,7 @@ def _readiness_dependency_snapshot(
     session: Session,
     *,
     include_database_contract: bool,
+    allow_stale_dependency_cache: bool = False,
 ) -> tuple[dict[str, object], datetime, bool]:
     if (
         not settings.trading_readiness_dependency_cache_enabled
@@ -373,6 +435,10 @@ def _readiness_dependency_snapshot(
     cache_ttl = timedelta(
         seconds=settings.trading_readiness_dependency_cache_ttl_seconds
     )
+    stale_tolerance = max(
+        0,
+        int(settings.trading_readiness_dependency_cache_stale_tolerance_seconds),
+    )
     now = datetime.now(timezone.utc)
     cache_key = _readiness_dependency_cache_key(include_database_contract)
 
@@ -380,7 +446,18 @@ def _readiness_dependency_snapshot(
         cache_entry = _TRADING_DEPENDENCY_HEALTH_CACHE.get(cache_key)
         if cache_entry:
             cache_checked_at = cast(datetime, cache_entry["checked_at"])
-            if now - cache_checked_at < cache_ttl:
+            cache_age = now - cache_checked_at
+            if cache_age < cache_ttl:
+                return (
+                    cast(dict[str, object], cache_entry["dependencies"]),
+                    cache_checked_at,
+                    True,
+                )
+            if (
+                allow_stale_dependency_cache
+                and stale_tolerance > 0
+                and cache_age <= cache_ttl + timedelta(seconds=stale_tolerance)
+            ):
                 return (
                     cast(dict[str, object], cache_entry["dependencies"]),
                     cache_checked_at,
@@ -403,6 +480,7 @@ def _evaluate_trading_health_payload(
     session: Session,
     *,
     include_database_contract: bool = False,
+    allow_stale_dependency_cache: bool = False,
 ) -> tuple[dict[str, object], int]:
     """Build shared trading health payload and status code."""
 
@@ -447,12 +525,25 @@ def _evaluate_trading_health_payload(
         scheduler_payload["startup_readiness_grace_seconds"] = startup_grace_seconds
         scheduler_payload["startup_readiness_grace_active"] = in_startup_grace
 
+    now = datetime.now(timezone.utc)
     dependencies, checked_at, cache_used = _readiness_dependency_snapshot(
         session,
         include_database_contract=include_database_contract,
+        allow_stale_dependency_cache=allow_stale_dependency_cache,
     )
     dependencies = dict(dependencies)
     dependencies["universe"] = _evaluate_universe_dependency(scheduler)
+    cache_age_seconds = (
+        (now - checked_at).total_seconds() if checked_at else 0.0
+    )
+    cache_age_seconds = (
+        0.0 if cache_age_seconds < 0 else round(cache_age_seconds, 3)
+    )
+    cache_stale = (
+        cache_used
+        and cache_age_seconds
+        > settings.trading_readiness_dependency_cache_ttl_seconds
+    )
     dependency_statuses = [
         cast(dict[str, object], checks).get("ok", True)
         for name, checks in dependencies.items()
@@ -461,7 +552,10 @@ def _evaluate_trading_health_payload(
     dependencies["readiness_cache"] = {
         "checked_at": checked_at.isoformat(),
         "cache_ttl_seconds": settings.trading_readiness_dependency_cache_ttl_seconds,
+        "cache_stale_tolerance_seconds": settings.trading_readiness_dependency_cache_stale_tolerance_seconds,
         "cache_used": cache_used,
+        "cache_age_seconds": cache_age_seconds,
+        "cache_stale": cache_stale,
     }
 
     overall_ok = scheduler_ok and all(bool(dep) for dep in dependency_statuses)
@@ -542,9 +636,12 @@ def _evaluate_universe_dependency(
         }
 
     if universe_status == "degraded":
+        degraded_detail = "jangar stale cache in use"
+        if isinstance(universe_reason, str) and "static_fallback" in universe_reason:
+            degraded_detail = "jangar static fallback in use"
         return {
             "ok": not universe_fail_safe_blocked,
-            "detail": "jangar stale cache in use",
+            "detail": degraded_detail,
             "source": settings.trading_universe_source,
             "status": universe_status,
             "reason": universe_reason,
@@ -649,8 +746,98 @@ def _evaluate_database_contract(session: Session) -> dict[str, object]:
 
     schema_current = bool(schema_status.get("schema_current"))
     account_scope_ready = bool(account_scope_checks.get("account_scope_ready"))
+    schema_graph_roots = [
+        str(root)
+        for root in cast(list[object], schema_status.get("schema_graph_roots", []))
+    ]
+    schema_graph_parent_forks = {
+        str(parent): sorted(str(child) for child in cast(list[object], children))
+        for parent, children in cast(
+            Mapping[object, object],
+            schema_status.get("schema_graph_parent_forks", {}),
+        ).items()
+        if isinstance(children, list)
+    }
+    schema_graph_duplicate_revisions = {
+        str(revision): sorted(str(path) for path in cast(list[object], files))
+        for revision, files in cast(
+            Mapping[object, object],
+            schema_status.get("schema_graph_duplicate_revisions", {}),
+        ).items()
+        if isinstance(files, list)
+    }
+    schema_graph_orphan_parents = [
+        str(parent)
+        for parent in cast(
+            list[object],
+            schema_status.get("schema_graph_orphan_parents", []),
+        )
+    ]
+    schema_graph_branch_tolerance = max(
+        0,
+        int(settings.trading_db_schema_graph_branch_tolerance),
+    )
+    schema_graph_allow_divergence_roots = bool(
+        settings.trading_db_schema_graph_allow_divergence_roots,
+    )
+
+    raw_branch_count = schema_status.get("schema_graph_branch_count")
+    schema_graph_branch_count: int
+    if isinstance(raw_branch_count, bool):
+        schema_graph_branch_count = int(raw_branch_count)
+    elif isinstance(raw_branch_count, int):
+        schema_graph_branch_count = raw_branch_count
+    elif isinstance(raw_branch_count, str):
+        try:
+            schema_graph_branch_count = int(raw_branch_count)
+        except ValueError:
+            schema_graph_branch_count = 0
+    else:
+        schema_graph_branch_count = 0
+
+    schema_graph_lineage_errors: list[str] = []
+    schema_graph_lineage_warnings: list[str] = []
+
+    if schema_graph_duplicate_revisions:
+        duplicate_summary = ", ".join(sorted(schema_graph_duplicate_revisions))
+        schema_graph_lineage_errors.append(
+            f"duplicate migration revision identifiers detected: {duplicate_summary}"
+        )
+
+    if schema_graph_orphan_parents:
+        schema_graph_lineage_errors.append(
+            "orphan migration parents detected: "
+            + ", ".join(schema_graph_orphan_parents)
+        )
+
+    if schema_graph_parent_forks:
+        parent_summary = ", ".join(
+            f"{parent} -> [{', '.join(children)}]"
+            for parent, children in sorted(schema_graph_parent_forks.items())
+        )
+        schema_graph_lineage_warnings.append(
+            f"migration parent forks detected: {parent_summary}"
+        )
+
+    if schema_graph_branch_count > schema_graph_branch_tolerance:
+        divergence_message = (
+            "migration graph branch count "
+            f"{schema_graph_branch_count} exceeds tolerance {schema_graph_branch_tolerance}"
+        )
+        if schema_graph_allow_divergence_roots:
+            schema_graph_lineage_warnings.append(
+                divergence_message
+                + "; allowed by TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS=true"
+            )
+        else:
+            schema_graph_lineage_errors.append(
+                divergence_message
+                + "; set TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS=true for temporary override"
+            )
+
+    schema_graph_lineage_ready = len(schema_graph_lineage_errors) == 0
     return {
-        "ok": schema_current and account_scope_ready,
+        "ok": schema_current and account_scope_ready and schema_graph_lineage_ready,
         "schema_current": schema_current,
         "schema_current_heads": schema_status.get("current_heads", []),
         "expected_heads": schema_status.get("expected_heads", []),
@@ -663,6 +850,17 @@ def _evaluate_database_contract(session: Session) -> dict[str, object]:
             "expected_heads_signature",
             schema_status.get("schema_head_signature"),
         ),
+        "schema_graph_signature": schema_status.get("schema_graph_signature"),
+        "schema_graph_roots": schema_graph_roots,
+        "schema_graph_branch_count": schema_graph_branch_count,
+        "schema_graph_parent_forks": schema_graph_parent_forks,
+        "schema_graph_duplicate_revisions": schema_graph_duplicate_revisions,
+        "schema_graph_orphan_parents": schema_graph_orphan_parents,
+        "schema_graph_branch_tolerance": schema_graph_branch_tolerance,
+        "schema_graph_allow_divergence_roots": schema_graph_allow_divergence_roots,
+        "schema_graph_lineage_ready": schema_graph_lineage_ready,
+        "schema_graph_lineage_errors": schema_graph_lineage_errors,
+        "schema_graph_lineage_warnings": schema_graph_lineage_warnings,
         "checked_at": checked_at,
         "account_scope_ready": account_scope_ready,
         "account_scope_errors": account_scope_checks.get("account_scope_errors", []),
@@ -677,6 +875,7 @@ def readyz(session: Session = Depends(get_session)) -> JSONResponse:
     payload, status_code = _evaluate_trading_health_payload(
         session,
         include_database_contract=True,
+        allow_stale_dependency_cache=True,
     )
     return JSONResponse(
         status_code=status_code,
@@ -707,6 +906,40 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
             "current_heads": database_contract.get("schema_current_heads"),
             "expected_heads": database_contract.get("expected_heads"),
             "schema_head_signature": database_contract.get("schema_head_signature"),
+            "schema_graph_signature": database_contract.get("schema_graph_signature"),
+            "schema_graph_roots": database_contract.get("schema_graph_roots", []),
+            "schema_graph_branch_count": database_contract.get(
+                "schema_graph_branch_count",
+            ),
+            "schema_graph_branch_tolerance": database_contract.get(
+                "schema_graph_branch_tolerance",
+            ),
+            "schema_graph_allow_divergence_roots": database_contract.get(
+                "schema_graph_allow_divergence_roots",
+            ),
+            "schema_graph_parent_forks": database_contract.get(
+                "schema_graph_parent_forks",
+                {},
+            ),
+            "schema_graph_duplicate_revisions": database_contract.get(
+                "schema_graph_duplicate_revisions",
+                {},
+            ),
+            "schema_graph_orphan_parents": database_contract.get(
+                "schema_graph_orphan_parents",
+                [],
+            ),
+            "schema_graph_lineage_ready": database_contract.get(
+                "schema_graph_lineage_ready",
+            ),
+            "schema_graph_lineage_errors": database_contract.get(
+                "schema_graph_lineage_errors",
+                [],
+            ),
+            "schema_graph_lineage_warnings": database_contract.get(
+                "schema_graph_lineage_warnings",
+                [],
+            ),
             "schema_missing_heads": database_contract.get("schema_missing_heads", []),
             "schema_unexpected_heads": database_contract.get("schema_unexpected_heads", []),
             "schema_head_count_expected": database_contract.get(
@@ -740,6 +973,17 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
                 "schema_current": False,
                 "schema_missing_heads": database_contract.get("schema_missing_heads", []),
                 "schema_unexpected_heads": database_contract.get("schema_unexpected_heads", []),
+                "schema_graph_lineage_ready": database_contract.get(
+                    "schema_graph_lineage_ready",
+                ),
+                "schema_graph_lineage_errors": database_contract.get(
+                    "schema_graph_lineage_errors",
+                    [],
+                ),
+                "schema_graph_lineage_warnings": database_contract.get(
+                    "schema_graph_lineage_warnings",
+                    [],
+                ),
                 "checked_at": database_contract.get("checked_at"),
                 "account_scope_ready": account_scope_status.get("account_scope_ready"),
                 "account_scope_warnings": account_scope_status.get(
@@ -769,6 +1013,23 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
                 **schema_status,
             },
         )
+    if not bool(database_contract.get("schema_graph_lineage_ready", True)):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "database schema lineage divergence",
+                "checked_at": database_contract.get("checked_at"),
+                "schema_graph_lineage_errors": database_contract.get(
+                    "schema_graph_lineage_errors",
+                    [],
+                ),
+                "schema_graph_lineage_warnings": database_contract.get(
+                    "schema_graph_lineage_warnings",
+                    [],
+                ),
+                **schema_status,
+            },
+        )
     if settings.trading_multi_account_enabled and not bool(
         account_scope_status.get("account_scope_ready")
     ):
@@ -778,6 +1039,14 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
                 "error": "database account scope schema mismatch",
                 "checked_at": database_contract.get("checked_at"),
                 "schema_head_signature": database_contract.get("schema_head_signature"),
+                "schema_graph_signature": database_contract.get("schema_graph_signature"),
+                "schema_graph_branch_count": database_contract.get(
+                    "schema_graph_branch_count",
+                ),
+                "schema_graph_lineage_warnings": database_contract.get(
+                    "schema_graph_lineage_warnings",
+                    [],
+                ),
                 "account_scope_warnings": database_contract.get(
                     "account_scope_warnings",
                     [],
@@ -1207,6 +1476,9 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
     llm_evaluation = _load_llm_evaluation(session)
     tca_summary = _load_tca_summary(session)
     control_plane_contract = _build_control_plane_contract(state)
+    market_context_status = scheduler.market_context_status()
+    shorting_metadata_status = scheduler.shorting_metadata_status()
+    rejection_alert_status = scheduler.rejection_alert_status()
     return {
         "enabled": settings.trading_enabled,
         "autonomy_enabled": settings.trading_autonomy_enabled,
@@ -1267,6 +1539,34 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
             "no_signal_streak_alert_threshold": settings.trading_signal_no_signal_streak_alert_threshold,
             "signal_lag_alert_threshold_seconds": settings.trading_signal_stale_lag_alert_seconds,
             "signal_continuity_recovery_cycles": settings.trading_signal_continuity_recovery_cycles,
+        },
+        "market_context": market_context_status,
+        "shorting_metadata": shorting_metadata_status,
+        "rejections": {
+            "policy_veto_total": state.metrics.llm_policy_veto_total,
+            "runtime_fallback_total": state.metrics.llm_runtime_fallback_total,
+            "market_context_block_total": state.metrics.llm_market_context_block_total,
+            "pre_llm_capacity_reject_total": state.metrics.pre_llm_capacity_reject_total,
+            "pre_llm_qty_below_min_total": state.metrics.pre_llm_qty_below_min_total,
+            "runtime_fallback_ratio": rejection_alert_status[
+                "runtime_fallback_ratio"
+            ],
+            "runtime_fallback_alert_ratio_threshold": rejection_alert_status[
+                "runtime_fallback_alert_ratio_threshold"
+            ],
+            "runtime_fallback_alert_active": rejection_alert_status[
+                "runtime_fallback_alert_active"
+            ],
+        },
+        "alerts": {
+            "market_context_alert_active": market_context_status["alert_active"],
+            "market_context_alert_reason": market_context_status["alert_reason"],
+            "runtime_fallback_alert_active": rejection_alert_status[
+                "runtime_fallback_alert_active"
+            ],
+            "shorting_metadata_alert_active": rejection_alert_status[
+                "shorting_metadata_alert_active"
+            ],
         },
         "rollback": {
             "emergency_stop_active": state.emergency_stop_active,
@@ -1516,11 +1816,35 @@ def prometheus_metrics(session: Session = Depends(get_session)) -> Response:
         scheduler = TradingScheduler()
         app.state.trading_scheduler = scheduler
     metrics = scheduler.state.metrics
+    market_context_status = scheduler.market_context_status()
+    shorting_metadata_status = scheduler.shorting_metadata_status()
+    rejection_alert_status = scheduler.rejection_alert_status()
     payload = render_trading_metrics(
         {
             **metrics.__dict__,
             "tca_summary": _load_tca_summary(session),
             "route_provenance": _load_route_provenance_summary(session),
+            "market_context_alert_active": int(
+                bool(market_context_status.get("alert_active"))
+            ),
+            "market_context_last_freshness_seconds": _safe_int(
+                market_context_status.get("last_freshness_seconds")
+            ),
+            "market_context_last_quality_score": _safe_float(
+                market_context_status.get("last_quality_score")
+            ),
+            "llm_runtime_fallback_ratio": _safe_float(
+                rejection_alert_status.get("runtime_fallback_ratio")
+            ),
+            "llm_runtime_fallback_alert_active": int(
+                bool(rejection_alert_status.get("runtime_fallback_alert_active"))
+            ),
+            "shorting_metadata_account_ready": int(
+                shorting_metadata_status.get("account_ready") is True
+            ),
+            "shorting_metadata_alert_active": int(
+                bool(rejection_alert_status.get("shorting_metadata_alert_active"))
+            ),
         }
     )
     return Response(content=payload, media_type="text/plain; version=0.0.4")
@@ -2523,6 +2847,14 @@ def _safe_int(value: object) -> int:
     if isinstance(value, float):
         return int(value)
     return 0
+
+
+def _safe_float(value: object) -> float:
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    return 0.0
 
 
 def _load_llm_evaluation(session: Session) -> dict[str, object]:

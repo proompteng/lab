@@ -7,6 +7,7 @@ describe('db ssl config', () => {
 
   beforeEach(() => {
     previousEnv.PGSSLMODE = process.env.PGSSLMODE
+    previousEnv.DATABASE_URL = process.env.DATABASE_URL
   })
 
   afterEach(() => {
@@ -14,6 +15,12 @@ describe('db ssl config', () => {
       delete process.env.PGSSLMODE
     } else {
       process.env.PGSSLMODE = previousEnv.PGSSLMODE
+    }
+
+    if (previousEnv.DATABASE_URL === undefined) {
+      delete process.env.DATABASE_URL
+    } else {
+      process.env.DATABASE_URL = previousEnv.DATABASE_URL
     }
   })
 
@@ -49,5 +56,19 @@ describe('db ssl config', () => {
     const ssl = __private.resolveSslConfig('verify-full', ca)
     expect(ssl?.rejectUnauthorized).toBe(true)
     expect(ssl?.ca).toBe(ca)
+  })
+
+  it('normalizes blank database urls', () => {
+    expect(__private.normalizeDbUrl(undefined)).toBe('')
+    expect(__private.normalizeDbUrl('  postgres://db  ')).toBe('postgres://db')
+  })
+
+  it('reuses the shared db only for the default process url without a custom factory', () => {
+    process.env.DATABASE_URL = 'postgresql://user:pass@localhost:5432/db'
+
+    expect(__private.shouldReuseSharedDb({})).toBe(true)
+    expect(__private.shouldReuseSharedDb({ url: 'postgresql://user:pass@localhost:5432/db' })).toBe(true)
+    expect(__private.shouldReuseSharedDb({ url: 'postgresql://other@localhost:5432/db' })).toBe(false)
+    expect(__private.shouldReuseSharedDb({ createDb: () => ({}) as never })).toBe(false)
   })
 })

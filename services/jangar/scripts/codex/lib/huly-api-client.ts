@@ -25,6 +25,9 @@ export type HulyChannelMessage = {
   channelId?: string
   channelName?: string
   messageId?: string
+  replyToMessageId?: string | null
+  replyToMessageClass?: string
+  collection?: string
 }
 
 export type HulyListChannelMessagesResult = {
@@ -49,6 +52,9 @@ export type HulyPostChannelMessageResult = {
   channelId?: string
   channelName?: string
   messageId?: string
+  replyToMessageId?: string | null
+  replyToMessageClass?: string
+  collection?: string
 }
 
 export type HulyUpsertMissionResult = {
@@ -146,20 +152,35 @@ const withWorkerAuthArgs = ({
   workerId,
   workerIdentity,
   requireWorkerToken,
+  tokenEnvKey,
+  expectedActorEnvKey,
+  requireExpectedActorId,
 }: {
   workerId?: string
   workerIdentity?: string
   requireWorkerToken: boolean
+  tokenEnvKey?: string
+  expectedActorEnvKey?: string
+  requireExpectedActorId?: boolean
 }) => {
   const args: string[] = []
   if (requireWorkerToken) {
     args.push('--require-worker-token')
+  }
+  if (requireExpectedActorId) {
+    args.push('--require-expected-actor-id')
   }
   if (workerId) {
     args.push('--worker-id', workerId)
   }
   if (workerIdentity) {
     args.push('--worker-identity', workerIdentity)
+  }
+  if (tokenEnvKey) {
+    args.push('--token-env-key', tokenEnvKey)
+  }
+  if (expectedActorEnvKey) {
+    args.push('--expected-actor-env-key', expectedActorEnvKey)
   }
   return args
 }
@@ -170,17 +191,30 @@ export const listChannelMessages = async ({
   workerIdentity,
   limit = 30,
   requireWorkerToken = true,
+  tokenEnvKey,
+  expectedActorEnvKey,
+  requireExpectedActorId = false,
 }: {
   channel: string
   workerId?: string
   workerIdentity?: string
   limit?: number
   requireWorkerToken?: boolean
+  tokenEnvKey?: string
+  expectedActorEnvKey?: string
+  requireExpectedActorId?: boolean
 }) => {
   const result = await runHulyApi<HulyListChannelMessagesResult>({
     operation: 'list-channel-messages',
     args: [
-      ...withWorkerAuthArgs({ workerId, workerIdentity, requireWorkerToken }),
+      ...withWorkerAuthArgs({
+        workerId,
+        workerIdentity,
+        requireWorkerToken,
+        tokenEnvKey,
+        expectedActorEnvKey,
+        requireExpectedActorId,
+      }),
       '--channel',
       channel,
       '--limit',
@@ -196,17 +230,30 @@ export const verifyChatAccess = async ({
   workerId,
   workerIdentity,
   requireWorkerToken = true,
+  tokenEnvKey,
+  expectedActorEnvKey,
+  requireExpectedActorId = false,
 }: {
   channel: string
   message: string
   workerId?: string
   workerIdentity?: string
   requireWorkerToken?: boolean
+  tokenEnvKey?: string
+  expectedActorEnvKey?: string
+  requireExpectedActorId?: boolean
 }) => {
   const result = await runHulyApi<HulyVerifyChatAccessResult>({
     operation: 'verify-chat-access',
     args: [
-      ...withWorkerAuthArgs({ workerId, workerIdentity, requireWorkerToken }),
+      ...withWorkerAuthArgs({
+        workerId,
+        workerIdentity,
+        requireWorkerToken,
+        tokenEnvKey,
+        expectedActorEnvKey,
+        requireExpectedActorId,
+      }),
       '--channel',
       channel,
       '--message',
@@ -219,25 +266,50 @@ export const verifyChatAccess = async ({
 export const postChannelMessage = async ({
   channel,
   message,
+  replyToMessageId,
+  replyToMessageClass,
   workerId,
   workerIdentity,
   requireWorkerToken = true,
+  tokenEnvKey,
+  expectedActorEnvKey,
+  requireExpectedActorId = false,
 }: {
   channel: string
   message: string
+  replyToMessageId?: string
+  replyToMessageClass?: string
   workerId?: string
   workerIdentity?: string
   requireWorkerToken?: boolean
+  tokenEnvKey?: string
+  expectedActorEnvKey?: string
+  requireExpectedActorId?: boolean
 }) => {
+  const args = [
+    ...withWorkerAuthArgs({
+      workerId,
+      workerIdentity,
+      requireWorkerToken,
+      tokenEnvKey,
+      expectedActorEnvKey,
+      requireExpectedActorId,
+    }),
+    '--channel',
+    channel,
+    '--message',
+    message,
+  ]
+  if (replyToMessageId) {
+    args.push('--reply-to-message-id', replyToMessageId)
+  }
+  if (replyToMessageClass) {
+    args.push('--reply-to-message-class', replyToMessageClass)
+  }
+
   const result = await runHulyApi<HulyPostChannelMessageResult>({
     operation: 'post-channel-message',
-    args: [
-      ...withWorkerAuthArgs({ workerId, workerIdentity, requireWorkerToken }),
-      '--channel',
-      channel,
-      '--message',
-      message,
-    ],
+    args,
   })
   return result
 }
@@ -254,6 +326,9 @@ export const upsertMission = async ({
   workerId,
   workerIdentity,
   requireWorkerToken = true,
+  tokenEnvKey,
+  expectedActorEnvKey,
+  requireExpectedActorId = false,
 }: {
   missionId: string
   title: string
@@ -266,9 +341,19 @@ export const upsertMission = async ({
   workerId?: string
   workerIdentity?: string
   requireWorkerToken?: boolean
+  tokenEnvKey?: string
+  expectedActorEnvKey?: string
+  requireExpectedActorId?: boolean
 }) => {
   const args = [
-    ...withWorkerAuthArgs({ workerId, workerIdentity, requireWorkerToken }),
+    ...withWorkerAuthArgs({
+      workerId,
+      workerIdentity,
+      requireWorkerToken,
+      tokenEnvKey,
+      expectedActorEnvKey,
+      requireExpectedActorId,
+    }),
     '--mission-id',
     missionId,
     '--title',

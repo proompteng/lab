@@ -1,0 +1,180 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: torghut-execution-recovery-dashboard
+  namespace: observability
+data:
+  torghut-execution-recovery-dashboard.json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": "-- Grafana --",
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "graphTooltip": 0,
+      "id": null,
+      "iteration": 1,
+      "panels": [
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+          "id": 1,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "torghut_trading_execution_clean_ratio{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}",
+              "legendFormat": "clean ratio",
+              "refId": "A"
+            },
+            {
+              "expr": "torghut_trading_execution_reject_ratio{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}",
+              "legendFormat": "reject ratio",
+              "refId": "B"
+            }
+          ],
+          "title": "Clean vs Reject Ratio",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+          "id": 2,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "increase(torghut_trading_decision_reject_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\", reason=\"qty_below_min\"}[30m]) / clamp_min(increase(torghut_trading_decisions_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[30m]), 1)",
+              "legendFormat": "qty_below_min ratio (30m)",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(increase(torghut_trading_decision_reject_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\", reason=~\"llm_unavailable_.*\"}[30m])) / clamp_min(increase(torghut_trading_decisions_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[30m]), 1)",
+              "legendFormat": "llm_unavailable ratio (30m)",
+              "refId": "B"
+            }
+          ],
+          "title": "Recovery Gate Ratios (30m)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+          "id": 3,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "topk(10, increase(torghut_trading_decision_reject_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[2h]))",
+              "legendFormat": "{{reason}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Top Reject Reasons (2h)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+          "id": 4,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "increase(torghut_trading_llm_unavailable_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[2h])",
+              "legendFormat": "{{reason}}",
+              "refId": "A"
+            }
+          ],
+          "title": "LLM Unavailable Sources (2h)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+          "id": 5,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "increase(torghut_trading_llm_unavailable_reject_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[2h])",
+              "legendFormat": "{{reason}}",
+              "refId": "A"
+            }
+          ],
+          "title": "LLM Unavailable Reject Classes (2h)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+          "id": 6,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "rate(torghut_trading_orders_submitted_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[15m])",
+              "legendFormat": "submitted/s",
+              "refId": "A"
+            },
+            {
+              "expr": "rate(torghut_trading_orders_rejected_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[15m])",
+              "legendFormat": "rejected/s",
+              "refId": "B"
+            }
+          ],
+          "title": "Submit vs Reject Rates",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+          "id": 7,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "increase(jangar_torghut_market_context_batch_runs_total{domain=~\"fundamentals|news\"}[2h])",
+              "legendFormat": "{{domain}} {{outcome}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Market-Context Batch Outcomes (2h)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+          "id": 8,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(jangar_torghut_market_context_batch_run_duration_ms_bucket[30m])) by (le, domain))",
+              "legendFormat": "{{domain}} p95",
+              "refId": "A"
+            }
+          ],
+          "title": "Market-Context Batch Duration p95",
+          "type": "timeseries"
+        }
+      ],
+      "schemaVersion": 39,
+      "style": "dark",
+      "tags": ["torghut", "execution", "recovery"],
+      "templating": {"list": []},
+      "time": {"from": "now-24h", "to": "now"},
+      "timezone": "",
+      "title": "Torghut Execution Recovery",
+      "uid": "torghut-execution-recovery",
+      "version": 1
+    }

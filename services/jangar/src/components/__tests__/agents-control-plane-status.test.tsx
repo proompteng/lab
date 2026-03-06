@@ -34,26 +34,19 @@ const baseStatus: ControlPlaneStatus = {
   ],
   runtime_adapters: [],
   workflows: {
-    status: 'healthy',
     window_minutes: 15,
     active_job_runs: 1,
     recent_failed_jobs: 2,
     backoff_limit_exceeded_jobs: 1,
+    data_confidence: 'high',
+    collection_errors: 0,
+    collected_namespaces: 1,
+    target_namespaces: 1,
+    message: '',
     top_failure_reasons: [
       { reason: 'BackoffLimitExceeded', count: 2 },
       { reason: 'ImagePullBackOff', count: 1 },
     ],
-    message: 'stable',
-  },
-  rollout: {
-    status: 'healthy',
-    window_minutes: 120,
-    observed_schedules: 0,
-    inactive_schedules: 0,
-    stale_schedules: 0,
-    backoff_limit_exceeded_jobs: 0,
-    backoff_limit_exceeded_threshold: 2,
-    stages: [],
   },
   database: {
     configured: true,
@@ -112,59 +105,7 @@ describe('ControlPlaneStatusPanel', () => {
     const normalizedHtml = html.replace(/<!-- -->/g, '')
 
     expect(normalizedHtml).toContain('Top failure reasons: BackoffLimitExceeded (2), ImagePullBackOff (1)')
+    expect(normalizedHtml).toContain('Data confidence: high')
     expect(normalizedHtml).not.toContain('Top failure reasons: [object Object], [object Object]')
-  })
-
-  it('handles missing rollout stage failure reasons without crashing', () => {
-    const statusWithMissingRolloutReasons = {
-      ...baseStatus,
-      rollout: {
-        ...baseStatus.rollout,
-        stages: [
-          {
-            name: 'jangar-control-plane-implement-sched',
-            namespace: 'agents',
-            swarm: 'jangar-control-plane',
-            stage: 'implement',
-            phase: 'Active',
-            last_run_at: '2026-01-20T00:00:00Z',
-            last_successful_run_at: '2026-01-20T00:00:00Z',
-            last_transition_at: '2026-01-20T00:00:00Z',
-            is_active: true,
-            is_stale: false,
-            reasons: ['manual test'],
-            recent_failed_jobs: 0,
-            backoff_limit_exceeded_jobs: 0,
-            failed_runs_last_window: 0,
-            backoff_failures_last_window: 0,
-            top_failure_reasons: undefined as unknown as Array<{ reason: string; count: number }>,
-          },
-        ],
-      },
-    }
-
-    const html = renderToString(
-      <ControlPlaneStatusPanel status={statusWithMissingRolloutReasons} error={null} isLoading={false} />,
-    )
-    const normalizedHtml = html.replace(/<!-- -->/g, '')
-
-    expect(normalizedHtml).toContain('Failure trend: —')
-  })
-
-  it('handles missing workflow failure reasons without crashing', () => {
-    const statusWithMissingWorkflowReasons = {
-      ...baseStatus,
-      workflows: {
-        ...baseStatus.workflows,
-        top_failure_reasons: undefined as unknown as Array<{ reason: string; count: number }>,
-      },
-    }
-
-    const html = renderToString(
-      <ControlPlaneStatusPanel status={statusWithMissingWorkflowReasons} error={null} isLoading={false} />,
-    )
-    const normalizedHtml = html.replace(/<!-- -->/g, '')
-
-    expect(normalizedHtml).toContain('Top failure reasons: —')
   })
 })

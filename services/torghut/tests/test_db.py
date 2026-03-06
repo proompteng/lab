@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 from unittest import TestCase
 
@@ -85,6 +87,22 @@ class TestDbSchemaCurrent(TestCase):
                 "app.db._get_expected_schema_heads",
                 return_value=("0011_demo_alpha", "0012_demo_beta"),
             ),
+            patch(
+                "app.db._get_expected_schema_graph",
+                return_value={
+                    "expected_schema_graph_signature": "graph-signature-demo",
+                    "expected_migration_roots": ["0001_demo_root"],
+                    "expected_migration_branch_count": 2,
+                    "expected_migration_parent_forks": {
+                        "0010_demo_parent": [
+                            "0011_demo_alpha",
+                            "0011_demo_beta",
+                        ]
+                    },
+                    "expected_migration_duplicate_revisions": {},
+                    "expected_migration_orphan_parents": [],
+                },
+            ),
             patch("app.db.MigrationContext") as mock_migration_context,
         ):
             context_instance = MagicMock()
@@ -115,6 +133,15 @@ class TestDbSchemaCurrent(TestCase):
         self.assertEqual(status["schema_head_count_expected"], 2)
         self.assertEqual(status["schema_head_count_current"], 3)
         self.assertEqual(status["schema_head_delta_count"], 2)
+        self.assertEqual(status["schema_graph_signature"], "graph-signature-demo")
+        self.assertEqual(status["schema_graph_roots"], ["0001_demo_root"])
+        self.assertEqual(status["schema_graph_branch_count"], 2)
+        self.assertEqual(
+            status["schema_graph_parent_forks"],
+            {"0010_demo_parent": ["0011_demo_alpha", "0011_demo_beta"]},
+        )
+        self.assertEqual(status["schema_graph_duplicate_revisions"], {})
+        self.assertEqual(status["schema_graph_orphan_parents"], [])
 
     def test_expected_schema_heads_cached(self) -> None:
         app_db._get_expected_schema_heads.cache_clear()
@@ -132,3 +159,61 @@ class TestDbSchemaCurrent(TestCase):
         self.assertEqual(first, ("0011_demo_alpha", "0012_demo_beta"))
         self.assertEqual(second, first)
         self.assertEqual(mock_from_config.call_count, 1)
+
+
+class TestDbMigrationGraphParsing(TestCase):
+    def test_parse_migration_graph_infers_roots_heads_forks_and_stable_signature(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            versions_dir = Path(tmpdir)
+            (versions_dir / "0001_root.py").write_text(
+                "revision = '0001_root'\ndown_revision = None\n",
+                encoding="utf-8",
+            )
+            (versions_dir / "0002_alpha.py").write_text(
+                "revision = '0002_alpha'\ndown_revision = '0001_root'\n",
+                encoding="utf-8",
+            )
+            (versions_dir / "0002_beta.py").write_text(
+                "revision = '0002_beta'\ndown_revision = '0001_root'\n",
+                encoding="utf-8",
+            )
+
+            first = app_db._parse_migration_graph(versions_dir)
+            second = app_db._parse_migration_graph(versions_dir)
+
+        self.assertEqual(first["expected_migration_roots"], ["0001_root"])
+        self.assertEqual(
+            first["expected_migration_heads"],
+            ["0002_alpha", "0002_beta"],
+        )
+        self.assertEqual(first["expected_migration_branch_count"], 2)
+        self.assertEqual(
+            first["expected_migration_parent_forks"],
+            {"0001_root": ["0002_alpha", "0002_beta"]},
+        )
+        self.assertEqual(first["expected_migration_duplicate_revisions"], {})
+        self.assertEqual(first["expected_migration_orphan_parents"], [])
+        self.assertEqual(
+            first["expected_schema_graph_signature"],
+            second["expected_schema_graph_signature"],
+        )
+
+    def test_parse_migration_graph_reports_duplicate_revisions_and_orphans(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            versions_dir = Path(tmpdir)
+            (versions_dir / "0001_first.py").write_text(
+                "revision = '0001_first'\ndown_revision = '0000_missing'\n",
+                encoding="utf-8",
+            )
+            (versions_dir / "0001_duplicate.py").write_text(
+                "revision = '0001_first'\ndown_revision = None\n",
+                encoding="utf-8",
+            )
+
+            summary = app_db._parse_migration_graph(versions_dir)
+
+        self.assertEqual(
+            summary["expected_migration_duplicate_revisions"],
+            {"0001_first": ["0001_duplicate.py", "0001_first.py"]},
+        )
+        self.assertEqual(summary["expected_migration_orphan_parents"], ["0000_missing"])

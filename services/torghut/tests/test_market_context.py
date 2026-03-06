@@ -16,6 +16,15 @@ class TestMarketContextClient(TestCase):
         self._original_required = config.settings.trading_market_context_required
         self._original_min_quality = config.settings.trading_market_context_min_quality
         self._original_max_staleness = config.settings.trading_market_context_max_staleness_seconds
+        self._original_allow_degraded_last_good = (
+            config.settings.trading_market_context_allow_degraded_last_good
+        )
+        self._original_fundamentals_degraded_max_staleness = (
+            config.settings.trading_market_context_fundamentals_degraded_max_staleness_seconds
+        )
+        self._original_news_degraded_max_staleness = (
+            config.settings.trading_market_context_news_degraded_max_staleness_seconds
+        )
 
     def tearDown(self) -> None:
         config.settings.trading_market_context_url = self._original_url
@@ -23,6 +32,15 @@ class TestMarketContextClient(TestCase):
         config.settings.trading_market_context_required = self._original_required
         config.settings.trading_market_context_min_quality = self._original_min_quality
         config.settings.trading_market_context_max_staleness_seconds = self._original_max_staleness
+        config.settings.trading_market_context_allow_degraded_last_good = (
+            self._original_allow_degraded_last_good
+        )
+        config.settings.trading_market_context_fundamentals_degraded_max_staleness_seconds = (
+            self._original_fundamentals_degraded_max_staleness
+        )
+        config.settings.trading_market_context_news_degraded_max_staleness_seconds = (
+            self._original_news_degraded_max_staleness
+        )
 
     def test_fetch_parses_bundle(self) -> None:
         config.settings.trading_market_context_url = 'http://jangar.test/api/torghut/market-context'
@@ -326,3 +344,167 @@ class TestMarketContextClient(TestCase):
         self.assertFalse(status.allow_llm)
         self.assertEqual(status.reason, 'market_context_domain_error')
         self.assertIn('market_context_stale', status.risk_flags)
+
+    def test_evaluate_allows_degraded_last_good_within_hard_caps(self) -> None:
+        config.settings.trading_market_context_required = True
+        config.settings.trading_market_context_min_quality = 0.8
+        config.settings.trading_market_context_max_staleness_seconds = 60
+        config.settings.trading_market_context_allow_degraded_last_good = True
+        config.settings.trading_market_context_news_degraded_max_staleness_seconds = 1800
+
+        bundle = MarketContextBundle.model_validate(
+            {
+                'contextVersion': 'torghut.market-context.v1',
+                'symbol': 'AAPL',
+                'asOfUtc': '2026-02-19T12:00:00Z',
+                'freshnessSeconds': 120,
+                'qualityScore': 0.55,
+                'sourceCount': 4,
+                'riskFlags': [
+                    'market_context_degraded_last_good',
+                    'news_generation_failed_all_models',
+                ],
+                'domains': {
+                    'technicals': {
+                        'domain': 'technicals',
+                        'state': 'ok',
+                        'asOf': '2026-02-19T12:00:00Z',
+                        'freshnessSeconds': 15,
+                        'maxFreshnessSeconds': 60,
+                        'sourceCount': 1,
+                        'qualityScore': 1,
+                        'payload': {},
+                        'citations': [],
+                        'riskFlags': [],
+                    },
+                    'fundamentals': {
+                        'domain': 'fundamentals',
+                        'state': 'ok',
+                        'asOf': '2026-02-19T11:00:00Z',
+                        'freshnessSeconds': 3600,
+                        'maxFreshnessSeconds': 86400,
+                        'sourceCount': 1,
+                        'qualityScore': 0.9,
+                        'payload': {},
+                        'citations': [],
+                        'riskFlags': [],
+                    },
+                    'news': {
+                        'domain': 'news',
+                        'state': 'stale',
+                        'asOf': '2026-02-19T11:40:00Z',
+                        'freshnessSeconds': 1200,
+                        'maxFreshnessSeconds': 300,
+                        'sourceCount': 2,
+                        'qualityScore': 0.3,
+                        'payload': {
+                            'generationFailed': True,
+                            'lastSuccessfulAsOfUtc': '2026-02-19T11:40:00Z',
+                        },
+                        'citations': [],
+                        'riskFlags': [
+                            'news_stale',
+                            'news_generation_failed_all_models',
+                            'market_context_degraded_last_good',
+                        ],
+                    },
+                    'regime': {
+                        'domain': 'regime',
+                        'state': 'ok',
+                        'asOf': '2026-02-19T12:00:00Z',
+                        'freshnessSeconds': 15,
+                        'maxFreshnessSeconds': 120,
+                        'sourceCount': 1,
+                        'qualityScore': 1,
+                        'payload': {},
+                        'citations': [],
+                        'riskFlags': [],
+                    },
+                },
+            }
+        )
+
+        status = evaluate_market_context(bundle)
+        self.assertTrue(status.allow_llm)
+        self.assertIsNone(status.reason)
+        self.assertIn('market_context_degraded_last_good', status.risk_flags)
+
+    def test_evaluate_blocks_degraded_last_good_when_news_hard_cap_exceeded(self) -> None:
+        config.settings.trading_market_context_required = True
+        config.settings.trading_market_context_min_quality = 0.8
+        config.settings.trading_market_context_max_staleness_seconds = 60
+        config.settings.trading_market_context_allow_degraded_last_good = True
+        config.settings.trading_market_context_news_degraded_max_staleness_seconds = 900
+
+        bundle = MarketContextBundle.model_validate(
+            {
+                'contextVersion': 'torghut.market-context.v1',
+                'symbol': 'AAPL',
+                'asOfUtc': '2026-02-19T12:00:00Z',
+                'freshnessSeconds': 120,
+                'qualityScore': 0.55,
+                'sourceCount': 4,
+                'riskFlags': [
+                    'market_context_degraded_last_good',
+                    'news_generation_failed_all_models',
+                ],
+                'domains': {
+                    'technicals': {
+                        'domain': 'technicals',
+                        'state': 'ok',
+                        'asOf': '2026-02-19T12:00:00Z',
+                        'freshnessSeconds': 15,
+                        'maxFreshnessSeconds': 60,
+                        'sourceCount': 1,
+                        'qualityScore': 1,
+                        'payload': {},
+                        'citations': [],
+                        'riskFlags': [],
+                    },
+                    'fundamentals': {
+                        'domain': 'fundamentals',
+                        'state': 'ok',
+                        'asOf': '2026-02-19T11:00:00Z',
+                        'freshnessSeconds': 3600,
+                        'maxFreshnessSeconds': 86400,
+                        'sourceCount': 1,
+                        'qualityScore': 0.9,
+                        'payload': {},
+                        'citations': [],
+                        'riskFlags': [],
+                    },
+                    'news': {
+                        'domain': 'news',
+                        'state': 'stale',
+                        'asOf': '2026-02-19T11:40:00Z',
+                        'freshnessSeconds': 1200,
+                        'maxFreshnessSeconds': 300,
+                        'sourceCount': 2,
+                        'qualityScore': 0.3,
+                        'payload': {'generationFailed': True},
+                        'citations': [],
+                        'riskFlags': [
+                            'news_stale',
+                            'news_generation_failed_all_models',
+                            'market_context_degraded_last_good',
+                        ],
+                    },
+                    'regime': {
+                        'domain': 'regime',
+                        'state': 'ok',
+                        'asOf': '2026-02-19T12:00:00Z',
+                        'freshnessSeconds': 15,
+                        'maxFreshnessSeconds': 120,
+                        'sourceCount': 1,
+                        'qualityScore': 1,
+                        'payload': {},
+                        'citations': [],
+                        'riskFlags': [],
+                    },
+                },
+            }
+        )
+
+        status = evaluate_market_context(bundle)
+        self.assertFalse(status.allow_llm)
+        self.assertEqual(status.reason, 'market_context_stale')

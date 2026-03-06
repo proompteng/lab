@@ -162,7 +162,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "0"
                 automation: auto
-                enabled: "false"
+                enabled: "true"
               - name: istio-system
                 path: argocd/applications/istio-system
                 namespace: istio-system
@@ -354,6 +354,20 @@ spec:
                     pod-security.kubernetes.io/warn: privileged
                 automation: auto
                 enabled: "true"
+              - name: forgejo-runners
+                path: argocd/applications/forgejo-runners
+                namespace: forgejo-runners
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false
+                automation: manual
+                enabled: "true"
               - name: backstage
                 path: argocd/applications/backstage
                 namespace: backstage
@@ -486,6 +500,18 @@ spec:
             - .spec.template.spec.restartPolicy
             - .spec.template.spec.schedulerName
             - .spec.template.spec.volumes[].configMap.defaultMode
+        - kind: StatefulSet
+          group: apps
+          namespace: forgejo-runners
+          name: forgejo-runners-amd64
+          jqPathExpressions:
+            - '.spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"]'
+        - kind: StatefulSet
+          group: apps
+          namespace: forgejo-runners
+          name: forgejo-runners-arm64
+          jqPathExpressions:
+            - '.spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"]'
         - kind: Service
           group: serving.knative.dev
           namespace: graf

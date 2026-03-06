@@ -1228,6 +1228,114 @@ data:
                 Rejected orders exceed 20% of submitted orders for 10 minutes. This impacts execution quality
                 and will degrade quant control-plane performance metrics.
               runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutQuantExecutionCleanRatioLow
+            expr: |
+              min_over_time(
+                torghut_trading_execution_clean_ratio{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut"
+                }[15m]
+              ) < 0.75
+              and
+              increase(
+                torghut_trading_decisions_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut"
+                }[15m]
+              ) > 20
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut clean execution ratio degraded
+              description: |
+                Clean execution ratio is below 75% for 10 minutes while decision traffic is active.
+                Hold live promotion gates and investigate dominant rejection classes before scaling.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutQuantQtyBelowMinRatioHigh
+            expr: |
+              (
+                increase(
+                  torghut_trading_decision_reject_reason_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut",
+                    reason="qty_below_min"
+                  }[30m]
+                )
+                /
+                clamp_min(
+                  increase(
+                    torghut_trading_decisions_total{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut"
+                    }[30m]
+                  ),
+                  1
+                )
+              ) > 0.03
+              and
+              increase(
+                torghut_trading_decisions_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut"
+                }[30m]
+              ) > 25
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut qty_below_min ratio above recovery gate
+              description: |
+                qty_below_min exceeds 3% of recent decisions.
+                Check sizing diagnostics and limiting constraints before allowing canary progression.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutQuantLlmUnavailableRejectRatioHigh
+            expr: |
+              (
+                sum(
+                  increase(
+                    torghut_trading_decision_reject_reason_total{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut",
+                      reason=~"llm_unavailable_.*"
+                    }[30m]
+                  )
+                )
+                /
+                clamp_min(
+                  increase(
+                    torghut_trading_decisions_total{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut"
+                    }[30m]
+                  ),
+                  1
+                )
+              ) > 0.02
+              and
+              increase(
+                torghut_trading_decisions_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut"
+                }[30m]
+              ) > 25
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut LLM unavailable rejects above recovery gate
+              description: |
+                LLM-unavailable veto reasons exceed 2% of recent decisions.
+                Keep deterministic risk controls authoritative and rollback canary if this persists.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
           - alert: TorghutQuantLLMErrorRateHigh
             expr: |
               (
@@ -1378,4 +1486,42 @@ data:
               description: |
                 Market-context dispatch state has remained submitted past configured stuck thresholds.
                 This indicates callback ingest and/or runner completion handoff is blocked.
+              runbook_url: docs/runbooks/torghut-market-context-ingest.md
+          - alert: JangarTorghutMarketContextBatchFailureRateHigh
+            expr: |
+              (
+                sum(rate(jangar_torghut_market_context_batch_runs_total{outcome=~"failed|partial"}[30m]))
+                /
+                clamp_min(sum(rate(jangar_torghut_market_context_batch_runs_total[30m])), 0.001)
+              ) > 0.4
+              and sum(rate(jangar_torghut_market_context_batch_runs_total[30m])) > 0.005
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: Jangar market-context batch outcomes are degraded
+              description: |
+                Failed/partial batch outcomes exceed 40% for 15 minutes.
+                Treat this as a canary blocker for Torghut live promotion until freshness recovers.
+              runbook_url: docs/runbooks/torghut-market-context-ingest.md
+          - alert: JangarTorghutMarketContextSkippedDuringMarketHours
+            expr: |
+              (
+                sum(increase(jangar_torghut_market_context_batch_runs_total{outcome="skipped_market_closed"}[30m])) > 0
+              )
+              * on() group_left()
+              (
+                (day_of_week(vector(time())) >= bool 1)
+                * (day_of_week(vector(time())) <= bool 5)
+                * (hour(vector(time())) >= bool 14)
+                * (hour(vector(time())) < bool 21)
+              )
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Jangar market-context batch unexpectedly skipped during market hours
+              description: |
+                Batch runs are reporting market-closed skips during expected market-open windows.
+                Validate Torghut trading status probe semantics and pre-open probe contracts.
               runbook_url: docs/runbooks/torghut-market-context-ingest.md

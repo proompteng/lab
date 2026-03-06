@@ -14,6 +14,10 @@ from urllib.parse import urlsplit
 from pydantic import AliasChoices, BaseModel, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .logging_config import configure_logging
+
+configure_logging()
+
 logger = logging.getLogger(__name__)
 
 FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
@@ -28,8 +32,12 @@ FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "trading_autonomy_allow_live_promotion": "torghut_trading_autonomy_allow_live_promotion",
     "trading_evidence_continuity_enabled": "torghut_trading_evidence_continuity_enabled",
     "trading_universe_require_non_empty_jangar": "torghut_trading_universe_require_non_empty_jangar",
+    "trading_universe_static_fallback_enabled": "torghut_trading_universe_static_fallback_enabled",
     "trading_readiness_dependency_cache_enabled": (
         "torghut_trading_readiness_dependency_cache_enabled"
+    ),
+    "trading_db_schema_graph_allow_divergence_roots": (
+        "torghut_trading_db_schema_graph_allow_divergence_roots"
     ),
     "trading_execution_prefer_limit": "torghut_trading_execution_prefer_limit",
     "trading_allocator_enabled": "torghut_trading_allocator_enabled",
@@ -46,6 +54,9 @@ FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "trading_kill_switch_enabled": "torghut_trading_kill_switch_enabled",
     "trading_emergency_stop_enabled": "torghut_trading_emergency_stop_enabled",
     "trading_market_context_required": "torghut_trading_market_context_required",
+    "trading_market_context_allow_degraded_last_good": (
+        "torghut_trading_market_context_allow_degraded_last_good"
+    ),
     "llm_enabled": "torghut_llm_enabled",
     "llm_fail_open_live_approved": "torghut_llm_fail_open_live_approved",
     "llm_adjustment_allowed": "torghut_llm_adjustment_allowed",
@@ -236,6 +247,21 @@ class Settings(BaseSettings):
 
     app_env: Literal["dev", "stage", "prod"] = Field(
         default="dev", alias="APP_ENV", description="Deployment environment."
+    )
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
+        default="INFO",
+        alias="LOG_LEVEL",
+        description="Root application log level.",
+    )
+    log_format: Literal["json", "text"] = Field(
+        default="text",
+        alias="LOG_FORMAT",
+        description="Application log output format.",
+    )
+    log_access_log: bool = Field(
+        default=True,
+        alias="LOG_ACCESS_LOG",
+        description="Emit Uvicorn access logs.",
     )
     db_dsn: str = Field(
         default="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
@@ -673,6 +699,22 @@ class Settings(BaseSettings):
         default=True,
         alias="TRADING_UNIVERSE_REQUIRE_NON_EMPTY_JANGAR",
         description="Fail closed when Jangar-backed universe cannot be resolved to a non-empty symbol set.",
+    )
+    trading_universe_static_fallback_enabled: bool = Field(
+        default=False,
+        alias="TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED",
+        description=(
+            "When enabled, Jangar resolution failures may fall back to static symbols if configured. "
+            "Fail-closed behavior remains in effect when no fallback symbols are available."
+        ),
+    )
+    trading_universe_static_fallback_symbols_raw: Optional[str] = Field(
+        default=None,
+        alias="TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS",
+        description=(
+            "Optional comma-separated fallback symbols used only when "
+            "TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED=true and Jangar resolution is unavailable."
+        ),
     )
     trading_universe_max_stale_seconds: int = Field(
         default=900,
@@ -1191,7 +1233,7 @@ class Settings(BaseSettings):
         description="Jangar market-context endpoint consumed by LLM review.",
     )
     trading_market_context_timeout_seconds: int = Field(
-        default=3,
+        default=300,
         alias="TRADING_MARKET_CONTEXT_TIMEOUT_SECONDS",
         description="Timeout for market-context fetches.",
     )
@@ -1214,6 +1256,21 @@ class Settings(BaseSettings):
         default=300,
         alias="TRADING_MARKET_CONTEXT_MAX_STALENESS_SECONDS",
         description="Maximum accepted market-context staleness.",
+    )
+    trading_market_context_allow_degraded_last_good: bool = Field(
+        default=True,
+        alias="TRADING_MARKET_CONTEXT_ALLOW_DEGRADED_LAST_GOOD",
+        description="Allow degraded last-good market context when generation failed but a bounded stale snapshot exists.",
+    )
+    trading_market_context_fundamentals_degraded_max_staleness_seconds: int = Field(
+        default=86400,
+        alias="TRADING_MARKET_CONTEXT_FUNDAMENTALS_DEGRADED_MAX_STALENESS_SECONDS",
+        description="Hard stale cap for degraded last-good fundamentals context.",
+    )
+    trading_market_context_news_degraded_max_staleness_seconds: int = Field(
+        default=1800,
+        alias="TRADING_MARKET_CONTEXT_NEWS_DEGRADED_MAX_STALENESS_SECONDS",
+        description="Hard stale cap for degraded last-good news context.",
     )
     trading_clickhouse_url: Optional[str] = Field(
         default=None, alias="TA_CLICKHOUSE_URL"
@@ -1245,6 +1302,30 @@ class Settings(BaseSettings):
         description=(
             "Maximum cache age for readiness dependency checks (in seconds). Set to 0 to "
             "force synchronous checks on every request."
+        ),
+    )
+    trading_readiness_dependency_cache_stale_tolerance_seconds: int = Field(
+        default=20,
+        alias="TRADING_READINESS_DEPENDENCY_CACHE_STALE_TOLERANCE_SECONDS",
+        description=(
+            "Additional seconds allowed to reuse stale readiness dependency cache "
+            "on /readyz requests before a hard refresh is forced."
+        ),
+    )
+    trading_db_schema_graph_branch_tolerance: int = Field(
+        default=1,
+        alias="TRADING_DB_SCHEMA_GRAPH_BRANCH_TOLERANCE",
+        description=(
+            "Maximum allowed migration graph branch count before readiness marks "
+            "lineage divergence."
+        ),
+    )
+    trading_db_schema_graph_allow_divergence_roots: bool = Field(
+        default=False,
+        alias="TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS",
+        description=(
+            "Allow schema graph branch-count divergence as a warning instead of a "
+            "hard readiness failure."
         ),
     )
     trading_startup_readiness_grace_seconds: int = Field(
@@ -1410,6 +1491,10 @@ class Settings(BaseSettings):
     llm_dspy_live_runtime_block_qty_multiplier: float = Field(
         default=0.5,
         alias="LLM_DSPY_LIVE_RUNTIME_BLOCK_QTY_MULTIPLIER",
+    )
+    llm_dspy_runtime_fallback_alert_ratio: float = Field(
+        default=0.01,
+        alias="LLM_DSPY_RUNTIME_FALLBACK_ALERT_RATIO",
     )
     llm_dspy_compile_metrics_policy_ref: str = Field(
         default="config/trading/llm/dspy-metrics.yaml",
@@ -1870,6 +1955,13 @@ class Settings(BaseSettings):
                 self.trading_planned_decision_timeout_seconds,
                 "TRADING_PLANNED_DECISION_TIMEOUT_SECONDS must be >= 0",
             ),
+            (
+                self.trading_readiness_dependency_cache_stale_tolerance_seconds,
+                (
+                    "TRADING_READINESS_DEPENDENCY_CACHE_STALE_TOLERANCE_SECONDS "
+                    "must be >= 0"
+                ),
+            ),
         ]
         for value, message in checks:
             self._validate_non_negative_value(value, message)
@@ -2077,6 +2169,10 @@ class Settings(BaseSettings):
             raise ValueError("POSTHOG_API_KEY is required when POSTHOG_ENABLED=true")
 
     def model_post_init(self, __context: Any) -> None:
+        if not os.getenv("LOG_FORMAT"):
+            self.log_format = "json" if self.app_env in {"stage", "prod"} else "text"
+        if not os.getenv("LOG_LEVEL"):
+            self.log_level = "INFO"
         self._validate_allocator_alias_environment_parity()
         self._apply_feature_flag_overrides()
         self._apply_trading_defaults()
@@ -2124,6 +2220,18 @@ class Settings(BaseSettings):
             for symbol in self.trading_static_symbols_raw.split(",")
             if symbol.strip()
         ]
+
+    @property
+    def trading_universe_static_fallback_symbols(self) -> list[str]:
+        if self.trading_universe_static_fallback_symbols_raw:
+            return [
+                symbol.strip()
+                for symbol in self.trading_universe_static_fallback_symbols_raw.split(
+                    ","
+                )
+                if symbol.strip()
+            ]
+        return self.trading_static_symbols
 
     @property
     def trading_execution_adapter_symbols(self) -> set[str]:

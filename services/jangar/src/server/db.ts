@@ -4,6 +4,11 @@ import { type Generated, Kysely, PostgresDialect } from 'kysely'
 import { Pool } from 'pg'
 
 export type Db = Kysely<Database>
+export type StoreDbResolution = {
+  db: Db | null
+  shared: boolean
+  url: string | null
+}
 
 type Timestamp = string | Date
 
@@ -837,10 +842,19 @@ const createDbClient = (rawUrl: string): Db => {
   })
 }
 
+const normalizeDbUrl = (value: string | undefined) => value?.trim() ?? ''
+
+const shouldReuseSharedDb = (options: { url?: string; createDb?: (url: string) => Db }) => {
+  if (options.createDb) return false
+  const envUrl = normalizeDbUrl(process.env.DATABASE_URL)
+  const resolvedUrl = normalizeDbUrl(options.url) || envUrl
+  return resolvedUrl.length > 0 && resolvedUrl === envUrl
+}
+
 export const getDb = () => {
   if (db !== undefined) return db
 
-  const url = process.env.DATABASE_URL?.trim()
+  const url = normalizeDbUrl(process.env.DATABASE_URL)
   if (!url) {
     db = null
     return db
@@ -852,7 +866,22 @@ export const getDb = () => {
 
 export const createKyselyDb = (url: string) => createDbClient(url)
 
+export const resolveStoreDb = (options: { url?: string; createDb?: (url: string) => Db } = {}): StoreDbResolution => {
+  const url = normalizeDbUrl(options.url) || normalizeDbUrl(process.env.DATABASE_URL)
+  if (!url) {
+    return { db: null, shared: false, url: null }
+  }
+
+  if (shouldReuseSharedDb(options)) {
+    return { db: getDb(), shared: true, url }
+  }
+
+  return { db: (options.createDb ?? createKyselyDb)(url), shared: false, url }
+}
+
 export const __private = {
+  normalizeDbUrl,
   resolveEffectiveSslMode,
   resolveSslConfig,
+  shouldReuseSharedDb,
 }

@@ -71,6 +71,13 @@ const resolveMigrationsMode = () => {
   return 'auto'
 }
 
+const resolveAllowUnorderedMigrations = () => {
+  const raw = process.env.JANGAR_ALLOW_UNORDERED_MIGRATIONS?.trim().toLowerCase()
+  if (!raw) return true
+  if (['false', '0', 'off', 'disabled', 'no'].includes(raw)) return false
+  return true
+}
+
 const ensureExtensions = async (db: Db) => {
   const { rows: extensionRows } = await sql<{ extname: string }>`
     SELECT extname FROM pg_extension WHERE extname IN ('vector', 'pgcrypto')
@@ -93,6 +100,8 @@ const runMigrations = async (db: Db) => {
   const migrator = new Migrator({
     db,
     provider: migrationProvider,
+    // Allow backfilled migration names to be applied safely instead of hard-failing startup.
+    allowUnorderedMigrations: resolveAllowUnorderedMigrations(),
   })
 
   const { error, results } = await migrator.migrateToLatest()
@@ -128,4 +137,5 @@ export const ensureMigrations = async (db: Db) => {
 
 export const __test__ = {
   getRegisteredMigrations: getRegisteredMigrationNames,
+  resolveAllowUnorderedMigrations,
 }

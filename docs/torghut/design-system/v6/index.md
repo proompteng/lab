@@ -52,11 +52,15 @@ This pack is positioned as the next architecture layer above:
 18. `17-emergency-stop-reason-normalization-and-recovery-stability-2026-03-04.md`
 19. `18-trading-readiness-and-rollout-stability-2026-03-04.md`
 20. `19-jangar-symbol-dependency-freshness-and-readiness-guard.md`
-20. `20-trading-allocator-config-surface-hardening-2026-03-04.md`
-21. `21-schema-fingerprint-and-freshness-for-database-readiness-2026-03-04.md`
-22. `22-trading-readiness-dependency-freshness-cache-2026-03-04.md`
-23. `23-readiness-schema-drift-diagnostics-2026-03-04.md`
-24. `23-trading-startup-readiness-warmup-2026-03-04.md`
+21. `20-trading-allocator-config-surface-hardening-2026-03-04.md`
+22. `21-schema-fingerprint-and-freshness-for-database-readiness-2026-03-04.md`
+23. `22-trading-readiness-dependency-freshness-cache-2026-03-04.md`
+24. `23-readiness-schema-drift-diagnostics-2026-03-04.md`
+25. `23-trading-startup-readiness-warmup-2026-03-04.md`
+26. `26-database-migration-lineage-and-readiness-contract-2026-03-05.md`
+27. `27-live-hypothesis-ledger-and-capital-allocation-contract-2026-03-06.md`
+28. `28-hypothesis-led-alpha-readiness-and-profit-circuit-2026-03-06.md`
+29. `29-code-investigated-vnext-architecture-reset-2026-03-06.md`
 
 ## Recommended Build Order
 
@@ -80,11 +84,15 @@ This pack is positioned as the next architecture layer above:
 18. `17-emergency-stop-reason-normalization-and-recovery-stability-2026-03-04.md`
 19. `18-trading-readiness-and-rollout-stability-2026-03-04.md`
 20. `19-jangar-symbol-dependency-freshness-and-readiness-guard.md`
-20. `20-trading-allocator-config-surface-hardening-2026-03-04.md`
-21. `21-schema-fingerprint-and-freshness-for-database-readiness-2026-03-04.md`
-22. `22-trading-readiness-dependency-freshness-cache-2026-03-04.md`
-23. `23-readiness-schema-drift-diagnostics-2026-03-04.md`
-24. `23-trading-startup-readiness-warmup-2026-03-04.md`
+21. `20-trading-allocator-config-surface-hardening-2026-03-04.md`
+22. `21-schema-fingerprint-and-freshness-for-database-readiness-2026-03-04.md`
+23. `22-trading-readiness-dependency-freshness-cache-2026-03-04.md`
+24. `23-readiness-schema-drift-diagnostics-2026-03-04.md`
+25. `23-trading-startup-readiness-warmup-2026-03-04.md`
+26. `26-database-migration-lineage-and-readiness-contract-2026-03-05.md`
+27. `27-live-hypothesis-ledger-and-capital-allocation-contract-2026-03-06.md`
+28. `28-hypothesis-led-alpha-readiness-and-profit-circuit-2026-03-06.md`
+29. `29-code-investigated-vnext-architecture-reset-2026-03-06.md`
 
 ## Why This Sequence
 
@@ -95,4 +103,9 @@ This pack is positioned as the next architecture layer above:
 - DSPy decision integration must be implemented on top of stable routing and deterministic gate interfaces.
 - Autonomous strategy evolution should only be promoted after evaluation and serving contracts are stable.
 - Production rollout and governance closes with explicit SLO, rollback, and incident controls.
+- Live profitability must ultimately be governed by a database-backed hypothesis ledger, not only by static artifacts.
 - PostHog observability design is sequenced late to instrument stable runtime paths and avoid telemetry contract churn.
+- The hypothesis-led alpha readiness and profit circuit closes the remaining gap between runtime health and capital promotion, ensuring profitable scale-up is evidence-backed instead of inferred from process uptime.
+- The code-investigated vNext architecture reset is sequenced last because it reframes the pack around the now-visible
+  gap between control-plane completion and empirical alpha readiness, and it defines the contract for the next wave of
+  implementation work.

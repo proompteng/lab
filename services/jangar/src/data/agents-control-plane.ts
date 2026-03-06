@@ -120,10 +120,8 @@ export type WorkflowFailureReason = {
   reason: string
   count: number
 }
-export type RolloutFailureReason = {
-  reason: string
-  count: number
-}
+
+export type WorkflowDataConfidence = 'high' | 'degraded' | 'unknown'
 
 export type DatabaseMigrationConsistency = {
   status: 'healthy' | 'degraded' | 'unknown'
@@ -149,32 +147,16 @@ export type DatabaseStatus = {
 }
 
 export type WorkflowsReliabilityStatus = {
-  status: 'healthy' | 'degraded' | 'unknown'
   active_job_runs: number
   recent_failed_jobs: number
   backoff_limit_exceeded_jobs: number
   window_minutes: number
   top_failure_reasons: WorkflowFailureReason[]
+  data_confidence: WorkflowDataConfidence
+  collection_errors: number
+  collected_namespaces: number
+  target_namespaces: number
   message: string
-}
-
-export type DeploymentRolloutStageReliability = {
-  name: string
-  namespace: string
-  swarm: string
-  stage: string
-  phase: string
-  last_run_at: string
-  last_successful_run_at: string
-  last_transition_at: string
-  is_active: boolean
-  is_stale: boolean
-  failed_runs_last_window: number
-  backoff_failures_last_window: number
-  top_failure_reasons: WorkflowFailureReason[]
-  reasons: string[]
-  recent_failed_jobs: number
-  backoff_limit_exceeded_jobs: number
 }
 
 export type DeploymentRolloutStatus = {
@@ -229,36 +211,6 @@ export type NamespaceStatus = {
   degraded_components: string[]
 }
 
-export type ControlPlaneRolloutStageReliability = {
-  name: string
-  namespace: string
-  swarm: string
-  stage: string
-  phase: string
-  last_run_at: string
-  last_successful_run_at: string
-  last_transition_at: string
-  is_active: boolean
-  is_stale: boolean
-  reasons: string[]
-  recent_failed_jobs: number
-  backoff_limit_exceeded_jobs: number
-  failed_runs_last_window: number
-  backoff_failures_last_window: number
-  top_failure_reasons: RolloutFailureReason[]
-}
-
-export type ControlPlaneRolloutReliability = {
-  status: 'healthy' | 'degraded' | 'unknown'
-  window_minutes: number
-  observed_schedules: number
-  inactive_schedules: number
-  stale_schedules: number
-  backoff_limit_exceeded_jobs: number
-  backoff_limit_exceeded_threshold: number
-  stages: ControlPlaneRolloutStageReliability[]
-}
-
 export type ControlPlaneStatus = {
   service: string
   generated_at: string
@@ -283,7 +235,6 @@ export type ControlPlaneStatus = {
   database: DatabaseStatus
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
-  rollout: ControlPlaneRolloutReliability
   rollout_health: ControlPlaneRolloutHealth
   namespaces: NamespaceStatus[]
 }

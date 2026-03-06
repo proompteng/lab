@@ -4,4 +4,9 @@ metadata:
   name: torghut-fundamentals-agent
 spec:
   providerRef:
-    name: codex-spark
+    name: torghut-market-context
+  defaults:
+    systemPromptRef:
+      kind: ConfigMap
+      name: torghut-fundamentals-agent-system-prompt
+      key: system-prompt.md

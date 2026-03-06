@@ -3494,6 +3494,133 @@ describe('agents controller reconcileAgentRun', () => {
     expect(thirdSteps[0]?.phase).toBe('Running')
   })
 
+  it('propagates failed workflow job reason and message onto AgentRun status', async () => {
+    const jobStatuses = new Map<string, Record<string, unknown>>()
+    const apply = vi.fn(async (resource: Record<string, unknown>) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+      const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+      const applied = { ...resource, metadata: { ...metadata, uid } }
+      if (resource.kind === 'Job') {
+        const name = (resource.metadata as Record<string, unknown> | undefined)?.name as string | undefined
+        if (name) {
+          jobStatuses.set(name, applied)
+        }
+      }
+      return applied
+    })
+    const kube = buildKube({
+      apply,
+      get: vi.fn(async (resource: string, name: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        if (resource === 'job') {
+          return jobStatuses.get(name) ?? null
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      spec: {
+        agentRef: { name: 'agent-1' },
+        implementationSpecRef: { name: 'impl-1' },
+        runtime: { type: 'workflow', config: {} },
+        workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+        workflow: {
+          steps: [{ name: 'deploy-step', retries: 0 }],
+        },
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const firstStatus = getLastStatus(kube)
+    const firstWorkflow = firstStatus.workflow as Record<string, unknown>
+    const firstStep = ((firstWorkflow.steps as Record<string, unknown>[]) ?? [])[0] ?? {}
+    const firstJobName = (firstStep.jobRef as Record<string, unknown> | undefined)?.name as string | undefined
+    jobStatuses.set(firstJobName ?? '', {
+      ...jobStatuses.get(firstJobName ?? ''),
+      status: {
+        failed: 1,
+        conditions: [
+          {
+            type: 'Failed',
+            status: 'True',
+            reason: 'BackoffLimitExceeded',
+            message: 'container exited with code 17',
+          },
+        ],
+      },
+    })
+
+    await __test.reconcileAgentRun(
+      kube as never,
+      { ...agentRun, status: firstStatus },
+      'agents',
+      [],
+      [],
+      defaultConcurrency,
+      buildInFlight(),
+      0,
+    )
+
+    const failedStatus = getLastStatus(kube)
+    expect(failedStatus.phase).toBe('Failed')
+    expect(failedStatus.reason).toBe('BackoffLimitExceeded')
+    expect(failedStatus.message).toBe('workflow step deploy-step: container exited with code 17')
+    const failedWorkflow = failedStatus.workflow as Record<string, unknown>
+    const failedStep = ((failedWorkflow.steps as Record<string, unknown>[]) ?? [])[0] ?? {}
+    expect(failedStep.message).toBe('container exited with code 17')
+  })
+
+  it('propagates failed job reason and message onto AgentRun status', async () => {
+    const kube = buildKube({
+      get: vi.fn(async (resource: string, name: string) => {
+        if (resource === 'job' && name === 'job-1') {
+          return {
+            metadata: { name: 'job-1', namespace: 'agents' },
+            status: {
+              failed: 1,
+              conditions: [
+                {
+                  type: 'Failed',
+                  status: 'True',
+                  reason: 'DeadlineExceeded',
+                  message: 'job exceeded active deadline',
+                },
+              ],
+            },
+          }
+        }
+        return null
+      }),
+    })
+
+    const agentRun = buildAgentRun({
+      status: {
+        phase: 'Running',
+        runtimeRef: { type: 'job', name: 'job-1', namespace: 'agents' },
+      },
+    })
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    const status = getLastStatus(kube)
+    expect(status.phase).toBe('Failed')
+    expect(status.reason).toBe('DeadlineExceeded')
+    expect(status.message).toBe('job exceeded active deadline')
+  })
+
   it('fails workflow steps when timeout is exceeded', async () => {
     const apply = vi.fn(async (resource: Record<string, unknown>) => {
       const metadata = (resource.metadata ?? {}) as Record<string, unknown>

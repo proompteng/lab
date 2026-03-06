@@ -687,8 +687,17 @@ const STAGE_CADENCE_KEY: Record<StageName, string> = {
 }
 
 const STAGE_AGENT_ROLE: Record<StageName, string> = {
-  discover: 'architector',
-  plan: 'architector',
+  discover: 'architect',
+  plan: 'architect',
+  implement: 'engineer',
+  verify: 'deployer',
+}
+
+type SwarmPersonaRole = 'architect' | 'engineer' | 'deployer'
+
+const STAGE_PERSONA_ROLE: Record<StageName, SwarmPersonaRole> = {
+  discover: 'architect',
+  plan: 'architect',
   implement: 'engineer',
   verify: 'deployer',
 }
@@ -698,6 +707,13 @@ const STAGE_LAST_RUN_KEY: Record<StageName, string> = {
   plan: 'lastPlanAt',
   implement: 'lastImplementAt',
   verify: 'lastVerifyAt',
+}
+
+const STAGE_HOURLY_STAGGER_OFFSET: Record<StageName, number> = {
+  discover: 0,
+  plan: 15,
+  implement: 30,
+  verify: 45,
 }
 
 const TERMINAL_SUCCESS_PHASES = new Set(['succeeded', 'success', 'completed'])
@@ -725,6 +741,9 @@ const SWARM_SCHEDULE_ANNOTATION_HULY_WORKSPACE = 'swarm.proompteng.ai/huly-works
 const SWARM_SCHEDULE_ANNOTATION_HULY_PROJECT = 'swarm.proompteng.ai/huly-project'
 const SWARM_SCHEDULE_ANNOTATION_HULY_SECRET = 'swarm.proompteng.ai/huly-secret'
 const SWARM_SCHEDULE_ANNOTATION_HULY_SKILL_REF = 'swarm.proompteng.ai/huly-skill-ref'
+const SWARM_SCHEDULE_ANNOTATION_HULY_TOKEN_KEY = 'swarm.proompteng.ai/huly-token-key'
+const SWARM_SCHEDULE_ANNOTATION_HULY_EXPECTED_ACTOR_KEY = 'swarm.proompteng.ai/huly-expected-actor-key'
+const SWARM_SCHEDULE_ANNOTATION_HUMAN_NAME = 'swarm.proompteng.ai/human-name'
 const SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT = (() => {
   const raw = Number(process.env.JANGAR_SWARM_REQUIREMENT_MAX_PAYLOAD_BYTES ?? '16384')
   if (!Number.isFinite(raw) || raw < 1) return 16_384
@@ -744,18 +763,190 @@ const SWARM_REQUIREMENT_MAX_ATTEMPTS = (() => {
   return Math.floor(raw)
 })()
 
+const deriveStageStaggerMinute = (swarmName: string, stage: StageName) => {
+  const base = Number.parseInt(hashNameSuffix(swarmName), 36)
+  const swarmOffset = Number.isFinite(base) ? base % 15 : 0
+  return (STAGE_HOURLY_STAGGER_OFFSET[stage] + swarmOffset) % 60
+}
+
+const normalizeRequirementPriority = (value: string | undefined) => {
+  const normalized = (value ?? '').trim().toLowerCase()
+  if (!normalized) return 2
+  if (
+    normalized === 'p0' ||
+    normalized === 'critical' ||
+    normalized === 'urgent' ||
+    normalized === 'blocker' ||
+    normalized === 'highest'
+  ) {
+    return 0
+  }
+  if (normalized === 'p1' || normalized === 'high') {
+    return 1
+  }
+  if (normalized === 'p2' || normalized === 'medium' || normalized === 'normal') {
+    return 2
+  }
+  if (normalized === 'p3' || normalized === 'low') {
+    return 3
+  }
+  return 2
+}
+
+const parseSignalPayloadRecord = (payload: unknown) => {
+  const directRecord = asRecord(payload)
+  if (directRecord) {
+    return directRecord
+  }
+  if (typeof payload === 'string') {
+    try {
+      const parsed = JSON.parse(payload) as unknown
+      return asRecord(parsed)
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+const resolveRequirementPriorityScore = (signal: Record<string, unknown>) => {
+  const signalSpec = asRecord(signal.spec) ?? {}
+  const signalMetadata = asRecord(signal.metadata) ?? {}
+  const payloadRecord = parseSignalPayloadRecord(signalSpec.payload)
+  const payloadContextRecord = payloadRecord ? asRecord(payloadRecord.context) : null
+  const candidates = [
+    asString(signalSpec.priority),
+    asString(signalSpec.severity),
+    asString(payloadRecord?.priority),
+    asString(payloadRecord?.severity),
+    asString(payloadContextRecord?.priority),
+    asString(asRecord(signalMetadata.labels)?.priority),
+  ]
+  for (const candidate of candidates) {
+    if (candidate && candidate.trim().length > 0) {
+      return normalizeRequirementPriority(candidate)
+    }
+  }
+  return 2
+}
+
+const sortRequirementSignalsForDispatch = (signals: Record<string, unknown>[]) => {
+  return signals
+    .map((signal) => {
+      const metadata = asRecord(signal.metadata) ?? {}
+      const signalName = asString(metadata.name) ?? ''
+      const createdAt = asString(metadata.creationTimestamp)
+      const createdAtMs = createdAt ? Date.parse(createdAt) : Number.NaN
+      return {
+        signal,
+        signalName,
+        createdAtMs: Number.isFinite(createdAtMs) ? createdAtMs : Number.MAX_SAFE_INTEGER,
+        priority: resolveRequirementPriorityScore(signal),
+      }
+    })
+    .sort((left, right) => {
+      if (left.priority !== right.priority) {
+        return left.priority - right.priority
+      }
+      if (left.createdAtMs !== right.createdAtMs) {
+        return left.createdAtMs - right.createdAtMs
+      }
+      return left.signalName.localeCompare(right.signalName)
+    })
+    .map((entry) => entry.signal)
+}
+
 type SwarmHulyIntegration = {
   baseUrl: string
   workspace?: string
   project?: string
   secretName: string
   skillRef: string
+  personas: Partial<Record<SwarmPersonaRole, SwarmPersona>>
 }
 
 type SwarmAgentIdentity = {
   workerId: string
   identity: string
   role: string
+  humanName: string
+  tokenKey: string
+  expectedActorIdKey: string
+}
+
+type SwarmPersona = {
+  role: SwarmPersonaRole
+  humanName: string
+  workerIdentity: string
+  tokenKey: string
+  expectedActorIdKey: string
+}
+
+const DEFAULT_SWARM_PERSONAS: Record<string, { secretName: string; personas: Record<SwarmPersonaRole, SwarmPersona> }> =
+  {
+    'jangar-control-plane': {
+      secretName: 'huly-api-jangar',
+      personas: {
+        architect: {
+          role: 'architect',
+          humanName: 'Victor Chen',
+          workerIdentity: 'victor-chen-jangar-architect',
+          tokenKey: 'HULY_API_TOKEN_VICTOR_CHEN_JANGAR_ARCHITECT',
+          expectedActorIdKey: 'HULY_EXPECTED_ACTOR_ID_VICTOR_CHEN_JANGAR_ARCHITECT',
+        },
+        engineer: {
+          role: 'engineer',
+          humanName: 'Elise Novak',
+          workerIdentity: 'elise-novak-jangar-engineer',
+          tokenKey: 'HULY_API_TOKEN_ELISE_NOVAK_JANGAR_ENGINEER',
+          expectedActorIdKey: 'HULY_EXPECTED_ACTOR_ID_ELISE_NOVAK_JANGAR_ENGINEER',
+        },
+        deployer: {
+          role: 'deployer',
+          humanName: 'Marco Silva',
+          workerIdentity: 'marco-silva-jangar-deployer',
+          tokenKey: 'HULY_API_TOKEN_MARCO_SILVA_JANGAR_DEPLOYER',
+          expectedActorIdKey: 'HULY_EXPECTED_ACTOR_ID_MARCO_SILVA_JANGAR_DEPLOYER',
+        },
+      },
+    },
+    'torghut-quant': {
+      secretName: 'huly-api-torghut',
+      personas: {
+        architect: {
+          role: 'architect',
+          humanName: 'Gideon Park',
+          workerIdentity: 'gideon-park-torghut-architect',
+          tokenKey: 'HULY_API_TOKEN_GIDEON_PARK_TORGHUT_ARCHITECT',
+          expectedActorIdKey: 'HULY_EXPECTED_ACTOR_ID_GIDEON_PARK_TORGHUT_ARCHITECT',
+        },
+        engineer: {
+          role: 'engineer',
+          humanName: 'Naomi Ibarra',
+          workerIdentity: 'naomi-ibarra-torghut-engineer',
+          tokenKey: 'HULY_API_TOKEN_NAOMI_IBARRA_TORGHUT_ENGINEER',
+          expectedActorIdKey: 'HULY_EXPECTED_ACTOR_ID_NAOMI_IBARRA_TORGHUT_ENGINEER',
+        },
+        deployer: {
+          role: 'deployer',
+          humanName: 'Julian Hart',
+          workerIdentity: 'julian-hart-torghut-deployer',
+          tokenKey: 'HULY_API_TOKEN_JULIAN_HART_TORGHUT_DEPLOYER',
+          expectedActorIdKey: 'HULY_EXPECTED_ACTOR_ID_JULIAN_HART_TORGHUT_DEPLOYER',
+        },
+      },
+    },
+  }
+
+const resolveDefaultSwarmPersonaConfig = (swarmName: string, owner: Record<string, unknown>) => {
+  const ownerId = asString(owner.id)?.toLowerCase() ?? ''
+  if (DEFAULT_SWARM_PERSONAS[swarmName]) {
+    return DEFAULT_SWARM_PERSONAS[swarmName]
+  }
+  if (swarmName.toLowerCase().includes('torghut') || ownerId.includes('trading')) {
+    return DEFAULT_SWARM_PERSONAS['torghut-quant']
+  }
+  return DEFAULT_SWARM_PERSONAS['jangar-control-plane']
 }
 
 const normalizeLabelValue = (value: string) => {
@@ -771,6 +962,12 @@ const normalizeLabelValue = (value: string) => {
     .replace(/^[.\-]+/, '')
     .replace(/[.\-]+$/, '')
   return trimmed || 'swarm'
+}
+
+const resolveDefaultWorkloadImage = () => {
+  const candidate =
+    asString(process.env.JANGAR_AGENT_RUNNER_IMAGE)?.trim() ?? asString(process.env.JANGAR_AGENT_IMAGE)?.trim() ?? ''
+  return candidate.length > 0 ? candidate : null
 }
 
 const parseStringList = (raw: unknown) => {
@@ -824,37 +1021,82 @@ const normalizeHulyBaseUrl = (value: string | null | undefined) => {
 const resolveSwarmHulyIntegration = (
   spec: Record<string, unknown>,
   owner: Record<string, unknown>,
+  swarmName: string,
 ): SwarmHulyIntegration => {
   const integrations = asRecord(spec.integrations) ?? {}
   const huly = asRecord(integrations.huly) ?? {}
   const authSecretRef = asRecord(huly.authSecretRef) ?? {}
-  const ownerChannel = asString(owner.channel)
-  const baseUrl =
-    normalizeHulyBaseUrl(asString(huly.baseUrl)) || normalizeHulyBaseUrl(ownerChannel) || SWARM_DEFAULT_HULY_BASE_URL
+  const baseUrl = normalizeHulyBaseUrl(asString(huly.baseUrl)) || SWARM_DEFAULT_HULY_BASE_URL
   // Avoid implicit global secret fallback; swarm runs should use explicit per-swarm auth secret refs.
   const secretName = asString(authSecretRef.name)?.trim() ?? ''
   const workspace = asString(huly.workspace)?.trim() || undefined
   const project = asString(huly.project)?.trim() || undefined
   const skillRef = asString(huly.skillRef)?.trim() || SWARM_DEFAULT_HULY_SKILL_REF
+  const rawPersonas = asRecord(huly.personas) ?? {}
+  const personaEntries = Object.entries(rawPersonas)
+    .map(([role, value]) => {
+      if (role !== 'architect' && role !== 'engineer' && role !== 'deployer') return null
+      const record = asRecord(value) ?? {}
+      const humanName = asString(record.humanName)?.trim() ?? ''
+      const workerIdentity = asString(record.workerIdentity)?.trim() ?? ''
+      const tokenKey = asString(record.tokenKey)?.trim() ?? ''
+      const expectedActorIdKey = asString(record.expectedActorIdKey)?.trim() ?? ''
+      if (!humanName || !workerIdentity || !tokenKey || !expectedActorIdKey) {
+        return {
+          role,
+          humanName,
+          workerIdentity,
+          tokenKey,
+          expectedActorIdKey,
+        } satisfies SwarmPersona
+      }
+      return {
+        role,
+        humanName,
+        workerIdentity,
+        tokenKey,
+        expectedActorIdKey,
+      } satisfies SwarmPersona
+    })
+    .filter((persona): persona is SwarmPersona => persona !== null)
+  const explicitPersonas = Object.fromEntries(personaEntries.map((persona) => [persona.role, persona])) as Partial<
+    Record<SwarmPersonaRole, SwarmPersona>
+  >
+  const defaultConfig = resolveDefaultSwarmPersonaConfig(swarmName, owner)
+  const personas =
+    explicitPersonas.architect && explicitPersonas.engineer && explicitPersonas.deployer
+      ? explicitPersonas
+      : (defaultConfig?.personas ?? explicitPersonas)
   return {
     baseUrl,
     workspace,
     project,
-    secretName,
+    secretName: secretName || defaultConfig?.secretName || '',
     skillRef,
+    personas,
   }
 }
 
-const buildSwarmAgentIdentity = (input: { swarmName: string; stage: StageName; seedSuffix?: string }) => {
+const resolveSwarmPersonaForStage = (huly: SwarmHulyIntegration, stage: StageName) => {
+  return huly.personas[STAGE_PERSONA_ROLE[stage]]
+}
+
+const buildSwarmAgentIdentity = (input: {
+  swarmName: string
+  stage: StageName
+  persona: SwarmPersona
+  seedSuffix?: string
+}) => {
   const seed = `${input.swarmName}:${input.stage}:${input.seedSuffix ?? ''}`
   const hash = hashNameSuffix(seed)
   const workerId = `worker-${hash.slice(0, 8)}`
-  const swarmLabel = normalizeLabelValue(input.swarmName)
-  const identity = `vw-${swarmLabel}-${input.stage}-${workerId}`.slice(0, 120)
   return {
     workerId,
-    identity,
-    role: STAGE_AGENT_ROLE[input.stage],
+    identity: input.persona.workerIdentity.slice(0, 120),
+    role: input.persona.role,
+    humanName: input.persona.humanName,
+    tokenKey: input.persona.tokenKey,
+    expectedActorIdKey: input.persona.expectedActorIdKey,
   } satisfies SwarmAgentIdentity
 }
 
@@ -867,6 +1109,9 @@ const buildSwarmRuntimeParameters = (input: {
     swarmAgentWorkerId: input.identity.workerId,
     swarmAgentIdentity: input.identity.identity,
     swarmAgentRole: input.identity.role,
+    swarmHumanName: input.identity.humanName,
+    swarmAgentTokenKey: input.identity.tokenKey,
+    swarmAgentExpectedActorIdKey: input.identity.expectedActorIdKey,
     hulyApiBaseUrl: input.huly.baseUrl,
     hulySkillRef: input.huly.skillRef,
   }
@@ -891,9 +1136,12 @@ const buildSwarmScheduleAnnotations = (input: {
     [SWARM_SCHEDULE_ANNOTATION_WORKER_ID]: input.identity.workerId,
     [SWARM_SCHEDULE_ANNOTATION_IDENTITY]: input.identity.identity,
     [SWARM_SCHEDULE_ANNOTATION_ROLE]: input.identity.role,
+    [SWARM_SCHEDULE_ANNOTATION_HUMAN_NAME]: input.identity.humanName,
     [SWARM_SCHEDULE_ANNOTATION_HULY_BASE_URL]: input.huly.baseUrl,
     [SWARM_SCHEDULE_ANNOTATION_HULY_SECRET]: input.huly.secretName,
     [SWARM_SCHEDULE_ANNOTATION_HULY_SKILL_REF]: input.huly.skillRef,
+    [SWARM_SCHEDULE_ANNOTATION_HULY_TOKEN_KEY]: input.identity.tokenKey,
+    [SWARM_SCHEDULE_ANNOTATION_HULY_EXPECTED_ACTOR_KEY]: input.identity.expectedActorIdKey,
   }
   if (input.ownerChannel) {
     annotations[SWARM_SCHEDULE_ANNOTATION_OWNER_CHANNEL] = input.ownerChannel
@@ -913,21 +1161,27 @@ const resolveScheduleRuntimeInjection = (schedule: Record<string, unknown>) => {
   const workerId = asString(annotations[SWARM_SCHEDULE_ANNOTATION_WORKER_ID])
   const identity = asString(annotations[SWARM_SCHEDULE_ANNOTATION_IDENTITY])
   const role = asString(annotations[SWARM_SCHEDULE_ANNOTATION_ROLE])
+  const humanName = asString(annotations[SWARM_SCHEDULE_ANNOTATION_HUMAN_NAME])
   const hulyBaseUrl = asString(annotations[SWARM_SCHEDULE_ANNOTATION_HULY_BASE_URL])
   const hulyWorkspace = asString(annotations[SWARM_SCHEDULE_ANNOTATION_HULY_WORKSPACE])
   const hulyProject = asString(annotations[SWARM_SCHEDULE_ANNOTATION_HULY_PROJECT])
   const hulySecret = asString(annotations[SWARM_SCHEDULE_ANNOTATION_HULY_SECRET])
   const hulySkillRef = asString(annotations[SWARM_SCHEDULE_ANNOTATION_HULY_SKILL_REF])
+  const hulyTokenKey = asString(annotations[SWARM_SCHEDULE_ANNOTATION_HULY_TOKEN_KEY])
+  const hulyExpectedActorIdKey = asString(annotations[SWARM_SCHEDULE_ANNOTATION_HULY_EXPECTED_ACTOR_KEY])
 
   const parameters: Record<string, string> = {}
   if (ownerChannel) parameters.ownerChannel = ownerChannel
   if (workerId) parameters.swarmAgentWorkerId = workerId
   if (identity) parameters.swarmAgentIdentity = identity
   if (role) parameters.swarmAgentRole = role
+  if (humanName) parameters.swarmHumanName = humanName
   if (hulyBaseUrl) parameters.hulyApiBaseUrl = hulyBaseUrl
   if (hulyWorkspace) parameters.hulyWorkspace = hulyWorkspace
   if (hulyProject) parameters.hulyProject = hulyProject
   if (hulySkillRef) parameters.hulySkillRef = hulySkillRef
+  if (hulyTokenKey) parameters.swarmAgentTokenKey = hulyTokenKey
+  if (hulyExpectedActorIdKey) parameters.swarmAgentExpectedActorIdKey = hulyExpectedActorIdKey
 
   return {
     parameters,
@@ -950,7 +1204,7 @@ const parseDurationToMs = (raw: string) => {
   return amount * 24 * 60 * 60 * 1000
 }
 
-const cadenceToCron = (raw: string) => {
+const cadenceToCron = (raw: string, options?: { swarmName?: string; stage?: StageName }) => {
   const durationMs = parseDurationToMs(raw)
   if (!durationMs) return null
   const durationMinutes = durationMs / (60 * 1000)
@@ -966,6 +1220,13 @@ const cadenceToCron = (raw: string) => {
   if (durationMinutes % 60 === 0) {
     const hours = durationMinutes / 60
     if (hours >= 1 && hours <= 23 && Number.isInteger(hours)) {
+      if (options?.swarmName && options?.stage) {
+        const minute = deriveStageStaggerMinute(options.swarmName, options.stage)
+        if (hours === 1) {
+          return `${minute} * * * *`
+        }
+        return `${minute} */${hours} * * *`
+      }
       return `0 */${hours} * * *`
     }
   }
@@ -1108,10 +1369,24 @@ const sortByMostRecentRun = (resources: Record<string, unknown>[]) => {
   })
 }
 
+const isIdempotencyDuplicateRun = (resource: Record<string, unknown>) => {
+  const rawConditions = readNested(resource, ['status', 'conditions'])
+  const conditions = Array.isArray(rawConditions) ? rawConditions : []
+  if (conditions.length === 0) return false
+  return conditions.some((condition) => {
+    const record = asRecord(condition)
+    if (!record) return false
+    const reason = (asString(record.reason) ?? '').toLowerCase()
+    const type = (asString(record.type) ?? '').toLowerCase()
+    return reason === 'idempotencykeyinuse' || type === 'duplicate'
+  })
+}
+
 const countConsecutiveFailures = (resources: Record<string, unknown>[]) => {
   const sorted = sortByMostRecentRun(resources)
   let failures = 0
   for (const resource of sorted) {
+    if (isIdempotencyDuplicateRun(resource)) continue
     const phase = (asString(readNested(resource, ['status', 'phase'])) ?? '').toLowerCase()
     if (!phase) continue
     if (TERMINAL_FAILURE_PHASES.has(phase)) {
@@ -1124,10 +1399,22 @@ const countConsecutiveFailures = (resources: Record<string, unknown>[]) => {
   return failures
 }
 
+const countIdempotencyDuplicates = (resources: Record<string, unknown>[]) => {
+  return resources.filter((resource) => isIdempotencyDuplicateRun(resource)).length
+}
+
+const resolveLatestSuccessfulRunTime = (resources: Record<string, unknown>[]) => {
+  const latestSuccessful = sortByMostRecentRun(resources).find((resource) =>
+    TERMINAL_SUCCESS_PHASES.has((asString(readNested(resource, ['status', 'phase'])) ?? '').toLowerCase()),
+  )
+  return latestSuccessful ? parseTimeOrNull(getRunTimestamp(latestSuccessful)) : null
+}
+
 const collectRecentFailureRuns = (resources: Record<string, unknown>[], limit = 5) => {
   const sorted = sortByMostRecentRun(resources)
   const failures = sorted
     .filter((resource) => {
+      if (isIdempotencyDuplicateRun(resource)) return false
       const phase = (asString(readNested(resource, ['status', 'phase'])) ?? '').toLowerCase()
       return TERMINAL_FAILURE_PHASES.has(phase)
     })
@@ -1138,8 +1425,26 @@ const collectRecentFailureRuns = (resources: Record<string, unknown>[], limit = 
     const phase = (asString(readNested(resource, ['status', 'phase'])) ?? '').toLowerCase()
     const timestamp = getRunTimestamp(resource)
     const conclusion = asString(readNested(resource, ['status', 'conclusion']))
+    const failedCondition = (
+      Array.isArray(readNested(resource, ['status', 'conditions']))
+        ? (readNested(resource, ['status', 'conditions']) as unknown[])
+        : []
+    )
+      .map((entry) => asRecord(entry))
+      .find((condition) => asString(condition?.type) === 'Failed' && asString(condition?.status) === 'True')
+    const failedStep = (
+      Array.isArray(readNested(resource, ['status', 'workflow', 'steps']))
+        ? (readNested(resource, ['status', 'workflow', 'steps']) as unknown[])
+        : []
+    )
+      .map((entry) => asRecord(entry))
+      .find((step) => asString(step?.phase) === 'Failed')
     const reason =
-      asString(readNested(resource, ['status', 'message'])) ?? asString(readNested(resource, ['status', 'reason']))
+      asString(readNested(resource, ['status', 'message'])) ??
+      asString(readNested(resource, ['status', 'reason'])) ??
+      asString(failedCondition?.message) ??
+      asString(failedCondition?.reason) ??
+      asString(failedStep?.message)
     return {
       name,
       namespace,
@@ -1481,6 +1786,8 @@ const buildScheduleRunTemplate = (
     const existingParameters = normalizeParameterMap(spec.parameters)
     const existingSecrets = parseStringList(spec.secrets)
     const mergedSecrets = resolveSwarmRunSecrets(existingSecrets, runtimeInjection.hulySecret)
+    const existingWorkload = asRecord(spec.workload) ?? {}
+    const workloadImage = asString(existingWorkload.image) ?? resolveDefaultWorkloadImage()
     return {
       apiVersion: 'agents.proompteng.ai/v1alpha1',
       kind: 'AgentRun',
@@ -1496,6 +1803,7 @@ const buildScheduleRunTemplate = (
           ...existingParameters,
           ...runtimeInjection.parameters,
         },
+        ...(workloadImage ? { workload: { ...existingWorkload, image: workloadImage } } : {}),
         ...(mergedSecrets.length > 0 ? { secrets: mergedSecrets } : {}),
       },
     }
@@ -1712,7 +2020,7 @@ const reconcileSwarm = async (
   const execution = asRecord(spec.execution) ?? {}
   const risk = asRecord(spec.risk) ?? {}
   const ownerChannel = asString(owner.channel) ?? null
-  const huly = resolveSwarmHulyIntegration(spec, owner)
+  const huly = resolveSwarmHulyIntegration(spec, owner, swarmName)
 
   const freezeAfterFailuresRaw = Number(risk.freezeAfterFailures)
   const freezeAfterFailures =
@@ -1730,6 +2038,17 @@ const reconcileSwarm = async (
   }
   if (mode !== 'assisted' && mode !== 'lights-out') {
     errors.push('spec.mode must be assisted or lights-out')
+  }
+  if (!huly.secretName) {
+    errors.push('spec.integrations.huly.authSecretRef.name is required')
+  }
+  for (const role of ['architect', 'engineer', 'deployer'] as const) {
+    const persona = huly.personas[role]
+    if (!persona?.humanName || !persona.workerIdentity || !persona.tokenKey || !persona.expectedActorIdKey) {
+      errors.push(
+        `spec.integrations.huly.personas.${role} requires humanName, workerIdentity, tokenKey, and expectedActorIdKey`,
+      )
+    }
   }
 
   const stageConfigs: Array<{
@@ -1757,7 +2076,7 @@ const reconcileSwarm = async (
       continue
     }
 
-    const cron = cadenceToCron(every)
+    const cron = cadenceToCron(every, { swarmName, stage })
     if (!cron) {
       errors.push(`unsupported cadence for ${stage}: ${every}`)
       stageConfigs.push({ stage, enabled, scheduleName, every })
@@ -1829,6 +2148,46 @@ const reconcileSwarm = async (
   const implementRuns = allRuns.filter(
     (run) => asString(readNested(run, ['metadata', 'labels', 'swarm.proompteng.ai/stage'])) === 'implement',
   )
+  const targetResources = new Map<StageName, Record<string, unknown> | null>()
+  await Promise.all(
+    stageConfigs
+      .filter((stageConfig) => stageConfig.enabled && stageConfig.targetRef)
+      .map(async (stageConfig) => {
+        const target = await resolveStageTargetResource(kube, stageConfig.targetRef as StageTargetRef)
+        targetResources.set(stageConfig.stage, target ?? null)
+      }),
+  )
+  const defaultWorkloadImage = resolveDefaultWorkloadImage()
+  for (const stageConfig of stageConfigs) {
+    if (!stageConfig.enabled || stageConfig.targetRef?.kind !== 'AgentRun') continue
+    const target = targetResources.get(stageConfig.stage)
+    const targetSpec = asRecord(target?.spec) ?? {}
+    const workload = asRecord(targetSpec.workload) ?? {}
+    const workloadImage = asString(workload.image) ?? defaultWorkloadImage
+    if (!workloadImage) {
+      errors.push(
+        `spec.execution.${stageConfig.stage}.targetRef ${stageConfig.targetRef.name} requires spec.workload.image or JANGAR_AGENT_RUNNER_IMAGE`,
+      )
+    }
+  }
+  if (errors.length > 0) {
+    clearSwarmUnfreezeTimer(swarmNamespace, swarmName)
+    for (const stageConfig of stageConfigs) {
+      try {
+        await kube.delete(RESOURCE_MAP.Schedule, stageConfig.scheduleName, swarmNamespace, { wait: false })
+      } catch {
+        // best effort
+      }
+    }
+
+    const conditions = upsertCondition(conditionsBase, buildReadyCondition(false, 'InvalidSpec', errors.join('; ')))
+    await setStatus(kube, swarm, {
+      observedGeneration: asRecord(swarm.metadata)?.generation ?? 0,
+      phase: 'Invalid',
+      conditions,
+    })
+    return
+  }
 
   const nowMs = Date.now()
   const existingFreezeUntil = asString(readNested(status, ['freeze', 'until']))
@@ -1944,7 +2303,9 @@ const reconcileSwarm = async (
       stageConfig.stage === 'implement' && stageConfig.enabled && Boolean(stageConfig.targetRef),
   )
   const requirementSelector = `${SWARM_REQUIREMENT_LABEL_TYPE}=requirement,${SWARM_REQUIREMENT_LABEL_TO}=${swarmLabel}`
-  const requirementSignals = listItems(await kube.list(RESOURCE_MAP.Signal, swarmNamespace, requirementSelector))
+  const requirementSignals = sortRequirementSignalsForDispatch(
+    listItems(await kube.list(RESOURCE_MAP.Signal, swarmNamespace, requirementSelector)),
+  )
   const requirementRunStates = new Map<
     string,
     {
@@ -1957,6 +2318,7 @@ const reconcileSwarm = async (
   for (const run of implementRuns) {
     const requirementId = asString(readNested(run, ['metadata', 'labels', SWARM_REQUIREMENT_LABEL_ID]))
     if (!requirementId) continue
+    if (isIdempotencyDuplicateRun(run)) continue
     const phase = (asString(readNested(run, ['status', 'phase'])) ?? '').toLowerCase()
     const current = requirementRunStates.get(requirementId) ?? { any: false, active: false, success: false, failed: 0 }
     current.any = true
@@ -1974,6 +2336,7 @@ const reconcileSwarm = async (
     blocked: 0,
     completed: 0,
     invalidChannel: 0,
+    duplicates: countIdempotencyDuplicates(implementRuns),
   }
 
   for (const signal of requirementSignals) {
@@ -2017,7 +2380,7 @@ const reconcileSwarm = async (
     }
 
     if (requirementTemplate === undefined) {
-      requirementTemplate = await resolveStageTargetResource(kube, implementStageConfig.targetRef)
+      requirementTemplate = targetResources.get('implement') ?? null
       if (!requirementTemplate) {
         requirementTemplateError = `implement target ${implementStageConfig.targetRef.kind}/${implementStageConfig.targetRef.name} not found`
       }
@@ -2030,9 +2393,15 @@ const reconcileSwarm = async (
     const sourceSwarmRaw =
       asString(readNested(signal, ['metadata', 'labels', SWARM_REQUIREMENT_LABEL_FROM])) ?? 'unknown'
     const sourceSwarmLabel = normalizeLabelValue(sourceSwarmRaw)
+    const requirementPersona = resolveSwarmPersonaForStage(huly, 'implement')
+    if (!requirementPersona) {
+      requirementStats.blocked += 1
+      continue
+    }
     const requirementIdentity = buildSwarmAgentIdentity({
       swarmName,
       stage: 'implement',
+      persona: requirementPersona,
       seedSuffix: requirementId,
     })
     const runtimeParameters = buildSwarmRuntimeParameters({
@@ -2086,6 +2455,8 @@ const reconcileSwarm = async (
     const targetNamespace =
       asString(readNested(requirementTemplate, ['metadata', 'namespace'])) ?? implementStageConfig.targetRef.namespace
     const targetSpec = asRecord(requirementTemplate.spec) ?? {}
+    const targetWorkload = asRecord(targetSpec.workload) ?? {}
+    const targetWorkloadImage = asString(targetWorkload.image) ?? defaultWorkloadImage
     const generateName = makeGenerateName(`${swarmName}-${sourceSwarmLabel}`, `req-${requirementId}-${attempt}`)
 
     try {
@@ -2110,6 +2481,7 @@ const reconcileSwarm = async (
               ...existingParameters,
               ...requirementParameters,
             },
+            ...(targetWorkloadImage ? { workload: { ...targetWorkload, image: targetWorkloadImage } } : {}),
             ...(mergedSecrets.length > 0 ? { secrets: mergedSecrets } : {}),
           },
         })
@@ -2170,9 +2542,20 @@ const reconcileSwarm = async (
     }
 
     const stageLabel = normalizeLabelValue(stageConfig.stage)
+    const stagePersona = resolveSwarmPersonaForStage(huly, stageConfig.stage)
+    if (!stagePersona) {
+      stageStates[stageConfig.stage] = {
+        ...baseState,
+        phase: 'Invalid',
+        healthy: false,
+        reason: 'PersonaMissing',
+      }
+      continue
+    }
     const stageIdentity = buildSwarmAgentIdentity({
       swarmName,
       stage: stageConfig.stage,
+      persona: stagePersona,
       seedSuffix: stageConfig.targetRef ? `${stageConfig.targetRef.kind}:${stageConfig.targetRef.name}` : undefined,
     })
     const stageAnnotations = buildSwarmScheduleAnnotations({
@@ -2212,12 +2595,35 @@ const reconcileSwarm = async (
     const scheduleResource = await kube.get(RESOURCE_MAP.Schedule, stageConfig.scheduleName, swarmNamespace)
     const schedulePhase = asString(readNested(scheduleResource ?? {}, ['status', 'phase'])) ?? 'Active'
     const lastRunTime = asString(readNested(scheduleResource ?? {}, ['status', 'lastRunTime'])) ?? undefined
+    const stageRuns = allRuns.filter(
+      (run) => asString(readNested(run, ['metadata', 'labels', 'swarm.proompteng.ai/stage'])) === stageConfig.stage,
+    )
+    const cadenceMs = stageConfig.every ? parseDurationToMs(stageConfig.every) : null
+    const latestRunMs = parseTimeOrNull(lastRunTime)
+    const latestSuccessMs = resolveLatestSuccessfulRunTime(stageRuns)
+    const consecutiveStageFailures = countConsecutiveFailures(stageRuns)
+    const freshnessWindowMs = cadenceMs === null ? null : cadenceMs * 2
+    const fresh =
+      freshnessWindowMs === null
+        ? Boolean(lastRunTime)
+        : latestRunMs !== null && nowMs - latestRunMs <= freshnessWindowMs
+    const recentSuccess =
+      freshnessWindowMs === null
+        ? latestSuccessMs !== null
+        : latestSuccessMs !== null && nowMs - latestSuccessMs <= freshnessWindowMs
+    const healthy = schedulePhase === 'Active' && fresh && recentSuccess && consecutiveStageFailures === 0
     stageStates[stageConfig.stage] = {
       ...baseState,
       phase: schedulePhase,
       lastRunTime: lastRunTime ?? null,
       agentWorkerId: stageIdentity.workerId,
       agentIdentity: stageIdentity.identity,
+      agentRole: stageIdentity.role,
+      humanName: stageIdentity.humanName,
+      recentSuccessAt: latestSuccessMs === null ? null : new Date(latestSuccessMs).toISOString(),
+      consecutiveFailures: consecutiveStageFailures,
+      fresh,
+      healthy,
     }
   }
 
@@ -2268,6 +2674,7 @@ const reconcileSwarm = async (
       blocked: requirementStats.blocked,
       completed: requirementStats.completed,
       invalidChannel: requirementStats.invalidChannel,
+      duplicates: requirementStats.duplicates,
       ...(requirementTemplateError ? { error: requirementTemplateError } : {}),
     },
   }
@@ -2283,7 +2690,21 @@ const reconcileSwarm = async (
     }
   }
 
+  const inactiveFreezeUntil = freezeUntil ?? existingFreezeUntil ?? nowIso()
+  const inactiveFreezeEnteredAt = freezeEnteredAt ?? existingFreezeEnteredAt ?? nowIso()
   let conditions = conditionsBase
+  const unhealthyStages = STAGE_NAMES.filter((stage) => {
+    const state = asRecord(stageStates[stage]) ?? {}
+    return state.enabled !== false && state.healthy === false
+  })
+  const verifyStageState = asRecord(stageStates.verify) ?? {}
+  const verifyFailures = Number(verifyStageState.consecutiveFailures ?? 0)
+  const requirementsHealthy =
+    requirementStats.invalidChannel === 0 &&
+    requirementStats.blocked === 0 &&
+    requirementStats.duplicates === 0 &&
+    !requirementTemplateError
+  const readyActive = unhealthyStages.length === 0 && requirementsHealthy
   if (freezeActive) {
     if (freezeUntil) {
       scheduleSwarmUnfreezeReconcile(kube, swarmNamespace, swarmName, freezeUntil)
@@ -2314,14 +2735,61 @@ const reconcileSwarm = async (
     }
   } else {
     clearSwarmUnfreezeTimer(swarmNamespace, swarmName)
-    conditions = upsertCondition(conditions, buildReadyCondition(true, 'Active', 'swarm active'))
+    conditions = upsertCondition(
+      conditions,
+      buildReadyCondition(
+        readyActive,
+        readyActive ? 'Active' : 'Degraded',
+        readyActive
+          ? 'swarm active'
+          : `stage or requirement health degraded (${[...unhealthyStages, !requirementsHealthy ? 'requirements' : null].filter(Boolean).join(', ')})`,
+      ),
+    )
     conditions = upsertCondition(conditions, {
       type: 'Frozen',
       status: 'False',
       reason: 'NotFrozen',
       message: 'swarm operating normally',
     })
+    // Keep a concrete object here so server-side apply updates the existing freeze status
+    // instead of attempting to delete it with null values that violate the CRD schema.
+    nextStatus.freeze = {
+      reason: 'NotFrozen',
+      until: inactiveFreezeUntil,
+      consecutiveFailures,
+      threshold: freezeAfterFailures,
+      enteredAt: inactiveFreezeEnteredAt,
+      durationMs: freezeDurationMs,
+      evidence: {
+        triggeringRuns: freezeFailureEvidence,
+        recentRunWindowMs: freezeAfterFailures * freezeDurationMs,
+        freezeWindowStartedAt: failureWindowStartMs === null ? null : new Date(failureWindowStartMs).toISOString(),
+        stageStaleness: staleStageSignals,
+        triggers: freezeTriggerReasons,
+      },
+    }
   }
+
+  conditions = upsertCondition(conditions, {
+    type: 'Degraded',
+    status: unhealthyStages.length > 0 || !requirementsHealthy || verifyFailures >= 2 ? 'True' : 'False',
+    reason:
+      verifyFailures >= 2
+        ? 'VerifyFailed'
+        : !requirementsHealthy
+          ? 'RequirementsBridgeDegraded'
+          : unhealthyStages.length > 0
+            ? 'StageHealthDegraded'
+            : 'Healthy',
+    message:
+      verifyFailures >= 2
+        ? `verify stage has ${verifyFailures} consecutive failures`
+        : !requirementsHealthy
+          ? 'requirement bridge is degraded'
+          : unhealthyStages.length > 0
+            ? `unhealthy stages: ${unhealthyStages.join(', ')}`
+            : 'all stage and requirement health checks passing',
+  })
 
   if (requirementStats.invalidChannel > 0) {
     conditions = upsertCondition(conditions, {
@@ -2336,6 +2804,13 @@ const reconcileSwarm = async (
       status: 'False',
       reason: 'ImplementTemplateMissing',
       message: requirementTemplateError,
+    })
+  } else if (requirementStats.duplicates > 0) {
+    conditions = upsertCondition(conditions, {
+      type: 'RequirementsBridge',
+      status: 'False',
+      reason: 'RequirementDispatchDuplicate',
+      message: `${requirementStats.duplicates} duplicate/idempotent requirement run(s) detected`,
     })
   } else if (requirementStats.blocked > 0) {
     conditions = upsertCondition(conditions, {
@@ -2815,10 +3290,13 @@ export const __test__ = {
   applyResourceIfChanged,
   buildScheduleRunnerCommand,
   buildScheduleRunTemplate,
+  cadenceToCron,
+  deriveStageStaggerMinute,
   isSwarmStatusOnlyEvent,
   reconcileScheduleRunnerStatus,
   reconcileTool,
   reconcileSwarm,
+  resolveRequirementPriorityScore,
   resolveSwarmRunSecrets,
   resolveWatchedResourceForKind,
   shouldThrottleScheduleRunnerStatusReconcile,

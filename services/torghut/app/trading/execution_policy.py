@@ -45,6 +45,14 @@ MICROSTRUCTURE_LOW_DEPTH_RATE_SCALE = Decimal("0.75")
 MICROSTRUCTURE_STRESS_EXECUTION_SCALE = Decimal("1.40")
 MICROSTRUCTURE_PRESSURE_EXECUTION_SCALE = Decimal("1.10")
 MICROSTRUCTURE_EXECUTION_SCALE_EPSILON = Decimal("0.01")
+_SIZING_LIMITING_CONSTRAINT_REASONS: frozenset[str] = frozenset(
+    {
+        "symbol_capacity_exhausted",
+        "sell_inventory_unavailable",
+        "gross_exposure_capacity_exhausted",
+        "net_exposure_capacity_exhausted",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -310,7 +318,7 @@ class ExecutionPolicy:
             reasons.append("qty_non_positive")
             qty = Decimal("0")
         elif qty < min_qty:
-            reasons.append("qty_below_min")
+            reasons.append(_resolve_qty_below_min_reason(decision))
         elif not qty_has_valid_increment(
             decision.symbol,
             qty,
@@ -1051,6 +1059,22 @@ def _allocator_payload(decision: StrategyDecision) -> dict[str, object]:
         return {}
     payload = cast(dict[object, object], raw)
     return {str(key): value for key, value in payload.items()}
+
+
+def _resolve_qty_below_min_reason(decision: StrategyDecision) -> str:
+    portfolio_sizing = decision.params.get("portfolio_sizing")
+    if not isinstance(portfolio_sizing, dict):
+        return "qty_below_min"
+    output = cast(dict[object, object], portfolio_sizing).get("output")
+    if not isinstance(output, dict):
+        return "qty_below_min"
+    limiting_constraint = cast(dict[object, object], output).get("limiting_constraint")
+    if not isinstance(limiting_constraint, str):
+        return "qty_below_min"
+    normalized = limiting_constraint.strip()
+    if normalized in _SIZING_LIMITING_CONSTRAINT_REASONS:
+        return normalized
+    return "qty_below_min"
 
 
 def _stringify_decimal(value: Optional[Decimal]) -> Optional[str]:

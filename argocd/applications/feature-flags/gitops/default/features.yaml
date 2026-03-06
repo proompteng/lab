@@ -95,6 +95,11 @@ flags:
     description: Fails closed when Jangar-backed universe is empty.
     type: BOOLEAN_FLAG_TYPE
     enabled: true
+  - key: torghut_trading_universe_static_fallback_enabled
+    name: Torghut Trading Universe Static Fallback Enabled
+    description: Allows bounded static-symbol fallback when Jangar universe resolution is unavailable.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
   - key: torghut_trading_execution_prefer_limit
     name: Torghut Trading Execution Prefer Limit
     description: Prefers limit order execution when supported.
@@ -165,11 +170,21 @@ flags:
     description: Requires market context for LLM reviews.
     type: BOOLEAN_FLAG_TYPE
     enabled: false
+  - key: torghut_trading_market_context_allow_degraded_last_good
+    name: Torghut Trading Market Context Allow Degraded Last Good
+    description: Allows degraded last-good market context bundles within configured hard staleness caps.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
   - key: torghut_trading_readiness_dependency_cache_enabled
     name: Torghut Trading Readiness Dependency Cache Enabled
     description: Enables caching for readiness dependency checks in trading probes.
     type: BOOLEAN_FLAG_TYPE
     enabled: true
+  - key: torghut_trading_db_schema_graph_allow_divergence_roots
+    name: Torghut Trading DB Schema Graph Allow Divergence Roots
+    description: Allows schema-graph divergence in readiness as warnings during controlled migration windows.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: false
   - key: torghut_llm_enabled
     name: Torghut LLM Enabled
     description: Global LLM review enablement for Torghut.

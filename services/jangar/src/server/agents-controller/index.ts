@@ -53,11 +53,14 @@ import {
   clearGithubAppTokenCache,
   fetchGithubAppToken,
   parseIntOrString,
+  resolveAuthSecretConfig,
+  resolveSecretValue,
   resolveVcsContext,
   resolveVcsPrRateLimits,
   secretHasKey,
 } from './vcs-context'
 import { createWorkflowReconciler } from './workflow-reconciler'
+import { validateAutonomousCodexAuthSecret } from './policy'
 
 const DEFAULT_NAMESPACES = ['agents']
 const DEFAULT_AGENTRUN_RETENTION_SECONDS = 30 * 24 * 60 * 60
@@ -674,7 +677,10 @@ const {
   resolveVcsAuthMethod,
   validateVcsAuthConfig,
   parseIntOrString,
+  resolveAuthSecretConfig,
+  resolveSecretValue,
   secretHasKey,
+  validateAutonomousCodexAuthSecret,
 })
 
 const buildConditions = (resource: Record<string, unknown>) =>

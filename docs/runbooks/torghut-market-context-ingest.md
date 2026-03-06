@@ -8,6 +8,8 @@ Use this runbook for alerts:
 - `JangarTorghutMarketContextIngestSuccessRateLow`
 - `JangarTorghutMarketContextDispatchErrors`
 - `JangarTorghutMarketContextDispatchStuck`
+- `JangarTorghutMarketContextBatchFailureRateHigh`
+- `JangarTorghutMarketContextSkippedDuringMarketHours`
 
 These failures block fundamentals/news snapshot persistence and can keep Torghut market context below the trading quality gate.
 
@@ -46,6 +48,14 @@ kubectl logs -n agents job/<latest-market-context-job> --tail=200
 
 Search for callback `curl` failures and HTTP codes.
 
+5. Confirm pre-open probe schedules exist and target probe templates:
+
+```bash
+kubectl get schedules.schedules.proompteng.ai -n agents | rg 'torghut-market-context-.*preopen-probe'
+kubectl get agentrun -n agents torghut-market-context-fundamentals-preopen-probe-template -o yaml | rg 'reason: pre_open_probe'
+kubectl get agentrun -n agents torghut-market-context-news-preopen-probe-template -o yaml | rg 'reason: pre_open_probe'
+```
+
 ## Data Plane Verification
 
 1. Trigger providers via Jangar (example symbol):
@@ -75,6 +85,16 @@ const { Client } = require(\"pg\"); \
 kubectl exec -n torghut deploy/torghut -- sh -c 'curl -sS "http://jangar.jangar.svc.cluster.local/api/torghut/market-context/?symbol=NVDA" | jq ".qualityScore,.riskFlags"'
 ```
 
+4. Validate batch-outcome telemetry:
+
+```bash
+kubectl exec -n jangar deploy/jangar -c app -- sh -c 'curl -fsS "http://127.0.0.1:8080/metrics" | rg "jangar_torghut_market_context_batch_runs_total"'
+```
+
+Acceptance thresholds:
+- `failed|partial` batch outcomes <= 40% over 30 minutes.
+- `skipped_market_closed` outcomes should be zero during market-open windows.
+
 ## Remediation
 
 1. If callbacks are `401`:
@@ -90,6 +110,10 @@ kubectl exec -n torghut deploy/torghut -- sh -c 'curl -sS "http://jangar.jangar.
 3. If Jangar revision is missing `torghut-market-context-agents`:
 
 - Roll out a newer Jangar image/revision containing market-context agent ingest code before further debugging.
+4. If `JangarTorghutMarketContextSkippedDuringMarketHours` is active:
+- Verify Torghut `/trading/status` `market_session_open` semantics and timezone.
+- Validate pre-open probe schedules are not running after market open due to stale cron/controller time.
+- Treat as canary blocker until skip outcome returns to expected pre-open windows only.
 
 ## Known Failure Modes (2026-02-27)
 

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.6
-FROM ghcr.io/openai/codex-universal:latest
+FROM ghcr.io/openai/codex-universal@sha256:956c2e7dd1590fc12763f172579d777464312006b9fa1f6405f5f1b78b8ea2dc
 
 ARG ARGO_VERSION=v3.6.3
 ARG KUBECONFORM_VERSION=v0.6.7
@@ -7,7 +7,7 @@ ARG NATSCLI_VERSION=v0.3.0
 ARG TARGETARCH=arm64
 ARG TEMPORAL_VERSION=v1.5.1
 ARG CODEX_AUTH_CHECKSUM=unspecified
-ARG CODEX_VERSION=latest
+ARG CODEX_VERSION=0.106.0
 
 ENV DEBIAN_FRONTEND=noninteractive \
     WORKSPACE=/workspace \

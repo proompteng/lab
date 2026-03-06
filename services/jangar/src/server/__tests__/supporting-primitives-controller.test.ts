@@ -37,6 +37,9 @@ import {
   stopSupportingPrimitivesController,
 } from '~/server/supporting-primitives-controller'
 
+const TEST_RUNNER_IMAGE =
+  'registry.ide-newton.ts.net/lab/jangar:test@sha256:1111111111111111111111111111111111111111111111111111111111111111'
+
 const createMockKubectlProcess = (code: number, stderr = '') => {
   const stdout = new EventEmitter() as EventEmitter & { setEncoding: () => void }
   const stderrStream = new EventEmitter() as EventEmitter & { setEncoding: () => void }
@@ -103,6 +106,7 @@ describe('supporting primitives controller', () => {
     primitivesKubeMocks.createKubernetesClient.mockReturnValue({
       list: vi.fn(async () => ({ items: [] })),
     })
+    process.env.JANGAR_AGENT_RUNNER_IMAGE = TEST_RUNNER_IMAGE
     delete process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED
     delete process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY
   })
@@ -110,6 +114,7 @@ describe('supporting primitives controller', () => {
   afterEach(() => {
     stopSupportingPrimitivesController()
     vi.useRealTimers()
+    delete process.env.JANGAR_AGENT_RUNNER_IMAGE
   })
 
   it('sets standard conditions and updatedAt for invalid tools', async () => {
@@ -147,6 +152,38 @@ describe('supporting primitives controller', () => {
     expect(command).toContain('DELIVERY_ID=$(cat /proc/sys/kernel/random/uuid);')
     expect(command).toContain('s/__JANGAR_DELIVERY_ID__/${DELIVERY_ID}/g')
     expect(command).not.toContain('\\${DELIVERY_ID}')
+  })
+
+  it('staggers hourly stage cadence deterministically per stage', () => {
+    const discoverCron = __test__.cadenceToCron('1h', { swarmName: 'jangar-control-plane', stage: 'discover' })
+    const planCron = __test__.cadenceToCron('1h', { swarmName: 'jangar-control-plane', stage: 'plan' })
+    const implementCron = __test__.cadenceToCron('1h', { swarmName: 'jangar-control-plane', stage: 'implement' })
+    const verifyCron = __test__.cadenceToCron('1h', { swarmName: 'jangar-control-plane', stage: 'verify' })
+
+    expect(discoverCron).toMatch(/^\d{1,2} \* \* \* \*$/)
+    expect(planCron).toMatch(/^\d{1,2} \* \* \* \*$/)
+    expect(implementCron).toMatch(/^\d{1,2} \* \* \* \*$/)
+    expect(verifyCron).toMatch(/^\d{1,2} \* \* \* \*$/)
+    expect(new Set([discoverCron, planCron, implementCron, verifyCron]).size).toBe(4)
+  })
+
+  it('normalizes requirement priority from payload and labels', () => {
+    expect(
+      __test__.resolveRequirementPriorityScore({
+        spec: { payload: { priority: 'critical' } },
+      } as Record<string, unknown>),
+    ).toBe(0)
+    expect(
+      __test__.resolveRequirementPriorityScore({
+        spec: { payload: { priority: 'low' } },
+      } as Record<string, unknown>),
+    ).toBe(3)
+    expect(
+      __test__.resolveRequirementPriorityScore({
+        metadata: { labels: { priority: 'high' } },
+        spec: {},
+      } as Record<string, unknown>),
+    ).toBe(1)
   })
 
   it('strips global huly-api secret when building schedule run templates', () => {
@@ -536,7 +573,7 @@ describe('supporting primitives controller', () => {
     expect(status.stageStates).toBeTruthy()
   })
 
-  it('derives transactor huly api base url from front owner channel', async () => {
+  it('does not derive huly api base url from owner channel transport-like values', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})
     const get = vi.fn().mockResolvedValue({
@@ -585,7 +622,7 @@ describe('supporting primitives controller', () => {
       .find((payload) => payload.kind === 'Schedule') as { metadata?: Record<string, unknown> } | undefined
     expect(schedulePayload).toBeDefined()
     const annotations = (schedulePayload?.metadata?.annotations ?? {}) as Record<string, string>
-    expect(annotations['swarm.proompteng.ai/huly-base-url']).toBe('http://transactor.huly.svc.cluster.local')
+    expect(annotations['swarm.proompteng.ai/huly-base-url']).toBe('https://huly.proompteng.ai')
   })
 
   it('dispatches Huly requirement signals into implement runs', async () => {
@@ -714,14 +751,19 @@ describe('supporting primitives controller', () => {
       'Raise risk budget guardrails for market-open volatility\n\nacceptance: deploy and verify policy',
     )
     expect(parameters.swarmAgentWorkerId).toMatch(/^worker-/)
-    expect(parameters.swarmAgentIdentity).toMatch(/^vw-/)
+    expect(parameters.swarmAgentIdentity).toBe('elise-novak-jangar-engineer')
     expect(parameters.swarmAgentRole).toBe('engineer')
+    expect(parameters.swarmHumanName).toBe('Elise Novak')
+    expect(parameters.swarmAgentTokenKey).toBe('HULY_API_TOKEN_ELISE_NOVAK_JANGAR_ENGINEER')
+    expect(parameters.swarmAgentExpectedActorIdKey).toBe('HULY_EXPECTED_ACTOR_ID_ELISE_NOVAK_JANGAR_ENGINEER')
     expect(parameters.hulyApiBaseUrl).toBe('https://huly.proompteng.ai')
     expect(parameters.hulySkillRef).toBe('skills/huly-api/SKILL.md')
     const runSecrets = Array.isArray(requirementRun.spec.secrets) ? (requirementRun.spec.secrets as string[]) : []
     expect(runSecrets).not.toContain('huly-api')
     expect(runSecrets).toContain('keep-me')
-    expect(runSecrets).toHaveLength(1)
+    expect(runSecrets).toContain('huly-api-jangar')
+    expect(runSecrets).toHaveLength(2)
+    expect((requirementRun.spec.workload as { image?: string } | undefined)?.image).toContain(TEST_RUNNER_IMAGE)
 
     const statusCall = applyStatus.mock.calls.at(-1)
     const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
@@ -732,6 +774,122 @@ describe('supporting primitives controller', () => {
     const conditions = Array.isArray(status.conditions) ? status.conditions : []
     const bridge = conditions.find((condition) => condition.type === 'RequirementsBridge')
     expect(bridge?.status).toBe('True')
+  })
+
+  it('dispatches higher-priority requirement signals before lower-priority signals', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Schedule) {
+        return { status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' } }
+      }
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          kind: 'AgentRun',
+          metadata: { name: 'agentrun-implement-template', namespace: 'agents' },
+          spec: {
+            agentRef: { name: 'codex-spark-agent' },
+            runtime: { type: 'job' },
+            parameters: {
+              staticKey: 'static-value',
+            },
+            secrets: ['keep-me'],
+          },
+        }
+      }
+      return null
+    })
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Signal) {
+        return {
+          items: [
+            {
+              metadata: {
+                name: 'torghut-low-priority',
+                namespace: 'agents',
+                creationTimestamp: '2026-01-20T00:00:00Z',
+                labels: {
+                  'swarm.proompteng.ai/type': 'requirement',
+                  'swarm.proompteng.ai/from': 'torghut-quant',
+                  'swarm.proompteng.ai/to': 'jangar-control-plane',
+                },
+              },
+              spec: {
+                channel: 'huly://swarm-bridge/issues/TOR-LOW',
+                description: 'Low priority scope',
+                payload: {
+                  priority: 'low',
+                },
+              },
+            },
+            {
+              metadata: {
+                name: 'torghut-critical-priority',
+                namespace: 'agents',
+                creationTimestamp: '2026-01-20T00:10:00Z',
+                labels: {
+                  'swarm.proompteng.ai/type': 'requirement',
+                  'swarm.proompteng.ai/from': 'torghut-quant',
+                  'swarm.proompteng.ai/to': 'jangar-control-plane',
+                },
+              },
+              spec: {
+                channel: 'huly://swarm-bridge/issues/TOR-HIGH',
+                description: 'Critical priority scope',
+                payload: {
+                  priority: 'critical',
+                },
+              },
+            },
+          ],
+        }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'jangar-control-plane', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'swarm://owner/platform' },
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'AgentRun', name: 'agentrun-implement-template' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    const requirementRunPayloads = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
+      .filter((payload) => {
+        const metadata = payload.metadata as Record<string, unknown>
+        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
+      })
+    expect(requirementRunPayloads).toHaveLength(2)
+    const firstParameters = (requirementRunPayloads[0]?.spec as Record<string, unknown> | undefined)?.parameters as
+      | Record<string, string>
+      | undefined
+    const secondParameters = (requirementRunPayloads[1]?.spec as Record<string, unknown> | undefined)?.parameters as
+      | Record<string, string>
+      | undefined
+    expect(firstParameters?.swarmRequirementSignal).toBe('torghut-critical-priority')
+    expect(secondParameters?.swarmRequirementSignal).toBe('torghut-low-priority')
   })
 
   it('uses requirement payload as primary objective when description is missing', async () => {
@@ -1633,6 +1791,110 @@ describe('supporting primitives controller', () => {
     expect(status.freeze).toBeTruthy()
   })
 
+  it('includes nested workflow failure detail in freeze evidence when top-level status is empty', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue(null)
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          items: [
+            {
+              metadata: {
+                name: 'run-2',
+                creationTimestamp: '2026-01-20T00:01:00Z',
+                labels: {
+                  'swarm.proompteng.ai/name': 'torghut-quant',
+                  'swarm.proompteng.ai/stage': 'implement',
+                },
+              },
+              status: {
+                phase: 'Failed',
+                workflow: {
+                  steps: [
+                    {
+                      name: 'deploy-step',
+                      phase: 'Failed',
+                      message: 'workflow step deploy-step: container exited with code 17',
+                    },
+                  ],
+                },
+              },
+            },
+            {
+              metadata: {
+                name: 'run-1',
+                creationTimestamp: '2026-01-20T00:00:00Z',
+                labels: {
+                  'swarm.proompteng.ai/name': 'torghut-quant',
+                  'swarm.proompteng.ai/stage': 'implement',
+                },
+              },
+              status: {
+                phase: 'Failed',
+                workflow: {
+                  steps: [
+                    {
+                      name: 'deploy-step',
+                      phase: 'Failed',
+                      message: 'workflow step deploy-step: container exited with code 17',
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        }
+      }
+      if (resource === RESOURCE_MAP.OrchestrationRun) {
+        return { items: [] }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'torghut-quant', namespace: 'agents', generation: 1, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'trading-owner', channel: 'swarm://owner/trading' },
+        domains: ['autonomous-trading'],
+        objectives: ['improve risk-adjusted return'],
+        mode: 'lights-out',
+        cadence: {
+          discoverEvery: '1m',
+          planEvery: '5m',
+          implementEvery: '15m',
+          verifyEvery: '1m',
+        },
+        discovery: { sources: [{ name: 'market-feed' }] },
+        delivery: { deploymentTargets: ['torghut'] },
+        risk: { freezeAfterFailures: 2, freezeDuration: '60m' },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'OrchestrationRun', name: 'orchestrationrun-sample' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    const firstStatusCall = applyStatus.mock.calls[0]
+    const status = (firstStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    expect(status.freeze).toMatchObject({
+      reason: 'ConsecutiveFailures',
+      evidence: {
+        triggeringRuns: expect.arrayContaining([
+          expect.objectContaining({ reason: 'workflow step deploy-step: container exited with code 17' }),
+        ]),
+      },
+    })
+  })
+
   it('freezes when consecutive timed-out implement failures remain active', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})
@@ -2063,7 +2325,18 @@ describe('supporting primitives controller', () => {
     const finalStatusCall = applyStatus.mock.calls.at(-1)
     const finalStatus = (finalStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
     expect(finalStatus.phase).toBe('Active')
-    expect(finalStatus.freeze).toBeUndefined()
+    expect(finalStatus.freeze).toMatchObject({
+      reason: 'NotFrozen',
+      threshold: 2,
+      durationMs: 60 * 60 * 1000,
+      evidence: {
+        triggeringRuns: [],
+        stageStaleness: [],
+        triggers: [],
+      },
+    })
+    expect(finalStatus.freeze).toHaveProperty('until')
+    expect(finalStatus.freeze).toHaveProperty('enteredAt')
   })
 
   it('chunks unfreeze timers so long freeze durations wait the full expiry time', async () => {
@@ -2128,9 +2401,10 @@ describe('supporting primitives controller', () => {
     const initialStatusCall = applyStatus.mock.calls[0]
     const initialStatus = (initialStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
     expect(initialStatus.phase).toBe('Frozen')
+    const initialGetCallCount = get.mock.calls.length
 
     await vi.advanceTimersByTimeAsync(2_147_483_647)
-    expect(get).not.toHaveBeenCalled()
+    expect(get).toHaveBeenCalledTimes(initialGetCallCount)
 
     const remainingDelay = 2_500_000_000 - 2_147_483_647
     await vi.advanceTimersByTimeAsync(remainingDelay)
@@ -2139,7 +2413,18 @@ describe('supporting primitives controller', () => {
     const finalStatusCall = applyStatus.mock.calls.at(-1)
     const finalStatus = (finalStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
     expect(finalStatus.phase).toBe('Active')
-    expect(finalStatus.freeze).toBeUndefined()
+    expect(finalStatus.freeze).toMatchObject({
+      reason: 'NotFrozen',
+      threshold: 2,
+      durationMs: 60 * 60 * 1000,
+      evidence: {
+        triggeringRuns: [],
+        stageStaleness: [],
+        triggers: [],
+      },
+    })
+    expect(finalStatus.freeze).toHaveProperty('until')
+    expect(finalStatus.freeze).toHaveProperty('enteredAt')
   })
 
   it('uses different schedule names for long swarms with identical prefixes', async () => {

@@ -28,6 +28,7 @@ export interface RunCodexSessionResult {
   sessionId?: string
   exitCode?: number
   forcedTermination?: boolean
+  contextWindowExceeded?: boolean
 }
 
 export interface PushCodexEventsToLokiOptions {
@@ -216,6 +217,7 @@ export const runCodexSession = async ({
   const agentMessages: string[] = []
   let sessionId: string | undefined
   let sawDelta = false
+  let contextWindowExceeded = false
   let discordStreamBuffer = ''
   let discordWriteQueue = Promise.resolve()
 
@@ -327,6 +329,16 @@ export const runCodexSession = async ({
     }
     const trimmed = value.trimEnd()
     return trimmed.length > 0 ? trimmed : undefined
+  }
+
+  const contextWindowPattern =
+    /ran out of room in the model'?s context window|context window|maximum context length|context_length_exceeded/i
+
+  const detectContextWindowExceeded = (value: string | undefined) => {
+    if (!value) {
+      return false
+    }
+    return contextWindowPattern.test(value)
   }
 
   const formatFileChangeSummary = (item: Record<string, unknown>) => {
@@ -608,6 +620,9 @@ export const runCodexSession = async ({
       if (eventType === 'turn.failed') {
         const error = event.error as Record<string, unknown> | undefined
         const message = readString(error?.message) ?? readString(event.message)
+        if (!contextWindowExceeded && detectContextWindowExceeded(message)) {
+          contextWindowExceeded = true
+        }
         const payload = message ? `Turn failed → ${message}` : 'Turn failed'
         await emitStreamLine(payload, 'Failed to write turn failure to Discord channel:')
         return
@@ -615,6 +630,9 @@ export const runCodexSession = async ({
       if (eventType === 'error') {
         const message =
           readString(event.message) ?? readString((event.error as Record<string, unknown> | undefined)?.message)
+        if (!contextWindowExceeded && detectContextWindowExceeded(message)) {
+          contextWindowExceeded = true
+        }
         const payload = message ? `Stream error → ${message}` : 'Stream error'
         await emitStreamLine(payload, 'Failed to write stream error to Discord channel:')
         return
@@ -659,6 +677,7 @@ export const runCodexSession = async ({
     sessionId,
     exitCode: runResult.exitCode,
     forcedTermination: runResult.forcedTermination,
+    contextWindowExceeded,
   }
 }
 

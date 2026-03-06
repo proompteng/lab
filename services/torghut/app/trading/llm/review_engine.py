@@ -80,6 +80,7 @@ class LLMReviewOutcome:
     tokens_completion: Optional[int]
     request_hash: str
     response_hash: str
+    runtime_fallback: Optional[dict[str, Any]] = None
 
 
 class LLMReviewEngine:
@@ -135,6 +136,7 @@ class LLMReviewEngine:
             response_json["dspy"] = metadata.to_payload()
             used_model = f"dspy:{metadata.program_name}"
             used_prompt_version = f"dspy:{metadata.signature_version}"
+            runtime_fallback = None
         except DSPyRuntimeUnsupportedStateError:
             raise
         except DSPyRuntimeError as exc:
@@ -146,6 +148,11 @@ class LLMReviewEngine:
             response_json["dspy"] = dspy_payload
             used_model = f"dspy:{self.dspy_runtime.program_name}"
             used_prompt_version = f"dspy:{self.dspy_runtime.signature_version}"
+            runtime_fallback = {
+                "reject_reason": "llm_runtime_fallback",
+                "subtype": "dspy_runtime_error",
+                "error": str(exc),
+            }
 
         request_hash = _hash_payload(request_json)
         response_hash = _hash_payload(response_json)
@@ -160,6 +167,7 @@ class LLMReviewEngine:
             tokens_completion=None,
             request_hash=request_hash,
             response_hash=response_hash,
+            runtime_fallback=runtime_fallback,
         )
 
     def build_request(

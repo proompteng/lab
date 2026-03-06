@@ -82,6 +82,11 @@ describe('getQuantHealthHandler', () => {
       account: 'paper',
       window: '1d',
     })
+    expect(getQuantLatestStoreStatus).toHaveBeenCalledWith({
+      strategyId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      account: 'paper',
+      window: '1d',
+    })
 
     const body = await response.json()
     expect(body.ok).toBe(true)
@@ -122,6 +127,7 @@ describe('getQuantHealthHandler', () => {
     )
 
     expect(response.status).toBe(200)
+    expect(getQuantLatestStoreStatus).toHaveBeenCalledWith({})
     const body = await response.json()
     expect(body.ok).toBe(true)
     expect(body.status).toBe('ok')
@@ -156,10 +162,57 @@ describe('getQuantHealthHandler', () => {
     )
 
     expect(response.status).toBe(200)
+    expect(getQuantLatestStoreStatus).toHaveBeenCalledWith({})
     const body = await response.json()
     expect(body.ok).toBe(true)
     expect(body.status).toBe('degraded')
     expect(body.missingUpdateAlarm).toBe(false)
     expect(body.maxStageLagSeconds).toBe(9)
+  })
+
+  it('scopes latest metric freshness check by requested strategy/account/window', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-02-18T15:00:00.000Z'))
+    process.env.JANGAR_TORGHUT_QUANT_HEALTH_MISSING_UPDATE_SECONDS = '15'
+
+    const { getQuantHealthHandler } = await import('./health')
+
+    getQuantLatestStoreStatus.mockResolvedValueOnce({
+      updatedAt: '2026-02-18T14:58:00.000Z',
+      count: 7,
+    })
+    listLatestQuantPipelineHealth.mockResolvedValueOnce([
+      {
+        strategyId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        account: 'paper',
+        stage: 'materialization',
+        ok: true,
+        lagSeconds: 5,
+        asOf: '2026-02-18T14:59:58.000Z',
+        details: { window: '1d', strategy_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' },
+      },
+    ])
+
+    const response = await getQuantHealthHandler(
+      new Request(
+        'http://localhost/api/torghut/trading/control-plane/quant/health?strategy_id=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb&account=paper&window=1d',
+      ),
+    )
+
+    expect(response.status).toBe(200)
+    expect(listLatestQuantPipelineHealth).toHaveBeenCalledWith({
+      strategyId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      account: 'paper',
+      window: '1d',
+    })
+    expect(getQuantLatestStoreStatus).toHaveBeenCalledWith({
+      strategyId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      account: 'paper',
+      window: '1d',
+    })
+
+    const body = await response.json()
+    expect(body.metricsPipelineLagSeconds).toBe(120)
+    expect(body.missingUpdateAlarm).toBe(true)
   })
 })

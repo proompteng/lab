@@ -12,6 +12,8 @@ spec:
     type: workflow
     config:
       serviceAccountName: agents-sa
+  workload:
+    image: registry.ide-newton.ts.net/lab/jangar:fab5cdf4@sha256:1db0eb6d389b94bd34f4be2f1f7574c11219742d63d17d363851e0ee6c197195
   ttlSecondsAfterFinished: 43200
   workflow:
     steps:
@@ -26,12 +28,14 @@ spec:
     issueTitle: Jangar Engineering discover mission
     swarmName: jangar-control-plane
     swarmStage: discover
-    swarmAgentRole: architector
+    swarmAgentRole: architect
     swarmAgentWorkerId: worker-jangar-discover
-    swarmAgentIdentity: architector-jangar-discover
-    swarmHumanName: architector
+    swarmAgentIdentity: victor-chen-jangar-architect
+    swarmHumanName: Victor Chen
+    swarmAgentTokenKey: HULY_API_TOKEN_VICTOR_CHEN_JANGAR_ARCHITECT
+    swarmAgentExpectedActorIdKey: HULY_EXPECTED_ACTOR_ID_VICTOR_CHEN_JANGAR_ARCHITECT
     swarmTeamName: Jangar Engineering
-    ownerChannel: http://transactor.huly.svc.cluster.local
+    ownerChannel: swarm://owner/platform
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
     hulyProject: DefaultProject
@@ -41,7 +45,7 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: assess cluster/source/database state and create+merge a design PR that improves, maintains, and innovates the Jangar control plane
+    objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate the Jangar control plane
   vcsRef:
     name: github
   vcsPolicy:
@@ -66,6 +70,8 @@ spec:
     type: workflow
     config:
       serviceAccountName: agents-sa
+  workload:
+    image: registry.ide-newton.ts.net/lab/jangar:fab5cdf4@sha256:1db0eb6d389b94bd34f4be2f1f7574c11219742d63d17d363851e0ee6c197195
   ttlSecondsAfterFinished: 43200
   workflow:
     steps:
@@ -80,12 +86,14 @@ spec:
     issueTitle: Jangar Engineering plan mission
     swarmName: jangar-control-plane
     swarmStage: plan
-    swarmAgentRole: architector
+    swarmAgentRole: architect
     swarmAgentWorkerId: worker-jangar-plan
-    swarmAgentIdentity: architector-jangar-plan
-    swarmHumanName: architector
+    swarmAgentIdentity: victor-chen-jangar-architect
+    swarmHumanName: Victor Chen
+    swarmAgentTokenKey: HULY_API_TOKEN_VICTOR_CHEN_JANGAR_ARCHITECT
+    swarmAgentExpectedActorIdKey: HULY_EXPECTED_ACTOR_ID_VICTOR_CHEN_JANGAR_ARCHITECT
     swarmTeamName: Jangar Engineering
-    ownerChannel: http://transactor.huly.svc.cluster.local
+    ownerChannel: swarm://owner/platform
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
     hulyProject: DefaultProject
@@ -95,7 +103,7 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: assess cluster/source/database state and create+merge a design PR that improves, maintains, and innovates the Jangar control plane
+    objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate the Jangar control plane
   vcsRef:
     name: github
   vcsPolicy:
@@ -120,6 +128,8 @@ spec:
     type: workflow
     config:
       serviceAccountName: agents-sa
+  workload:
+    image: registry.ide-newton.ts.net/lab/jangar:fab5cdf4@sha256:1db0eb6d389b94bd34f4be2f1f7574c11219742d63d17d363851e0ee6c197195
   ttlSecondsAfterFinished: 172800
   workflow:
     steps:
@@ -139,11 +149,13 @@ spec:
     swarmStage: implement
     swarmAgentRole: engineer
     swarmAgentWorkerId: worker-jangar-implement
-    swarmAgentIdentity: engineer-jangar-implement
-    swarmHumanName: engineer
+    swarmAgentIdentity: elise-novak-jangar-engineer
+    swarmHumanName: Elise Novak
+    swarmAgentTokenKey: HULY_API_TOKEN_ELISE_NOVAK_JANGAR_ENGINEER
+    swarmAgentExpectedActorIdKey: HULY_EXPECTED_ACTOR_ID_ELISE_NOVAK_JANGAR_ENGINEER
     swarmTeamName: Jangar Engineering
     objective: grab the system design document, implement high-quality engineering changes, update impacted documentation, and deliver a production-ready PR
-    ownerChannel: http://transactor.huly.svc.cluster.local
+    ownerChannel: swarm://owner/platform
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
     hulyProject: DefaultProject
@@ -177,6 +189,8 @@ spec:
     type: workflow
     config:
       serviceAccountName: agents-sa
+  workload:
+    image: registry.ide-newton.ts.net/lab/jangar:fab5cdf4@sha256:1db0eb6d389b94bd34f4be2f1f7574c11219742d63d17d363851e0ee6c197195
   ttlSecondsAfterFinished: 43200
   workflow:
     steps:
@@ -193,10 +207,12 @@ spec:
     swarmStage: verify
     swarmAgentRole: deployer
     swarmAgentWorkerId: worker-jangar-verify
-    swarmAgentIdentity: deployer-jangar-verify
-    swarmHumanName: deployer
+    swarmAgentIdentity: marco-silva-jangar-deployer
+    swarmHumanName: Marco Silva
+    swarmAgentTokenKey: HULY_API_TOKEN_MARCO_SILVA_JANGAR_DEPLOYER
+    swarmAgentExpectedActorIdKey: HULY_EXPECTED_ACTOR_ID_MARCO_SILVA_JANGAR_DEPLOYER
     swarmTeamName: Jangar Engineering
-    ownerChannel: http://transactor.huly.svc.cluster.local
+    ownerChannel: swarm://owner/platform
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
     hulyProject: DefaultProject
@@ -206,7 +222,7 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: merge Jangar PRs only when all checks pass with no failures; if checks fail, fix them first, then roll out merged changes in-cluster via GitOps with health verification
+    objective: as release engineer, make Jangar PRs production-ready by fixing blockers until all required checks are green, then squash-merge and verify in-cluster GitOps rollout health
   vcsRef:
     name: github
   vcsPolicy:
@@ -231,6 +247,8 @@ spec:
     type: workflow
     config:
       serviceAccountName: agents-sa
+  workload:
+    image: registry.ide-newton.ts.net/lab/jangar:fab5cdf4@sha256:1db0eb6d389b94bd34f4be2f1f7574c11219742d63d17d363851e0ee6c197195
   ttlSecondsAfterFinished: 43200
   workflow:
     steps:
@@ -245,12 +263,14 @@ spec:
     issueTitle: Torghut Traders discover mission
     swarmName: torghut-quant
     swarmStage: discover
-    swarmAgentRole: architector
+    swarmAgentRole: architect
     swarmAgentWorkerId: worker-torghut-discover
-    swarmAgentIdentity: architector-torghut-discover
-    swarmHumanName: architector
+    swarmAgentIdentity: gideon-park-torghut-architect
+    swarmHumanName: Gideon Park
+    swarmAgentTokenKey: HULY_API_TOKEN_GIDEON_PARK_TORGHUT_ARCHITECT
+    swarmAgentExpectedActorIdKey: HULY_EXPECTED_ACTOR_ID_GIDEON_PARK_TORGHUT_ARCHITECT
     swarmTeamName: Torghut Traders
-    ownerChannel: http://transactor.huly.svc.cluster.local
+    ownerChannel: swarm://owner/trading
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
     hulyProject: DefaultProject
@@ -260,7 +280,7 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: assess cluster/source/database state and create+merge a design PR that improves, maintains, and innovates Torghut quant
+    objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate Torghut quant
   vcsRef:
     name: github
   vcsPolicy:
@@ -285,6 +305,8 @@ spec:
     type: workflow
     config:
       serviceAccountName: agents-sa
+  workload:
+    image: registry.ide-newton.ts.net/lab/jangar:fab5cdf4@sha256:1db0eb6d389b94bd34f4be2f1f7574c11219742d63d17d363851e0ee6c197195
   ttlSecondsAfterFinished: 43200
   workflow:
     steps:
@@ -299,12 +321,14 @@ spec:
     issueTitle: Torghut Traders plan mission
     swarmName: torghut-quant
     swarmStage: plan
-    swarmAgentRole: architector
+    swarmAgentRole: architect
     swarmAgentWorkerId: worker-torghut-plan
-    swarmAgentIdentity: architector-torghut-plan
-    swarmHumanName: architector
+    swarmAgentIdentity: gideon-park-torghut-architect
+    swarmHumanName: Gideon Park
+    swarmAgentTokenKey: HULY_API_TOKEN_GIDEON_PARK_TORGHUT_ARCHITECT
+    swarmAgentExpectedActorIdKey: HULY_EXPECTED_ACTOR_ID_GIDEON_PARK_TORGHUT_ARCHITECT
     swarmTeamName: Torghut Traders
-    ownerChannel: http://transactor.huly.svc.cluster.local
+    ownerChannel: swarm://owner/trading
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
     hulyProject: DefaultProject
@@ -314,7 +338,7 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: assess cluster/source/database state and create+merge a design PR that improves, maintains, and innovates Torghut quant
+    objective: assess cluster/source/database state and create/update+merge required design-document PRs that improve, maintain, and innovate Torghut quant
   vcsRef:
     name: github
   vcsPolicy:
@@ -339,6 +363,8 @@ spec:
     type: workflow
     config:
       serviceAccountName: agents-sa
+  workload:
+    image: registry.ide-newton.ts.net/lab/jangar:fab5cdf4@sha256:1db0eb6d389b94bd34f4be2f1f7574c11219742d63d17d363851e0ee6c197195
   ttlSecondsAfterFinished: 172800
   workflow:
     steps:
@@ -358,11 +384,13 @@ spec:
     swarmStage: implement
     swarmAgentRole: engineer
     swarmAgentWorkerId: worker-torghut-implement
-    swarmAgentIdentity: engineer-torghut-implement
-    swarmHumanName: engineer
+    swarmAgentIdentity: naomi-ibarra-torghut-engineer
+    swarmHumanName: Naomi Ibarra
+    swarmAgentTokenKey: HULY_API_TOKEN_NAOMI_IBARRA_TORGHUT_ENGINEER
+    swarmAgentExpectedActorIdKey: HULY_EXPECTED_ACTOR_ID_NAOMI_IBARRA_TORGHUT_ENGINEER
     swarmTeamName: Torghut Traders
     objective: grab the system design document, implement high-quality engineering changes, update impacted documentation, and deliver a production-ready PR
-    ownerChannel: http://transactor.huly.svc.cluster.local
+    ownerChannel: swarm://owner/trading
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
     hulyProject: DefaultProject
@@ -396,6 +424,8 @@ spec:
     type: workflow
     config:
       serviceAccountName: agents-sa
+  workload:
+    image: registry.ide-newton.ts.net/lab/jangar:fab5cdf4@sha256:1db0eb6d389b94bd34f4be2f1f7574c11219742d63d17d363851e0ee6c197195
   ttlSecondsAfterFinished: 43200
   workflow:
     steps:
@@ -412,10 +442,12 @@ spec:
     swarmStage: verify
     swarmAgentRole: deployer
     swarmAgentWorkerId: worker-torghut-verify
-    swarmAgentIdentity: deployer-torghut-verify
-    swarmHumanName: deployer
+    swarmAgentIdentity: julian-hart-torghut-deployer
+    swarmHumanName: Julian Hart
+    swarmAgentTokenKey: HULY_API_TOKEN_JULIAN_HART_TORGHUT_DEPLOYER
+    swarmAgentExpectedActorIdKey: HULY_EXPECTED_ACTOR_ID_JULIAN_HART_TORGHUT_DEPLOYER
     swarmTeamName: Torghut Traders
-    ownerChannel: http://transactor.huly.svc.cluster.local
+    ownerChannel: swarm://owner/trading
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
     hulyProject: DefaultProject
@@ -425,7 +457,7 @@ spec:
     hulyTrackerUrl: https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues
     hulyRequireDedicatedAccount: "true"
     hulySkillRef: skills/huly-api/SKILL.md
-    objective: merge Torghut PRs only when all checks pass with no failures; if checks fail, fix them first, then roll out merged changes in-cluster via GitOps with health verification
+    objective: as release engineer, make Torghut PRs production-ready by fixing blockers until all required checks are green, then squash-merge and verify in-cluster GitOps rollout health
   vcsRef:
     name: github
   vcsPolicy:

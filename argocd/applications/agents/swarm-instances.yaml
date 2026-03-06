@@ -6,7 +6,7 @@ metadata:
 spec:
   owner:
     id: platform-owner
-    channel: http://transactor.huly.svc.cluster.local
+    channel: swarm://owner/platform
   domains:
     - platform-reliability
     - platform-evolution
@@ -17,10 +17,34 @@ spec:
   mode: lights-out
   timezone: UTC
   cadence:
-    discoverEvery: 30m
-    planEvery: 30m
-    implementEvery: 30m
-    verifyEvery: 30m
+    discoverEvery: 1h
+    planEvery: 1h
+    implementEvery: 1h
+    verifyEvery: 1h
+  integrations:
+    huly:
+      baseUrl: http://transactor.huly.svc.cluster.local
+      workspace: proompteng
+      project: DefaultProject
+      skillRef: skills/huly-api/SKILL.md
+      authSecretRef:
+        name: huly-api-jangar
+      personas:
+        architect:
+          humanName: Victor Chen
+          workerIdentity: victor-chen-jangar-architect
+          tokenKey: HULY_API_TOKEN_VICTOR_CHEN_JANGAR_ARCHITECT
+          expectedActorIdKey: HULY_EXPECTED_ACTOR_ID_VICTOR_CHEN_JANGAR_ARCHITECT
+        engineer:
+          humanName: Elise Novak
+          workerIdentity: elise-novak-jangar-engineer
+          tokenKey: HULY_API_TOKEN_ELISE_NOVAK_JANGAR_ENGINEER
+          expectedActorIdKey: HULY_EXPECTED_ACTOR_ID_ELISE_NOVAK_JANGAR_ENGINEER
+        deployer:
+          humanName: Marco Silva
+          workerIdentity: marco-silva-jangar-deployer
+          tokenKey: HULY_API_TOKEN_MARCO_SILVA_JANGAR_DEPLOYER
+          expectedActorIdKey: HULY_EXPECTED_ACTOR_ID_MARCO_SILVA_JANGAR_DEPLOYER
   discovery:
     minCitations: 2
     minConfidence: 0.75
@@ -79,7 +103,7 @@ metadata:
 spec:
   owner:
     id: trading-owner
-    channel: http://transactor.huly.svc.cluster.local
+    channel: swarm://owner/trading
   domains:
     - quant-research
     - autonomous-trading
@@ -90,10 +114,34 @@ spec:
   mode: lights-out
   timezone: UTC
   cadence:
-    discoverEvery: 30m
-    planEvery: 30m
-    implementEvery: 30m
-    verifyEvery: 30m
+    discoverEvery: 1h
+    planEvery: 1h
+    implementEvery: 1h
+    verifyEvery: 1h
+  integrations:
+    huly:
+      baseUrl: http://transactor.huly.svc.cluster.local
+      workspace: proompteng
+      project: DefaultProject
+      skillRef: skills/huly-api/SKILL.md
+      authSecretRef:
+        name: huly-api-torghut
+      personas:
+        architect:
+          humanName: Gideon Park
+          workerIdentity: gideon-park-torghut-architect
+          tokenKey: HULY_API_TOKEN_GIDEON_PARK_TORGHUT_ARCHITECT
+          expectedActorIdKey: HULY_EXPECTED_ACTOR_ID_GIDEON_PARK_TORGHUT_ARCHITECT
+        engineer:
+          humanName: Naomi Ibarra
+          workerIdentity: naomi-ibarra-torghut-engineer
+          tokenKey: HULY_API_TOKEN_NAOMI_IBARRA_TORGHUT_ENGINEER
+          expectedActorIdKey: HULY_EXPECTED_ACTOR_ID_NAOMI_IBARRA_TORGHUT_ENGINEER
+        deployer:
+          humanName: Julian Hart
+          workerIdentity: julian-hart-torghut-deployer
+          tokenKey: HULY_API_TOKEN_JULIAN_HART_TORGHUT_DEPLOYER
+          expectedActorIdKey: HULY_EXPECTED_ACTOR_ID_JULIAN_HART_TORGHUT_DEPLOYER
   discovery:
     minCitations: 2
     minConfidence: 0.8

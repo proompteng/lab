@@ -146,6 +146,34 @@ class PositionLookupUnavailableHeldInventoryClient(PositionLookupUnavailableClie
         ]
 
 
+class PartiallyHeldInventoryClient(FakeAlpacaClient):
+    def list_positions(self) -> list[dict[str, str]]:
+        return [
+            {
+                "symbol": "AAPL",
+                "qty": "2",
+                "side": "long",
+            }
+        ]
+
+    def list_orders(self, status: str = "all") -> list[dict[str, str]]:
+        if status != "open":
+            return []
+        return [
+            {
+                "id": "order-held-partial-1",
+                "client_order_id": "existing-sell-order",
+                "symbol": "AAPL",
+                "side": "sell",
+                "type": "limit",
+                "time_in_force": "day",
+                "qty": "1",
+                "filled_qty": "0",
+                "status": "accepted",
+            }
+        ]
+
+
 class AccountShortingDisabledClient(FakeAlpacaClient):
     def get_account(self) -> dict[str, bool]:
         return {"shorting_enabled": False}
@@ -214,6 +242,11 @@ class AssetShortabilityUnknownClient(FakeAlpacaClient):
             "tradable": True,
             "easy_to_borrow": True,
         }
+
+
+class AccountMetadataUnavailableClientWithLongPosition(AccountMetadataUnavailableClient):
+    def list_positions(self) -> list[dict[str, str]]:
+        return [{"symbol": "AAPL", "qty": "2", "side": "long"}]
 
 
 class TestOrderIdempotency(TestCase):
@@ -1291,7 +1324,7 @@ class TestOrderIdempotency(TestCase):
 
             payload = json.loads(str(context.exception))
             self.assertEqual(payload.get("source"), "local_pre_submit")
-            self.assertEqual(payload.get("code"), "local_account_metadata_unavailable")
+            self.assertEqual(payload.get("code"), "shorting_metadata_unavailable")
 
     def test_submit_order_precheck_blocks_short_when_account_shorting_status_unknown_live(
         self,
@@ -1334,7 +1367,7 @@ class TestOrderIdempotency(TestCase):
 
             payload = json.loads(str(context.exception))
             self.assertEqual(payload.get("source"), "local_pre_submit")
-            self.assertEqual(payload.get("code"), "local_account_shorting_status_unknown")
+            self.assertEqual(payload.get("code"), "shorting_metadata_unavailable")
 
     def test_submit_order_precheck_blocks_short_when_asset_metadata_unavailable_live(
         self,
@@ -1377,7 +1410,7 @@ class TestOrderIdempotency(TestCase):
 
             payload = json.loads(str(context.exception))
             self.assertEqual(payload.get("source"), "local_pre_submit")
-            self.assertEqual(payload.get("code"), "local_symbol_metadata_unavailable")
+            self.assertEqual(payload.get("code"), "shorting_metadata_unavailable")
 
     def test_submit_order_precheck_blocks_short_when_asset_shortability_unknown_live(
         self,
@@ -1420,7 +1453,48 @@ class TestOrderIdempotency(TestCase):
 
             payload = json.loads(str(context.exception))
             self.assertEqual(payload.get("source"), "local_pre_submit")
-            self.assertEqual(payload.get("code"), "local_symbol_shortability_unknown")
+            self.assertEqual(payload.get("code"), "shorting_metadata_unavailable")
+
+    def test_submit_order_precheck_allows_position_reducing_sell_without_shorting_metadata(
+        self,
+    ) -> None:
+        settings.trading_allow_shorts = True
+        settings.trading_mode = "live"
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("1"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+
+            execution = executor.submit_order(
+                session,
+                AccountMetadataUnavailableClientWithLongPosition(),
+                decision,
+                decision_row,
+                "paper",
+            )
+
+            self.assertIsNotNone(execution)
+            self.assertEqual(execution.status, "accepted")
 
     def test_submit_order_precheck_allows_short_when_asset_metadata_unavailable_paper(
         self,
@@ -1623,6 +1697,53 @@ class TestOrderIdempotency(TestCase):
             self.assertEqual(payload.get("source"), "broker_precheck")
             self.assertEqual(payload.get("code"), "precheck_sell_qty_exceeds_available")
             self.assertEqual(payload.get("position_qty"), None)
+
+    def test_submit_order_precheck_clips_sell_to_available_inventory(self) -> None:
+        settings.trading_allow_shorts = True
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("2"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+
+            client = PartiallyHeldInventoryClient()
+            execution = executor.submit_order(
+                session,
+                client,
+                decision,
+                decision_row,
+                "paper",
+            )
+
+            assert execution is not None
+            self.assertEqual(client.submitted[0]["qty"], "1.0")
+            session.refresh(decision_row)
+            payload = decision_row.decision_json
+            assert isinstance(payload, dict)
+            self.assertEqual(payload.get("qty"), "1")
+            adjustment = payload.get("broker_precheck_adjustment")
+            assert isinstance(adjustment, dict)
+            self.assertEqual(adjustment.get("requested_qty"), "2")
+            self.assertEqual(adjustment.get("adjusted_qty"), "1")
 
     def test_local_pre_submit_rejection_formats_with_distinct_reason_prefix(self) -> None:
         error = RuntimeError(

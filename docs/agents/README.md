@@ -154,6 +154,8 @@ For env and gRPC source-of-truth changes in this branch:
 - [designs/controller-controllers-deployment-migrations-skip.md](designs/controller-controllers-deployment-migrations-skip.md)
 - [designs/controller-failed-reconcile-events.md](designs/controller-failed-reconcile-events.md)
 - [designs/jangar-control-plane-operability-reliability-assessment.md](designs/jangar-control-plane-operability-reliability-assessment.md)
+- [designs/jangar-control-plane-capability-admission-failure-budgets-and-rollout-rings-2026-03-06.md](designs/jangar-control-plane-capability-admission-failure-budgets-and-rollout-rings-2026-03-06.md)
+- [designs/jangar-control-plane-admission-quorum-and-rollout-circuit-breaker-2026-03-06.md](designs/jangar-control-plane-admission-quorum-and-rollout-circuit-breaker-2026-03-06.md)
 - [designs/controller-finalizer-conventions.md](designs/controller-finalizer-conventions.md)
 - [designs/controller-kubectl-version-compat.md](designs/controller-kubectl-version-compat.md)
 - [designs/controller-namespace-scope-parse-validate.md](designs/controller-namespace-scope-parse-validate.md)

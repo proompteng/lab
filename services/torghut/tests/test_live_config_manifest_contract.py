@@ -106,13 +106,39 @@ class TestLiveConfigManifestContract(TestCase):
         settings = Settings(**env)
 
         self.assertEqual(settings.trading_mode, "live")
+        self.assertEqual(env.get("TRADING_DB_SCHEMA_GRAPH_BRANCH_TOLERANCE"), "1")
+        self.assertEqual(
+            env.get("TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS"),
+            "true",
+        )
         self.assertFalse(settings.trading_feature_flags_enabled)
+        self.assertEqual(settings.trading_db_schema_graph_branch_tolerance, 1)
+        self.assertTrue(settings.trading_db_schema_graph_allow_divergence_roots)
         self.assertEqual(settings.llm_rollout_stage, "stage3_controlled_live")
         self.assertEqual(settings.llm_dspy_runtime_mode, "active")
         self.assertEqual(settings.llm_fail_mode, "veto")
         self.assertEqual(settings.llm_fail_mode_enforcement, "strict_veto")
         self.assertFalse(settings.llm_fail_open_live_approved)
         self.assertFalse(settings.posthog_enabled)
+        self.assertTrue(settings.trading_fractional_equities_enabled)
+        self.assertTrue(settings.trading_universe_static_fallback_enabled)
+        self.assertEqual(
+            set(settings.trading_universe_static_fallback_symbols),
+            {
+                "AAPL",
+                "AMAT",
+                "AMD",
+                "AVGO",
+                "GOOG",
+                "INTC",
+                "META",
+                "MSFT",
+                "NVDA",
+                "QQQ",
+                "SPY",
+                "TSLA",
+            },
+        )
         self.assertFalse(settings.llm_live_fail_open_requested_for_stage("stage3"))
         self.assertEqual(settings.llm_effective_fail_mode_for_current_rollout(), "veto")
         cutover_allowed, cutover_reasons = settings.llm_dspy_cutover_migration_guard()
@@ -148,6 +174,7 @@ class TestLiveConfigManifestContract(TestCase):
 
         _require_flag_enabled_false("torghut_trading_execution_advisor_enabled")
         _require_flag_enabled_false("torghut_trading_execution_advisor_live_apply_enabled")
+        _require_flag_enabled_false("torghut_trading_db_schema_graph_allow_divergence_roots")
         _require_flag_enabled_false("torghut_llm_fail_open_live_approved")
         _require_flag_enabled_false("torghut_llm_shadow_mode")
 

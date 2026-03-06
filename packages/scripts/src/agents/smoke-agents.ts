@@ -82,6 +82,60 @@ const buildEnv = (env?: Record<string, string | undefined>) =>
     Object.entries(env ? { ...process.env, ...env } : process.env).filter(([, value]) => value !== undefined),
   ) as Record<string, string>
 
+type BuildHelmArgsInput = {
+  releaseName: string
+  namespace: string
+  valuesFile: string
+  createNamespace: boolean
+  databaseUrl?: string
+  imageRepository?: string
+  imageTag?: string
+  imageDigestSet: boolean
+  imageDigest: string
+}
+
+export const buildHelmArgs = ({
+  releaseName,
+  namespace,
+  valuesFile,
+  createNamespace,
+  databaseUrl,
+  imageRepository,
+  imageTag,
+  imageDigestSet,
+  imageDigest,
+}: BuildHelmArgsInput) => {
+  const helmArgs = [
+    'upgrade',
+    '--install',
+    releaseName,
+    resolve(repoRoot, 'charts/agents'),
+    '--namespace',
+    namespace,
+    '--values',
+    valuesFile,
+  ]
+
+  if (createNamespace) {
+    helmArgs.push('--create-namespace')
+  }
+
+  if (databaseUrl) {
+    helmArgs.push('--set-string', `database.url=${databaseUrl}`)
+  }
+  if (imageRepository) {
+    helmArgs.push('--set', `image.repository=${imageRepository}`)
+  }
+  if (imageTag) {
+    helmArgs.push('--set', `image.tag=${imageTag}`)
+  }
+  if (imageDigestSet) {
+    helmArgs.push('--set', `image.digest=${imageDigest}`)
+  }
+
+  return helmArgs
+}
+
 const listPodNames = async (namespace: string) => {
   const result = await execCapture([
     'kubectl',
@@ -120,8 +174,8 @@ const applyYaml = async (namespace: string, manifest: string) => {
     stderr: 'inherit',
   })
 
-  subprocess.stdin?.write(manifest)
-  subprocess.stdin?.end()
+  void subprocess.stdin?.write(manifest)
+  void subprocess.stdin?.end()
 
   const exitCode = await subprocess.exited
   if (exitCode !== 0) {
@@ -380,34 +434,17 @@ spec:
     process.env.AGENTS_DB_URL = databaseUrl
   }
 
-  const helmArgs = [
-    'upgrade',
-    '--install',
+  const helmArgs = buildHelmArgs({
     releaseName,
-    resolve(repoRoot, 'charts/agents'),
-    '--namespace',
     namespace,
-    '--values',
     valuesFile,
-  ]
-
-  if (createNamespace) {
-    helmArgs.push('--create-namespace')
-  }
-
-  if (process.env.AGENTS_DB_URL) {
-    helmArgs.push('--set-string', `database.url=${process.env.AGENTS_DB_URL}`)
-  }
-  if (imageRepository) {
-    helmArgs.push('--set', `image.repository=${imageRepository}`)
-  }
-  if (imageTag) {
-    helmArgs.push('--set', `image.tag=${imageTag}`)
-  }
-  if (imageDigestSet) {
-    helmArgs.push('--set', `image.digest=${imageDigest}`)
-  }
-
+    createNamespace,
+    databaseUrl: process.env.AGENTS_DB_URL,
+    imageRepository,
+    imageTag,
+    imageDigestSet,
+    imageDigest,
+  })
   await run('helm', helmArgs)
   {
     const exitCode = await runInherit([

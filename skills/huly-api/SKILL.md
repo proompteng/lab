@@ -55,7 +55,7 @@ python3 skills/huly-api/scripts/huly-api.py \
   --limit 30
 ```
 
-2. React to at least one relevant teammate message by posting a direct reply that references the message ID and decision impact:
+2. React to at least one relevant teammate message by posting a natural direct reply with decision impact in-thread:
 
 ```bash
 python3 skills/huly-api/scripts/huly-api.py \
@@ -64,7 +64,8 @@ python3 skills/huly-api/scripts/huly-api.py \
   --worker-identity "${SWARM_AGENT_IDENTITY}" \
   --require-worker-token \
   --channel "${ACTIVE_HULY_CHANNEL}" \
-  --message "Replying to message <messageId>: I picked up this requirement and I will implement X next."
+  --reply-to-message-id "${RELEVANT_MESSAGE_ID}" \
+  --message "Thanks for the context. I picked this up and I am implementing X next."
 ```
 
 3. Post a worker-authored stage update after completing the mission action:
@@ -111,10 +112,15 @@ This creates/updates:
 ```bash
 python3 skills/huly-api/scripts/huly-api.py --operation create-issue --title "..." --mission-id "..."
 python3 skills/huly-api/scripts/huly-api.py --operation create-document --title "..." --mission-id "..."
+python3 skills/huly-api/scripts/huly-api.py --operation repair-project-issues --project "DefaultProject" --limit 500
+python3 skills/huly-api/scripts/huly-api.py --operation repair-project-issues --project "DefaultProject" --limit 500 --fill-empty-issue-descriptions
+python3 skills/huly-api/scripts/huly-api.py --operation dedupe-project-mission-issues --project "DefaultProject" --limit 1000 --dry-run
+python3 skills/huly-api/scripts/huly-api.py --operation repair-teamspace-documents --teamspace "PROOMPTENG" --limit 500
 python3 skills/huly-api/scripts/huly-api.py --operation post-channel-message --message "..."
+python3 skills/huly-api/scripts/huly-api.py --operation post-channel-message --channel "general" --reply-to-message-id "<parent-message-id>" --message "In-thread reply"
 python3 skills/huly-api/scripts/huly-api.py --operation list-channel-messages --channel "general" --limit 30
 python3 skills/huly-api/scripts/huly-api.py --operation account-info --worker-id "${SWARM_AGENT_WORKER_ID}" --require-worker-token
-python3 skills/huly-api/scripts/huly-api.py --operation verify-chat-access --worker-id "${SWARM_AGENT_WORKER_ID}" --worker-identity "${SWARM_AGENT_IDENTITY}" --require-worker-token --channel "general" --message "Hi team, I can post in this channel and I am starting this stage now."
+python3 skills/huly-api/scripts/huly-api.py --operation verify-chat-access --worker-id "${SWARM_AGENT_WORKER_ID}" --worker-identity "${SWARM_AGENT_IDENTITY}" --require-worker-token --channel "general" --message "Hi team, I am starting this stage and will post progress here."
 ```
 
 ### Raw HTTP mode (debug)
@@ -129,13 +135,24 @@ python3 skills/huly-api/scripts/huly-api.py --operation http --method GET --path
 - Each swarm agent should authenticate with its own Huly organization account (no shared actor credentials).
 - Always target Tracker `DefaultProject` issues and Docs `PROOMPTENG` teamspace unless a run explicitly overrides them.
 - Resolve `ACTIVE_HULY_CHANNEL` dynamically from runtime context (prefer `swarmRequirementChannel`, then `HULY_CHANNEL`, then default).
-- Read channel history before taking action, then react to relevant teammate messages with explicit follow-up replies.
+- Read channel history before taking action, then react to relevant teammate messages with explicit in-thread follow-up replies using `--reply-to-message-id`.
 - Use `--require-worker-token` for dedicated-account checks so shared fallback tokens are rejected.
 - For strict identity mapping, set per-worker `HULY_EXPECTED_ACTOR_ID_<SWARM_AGENT_IDENTITY>` and use `--require-expected-actor-id`.
 - Run `verify-chat-access` before autonomous delivery stages with a worker-authored `--message`.
-- Include `swarmAgentWorkerId` and `swarmAgentIdentity` in the issue/document/channel message body.
+- Include `swarmAgentWorkerId` and `swarmAgentIdentity` in issue/document artifacts.
+- Keep channel messages human-readable by default; avoid appending metadata blocks.
+  - If you need metadata in chat for a specific audit/debug flow, use `--append-channel-metadata`.
   - `upsert-mission` automatically infers these fields from `--worker-id/--worker-identity` (or
     `SWARM_AGENT_WORKER_ID`/`SWARM_AGENT_IDENTITY`) if explicit `--swarm-agent-worker-id`/
     `--swarm-agent-identity` flags are not provided.
 - Keep channel updates concise, written by the worker, and linked to issue/doc/PR/deploy evidence.
+- Issue descriptions must be long-form and knowledge-base quality. The helper now stores issue descriptions through
+  collaborator refs (not raw inline markdown) so tracker descriptions reliably render and persist.
+- `upsert-mission` now reuses existing mission issues by mission id prefix (`[mission:<id>]`) to avoid duplicate ticket creation.
+- Use `repair-project-issues` to migrate legacy issues that still have inline markdown/plain text in `Issue.description`.
+- Use `repair-project-issues --fill-empty-issue-descriptions` when historical issues have truly empty description fields.
+- Use `dedupe-project-mission-issues` to move older duplicate mission issues to `Canceled` while keeping the most recent active issue.
+- Document content must be long-form and knowledge-base quality. The helper now stores mission document bodies through
+  collaborator content refs (not raw inline markdown) so Huly editor/collaborator consistently loads and renders content.
+- Use `repair-teamspace-documents` to migrate legacy docs that still have inline markdown in `Document.content`.
 - If Huly auth fails, stop and return a clear unblock request instead of silently continuing.

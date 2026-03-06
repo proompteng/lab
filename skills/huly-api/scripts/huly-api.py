@@ -12,6 +12,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import secrets
 import sys
 import time
@@ -33,18 +34,24 @@ TX_UPDATE_CLASS = 'core:class:TxUpdateDoc'
 TX_SPACE = 'core:space:Tx'
 
 DEFAULT_ISSUE_STATUS = 'tracker:status:Backlog'
+ISSUE_STATUS_IN_PROGRESS = 'tracker:status:InProgress'
+ISSUE_STATUS_DONE = 'tracker:status:Done'
+ISSUE_STATUS_CANCELED = 'tracker:status:Canceled'
 DEFAULT_ISSUE_KIND = 'tracker:taskTypes:Issue'
 DEFAULT_DOCUMENT_PARENT = 'document:ids:NoParent'
 DEFAULT_RANK = '0|zzzzzz:'
 DEFAULT_TEAMSPACE = 'PROOMPTENG'
 DEFAULT_TRACKER_URL = 'https://huly.proompteng.ai/workbench/proompteng/tracker/tracker%3Aproject%3ADefaultProject/issues'
-MAX_INLINE_MISSION_BODY_CHARS = 900
-TRUNCATION_NOTICE = '\n\n[Truncated for Huly storage compatibility. Full details are in the channel update.]'
+ISSUE_DESCRIPTION_ATTR = 'description'
+DOCUMENT_CONTENT_ATTR = 'content'
+COLLAB_REF_PATTERN = re.compile(r'^[A-Za-z0-9:_-]{16,}$')
+MISSION_TITLE_PATTERN = re.compile(r'^\[mission:([^\]]+)\]\s*(.*)$')
 
 
 @dataclass
 class HulyContext:
     base_url: str
+    collaborator_base_url: str
     token: str
     token_source: str
     workspace_id: str
@@ -199,18 +206,6 @@ def build_upsert_mission_context_message(*, metadata: dict[str, str]) -> str:
     return ' | '.join(segments)
 
 
-def ensure_inline_body_limit(body: str) -> str:
-    text = body.strip()
-    if len(text) <= MAX_INLINE_MISSION_BODY_CHARS:
-        return text
-
-    reserved = len(TRUNCATION_NOTICE)
-    cutoff = MAX_INLINE_MISSION_BODY_CHARS - reserved
-    if cutoff < 1:
-        return text[:MAX_INLINE_MISSION_BODY_CHARS]
-    return f'{text[:cutoff].rstrip()}{TRUNCATION_NOTICE}'
-
-
 def is_worker_scoped_token_source(source: str) -> bool:
     return source.startswith('HULY_API_TOKEN_')
 
@@ -225,6 +220,8 @@ def resolve_expected_actor_id(args: argparse.Namespace) -> str:
         explicit_value = env_if_set(explicit_env_key)
         if explicit_value:
             return explicit_value
+        if args.require_expected_actor_id:
+            return ''
 
     worker_identity = args.worker_identity.strip() or env_if_set('SWARM_AGENT_IDENTITY')
     if worker_identity:
@@ -253,6 +250,8 @@ def resolve_token(args: argparse.Namespace) -> tuple[str, str]:
         candidate = env_if_set(token_env_key)
         if candidate:
             return candidate, token_env_key
+        if args.require_worker_token:
+            return '', ''
 
     worker_identity = args.worker_identity.strip() or env_if_set('SWARM_AGENT_IDENTITY')
     if worker_identity:
@@ -364,6 +363,84 @@ def build_mission_provenance_compact(
     return 'Mission Metadata: ' + ' | '.join(fields)
 
 
+def build_mission_document_body(
+    *,
+    mission_id: str,
+    title: str,
+    stage: str,
+    status: str,
+    summary: str,
+    details: str,
+    worker_update: str,
+    metadata: str,
+    context_section: str,
+) -> str:
+    sections: list[str] = [
+        f'# {title}',
+        '\n'.join(
+            [
+                '## Mission Snapshot',
+                f'- Mission ID: {mission_id}',
+                f'- Stage: {stage}',
+                f'- Status: {status}',
+            ]
+        ),
+        f'## Executive Summary\n{summary}',
+        f'## Detailed Notes\n{details or "No additional detailed notes were provided for this stage."}',
+        f'## Worker Update\n{worker_update}',
+        '\n'.join(
+            [
+                '## Operational Follow-up',
+                '- Link implementation evidence (PRs, rollout checks, and logs) in subsequent updates.',
+                '- Keep this document updated with post-merge verification and rollback context if incidents occur.',
+            ]
+        ),
+    ]
+    if metadata:
+        sections.append(metadata)
+    if context_section:
+        sections.append(context_section)
+    return '\n\n'.join(section for section in sections if section)
+
+
+def derive_issue_status_for_mission_status(mission_status: str) -> str:
+    status = mission_status.strip().lower()
+    if not status:
+        return ''
+    if any(token in status for token in ['done', 'complete', 'completed', 'success', 'succeeded', 'merged']):
+        return ISSUE_STATUS_DONE
+    if any(token in status for token in ['cancel', 'canceled', 'cancelled']):
+        return ISSUE_STATUS_CANCELED
+    if any(token in status for token in ['run', 'progress', 'active', 'verify', 'implement', 'discover', 'plan']):
+        return ISSUE_STATUS_IN_PROGRESS
+    return ''
+
+
+def parse_mission_title(title: str) -> tuple[str, str]:
+    match = MISSION_TITLE_PATTERN.match(title.strip())
+    if not match:
+        return '', title.strip()
+    return match.group(1).strip(), match.group(2).strip()
+
+
+def build_issue_backfill_description(*, mission_id: str, title: str, status: str) -> str:
+    mission_reference = mission_id or 'unknown'
+    title_reference = title or 'Untitled mission issue'
+    status_reference = status or ISSUE_STATUS_IN_PROGRESS
+    return (
+        f'## Summary\n'
+        f'Backfilled mission issue description for `{title_reference}`. '
+        f'This issue previously had an empty body because legacy swarm writes did not persist a tracker description.\n\n'
+        f'## Mission Context\n'
+        f'- Mission ID: {mission_reference}\n'
+        f'- Current Status: {status_reference}\n\n'
+        f'## Next Actions\n'
+        f'1. Add implementation evidence (PR links, CI checks, and rollout verification notes).\n'
+        f'2. Keep status transitions aligned with real execution progress.\n'
+        f'3. Mark Done only after production rollout health is verified.'
+    )
+
+
 def join_url(base_url: str, path: str) -> str:
     normalized_base = base_url.rstrip('/')
     normalized_path = path if path.startswith('/') else f'/{path}'
@@ -409,6 +486,66 @@ def normalize_api_base_url(base_url: str) -> str:
         target_hostname = f"transactor.{hostname[len('front.'):]}"
 
     return f'{parsed.scheme}://{target_hostname}{port}'
+
+
+def normalize_collaborator_base_url(base_url: str) -> str:
+    raw = base_url.strip().rstrip('/')
+    if not raw:
+        return ''
+
+    if raw.startswith('ws://'):
+        raw = 'http://' + raw[len('ws://'):]
+    elif raw.startswith('wss://'):
+        raw = 'https://' + raw[len('wss://'):]
+
+    parsed = urllib.parse.urlparse(raw)
+    if not parsed.scheme or not parsed.netloc:
+        return raw
+
+    hostname = parsed.hostname or ''
+    port = f':{parsed.port}' if parsed.port else ''
+    target_hostname = hostname
+    if hostname.lower().startswith('front.'):
+        target_hostname = f"collaborator.{hostname[len('front.'):]}"
+    elif hostname.lower().startswith('transactor.'):
+        target_hostname = f"collaborator.{hostname[len('transactor.'):]}"
+
+    return f'{parsed.scheme}://{target_hostname}{port}'
+
+
+def derive_collaborator_base_url(api_base_url: str) -> str:
+    parsed = urllib.parse.urlparse(api_base_url)
+    if not parsed.scheme or not parsed.netloc:
+        return ''
+
+    hostname = parsed.hostname or ''
+    port = f':{parsed.port}' if parsed.port else ''
+    target_hostname = hostname
+    if hostname.lower().startswith('transactor.'):
+        target_hostname = f"collaborator.{hostname[len('transactor.'):]}"
+    elif hostname.lower().startswith('front.'):
+        target_hostname = f"collaborator.{hostname[len('front.'):]}"
+
+    return f'{parsed.scheme}://{target_hostname}{port}'
+
+
+def is_probable_collab_ref(value: str) -> bool:
+    candidate = value.strip()
+    if not candidate:
+        return False
+    if any(char.isspace() for char in candidate):
+        return False
+    return bool(COLLAB_REF_PATTERN.fullmatch(candidate))
+
+
+def encode_document_id(
+    *,
+    workspace_id: str,
+    object_class: str,
+    object_id: str,
+    object_attr: str = DOCUMENT_CONTENT_ATTR,
+) -> str:
+    return f'{workspace_id}|{object_class}|{object_id}|{object_attr}'
 
 
 def api_call(
@@ -457,6 +594,143 @@ def api_call(
         raise RuntimeError(json.dumps(details, sort_keys=True)) from error
     except urllib.error.URLError as error:
         raise RuntimeError(f'request failed: {error.reason}') from error
+
+
+def collaborator_rpc(
+    *,
+    context: HulyContext,
+    document_id: str,
+    method: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    if not context.collaborator_base_url:
+        raise RuntimeError('missing collaborator base url; set --collaborator-url or HULY_COLLABORATOR_URL')
+
+    encoded_document_id = urllib.parse.quote(document_id, safe='')
+    result = api_call(
+        method='POST',
+        url=join_url(context.collaborator_base_url, f'/rpc/{encoded_document_id}'),
+        token=context.token,
+        timeout_seconds=context.timeout_seconds,
+        data={'method': method, 'payload': payload},
+    )
+    if not isinstance(result, dict):
+        raise RuntimeError(f'collaborator {method} returned invalid response shape')
+    error_message = result.get('error')
+    if isinstance(error_message, str) and error_message.strip():
+        raise RuntimeError(f'collaborator {method} failed: {error_message.strip()}')
+    return result
+
+
+def create_collab_content_ref(
+    *,
+    context: HulyContext,
+    object_class: str,
+    document_id: str,
+    object_attr: str,
+    content: str,
+) -> str:
+    document_name = encode_document_id(
+        workspace_id=context.workspace_id,
+        object_class=object_class,
+        object_id=document_id,
+        object_attr=object_attr,
+    )
+    result = collaborator_rpc(
+        context=context,
+        document_id=document_name,
+        method='createContent',
+        payload={'content': {object_attr: content}},
+    )
+    content_refs = result.get('content')
+    if not isinstance(content_refs, dict):
+        raise RuntimeError('collaborator createContent returned invalid content payload')
+    content_ref = str(content_refs.get(object_attr) or '').strip()
+    if not content_ref:
+        raise RuntimeError('collaborator createContent did not return content reference')
+    return content_ref
+
+
+def update_collab_content_via_collaborator(
+    *,
+    context: HulyContext,
+    object_class: str,
+    document_id: str,
+    object_attr: str,
+    content: str,
+) -> None:
+    document_name = encode_document_id(
+        workspace_id=context.workspace_id,
+        object_class=object_class,
+        object_id=document_id,
+        object_attr=object_attr,
+    )
+    collaborator_rpc(
+        context=context,
+        document_id=document_name,
+        method='updateContent',
+        payload={'content': {object_attr: content}},
+    )
+
+
+def create_document_content_ref(
+    *,
+    context: HulyContext,
+    document_id: str,
+    content: str,
+) -> str:
+    return create_collab_content_ref(
+        context=context,
+        object_class=DOCUMENT_CLASS,
+        document_id=document_id,
+        object_attr=DOCUMENT_CONTENT_ATTR,
+        content=content,
+    )
+
+
+def update_document_content_via_collaborator(
+    *,
+    context: HulyContext,
+    document_id: str,
+    content: str,
+) -> None:
+    update_collab_content_via_collaborator(
+        context=context,
+        object_class=DOCUMENT_CLASS,
+        document_id=document_id,
+        object_attr=DOCUMENT_CONTENT_ATTR,
+        content=content,
+    )
+
+
+def create_issue_description_ref(
+    *,
+    context: HulyContext,
+    issue_id: str,
+    description: str,
+) -> str:
+    return create_collab_content_ref(
+        context=context,
+        object_class=ISSUE_CLASS,
+        document_id=issue_id,
+        object_attr=ISSUE_DESCRIPTION_ATTR,
+        content=description,
+    )
+
+
+def update_issue_description_via_collaborator(
+    *,
+    context: HulyContext,
+    issue_id: str,
+    description: str,
+) -> None:
+    update_collab_content_via_collaborator(
+        context=context,
+        object_class=ISSUE_CLASS,
+        document_id=issue_id,
+        object_attr=ISSUE_DESCRIPTION_ATTR,
+        content=description,
+    )
 
 
 def find_all(
@@ -664,6 +938,24 @@ def find_issue_by_title(context: HulyContext, project_id: str, title: str) -> di
     return None
 
 
+def find_issue_by_mission_id(context: HulyContext, project_id: str, mission_id: str) -> dict[str, Any] | None:
+    mission_key = mission_id.strip()
+    if not mission_key:
+        return None
+    mission_prefix = f'[mission:{mission_key}]'
+    issues = find_all(
+        context=context,
+        class_name=ISSUE_CLASS,
+        query={'space': project_id},
+        options={'limit': 500, 'sort': {'modifiedOn': -1}},
+    )
+    for issue in issues:
+        title = str(issue.get('title') or '').strip()
+        if title.startswith(mission_prefix):
+            return issue
+    return None
+
+
 def find_document_by_title(context: HulyContext, teamspace_id: str, title: str) -> dict[str, Any] | None:
     docs = find_all(
         context=context,
@@ -686,26 +978,47 @@ def create_or_update_issue(
     status: str,
     priority: int,
 ) -> dict[str, Any]:
-    body = ensure_inline_body_limit(body)
+    body = body.strip()
+    requested_status = status.strip()
     project = resolve_project(context, project_ref)
     project_id = str(project.get('_id') or '')
     project_identifier = str(project.get('identifier') or '').strip()
+    project_default_status = str(project.get('defaultIssueStatus') or '').strip()
     if not project_id:
         raise RuntimeError('resolved project is missing _id')
 
     mission_title = f'[mission:{mission_id}] {title}' if mission_id else title
-    existing = find_issue_by_title(context, project_id, mission_title)
+    existing = find_issue_by_mission_id(context, project_id, mission_id) if mission_id else None
+    if not existing:
+        existing = find_issue_by_title(context, project_id, mission_title)
     if existing:
         issue_id = str(existing.get('_id') or '')
         if not issue_id:
             raise RuntimeError('resolved issue is missing _id')
         operations: dict[str, Any] = {
-            'status': status,
             'priority': priority,
             'title': mission_title,
         }
+        if requested_status:
+            operations['status'] = requested_status
         if body:
-            operations['description'] = body
+            existing_description = str(existing.get(ISSUE_DESCRIPTION_ATTR) or '').strip()
+            try:
+                description_ref = create_issue_description_ref(
+                    context=context,
+                    issue_id=issue_id,
+                    description=body,
+                )
+                operations[ISSUE_DESCRIPTION_ATTR] = description_ref
+            except RuntimeError as error:
+                if 'already exists' in str(error).lower() and is_probable_collab_ref(existing_description):
+                    update_issue_description_via_collaborator(
+                        context=context,
+                        issue_id=issue_id,
+                        description=body,
+                    )
+                else:
+                    raise
         tx = create_tx_update_doc(
             actor_id=context.actor_id,
             object_class=ISSUE_CLASS,
@@ -724,10 +1037,11 @@ def create_or_update_issue(
 
     next_number = latest_issue_number(context, project_id) + 1
     identifier = f'{project_identifier}-{next_number}' if project_identifier else None
+    issue_id = new_id()
 
     attributes: dict[str, Any] = {
         'title': mission_title,
-        'status': status,
+        'status': requested_status or project_default_status or DEFAULT_ISSUE_STATUS,
         'number': next_number,
         'kind': DEFAULT_ISSUE_KIND,
         'priority': int(priority),
@@ -750,9 +1064,12 @@ def create_or_update_issue(
     if identifier:
         attributes['identifier'] = identifier
     if body:
-        attributes['description'] = body
+        attributes[ISSUE_DESCRIPTION_ATTR] = create_issue_description_ref(
+            context=context,
+            issue_id=issue_id,
+            description=body,
+        )
 
-    issue_id = new_id()
     tx = create_tx_create_doc(
         actor_id=context.actor_id,
         object_class=ISSUE_CLASS,
@@ -784,7 +1101,7 @@ def create_or_update_document(
     body: str,
     mission_id: str,
 ) -> dict[str, Any]:
-    body = ensure_inline_body_limit(body)
+    body = body.strip()
     teamspace = resolve_teamspace(context, teamspace_ref)
     teamspace_id = str(teamspace.get('_id') or '')
     if not teamspace_id:
@@ -798,7 +1115,23 @@ def create_or_update_document(
             raise RuntimeError('resolved document is missing _id')
         operations: dict[str, Any] = {'title': mission_title}
         if body:
-            operations['content'] = body
+            existing_content = str(existing.get(DOCUMENT_CONTENT_ATTR) or '').strip()
+            try:
+                content_ref = create_document_content_ref(
+                    context=context,
+                    document_id=doc_id,
+                    content=body,
+                )
+                operations[DOCUMENT_CONTENT_ATTR] = content_ref
+            except RuntimeError as error:
+                if 'already exists' in str(error).lower() and is_probable_collab_ref(existing_content):
+                    update_document_content_via_collaborator(
+                        context=context,
+                        document_id=doc_id,
+                        content=body,
+                    )
+                else:
+                    raise
         tx = create_tx_update_doc(
             actor_id=context.actor_id,
             object_class=DOCUMENT_CLASS,
@@ -819,8 +1152,6 @@ def create_or_update_document(
         'parent': DEFAULT_DOCUMENT_PARENT,
         'rank': DEFAULT_RANK,
     }
-    if body:
-        attributes['content'] = body
 
     doc_id = new_id()
     tx = create_tx_create_doc(
@@ -832,6 +1163,21 @@ def create_or_update_document(
     )
     submit_tx(context=context, payload=tx)
 
+    if body:
+        content_ref = create_document_content_ref(
+            context=context,
+            document_id=doc_id,
+            content=body,
+        )
+        update_tx = create_tx_update_doc(
+            actor_id=context.actor_id,
+            object_class=DOCUMENT_CLASS,
+            object_space=teamspace_id,
+            object_id=doc_id,
+            operations={DOCUMENT_CONTENT_ATTR: content_ref},
+        )
+        submit_tx(context=context, payload=update_tx)
+
     return {
         'action': 'created',
         'teamspaceId': teamspace_id,
@@ -840,17 +1186,280 @@ def create_or_update_document(
     }
 
 
+def repair_teamspace_documents(
+    *,
+    context: HulyContext,
+    teamspace_ref: str,
+    limit: int,
+    mission_only: bool,
+    dry_run: bool,
+) -> dict[str, Any]:
+    teamspace = resolve_teamspace(context, teamspace_ref)
+    teamspace_id = str(teamspace.get('_id') or '')
+    if not teamspace_id:
+        raise RuntimeError('resolved teamspace is missing _id')
+
+    safe_limit = max(1, min(limit, 1000))
+    documents = find_all(
+        context=context,
+        class_name=DOCUMENT_CLASS,
+        query={'space': teamspace_id},
+        options={'limit': safe_limit, 'sort': {'modifiedOn': -1}},
+    )
+
+    scanned = 0
+    converted = 0
+    already_healthy = 0
+    skipped_no_content = 0
+    skipped_non_mission = 0
+    updated_documents: list[dict[str, str]] = []
+
+    for document in documents:
+        scanned += 1
+        doc_id = str(document.get('_id') or '').strip()
+        title = str(document.get('title') or '').strip()
+        content = str(document.get(DOCUMENT_CONTENT_ATTR) or '').strip()
+        if not doc_id:
+            continue
+        if mission_only and not title.startswith('[mission:'):
+            skipped_non_mission += 1
+            continue
+        if not content:
+            skipped_no_content += 1
+            continue
+        if is_probable_collab_ref(content):
+            already_healthy += 1
+            continue
+
+        if not dry_run:
+            content_ref = create_document_content_ref(
+                context=context,
+                document_id=doc_id,
+                content=content,
+            )
+            tx = create_tx_update_doc(
+                actor_id=context.actor_id,
+                object_class=DOCUMENT_CLASS,
+                object_space=teamspace_id,
+                object_id=doc_id,
+                operations={DOCUMENT_CONTENT_ATTR: content_ref},
+            )
+            submit_tx(context=context, payload=tx)
+        converted += 1
+        updated_documents.append({'documentId': doc_id, 'title': title})
+
+    return {
+        'teamspaceId': teamspace_id,
+        'teamspaceName': teamspace.get('name'),
+        'scanned': scanned,
+        'converted': converted,
+        'alreadyHealthy': already_healthy,
+        'skippedNoContent': skipped_no_content,
+        'skippedNonMission': skipped_non_mission,
+        'missionOnly': mission_only,
+        'dryRun': dry_run,
+        'updatedDocuments': updated_documents,
+    }
+
+
+def repair_project_issues(
+    *,
+    context: HulyContext,
+    project_ref: str,
+    limit: int,
+    mission_only: bool,
+    fill_empty_descriptions: bool,
+    dry_run: bool,
+) -> dict[str, Any]:
+    project = resolve_project(context, project_ref)
+    project_id = str(project.get('_id') or '')
+    project_identifier = str(project.get('identifier') or '').strip()
+    if not project_id:
+        raise RuntimeError('resolved project is missing _id')
+
+    safe_limit = max(1, min(limit, 1000))
+    issues = find_all(
+        context=context,
+        class_name=ISSUE_CLASS,
+        query={'space': project_id},
+        options={'limit': safe_limit, 'sort': {'modifiedOn': -1}},
+    )
+
+    scanned = 0
+    converted = 0
+    already_healthy = 0
+    skipped_no_description = 0
+    skipped_non_mission = 0
+    filled_empty = 0
+    updated_issues: list[dict[str, str]] = []
+
+    for issue in issues:
+        scanned += 1
+        issue_id = str(issue.get('_id') or '').strip()
+        title = str(issue.get('title') or '').strip()
+        description = str(issue.get(ISSUE_DESCRIPTION_ATTR) or '').strip()
+        mission_id, _ = parse_mission_title(title)
+        if not issue_id:
+            continue
+        if mission_only and not title.startswith('[mission:'):
+            skipped_non_mission += 1
+            continue
+        if not description:
+            if not fill_empty_descriptions:
+                skipped_no_description += 1
+                continue
+            description = build_issue_backfill_description(
+                mission_id=mission_id,
+                title=title,
+                status=str(issue.get('status') or ''),
+            )
+            filled_empty += 1
+        if is_probable_collab_ref(description):
+            already_healthy += 1
+            continue
+
+        if not dry_run:
+            description_ref = create_issue_description_ref(
+                context=context,
+                issue_id=issue_id,
+                description=description,
+            )
+            tx = create_tx_update_doc(
+                actor_id=context.actor_id,
+                object_class=ISSUE_CLASS,
+                object_space=project_id,
+                object_id=issue_id,
+                operations={ISSUE_DESCRIPTION_ATTR: description_ref},
+            )
+            submit_tx(context=context, payload=tx)
+        converted += 1
+        updated_issues.append({'issueId': issue_id, 'title': title})
+
+    return {
+        'projectId': project_id,
+        'projectIdentifier': project_identifier,
+        'scanned': scanned,
+        'converted': converted,
+        'alreadyHealthy': already_healthy,
+        'filledEmptyDescriptions': filled_empty,
+        'skippedNoDescription': skipped_no_description,
+        'skippedNonMission': skipped_non_mission,
+        'missionOnly': mission_only,
+        'fillEmptyDescriptions': fill_empty_descriptions,
+        'dryRun': dry_run,
+        'updatedIssues': updated_issues,
+    }
+
+
+def dedupe_project_mission_issues(
+    *,
+    context: HulyContext,
+    project_ref: str,
+    limit: int,
+    dry_run: bool,
+) -> dict[str, Any]:
+    project = resolve_project(context, project_ref)
+    project_id = str(project.get('_id') or '')
+    project_identifier = str(project.get('identifier') or '').strip()
+    if not project_id:
+        raise RuntimeError('resolved project is missing _id')
+
+    safe_limit = max(1, min(limit, 2000))
+    issues = find_all(
+        context=context,
+        class_name=ISSUE_CLASS,
+        query={'space': project_id},
+        options={'limit': safe_limit, 'sort': {'modifiedOn': -1}},
+    )
+
+    mission_groups: dict[str, list[dict[str, Any]]] = {}
+    for issue in issues:
+        title = str(issue.get('title') or '').strip()
+        mission_id, _ = parse_mission_title(title)
+        if not mission_id:
+            continue
+        mission_groups.setdefault(mission_id, []).append(issue)
+
+    duplicate_groups = 0
+    canceled = 0
+    already_canceled = 0
+    plan: list[dict[str, Any]] = []
+
+    for mission_id, grouped in mission_groups.items():
+        if len(grouped) <= 1:
+            continue
+        duplicate_groups += 1
+
+        primary = next(
+            (
+                issue
+                for issue in grouped
+                if str(issue.get('status') or '').strip() != ISSUE_STATUS_CANCELED
+            ),
+            grouped[0],
+        )
+        primary_id = str(primary.get('_id') or '').strip()
+        cancel_ids: list[str] = []
+        for issue in grouped:
+            issue_id = str(issue.get('_id') or '').strip()
+            if not issue_id or issue_id == primary_id:
+                continue
+            issue_status = str(issue.get('status') or '').strip()
+            if issue_status == ISSUE_STATUS_CANCELED:
+                already_canceled += 1
+                continue
+            cancel_ids.append(issue_id)
+            if not dry_run:
+                tx = create_tx_update_doc(
+                    actor_id=context.actor_id,
+                    object_class=ISSUE_CLASS,
+                    object_space=project_id,
+                    object_id=issue_id,
+                    operations={'status': ISSUE_STATUS_CANCELED},
+                )
+                submit_tx(context=context, payload=tx)
+            canceled += 1
+
+        plan.append(
+            {
+                'missionId': mission_id,
+                'keptIssueId': primary_id,
+                'canceledIssueIds': cancel_ids,
+            }
+        )
+
+    return {
+        'projectId': project_id,
+        'projectIdentifier': project_identifier,
+        'scanned': len(issues),
+        'missionGroups': len(mission_groups),
+        'duplicateMissionGroups': duplicate_groups,
+        'canceledDuplicates': canceled,
+        'alreadyCanceledDuplicates': already_canceled,
+        'dryRun': dry_run,
+        'plan': plan,
+    }
+
+
 def post_channel_message(
     *,
     context: HulyContext,
     channel_ref: str,
     message: str,
+    reply_to_message_id: str = '',
+    reply_to_message_class: str = CHAT_MESSAGE_CLASS,
 ) -> dict[str, Any]:
     channel = resolve_channel(context, channel_ref)
     channel_id = str(channel.get('_id') or '')
     channel_name = str(channel.get('name') or '')
     if not channel_id:
         raise RuntimeError('resolved channel is missing _id')
+
+    reply_parent_id = reply_to_message_id.strip()
+    reply_parent_class = (reply_to_message_class or CHAT_MESSAGE_CLASS).strip() or CHAT_MESSAGE_CLASS
+    attached_to = reply_parent_id or channel_id
+    attached_to_class = reply_parent_class if reply_parent_id else CHANNEL_CLASS
+    collection = 'replies' if reply_parent_id else 'messages'
 
     message_id = new_id()
     attributes = {
@@ -862,9 +1471,9 @@ def post_channel_message(
         object_class=CHAT_MESSAGE_CLASS,
         object_space=channel_id,
         object_id=message_id,
-        attached_to=channel_id,
-        attached_to_class=CHANNEL_CLASS,
-        collection='messages',
+        attached_to=attached_to,
+        attached_to_class=attached_to_class,
+        collection=collection,
         attributes=attributes,
     )
     submit_tx(context=context, payload=tx)
@@ -874,6 +1483,9 @@ def post_channel_message(
         'channelId': channel_id,
         'channelName': channel_name,
         'messageId': message_id,
+        'replyToMessageId': reply_parent_id or None,
+        'replyToMessageClass': attached_to_class,
+        'collection': collection,
     }
 
 
@@ -930,6 +1542,17 @@ def build_context(args: argparse.Namespace, *, for_platform_api: bool) -> HulyCo
         )
 
     base_url = normalize_api_base_url(base_url_raw) if for_platform_api else base_url_raw.rstrip('/')
+    collaborator_base_url = ''
+    if for_platform_api:
+        configured_collaborator_url = (
+            args.collaborator_url.strip()
+            if getattr(args, 'collaborator_url', None)
+            else env_first('HULY_COLLABORATOR_URL', 'HULY_COLLABORATOR_BASE_URL')
+        )
+        if configured_collaborator_url:
+            collaborator_base_url = normalize_collaborator_base_url(configured_collaborator_url)
+        else:
+            collaborator_base_url = derive_collaborator_base_url(base_url)
 
     workspace_id = args.workspace_id.strip() if args.workspace_id else ''
     if not workspace_id:
@@ -955,6 +1578,7 @@ def build_context(args: argparse.Namespace, *, for_platform_api: bool) -> HulyCo
 
     return HulyContext(
         base_url=base_url,
+        collaborator_base_url=collaborator_base_url,
         token=token,
         token_source=token_source,
         workspace_id=workspace_id,
@@ -1123,7 +1747,7 @@ def run_create_issue(args: argparse.Namespace) -> int:
 
     mission_id = args.mission_id.strip()
     body = args.body.strip()
-    status = args.issue_status.strip() or DEFAULT_ISSUE_STATUS
+    status = args.issue_status.strip()
 
     result = create_or_update_issue(
         context=context,
@@ -1170,6 +1794,8 @@ def run_post_channel_message(args: argparse.Namespace) -> int:
         context=context,
         channel_ref=args.channel,
         message=message,
+        reply_to_message_id=args.reply_to_message_id,
+        reply_to_message_class=args.reply_to_message_class,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
@@ -1181,6 +1807,45 @@ def run_list_channel_messages(args: argparse.Namespace) -> int:
         context=context,
         channel_ref=args.channel,
         limit=args.limit,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def run_repair_teamspace_documents(args: argparse.Namespace) -> int:
+    context = build_context(args, for_platform_api=True)
+    result = repair_teamspace_documents(
+        context=context,
+        teamspace_ref=args.teamspace,
+        limit=args.limit,
+        mission_only=not args.include_non_mission_docs,
+        dry_run=args.dry_run,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def run_repair_project_issues(args: argparse.Namespace) -> int:
+    context = build_context(args, for_platform_api=True)
+    result = repair_project_issues(
+        context=context,
+        project_ref=args.project,
+        limit=args.limit,
+        mission_only=not args.include_non_mission_issues,
+        fill_empty_descriptions=args.fill_empty_issue_descriptions,
+        dry_run=args.dry_run,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def run_dedupe_project_mission_issues(args: argparse.Namespace) -> int:
+    context = build_context(args, for_platform_api=True)
+    result = dedupe_project_mission_issues(
+        context=context,
+        project_ref=args.project,
+        limit=args.limit,
+        dry_run=args.dry_run,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
@@ -1244,26 +1909,24 @@ def run_upsert_mission(args: argparse.Namespace) -> int:
     if context_section:
         issue_body = f'{issue_body}\n\n{context_section}'
 
-    document_body = (
-        f'# {title}\n\n'
-        f'## Mission\n{mission_id}\n\n'
-        f'## Stage\n{stage}\n\n'
-        f'## Status\n{status}\n\n'
-        f'## Summary\n{summary}\n'
+    document_body = build_mission_document_body(
+        mission_id=mission_id,
+        title=title,
+        stage=stage,
+        status=status,
+        summary=summary,
+        details=details,
+        worker_update=channel_message,
+        metadata=metadata,
+        context_section=context_section,
     )
-    if details:
-        document_body += f'\n## Details\n{details}\n'
-    if metadata:
-        document_body = f'{document_body}\n\n{metadata}'
-    if context_section:
-        document_body = f'{document_body}\n\n{context_section}'
 
-    channel_metadata = [channel_metadata_header]
-    if context_message:
-        channel_metadata.append(context_message)
     channel_message_with_metadata = channel_message
-    if channel_metadata:
-        channel_message_with_metadata = f'{channel_message}\n\n' + '\n\n'.join(channel_metadata)
+    if args.append_channel_metadata:
+        channel_metadata = [entry for entry in [channel_metadata_header, context_message] if entry]
+        if channel_metadata:
+            channel_message_with_metadata = f'{channel_message}\n\n' + '\n\n'.join(channel_metadata)
+    issue_status = args.issue_status.strip() or derive_issue_status_for_mission_status(status)
 
     issue_result = create_or_update_issue(
         context=context,
@@ -1271,7 +1934,7 @@ def run_upsert_mission(args: argparse.Namespace) -> int:
         title=title,
         body=issue_body,
         mission_id=mission_id,
-        status=args.issue_status.strip() or DEFAULT_ISSUE_STATUS,
+        status=issue_status,
         priority=args.priority,
     )
 
@@ -1314,6 +1977,9 @@ def build_parser() -> argparse.ArgumentParser:
             'create-document',
             'post-channel-message',
             'list-channel-messages',
+            'repair-teamspace-documents',
+            'repair-project-issues',
+            'dedupe-project-mission-issues',
             'upsert-mission',
             'account-info',
             'verify-chat-access',
@@ -1339,6 +2005,11 @@ def build_parser() -> argparse.ArgumentParser:
         '--base-url',
         default='',
         help='Override base URL (defaults to HULY_API_BASE_URL or HULY_BASE_URL)',
+    )
+    parser.add_argument(
+        '--collaborator-url',
+        default=env_first('HULY_COLLABORATOR_URL', 'HULY_COLLABORATOR_BASE_URL'),
+        help='Override collaborator base URL (defaults to HULY_COLLABORATOR_URL or derived from base URL)',
     )
     parser.add_argument('--workspace-id', default='', help='Override workspace id (defaults to JWT payload or env)')
     parser.add_argument('--actor-id', default='', help='Override actor id / primarySocialId')
@@ -1380,11 +2051,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--title', default='', help='Artifact title')
     parser.add_argument('--body', default='', help='Body text for issue/document operations')
     parser.add_argument('--message', default='', help='Chat message body for post-channel-message')
+    parser.add_argument(
+        '--reply-to-message-id',
+        default='',
+        help='When set, post as a thread reply to this chat message id',
+    )
+    parser.add_argument(
+        '--reply-to-message-class',
+        default=CHAT_MESSAGE_CLASS,
+        help='Class id for reply parent (defaults to chunter:class:ChatMessage)',
+    )
     parser.add_argument('--summary', default='', help='Mission summary for upsert-mission')
     parser.add_argument('--details', default='', help='Mission details for upsert-mission')
     parser.add_argument('--stage', default='', help='Mission stage label for upsert-mission')
     parser.add_argument('--status', default='', help='Mission status label for upsert-mission')
-    parser.add_argument('--issue-status', default=DEFAULT_ISSUE_STATUS, help='Issue status id for task artifacts')
+    parser.add_argument(
+        '--issue-status',
+        default='',
+        help='Issue status id for task artifacts (when omitted, updates keep current status and creates use project default)',
+    )
     parser.add_argument('--priority', type=int, default=0, help='Issue priority for task artifacts')
     parser.add_argument(
         '--swarm-agent-worker-id',
@@ -1396,7 +2081,32 @@ def build_parser() -> argparse.ArgumentParser:
         default='',
         help='Optional worker identity metadata for mission provenance',
     )
+    parser.add_argument(
+        '--append-channel-metadata',
+        action='store_true',
+        help='Append mission metadata/context to the channel message body (off by default for human-readable chat)',
+    )
     parser.add_argument('--limit', type=int, default=20, help='Result limit for list-channel-messages')
+    parser.add_argument(
+        '--include-non-mission-docs',
+        action='store_true',
+        help='Include non-mission document titles for repair-teamspace-documents',
+    )
+    parser.add_argument(
+        '--include-non-mission-issues',
+        action='store_true',
+        help='Include non-mission issue titles for repair-project-issues',
+    )
+    parser.add_argument(
+        '--fill-empty-issue-descriptions',
+        action='store_true',
+        help='Backfill empty issue descriptions with a structured template during repair-project-issues',
+    )
+    parser.add_argument(
+        '--dry-run',
+        action='store_true',
+        help='Report repair-teamspace-documents candidates without writing updates',
+    )
     parser.add_argument(
         '--expected-actor-id',
         default='',
@@ -1431,6 +2141,12 @@ def main() -> int:
             return run_post_channel_message(args)
         if args.operation == 'list-channel-messages':
             return run_list_channel_messages(args)
+        if args.operation == 'repair-teamspace-documents':
+            return run_repair_teamspace_documents(args)
+        if args.operation == 'repair-project-issues':
+            return run_repair_project_issues(args)
+        if args.operation == 'dedupe-project-mission-issues':
+            return run_dedupe_project_mission_issues(args)
         if args.operation == 'upsert-mission':
             return run_upsert_mission(args)
         if args.operation == 'account-info':
