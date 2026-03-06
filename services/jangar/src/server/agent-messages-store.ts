@@ -1,6 +1,6 @@
 import { sql } from 'kysely'
 
-import { createKyselyDb, type Db } from '~/server/db'
+import { resolveStoreDb, type Db } from '~/server/db'
 import { ensureMigrations } from '~/server/kysely-migrations'
 
 export type AgentMessageRecord = {
@@ -149,12 +149,11 @@ export type ListAgentMessagesInput = {
 }
 
 export const createAgentMessagesStore = (options: AgentMessagesStoreOptions = {}): AgentMessagesStore => {
-  const url = options.url ?? process.env.DATABASE_URL
-  if (!url) {
+  const resolved = resolveStoreDb(options)
+  if (!resolved.db) {
     throw new Error('DATABASE_URL is required for agent messages storage')
   }
-
-  const db = (options.createDb ?? createKyselyDb)(url)
+  const db = resolved.db
   let schemaReady: Promise<void> | null = null
 
   const ensureReady = async () => {
@@ -257,6 +256,7 @@ export const createAgentMessagesStore = (options: AgentMessagesStoreOptions = {}
   }
 
   const close = async () => {
+    if (resolved.shared) return
     await db.destroy()
   }
 

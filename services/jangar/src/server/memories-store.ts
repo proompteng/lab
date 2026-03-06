@@ -1,6 +1,6 @@
 import { sql } from 'kysely'
 
-import { createKyselyDb, type Db } from '~/server/db'
+import { resolveStoreDb, type Db } from '~/server/db'
 import { ensureMigrations } from '~/server/kysely-migrations'
 
 export type MemoryRecord = {
@@ -225,12 +225,11 @@ const embedText = async (text: string): Promise<number[]> => {
 }
 
 export const createPostgresMemoriesStore = (options: PostgresMemoriesStoreOptions = {}): MemoriesStore => {
-  const url = options.url ?? process.env.DATABASE_URL
-  if (!url) {
+  const resolved = resolveStoreDb(options)
+  if (!resolved.db) {
     throw new Error('DATABASE_URL is required for MCP memories storage')
   }
-
-  const db = (options.createDb ?? createKyselyDb)(url)
+  const db = resolved.db
   let schemaReady: Promise<void> | null = null
   const defaults = resolveEmbeddingDefaults(
     process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? DEFAULT_OPENAI_API_BASE_URL,

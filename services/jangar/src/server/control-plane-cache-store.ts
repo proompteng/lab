@@ -1,6 +1,6 @@
 import { sql } from 'kysely'
 
-import { createKyselyDb, type Db } from '~/server/db'
+import { resolveStoreDb, type Db } from '~/server/db'
 import { ensureMigrations } from '~/server/kysely-migrations'
 
 type Timestamp = string | Date
@@ -89,15 +89,16 @@ const resolveLimit = (value: number | null | undefined) => {
 }
 
 export const createControlPlaneCacheStore = (options: StoreOptions = {}): ControlPlaneCacheStore => {
-  const url = options.url ?? process.env.DATABASE_URL
-  if (!url) {
+  const resolved = resolveStoreDb(options)
+  if (!resolved.db || !resolved.url) {
     throw new Error('DATABASE_URL is required for Jangar control-plane cache')
   }
 
-  const db = (options.createDb ?? createKyselyDb)(url)
+  const db = resolved.db
   const ready = ensureMigrations(db)
 
   const close = async () => {
+    if (resolved.shared) return
     await db.destroy()
   }
 
