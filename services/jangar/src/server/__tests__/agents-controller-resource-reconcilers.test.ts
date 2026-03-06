@@ -145,7 +145,7 @@ describe('agents controller resource reconcilers module', () => {
           data: {
             'auth.json': Buffer.from(
               JSON.stringify({
-                auth_mode: 'api_key',
+                auth_mode: 'apikey',
                 OPENAI_API_KEY: 'test-key',
               }),
             ).toString('base64'),
