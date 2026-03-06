@@ -121,6 +121,8 @@ export type WorkflowFailureReason = {
   count: number
 }
 
+export type WorkflowDataConfidence = 'high' | 'degraded' | 'unknown'
+
 export type DatabaseMigrationConsistency = {
   status: 'healthy' | 'degraded' | 'unknown'
   migration_table: string | null
@@ -150,6 +152,11 @@ export type WorkflowsReliabilityStatus = {
   backoff_limit_exceeded_jobs: number
   window_minutes: number
   top_failure_reasons: WorkflowFailureReason[]
+  data_confidence: WorkflowDataConfidence
+  collection_errors: number
+  collected_namespaces: number
+  target_namespaces: number
+  message: string
 }
 
 export type DeploymentRolloutStatus = {

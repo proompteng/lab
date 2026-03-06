@@ -28,6 +28,7 @@ const DEFAULT_WORKFLOWS_WARNING_BACKOFF_THRESHOLD = 2
 const DEFAULT_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD = 3
 const DEFAULT_ROLLOUT_DEPLOYMENTS = ['agents']
 const MAX_TOP_FAILURE_REASONS = 5
+const MAX_WORKFLOW_COLLECTION_ERROR_SAMPLE = 3
 const MIN_WINDOW_MINUTES = 1
 const MAX_WINDOW_MINUTES = 24 * 60
 
@@ -700,6 +701,9 @@ const resolveWorkflowsReliabilityStatus = async ({
   let recentFailedJobs = 0
   let backoffLimitExceededJobs = 0
   const reasonsMap = new Map<string, number>()
+  let collectionErrors = 0
+  let collectedNamespaces = 0
+  const collectionErrorMessages: string[] = []
 
   const uniqueNamespaces = uniqueStrings(namespaces)
   const uniqueSwarms = uniqueStrings(swarms)
@@ -716,6 +720,7 @@ const resolveWorkflowsReliabilityStatus = async ({
     try {
       const jobsPayload = await kube.list(WORKFLOW_JOB_RESOURCE, currentNamespace, labelSelector)
       const jobs = parseItems(jobsPayload)
+      collectedNamespaces += 1
 
       for (const job of jobs) {
         const metadata = asRecord(job.metadata) ?? {}
@@ -792,8 +797,11 @@ const resolveWorkflowsReliabilityStatus = async ({
         }
       }
     } catch (error) {
+      collectionErrors += 1
+      const errorMessage = normalizeMessage(error)
+      collectionErrorMessages.push(`${currentNamespace}: ${errorMessage}`)
       console.warn(
-        `[jangar] failed to collect workflow reliability metrics for namespace ${currentNamespace}: ${normalizeMessage(error)}`,
+        `[jangar] failed to collect workflow reliability metrics for namespace ${currentNamespace}: ${errorMessage}`,
       )
     }
   }
@@ -806,6 +814,23 @@ const resolveWorkflowsReliabilityStatus = async ({
     .slice(0, MAX_TOP_FAILURE_REASONS)
     .map(([reason, count]) => ({ reason, count }))
 
+  const targetNamespaces = namespaceScope.length
+  const dataConfidence: WorkflowsReliabilityStatus['data_confidence'] =
+    collectionErrors === 0 ? 'high' : collectedNamespaces === 0 ? 'unknown' : 'degraded'
+  const collectionMessage =
+    dataConfidence === 'high'
+      ? ''
+      : [
+          dataConfidence === 'unknown'
+            ? `workflow reliability unavailable (${collectionErrors}/${targetNamespaces} namespace queries failed)`
+            : `workflow reliability partially unavailable (${collectionErrors}/${targetNamespaces} namespace queries failed)`,
+          collectionErrorMessages.length > 0
+            ? `sample errors: ${collectionErrorMessages.slice(0, MAX_WORKFLOW_COLLECTION_ERROR_SAMPLE).join(' | ')}`
+            : '',
+        ]
+          .filter((value) => value.length > 0)
+          .join('; ')
+
   // Keep payload bounded and deterministic.
   return {
     active_job_runs: activeJobRuns,
@@ -813,6 +838,11 @@ const resolveWorkflowsReliabilityStatus = async ({
     backoff_limit_exceeded_jobs: backoffLimitExceededJobs,
     window_minutes: windowMinutes,
     top_failure_reasons: topFailureReasons,
+    data_confidence: dataConfidence,
+    collection_errors: collectionErrors,
+    collected_namespaces: collectedNamespaces,
+    target_namespaces: targetNamespaces,
+    message: collectionMessage,
   }
 }
 
@@ -895,6 +925,9 @@ export const buildControlPlaneStatus = async (
     kube: createKubernetesClient(),
   })
 
+  const isWorkflowsDataUnknown = workflows.data_confidence === 'unknown'
+  const isWorkflowsDataDegraded = workflows.data_confidence === 'degraded'
+  const isWorkflowsDataUnavailable = isWorkflowsDataUnknown || isWorkflowsDataDegraded
   const isWorkflowsWarning = workflows.backoff_limit_exceeded_jobs >= warningBackoffThreshold
   const isWorkflowsDegraded = workflows.backoff_limit_exceeded_jobs >= degradedBackoffThreshold
 
@@ -908,8 +941,8 @@ export const buildControlPlaneStatus = async (
     ...(database.status === 'healthy' ? [] : ['database']),
     ...(grpcStatus.enabled && grpcStatus.status !== 'healthy' ? ['grpc'] : []),
     ...(watchReliability.status === 'degraded' ? ['watch_reliability'] : []),
-    ...(isWorkflowsWarning || isWorkflowsDegraded ? ['workflows'] : []),
-    ...(isWorkflowsDegraded ? ['runtime:workflows'] : []),
+    ...(isWorkflowsDataUnavailable || isWorkflowsWarning || isWorkflowsDegraded ? ['workflows'] : []),
+    ...(isWorkflowsDataUnknown || isWorkflowsDegraded ? ['runtime:workflows'] : []),
     ...(rolloutHealth.status === 'degraded' ? ['rollout_health'] : []),
   ]
 

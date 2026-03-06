@@ -38,6 +38,11 @@ const baseStatus: ControlPlaneStatus = {
     active_job_runs: 1,
     recent_failed_jobs: 2,
     backoff_limit_exceeded_jobs: 1,
+    data_confidence: 'high',
+    collection_errors: 0,
+    collected_namespaces: 1,
+    target_namespaces: 1,
+    message: '',
     top_failure_reasons: [
       { reason: 'BackoffLimitExceeded', count: 2 },
       { reason: 'ImagePullBackOff', count: 1 },
@@ -100,6 +105,7 @@ describe('ControlPlaneStatusPanel', () => {
     const normalizedHtml = html.replace(/<!-- -->/g, '')
 
     expect(normalizedHtml).toContain('Top failure reasons: BackoffLimitExceeded (2), ImagePullBackOff (1)')
+    expect(normalizedHtml).toContain('Data confidence: high')
     expect(normalizedHtml).not.toContain('Top failure reasons: [object Object], [object Object]')
   })
 })
