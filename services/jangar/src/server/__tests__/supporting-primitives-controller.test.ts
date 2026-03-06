@@ -2315,7 +2315,18 @@ describe('supporting primitives controller', () => {
     const finalStatusCall = applyStatus.mock.calls.at(-1)
     const finalStatus = (finalStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
     expect(finalStatus.phase).toBe('Active')
-    expect(finalStatus.freeze).toBeUndefined()
+    expect(finalStatus.freeze).toMatchObject({
+      reason: 'NotFrozen',
+      threshold: 2,
+      durationMs: 60 * 60 * 1000,
+      evidence: {
+        triggeringRuns: [],
+        stageStaleness: [],
+        triggers: [],
+      },
+    })
+    expect(finalStatus.freeze).toHaveProperty('until')
+    expect(finalStatus.freeze).toHaveProperty('enteredAt')
   })
 
   it('chunks unfreeze timers so long freeze durations wait the full expiry time', async () => {
@@ -2391,7 +2402,18 @@ describe('supporting primitives controller', () => {
     const finalStatusCall = applyStatus.mock.calls.at(-1)
     const finalStatus = (finalStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
     expect(finalStatus.phase).toBe('Active')
-    expect(finalStatus.freeze).toBeUndefined()
+    expect(finalStatus.freeze).toMatchObject({
+      reason: 'NotFrozen',
+      threshold: 2,
+      durationMs: 60 * 60 * 1000,
+      evidence: {
+        triggeringRuns: [],
+        stageStaleness: [],
+        triggers: [],
+      },
+    })
+    expect(finalStatus.freeze).toHaveProperty('until')
+    expect(finalStatus.freeze).toHaveProperty('enteredAt')
   })
 
   it('uses different schedule names for long swarms with identical prefixes', async () => {
