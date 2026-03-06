@@ -35,6 +35,8 @@ from ..evaluation import (
     WalkForwardFold,
     WalkForwardResults,
     build_profitability_evidence_v4,
+    build_shadow_live_deviation_report_v1,
+    build_simulation_calibration_report_v1,
     execute_profitability_benchmark_v4,
     validate_profitability_evidence_v4,
     write_walk_forward_results,
@@ -599,6 +601,78 @@ def _artifact_authority_for_evidence(name: str) -> dict[str, Any]:
     )
 
 
+def _build_bridge_evidence_payload(
+    report_payload: dict[str, Any],
+    *,
+    artifact_ref: str,
+    summary_fields: Sequence[str],
+) -> dict[str, Any]:
+    artifact_authority = report_payload.get("artifact_authority")
+    payload: dict[str, Any] = {
+        "artifact_ref": artifact_ref,
+        "artifact_authority": (
+            cast(dict[str, Any], artifact_authority)
+            if isinstance(artifact_authority, dict)
+            else {}
+        ),
+        "schema_version": str(report_payload.get("schema_version", "")).strip(),
+        "status": str(report_payload.get("status", "")).strip(),
+    }
+    for field_name in summary_fields:
+        if field_name in report_payload:
+            payload[field_name] = report_payload[field_name]
+    return payload
+
+
+def _build_vnext_gate_summary(
+    *,
+    runtime_strategies: list[StrategyRuntimeConfig],
+    simulation_calibration_payload: dict[str, Any],
+    shadow_live_deviation_payload: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "strategy_compilation": [
+            {
+                "strategy_id": strategy.strategy_id,
+                "strategy_type": strategy.strategy_type,
+                "version": strategy.version,
+                "compiler_source": strategy.compiler_source,
+                "spec_compiled": strategy.compiler_source == "spec_v2",
+            }
+            for strategy in runtime_strategies
+        ],
+        "simulation_calibration": {
+            key: simulation_calibration_payload.get(key)
+            for key in (
+                "schema_version",
+                "status",
+                "order_count",
+                "expected_shortfall_sample_count",
+                "expected_shortfall_coverage",
+                "avg_calibration_error_bps",
+                "confidence_gate_action",
+                "artifact_authority",
+            )
+            if key in simulation_calibration_payload
+        },
+        "shadow_live_deviation": {
+            key: shadow_live_deviation_payload.get(key)
+            for key in (
+                "schema_version",
+                "status",
+                "order_count",
+                "decision_count",
+                "trade_count",
+                "avg_abs_slippage_bps",
+                "avg_abs_divergence_bps",
+                "deviation_budget_utilization",
+                "artifact_authority",
+            )
+            if key in shadow_live_deviation_payload
+        },
+    }
+
+
 def _manifest_artifact_payload(
     artifact_root: Path,
     artifact_path: Path | None,
@@ -1110,6 +1184,8 @@ def _build_profitability_stage_manifest(
     advisor_fallback_slo_report_path: Path,
     profitability_evidence_path: Path,
     profitability_validation_path: Path,
+    simulation_calibration_report_path: Path,
+    shadow_live_deviation_report_path: Path,
     hmm_state_posterior_path: Path,
     expert_router_registry_path: Path,
     janus_event_car_path: Path,
@@ -1187,6 +1263,14 @@ def _build_profitability_stage_manifest(
         (profitability_benchmark_path, "profitability_benchmark_present"),
         (profitability_evidence_path, "profitability_evidence_present"),
         (profitability_validation_path, "profitability_validation_present"),
+        (
+            simulation_calibration_report_path,
+            "simulation_calibration_report_present",
+        ),
+        (
+            shadow_live_deviation_report_path,
+            "shadow_live_deviation_report_present",
+        ),
     ):
         entry = _manifest_artifact_payload(
             output_dir,
@@ -1236,6 +1320,16 @@ def _build_profitability_stage_manifest(
             "advisor_fallback_slo_present",
             "advisor_fallback_slo",
             advisor_fallback_slo_report_path,
+        ),
+        (
+            "simulation_calibration_report_present",
+            "simulation_calibration",
+            simulation_calibration_report_path,
+        ),
+        (
+            "shadow_live_deviation_report_present",
+            "shadow_live_deviation",
+            shadow_live_deviation_report_path,
         ),
         (
             "hmm_state_posterior_present",
@@ -1580,6 +1674,12 @@ def run_autonomous_lane(
     profitability_benchmark_path = gates_dir / "profitability-benchmark-v4.json"
     profitability_evidence_path = gates_dir / "profitability-evidence-v4.json"
     profitability_validation_path = gates_dir / "profitability-evidence-validation.json"
+    simulation_calibration_report_path = (
+        gates_dir / "simulation-calibration-report-v1.json"
+    )
+    shadow_live_deviation_report_path = (
+        gates_dir / "shadow-live-deviation-report-v1.json"
+    )
     contamination_registry_path = gates_dir / _CONTAMINATION_REGISTRY_ARTIFACT_PATH
     janus_event_car_path = gates_dir / "janus-event-car-v1.json"
     janus_hgrm_reward_path = gates_dir / "janus-hgrm-reward-v1.json"
@@ -1942,6 +2042,71 @@ def run_autonomous_lane(
             json.dumps(profitability_validation.to_payload(), indent=2),
             encoding="utf-8",
         )
+        tca_gate_inputs = _load_tca_gate_inputs(factory)
+        simulation_calibration_report = build_simulation_calibration_report_v1(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            profitability_evidence=profitability_evidence,
+            tca_metrics=tca_gate_inputs,
+            min_order_count=_coerce_int(
+                gate_policy_payload.get(
+                    "promotion_simulation_calibration_min_order_count",
+                    1,
+                ),
+                default=1,
+            ),
+            min_expected_shortfall_coverage=_decimal_or_zero(
+                gate_policy_payload.get(
+                    "promotion_simulation_calibration_min_expected_shortfall_coverage",
+                    "0.50",
+                )
+            ),
+            max_avg_calibration_error_bps=_decimal_or_zero(
+                gate_policy_payload.get(
+                    "promotion_simulation_calibration_max_avg_calibration_error_bps",
+                    "25",
+                )
+            ),
+            generated_at=now,
+        )
+        simulation_calibration_report_payload = (
+            simulation_calibration_report.to_payload()
+        )
+        simulation_calibration_report_path.write_text(
+            json.dumps(simulation_calibration_report_payload, indent=2),
+            encoding="utf-8",
+        )
+        shadow_live_deviation_report = build_shadow_live_deviation_report_v1(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            profitability_evidence=profitability_evidence,
+            tca_metrics=tca_gate_inputs,
+            min_order_count=_coerce_int(
+                gate_policy_payload.get(
+                    "promotion_shadow_live_deviation_min_order_count",
+                    1,
+                ),
+                default=1,
+            ),
+            max_avg_abs_slippage_bps=_decimal_or_zero(
+                gate_policy_payload.get(
+                    "promotion_shadow_live_deviation_max_avg_abs_slippage_bps",
+                    "20",
+                )
+            ),
+            max_avg_abs_divergence_bps=_decimal_or_zero(
+                gate_policy_payload.get(
+                    "promotion_shadow_live_deviation_max_avg_abs_divergence_bps",
+                    "15",
+                )
+            ),
+            generated_at=now,
+        )
+        shadow_live_deviation_report_payload = shadow_live_deviation_report.to_payload()
+        shadow_live_deviation_report_path.write_text(
+            json.dumps(shadow_live_deviation_report_payload, indent=2),
+            encoding="utf-8",
+        )
         contamination_registry_payload = _build_contamination_registry_payload(
             output_dir=output_dir,
             run_id=run_id,
@@ -1956,6 +2121,8 @@ def run_autonomous_lane(
                 baseline_report_path,
                 profitability_evidence_path,
                 profitability_validation_path,
+                simulation_calibration_report_path,
+                shadow_live_deviation_report_path,
                 profitability_benchmark_path,
                 benchmark_parity_path,
                 foundation_router_parity_path,
@@ -2040,7 +2207,7 @@ def run_autonomous_lane(
             symbol_coverage=len({signal.symbol for signal in signals}),
             metrics=metrics_payload,
             robustness=report.robustness.to_payload(),
-            tca_metrics=_load_tca_gate_inputs(factory),
+            tca_metrics=tca_gate_inputs,
             llm_metrics=_resolve_gate_llm_metrics(
                 session_factory=factory,
                 now=now,
@@ -2126,9 +2293,17 @@ def run_autonomous_lane(
         )
         stress_metrics_artifact_ref = str(stress_metrics_path)
         fold_metrics_artifact_ref = str(fold_metrics_path)
+        simulation_calibration_artifact_ref = str(simulation_calibration_report_path)
+        shadow_live_deviation_artifact_ref = str(shadow_live_deviation_report_path)
         if not output_dir.is_absolute():
             stress_metrics_artifact_ref = str(stress_metrics_path.relative_to(output_dir))
             fold_metrics_artifact_ref = str(fold_metrics_path.relative_to(output_dir))
+            simulation_calibration_artifact_ref = str(
+                simulation_calibration_report_path.relative_to(output_dir)
+            )
+            shadow_live_deviation_artifact_ref = str(
+                shadow_live_deviation_report_path.relative_to(output_dir)
+            )
         benchmark_parity_artifact_ref = str(benchmark_parity_path)
         if not output_dir.is_absolute():
             benchmark_parity_artifact_ref = str(
@@ -2188,6 +2363,29 @@ def run_autonomous_lane(
                 "artifact_ref": stress_metrics_artifact_ref,
                 "artifact_authority": _artifact_authority_for_evidence("stress_metrics"),
             },
+            "simulation_calibration": _build_bridge_evidence_payload(
+                simulation_calibration_report_payload,
+                artifact_ref=simulation_calibration_artifact_ref,
+                summary_fields=(
+                    "order_count",
+                    "expected_shortfall_sample_count",
+                    "expected_shortfall_coverage",
+                    "avg_calibration_error_bps",
+                    "confidence_gate_action",
+                ),
+            ),
+            "shadow_live_deviation": _build_bridge_evidence_payload(
+                shadow_live_deviation_report_payload,
+                artifact_ref=shadow_live_deviation_artifact_ref,
+                summary_fields=(
+                    "order_count",
+                    "decision_count",
+                    "trade_count",
+                    "avg_abs_slippage_bps",
+                    "avg_abs_divergence_bps",
+                    "deviation_budget_utilization",
+                ),
+            ),
             "janus_q": {
                 "event_car": {
                     "count": janus_event_count,
@@ -2309,9 +2507,14 @@ def run_autonomous_lane(
                     dict[str, dict[str, Any]],
                     gate_report_payload["promotion_evidence"],
                 ).items()
-                if isinstance(payload, dict) and payload.get("artifact_authority")
+                if payload.get("artifact_authority")
             },
         }
+        gate_report_payload["vnext"] = _build_vnext_gate_summary(
+            runtime_strategies=runtime_strategies,
+            simulation_calibration_payload=simulation_calibration_report_payload,
+            shadow_live_deviation_payload=shadow_live_deviation_report_payload,
+        )
         gate_report_path.write_text(
             json.dumps(gate_report_payload, indent=2), encoding="utf-8"
         )
@@ -2340,6 +2543,8 @@ def run_autonomous_lane(
                 "profitability_benchmark": str(profitability_benchmark_path),
                 "profitability_evidence": str(profitability_evidence_path),
                 "profitability_validation": str(profitability_validation_path),
+                "simulation_calibration": str(simulation_calibration_report_path),
+                "shadow_live_deviation": str(shadow_live_deviation_report_path),
                 "stress_metrics": str(stress_metrics_path),
                 "hmm_state_posterior": str(hmm_state_posterior_path),
                 "expert_router_registry": str(expert_router_registry_path),
@@ -2449,6 +2654,8 @@ def run_autonomous_lane(
                 contamination_registry_path=contamination_registry_path,
                 profitability_evidence_path=profitability_evidence_path,
                 profitability_validation_path=profitability_validation_path,
+                simulation_calibration_report_path=simulation_calibration_report_path,
+                shadow_live_deviation_report_path=shadow_live_deviation_report_path,
                 hmm_state_posterior_path=hmm_state_posterior_path,
                 expert_router_registry_path=expert_router_registry_path,
                 benchmark_parity_path=benchmark_parity_path,
@@ -2473,6 +2680,54 @@ def run_autonomous_lane(
         promotion_policy_payload = dict(raw_gate_policy)
         promotion_policy_payload["promotion_require_profitability_stage_manifest"] = True
         promotion_policy_payload["promotion_require_truthful_evidence_contracts"] = True
+        promotion_policy_payload.setdefault(
+            "promotion_require_simulation_calibration",
+            True,
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_simulation_calibration_required_artifacts",
+            ["gates/simulation-calibration-report-v1.json"],
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_simulation_calibration_required_targets",
+            ["paper", "live"],
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_simulation_calibration_min_order_count",
+            1,
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_simulation_calibration_min_expected_shortfall_coverage",
+            "0.50",
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_simulation_calibration_max_avg_calibration_error_bps",
+            "25",
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_require_shadow_live_deviation",
+            True,
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_shadow_live_deviation_required_artifacts",
+            ["gates/shadow-live-deviation-report-v1.json"],
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_shadow_live_deviation_required_targets",
+            ["paper", "live"],
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_shadow_live_deviation_min_order_count",
+            1,
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_shadow_live_deviation_max_avg_abs_slippage_bps",
+            "20",
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_shadow_live_deviation_max_avg_abs_divergence_bps",
+            "15",
+        )
         promotion_policy_payload.setdefault(
             "promotion_profitability_stage_manifest_artifact",
             _PROFITABILITY_STAGE_MANIFEST_PATH,
@@ -2561,6 +2816,8 @@ def run_autonomous_lane(
                         str(advisor_fallback_slo_report_path),
                         str(profitability_evidence_path),
                         str(profitability_validation_path),
+                        str(simulation_calibration_report_path),
+                        str(shadow_live_deviation_report_path),
                         str(stress_metrics_path),
                         str(hmm_state_posterior_path),
                         str(expert_router_registry_path),
@@ -2591,6 +2848,8 @@ def run_autonomous_lane(
                         str(profitability_benchmark_path),
                         str(profitability_evidence_path),
                         str(profitability_validation_path),
+                        str(simulation_calibration_report_path),
+                        str(shadow_live_deviation_report_path),
                         str(fold_metrics_path),
                         str(stress_metrics_path),
                         str(hmm_state_posterior_path),
@@ -2626,6 +2885,29 @@ def run_autonomous_lane(
                 "artifact_ref": stress_metrics_artifact_ref,
                 "artifact_authority": _artifact_authority_for_evidence("stress_metrics"),
             },
+            "simulation_calibration": _build_bridge_evidence_payload(
+                simulation_calibration_report_payload,
+                artifact_ref=simulation_calibration_artifact_ref,
+                summary_fields=(
+                    "order_count",
+                    "expected_shortfall_sample_count",
+                    "expected_shortfall_coverage",
+                    "avg_calibration_error_bps",
+                    "confidence_gate_action",
+                ),
+            ),
+            "shadow_live_deviation": _build_bridge_evidence_payload(
+                shadow_live_deviation_report_payload,
+                artifact_ref=shadow_live_deviation_artifact_ref,
+                summary_fields=(
+                    "order_count",
+                    "decision_count",
+                    "trade_count",
+                    "avg_abs_slippage_bps",
+                    "avg_abs_divergence_bps",
+                    "deviation_budget_utilization",
+                ),
+            ),
             "janus_q": {
                 "event_car": {
                     "count": janus_event_count,
@@ -2760,6 +3042,10 @@ def run_autonomous_lane(
             "profitability_benchmark_artifact": str(profitability_benchmark_path),
             "profitability_evidence_artifact": str(profitability_evidence_path),
             "profitability_validation_artifact": str(profitability_validation_path),
+            "simulation_calibration_artifact": str(simulation_calibration_report_path),
+            "shadow_live_deviation_artifact": str(
+                shadow_live_deviation_report_path
+            ),
             "hmm_state_posterior_artifact": str(hmm_state_posterior_path),
             "expert_router_registry_artifact": str(expert_router_registry_path),
             "janus_event_car_artifact": str(janus_event_car_path),
@@ -2772,9 +3058,14 @@ def run_autonomous_lane(
                     dict[str, dict[str, Any]],
                     gate_report_payload["promotion_evidence"],
                 ).items()
-                if isinstance(payload, dict) and payload.get("artifact_authority")
+                if payload.get("artifact_authority")
             },
         }
+        gate_report_payload["vnext"] = _build_vnext_gate_summary(
+            runtime_strategies=runtime_strategies,
+            simulation_calibration_payload=simulation_calibration_report_payload,
+            shadow_live_deviation_payload=shadow_live_deviation_report_payload,
+        )
         gate_report_path.write_text(
             json.dumps(gate_report_payload, indent=2), encoding="utf-8"
         )
@@ -2808,6 +3099,8 @@ def run_autonomous_lane(
                 "profitability_benchmark": profitability_benchmark_path,
                 "profitability_evidence": profitability_evidence_path,
                 "profitability_validation": profitability_validation_path,
+                "simulation_calibration": simulation_calibration_report_path,
+                "shadow_live_deviation": shadow_live_deviation_report_path,
                 "hmm_state_posterior": hmm_state_posterior_path,
                 "expert_router_registry": expert_router_registry_path,
                 "janus_event_car": janus_event_car_path,
@@ -2849,6 +3142,8 @@ def run_autonomous_lane(
                         str(profitability_benchmark_path),
                         str(profitability_evidence_path),
                         str(profitability_validation_path),
+                        str(simulation_calibration_report_path),
+                        str(shadow_live_deviation_report_path),
                         str(hmm_state_posterior_path),
                         str(expert_router_registry_path),
                         str(janus_event_car_path),
@@ -2915,6 +3210,8 @@ def run_autonomous_lane(
             "profitability_benchmark": profitability_benchmark_path,
             "profitability_evidence": profitability_evidence_path,
             "profitability_validation": profitability_validation_path,
+            "simulation_calibration": simulation_calibration_report_path,
+            "shadow_live_deviation": shadow_live_deviation_report_path,
             "expert_router_registry": expert_router_registry_path,
             "janus_event_car": janus_event_car_path,
             "janus_hgrm_reward": janus_hgrm_reward_path,
@@ -3028,6 +3325,8 @@ def run_autonomous_lane(
             profitability_benchmark_path=profitability_benchmark_path,
             profitability_evidence_path=profitability_evidence_path,
             profitability_validation_path=profitability_validation_path,
+            simulation_calibration_report_path=simulation_calibration_report_path,
+            shadow_live_deviation_report_path=shadow_live_deviation_report_path,
             benchmark_parity_path=benchmark_parity_path,
             foundation_router_parity_path=foundation_router_parity_path,
             deeplob_bdlob_report_path=deeplob_bdlob_report_path,
@@ -3114,6 +3413,8 @@ def run_autonomous_lane(
             ),
             stage_manifest_refs=research_spec["stage_manifest_refs"],
             replay_artifact_hashes=replay_artifact_hashes,
+            simulation_calibration_report_payload=simulation_calibration_report_payload,
+            shadow_live_deviation_report_payload=shadow_live_deviation_report_payload,
         )
         _mark_run_passed_if_requested(
             persist_results=persist_results,
@@ -3742,6 +4043,8 @@ def _build_actuation_intent_payload(
     profitability_benchmark_path: Path,
     profitability_evidence_path: Path,
     profitability_validation_path: Path,
+    simulation_calibration_report_path: Path,
+    shadow_live_deviation_report_path: Path,
     benchmark_parity_path: Path,
     foundation_router_parity_path: Path,
     deeplob_bdlob_report_path: Path,
@@ -3789,6 +4092,8 @@ def _build_actuation_intent_payload(
             str(advisor_fallback_slo_report_path),
             str(profitability_evidence_path),
             str(profitability_validation_path),
+            str(simulation_calibration_report_path),
+            str(shadow_live_deviation_report_path),
             str(janus_event_car_path),
             str(janus_hgrm_reward_path),
             str(recalibration_report_path),
@@ -3969,6 +4274,8 @@ def _persist_run_outputs_if_requested(
     stage_lineage_payload: dict[str, Any],
     stage_manifest_refs: dict[str, str],
     replay_artifact_hashes: dict[str, str],
+    simulation_calibration_report_payload: dict[str, Any],
+    shadow_live_deviation_report_payload: dict[str, Any],
 ) -> None:
     if not persist_results:
         return
@@ -4000,6 +4307,8 @@ def _persist_run_outputs_if_requested(
         stage_lineage_payload=stage_lineage_payload,
         stage_manifest_refs=stage_manifest_refs,
         replay_artifact_hashes=replay_artifact_hashes,
+        simulation_calibration_report_payload=simulation_calibration_report_payload,
+        shadow_live_deviation_report_payload=shadow_live_deviation_report_payload,
     )
 
 
@@ -4209,6 +4518,8 @@ def _persist_run_outputs(
     stage_lineage_payload: dict[str, Any],
     stage_manifest_refs: dict[str, str],
     replay_artifact_hashes: dict[str, str],
+    simulation_calibration_report_payload: dict[str, Any],
+    shadow_live_deviation_report_payload: dict[str, Any],
 ) -> None:
     robustness_by_fold = {fold.fold_name: fold for fold in report.robustness.folds}
     effective_promotion_allowed = bool(promotion_allowed and actuation_allowed)
@@ -4281,6 +4592,26 @@ def _persist_run_outputs(
                     }
                     for strategy in runtime_strategies
                 ],
+                "simulation_calibration": {
+                    key: simulation_calibration_report_payload.get(key)
+                    for key in (
+                        "status",
+                        "order_count",
+                        "expected_shortfall_coverage",
+                        "avg_calibration_error_bps",
+                        "confidence_gate_action",
+                    )
+                },
+                "shadow_live_deviation": {
+                    key: shadow_live_deviation_report_payload.get(key)
+                    for key in (
+                        "status",
+                        "order_count",
+                        "avg_abs_slippage_bps",
+                        "avg_abs_divergence_bps",
+                        "deviation_budget_utilization",
+                    )
+                },
             }
             recommended_mode = promotion_recommendation.recommended_mode
             lifecycle_payload = {
@@ -4405,6 +4736,12 @@ def _persist_run_outputs(
                 "evidence_authority": {
                     "fold_metrics": _artifact_authority_for_evidence("fold_metrics"),
                     "stress_metrics": _artifact_authority_for_evidence("stress_metrics"),
+                    "simulation_calibration": simulation_calibration_report_payload.get(
+                        "artifact_authority"
+                    ),
+                    "shadow_live_deviation": shadow_live_deviation_report_payload.get(
+                        "artifact_authority"
+                    ),
                     "benchmark_parity": _artifact_authority_for_evidence("benchmark_parity"),
                     "foundation_router_parity": _artifact_authority_for_evidence("foundation_router_parity"),
                     "deeplob_bdlob_contract": _artifact_authority_for_evidence("deeplob_bdlob_contract"),
@@ -4413,6 +4750,25 @@ def _persist_run_outputs(
                     "expert_router_registry": _artifact_authority_for_evidence("expert_router_registry"),
                     "contamination_registry": _artifact_authority_for_evidence("contamination_registry"),
                     "janus_q": _artifact_authority_for_evidence("janus_q"),
+                },
+                "simulation_calibration": {
+                    key: simulation_calibration_report_payload.get(key)
+                    for key in (
+                        "status",
+                        "order_count",
+                        "expected_shortfall_coverage",
+                        "avg_calibration_error_bps",
+                    )
+                },
+                "shadow_live_deviation": {
+                    key: shadow_live_deviation_report_payload.get(key)
+                    for key in (
+                        "status",
+                        "order_count",
+                        "avg_abs_slippage_bps",
+                        "avg_abs_divergence_bps",
+                        "deviation_budget_utilization",
+                    )
                 },
             }
             challenger_decision = {

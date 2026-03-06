@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
 from typing import Any, Mapping, cast
 
 
@@ -344,13 +343,6 @@ def _default_version(strategy_type: str) -> str:
 def _nullable_text(value: Any) -> str | None:
     text = str(value or '').strip()
     return text or None
-
-
-def _decimal_or_none(value: Any) -> Decimal | None:
-    try:
-        return Decimal(str(value))
-    except Exception:
-        return None
 
 
 __all__ = [

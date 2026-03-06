@@ -7,6 +7,8 @@ from unittest import TestCase
 from app.trading.evaluation import (
     ProfitabilityEvidenceThresholdsV4,
     build_profitability_evidence_v4,
+    build_shadow_live_deviation_report_v1,
+    build_simulation_calibration_report_v1,
     execute_profitability_benchmark_v4,
     validate_profitability_evidence_v4,
 )
@@ -117,6 +119,82 @@ class TestProfitabilityEvidenceV4(TestCase):
         self.assertIn("market_net_pnl_delta_below_threshold", validation.reasons)
         self.assertIn("cost_bps_exceeds_threshold", validation.reasons)
         self.assertIn("reproducibility_hash_keys_missing", validation.reasons)
+
+    def test_bridge_reports_emit_calibration_and_deviation_status(self) -> None:
+        candidate_report = _report_payload(
+            net_pnl="12",
+            max_drawdown="6",
+            cost_bps="4",
+            regime_label="bullish",
+            regime_net_pnl="12",
+        )
+        baseline_report = _report_payload(
+            net_pnl="10",
+            max_drawdown="8",
+            cost_bps="5",
+            regime_label="bullish",
+            regime_net_pnl="8",
+        )
+        benchmark = execute_profitability_benchmark_v4(
+            candidate_id="cand-3",
+            baseline_id="baseline-legacy",
+            candidate_report_payload=candidate_report,
+            baseline_report_payload=baseline_report,
+        )
+        evidence = build_profitability_evidence_v4(
+            run_id="run-3",
+            candidate_id="cand-3",
+            baseline_id="baseline-legacy",
+            candidate_report_payload=candidate_report,
+            benchmark=benchmark,
+            confidence_values=[Decimal("0.7"), Decimal("0.8"), Decimal("0.75")],
+            reproducibility_hashes={
+                "signals": "a",
+                "strategy_config": "b",
+                "gate_policy": "c",
+                "candidate_report": "d",
+                "baseline_report": "e",
+            },
+            artifact_refs=["/tmp/a.json"],
+            generated_at=datetime(2026, 2, 20, tzinfo=timezone.utc),
+        )
+        tca_metrics = {
+            "order_count": 12,
+            "expected_shortfall_sample_count": 12,
+            "expected_shortfall_coverage": Decimal("1"),
+            "avg_expected_shortfall_bps_p50": Decimal("4"),
+            "avg_expected_shortfall_bps_p95": Decimal("8"),
+            "avg_realized_shortfall_bps": Decimal("5"),
+            "avg_realized_shortfall_bps_abs": Decimal("5"),
+            "avg_abs_slippage_bps": Decimal("6"),
+            "avg_divergence_bps_abs": Decimal("3"),
+            "avg_calibration_error_bps": Decimal("2"),
+        }
+
+        simulation = build_simulation_calibration_report_v1(
+            run_id="run-3",
+            candidate_id="cand-3",
+            profitability_evidence=evidence,
+            tca_metrics=tca_metrics,
+            generated_at=datetime(2026, 2, 20, tzinfo=timezone.utc),
+        )
+        deviation = build_shadow_live_deviation_report_v1(
+            run_id="run-3",
+            candidate_id="cand-3",
+            profitability_evidence=evidence,
+            tca_metrics=tca_metrics,
+            generated_at=datetime(2026, 2, 20, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(simulation.to_payload()["status"], "calibrated")
+        self.assertEqual(
+            simulation.to_payload()["artifact_authority"]["maturity"], "calibrated"
+        )
+        self.assertEqual(deviation.to_payload()["status"], "within_budget")
+        self.assertEqual(
+            deviation.to_payload()["artifact_authority"]["provenance"],
+            "paper_runtime_observed",
+        )
 
 
 def _report_payload(

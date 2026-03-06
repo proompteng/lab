@@ -16,6 +16,10 @@ from .features import FeatureVectorV3, validate_declared_features
 from .strategy_specs import build_compiled_strategy_artifacts, strategy_type_supports_spec_v2
 
 
+def _empty_meta() -> dict[str, Any]:
+    return {}
+
+
 @dataclass(frozen=True)
 class StrategyDefinition:
     strategy_id: str
@@ -29,8 +33,8 @@ class StrategyDefinition:
     enabled: bool
     base_timeframe: str
     compiler_source: str = "legacy_runtime"
-    strategy_spec: dict[str, Any] = field(default_factory=dict)
-    compiled_targets: dict[str, Any] = field(default_factory=dict)
+    strategy_spec: dict[str, Any] = field(default_factory=_empty_meta)
+    compiled_targets: dict[str, Any] = field(default_factory=_empty_meta)
 
 
 @dataclass(frozen=True)
@@ -43,7 +47,7 @@ class StrategyContext:
     symbol: str
     timeframe: str
     params: dict[str, Any]
-    strategy_spec: dict[str, Any] = field(default_factory=dict)
+    strategy_spec: dict[str, Any] = field(default_factory=_empty_meta)
 
 
 @dataclass(frozen=True)
@@ -87,7 +91,7 @@ class RuntimeDecision:
     parameter_hash: str
     feature_hash: str
     compiler_source: str = "legacy_runtime"
-    strategy_spec: dict[str, Any] = field(default_factory=dict)
+    strategy_spec: dict[str, Any] = field(default_factory=_empty_meta)
 
     def metadata(self) -> dict[str, Any]:
         return {
@@ -594,15 +598,21 @@ class StrategyRuntime:
         strategy_spec: dict[str, Any] = {}
         compiled_targets: dict[str, Any] = {}
         if strategy_type_supports_spec_v2(strategy_type):
+            raw_universe_symbols: object = strategy.universe_symbols
+            universe_symbols: list[str] | None = None
+            if isinstance(raw_universe_symbols, list):
+                universe_symbols = []
+                for raw_item in cast(list[object], raw_universe_symbols):
+                    item_text = str(raw_item).strip()
+                    if item_text:
+                        universe_symbols.append(item_text)
             compiled = build_compiled_strategy_artifacts(
                 strategy_id=str(strategy.id),
                 strategy_type=strategy_type,
                 semantic_version=version,
                 params=params,
                 base_timeframe=str(strategy.base_timeframe),
-                universe_symbols=cast(list[str], strategy.universe_symbols)
-                if isinstance(strategy.universe_symbols, list)
-                else None,
+                universe_symbols=universe_symbols,
                 source="spec_v2",
             )
             compiler_source = "spec_v2"

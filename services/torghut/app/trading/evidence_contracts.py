@@ -78,10 +78,14 @@ def parse_evidence_contract(value: Any) -> dict[str, Any]:
     }
     calibration_summary = payload.get('calibration_summary')
     if isinstance(calibration_summary, dict):
-        normalized['calibration_summary'] = dict(calibration_summary)
+        normalized['calibration_summary'] = dict(
+            cast(dict[str, Any], calibration_summary)
+        )
     deviation_summary = payload.get('deviation_summary')
     if isinstance(deviation_summary, dict):
-        normalized['deviation_summary'] = dict(deviation_summary)
+        normalized['deviation_summary'] = dict(
+            cast(dict[str, Any], deviation_summary)
+        )
     notes = str(payload.get('notes', '')).strip()
     if notes:
         normalized['notes'] = notes

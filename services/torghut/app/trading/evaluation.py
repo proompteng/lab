@@ -12,6 +12,11 @@ from typing import Any, Iterable, Protocol, cast
 
 from ..models import Strategy
 from .decisions import DecisionEngine
+from .evidence_contracts import (
+    ArtifactProvenance,
+    EvidenceMaturity,
+    evidence_contract_payload,
+)
 from .features import SignalFeatures, extract_signal_features
 from .models import SignalEnvelope, StrategyDecision
 
@@ -282,6 +287,90 @@ class ProfitabilityEvidenceV4:
             "reproducibility": dict(self.reproducibility),
             "benchmark": self.benchmark.to_payload(),
             "artifact_refs": list(self.artifact_refs),
+        }
+
+
+@dataclass(frozen=True)
+class SimulationCalibrationReportV1:
+    schema_version: str
+    generated_at: datetime
+    run_id: str
+    candidate_id: str
+    order_count: int
+    expected_shortfall_sample_count: int
+    expected_shortfall_coverage: Decimal
+    avg_expected_shortfall_bps_p50: Decimal
+    avg_expected_shortfall_bps_p95: Decimal
+    avg_realized_shortfall_bps: Decimal
+    avg_calibration_error_bps: Decimal
+    confidence_sample_count: int
+    confidence_calibration_error: Decimal
+    confidence_coverage_error: Decimal
+    confidence_shift_score: Decimal
+    confidence_gate_action: str
+    thresholds: dict[str, object]
+    status: str
+    artifact_authority: dict[str, object]
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "generated_at": self.generated_at.isoformat(),
+            "run_id": self.run_id,
+            "candidate_id": self.candidate_id,
+            "order_count": self.order_count,
+            "expected_shortfall_sample_count": self.expected_shortfall_sample_count,
+            "expected_shortfall_coverage": str(self.expected_shortfall_coverage),
+            "avg_expected_shortfall_bps_p50": str(self.avg_expected_shortfall_bps_p50),
+            "avg_expected_shortfall_bps_p95": str(self.avg_expected_shortfall_bps_p95),
+            "avg_realized_shortfall_bps": str(self.avg_realized_shortfall_bps),
+            "avg_calibration_error_bps": str(self.avg_calibration_error_bps),
+            "confidence_sample_count": self.confidence_sample_count,
+            "confidence_calibration_error": str(self.confidence_calibration_error),
+            "confidence_coverage_error": str(self.confidence_coverage_error),
+            "confidence_shift_score": str(self.confidence_shift_score),
+            "confidence_gate_action": self.confidence_gate_action,
+            "thresholds": dict(self.thresholds),
+            "status": self.status,
+            "artifact_authority": dict(self.artifact_authority),
+        }
+
+
+@dataclass(frozen=True)
+class ShadowLiveDeviationReportV1:
+    schema_version: str
+    generated_at: datetime
+    run_id: str
+    candidate_id: str
+    order_count: int
+    decision_count: int
+    trade_count: int
+    trade_to_decision_ratio: Decimal
+    avg_abs_slippage_bps: Decimal
+    avg_abs_divergence_bps: Decimal
+    avg_realized_shortfall_bps_abs: Decimal
+    deviation_budget_utilization: Decimal
+    thresholds: dict[str, object]
+    status: str
+    artifact_authority: dict[str, object]
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "generated_at": self.generated_at.isoformat(),
+            "run_id": self.run_id,
+            "candidate_id": self.candidate_id,
+            "order_count": self.order_count,
+            "decision_count": self.decision_count,
+            "trade_count": self.trade_count,
+            "trade_to_decision_ratio": str(self.trade_to_decision_ratio),
+            "avg_abs_slippage_bps": str(self.avg_abs_slippage_bps),
+            "avg_abs_divergence_bps": str(self.avg_abs_divergence_bps),
+            "avg_realized_shortfall_bps_abs": str(self.avg_realized_shortfall_bps_abs),
+            "deviation_budget_utilization": str(self.deviation_budget_utilization),
+            "thresholds": dict(self.thresholds),
+            "status": self.status,
+            "artifact_authority": dict(self.artifact_authority),
         }
 
 
@@ -558,6 +647,196 @@ def validate_profitability_evidence_v4(
         artifact_refs=sorted(set(evidence.artifact_refs)),
         checked_at=checked_at or datetime.now(timezone.utc),
         thresholds=policy,
+    )
+
+
+def build_simulation_calibration_report_v1(
+    *,
+    run_id: str,
+    candidate_id: str,
+    profitability_evidence: ProfitabilityEvidenceV4,
+    tca_metrics: dict[str, object],
+    min_order_count: int = 1,
+    min_expected_shortfall_coverage: Decimal = Decimal("0.50"),
+    max_avg_calibration_error_bps: Decimal = Decimal("25"),
+    generated_at: datetime | None = None,
+) -> SimulationCalibrationReportV1:
+    order_count = _as_int(tca_metrics.get("order_count")) or 0
+    expected_shortfall_sample_count = (
+        _as_int(tca_metrics.get("expected_shortfall_sample_count")) or 0
+    )
+    expected_shortfall_coverage = (
+        _decimal(tca_metrics.get("expected_shortfall_coverage")) or Decimal("0")
+    )
+    avg_expected_shortfall_bps_p50 = (
+        _decimal(tca_metrics.get("avg_expected_shortfall_bps_p50")) or Decimal("0")
+    )
+    avg_expected_shortfall_bps_p95 = (
+        _decimal(tca_metrics.get("avg_expected_shortfall_bps_p95")) or Decimal("0")
+    )
+    avg_realized_shortfall_bps = (
+        _decimal(tca_metrics.get("avg_realized_shortfall_bps")) or Decimal("0")
+    )
+    avg_calibration_error_bps = (
+        _decimal(tca_metrics.get("avg_calibration_error_bps")) or Decimal("0")
+    )
+    confidence_payload = _as_dict(profitability_evidence.confidence_calibration)
+    confidence_sample_count = _as_int(confidence_payload.get("sample_count")) or 0
+    confidence_calibration_error = (
+        _decimal(confidence_payload.get("calibration_error")) or Decimal("0")
+    )
+    confidence_coverage_error = (
+        _decimal(confidence_payload.get("coverage_error")) or Decimal("0")
+    )
+    confidence_shift_score = (
+        _decimal(confidence_payload.get("shift_score")) or Decimal("0")
+    )
+    confidence_gate_action = str(
+        confidence_payload.get("gate_action", "abstain")
+    ).strip() or "abstain"
+    thresholds: dict[str, object] = {
+        "min_order_count": min_order_count,
+        "min_expected_shortfall_coverage": str(min_expected_shortfall_coverage),
+        "max_avg_calibration_error_bps": str(max_avg_calibration_error_bps),
+    }
+    calibrated = (
+        order_count >= min_order_count
+        and expected_shortfall_coverage >= min_expected_shortfall_coverage
+        and avg_calibration_error_bps <= max_avg_calibration_error_bps
+        and confidence_gate_action == "pass"
+    )
+    status = "calibrated" if calibrated else (
+        "pending_runtime_observation" if order_count < min_order_count else "uncalibrated"
+    )
+    maturity = (
+        EvidenceMaturity.CALIBRATED if calibrated else EvidenceMaturity.UNCALIBRATED
+    )
+    provenance = (
+        ArtifactProvenance.PAPER_RUNTIME_OBSERVED
+        if order_count > 0
+        else ArtifactProvenance.HISTORICAL_MARKET_REPLAY
+    )
+    artifact_authority = evidence_contract_payload(
+        provenance=provenance,
+        maturity=maturity,
+        calibration_summary={
+            "status": status,
+            "order_count": order_count,
+            "expected_shortfall_coverage": str(expected_shortfall_coverage),
+            "avg_calibration_error_bps": str(avg_calibration_error_bps),
+            "confidence_gate_action": confidence_gate_action,
+        },
+    )
+    return SimulationCalibrationReportV1(
+        schema_version="simulation-calibration-report-v1",
+        generated_at=generated_at or datetime.now(timezone.utc),
+        run_id=run_id,
+        candidate_id=candidate_id,
+        order_count=order_count,
+        expected_shortfall_sample_count=expected_shortfall_sample_count,
+        expected_shortfall_coverage=expected_shortfall_coverage,
+        avg_expected_shortfall_bps_p50=avg_expected_shortfall_bps_p50,
+        avg_expected_shortfall_bps_p95=avg_expected_shortfall_bps_p95,
+        avg_realized_shortfall_bps=avg_realized_shortfall_bps,
+        avg_calibration_error_bps=avg_calibration_error_bps,
+        confidence_sample_count=confidence_sample_count,
+        confidence_calibration_error=confidence_calibration_error,
+        confidence_coverage_error=confidence_coverage_error,
+        confidence_shift_score=confidence_shift_score,
+        confidence_gate_action=confidence_gate_action,
+        thresholds=thresholds,
+        status=status,
+        artifact_authority=artifact_authority,
+    )
+
+
+def build_shadow_live_deviation_report_v1(
+    *,
+    run_id: str,
+    candidate_id: str,
+    profitability_evidence: ProfitabilityEvidenceV4,
+    tca_metrics: dict[str, object],
+    min_order_count: int = 1,
+    max_avg_abs_slippage_bps: Decimal = Decimal("20"),
+    max_avg_abs_divergence_bps: Decimal = Decimal("15"),
+    generated_at: datetime | None = None,
+) -> ShadowLiveDeviationReportV1:
+    order_count = _as_int(tca_metrics.get("order_count")) or 0
+    decision_count = _as_int(
+        profitability_evidence.cost_fill_realism.get("decision_count")
+    ) or 0
+    trade_count = _as_int(profitability_evidence.cost_fill_realism.get("trade_count")) or 0
+    trade_to_decision_ratio = (
+        _decimal(profitability_evidence.cost_fill_realism.get("trade_to_decision_ratio"))
+        or Decimal("0")
+    )
+    avg_abs_slippage_bps = (
+        _decimal(tca_metrics.get("avg_abs_slippage_bps")) or Decimal("0")
+    )
+    avg_abs_divergence_bps = (
+        _decimal(tca_metrics.get("avg_divergence_bps_abs")) or Decimal("0")
+    )
+    avg_realized_shortfall_bps_abs = (
+        _decimal(tca_metrics.get("avg_realized_shortfall_bps_abs")) or Decimal("0")
+    )
+    slippage_utilization = (
+        avg_abs_slippage_bps / max_avg_abs_slippage_bps
+        if max_avg_abs_slippage_bps > 0
+        else Decimal("0")
+    )
+    divergence_utilization = (
+        avg_abs_divergence_bps / max_avg_abs_divergence_bps
+        if max_avg_abs_divergence_bps > 0
+        else Decimal("0")
+    )
+    deviation_budget_utilization = max(slippage_utilization, divergence_utilization)
+    within_budget = (
+        order_count >= min_order_count
+        and avg_abs_slippage_bps <= max_avg_abs_slippage_bps
+        and avg_abs_divergence_bps <= max_avg_abs_divergence_bps
+    )
+    status = "within_budget" if within_budget else (
+        "pending_runtime_observation" if order_count < min_order_count else "out_of_budget"
+    )
+    maturity = (
+        EvidenceMaturity.CALIBRATED if within_budget else EvidenceMaturity.UNCALIBRATED
+    )
+    provenance = (
+        ArtifactProvenance.PAPER_RUNTIME_OBSERVED
+        if order_count > 0
+        else ArtifactProvenance.HISTORICAL_MARKET_REPLAY
+    )
+    artifact_authority = evidence_contract_payload(
+        provenance=provenance,
+        maturity=maturity,
+        deviation_summary={
+            "status": status,
+            "order_count": order_count,
+            "avg_abs_slippage_bps": str(avg_abs_slippage_bps),
+            "avg_abs_divergence_bps": str(avg_abs_divergence_bps),
+            "deviation_budget_utilization": str(deviation_budget_utilization),
+        },
+    )
+    return ShadowLiveDeviationReportV1(
+        schema_version="shadow-live-deviation-report-v1",
+        generated_at=generated_at or datetime.now(timezone.utc),
+        run_id=run_id,
+        candidate_id=candidate_id,
+        order_count=order_count,
+        decision_count=decision_count,
+        trade_count=trade_count,
+        trade_to_decision_ratio=trade_to_decision_ratio,
+        avg_abs_slippage_bps=avg_abs_slippage_bps,
+        avg_abs_divergence_bps=avg_abs_divergence_bps,
+        avg_realized_shortfall_bps_abs=avg_realized_shortfall_bps_abs,
+        deviation_budget_utilization=deviation_budget_utilization,
+        thresholds={
+            "min_order_count": min_order_count,
+            "max_avg_abs_slippage_bps": str(max_avg_abs_slippage_bps),
+            "max_avg_abs_divergence_bps": str(max_avg_abs_divergence_bps),
+        },
+        status=status,
+        artifact_authority=artifact_authority,
     )
 
 
