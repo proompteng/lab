@@ -61,7 +61,7 @@ spec:
     Huly collaboration (required):
     1) Resolve active channel in order: swarmRequirementChannel, hulyChannelName, hulyChannelUrl.
     2) Read recent channel context before action.
-    3) Verify dedicated account (if required) and chat access.
+    3) Verify dedicated account and chat access with `--require-worker-token --token-env-key ${swarmAgentTokenKey} --require-expected-actor-id --expected-actor-env-key ${swarmAgentExpectedActorIdKey}`.
     4) If a relevant teammate message has a thread, reply in that thread; use top-level channel posts only when no thread target exists.
     5) Reply naturally; do not prefix with "Replying to message" or include raw message IDs.
     6) Upsert mission artifacts (issue, channel update, mission document).
@@ -157,7 +157,7 @@ spec:
     Huly collaboration (required):
     1) Resolve active channel in order: swarmRequirementChannel, hulyChannelName, hulyChannelUrl.
     2) Read recent channel context before action.
-    3) Verify dedicated account (if required) and chat access.
+    3) Verify dedicated account and chat access with `--require-worker-token --token-env-key ${swarmAgentTokenKey} --require-expected-actor-id --expected-actor-env-key ${swarmAgentExpectedActorIdKey}`.
     4) If a relevant teammate message has a thread, reply in that thread; use top-level channel posts only when no thread target exists.
     5) Reply naturally; do not prefix with "Replying to message" or include raw message IDs.
     6) Upsert mission artifacts (issue, channel update, mission document).
@@ -235,7 +235,7 @@ spec:
     Huly collaboration (required):
     1) Resolve active channel in order: hulyChannelName, hulyChannelUrl.
     2) Read recent channel context before action.
-    3) Verify dedicated account (if required) and chat access.
+    3) Verify dedicated account and chat access with `--require-worker-token --token-env-key ${swarmAgentTokenKey} --require-expected-actor-id --expected-actor-env-key ${swarmAgentExpectedActorIdKey}`.
     4) If a relevant teammate message has a thread, reply in that thread; use top-level channel posts only when no thread target exists.
     5) Reply naturally; do not prefix with "Replying to message" or include raw message IDs.
     6) Upsert mission artifacts (issue, channel update, mission document).

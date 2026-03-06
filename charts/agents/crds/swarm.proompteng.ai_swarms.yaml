@@ -61,6 +61,85 @@ spec:
                   required:
                     - id
                     - channel
+                integrations:
+                  type: object
+                  properties:
+                    huly:
+                      type: object
+                      properties:
+                        baseUrl:
+                          type: string
+                        workspace:
+                          type: string
+                        project:
+                          type: string
+                        skillRef:
+                          type: string
+                        authSecretRef:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                          required:
+                            - name
+                        personas:
+                          type: object
+                          properties:
+                            architect:
+                              type: object
+                              properties:
+                                humanName:
+                                  type: string
+                                workerIdentity:
+                                  type: string
+                                tokenKey:
+                                  type: string
+                                expectedActorIdKey:
+                                  type: string
+                              required:
+                                - humanName
+                                - workerIdentity
+                                - tokenKey
+                                - expectedActorIdKey
+                            engineer:
+                              type: object
+                              properties:
+                                humanName:
+                                  type: string
+                                workerIdentity:
+                                  type: string
+                                tokenKey:
+                                  type: string
+                                expectedActorIdKey:
+                                  type: string
+                              required:
+                                - humanName
+                                - workerIdentity
+                                - tokenKey
+                                - expectedActorIdKey
+                            deployer:
+                              type: object
+                              properties:
+                                humanName:
+                                  type: string
+                                workerIdentity:
+                                  type: string
+                                tokenKey:
+                                  type: string
+                                expectedActorIdKey:
+                                  type: string
+                              required:
+                                - humanName
+                                - workerIdentity
+                                - tokenKey
+                                - expectedActorIdKey
+                          required:
+                            - architect
+                            - engineer
+                            - deployer
+                      required:
+                        - authSecretRef
+                        - personas
                 domains:
                   type: array
                   minItems: 1

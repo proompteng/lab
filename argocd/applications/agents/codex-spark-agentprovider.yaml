@@ -9,6 +9,8 @@ spec:
     CODEX_LOG_LEVEL: info
     NATS_URL: nats://nats.nats.svc.cluster.local:4222
     AGENT_PROVIDER_PATH: /root/.codex/provider-codex-spark.json
+    CODEX_MODEL: gpt-5.3-codex-spark
+    CODEX_MODEL_FALLBACKS: gpt-5.4
   inputFiles:
     - path: /root/.codex/config.toml
       content: |-

@@ -10,6 +10,10 @@ spec:
       set -euo pipefail
       PROMPT_FILE="$(mktemp /tmp/codex-smoke-prompt.XXXXXX.txt)"
       EVENT_FILE="/workspace/run.json"
+      DEFAULT_CONFIG="/root/.codex/config.toml"
+      PRIMARY_MODEL="${CODEX_MODEL:-gpt-5.3-codex-spark}"
+      FALLBACK_MODEL="${CODEX_MODEL_FALLBACKS:-gpt-5.4}"
+      LOG_PATH="/workspace/.agentrun/smoke/codex-exec.log"
 
       python3 - "$EVENT_FILE" "$PROMPT_FILE" <<'PY'
       import json
@@ -63,8 +67,59 @@ spec:
 
       mkdir -p /workspace/.agentrun/smoke
       export HOME=/root
-      export CODEX_CONFIG=/root/.codex/config.toml
-      codex exec --skip-git-repo-check -C /workspace/lab < "$PROMPT_FILE"
+
+      rewrite_config() {
+        local model="$1"
+        local config_file
+        config_file="$(mktemp /tmp/codex-smoke-config.XXXXXX.toml)"
+        python3 - "$DEFAULT_CONFIG" "$config_file" "$model" <<'PY'
+      from pathlib import Path
+      import sys
+
+      source = Path(sys.argv[1]).read_text(encoding='utf-8').splitlines()
+      target = Path(sys.argv[2])
+      model = sys.argv[3]
+      replaced = False
+      lines = []
+      for line in source:
+        if line.strip().startswith('model = '):
+          lines.append(f'model = "{model}"')
+          replaced = True
+        else:
+          lines.append(line)
+      if not replaced:
+        lines.insert(0, f'model = "{model}"')
+      target.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+      PY
+        printf '%s\n' "$config_file"
+      }
+
+      can_fallback() {
+        grep -Eiq 'usage limit|quota|insufficient_quota|unknown model|model is not supported|not supported when using codex|model unavailable' "$LOG_PATH"
+      }
+
+      run_smoke() {
+        local model="$1"
+        local config_file
+        config_file="$(rewrite_config "$model")"
+        export CODEX_CONFIG="$config_file"
+        if codex exec --skip-git-repo-check -C /workspace/lab < "$PROMPT_FILE" >"$LOG_PATH" 2>&1; then
+          rm -f "$config_file"
+          return 0
+        fi
+        local exit_code=$?
+        cat "$LOG_PATH" >&2 || true
+        rm -f "$config_file"
+        return "$exit_code"
+      }
+
+      if ! run_smoke "$PRIMARY_MODEL"; then
+        if [ -n "$FALLBACK_MODEL" ] && can_fallback; then
+          run_smoke "$FALLBACK_MODEL"
+        else
+          exit 1
+        fi
+      fi
       test -s /workspace/.agentrun/smoke/result.md
   envTemplate:
     CODEX_LOG_LEVEL: info
@@ -73,6 +128,8 @@ spec:
     CODEX_CONFIG: /root/.codex/config.toml
     CODEX_DISABLE_RESUME: "1"
     CODEX_MAX_SESSION_ATTEMPTS: "1"
+    CODEX_MODEL: gpt-5.3-codex-spark
+    CODEX_MODEL_FALLBACKS: gpt-5.4
   inputFiles:
     - path: /root/.codex/config.toml
       content: |-

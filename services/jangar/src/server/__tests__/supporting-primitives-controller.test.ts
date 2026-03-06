@@ -37,6 +37,9 @@ import {
   stopSupportingPrimitivesController,
 } from '~/server/supporting-primitives-controller'
 
+const TEST_RUNNER_IMAGE =
+  'registry.ide-newton.ts.net/lab/jangar:test@sha256:1111111111111111111111111111111111111111111111111111111111111111'
+
 const createMockKubectlProcess = (code: number, stderr = '') => {
   const stdout = new EventEmitter() as EventEmitter & { setEncoding: () => void }
   const stderrStream = new EventEmitter() as EventEmitter & { setEncoding: () => void }
@@ -103,6 +106,7 @@ describe('supporting primitives controller', () => {
     primitivesKubeMocks.createKubernetesClient.mockReturnValue({
       list: vi.fn(async () => ({ items: [] })),
     })
+    process.env.JANGAR_AGENT_RUNNER_IMAGE = TEST_RUNNER_IMAGE
     delete process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED
     delete process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY
   })
@@ -110,6 +114,7 @@ describe('supporting primitives controller', () => {
   afterEach(() => {
     stopSupportingPrimitivesController()
     vi.useRealTimers()
+    delete process.env.JANGAR_AGENT_RUNNER_IMAGE
   })
 
   it('sets standard conditions and updatedAt for invalid tools', async () => {
@@ -746,14 +751,19 @@ describe('supporting primitives controller', () => {
       'Raise risk budget guardrails for market-open volatility\n\nacceptance: deploy and verify policy',
     )
     expect(parameters.swarmAgentWorkerId).toMatch(/^worker-/)
-    expect(parameters.swarmAgentIdentity).toMatch(/^vw-/)
+    expect(parameters.swarmAgentIdentity).toBe('elise-novak-jangar-engineer')
     expect(parameters.swarmAgentRole).toBe('engineer')
+    expect(parameters.swarmHumanName).toBe('Elise Novak')
+    expect(parameters.swarmAgentTokenKey).toBe('HULY_API_TOKEN_ELISE_NOVAK_JANGAR_ENGINEER')
+    expect(parameters.swarmAgentExpectedActorIdKey).toBe('HULY_EXPECTED_ACTOR_ID_ELISE_NOVAK_JANGAR_ENGINEER')
     expect(parameters.hulyApiBaseUrl).toBe('https://huly.proompteng.ai')
     expect(parameters.hulySkillRef).toBe('skills/huly-api/SKILL.md')
     const runSecrets = Array.isArray(requirementRun.spec.secrets) ? (requirementRun.spec.secrets as string[]) : []
     expect(runSecrets).not.toContain('huly-api')
     expect(runSecrets).toContain('keep-me')
-    expect(runSecrets).toHaveLength(1)
+    expect(runSecrets).toContain('huly-api-jangar')
+    expect(runSecrets).toHaveLength(2)
+    expect((requirementRun.spec.workload as { image?: string } | undefined)?.image).toContain(TEST_RUNNER_IMAGE)
 
     const statusCall = applyStatus.mock.calls.at(-1)
     const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
@@ -2391,9 +2401,10 @@ describe('supporting primitives controller', () => {
     const initialStatusCall = applyStatus.mock.calls[0]
     const initialStatus = (initialStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
     expect(initialStatus.phase).toBe('Frozen')
+    const initialGetCallCount = get.mock.calls.length
 
     await vi.advanceTimersByTimeAsync(2_147_483_647)
-    expect(get).not.toHaveBeenCalled()
+    expect(get).toHaveBeenCalledTimes(initialGetCallCount)
 
     const remainingDelay = 2_500_000_000 - 2_147_483_647
     await vi.advanceTimersByTimeAsync(remainingDelay)
