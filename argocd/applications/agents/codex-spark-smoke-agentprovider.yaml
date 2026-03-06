@@ -103,7 +103,7 @@ spec:
         local config_file
         config_file="$(rewrite_config "$model")"
         export CODEX_CONFIG="$config_file"
-        if codex exec --skip-git-repo-check -C /workspace/lab < "$PROMPT_FILE" >"$LOG_PATH" 2>&1; then
+        if codex exec --skip-git-repo-check -C /workspace < "$PROMPT_FILE" >"$LOG_PATH" 2>&1; then
           rm -f "$config_file"
           return 0
         fi
