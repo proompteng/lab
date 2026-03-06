@@ -46,6 +46,11 @@ Optional migration-lineage controls:
 
 - `TRADING_DB_SCHEMA_GRAPH_BRANCH_TOLERANCE` (default `1`)
 - `TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS` (default `false`; use `true` for controlled override windows)
+- If a PR intentionally changes migration topology beyond the current allowlist, update
+  `DEFAULT_ALLOWED_DIVERGENT_SIGNATURES` in `scripts/check_migration_graph.py` in the same change or land a merge
+  migration that brings the graph back within tolerance. CI will reject undocumented divergence.
+- Remove the runtime override from GitOps after merge migrations collapse the graph back to the tolerated branch count;
+  keep the feature flag default disabled outside explicit rollout windows.
 
 ## Whitepaper workflow (GitHub issue -> Kafka -> AgentRun)
 

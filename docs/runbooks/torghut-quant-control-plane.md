@@ -43,6 +43,10 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
    - `kubectl cnpg psql -n torghut torghut-db -- -d torghut -c "select alpaca_account_label, status, count(*) from trade_decisions where created_at >= now() - interval '1 day' group by alpaca_account_label, status order by alpaca_account_label, status;"`
    - Treat account lanes independently; stale legacy lanes can hide active-lane degradation.
    - If `schema_graph_lineage_errors` is non-empty, treat as migration-lineage divergence and pause rollout promotion until migration governance review is complete.
+   - If rollout must tolerate the current branched graph, verify the PR also updated `scripts/check_migration_graph.py`
+     allowlist evidence for the new signature; temporary GitOps overrides are not sufficient for CI.
+   - After merge migrations reduce the graph back within tolerance, remove
+     `TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS=true` from GitOps and confirm warnings clear from `/db-check`.
 3. Validate signal freshness and TA pipeline health.
    - `kubectl -n torghut get deploy torghut-clickhouse-guardrails-exporter torghut-ws torghut-ta`
    - `kubectl -n torghut port-forward svc/torghut-ws 19090:9090`
