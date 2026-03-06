@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from ..alpaca_client import OrderFirewallToken, TorghutAlpacaClient
 from ..config import settings
@@ -75,8 +76,66 @@ class OrderFirewall:
         return self._client.cancel_order(alpaca_order_id, firewall_token=self._token)
 
     def cancel_all_orders(self) -> list[dict[str, Any]]:
-        return self._client.cancel_all_orders(firewall_token=self._token)
+        orders = self._client.cancel_all_orders(firewall_token=self._token)
+        return _normalize_mapping_list(orders)
 
     def get_order_by_client_order_id(self, client_order_id: str) -> dict[str, Any] | None:
         # Reads are always allowed; this is used for idempotency backfills.
-        return self._client.get_order_by_client_order_id(client_order_id)
+        order = self._client.get_order_by_client_order_id(client_order_id)
+        return _normalize_mapping(order)
+
+    def get_order(self, alpaca_order_id: str) -> dict[str, Any]:
+        order = self._client.get_order(alpaca_order_id)
+        normalized = _normalize_mapping(order)
+        if normalized is None:
+            return {}
+        return normalized
+
+    def list_orders(self, status: str = 'all') -> list[dict[str, Any]]:
+        lister = getattr(self._client, 'list_orders', None)
+        if not callable(lister):
+            return []
+        result = lister(status=status)
+        return _normalize_mapping_list(result)
+
+    def list_positions(self) -> list[dict[str, Any]] | None:
+        lister = getattr(self._client, 'list_positions', None)
+        if not callable(lister):
+            return None
+        result = lister()
+        if result is None:
+            return None
+        return _normalize_mapping_list(result)
+
+    def get_account(self) -> dict[str, Any] | None:
+        getter = getattr(self._client, 'get_account', None)
+        if not callable(getter):
+            return None
+        result = getter()
+        return _normalize_mapping(result)
+
+    def get_asset(self, symbol_or_asset_id: str) -> dict[str, Any] | None:
+        getter = getattr(self._client, 'get_asset', None)
+        if not callable(getter):
+            return None
+        result = getter(symbol_or_asset_id)
+        return _normalize_mapping(result)
+
+
+def _normalize_mapping(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    mapping = cast(Mapping[object, Any], value)
+    return {str(key): item for key, item in mapping.items()}
+
+
+def _normalize_mapping_list(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    items = cast(list[object], value)
+    for item in items:
+        mapping = _normalize_mapping(item)
+        if mapping is not None:
+            normalized.append(mapping)
+    return normalized

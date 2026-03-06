@@ -45,7 +45,9 @@ class RiskEngine:
             reasons.append("missing_price")
 
         qty = Decimal(str(decision.qty))
-        notional = price * qty if price is not None else None
+        notional = _portfolio_sizing_final_notional(decision)
+        if notional is None:
+            notional = price * qty if price is not None else None
         position_qty, position_value = _position_summary(decision.symbol, positions)
         short_increasing = _is_short_increasing(decision.action, qty, position_qty)
         allocator_meta = _allocator_payload(decision)
@@ -81,14 +83,15 @@ class RiskEngine:
         max_pct = _resolve_decimal(
             strategy.max_position_pct_equity
         ) or _resolve_decimal(settings.trading_max_position_pct_equity)
-        _append_position_pct_reason(
-            reasons,
-            max_pct=max_pct,
-            equity=equity,
-            notional=notional,
-            action=decision.action,
-            position_value=position_value,
-        )
+        if not _position_pct_guardrail_satisfied_by_portfolio_sizing(decision):
+            _append_position_pct_reason(
+                reasons,
+                max_pct=max_pct,
+                equity=equity,
+                notional=notional,
+                action=decision.action,
+                position_value=position_value,
+            )
 
         allocator_cap_notional = _allocator_approved_notional(decision)
         _append_allocator_notional_reason(
@@ -206,6 +209,58 @@ def _append_position_pct_reason(
     projected_abs = abs(projected_value)
     if projected_abs > equity * max_pct and projected_abs >= current_abs:
         reasons.append("max_position_pct_exceeded")
+
+
+def _portfolio_sizing_output(decision: StrategyDecision) -> Mapping[str, Any] | None:
+    raw = decision.params.get("portfolio_sizing")
+    if not isinstance(raw, Mapping):
+        return None
+    output = cast(Mapping[str, Any], raw).get("output")
+    if not isinstance(output, Mapping):
+        return None
+    return cast(Mapping[str, Any], output)
+
+
+def _portfolio_sizing_final_notional(decision: StrategyDecision) -> Decimal | None:
+    output = _portfolio_sizing_output(decision)
+    if output is None:
+        return None
+    status = str(output.get("status") or "").strip().lower()
+    if status != "approved":
+        return None
+    final_qty = _resolve_decimal(cast(Decimal | str | float | None, output.get("final_qty")))
+    if final_qty is None or final_qty != decision.qty:
+        return None
+    final_notional = _resolve_decimal(
+        cast(Decimal | str | float | None, output.get("final_notional"))
+    )
+    if final_notional is None or final_notional <= 0:
+        return None
+    return final_notional
+
+
+def _position_pct_guardrail_satisfied_by_portfolio_sizing(
+    decision: StrategyDecision,
+) -> bool:
+    output = _portfolio_sizing_output(decision)
+    if output is None:
+        return False
+    if str(output.get("status") or "").strip().lower() != "approved":
+        return False
+    final_qty = _resolve_decimal(cast(Decimal | str | float | None, output.get("final_qty")))
+    if final_qty is None or final_qty != decision.qty:
+        return False
+    final_notional = _resolve_decimal(
+        cast(Decimal | str | float | None, output.get("final_notional"))
+    )
+    remaining_room_notional = _resolve_decimal(
+        cast(Decimal | str | float | None, output.get("remaining_room_notional"))
+    )
+    if final_notional is None or remaining_room_notional is None:
+        return False
+    if final_notional <= 0 or remaining_room_notional < 0:
+        return False
+    return final_notional <= remaining_room_notional + Decimal("0.01")
 
 
 def _append_allocator_notional_reason(
@@ -356,7 +411,6 @@ def _allocator_approved_notional(decision: StrategyDecision) -> Optional[Decimal
         return None
     payload = cast(Mapping[str, object], allocator)
     return _resolve_decimal(cast(Decimal | str | float | None, payload.get("approved_notional")))
-
 
 def _extract_adverse_selection_risk(
     payload: Mapping[str, Any] | None,
