@@ -1473,6 +1473,10 @@ class Settings(BaseSettings):
         default=0.5,
         alias="LLM_DSPY_LIVE_RUNTIME_BLOCK_QTY_MULTIPLIER",
     )
+    llm_dspy_runtime_fallback_alert_ratio: float = Field(
+        default=0.01,
+        alias="LLM_DSPY_RUNTIME_FALLBACK_ALERT_RATIO",
+    )
     llm_dspy_compile_metrics_policy_ref: str = Field(
         default="config/trading/llm/dspy-metrics.yaml",
         alias="LLM_DSPY_COMPILE_METRICS_POLICY_REF",

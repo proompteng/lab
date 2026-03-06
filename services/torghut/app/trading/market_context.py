@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from http.client import HTTPConnection, HTTPSConnection
 from typing import Any, Optional, cast
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from ..config import settings
 from .llm.schema import MarketContextBundle
@@ -144,6 +145,7 @@ class MarketContextClient:
     def __init__(self) -> None:
         self._base_url = (settings.trading_market_context_url or "").strip()
         self._timeout_seconds = max(settings.trading_market_context_timeout_seconds, 1)
+        self._health_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
     def fetch(self, symbol: str) -> Optional[MarketContextBundle]:
         if not self._base_url:
@@ -176,6 +178,52 @@ class MarketContextClient:
         if not isinstance(context, dict):
             raise RuntimeError("market_context_missing_context")
         return MarketContextBundle.model_validate(context)
+
+    def fetch_health(self, symbol: str) -> Optional[dict[str, Any]]:
+        if not self._base_url:
+            return None
+        cache_key = symbol.strip().upper() or "default"
+        now = time.monotonic()
+        cached = self._health_cache.get(cache_key)
+        if cached is not None and now - cached[0] <= 15.0:
+            return dict(cached[1])
+
+        health_url = self._derive_health_url()
+        query = urlencode({"symbol": symbol})
+        delimiter = "&" if "?" in health_url else "?"
+        request_url = f"{health_url}{delimiter}{query}"
+        request = _HttpRequest(
+            full_url=request_url,
+            method="GET",
+            headers={"accept": "application/json"},
+        )
+        payload = ""
+        with urlopen(request, self._timeout_seconds) as response:
+            raw_status = getattr(response, "status", 200)
+            status = raw_status if isinstance(raw_status, int) else 200
+            if status < 200 or status >= 300:
+                raise RuntimeError(f"market_context_health_http_{status}")
+            payload = response.read().decode("utf-8")
+        data = json.loads(payload)
+        if not isinstance(data, dict):
+            raise RuntimeError("market_context_health_invalid_payload")
+        payload_dict = cast(dict[str, Any], data)
+        if payload_dict.get("ok") is not True:
+            message = payload_dict.get("message") or "market_context_health_failed"
+            raise RuntimeError(str(message))
+        health = payload_dict.get("health")
+        if not isinstance(health, dict):
+            raise RuntimeError("market_context_health_missing_health")
+        health_dict = cast(dict[str, Any], health)
+        self._health_cache[cache_key] = (now, health_dict)
+        return dict(health_dict)
+
+    def _derive_health_url(self) -> str:
+        parsed = urlsplit(self._base_url)
+        path = parsed.path.rstrip("/")
+        if not path.endswith("/health"):
+            path = f"{path}/health"
+        return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
 
 
 def evaluate_market_context(bundle: Optional[MarketContextBundle]) -> MarketContextStatus:

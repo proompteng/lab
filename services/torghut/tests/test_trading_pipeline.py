@@ -4978,8 +4978,10 @@ class TestTradingPipeline(TestCase):
 
             with self.session_local() as session:
                 reviews = session.execute(select(LLMDecisionReview)).scalars().all()
+                decisions = session.execute(select(TradeDecision)).scalars().all()
                 executions = session.execute(select(Execution)).scalars().all()
                 self.assertEqual(len(reviews), 1)
+                self.assertEqual(len(decisions), 1)
                 self.assertEqual(reviews[0].verdict, "error")
                 self.assertEqual(reviews[0].response_json.get("fallback"), "veto")
                 self.assertEqual(
@@ -4987,6 +4989,10 @@ class TestTradingPipeline(TestCase):
                 )
                 self.assertEqual(
                     reviews[0].response_json.get("llm_runtime", {}).get("subtype"),
+                    "dspy_live_runtime_gate",
+                )
+                self.assertEqual(
+                    decisions[0].decision_json.get("llm_runtime", {}).get("subtype"),
                     "dspy_live_runtime_gate",
                 )
                 self.assertEqual(len(executions), 0)
@@ -6459,6 +6465,10 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(reviews[0].verdict, "error")
                 self.assertEqual(
                     reviews[0].response_json.get("error"),
+                    "market_context_fetch_error",
+                )
+                self.assertEqual(
+                    decisions[0].decision_json.get("market_context", {}).get("reason"),
                     "market_context_fetch_error",
                 )
                 policy_resolution = reviews[0].response_json.get("policy_resolution")
