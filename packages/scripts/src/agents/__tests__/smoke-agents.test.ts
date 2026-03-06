@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'bun:test'
+import { resolve } from 'node:path'
 
 import { buildHelmArgs } from '../smoke-agents'
 
 describe('buildHelmArgs', () => {
   it('applies image repository, tag, and empty digest overrides', () => {
+    const valuesFile = resolve(process.cwd(), 'charts/agents/values-ci.yaml')
+    const chartPath = resolve(process.cwd(), 'charts/agents')
     const args = buildHelmArgs({
       releaseName: 'agents',
       namespace: 'agents-ci',
-      valuesFile: '/workspace/lab/charts/agents/values-ci.yaml',
+      valuesFile,
       createNamespace: true,
       databaseUrl: 'postgresql://agents:pw@agents-postgres:5432/agents?sslmode=disable',
       imageRepository: 'ghcr.io/proompteng/jangar',
@@ -20,11 +23,11 @@ describe('buildHelmArgs', () => {
       'upgrade',
       '--install',
       'agents',
-      '/workspace/lab/charts/agents',
+      chartPath,
       '--namespace',
       'agents-ci',
       '--values',
-      '/workspace/lab/charts/agents/values-ci.yaml',
+      valuesFile,
       '--create-namespace',
       '--set-string',
       'database.url=postgresql://agents:pw@agents-postgres:5432/agents?sslmode=disable',
@@ -38,10 +41,11 @@ describe('buildHelmArgs', () => {
   })
 
   it('omits image digest when the env key is unset', () => {
+    const valuesFile = resolve(process.cwd(), 'charts/agents/values-local.yaml')
     const args = buildHelmArgs({
       releaseName: 'agents',
       namespace: 'agents',
-      valuesFile: '/workspace/lab/charts/agents/values-local.yaml',
+      valuesFile,
       createNamespace: false,
       imageDigestSet: false,
       imageDigest: '',
