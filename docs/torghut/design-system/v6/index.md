@@ -60,6 +60,7 @@ This pack is positioned as the next architecture layer above:
 26. `26-database-migration-lineage-and-readiness-contract-2026-03-05.md`
 27. `27-live-hypothesis-ledger-and-capital-allocation-contract-2026-03-06.md`
 28. `28-hypothesis-led-alpha-readiness-and-profit-circuit-2026-03-06.md`
+29. `29-code-investigated-vnext-architecture-reset-2026-03-06.md`
 
 ## Recommended Build Order
 
@@ -91,6 +92,7 @@ This pack is positioned as the next architecture layer above:
 26. `26-database-migration-lineage-and-readiness-contract-2026-03-05.md`
 27. `27-live-hypothesis-ledger-and-capital-allocation-contract-2026-03-06.md`
 28. `28-hypothesis-led-alpha-readiness-and-profit-circuit-2026-03-06.md`
+29. `29-code-investigated-vnext-architecture-reset-2026-03-06.md`
 
 ## Why This Sequence
 
@@ -104,3 +106,6 @@ This pack is positioned as the next architecture layer above:
 - Live profitability must ultimately be governed by a database-backed hypothesis ledger, not only by static artifacts.
 - PostHog observability design is sequenced late to instrument stable runtime paths and avoid telemetry contract churn.
 - The hypothesis-led alpha readiness and profit circuit closes the remaining gap between runtime health and capital promotion, ensuring profitable scale-up is evidence-backed instead of inferred from process uptime.
+- The code-investigated vNext architecture reset is sequenced last because it reframes the pack around the now-visible
+  gap between control-plane completion and empirical alpha readiness, and it defines the contract for the next wave of
+  implementation work.
