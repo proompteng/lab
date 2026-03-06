@@ -59,6 +59,11 @@ const globalState = globalThis as typeof globalThis & {
 
 const nowIso = () => new Date().toISOString()
 const toMicroTime = (date: Date) => new V1MicroTime(date.getTime())
+const isTestEnv = () =>
+  process.env.NODE_ENV === 'test' ||
+  Boolean(process.env.VITEST) ||
+  Boolean(process.env.VITEST_POOL_ID) ||
+  Boolean(process.env.VITEST_WORKER_ID)
 
 const parseBooleanEnv = (value: string | undefined, fallback: boolean) => {
   if (!value) return fallback
@@ -82,7 +87,7 @@ const isControllerWorkloadFlagEnabled = (value: string | undefined, defaultValue
 }
 
 export const isLeaderElectionRequired = () => {
-  if (process.env.NODE_ENV === 'test') return false
+  if (isTestEnv()) return false
   // Only gate when this process is actually running leader-gated controller loops.
   const agents = isControllerWorkloadFlagEnabled(process.env.JANGAR_AGENTS_CONTROLLER_ENABLED, true)
   const orchestration = isControllerWorkloadFlagEnabled(process.env.JANGAR_ORCHESTRATION_CONTROLLER_ENABLED, true)
@@ -382,7 +387,7 @@ export const requireLeaderForMutationHttp = (): Response | null => {
 }
 
 export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) => {
-  if (process.env.NODE_ENV === 'test') return
+  if (isTestEnv()) return
   const required = isLeaderElectionRequired()
   const config = resolveLeaderElectionConfig()
 

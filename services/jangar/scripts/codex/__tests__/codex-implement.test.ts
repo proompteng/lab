@@ -216,11 +216,13 @@ describe('runCodexImplementation', () => {
     delete process.env.PR_URL_PATH
     delete process.env.CODEX_MODEL
     delete process.env.CODEX_MODEL_FALLBACKS
+    delete process.env.CODEX_REQUIRE_PULL_REQUEST
     delete process.env.CODEX_VERIFY_PR_CHECKS_WITH_GH
     delete process.env.CODEX_VERIFY_MERGE_WITH_GH
     delete process.env.CODEX_VERIFY_RELEASE_ROLLOUT_WITH_CLUSTER
     delete process.env.CODEX_STRICT_ROLE_EVIDENCE
     delete process.env.CODEX_ALLOW_HEURISTIC_EVIDENCE
+    delete process.env.VCS_PULL_REQUESTS_ENABLED
     process.env.WORKTREE = workdir
     process.env.LGTM_LOKI_ENDPOINT = 'http://localhost/loki'
     process.env.CHANNEL_SCRIPT = ''
