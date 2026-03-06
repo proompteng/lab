@@ -4,7 +4,7 @@ metadata:
   name: codex-spark-smoke-agent
 spec:
   providerRef:
-    name: codex-spark
+    name: codex-spark-smoke
   defaults:
     systemPromptRef:
       kind: ConfigMap
