@@ -175,6 +175,17 @@ export const ControlPlaneStatusPanel = ({
               <span>Backoff limit exceeded: {renderSummaryValue(status.workflows.backoff_limit_exceeded_jobs)}</span>
               <span>Window: {renderSummaryValue(status.workflows.window_minutes)}m</span>
             </div>
+            <div className="flex flex-wrap gap-4">
+              <span>Data confidence: {renderSummaryValue(status.workflows.data_confidence)}</span>
+              <span>
+                Namespace coverage: {renderSummaryValue(status.workflows.collected_namespaces)}/
+                {renderSummaryValue(status.workflows.target_namespaces)}
+              </span>
+              <span>Collection errors: {renderSummaryValue(status.workflows.collection_errors)}</span>
+            </div>
+            {status.workflows.message ? (
+              <div className="text-muted-foreground">Collection status: {status.workflows.message}</div>
+            ) : null}
             <div className="text-muted-foreground">
               Top failure reasons:{' '}
               {status.workflows.top_failure_reasons.length > 0

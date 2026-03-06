@@ -61,6 +61,11 @@ const buildWorkflowsReliabilityStatus = (
   backoff_limit_exceeded_jobs: 0,
   window_minutes: 15,
   top_failure_reasons: [],
+  data_confidence: 'high',
+  collection_errors: 0,
+  collected_namespaces: 1,
+  target_namespaces: 1,
+  message: '',
   ...overrides,
 })
 
@@ -207,6 +212,11 @@ describe('control-plane status', () => {
       backoff_limit_exceeded_jobs: 0,
       window_minutes: 15,
       top_failure_reasons: [],
+      data_confidence: 'high',
+      collection_errors: 0,
+      collected_namespaces: 1,
+      target_namespaces: 1,
+      message: '',
     })
     expect(status.namespaces).toHaveLength(1)
     expect(status.namespaces[0]?.status).toBe('healthy')
@@ -334,7 +344,7 @@ describe('control-plane status', () => {
     expect(status.namespaces[0]?.degraded_components ?? []).not.toContain('runtime:workflows')
   })
 
-  it('keeps control-plane status healthy when workflow list lookup fails', async () => {
+  it('marks workflow confidence unknown when workflow list lookup fails', async () => {
     kubeClientMocks.createKubernetesClient.mockReturnValue({
       list: vi.fn(async () => {
         throw new Error('simulated kubernetes failure')
@@ -377,9 +387,16 @@ describe('control-plane status', () => {
       backoff_limit_exceeded_jobs: 0,
       window_minutes: 15,
       top_failure_reasons: [],
+      data_confidence: 'unknown',
+      collection_errors: 1,
+      collected_namespaces: 0,
+      target_namespaces: 1,
+      message:
+        'workflow reliability unavailable (1/1 namespace queries failed); sample errors: agents: simulated kubernetes failure',
     })
-    expect(status.namespaces[0]?.status).toBe('healthy')
-    expect(status.namespaces[0]?.degraded_components ?? []).toHaveLength(0)
+    expect(status.namespaces[0]?.status).toBe('degraded')
+    expect(status.namespaces[0]?.degraded_components ?? []).toContain('workflows')
+    expect(status.namespaces[0]?.degraded_components ?? []).toContain('runtime:workflows')
   })
 
   it('throws when kubernetes client creation fails', async () => {

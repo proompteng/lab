@@ -1,6 +1,6 @@
 # Jangar Control Plane Stage Outcome Confidence and Quota Resilience
 
-Status: Proposed (2026-03-05)
+Status: In Progress (2026-03-06)
 
 ## Summary
 
@@ -8,6 +8,39 @@ Current `jangar-control-plane` stage schedules can report `Active/Ready` while s
 `BackoffLimitExceeded`, and discover/plan/verify failures do not contribute to the existing swarm freeze trigger.
 This proposal introduces a unified stage outcome confidence model and quota-aware failure policy so that control-plane
 status reflects execution truth, not only schedule liveness.
+
+## Implementation update (2026-03-06)
+
+This iteration implements the highest-priority runtime slice: stop reporting workflow reliability as implicitly healthy
+when Kubernetes workflow collection fails.
+
+Shipped in this slice:
+
+- `workflows.data_confidence` (`high|degraded|unknown`) in `/api/agents/control-plane/status`.
+- Explicit workflow collection telemetry:
+  - `workflows.collection_errors`
+  - `workflows.collected_namespaces`
+  - `workflows.target_namespaces`
+  - `workflows.message`
+- Namespace degradation wiring for workflow blind spots:
+  - `workflows` is degraded when confidence is not `high`.
+  - `runtime:workflows` is degraded when confidence is `unknown`.
+- UI surfacing for workflow data confidence and collection coverage.
+- Regression tests updated to require degraded status when workflow list lookup fails.
+
+Remaining design slices from this document:
+
+- Stage-level counters and confidence by discover/plan/implement/verify.
+- Freeze trigger expansion from implement-only to all enabled stages.
+- Quota/capacity-specific classification (`ModelCapacityExceeded`) and provider fallback policy metadata.
+
+Rollback path for this slice:
+
+- Revert the workflow confidence fields and namespace degradation wiring in:
+  - `services/jangar/src/server/control-plane-status.ts`
+  - `services/jangar/src/data/agents-control-plane.ts`
+  - `services/jangar/src/components/agents-control-plane-status.tsx`
+- Restore prior test expectations in `services/jangar/src/server/__tests__/control-plane-status.test.ts`.
 
 ## Assessment context
 
