@@ -1765,6 +1765,91 @@ class TestTradingApi(TestCase):
             else:
                 app.state.trading_scheduler = original_scheduler
 
+    def test_trading_autonomy_exposes_bridge_status(self) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        with TemporaryDirectory() as tmpdir:
+            gate_path = Path(tmpdir) / "gate-evaluation.json"
+            gate_path.write_text(
+                json.dumps(
+                    {
+                        "run_id": "run-bridge-1",
+                        "promotion_evidence": {
+                            "simulation_calibration": {
+                                "artifact_ref": "gates/simulation-calibration-report-v1.json",
+                                "status": "calibrated",
+                                "order_count": 12,
+                                "artifact_authority": {
+                                    "authoritative": True,
+                                    "provenance": "paper_runtime_observed",
+                                },
+                            },
+                            "shadow_live_deviation": {
+                                "artifact_ref": "gates/shadow-live-deviation-report-v1.json",
+                                "status": "within_budget",
+                                "avg_abs_slippage_bps": "6",
+                                "artifact_authority": {
+                                    "authoritative": True,
+                                    "provenance": "paper_runtime_observed",
+                                },
+                            },
+                        },
+                        "provenance": {
+                            "gate_report_trace_id": "gate-trace-bridge-1",
+                            "recommendation_trace_id": "rec-trace-bridge-1",
+                            "promotion_evidence_authority": {
+                                "simulation_calibration": {
+                                    "authoritative": True,
+                                },
+                                "shadow_live_deviation": {
+                                    "authoritative": True,
+                                },
+                            },
+                        },
+                        "vnext": {
+                            "strategy_compilation": [
+                                {
+                                    "strategy_id": "intraday-tsmom",
+                                    "compiler_source": "spec_v2",
+                                    "spec_compiled": True,
+                                }
+                            ]
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            try:
+                scheduler = TradingScheduler()
+                scheduler.state.last_autonomy_gates = str(gate_path)
+                scheduler.state.drift_status = "stable"
+                app.state.trading_scheduler = scheduler
+
+                response = self.client.get("/trading/autonomy")
+                self.assertEqual(response.status_code, 200)
+                payload = response.json()
+                self.assertEqual(payload["bridge_status"]["source"], "gate_report")
+                self.assertEqual(
+                    payload["bridge_status"]["strategy_compilation"]["spec_compiled"],
+                    1,
+                )
+                self.assertEqual(
+                    payload["bridge_status"]["simulation_calibration"]["status"],
+                    "calibrated",
+                )
+                self.assertEqual(
+                    payload["bridge_status"]["shadow_live_deviation"]["drift_status"],
+                    "stable",
+                )
+                self.assertEqual(
+                    payload["bridge_status"]["evidence_authority"]["authoritative_count"],
+                    2,
+                )
+            finally:
+                if original_scheduler is None:
+                    del app.state.trading_scheduler
+                else:
+                    app.state.trading_scheduler = original_scheduler
+
     def test_trading_autonomy_evidence_continuity_endpoint_returns_state_report(
         self,
     ) -> None:

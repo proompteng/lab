@@ -31,6 +31,11 @@ from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import settings
+from .trading.evidence_contracts import (
+    ArtifactProvenance,
+    EvidenceMaturity,
+    evidence_contract_payload,
+)
 
 app = FastAPI(title='torghut-lean-runner')
 
@@ -648,6 +653,13 @@ def _deterministic_backtest_result(record: _BacktestRecord) -> dict[str, Any]:
         },
         'replay_hash': replay_hash,
         'deterministic_replay_passed': True,
+        'artifact_authority': evidence_contract_payload(
+            provenance=ArtifactProvenance.SYNTHETIC_GENERATED,
+            maturity=EvidenceMaturity.STUB,
+            authoritative=False,
+            placeholder=True,
+            notes='LEAN backtest result is currently deterministic scaffold output.',
+        ),
     }
 
 

@@ -10,6 +10,11 @@ from typing import Any
 from unittest import TestCase
 from unittest.mock import patch
 
+from app.trading.evidence_contracts import (
+    ArtifactProvenance,
+    EvidenceMaturity,
+    evidence_contract_payload,
+)
 from app.trading.parity import (
     BENCHMARK_PARITY_CONTRACT_SCHEMA_VERSION,
     BENCHMARK_PARITY_REQUIRED_FAMILIES,
@@ -5087,6 +5092,34 @@ def _build_profitability_stage_manifest_payload(
     check_status_overrides: dict[tuple[str, str], str] | None = None,
     artifact_path_overrides: dict[tuple[str, str], Path] | None = None,
 ) -> dict[str, object]:
+    def _artifact_authority(check_name: str) -> dict[str, Any] | None:
+        if check_name in {
+            "hmm_state_posterior_present",
+            "expert_router_registry_present",
+            "janus_event_car_present",
+            "janus_hgrm_reward_present",
+        }:
+            return evidence_contract_payload(
+                provenance=ArtifactProvenance.SYNTHETIC_GENERATED,
+                maturity=EvidenceMaturity.STUB,
+                authoritative=False,
+                placeholder=True,
+            )
+        if check_name in {
+            "evaluation_report_present",
+            "walkforward_results_present",
+            "profitability_benchmark_present",
+            "profitability_evidence_present",
+            "profitability_validation_present",
+            "gate_evaluation_present",
+            "recalibration_report_present",
+        }:
+            return evidence_contract_payload(
+                provenance=ArtifactProvenance.HISTORICAL_MARKET_REPLAY,
+                maturity=EvidenceMaturity.UNCALIBRATED,
+            )
+        return None
+
     def _artifact_sha(payload_path: Path | None) -> str:
         if payload_path is None or not payload_path.exists():
             return "missing"
@@ -5274,6 +5307,9 @@ def _build_profitability_stage_manifest_payload(
                 "stage": stage_name,
                 "check": check_name,
             }
+            authority = _artifact_authority(check_name)
+            if authority:
+                artifacts[artifact_key]["artifact_authority"] = authority
         stages[stage_name] = {
             "status": resolved_stage_statuses[stage_name],
             "checks": checks,

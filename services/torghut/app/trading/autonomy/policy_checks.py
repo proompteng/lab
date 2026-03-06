@@ -12,6 +12,11 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlparse
 
+from ..evidence_contracts import (
+    NON_AUTHORITATIVE_PROVENANCE,
+    contract_from_artifact_payload,
+    parse_evidence_contract,
+)
 from ..parity import (
     ADVISOR_FALLBACK_SLO_CONTRACT_SCHEMA_VERSION,
     ADVISOR_FALLBACK_SLO_REQUIRED_REASONS,
@@ -166,6 +171,14 @@ def evaluate_promotion_prerequisites(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
     )
+    simulation_calibration_required = _requires_simulation_calibration(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    )
+    shadow_live_deviation_required = _requires_shadow_live_deviation(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    )
     hmm_state_posterior_required = _requires_hmm_state_posterior(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
@@ -185,6 +198,8 @@ def evaluate_promotion_prerequisites(
         include_advisor_fallback_slo_artifacts=advisor_fallback_slo_required,
         include_contamination_artifacts=contamination_registry_required,
         include_stress_artifacts=stress_required,
+        include_simulation_calibration_artifacts=simulation_calibration_required,
+        include_shadow_live_deviation_artifacts=shadow_live_deviation_required,
         include_hmm_state_posterior_artifacts=hmm_state_posterior_required,
         include_expert_router_artifacts=expert_router_registry_required,
         require_profitability_manifest=require_profitability_manifest,
@@ -758,6 +773,53 @@ def _append_profitability_stage_manifest_reasons(
                         }
                     )
                     continue
+                authority_payload = _as_dict(artifact_payload.get("artifact_authority"))
+                if not authority_payload:
+                    authority_payload = contract_from_artifact_payload(
+                        _load_json_if_exists(artifact_file)
+                    )
+                if stage_name in {"validation", "execution"}:
+                    if not authority_payload:
+                        reasons.append(
+                            "profitability_stage_manifest_artifact_authority_missing"
+                        )
+                        reason_details.append(
+                            {
+                                "reason": "profitability_stage_manifest_artifact_authority_missing",
+                                "artifact_ref": str(artifact_file),
+                                "stage": stage_name,
+                            }
+                        )
+                    else:
+                        normalized_contract = parse_evidence_contract(authority_payload)
+                        provenance = str(
+                            normalized_contract.get("provenance", "")
+                        ).strip()
+                        if provenance in {item.value for item in NON_AUTHORITATIVE_PROVENANCE}:
+                            reasons.append(
+                                "profitability_stage_manifest_artifact_non_authoritative"
+                            )
+                            reason_details.append(
+                                {
+                                    "reason": "profitability_stage_manifest_artifact_non_authoritative",
+                                    "artifact_ref": str(artifact_file),
+                                    "stage": stage_name,
+                                    "provenance": provenance,
+                                    "maturity": normalized_contract.get("maturity"),
+                                }
+                            )
+                        if not bool(normalized_contract.get("authoritative", False)):
+                            reasons.append(
+                                "profitability_stage_manifest_artifact_authoritative_flag_false"
+                            )
+                            reason_details.append(
+                                {
+                                    "reason": "profitability_stage_manifest_artifact_authoritative_flag_false",
+                                    "artifact_ref": str(artifact_file),
+                                    "stage": stage_name,
+                                    "provenance": provenance,
+                                }
+                            )
                 if (
                     artifact_file.suffix.lower() == ".json"
                     and _load_json_if_exists(artifact_file) is None
@@ -1304,6 +1366,8 @@ def _required_artifacts_for_target(
     include_advisor_fallback_slo_artifacts: bool,
     include_contamination_artifacts: bool,
     include_stress_artifacts: bool,
+    include_simulation_calibration_artifacts: bool,
+    include_shadow_live_deviation_artifacts: bool,
     include_hmm_state_posterior_artifacts: bool,
     include_expert_router_artifacts: bool,
     require_profitability_manifest: bool,
@@ -1396,6 +1460,18 @@ def _required_artifacts_for_target(
         for artifact in stress_artifacts:
             if isinstance(artifact, str):
                 required.append(artifact)
+    if include_simulation_calibration_artifacts:
+        simulation_calibration_artifacts = (
+            _simulation_calibration_required_artifact_refs(policy_payload)
+        )
+        for artifact in simulation_calibration_artifacts:
+            required.append(artifact)
+    if include_shadow_live_deviation_artifacts:
+        shadow_live_deviation_artifacts = (
+            _shadow_live_deviation_required_artifact_refs(policy_payload)
+        )
+        for artifact in shadow_live_deviation_artifacts:
+            required.append(artifact)
     if include_hmm_state_posterior_artifacts:
         hmm_artifacts = _hmm_state_posterior_required_artifact_refs(policy_payload)
         for artifact in hmm_artifacts:
@@ -1558,6 +1634,40 @@ def _expert_router_required_artifact_refs(
     return ["gates/expert-router-registry-v1.json"]
 
 
+def _simulation_calibration_required_artifact_refs(
+    policy_payload: dict[str, Any],
+) -> list[str]:
+    artifacts_raw = policy_payload.get(
+        "promotion_simulation_calibration_required_artifacts",
+        ["gates/simulation-calibration-report-v1.json"],
+    )
+    artifacts = [
+        str(artifact).strip()
+        for artifact in _list_from_any(artifacts_raw)
+        if isinstance(artifact, str) and artifact.strip()
+    ]
+    if artifacts:
+        return artifacts
+    return ["gates/simulation-calibration-report-v1.json"]
+
+
+def _shadow_live_deviation_required_artifact_refs(
+    policy_payload: dict[str, Any],
+) -> list[str]:
+    artifacts_raw = policy_payload.get(
+        "promotion_shadow_live_deviation_required_artifacts",
+        ["gates/shadow-live-deviation-report-v1.json"],
+    )
+    artifacts = [
+        str(artifact).strip()
+        for artifact in _list_from_any(artifacts_raw)
+        if isinstance(artifact, str) and artifact.strip()
+    ]
+    if artifacts:
+        return artifacts
+    return ["gates/shadow-live-deviation-report-v1.json"]
+
+
 def _requires_hmm_state_posterior(
     *, policy_payload: dict[str, Any], promotion_target: str
 ) -> bool:
@@ -1651,6 +1761,48 @@ def _requires_stress_evidence(
         return False
     required_targets_raw = policy_payload.get(
         "promotion_stress_required_targets", ["paper", "live"]
+    )
+    required_targets = [
+        str(target)
+        for target in _list_from_any(required_targets_raw)
+        if isinstance(target, str)
+    ]
+    if not required_targets:
+        return False
+    return promotion_target in required_targets
+
+
+def _requires_simulation_calibration(
+    *, policy_payload: dict[str, Any], promotion_target: str
+) -> bool:
+    if promotion_target == "shadow":
+        return False
+    if not bool(policy_payload.get("promotion_require_simulation_calibration", False)):
+        return False
+    required_targets_raw = policy_payload.get(
+        "promotion_simulation_calibration_required_targets",
+        ["paper", "live"],
+    )
+    required_targets = [
+        str(target)
+        for target in _list_from_any(required_targets_raw)
+        if isinstance(target, str)
+    ]
+    if not required_targets:
+        return False
+    return promotion_target in required_targets
+
+
+def _requires_shadow_live_deviation(
+    *, policy_payload: dict[str, Any], promotion_target: str
+) -> bool:
+    if promotion_target == "shadow":
+        return False
+    if not bool(policy_payload.get("promotion_require_shadow_live_deviation", False)):
+        return False
+    required_targets_raw = policy_payload.get(
+        "promotion_shadow_live_deviation_required_targets",
+        ["paper", "live"],
     )
     required_targets = [
         str(target)
@@ -1775,6 +1927,13 @@ def _evaluate_promotion_evidence(
     evidence = (
         cast(dict[str, Any], evidence_raw) if isinstance(evidence_raw, dict) else {}
     )
+    if bool(policy_payload.get("promotion_require_truthful_evidence_contracts", False)):
+        authority_reasons, authority_details = _evaluate_promotion_evidence_authority(
+            evidence=evidence,
+            promotion_target=promotion_target,
+        )
+        reasons.extend(authority_reasons)
+        details.extend(authority_details)
     stress_required = _requires_stress_evidence(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
@@ -1803,6 +1962,29 @@ def _evaluate_promotion_evidence(
         reasons.extend(fold_reasons)
         details.extend(fold_details)
         refs.extend(fold_refs)
+    simulation_calibration_reasons, simulation_calibration_details, simulation_calibration_refs = (
+        _evaluate_simulation_calibration_evidence(
+            policy_payload=policy_payload,
+            gate_report_payload=gate_report_payload,
+            artifact_root=artifact_root,
+            promotion_target=promotion_target,
+        )
+    )
+    reasons.extend(simulation_calibration_reasons)
+    details.extend(simulation_calibration_details)
+    refs.extend(simulation_calibration_refs)
+
+    shadow_live_deviation_reasons, shadow_live_deviation_details, shadow_live_deviation_refs = (
+        _evaluate_shadow_live_deviation_evidence(
+            policy_payload=policy_payload,
+            gate_report_payload=gate_report_payload,
+            artifact_root=artifact_root,
+            promotion_target=promotion_target,
+        )
+    )
+    reasons.extend(shadow_live_deviation_reasons)
+    details.extend(shadow_live_deviation_details)
+    refs.extend(shadow_live_deviation_refs)
 
     janus_reasons, janus_details, janus_refs = _evaluate_janus_evidence(
         policy_payload=policy_payload,
@@ -1907,6 +2089,84 @@ def _evaluate_promotion_evidence(
     refs.extend(advisor_refs)
 
     return sorted(set(reasons)), details, sorted(set(refs))
+
+
+def _evaluate_promotion_evidence_authority(
+    *,
+    evidence: dict[str, Any],
+    promotion_target: str,
+) -> tuple[list[str], list[dict[str, object]]]:
+    reasons: list[str] = []
+    details: list[dict[str, object]] = []
+    required = (
+        'fold_metrics',
+        'stress_metrics',
+        'simulation_calibration',
+        'shadow_live_deviation',
+        'janus_q',
+        'benchmark_parity',
+        'foundation_router_parity',
+        'deeplob_bdlob_contract',
+        'advisor_fallback_slo',
+        'hmm_state_posterior',
+        'expert_router_registry',
+        'contamination_registry',
+        'promotion_rationale',
+    )
+    for evidence_name in required:
+        payload = _as_dict(evidence.get(evidence_name))
+        if not payload:
+            continue
+        contract_payload = _extract_evidence_authority_payload(payload)
+        if not contract_payload:
+            reasons.append('promotion_evidence_authority_missing')
+            details.append(
+                {
+                    'reason': 'promotion_evidence_authority_missing',
+                    'evidence_name': evidence_name,
+                    'promotion_target': promotion_target,
+                }
+            )
+            continue
+        contract = parse_evidence_contract(contract_payload)
+        provenance = str(contract.get('provenance', '')).strip()
+        if provenance in {item.value for item in NON_AUTHORITATIVE_PROVENANCE}:
+            reasons.append('promotion_evidence_non_authoritative')
+            details.append(
+                {
+                    'reason': 'promotion_evidence_non_authoritative',
+                    'evidence_name': evidence_name,
+                    'promotion_target': promotion_target,
+                    'provenance': provenance,
+                    'maturity': contract.get('maturity'),
+                }
+            )
+        if not bool(contract.get('authoritative', False)):
+            reasons.append('promotion_evidence_authoritative_flag_false')
+            details.append(
+                {
+                    'reason': 'promotion_evidence_authoritative_flag_false',
+                    'evidence_name': evidence_name,
+                    'promotion_target': promotion_target,
+                    'provenance': provenance,
+                }
+            )
+    return reasons, details
+
+
+def _extract_evidence_authority_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    direct = _as_dict(payload.get('artifact_authority'))
+    if direct:
+        return direct
+    contract = contract_from_artifact_payload(payload)
+    if contract:
+        return contract
+    for nested_key in ('event_car', 'hgrm_reward'):
+        nested_payload = _as_dict(payload.get(nested_key))
+        nested_contract = _as_dict(nested_payload.get('artifact_authority'))
+        if nested_contract:
+            return nested_contract
+    return {}
 
 
 def _requires_foundation_router_parity(
@@ -4378,6 +4638,305 @@ def _evaluate_expert_router_registry_evidence(
                     "expected_artifact_hash": expected_hash,
                 }
             )
+
+    return reasons, details, refs
+
+
+def _evaluate_simulation_calibration_evidence(
+    *,
+    policy_payload: dict[str, Any],
+    gate_report_payload: dict[str, Any],
+    artifact_root: Path,
+    promotion_target: str,
+) -> tuple[list[str], list[dict[str, object]], list[str]]:
+    if not _requires_simulation_calibration(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    ):
+        return [], [], []
+
+    reasons: list[str] = []
+    details: list[dict[str, object]] = []
+    refs: list[str] = []
+    evidence = _as_dict(gate_report_payload.get("promotion_evidence"))
+    calibration = _as_dict(evidence.get("simulation_calibration"))
+    evidence_ref = str(calibration.get("artifact_ref") or "").strip()
+    if not evidence_ref:
+        reasons.append("simulation_calibration_artifact_ref_missing")
+        details.append({"reason": "simulation_calibration_artifact_ref_missing"})
+
+    required_artifacts = _simulation_calibration_required_artifact_refs(policy_payload)
+    artifact_ref = (evidence_ref or required_artifacts[0]).strip()
+    artifact_path = _normalize_artifact_path(artifact_ref, artifact_root=artifact_root)
+    if artifact_path is None:
+        reasons.append("simulation_calibration_artifact_ref_invalid")
+        details.append(
+            {
+                "reason": "simulation_calibration_artifact_ref_invalid",
+                "artifact_ref": artifact_ref,
+            }
+        )
+        return reasons, details, refs
+
+    refs.append(evidence_ref or str(artifact_path))
+    payload = _load_json_if_exists(artifact_path)
+    if payload is None:
+        reasons.append("simulation_calibration_artifact_invalid_json")
+        details.append(
+            {
+                "reason": "simulation_calibration_artifact_invalid_json",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+        return reasons, details, refs
+
+    schema_version = str(payload.get("schema_version", "")).strip()
+    if schema_version != "simulation-calibration-report-v1":
+        reasons.append("simulation_calibration_schema_version_invalid")
+        details.append(
+            {
+                "reason": "simulation_calibration_schema_version_invalid",
+                "artifact_ref": str(artifact_path),
+                "schema_version": schema_version,
+            }
+        )
+
+    status = str(payload.get("status", "")).strip()
+    if status != "calibrated":
+        reasons.append("simulation_calibration_status_not_calibrated")
+        details.append(
+            {
+                "reason": "simulation_calibration_status_not_calibrated",
+                "artifact_ref": str(artifact_path),
+                "status": status,
+            }
+        )
+
+    order_count = _int_or_default(payload.get("order_count"), -1)
+    minimum_order_count = max(
+        1,
+        _int_or_default(
+            policy_payload.get("promotion_simulation_calibration_min_order_count"),
+            1,
+        ),
+    )
+    if order_count < minimum_order_count:
+        reasons.append("simulation_calibration_order_count_below_minimum")
+        details.append(
+            {
+                "reason": "simulation_calibration_order_count_below_minimum",
+                "artifact_ref": str(artifact_path),
+                "actual_order_count": order_count,
+                "minimum_order_count": minimum_order_count,
+            }
+        )
+
+    expected_shortfall_coverage = _float_or_none(
+        payload.get("expected_shortfall_coverage")
+    )
+    minimum_coverage = _float_or_none(
+        policy_payload.get(
+            "promotion_simulation_calibration_min_expected_shortfall_coverage"
+        )
+    )
+    if minimum_coverage is None:
+        minimum_coverage = 0.5
+    if expected_shortfall_coverage is None:
+        reasons.append("simulation_calibration_expected_shortfall_coverage_missing")
+        details.append(
+            {
+                "reason": "simulation_calibration_expected_shortfall_coverage_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    elif expected_shortfall_coverage < minimum_coverage:
+        reasons.append("simulation_calibration_expected_shortfall_coverage_below_threshold")
+        details.append(
+            {
+                "reason": "simulation_calibration_expected_shortfall_coverage_below_threshold",
+                "artifact_ref": str(artifact_path),
+                "actual_coverage": expected_shortfall_coverage,
+                "minimum_coverage": minimum_coverage,
+            }
+        )
+
+    avg_calibration_error_bps = _float_or_none(payload.get("avg_calibration_error_bps"))
+    max_avg_calibration_error_bps = _float_or_none(
+        policy_payload.get("promotion_simulation_calibration_max_avg_calibration_error_bps")
+    )
+    if max_avg_calibration_error_bps is None:
+        max_avg_calibration_error_bps = 25.0
+    if avg_calibration_error_bps is None:
+        reasons.append("simulation_calibration_avg_calibration_error_bps_missing")
+        details.append(
+            {
+                "reason": "simulation_calibration_avg_calibration_error_bps_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    elif avg_calibration_error_bps > max_avg_calibration_error_bps:
+        reasons.append("simulation_calibration_avg_calibration_error_bps_exceeds_threshold")
+        details.append(
+            {
+                "reason": "simulation_calibration_avg_calibration_error_bps_exceeds_threshold",
+                "artifact_ref": str(artifact_path),
+                "actual_avg_calibration_error_bps": avg_calibration_error_bps,
+                "maximum_avg_calibration_error_bps": max_avg_calibration_error_bps,
+            }
+        )
+
+    confidence_gate_action = str(payload.get("confidence_gate_action", "")).strip()
+    if confidence_gate_action != "pass":
+        reasons.append("simulation_calibration_confidence_gate_action_not_pass")
+        details.append(
+            {
+                "reason": "simulation_calibration_confidence_gate_action_not_pass",
+                "artifact_ref": str(artifact_path),
+                "confidence_gate_action": confidence_gate_action,
+            }
+        )
+
+    return reasons, details, refs
+
+
+def _evaluate_shadow_live_deviation_evidence(
+    *,
+    policy_payload: dict[str, Any],
+    gate_report_payload: dict[str, Any],
+    artifact_root: Path,
+    promotion_target: str,
+) -> tuple[list[str], list[dict[str, object]], list[str]]:
+    if not _requires_shadow_live_deviation(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    ):
+        return [], [], []
+
+    reasons: list[str] = []
+    details: list[dict[str, object]] = []
+    refs: list[str] = []
+    evidence = _as_dict(gate_report_payload.get("promotion_evidence"))
+    deviation = _as_dict(evidence.get("shadow_live_deviation"))
+    evidence_ref = str(deviation.get("artifact_ref") or "").strip()
+    if not evidence_ref:
+        reasons.append("shadow_live_deviation_artifact_ref_missing")
+        details.append({"reason": "shadow_live_deviation_artifact_ref_missing"})
+
+    required_artifacts = _shadow_live_deviation_required_artifact_refs(policy_payload)
+    artifact_ref = (evidence_ref or required_artifacts[0]).strip()
+    artifact_path = _normalize_artifact_path(artifact_ref, artifact_root=artifact_root)
+    if artifact_path is None:
+        reasons.append("shadow_live_deviation_artifact_ref_invalid")
+        details.append(
+            {
+                "reason": "shadow_live_deviation_artifact_ref_invalid",
+                "artifact_ref": artifact_ref,
+            }
+        )
+        return reasons, details, refs
+
+    refs.append(evidence_ref or str(artifact_path))
+    payload = _load_json_if_exists(artifact_path)
+    if payload is None:
+        reasons.append("shadow_live_deviation_artifact_invalid_json")
+        details.append(
+            {
+                "reason": "shadow_live_deviation_artifact_invalid_json",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+        return reasons, details, refs
+
+    schema_version = str(payload.get("schema_version", "")).strip()
+    if schema_version != "shadow-live-deviation-report-v1":
+        reasons.append("shadow_live_deviation_schema_version_invalid")
+        details.append(
+            {
+                "reason": "shadow_live_deviation_schema_version_invalid",
+                "artifact_ref": str(artifact_path),
+                "schema_version": schema_version,
+            }
+        )
+
+    status = str(payload.get("status", "")).strip()
+    if status != "within_budget":
+        reasons.append("shadow_live_deviation_status_not_within_budget")
+        details.append(
+            {
+                "reason": "shadow_live_deviation_status_not_within_budget",
+                "artifact_ref": str(artifact_path),
+                "status": status,
+            }
+        )
+
+    order_count = _int_or_default(payload.get("order_count"), -1)
+    minimum_order_count = max(
+        1,
+        _int_or_default(
+            policy_payload.get("promotion_shadow_live_deviation_min_order_count"),
+            1,
+        ),
+    )
+    if order_count < minimum_order_count:
+        reasons.append("shadow_live_deviation_order_count_below_minimum")
+        details.append(
+            {
+                "reason": "shadow_live_deviation_order_count_below_minimum",
+                "artifact_ref": str(artifact_path),
+                "actual_order_count": order_count,
+                "minimum_order_count": minimum_order_count,
+            }
+        )
+
+    avg_abs_slippage_bps = _float_or_none(payload.get("avg_abs_slippage_bps"))
+    max_avg_abs_slippage_bps = _float_or_none(
+        policy_payload.get("promotion_shadow_live_deviation_max_avg_abs_slippage_bps")
+    )
+    if max_avg_abs_slippage_bps is None:
+        max_avg_abs_slippage_bps = 20.0
+    if avg_abs_slippage_bps is None:
+        reasons.append("shadow_live_deviation_avg_abs_slippage_bps_missing")
+        details.append(
+            {
+                "reason": "shadow_live_deviation_avg_abs_slippage_bps_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    elif avg_abs_slippage_bps > max_avg_abs_slippage_bps:
+        reasons.append("shadow_live_deviation_avg_abs_slippage_bps_exceeds_threshold")
+        details.append(
+            {
+                "reason": "shadow_live_deviation_avg_abs_slippage_bps_exceeds_threshold",
+                "artifact_ref": str(artifact_path),
+                "actual_avg_abs_slippage_bps": avg_abs_slippage_bps,
+                "maximum_avg_abs_slippage_bps": max_avg_abs_slippage_bps,
+            }
+        )
+
+    avg_abs_divergence_bps = _float_or_none(payload.get("avg_abs_divergence_bps"))
+    max_avg_abs_divergence_bps = _float_or_none(
+        policy_payload.get("promotion_shadow_live_deviation_max_avg_abs_divergence_bps")
+    )
+    if max_avg_abs_divergence_bps is None:
+        max_avg_abs_divergence_bps = 15.0
+    if avg_abs_divergence_bps is None:
+        reasons.append("shadow_live_deviation_avg_abs_divergence_bps_missing")
+        details.append(
+            {
+                "reason": "shadow_live_deviation_avg_abs_divergence_bps_missing",
+                "artifact_ref": str(artifact_path),
+            }
+        )
+    elif avg_abs_divergence_bps > max_avg_abs_divergence_bps:
+        reasons.append("shadow_live_deviation_avg_abs_divergence_bps_exceeds_threshold")
+        details.append(
+            {
+                "reason": "shadow_live_deviation_avg_abs_divergence_bps_exceeds_threshold",
+                "artifact_ref": str(artifact_path),
+                "actual_avg_abs_divergence_bps": avg_abs_divergence_bps,
+                "maximum_avg_abs_divergence_bps": max_avg_abs_divergence_bps,
+            }
+        )
 
     return reasons, details, refs
 
