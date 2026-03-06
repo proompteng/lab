@@ -77,7 +77,21 @@ spec:
               cat <<'EOF' | kubectl -n "{{ $namespace }}" apply -f -
 {{- toYaml .Values.argocdHooks.smoke.agentRun | nindent 14 }}
               EOF
-              kubectl -n "{{ $namespace }}" wait --for=condition=Succeeded "agentruns.agents.proompteng.ai/{{ $smokeName }}" --timeout={{ .Values.argocdHooks.postSync.waitTimeout }}
+              timeout {{ .Values.argocdHooks.postSync.waitTimeout }} sh -c '
+                while true; do
+                  phase="$(kubectl -n "{{ $namespace }}" get "agentruns.agents.proompteng.ai/{{ $smokeName }}" -o jsonpath="{.status.phase}" 2>/dev/null || true)"
+                  case "$phase" in
+                    Succeeded)
+                      exit 0
+                      ;;
+                    Failed|Cancelled)
+                      kubectl -n "{{ $namespace }}" get "agentruns.agents.proompteng.ai/{{ $smokeName }}" -o yaml
+                      exit 1
+                      ;;
+                  esac
+                  sleep 5
+                done
+              '
               {{- if .Values.argocdHooks.postSync.cleanup }}
               kubectl -n "{{ $namespace }}" delete agentruns.agents.proompteng.ai "{{ $smokeName }}" --ignore-not-found
               {{- if $labelSelector }}

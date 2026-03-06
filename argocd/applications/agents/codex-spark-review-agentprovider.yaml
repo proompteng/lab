@@ -56,7 +56,7 @@ spec:
   inputFiles:
     - path: /root/.codex/config.toml
       content: |-
-        model = "gpt-5.4"
+        model = "gpt-5.3-codex-spark"
         model_reasoning_summary = "none"
         model_reasoning_effort = "xhigh"
         model_verbosity = "medium"

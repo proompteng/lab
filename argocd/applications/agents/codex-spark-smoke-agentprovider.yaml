@@ -1,0 +1,112 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentProvider
+metadata:
+  name: codex-spark-smoke
+spec:
+  binary: /bin/bash
+  argsTemplate:
+    - -lc
+    - |-
+      set -euo pipefail
+      PROMPT_FILE="$(mktemp /tmp/codex-smoke-prompt.XXXXXX.txt)"
+      EVENT_FILE="/workspace/run.json"
+
+      python3 - "$EVENT_FILE" "$PROMPT_FILE" <<'PY'
+      import json
+      import sys
+      from pathlib import Path
+
+      event_path = Path(sys.argv[1])
+      prompt_path = Path(sys.argv[2])
+      payload = json.loads(event_path.read_text(encoding='utf-8'))
+      params = payload.get('parameters') or {}
+
+      def read_value(key: str) -> str:
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+          return value.strip()
+        value = params.get(key)
+        if isinstance(value, str) and value.strip():
+          return value.strip()
+        return ''
+
+      repository = read_value('repository')
+      base = read_value('base')
+      head = read_value('head')
+      stage = read_value('stage')
+      objective = read_value('objective')
+
+      prompt = f"""Execute a read-only Codex runtime smoke validation.
+
+      Requirements:
+      - Do not modify repository state, branches, commits, pull requests, issues, Huly artifacts, or cluster resources.
+      - Use the mounted Codex config/auth exactly as provided.
+      - Verify the configured provider, model, auth secret, and runner image can start successfully.
+      - Write `/workspace/.agentrun/smoke/result.md` with:
+        - startup status
+        - resolved repository/base/head
+        - resolved stage
+        - one-line confirmation that no repo or external side effects were performed
+      - Keep the run short and deterministic.
+      - After the file is written, stop immediately and respond with exactly `OK`.
+
+      Resolved inputs:
+      - repository: {repository}
+      - base: {base}
+      - head: {head}
+      - stage: {stage}
+      - objective: {objective}
+      """
+
+      prompt_path.write_text(prompt, encoding='utf-8')
+      PY
+
+      mkdir -p /workspace/.agentrun/smoke
+      export HOME=/root
+      export CODEX_CONFIG=/root/.codex/config.toml
+      codex exec --skip-git-repo-check -C /workspace/lab < "$PROMPT_FILE"
+      test -s /workspace/.agentrun/smoke/result.md
+  envTemplate:
+    CODEX_LOG_LEVEL: info
+    NATS_URL: nats://nats.nats.svc.cluster.local:4222
+    HOME: /root
+    CODEX_CONFIG: /root/.codex/config.toml
+    CODEX_DISABLE_RESUME: "1"
+    CODEX_MAX_SESSION_ATTEMPTS: "1"
+  inputFiles:
+    - path: /root/.codex/config.toml
+      content: |-
+        model = "gpt-5.3-codex-spark"
+        model_reasoning_summary = "none"
+        model_reasoning_effort = "xhigh"
+        model_verbosity = "medium"
+        approval_policy = "never"
+        sandbox_mode = "danger-full-access"
+        web_search = "live"
+        suppress_unstable_features_warning = true
+
+        [features]
+        undo = true
+        enable_request_compression = true
+        apply_patch_freeform = true
+        unified_exec = true
+        shell_snapshot = true
+        steer = true
+        multi_agent = true
+        child_agents_md = true
+        collaboration_modes = true
+        responses_websockets = false
+
+        [shell_environment_policy]
+        ignore_default_excludes = true
+
+        [projects."/workspace/lab"]
+        trust_level = "trusted"
+
+        [projects."/root"]
+        trust_level = "trusted"
+  outputArtifacts:
+    - name: runner-log
+      path: /workspace/.agent/runner.log
+    - name: runner-status
+      path: /workspace/.agent/status.json
