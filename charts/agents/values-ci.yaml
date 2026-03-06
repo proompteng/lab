@@ -1,7 +1,7 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/proompteng/jangar
+  repository: registry.ide-newton.ts.net/lab/jangar-control-plane
   tag: latest
   digest: ''
   pullPolicy: IfNotPresent
@@ -11,8 +11,8 @@ namespaceOverride: agents-ci
 grpc:
   enabled: false
 
-# The CI image should stay on a public registry for reliable pull in hosted CI environments and uses
-# `/health` for readiness to avoid a rollout stall during smoke tests.
+# The CI control-plane image should stay on the published registry.ide-newton release image for reliable
+# hosted fallback pulls and uses `/health` for readiness to avoid a rollout stall during smoke tests.
 readinessProbe:
   path: /health
 
