@@ -9,7 +9,7 @@ spec:
     CODEX_LOG_LEVEL: info
     NATS_URL: nats://nats.nats.svc.cluster.local:4222
     AGENT_PROVIDER_PATH: /root/.codex/provider-torghut-market-context.json
-    CODEX_MARKET_CONTEXT_PROVIDER_CHAIN: codex-spark:gpt-5.4
+    CODEX_MARKET_CONTEXT_PROVIDER_CHAIN: codex-spark:gpt-5.3-codex-spark
     CODEX_MARKET_CONTEXT_ATTEMPT_TIMEOUT_SECONDS: "600"
     CODEX_MARKET_CONTEXT_OVERALL_TIMEOUT_SECONDS: "1200"
     CODEX_MARKET_CONTEXT_PROGRESS_TIMEOUT_SECONDS: "10"
@@ -20,7 +20,7 @@ spec:
   inputFiles:
     - path: /root/.codex/config.toml
       content: |-
-        model = "gpt-5.4"
+        model = "gpt-5.3-codex-spark"
         model_reasoning_summary = "none"
         model_reasoning_effort = "xhigh"
         model_verbosity = "medium"
@@ -214,7 +214,7 @@ spec:
             model = (model or provider).strip()
             if provider:
               providers.append((provider, model))
-          return providers or [('codex-spark', 'gpt-5.4')]
+          return providers or [('codex-spark', 'gpt-5.3-codex-spark')]
 
         def _read_json(path: Path) -> dict:
           payload = json.loads(path.read_text(encoding='utf-8'))
