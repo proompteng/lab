@@ -27,6 +27,9 @@ export type TorghutRejectedDecisionRow = {
   status: string
   rationale: string | null
   riskReasons: string[]
+  rejectReasonAtomic: string[]
+  rejectClass: string | null
+  rejectOrigin: string | null
   strategyId: string
   strategyName: string
 }
@@ -69,6 +72,25 @@ const splitRiskReason = (value: string): string[] =>
     .split(';')
     .map((item) => item.trim())
     .filter((item) => item.length > 0)
+
+const classifyRejectClass = (decision: TorghutRejectedDecisionRow) => {
+  if (decision.rejectClass) return decision.rejectClass
+  const reasons =
+    decision.rejectReasonAtomic.length > 0 ? decision.rejectReasonAtomic : decision.riskReasons.flatMap(splitRiskReason)
+  if (reasons.some((reason) => reason === 'llm_runtime_fallback' || reason === 'llm_error')) return 'runtime'
+  if (reasons.some((reason) => reason === 'market_context_block' || reason.startsWith('market_context_'))) {
+    return 'market_context'
+  }
+  if (reasons.some((reason) => reason === 'symbol_capacity_exhausted' || reason === 'qty_below_min')) return 'capacity'
+  if (reasons.some((reason) => reason === 'shorting_metadata_unavailable' || reason === 'broker_precheck_rejected')) {
+    return 'broker_precheck'
+  }
+  if (reasons.some((reason) => reason.startsWith('llm_'))) return 'policy'
+  return null
+}
+
+const decisionReasonTokens = (decision: TorghutRejectedDecisionRow) =>
+  decision.rejectReasonAtomic.length > 0 ? decision.rejectReasonAtomic : decision.riskReasons.flatMap(splitRiskReason)
 
 export const listTorghutTradingStrategies = async (params: { pool: Pool; limit?: number }) => {
   const limit = Math.max(1, Math.min(params.limit ?? 200, 1000))
@@ -181,6 +203,9 @@ export const listTorghutTradingRejectedDecisions = async (params: {
         td.status as status,
         td.rationale as rationale,
         td.decision_json->'risk_reasons' as risk_reasons,
+        td.decision_json->'reject_reason_atomic' as reject_reason_atomic,
+        td.decision_json->>'reject_class' as reject_class,
+        td.decision_json->>'reject_origin' as reject_origin,
         s.id::text as strategy_id,
         s.name as strategy_name
       from trade_decisions td
@@ -204,6 +229,9 @@ export const listTorghutTradingRejectedDecisions = async (params: {
     status: String(row.status),
     rationale: row.rationale ? String(row.rationale) : null,
     riskReasons: coerceStringArray(row.risk_reasons),
+    rejectReasonAtomic: coerceStringArray(row.reject_reason_atomic),
+    rejectClass: row.reject_class ? String(row.reject_class) : null,
+    rejectOrigin: row.reject_origin ? String(row.reject_origin) : null,
     strategyId: String(row.strategy_id),
     strategyName: String(row.strategy_name),
   })) satisfies TorghutRejectedDecisionRow[]
@@ -267,6 +295,7 @@ export type TorghutTradingSummary = {
   rejections: {
     rejectedCount: number
     topReasons: { reason: string; count: number }[]
+    classCounts: { rejectClass: string; count: number }[]
     sessionSplit: {
       preOpenCount: number
       postOpenCount: number
@@ -359,10 +388,8 @@ const formatSessionReasonTop = (bucket: SessionBucket, limit = 12) =>
     .map(([reason, count]) => ({ reason, count }))
 
 const addReasonCounts = (bucket: SessionBucket, decision: TorghutRejectedDecisionRow) => {
-  for (const reason of decision.riskReasons) {
-    for (const key of splitRiskReason(reason)) {
-      bucket.reasonCounts.set(key, (bucket.reasonCounts.get(key) ?? 0) + 1)
-    }
+  for (const key of decisionReasonTokens(decision)) {
+    bucket.reasonCounts.set(key, (bucket.reasonCounts.get(key) ?? 0) + 1)
   }
 }
 
@@ -464,6 +491,7 @@ export const buildTorghutTradingSummary = async (params: {
   const pnl = computeRealizedPnlAverageCostLongOnly(executions)
 
   const reasonsCount = new Map<string, number>()
+  const classCounts = new Map<string, number>()
   const sessionSplit = {
     preOpenCount: 0,
     postOpenCount: 0,
@@ -491,11 +519,11 @@ export const buildTorghutTradingSummary = async (params: {
     else byAccount.postOpenCount += 1
     byAccountSplit.set(decision.alpacaAccountLabel, byAccount)
 
-    for (const reason of decision.riskReasons) {
-      for (const key of splitRiskReason(reason)) {
-        reasonsCount.set(key, (reasonsCount.get(key) ?? 0) + 1)
-      }
+    for (const key of decisionReasonTokens(decision)) {
+      reasonsCount.set(key, (reasonsCount.get(key) ?? 0) + 1)
     }
+    const rejectClass = classifyRejectClass(decision)
+    if (rejectClass) classCounts.set(rejectClass, (classCounts.get(rejectClass) ?? 0) + 1)
   }
 
   const rollingTrend = buildRolling5DayRejectionTrend(rollingRejections, params.interval)
@@ -541,6 +569,9 @@ export const buildTorghutTradingSummary = async (params: {
     rejections: {
       rejectedCount: rejections.length,
       topReasons,
+      classCounts: [...classCounts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([rejectClass, count]) => ({ rejectClass, count })),
       sessionSplit,
       perAccountSplit: [...byAccountSplit.values()].sort((a, b) =>
         a.alpacaAccountLabel.localeCompare(b.alpacaAccountLabel),

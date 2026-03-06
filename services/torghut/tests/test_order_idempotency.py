@@ -216,6 +216,11 @@ class AssetShortabilityUnknownClient(FakeAlpacaClient):
         }
 
 
+class AccountMetadataUnavailableClientWithLongPosition(AccountMetadataUnavailableClient):
+    def list_positions(self) -> list[dict[str, str]]:
+        return [{"symbol": "AAPL", "qty": "2", "side": "long"}]
+
+
 class TestOrderIdempotency(TestCase):
     def setUp(self) -> None:
         engine = create_engine('sqlite+pysqlite:///:memory:', future=True)
@@ -1291,7 +1296,7 @@ class TestOrderIdempotency(TestCase):
 
             payload = json.loads(str(context.exception))
             self.assertEqual(payload.get("source"), "local_pre_submit")
-            self.assertEqual(payload.get("code"), "local_account_metadata_unavailable")
+            self.assertEqual(payload.get("code"), "shorting_metadata_unavailable")
 
     def test_submit_order_precheck_blocks_short_when_account_shorting_status_unknown_live(
         self,
@@ -1334,7 +1339,7 @@ class TestOrderIdempotency(TestCase):
 
             payload = json.loads(str(context.exception))
             self.assertEqual(payload.get("source"), "local_pre_submit")
-            self.assertEqual(payload.get("code"), "local_account_shorting_status_unknown")
+            self.assertEqual(payload.get("code"), "shorting_metadata_unavailable")
 
     def test_submit_order_precheck_blocks_short_when_asset_metadata_unavailable_live(
         self,
@@ -1377,7 +1382,7 @@ class TestOrderIdempotency(TestCase):
 
             payload = json.loads(str(context.exception))
             self.assertEqual(payload.get("source"), "local_pre_submit")
-            self.assertEqual(payload.get("code"), "local_symbol_metadata_unavailable")
+            self.assertEqual(payload.get("code"), "shorting_metadata_unavailable")
 
     def test_submit_order_precheck_blocks_short_when_asset_shortability_unknown_live(
         self,
@@ -1420,7 +1425,48 @@ class TestOrderIdempotency(TestCase):
 
             payload = json.loads(str(context.exception))
             self.assertEqual(payload.get("source"), "local_pre_submit")
-            self.assertEqual(payload.get("code"), "local_symbol_shortability_unknown")
+            self.assertEqual(payload.get("code"), "shorting_metadata_unavailable")
+
+    def test_submit_order_precheck_allows_position_reducing_sell_without_shorting_metadata(
+        self,
+    ) -> None:
+        settings.trading_allow_shorts = True
+        settings.trading_mode = "live"
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("1"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+
+            execution = executor.submit_order(
+                session,
+                AccountMetadataUnavailableClientWithLongPosition(),
+                decision,
+                decision_row,
+                "paper",
+            )
+
+            self.assertIsNotNone(execution)
+            self.assertEqual(execution.status, "accepted")
 
     def test_submit_order_precheck_allows_short_when_asset_metadata_unavailable_paper(
         self,

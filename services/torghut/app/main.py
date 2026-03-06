@@ -1305,6 +1305,23 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
             "signal_lag_alert_threshold_seconds": settings.trading_signal_stale_lag_alert_seconds,
             "signal_continuity_recovery_cycles": settings.trading_signal_continuity_recovery_cycles,
         },
+        "market_context": {
+            "required": settings.trading_market_context_required,
+            "fail_mode": settings.trading_market_context_fail_mode,
+            "allow_degraded_last_good": settings.trading_market_context_allow_degraded_last_good,
+            "min_quality": settings.trading_market_context_min_quality,
+            "max_staleness_seconds": settings.trading_market_context_max_staleness_seconds,
+            "fundamentals_degraded_max_staleness_seconds": settings.trading_market_context_fundamentals_degraded_max_staleness_seconds,
+            "news_degraded_max_staleness_seconds": settings.trading_market_context_news_degraded_max_staleness_seconds,
+        },
+        "shorting_metadata": scheduler.shorting_metadata_status(),
+        "rejections": {
+            "policy_veto_total": state.metrics.llm_policy_veto_total,
+            "runtime_fallback_total": state.metrics.llm_runtime_fallback_total,
+            "market_context_block_total": state.metrics.llm_market_context_block_total,
+            "pre_llm_capacity_reject_total": state.metrics.pre_llm_capacity_reject_total,
+            "pre_llm_qty_below_min_total": state.metrics.pre_llm_qty_below_min_total,
+        },
         "rollback": {
             "emergency_stop_active": state.emergency_stop_active,
             "emergency_stop_reason": state.emergency_stop_reason,

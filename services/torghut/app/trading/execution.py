@@ -8,7 +8,7 @@ import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, Optional, cast
+from typing import Any, NamedTuple, Optional, cast
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -38,9 +38,22 @@ from .tca import upsert_execution_tca_metric
 
 logger = logging.getLogger(__name__)
 
+_SHORTING_METADATA_CACHE_TTL_SECONDS = 30.0
+
 
 class OrderExecutor:
     """Submit orders to a broker adapter with idempotency guards."""
+
+    def __init__(self) -> None:
+        self._account_metadata_cache: dict[str, Any] | None = None
+        self._account_metadata_cached_at_monotonic: float | None = None
+        self._asset_metadata_cache: dict[str, tuple[dict[str, Any] | None, float]] = {}
+        self._shorting_metadata_status: dict[str, Any] = {
+            "account_ready": None,
+            "last_refresh_at": None,
+            "last_error": None,
+            "cache_ttl_seconds": _SHORTING_METADATA_CACHE_TTL_SECONDS,
+        }
 
     def ensure_decision(
         self,
@@ -366,7 +379,11 @@ class OrderExecutor:
                 time.sleep(delay)
 
     def mark_rejected(
-        self, session: Session, decision_row: TradeDecision, reason: str
+        self,
+        session: Session,
+        decision_row: TradeDecision,
+        reason: str,
+        metadata_update: Mapping[str, Any] | None = None,
     ) -> None:
         decision_row.status = "rejected"
         decision_json = _coerce_json(decision_row.decision_json)
@@ -377,6 +394,40 @@ class OrderExecutor:
             risk_reasons = []
         risk_reasons.append(reason)
         decision_json["risk_reasons"] = risk_reasons
+        reject_atomic = _merge_unique_strings(
+            _coerce_string_list(decision_json.get("reject_reason_atomic")),
+            [
+                normalized.atomic_reason
+                for normalized in _normalize_reject_reasons(reason)
+            ],
+        )
+        if reject_atomic:
+            decision_json["reject_reason_atomic"] = reject_atomic
+            primary = _normalize_reject_reasons(reason)[0]
+            decision_json["reject_class"] = primary.reject_class
+            decision_json["reject_origin"] = primary.reject_origin
+        sizing_debug = _extract_sizing_debug(decision_json)
+        if sizing_debug and any(
+            atomic_reason in {"qty_below_min", "symbol_capacity_exhausted"}
+            for atomic_reason in reject_atomic
+        ):
+            decision_json["sizing_debug"] = sizing_debug
+        if metadata_update:
+            for key, value in metadata_update.items():
+                decision_json[key] = coerce_json_payload(value)
+        decision_row.decision_json = decision_json
+        session.add(decision_row)
+        session.commit()
+
+    def update_decision_json(
+        self,
+        session: Session,
+        decision_row: TradeDecision,
+        update: Mapping[str, Any],
+    ) -> None:
+        decision_json = _coerce_json(decision_row.decision_json)
+        for key, value in update.items():
+            decision_json[key] = coerce_json_payload(value)
         decision_row.decision_json = decision_json
         session.add(decision_row)
         session.commit()
@@ -398,6 +449,12 @@ class OrderExecutor:
         decision_row.decision_json = decision_json
         session.add(decision_row)
         session.commit()
+
+    def prime_shorting_metadata_cache(self, execution_client: Any) -> None:
+        self._get_account(execution_client, force_refresh=True)
+
+    def shorting_metadata_status(self) -> dict[str, Any]:
+        return dict(self._shorting_metadata_status)
 
     @staticmethod
     def _fetch_existing_order(
@@ -586,7 +643,7 @@ class OrderExecutor:
             if strict_short_precheck:
                 return {
                     "source": "local_pre_submit",
-                    "code": "local_account_metadata_unavailable",
+                    "code": "shorting_metadata_unavailable",
                     "reject_reason": "account shorting eligibility metadata unavailable in live mode",
                     "symbol": symbol,
                     "qty": str(request.qty),
@@ -605,7 +662,7 @@ class OrderExecutor:
             elif strict_short_precheck:
                 return {
                     "source": "local_pre_submit",
-                    "code": "local_account_shorting_status_unknown",
+                    "code": "shorting_metadata_unavailable",
                     "reject_reason": "account shorting eligibility unknown in live mode",
                     "symbol": symbol,
                     "qty": str(request.qty),
@@ -616,7 +673,7 @@ class OrderExecutor:
             if strict_short_precheck:
                 return {
                     "source": "local_pre_submit",
-                    "code": "local_symbol_metadata_unavailable",
+                    "code": "shorting_metadata_unavailable",
                     "reject_reason": "asset shortability metadata unavailable in live mode",
                     "symbol": symbol,
                     "qty": str(request.qty),
@@ -636,7 +693,7 @@ class OrderExecutor:
         elif strict_short_precheck:
             return {
                 "source": "local_pre_submit",
-                "code": "local_symbol_tradability_unknown",
+                "code": "shorting_metadata_unavailable",
                 "reject_reason": "symbol tradability unknown in live mode",
                 "symbol": symbol,
                 "qty": str(request.qty),
@@ -655,7 +712,7 @@ class OrderExecutor:
         elif strict_short_precheck:
             return {
                 "source": "local_pre_submit",
-                "code": "local_symbol_shortability_unknown",
+                "code": "shorting_metadata_unavailable",
                 "reject_reason": "symbol shortability unknown in live mode",
                 "symbol": symbol,
                 "qty": str(request.qty),
@@ -674,7 +731,7 @@ class OrderExecutor:
         elif strict_short_precheck:
             return {
                 "source": "local_pre_submit",
-                "code": "local_symbol_borrow_status_unknown",
+                "code": "shorting_metadata_unavailable",
                 "reject_reason": "easy-to-borrow status unknown in live mode",
                 "symbol": symbol,
                 "qty": str(request.qty),
@@ -774,28 +831,85 @@ class OrderExecutor:
             normalized.append({str(key): value for key, value in mapped.items()})
         return normalized
 
-    @staticmethod
-    def _get_account(execution_client: Any) -> dict[str, Any] | None:
+    def _get_account(
+        self, execution_client: Any, *, force_refresh: bool = False
+    ) -> dict[str, Any] | None:
+        now = time.monotonic()
+        if (
+            not force_refresh
+            and self._account_metadata_cached_at_monotonic is not None
+            and now - self._account_metadata_cached_at_monotonic
+            < _SHORTING_METADATA_CACHE_TTL_SECONDS
+        ):
+            return self._account_metadata_cache
         getter = getattr(execution_client, "get_account", None)
         if not callable(getter):
+            self._account_metadata_cache = None
+            self._account_metadata_cached_at_monotonic = now
+            self._shorting_metadata_status.update(
+                {
+                    "account_ready": False,
+                    "last_refresh_at": datetime.now(timezone.utc).isoformat(),
+                    "last_error": "get_account_unavailable",
+                }
+            )
             return None
         try:
             account = getter()
         except Exception as exc:
             logger.warning("Failed to fetch account for short precheck: %s", exc)
+            self._account_metadata_cache = None
+            self._account_metadata_cached_at_monotonic = now
+            self._shorting_metadata_status.update(
+                {
+                    "account_ready": False,
+                    "last_refresh_at": datetime.now(timezone.utc).isoformat(),
+                    "last_error": str(exc),
+                }
+            )
             return None
         if not isinstance(account, Mapping):
+            self._account_metadata_cache = None
+            self._account_metadata_cached_at_monotonic = now
+            self._shorting_metadata_status.update(
+                {
+                    "account_ready": False,
+                    "last_refresh_at": datetime.now(timezone.utc).isoformat(),
+                    "last_error": "account_metadata_not_mapping",
+                }
+            )
             return None
         payload = cast(Mapping[object, Any], account)
-        return {str(key): value for key, value in payload.items()}
+        normalized = {str(key): value for key, value in payload.items()}
+        self._account_metadata_cache = normalized
+        self._account_metadata_cached_at_monotonic = now
+        self._shorting_metadata_status.update(
+            {
+                "account_ready": isinstance(normalized.get("shorting_enabled"), bool),
+                "last_refresh_at": datetime.now(timezone.utc).isoformat(),
+                "last_error": None,
+            }
+        )
+        return normalized
 
-    @staticmethod
     def _get_asset(
+        self,
         execution_client: Any,
         symbol: str,
+        *,
+        force_refresh: bool = False,
     ) -> dict[str, Any] | None:
+        now = time.monotonic()
+        cached = self._asset_metadata_cache.get(symbol)
+        if (
+            not force_refresh
+            and cached is not None
+            and now - cached[1] < _SHORTING_METADATA_CACHE_TTL_SECONDS
+        ):
+            return cached[0]
         getter = getattr(execution_client, "get_asset", None)
         if not callable(getter):
+            self._asset_metadata_cache[symbol] = (None, now)
             return None
         try:
             asset = getter(symbol)
@@ -805,11 +919,15 @@ class OrderExecutor:
                 symbol,
                 exc,
             )
+            self._asset_metadata_cache[symbol] = (None, now)
             return None
         if not isinstance(asset, Mapping):
+            self._asset_metadata_cache[symbol] = (None, now)
             return None
         payload = cast(Mapping[object, Any], asset)
-        return {str(key): value for key, value in payload.items()}
+        normalized = {str(key): value for key, value in payload.items()}
+        self._asset_metadata_cache[symbol] = (normalized, now)
+        return normalized
 
 
 def _coerce_json(value: Any) -> dict[str, Any]:
@@ -817,6 +935,82 @@ def _coerce_json(value: Any) -> dict[str, Any]:
         raw = cast(Mapping[str, Any], value)
         return {str(key): val for key, val in raw.items()}
     return {}
+
+
+def _coerce_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in cast(list[Any], value):
+        if isinstance(item, (str, int, float, bool)):
+            result.append(str(item))
+    return result
+
+
+def _merge_unique_strings(existing: list[str], updates: list[str]) -> list[str]:
+    merged = list(existing)
+    for update in updates:
+        if update not in merged:
+            merged.append(update)
+    return merged
+
+
+class _NormalizedRejectReason(NamedTuple):
+    atomic_reason: str
+    reject_class: str
+    reject_origin: str
+
+
+def _normalize_reject_reason(reason: str) -> _NormalizedRejectReason:
+    normalized = reason.strip()
+    if normalized in {"llm_policy_veto", "llm_veto"}:
+        return _NormalizedRejectReason("llm_policy_veto", "policy", "llm_review")
+    if normalized.startswith("llm_runtime_fallback"):
+        return _NormalizedRejectReason("llm_runtime_fallback", "runtime", "llm_runtime")
+    if normalized == "llm_error" or normalized.startswith("llm_error"):
+        return _NormalizedRejectReason("llm_error", "runtime", "llm_review")
+    if normalized == "market_context_block" or normalized.startswith("market_context_"):
+        return _NormalizedRejectReason("market_context_block", "market_context", "market_context")
+    if normalized == "symbol_capacity_exhausted":
+        return _NormalizedRejectReason("symbol_capacity_exhausted", "capacity", "portfolio_sizing")
+    if normalized == "qty_below_min":
+        return _NormalizedRejectReason("qty_below_min", "capacity", "portfolio_sizing")
+    if "code=shorting_metadata_unavailable" in normalized or "code=local_account_metadata_unavailable" in normalized:
+        return _NormalizedRejectReason("shorting_metadata_unavailable", "broker_precheck", "local_pre_submit")
+    if normalized.startswith("local_pre_submit_rejected"):
+        return _NormalizedRejectReason("broker_precheck_rejected", "broker_precheck", "local_pre_submit")
+    if normalized.startswith("broker_precheck_rejected"):
+        return _NormalizedRejectReason("broker_precheck_rejected", "broker_precheck", "broker_precheck")
+    if normalized.startswith("llm_"):
+        return _NormalizedRejectReason(normalized, "policy", "llm_review")
+    return _NormalizedRejectReason(normalized, "runtime", "scheduler")
+
+
+def _normalize_reject_reasons(reason: str) -> list[_NormalizedRejectReason]:
+    return [_normalize_reject_reason(part.strip()) for part in reason.split(";") if part.strip()]
+
+
+def _extract_sizing_debug(decision_json: Mapping[str, Any]) -> dict[str, Any]:
+    params = decision_json.get("params")
+    if not isinstance(params, Mapping):
+        return {}
+    params_mapping = cast(Mapping[str, Any], params)
+    portfolio_sizing = params_mapping.get("portfolio_sizing")
+    if not isinstance(portfolio_sizing, Mapping):
+        return {}
+    portfolio_sizing_mapping = cast(Mapping[str, Any], portfolio_sizing)
+    output = portfolio_sizing_mapping.get("output")
+    if not isinstance(output, Mapping):
+        return {}
+    output_mapping = cast(Mapping[str, Any], output)
+    return {
+        "requested_qty": decision_json.get("qty"),
+        "final_qty": output_mapping.get("final_qty"),
+        "min_executable_qty": output_mapping.get("min_executable_qty"),
+        "remaining_room_notional": output_mapping.get("remaining_room_notional"),
+        "fractional_allowed": output_mapping.get("fractional_allowed"),
+        "limiting_constraint": output_mapping.get("limiting_constraint"),
+    }
 
 
 def _validate_pre_submit_request(
