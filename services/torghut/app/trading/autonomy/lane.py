@@ -855,9 +855,9 @@ def _build_vnext_gate_summary(
         "portfolio_promotion": _build_portfolio_promotion_summary(runtime_strategies),
     }
     if dependency_quorum_payload is not None:
-        payload["dependency_quorum"] = dict(cast(Mapping[str, Any], dependency_quorum_payload))
+        payload["dependency_quorum"] = dict(dependency_quorum_payload)
     if hypothesis_registry_payload is not None:
-        payload["hypothesis_registry"] = dict(cast(Mapping[str, Any], hypothesis_registry_payload))
+        payload["hypothesis_registry"] = dict(hypothesis_registry_payload)
     return payload
 
 

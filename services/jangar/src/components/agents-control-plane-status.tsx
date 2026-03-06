@@ -218,6 +218,45 @@ export const ControlPlaneStatusPanel = ({
         </div>
 
         <div className="space-y-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Empirical services
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {(
+              [
+                ['Forecast', status.empirical_services.forecast],
+                ['LEAN', status.empirical_services.lean],
+                ['Jobs', status.empirical_services.jobs],
+              ] as const
+            ).map(([label, service]) => (
+              <div key={label} className="rounded-none border p-2 border-border/60 bg-muted/30 space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-foreground">{label}</span>
+                  <StatusBadge label={service.status} />
+                </div>
+                <div className="text-muted-foreground">{service.message || 'OK'}</div>
+                <div className="text-muted-foreground">Authoritative: {service.authoritative ? 'yes' : 'no'}</div>
+                {service.calibration_status ? (
+                  <div className="text-muted-foreground">Calibration: {service.calibration_status}</div>
+                ) : null}
+                {service.authoritative_modes && service.authoritative_modes.length > 0 ? (
+                  <div className="text-muted-foreground">Modes: {service.authoritative_modes.join(', ')}</div>
+                ) : null}
+                {service.eligible_models && service.eligible_models.length > 0 ? (
+                  <div className="text-muted-foreground">Eligible models: {service.eligible_models.join(', ')}</div>
+                ) : null}
+                {service.eligible_jobs && service.eligible_jobs.length > 0 ? (
+                  <div className="text-muted-foreground">Eligible jobs: {service.eligible_jobs.join(', ')}</div>
+                ) : null}
+                {service.stale_jobs && service.stale_jobs.length > 0 ? (
+                  <div className="text-muted-foreground">Stale jobs: {service.stale_jobs.join(', ')}</div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-2">
           <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Rollout health</div>
           <div className="rounded-none border p-2 border-border/60 bg-muted/30 space-y-1">
             <div className="flex flex-wrap items-center justify-between gap-2">

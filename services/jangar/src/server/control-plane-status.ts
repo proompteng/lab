@@ -112,6 +112,24 @@ export type NamespaceStatus = {
   degraded_components: string[]
 }
 
+export type EmpiricalDependencyStatus = {
+  status: 'healthy' | 'degraded' | 'disabled' | 'unknown'
+  endpoint: string
+  message: string
+  authoritative: boolean
+  calibration_status?: string
+  authoritative_modes?: string[]
+  eligible_models?: string[]
+  eligible_jobs?: string[]
+  stale_jobs?: string[]
+}
+
+export type EmpiricalServicesStatus = {
+  forecast: EmpiricalDependencyStatus
+  lean: EmpiricalDependencyStatus
+  jobs: EmpiricalDependencyStatus
+}
+
 export type ControlPlaneWatchReliability = {
   status: ControlPlaneWatchReliabilitySummary['status']
   window_minutes: number
@@ -145,6 +163,7 @@ export type ControlPlaneStatus = {
   workflows: WorkflowsReliabilityStatus
   dependency_quorum: DependencyQuorumStatus
   rollout_health: ControlPlaneRolloutHealth
+  empirical_services: EmpiricalServicesStatus
   namespaces: NamespaceStatus[]
 }
 
@@ -163,6 +182,7 @@ export type ControlPlaneStatusDeps = {
   checkDatabase?: () => Promise<DatabaseStatus>
   getWatchReliabilitySummary?: () => ControlPlaneWatchReliabilitySummary
   getWorkflowsReliabilityStatus?: (input: WorkflowsReliabilityStatusInput) => Promise<WorkflowsReliabilityStatus>
+  resolveEmpiricalServices?: () => Promise<EmpiricalServicesStatus>
 }
 
 const normalizeMessage = (value: unknown) => (value instanceof Error ? value.message : String(value))
@@ -423,6 +443,147 @@ const resolveTemporalAdapter = async (): Promise<RuntimeAdapterStatus> => {
     }
   }
 }
+
+const resolveServiceStatus = async (input: {
+  readyUrl?: string
+  detailUrl?: string
+  detailMethod?: 'GET' | 'POST'
+  detailBody?: Record<string, unknown>
+  type: 'forecast' | 'lean' | 'jobs'
+}): Promise<EmpiricalDependencyStatus> => {
+  if (!input.readyUrl) {
+    return {
+      status: 'disabled',
+      endpoint: '',
+      message: `${input.type} service not configured`,
+      authoritative: false,
+    }
+  }
+
+  const requestJson = async (
+    url: string,
+    init?: { method?: 'GET' | 'POST'; body?: Record<string, unknown> },
+  ): Promise<Record<string, unknown> | null> => {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 2000)
+    try {
+      const response = await fetch(url, {
+        method: init?.method ?? 'GET',
+        headers: init?.body
+          ? { 'content-type': 'application/json', accept: 'application/json' }
+          : { accept: 'application/json' },
+        body: init?.body ? JSON.stringify(init.body) : undefined,
+        signal: controller.signal,
+      })
+      const payload = (await response.json().catch(() => null)) as unknown
+      if (!response.ok || !payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        return null
+      }
+      return payload as Record<string, unknown>
+    } catch {
+      return null
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+
+  const readyPayload = await requestJson(input.readyUrl)
+  if (!readyPayload) {
+    return {
+      status: 'degraded',
+      endpoint: input.readyUrl,
+      message: `${input.type} readiness failed`,
+      authoritative: false,
+    }
+  }
+
+  const detailPayload = input.detailUrl
+    ? await requestJson(input.detailUrl, {
+        method: input.detailMethod,
+        body: input.detailBody,
+      })
+    : null
+
+  if (input.type === 'forecast') {
+    const models = Array.isArray(detailPayload?.models) ? detailPayload.models : []
+    const eligibleModels = models
+      .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item))
+      .filter((item) => item.promotion_authority_eligible === true)
+      .map((item) => (typeof item.model_family === 'string' ? item.model_family : ''))
+      .filter((item) => item.length > 0)
+    return {
+      status: 'healthy',
+      endpoint: input.readyUrl,
+      message: 'forecast service ready',
+      authoritative: eligibleModels.length > 0,
+      calibration_status: typeof detailPayload?.status === 'string' ? detailPayload.status : 'unknown',
+      eligible_models: eligibleModels,
+    }
+  }
+
+  if (input.type === 'jobs') {
+    const jobs =
+      detailPayload && typeof detailPayload.jobs === 'object' && detailPayload.jobs !== null
+        ? (detailPayload.jobs as Record<string, unknown>)
+        : {}
+    const eligibleJobs = Object.entries(jobs)
+      .filter(([, value]) => !!value && typeof value === 'object' && !Array.isArray(value))
+      .filter(([, value]) => (value as Record<string, unknown>).promotion_authority_eligible === true)
+      .map(([key]) => key)
+    const staleJobs = Object.entries(jobs)
+      .filter(([, value]) => !!value && typeof value === 'object' && !Array.isArray(value))
+      .filter(([, value]) => (value as Record<string, unknown>).stale === true)
+      .map(([key]) => key)
+    return {
+      status:
+        typeof detailPayload?.status === 'string'
+          ? (detailPayload.status as EmpiricalDependencyStatus['status'])
+          : 'degraded',
+      endpoint: input.readyUrl,
+      message: staleJobs.length > 0 ? `stale empirical jobs: ${staleJobs.join(', ')}` : 'empirical jobs fresh',
+      authoritative: detailPayload?.authority === 'empirical',
+      eligible_jobs: eligibleJobs,
+      stale_jobs: staleJobs,
+    }
+  }
+
+  const authority =
+    detailPayload && typeof detailPayload.authority === 'object' && detailPayload.authority !== null
+      ? (detailPayload.authority as Record<string, unknown>)
+      : {}
+  const authoritativeModes = Array.isArray(authority.authoritative_modes)
+    ? authority.authoritative_modes.filter((item): item is string => typeof item === 'string' && item.length > 0)
+    : []
+  return {
+    status: 'healthy',
+    endpoint: input.readyUrl,
+    message: 'LEAN runner ready',
+    authoritative: authoritativeModes.length > 0,
+    authoritative_modes: authoritativeModes,
+  }
+}
+
+const resolveEmpiricalServices = async (): Promise<EmpiricalServicesStatus> => ({
+  forecast: await resolveServiceStatus({
+    readyUrl: process.env.JANGAR_TORGHUT_FORECAST_READY_URL,
+    detailUrl: process.env.JANGAR_TORGHUT_FORECAST_CALIBRATION_URL,
+    detailMethod: 'POST',
+    detailBody: {},
+    type: 'forecast',
+  }),
+  lean: await resolveServiceStatus({
+    readyUrl: process.env.JANGAR_TORGHUT_LEAN_READY_URL,
+    detailUrl: process.env.JANGAR_TORGHUT_LEAN_OBSERVABILITY_URL,
+    detailMethod: 'GET',
+    type: 'lean',
+  }),
+  jobs: await resolveServiceStatus({
+    readyUrl: process.env.JANGAR_TORGHUT_EMPIRICAL_JOBS_URL,
+    detailUrl: process.env.JANGAR_TORGHUT_EMPIRICAL_JOBS_URL,
+    detailMethod: 'GET',
+    type: 'jobs',
+  }),
+})
 
 const uniqueStrings = (values: string[]) => {
   const seen = new Set<string>()
@@ -854,6 +1015,7 @@ const buildDependencyQuorum = (input: {
   watchReliability: ControlPlaneWatchReliabilitySummary
   workflows: WorkflowsReliabilityStatus
   rolloutHealth: ControlPlaneRolloutHealth
+  empiricalServices: EmpiricalServicesStatus
   warningBackoffThreshold: number
   degradedBackoffThreshold: number
 }): DependencyQuorumStatus => {
@@ -899,6 +1061,33 @@ const buildDependencyQuorum = (input: {
 
   if (input.rolloutHealth.status === 'degraded') {
     delayReasons.push('rollout_health_degraded')
+  }
+
+  if (input.empiricalServices.forecast.status === 'degraded') {
+    blockReasons.push('forecast_service_unhealthy')
+  } else if (
+    input.empiricalServices.forecast.status === 'healthy' &&
+    input.empiricalServices.forecast.authoritative === false
+  ) {
+    delayReasons.push('forecast_calibration_stale')
+  }
+
+  if (input.empiricalServices.lean.status === 'degraded') {
+    blockReasons.push('lean_runner_unhealthy')
+  } else if (
+    input.empiricalServices.lean.status === 'healthy' &&
+    input.empiricalServices.lean.authoritative === false
+  ) {
+    delayReasons.push('lean_authority_missing')
+  }
+
+  if (input.empiricalServices.jobs.status === 'degraded') {
+    delayReasons.push('empirical_jobs_stale')
+  } else if (
+    input.empiricalServices.jobs.status === 'healthy' &&
+    input.empiricalServices.jobs.authoritative === false
+  ) {
+    delayReasons.push('empirical_jobs_not_authoritative')
   }
 
   const reasons = uniqueStrings(blockReasons.length > 0 ? blockReasons : delayReasons)
@@ -1002,6 +1191,7 @@ export const buildControlPlaneStatus = async (
     swarms: resolveWorkflowSwarms(),
     kube: createKubernetesClient(),
   })
+  const empiricalServices = await (deps.resolveEmpiricalServices ?? resolveEmpiricalServices)()
 
   const isWorkflowsDataUnknown = workflows.data_confidence === 'unknown'
   const isWorkflowsDataDegraded = workflows.data_confidence === 'degraded'
@@ -1015,6 +1205,7 @@ export const buildControlPlaneStatus = async (
     watchReliability,
     workflows,
     rolloutHealth,
+    empiricalServices,
     warningBackoffThreshold,
     degradedBackoffThreshold,
   })
@@ -1032,6 +1223,9 @@ export const buildControlPlaneStatus = async (
     ...(isWorkflowsDataUnavailable || isWorkflowsWarning || isWorkflowsDegraded ? ['workflows'] : []),
     ...(isWorkflowsDataUnknown || isWorkflowsDegraded ? ['runtime:workflows'] : []),
     ...(rolloutHealth.status === 'degraded' ? ['rollout_health'] : []),
+    ...(empiricalServices.forecast.status === 'degraded' ? ['empirical:forecast'] : []),
+    ...(empiricalServices.lean.status === 'degraded' ? ['empirical:lean'] : []),
+    ...(empiricalServices.jobs.status === 'degraded' ? ['empirical:jobs'] : []),
   ]
 
   return {
@@ -1065,6 +1259,7 @@ export const buildControlPlaneStatus = async (
     rollout_health: rolloutHealth,
     workflows,
     dependency_quorum: dependencyQuorum,
+    empirical_services: empiricalServices,
     namespaces: [
       {
         namespace: options.namespace,

@@ -136,6 +136,22 @@ spec:
               value: http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?namespace=agents
             - name: TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS
               value: "15"
+            - name: TRADING_FORECAST_SERVICE_URL
+              value: http://torghut-forecast.torghut.svc.cluster.local:8089
+            - name: TRADING_FORECAST_SERVICE_TIMEOUT_SECONDS
+              value: "5"
+            - name: TRADING_FORECAST_SERVICE_REQUIRE_HEALTHY
+              value: "true"
+            - name: TRADING_FORECAST_SERVICE_ALLOWED_MODEL_FAMILIES
+              value: chronos,moment,financial_tsfm
+            - name: TRADING_FORECAST_SERVICE_FAIL_MODE
+              value: allow_operational_fallback
+            - name: TRADING_EMPIRICAL_JOB_STALE_AFTER_SECONDS
+              value: "86400"
+            - name: TRADING_FORECAST_ROUTER_PROVIDER_MODE
+              value: http
+            - name: TRADING_FORECAST_ROUTER_PROVIDER_URL
+              value: http://torghut-forecast.torghut.svc.cluster.local:8089
             - name: TRADING_POLL_MS
               value: "5000"
             - name: TRADING_RECONCILE_MS

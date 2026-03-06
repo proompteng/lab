@@ -1,0 +1,31 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: torghut-empirical-jobs-backfill
+  namespace: torghut
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: torghut
+      containers:
+        - name: backfill
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:c6dbeec91ac77a7bf49723c4f105c1a04f366b0f0dcf4cefa783a99e16820912
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/bash
+            - -lc
+          args:
+            - |
+              set -euo pipefail
+              cd /app
+              /opt/venv/bin/python scripts/backfill_vnext_empirical_jobs.py --json
+          env:
+            - name: DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: uri

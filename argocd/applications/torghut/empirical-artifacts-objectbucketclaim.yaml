@@ -1,0 +1,8 @@
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: torghut-empirical-artifacts
+  namespace: torghut
+spec:
+  bucketName: torghut-empirical-artifacts
+  storageClassName: rook-ceph-bucket

@@ -517,6 +517,50 @@ class Settings(BaseSettings):
         alias="TRADING_FORECAST_ROUTER_ENABLED",
         description="Enable deterministic forecast routing and uncertainty contract emission.",
     )
+    trading_forecast_service_url: Optional[str] = Field(
+        default=None,
+        alias="TRADING_FORECAST_SERVICE_URL",
+        validation_alias=AliasChoices(
+            "TRADING_FORECAST_SERVICE_URL",
+            "TRADING_FORECAST_ROUTER_PROVIDER_URL",
+        ),
+        description="Base URL for the empirical forecast service.",
+    )
+    trading_forecast_service_timeout_seconds: int = Field(
+        default=5,
+        alias="TRADING_FORECAST_SERVICE_TIMEOUT_SECONDS",
+        validation_alias=AliasChoices(
+            "TRADING_FORECAST_SERVICE_TIMEOUT_SECONDS",
+            "TRADING_FORECAST_ROUTER_PROVIDER_TIMEOUT_SECONDS",
+        ),
+        description="HTTP timeout for empirical forecast service requests.",
+    )
+    trading_forecast_service_require_healthy: bool = Field(
+        default=True,
+        alias="TRADING_FORECAST_SERVICE_REQUIRE_HEALTHY",
+        description="Treat forecast service readiness failures as operational degradation.",
+    )
+    trading_forecast_service_fail_mode: Literal[
+        "allow_operational_fallback", "fail_closed"
+    ] = Field(
+        default="allow_operational_fallback",
+        alias="TRADING_FORECAST_SERVICE_FAIL_MODE",
+        description="How Torghut reacts when empirical forecast service is unavailable.",
+    )
+    trading_forecast_service_allowed_model_families_raw: Optional[str] = Field(
+        default="chronos,moment,financial_tsfm",
+        alias="TRADING_FORECAST_SERVICE_ALLOWED_MODEL_FAMILIES",
+        description="Comma-separated model families allowed from the empirical forecast service.",
+    )
+    trading_forecast_service_api_key: Optional[str] = Field(
+        default=None,
+        alias="TRADING_FORECAST_SERVICE_API_KEY",
+        validation_alias=AliasChoices(
+            "TRADING_FORECAST_SERVICE_API_KEY",
+            "TRADING_FORECAST_ROUTER_PROVIDER_API_KEY",
+        ),
+        description="Optional API key forwarded to the empirical forecast service.",
+    )
     trading_forecast_router_policy_path: Optional[str] = Field(
         default=None,
         alias="TRADING_FORECAST_ROUTER_POLICY_PATH",
@@ -541,6 +585,31 @@ class Settings(BaseSettings):
         default=None,
         alias="TRADING_FORECAST_ROUTER_PROVIDER_API_KEY",
         description="Optional API key forwarded to external forecast inference service.",
+    )
+    trading_forecast_registry_manifest_path: Optional[str] = Field(
+        default=None,
+        alias="TRADING_FORECAST_REGISTRY_MANIFEST_PATH",
+        description="Path to the forecast model registry manifest consumed by torghut-forecast.",
+    )
+    trading_forecast_registry_manifest_url: Optional[str] = Field(
+        default=None,
+        alias="TRADING_FORECAST_REGISTRY_MANIFEST_URL",
+        description="Optional HTTP URL for the forecast model registry manifest.",
+    )
+    trading_forecast_registry_refresh_seconds: int = Field(
+        default=30,
+        alias="TRADING_FORECAST_REGISTRY_REFRESH_SECONDS",
+        description="Refresh cadence for torghut-forecast registry manifest reloads.",
+    )
+    trading_forecast_calibration_stale_after_seconds: int = Field(
+        default=3600,
+        alias="TRADING_FORECAST_CALIBRATION_STALE_AFTER_SECONDS",
+        description="Forecast calibration freshness budget used by torghut-forecast readiness checks.",
+    )
+    trading_empirical_job_stale_after_seconds: int = Field(
+        default=86400,
+        alias="TRADING_EMPIRICAL_JOB_STALE_AFTER_SECONDS",
+        description="Freshness budget for empirical parity and Janus workflow outputs.",
     )
     trading_forecast_router_refinement_enabled: bool = Field(
         default=True,
@@ -1721,7 +1790,9 @@ class Settings(BaseSettings):
             "trading_jangar_control_plane_status_url",
             "trading_market_context_url",
             "trading_lean_runner_url",
+            "trading_forecast_service_url",
             "trading_forecast_router_provider_url",
+            "trading_forecast_registry_manifest_url",
             "trading_lean_backtest_upstream_url",
             "trading_lean_shadow_upstream_url",
             "trading_lean_strategy_shadow_upstream_url",
@@ -1741,7 +1812,9 @@ class Settings(BaseSettings):
             "trading_order_feed_sasl_password",
             "trading_accounts_json",
             "trading_autonomy_approval_token",
+            "trading_forecast_service_api_key",
             "trading_forecast_router_provider_api_key",
+            "trading_forecast_registry_manifest_path",
             "trading_simulation_run_id",
             "trading_simulation_dataset_id",
             "trading_simulation_order_updates_bootstrap_servers",
@@ -1773,10 +1846,20 @@ class Settings(BaseSettings):
             self.trading_forecast_router_policy_path = (
                 self.trading_forecast_router_policy_path.strip() or None
             )
+        if self.trading_forecast_service_url and not self.trading_forecast_router_provider_url:
+            self.trading_forecast_router_provider_url = self.trading_forecast_service_url
+        if (
+            self.trading_forecast_service_api_key
+            and not self.trading_forecast_router_provider_api_key
+        ):
+            self.trading_forecast_router_provider_api_key = (
+                self.trading_forecast_service_api_key
+            )
 
     def _normalize_trading_csv_settings(self) -> None:
         for field_name in (
             "trading_execution_adapter_symbols_raw",
+            "trading_forecast_service_allowed_model_families_raw",
             "trading_lean_live_canary_symbols_raw",
             "trading_signal_staleness_alert_critical_reasons_raw",
             "trading_signal_market_closed_expected_reasons_raw",
@@ -2361,6 +2444,18 @@ class Settings(BaseSettings):
             symbol.strip()
             for symbol in self.trading_execution_adapter_symbols_raw.split(",")
             if symbol.strip()
+        }
+
+    @property
+    def trading_forecast_service_allowed_model_families(self) -> set[str]:
+        if not self.trading_forecast_service_allowed_model_families_raw:
+            return {"chronos", "moment", "financial_tsfm"}
+        return {
+            family.strip().lower().replace("-", "_")
+            for family in self.trading_forecast_service_allowed_model_families_raw.split(
+                ","
+            )
+            if family.strip()
         }
 
     @property

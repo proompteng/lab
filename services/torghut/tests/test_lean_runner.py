@@ -72,6 +72,24 @@ class TestLeanRunner(TestCase):
         self.assertEqual(fetched.status_code, 200)
         self.assertEqual(fetched.json().get('status'), 'completed')
         self.assertTrue(fetched.json().get('result', {}).get('deterministic_replay_passed'))
+        self.assertEqual(fetched.json().get('result', {}).get('authority_mode'), 'deterministic_scaffold')
+        self.assertFalse(fetched.json().get('result', {}).get('promotion_authority_eligible'))
+
+    def test_readyz_and_run_artifacts_surface_authority_metadata(self) -> None:
+        client = TestClient(lean_runner.app)
+        readiness = client.get('/readyz')
+        self.assertEqual(readiness.status_code, 200)
+        self.assertIn('authoritative_modes', readiness.json())
+
+        submitted = client.post('/v1/backtests', json={'lane': 'research_backtest', 'config': {'symbol': 'AAPL'}})
+        self.assertEqual(submitted.status_code, 200)
+        backtest_id = submitted.json()['backtest_id']
+        lean_runner._backtests[backtest_id].due_at = 0
+        artifacts = client.get(f'/v1/runs/{backtest_id}/artifacts')
+        self.assertEqual(artifacts.status_code, 200)
+        payload = artifacts.json()
+        self.assertIn('artifact_authority', payload)
+        self.assertIn('artifacts', payload)
 
     def test_strategy_shadow_endpoint(self) -> None:
         client = TestClient(lean_runner.app)

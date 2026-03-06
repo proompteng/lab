@@ -724,6 +724,40 @@ class VNextPromotionDecision(Base, TimestampMixin):
     )
 
 
+class VNextEmpiricalJobRun(Base, TimestampMixin):
+    """Normalized empirical job records for parity and Janus evidence freshness."""
+
+    __tablename__ = "vnext_empirical_job_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    job_name: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    job_type: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    job_run_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    status: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    authority: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    promotion_authority_eligible: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    dataset_snapshot_ref: Mapped[Optional[str]] = mapped_column(
+        String(length=255), nullable=True
+    )
+    artifact_refs: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("ix_vnext_empirical_job_runs_run_id", "run_id"),
+        Index("ix_vnext_empirical_job_runs_candidate_id", "candidate_id"),
+        Index("ix_vnext_empirical_job_runs_job_type", "job_type"),
+        Index(
+            "uq_vnext_empirical_job_runs_job_run_id",
+            "job_run_id",
+            unique=True,
+        ),
+    )
+
+
 class WhitepaperDocument(Base, TimestampMixin):
     """Logical whitepaper record with source metadata and lifecycle status."""
 

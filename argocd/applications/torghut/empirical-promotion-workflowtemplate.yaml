@@ -1,0 +1,75 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: torghut-empirical-promotion
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+spec:
+  serviceAccountName: torghut
+  entrypoint: run
+  arguments:
+    parameters:
+      - name: manifestB64
+        value: ""
+      - name: outputRoot
+        value: /tmp/torghut-empirical
+  templates:
+    - name: run
+      inputs:
+        parameters:
+          - name: manifestB64
+          - name: outputRoot
+      container:
+        image: registry.ide-newton.ts.net/lab/torghut@sha256:c6dbeec91ac77a7bf49723c4f105c1a04f366b0f0dcf4cefa783a99e16820912
+        imagePullPolicy: IfNotPresent
+        command:
+          - /bin/bash
+          - -lc
+        env:
+          - name: DB_DSN
+            valueFrom:
+              secretKeyRef:
+                name: torghut-db-app
+                key: uri
+          - name: TORGHUT_EMPIRICAL_CEPH_BUCKET
+            valueFrom:
+              secretKeyRef:
+                name: torghut-empirical-artifacts
+                key: BUCKET_NAME
+          - name: TORGHUT_EMPIRICAL_CEPH_BUCKET_HOST
+            valueFrom:
+              secretKeyRef:
+                name: torghut-empirical-artifacts
+                key: BUCKET_HOST
+          - name: TORGHUT_EMPIRICAL_CEPH_BUCKET_PORT
+            valueFrom:
+              secretKeyRef:
+                name: torghut-empirical-artifacts
+                key: BUCKET_PORT
+          - name: TORGHUT_EMPIRICAL_CEPH_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: torghut-empirical-artifacts
+                key: AWS_ACCESS_KEY_ID
+          - name: TORGHUT_EMPIRICAL_CEPH_SECRET_KEY
+            valueFrom:
+              secretKeyRef:
+                name: torghut-empirical-artifacts
+                key: AWS_SECRET_ACCESS_KEY
+        args:
+          - |
+            set -euo pipefail
+            WORKDIR=/tmp/torghut-empirical-workflow
+            mkdir -p "${WORKDIR}" "{{inputs.parameters.outputRoot}}"
+            MANIFEST_PATH="${WORKDIR}/manifest.yaml"
+            printf '%s' "{{inputs.parameters.manifestB64}}" | base64 -d > "${MANIFEST_PATH}"
+            cd /app
+            /opt/venv/bin/python scripts/run_empirical_promotion_jobs.py \
+              --manifest "${MANIFEST_PATH}" \
+              --output-dir "{{inputs.parameters.outputRoot}}" \
+              --json
+      outputs:
+        artifacts:
+          - name: empirical-output
+            path: "{{inputs.parameters.outputRoot}}"

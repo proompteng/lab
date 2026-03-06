@@ -31,6 +31,7 @@ from app.models import (
     LLMDecisionReview,
     Strategy,
     TradeDecision,
+    VNextEmpiricalJobRun,
 )
 
 
@@ -1426,12 +1427,16 @@ class TestTradingApi(TestCase):
             settings.trading_multi_account_enabled = original_multi
 
     def test_trading_status_includes_llm_evaluation(self) -> None:
-        response = self.client.get("/trading/status")
+        with patch("app.main.SessionLocal", self.session_local):
+            response = self.client.get("/trading/status")
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertIn("hypotheses", payload)
         self.assertIn("llm_evaluation", payload)
         self.assertIn("control_plane_contract", payload)
+        self.assertIn("forecast_service", payload)
+        self.assertIn("lean_authority", payload)
+        self.assertIn("empirical_jobs", payload)
         evaluation = payload["llm_evaluation"]
         self.assertTrue(evaluation["ok"])
         self.assertGreaterEqual(evaluation["metrics"]["total_reviews"], 1)
@@ -1459,6 +1464,9 @@ class TestTradingApi(TestCase):
             control_plane_contract["alpha_readiness_dependency_quorum_decision"],
             "unknown",
         )
+        self.assertIn(payload["forecast_service"]["authority"], {"empirical", "blocked"})
+        self.assertIn(payload["lean_authority"]["authority"], {"empirical", "blocked"})
+        self.assertIn(payload["empirical_jobs"]["authority"], {"empirical", "blocked"})
 
     def test_trading_status_exposes_rejection_and_market_context_controls(self) -> None:
         original_scheduler = getattr(app.state, "trading_scheduler", None)
@@ -1835,10 +1843,14 @@ class TestTradingApi(TestCase):
                 scheduler.state.drift_status = "stable"
                 app.state.trading_scheduler = scheduler
 
-                response = self.client.get("/trading/autonomy")
+                with patch("app.main.SessionLocal", self.session_local):
+                    response = self.client.get("/trading/autonomy")
                 self.assertEqual(response.status_code, 200)
                 payload = response.json()
                 self.assertEqual(payload["bridge_status"]["source"], "gate_report")
+                self.assertIn(payload["forecast_service"]["authority"], {"empirical", "blocked"})
+                self.assertIn(payload["lean_authority"]["authority"], {"empirical", "blocked"})
+                self.assertIn(payload["empirical_jobs"]["authority"], {"empirical", "blocked"})
                 self.assertEqual(
                     payload["bridge_status"]["strategy_compilation"]["spec_compiled"],
                     1,
@@ -1867,6 +1879,33 @@ class TestTradingApi(TestCase):
                     del app.state.trading_scheduler
                 else:
                     app.state.trading_scheduler = original_scheduler
+
+    def test_trading_empirical_jobs_endpoint_exposes_latest_job_freshness(self) -> None:
+        with self.session_local() as session:
+            session.add(
+                VNextEmpiricalJobRun(
+                    run_id="run-empirical-1",
+                    candidate_id="cand-empirical-1",
+                    job_name="benchmark parity",
+                    job_type="benchmark_parity",
+                    job_run_id="job-benchmark-1",
+                    status="completed",
+                    authority="empirical",
+                    promotion_authority_eligible=True,
+                    dataset_snapshot_ref="s3://datasets/run-empirical-1.json",
+                    artifact_refs=["s3://artifacts/benchmark.json"],
+                    payload_json={"artifact_authority": {"authoritative": True}},
+                )
+            )
+            session.commit()
+
+        with patch("app.main.SessionLocal", self.session_local):
+            response = self.client.get("/trading/empirical-jobs")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("jobs", payload)
+        self.assertEqual(payload["jobs"]["benchmark_parity"]["authority"], "empirical")
+        self.assertEqual(payload["jobs"]["benchmark_parity"]["job_run_id"], "job-benchmark-1")
 
     def test_trading_autonomy_evidence_continuity_endpoint_returns_state_report(
         self,

@@ -121,6 +121,30 @@ class TestConfig(TestCase):
         self.assertEqual(settings.trading_jangar_control_plane_timeout_seconds, 2.5)
         self.assertEqual(settings.trading_jangar_control_plane_cache_ttl_seconds, 30)
 
+    def test_forecast_service_settings_normalize_and_backfill_router_provider(self) -> None:
+        settings = Settings(
+            TRADING_ENABLED=False,
+            TRADING_AUTONOMY_ENABLED=False,
+            TRADING_LIVE_ENABLED=False,
+            TRADING_UNIVERSE_SOURCE="static",
+            TRADING_FORECAST_SERVICE_URL=" http://torghut-forecast.torghut.svc.cluster.local:8089/ ",
+            TRADING_FORECAST_SERVICE_ALLOWED_MODEL_FAMILIES=" chronos , moment , financial_tsfm ",
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+
+        self.assertEqual(
+            settings.trading_forecast_service_url,
+            "http://torghut-forecast.torghut.svc.cluster.local:8089",
+        )
+        self.assertEqual(
+            settings.trading_forecast_router_provider_url,
+            "http://torghut-forecast.torghut.svc.cluster.local:8089",
+        )
+        self.assertEqual(
+            settings.trading_forecast_service_allowed_model_families,
+            {"chronos", "moment", "financial_tsfm"},
+        )
+
     def test_allows_configured_live_pass_through_with_explicit_approval(self) -> None:
         settings = Settings(
             TRADING_MODE="live",
@@ -945,6 +969,7 @@ class TestConfig(TestCase):
             "trading_live_enabled",
             "trading_ws_crypto_enabled",
             "trading_universe_crypto_enabled",
+            "trading_forecast_service_require_healthy",
             "trading_lean_runner_healthcheck_enabled",
             "trading_lean_runner_require_healthy",
             "trading_lean_backtest_enabled",

@@ -219,6 +219,24 @@ export type NamespaceStatus = {
   degraded_components: string[]
 }
 
+export type EmpiricalDependencyStatus = {
+  status: 'healthy' | 'degraded' | 'disabled' | 'unknown'
+  endpoint: string
+  message: string
+  authoritative: boolean
+  calibration_status?: string
+  authoritative_modes?: string[]
+  eligible_models?: string[]
+  eligible_jobs?: string[]
+  stale_jobs?: string[]
+}
+
+export type EmpiricalServicesStatus = {
+  forecast: EmpiricalDependencyStatus
+  lean: EmpiricalDependencyStatus
+  jobs: EmpiricalDependencyStatus
+}
+
 export type ControlPlaneStatus = {
   service: string
   generated_at: string
@@ -245,6 +263,7 @@ export type ControlPlaneStatus = {
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
   rollout_health: ControlPlaneRolloutHealth
+  empirical_services: EmpiricalServicesStatus
   namespaces: NamespaceStatus[]
 }
 

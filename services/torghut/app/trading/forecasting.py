@@ -143,6 +143,11 @@ class ForecastContractV1:
     regime_entropy: str
     regime_predicted_next: str
     regime_inference_version: str
+    model_registry_ref: str | None = None
+    training_run_ref: str | None = None
+    dataset_snapshot_ref: str | None = None
+    calibration_ref: str | None = None
+    promotion_authority_eligible: bool = False
     artifact_authority: dict[str, Any] | None = None
 
     def to_payload(self) -> dict[str, object]:
@@ -165,6 +170,11 @@ class ForecastContractV1:
             'regime_entropy': self.regime_entropy,
             'regime_predicted_next': self.regime_predicted_next,
             'regime_inference_version': self.regime_inference_version,
+            'model_registry_ref': self.model_registry_ref,
+            'training_run_ref': self.training_run_ref,
+            'dataset_snapshot_ref': self.dataset_snapshot_ref,
+            'calibration_ref': self.calibration_ref,
+            'promotion_authority_eligible': self.promotion_authority_eligible,
             'artifact_authority': _forecast_artifact_authority(
                 self.model_family,
                 override=self.artifact_authority,
@@ -191,6 +201,11 @@ class ForecastDecisionAudit:
     regime_entropy: str
     regime_predicted_next: str
     regime_inference_version: str
+    model_registry_ref: str | None = None
+    training_run_ref: str | None = None
+    dataset_snapshot_ref: str | None = None
+    calibration_ref: str | None = None
+    promotion_authority_eligible: bool = False
     artifact_authority: dict[str, Any] | None = None
 
     def to_payload(self) -> dict[str, object]:
@@ -212,6 +227,11 @@ class ForecastDecisionAudit:
             'regime_entropy': self.regime_entropy,
             'regime_predicted_next': self.regime_predicted_next,
             'regime_inference_version': self.regime_inference_version,
+            'model_registry_ref': self.model_registry_ref,
+            'training_run_ref': self.training_run_ref,
+            'dataset_snapshot_ref': self.dataset_snapshot_ref,
+            'calibration_ref': self.calibration_ref,
+            'promotion_authority_eligible': self.promotion_authority_eligible,
             'artifact_authority': _forecast_artifact_authority(
                 self.final_model_family,
                 override=self.artifact_authority,
@@ -342,6 +362,11 @@ class ForecastAdapterOutput:
     interval: ForecastInterval
     uncertainty: ForecastUncertainty
     inference_latency_ms: int
+    model_registry_ref: str | None = None
+    training_run_ref: str | None = None
+    dataset_snapshot_ref: str | None = None
+    calibration_ref: str | None = None
+    promotion_authority_eligible: bool = False
     artifact_authority: dict[str, Any] | None = None
 
 
@@ -507,7 +532,7 @@ def _post_forecast_request(
     if api_key:
         headers['authorization'] = f'Bearer {api_key}'
     request = Request(
-        f'{base_url}/v1/forecast',
+        f'{base_url}/v1/forecasts',
         data=body,
         headers=headers,
         method='POST',
@@ -566,6 +591,13 @@ def _coerce_http_forecast_output(
             aleatoric=_decimal_or_default(uncertainty_payload.get('aleatoric'), Decimal('0.5')),
         ),
         inference_latency_ms=max(1, int(response.get('inference_latency_ms', 1))),
+        model_registry_ref=str(response.get('model_registry_ref') or '').strip() or None,
+        training_run_ref=str(response.get('training_run_ref') or '').strip() or None,
+        dataset_snapshot_ref=str(response.get('dataset_snapshot_ref') or '').strip() or None,
+        calibration_ref=str(response.get('calibration_ref') or '').strip() or None,
+        promotion_authority_eligible=bool(
+            response.get('promotion_authority_eligible', False)
+        ),
         artifact_authority=artifact_authority,
     )
 
@@ -645,6 +677,12 @@ class ForecastRefinerV5:
             interval=refined_interval,
             uncertainty=refined_uncertainty,
             inference_latency_ms=contract.inference_latency_ms,
+            model_registry_ref=contract.model_registry_ref,
+            training_run_ref=contract.training_run_ref,
+            dataset_snapshot_ref=contract.dataset_snapshot_ref,
+            calibration_ref=contract.calibration_ref,
+            promotion_authority_eligible=contract.promotion_authority_eligible,
+            artifact_authority=contract.artifact_authority,
         )
 
 
@@ -699,11 +737,15 @@ class ForecastRouterV5:
 
         output: ForecastAdapterOutput | None = None
         if fallback_reason is None and selected_adapter is not None:
-            output = selected_adapter.forecast(feature_vector=feature_vector, horizon=resolved_horizon)
-            if output.inference_latency_ms > route.max_inference_latency_ms:
-                fallback_reason = 'latency_slo_breach'
-            elif not output.interval.is_valid():
-                fallback_reason = 'invalid_interval_contract'
+            try:
+                output = selected_adapter.forecast(feature_vector=feature_vector, horizon=resolved_horizon)
+            except Exception:
+                fallback_reason = 'provider_error'
+            else:
+                if output.inference_latency_ms > route.max_inference_latency_ms:
+                    fallback_reason = 'latency_slo_breach'
+                elif not output.interval.is_valid():
+                    fallback_reason = 'invalid_interval_contract'
 
         final_family = selected_family
         if fallback_reason is not None:
@@ -741,6 +783,11 @@ class ForecastRouterV5:
             regime_entropy=regime_context.entropy,
             regime_predicted_next=regime_context.predicted_next,
             regime_inference_version=regime_context.artifact_model_id,
+            model_registry_ref=output.model_registry_ref,
+            training_run_ref=output.training_run_ref,
+            dataset_snapshot_ref=output.dataset_snapshot_ref,
+            calibration_ref=output.calibration_ref,
+            promotion_authority_eligible=output.promotion_authority_eligible,
             artifact_authority=output.artifact_authority,
         )
         selected_version = selected_adapter.model_version if selected_adapter is not None else 'missing'
@@ -762,6 +809,11 @@ class ForecastRouterV5:
             regime_entropy=regime_context.entropy,
             regime_predicted_next=regime_context.predicted_next,
             regime_inference_version=regime_context.artifact_model_id,
+            model_registry_ref=output.model_registry_ref,
+            training_run_ref=output.training_run_ref,
+            dataset_snapshot_ref=output.dataset_snapshot_ref,
+            calibration_ref=output.calibration_ref,
+            promotion_authority_eligible=output.promotion_authority_eligible,
             artifact_authority=output.artifact_authority,
         )
         telemetry = ForecastRoutingTelemetry(
@@ -827,31 +879,34 @@ def build_default_forecast_router(*, policy_path: str | None, refinement_enabled
 
     policy = ForecastRouterPolicyV1.from_payload(policy_payload)
     calibration_store = ForecastCalibrationStore.from_payload(policy_payload)
-    if (
+    service_enabled = bool(settings.trading_forecast_service_url) or (
         settings.trading_forecast_router_provider_mode == 'http'
         and settings.trading_forecast_router_provider_url
-    ):
+    )
+    allowed_families = settings.trading_forecast_service_allowed_model_families
+    if service_enabled:
+        service_url = (
+            settings.trading_forecast_service_url
+            or settings.trading_forecast_router_provider_url
+            or ''
+        )
+        service_timeout = settings.trading_forecast_service_timeout_seconds
+        service_api_key = (
+            settings.trading_forecast_service_api_key
+            or settings.trading_forecast_router_provider_api_key
+        )
         adapters: dict[str, ForecastAdapter] = {
-            'chronos': HttpForecastAdapter(
-                model_family='chronos',
-                base_url=settings.trading_forecast_router_provider_url,
-                timeout_seconds=settings.trading_forecast_router_provider_timeout_seconds,
-                api_key=settings.trading_forecast_router_provider_api_key,
-            ),
-            'moment': HttpForecastAdapter(
-                model_family='moment',
-                base_url=settings.trading_forecast_router_provider_url,
-                timeout_seconds=settings.trading_forecast_router_provider_timeout_seconds,
-                api_key=settings.trading_forecast_router_provider_api_key,
-            ),
-            'financial_tsfm': HttpForecastAdapter(
-                model_family='financial_tsfm',
-                base_url=settings.trading_forecast_router_provider_url,
-                timeout_seconds=settings.trading_forecast_router_provider_timeout_seconds,
-                api_key=settings.trading_forecast_router_provider_api_key,
-            ),
             'baseline': DeterministicBaselineAdapter(),
         }
+        for family in ('chronos', 'moment', 'financial_tsfm'):
+            if family not in allowed_families:
+                continue
+            adapters[family] = HttpForecastAdapter(
+                model_family=family,
+                base_url=service_url,
+                timeout_seconds=service_timeout,
+                api_key=service_api_key,
+            )
     else:
         adapters = {
             'chronos': ChronosForecastAdapter(),
