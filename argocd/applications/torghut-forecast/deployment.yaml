@@ -42,7 +42,7 @@ spec:
             - name: TRADING_FORECAST_REGISTRY_REFRESH_SECONDS
               value: "30"
             - name: TRADING_FORECAST_CALIBRATION_STALE_AFTER_SECONDS
-              value: "3600"
+              value: "86400"
             - name: TRADING_FORECAST_SERVICE_TIMEOUT_SECONDS
               value: "5"
           volumeMounts:
