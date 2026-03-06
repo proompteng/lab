@@ -1,0 +1,56 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: torghut-empirical-artifacts-retention
+  namespace: torghut
+spec:
+  schedule: "17 4 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: torghut
+          containers:
+            - name: retention
+              image: quay.io/minio/mc:RELEASE.2025-02-21T16-00-46Z
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-empirical-artifacts
+                      key: AWS_ACCESS_KEY_ID
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-empirical-artifacts
+                      key: AWS_SECRET_ACCESS_KEY
+                - name: BUCKET_NAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-empirical-artifacts
+                      key: BUCKET_NAME
+                - name: BUCKET_HOST
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-empirical-artifacts
+                      key: BUCKET_HOST
+                - name: BUCKET_PORT
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-empirical-artifacts
+                      key: BUCKET_PORT
+                - name: RETENTION_DAYS
+                  value: "30"
+              command:
+                - /bin/sh
+                - -lc
+              args:
+                - |
+                  set -euo pipefail
+                  mc alias set empirical "http://${BUCKET_HOST}:${BUCKET_PORT}" "${AWS_ACCESS_KEY_ID}" "${AWS_SECRET_ACCESS_KEY}"
+                  mc find "empirical/${BUCKET_NAME}" --older-than "${RETENTION_DAYS}d" --exec "mc rm {}"

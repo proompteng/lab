@@ -135,6 +135,16 @@ class TestLiveConfigManifestContract(TestCase):
             15,
         )
         self.assertEqual(
+            settings.trading_forecast_service_url,
+            "http://torghut-forecast.torghut.svc.cluster.local:8089",
+        )
+        self.assertTrue(settings.trading_forecast_service_require_healthy)
+        self.assertEqual(settings.trading_empirical_job_stale_after_seconds, 86400)
+        self.assertEqual(
+            settings.trading_forecast_service_allowed_model_families,
+            {"chronos", "moment", "financial_tsfm"},
+        )
+        self.assertEqual(
             set(settings.trading_universe_static_fallback_symbols),
             {
                 "AAPL",

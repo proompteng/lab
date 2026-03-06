@@ -12,6 +12,11 @@ automate via PR + Argo sync). Other docs should link here instead of duplicating
 The Argo WorkflowTemplate `torghut-historical-simulation` is now managed as part of
 `argocd/applications/torghut`.
 
+The Argo WorkflowTemplate `torghut-empirical-promotion` is also managed here. It assembles
+authoritative benchmark parity, foundation router parity, and Janus evidence artifacts from
+replayed/observed manifests, uploads them to the `torghut-empirical-artifacts` bucket when
+configured, and persists freshness rows into `vnext_empirical_job_runs`.
+
 Trigger a simulation run via Argo:
 
 ```bash

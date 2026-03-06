@@ -38,6 +38,9 @@ class TestJanusQScaffold(TestCase):
         self.assertIn("dataset_snapshot_hash", first.lineage)
         self.assertIn("run_config_hash", first.lineage)
         self.assertEqual(first.summary["unknown_event_type_count"], 0)
+        self.assertFalse(first.artifact_authority["authoritative"])
+        self.assertEqual(first.artifact_authority["provenance"], "synthetic_generated")
+        self.assertEqual(first.to_payload()["artifact_authority"]["maturity"], "stub")
 
     def test_hgrm_reward_scaffold_and_summary_contract(self) -> None:
         signals = _signals_fixture()
@@ -70,6 +73,10 @@ class TestJanusQScaffold(TestCase):
         self.assertEqual(summary["schema_version"], "janus-q-evidence-v1")
         self.assertIn("decision_snapshot_hash", hgrm.lineage)
         self.assertEqual(hgrm.summary["clipped_final_reward_count"], 0)
+        self.assertFalse(hgrm.artifact_authority["authoritative"])
+        self.assertFalse(summary["artifact_authority"]["authoritative"])
+        self.assertIn("artifact_authority", summary["event_car"])
+        self.assertIn("artifact_authority", summary["hgrm_reward"])
 
     def test_hgrm_reward_maps_by_seq_for_same_symbol_and_timestamp(self) -> None:
         generated_at = datetime(2026, 2, 25, tzinfo=timezone.utc)

@@ -12,6 +12,7 @@ from decimal import Decimal
 from typing import Any, Literal, Protocol, cast
 
 from ..models import Strategy
+from ..strategies.catalog import extract_catalog_metadata
 from .features import FeatureVectorV3, validate_declared_features
 from .strategy_specs import build_compiled_strategy_artifacts, strategy_type_supports_spec_v2
 
@@ -24,6 +25,7 @@ def _empty_meta() -> dict[str, Any]:
 class StrategyDefinition:
     strategy_id: str
     strategy_name: str
+    declared_strategy_id: str
     strategy_type: str
     version: str
     params: dict[str, Any]
@@ -41,6 +43,7 @@ class StrategyDefinition:
 class StrategyContext:
     strategy_id: str
     strategy_name: str
+    declared_strategy_id: str
     strategy_type: str
     strategy_version: str
     event_ts: str
@@ -86,15 +89,26 @@ class AggregatedIntent:
 @dataclass(frozen=True)
 class RuntimeDecision:
     intent: StrategyIntent
+    strategy_row_id: str
+    declared_strategy_id: str
+    strategy_name: str
+    strategy_type: str
+    strategy_version: str
     plugin_id: str
     plugin_version: str
     parameter_hash: str
     feature_hash: str
     compiler_source: str = "legacy_runtime"
     strategy_spec: dict[str, Any] = field(default_factory=_empty_meta)
+    compiled_targets: dict[str, Any] = field(default_factory=_empty_meta)
 
     def metadata(self) -> dict[str, Any]:
         return {
+            "strategy_row_id": self.strategy_row_id,
+            "declared_strategy_id": self.declared_strategy_id,
+            "strategy_name": self.strategy_name,
+            "strategy_type": self.strategy_type,
+            "strategy_version": self.strategy_version,
             "plugin_id": self.plugin_id,
             "plugin_version": self.plugin_version,
             "parameter_hash": self.parameter_hash,
@@ -102,6 +116,7 @@ class RuntimeDecision:
             "required_features": list(self.intent.required_features),
             "compiler_source": self.compiler_source,
             "strategy_spec_v2": dict(self.strategy_spec),
+            "compiled_targets": dict(self.compiled_targets),
         }
 
 
@@ -465,6 +480,7 @@ class StrategyRuntime:
         context = StrategyContext(
             strategy_id=definition.strategy_id,
             strategy_name=definition.strategy_name,
+            declared_strategy_id=definition.declared_strategy_id,
             strategy_type=definition.strategy_type,
             strategy_version=definition.version,
             event_ts=features.event_ts.isoformat(),
@@ -478,12 +494,18 @@ class StrategyRuntime:
             return None
         return RuntimeDecision(
             intent=intent,
+            strategy_row_id=definition.strategy_id,
+            declared_strategy_id=definition.declared_strategy_id,
+            strategy_name=definition.strategy_name,
+            strategy_type=definition.strategy_type,
+            strategy_version=definition.version,
             plugin_id=plugin.plugin_id,
             plugin_version=plugin.version,
             parameter_hash=self._parameter_hash(context.params),
             feature_hash=features.normalization_hash,
             compiler_source=definition.compiler_source,
             strategy_spec=dict(definition.strategy_spec),
+            compiled_targets=dict(definition.compiled_targets),
         )
 
     def evaluate_all(
@@ -536,6 +558,7 @@ class StrategyRuntime:
             context = StrategyContext(
                 strategy_id=definition.strategy_id,
                 strategy_name=definition.strategy_name,
+                declared_strategy_id=definition.declared_strategy_id,
                 strategy_type=definition.strategy_type,
                 strategy_version=definition.version,
                 event_ts=features.event_ts.isoformat(),
@@ -554,12 +577,18 @@ class StrategyRuntime:
                     continue
                 decision = RuntimeDecision(
                     intent=intent,
+                    strategy_row_id=definition.strategy_id,
+                    declared_strategy_id=definition.declared_strategy_id,
+                    strategy_name=definition.strategy_name,
+                    strategy_type=definition.strategy_type,
+                    strategy_version=definition.version,
                     plugin_id=plugin.plugin_id,
                     plugin_version=plugin.version,
                     parameter_hash=self._parameter_hash(context.params),
                     feature_hash=features.normalization_hash,
                     compiler_source=definition.compiler_source,
                     strategy_spec=dict(definition.strategy_spec),
+                    compiled_targets=dict(definition.compiled_targets),
                 )
                 raw_intents.append(decision)
                 all_intents.append(intent)
@@ -591,41 +620,56 @@ class StrategyRuntime:
 
     @staticmethod
     def definition_from_strategy(strategy: Strategy) -> StrategyDefinition:
+        catalog_metadata = StrategyRuntime._catalog_metadata(strategy)
         strategy_type = StrategyRuntime._strategy_plugin_type(strategy)
         version = StrategyRuntime._strategy_version(strategy)
         params = StrategyRuntime._strategy_params(strategy)
-        compiler_source = "legacy_runtime"
-        strategy_spec: dict[str, Any] = {}
-        compiled_targets: dict[str, Any] = {}
+        compiler_source = str(catalog_metadata.get("compiler_source") or "legacy_runtime")
+        strategy_spec = (
+            cast(dict[str, Any], catalog_metadata.get("strategy_spec_v2"))
+            if isinstance(catalog_metadata.get("strategy_spec_v2"), dict)
+            else {}
+        )
+        compiled_targets = (
+            cast(dict[str, Any], catalog_metadata.get("compiled_targets"))
+            if isinstance(catalog_metadata.get("compiled_targets"), dict)
+            else {}
+        )
+        declared_strategy_id = (
+            str(catalog_metadata.get("strategy_id") or "").strip()
+            or str(strategy.name)
+        )
         if strategy_type_supports_spec_v2(strategy_type):
-            raw_universe_symbols: object = strategy.universe_symbols
-            universe_symbols: list[str] | None = None
-            if isinstance(raw_universe_symbols, list):
-                universe_symbols = []
-                for raw_item in cast(list[object], raw_universe_symbols):
-                    item_text = str(raw_item).strip()
-                    if item_text:
-                        universe_symbols.append(item_text)
-            compiled = build_compiled_strategy_artifacts(
-                strategy_id=str(strategy.id),
-                strategy_type=strategy_type,
-                semantic_version=version,
-                params=params,
-                base_timeframe=str(strategy.base_timeframe),
-                universe_symbols=universe_symbols,
-                source="spec_v2",
-            )
             compiler_source = "spec_v2"
-            strategy_spec = compiled.strategy_spec.to_payload()
-            compiled_targets = {
-                "evaluator_config": compiled.evaluator_config,
-                "shadow_runtime_config": compiled.shadow_runtime_config,
-                "live_runtime_config": compiled.live_runtime_config,
-                "promotion_metadata": compiled.promotion_metadata,
-            }
+            if not strategy_spec or not compiled_targets:
+                raw_universe_symbols: object = strategy.universe_symbols
+                universe_symbols: list[str] | None = None
+                if isinstance(raw_universe_symbols, list):
+                    universe_symbols = []
+                    for raw_item in cast(list[object], raw_universe_symbols):
+                        item_text = str(raw_item).strip()
+                        if item_text:
+                            universe_symbols.append(item_text)
+                compiled = build_compiled_strategy_artifacts(
+                    strategy_id=declared_strategy_id,
+                    strategy_type=strategy_type,
+                    semantic_version=version,
+                    params=params,
+                    base_timeframe=str(strategy.base_timeframe),
+                    universe_symbols=universe_symbols,
+                    source="spec_v2",
+                )
+                strategy_spec = compiled.strategy_spec.to_payload()
+                compiled_targets = {
+                    "evaluator_config": compiled.evaluator_config,
+                    "shadow_runtime_config": compiled.shadow_runtime_config,
+                    "live_runtime_config": compiled.live_runtime_config,
+                    "promotion_metadata": compiled.promotion_metadata,
+                }
         return StrategyDefinition(
             strategy_id=str(strategy.id),
             strategy_name=str(strategy.name),
+            declared_strategy_id=declared_strategy_id,
             strategy_type=strategy_type,
             version=version,
             params=params,
@@ -641,6 +685,10 @@ class StrategyRuntime:
 
     @staticmethod
     def _strategy_plugin_type(strategy: Strategy) -> str:
+        metadata = StrategyRuntime._catalog_metadata(strategy)
+        metadata_type = str(metadata.get("strategy_type") or "").strip()
+        if metadata_type:
+            return str(metadata_type)
         raw = getattr(strategy, "universe_type", None)
         if not raw:
             return "legacy_macd_rsi"
@@ -652,6 +700,10 @@ class StrategyRuntime:
 
     @staticmethod
     def _strategy_version(strategy: Strategy) -> str:
+        metadata = StrategyRuntime._catalog_metadata(strategy)
+        metadata_version = str(metadata.get("version") or "").strip()
+        if metadata_version:
+            return metadata_version
         if strategy.description:
             description = str(strategy.description)
             if "version=" in description:
@@ -675,16 +727,33 @@ class StrategyRuntime:
 
     @staticmethod
     def _strategy_params(strategy: Strategy) -> dict[str, Any]:
-        return {
-            "max_position_pct_equity": str(strategy.max_position_pct_equity)
+        metadata = StrategyRuntime._catalog_metadata(strategy)
+        params = (
+            dict(cast(dict[str, Any], metadata.get("params")))
+            if isinstance(metadata.get("params"), dict)
+            else {}
+        )
+        params.setdefault(
+            "max_position_pct_equity",
+            str(strategy.max_position_pct_equity)
             if strategy.max_position_pct_equity is not None
             else None,
-            "max_notional_per_trade": str(strategy.max_notional_per_trade)
+        )
+        params.setdefault(
+            "max_notional_per_trade",
+            str(strategy.max_notional_per_trade)
             if strategy.max_notional_per_trade is not None
             else None,
-            "base_timeframe": strategy.base_timeframe,
-            "universe_symbols": strategy.universe_symbols,
-        }
+        )
+        params.setdefault("base_timeframe", strategy.base_timeframe)
+        params.setdefault("universe_symbols", strategy.universe_symbols)
+        return params
+
+    @staticmethod
+    def _catalog_metadata(strategy: Strategy) -> dict[str, Any]:
+        return extract_catalog_metadata(
+            str(strategy.description) if strategy.description is not None else None
+        )
 
     @staticmethod
     def _parameter_hash(params: dict[str, Any]) -> str:

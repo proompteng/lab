@@ -182,6 +182,9 @@ class DecisionEngine:
             return decisions
 
         strategies_by_id = {str(strategy.id): strategy for strategy in strategies}
+        raw_runtime_by_strategy_id = {
+            item.intent.strategy_id: item.metadata() for item in runtime_eval.raw_intents
+        }
         for intent in runtime_eval.intents:
             source_strategy_ids = list(intent.source_strategy_ids)
             primary_strategy_id = source_strategy_ids[0] if source_strategy_ids else None
@@ -197,6 +200,16 @@ class DecisionEngine:
                 for strategy_id in source_strategy_ids
                 if strategy_id in strategies_by_id
             ]
+            source_runtime_metadata = [
+                dict(raw_runtime_by_strategy_id[strategy_id])
+                for strategy_id in source_strategy_ids
+                if strategy_id in raw_runtime_by_strategy_id
+            ]
+            primary_runtime_metadata = (
+                dict(raw_runtime_by_strategy_id[primary_strategy_id])
+                if primary_strategy_id in raw_runtime_by_strategy_id
+                else {}
+            )
             qty, sizing_meta = _resolve_qty_for_aggregated(
                 source_strategies,
                 symbol=intent.symbol,
@@ -237,7 +250,24 @@ class DecisionEngine:
                         runtime_metadata={
                             "mode": settings.trading_strategy_runtime_mode,
                             "aggregated": True,
+                            "primary_strategy_row_id": primary_strategy_id,
+                            "primary_declared_strategy_id": primary_runtime_metadata.get(
+                                "declared_strategy_id"
+                            ),
                             "source_strategy_ids": source_strategy_ids,
+                            "source_declared_strategy_ids": [
+                                str(item.get("declared_strategy_id"))
+                                for item in source_runtime_metadata
+                                if str(item.get("declared_strategy_id") or "").strip()
+                            ],
+                            "compiler_sources": sorted(
+                                {
+                                    str(item.get("compiler_source") or "").strip()
+                                    for item in source_runtime_metadata
+                                    if str(item.get("compiler_source") or "").strip()
+                                }
+                            ),
+                            "source_strategy_runtime": source_runtime_metadata,
                             "feature_snapshot_hashes": list(
                                 intent.feature_snapshot_hashes
                             ),
@@ -325,6 +355,7 @@ class DecisionEngine:
             timeframe=timeframe,
             price=price,
         )
+        runtime_definition = StrategyRuntime.definition_from_strategy(strategy)
 
         qty, sizing_meta = _resolve_qty(
             strategy,
@@ -353,10 +384,17 @@ class DecisionEngine:
                 volatility=features.volatility,
                 snapshot=snapshot,
                 runtime_metadata={
+                    "strategy_row_id": str(strategy.id),
+                    "declared_strategy_id": runtime_definition.declared_strategy_id,
+                    "strategy_type": runtime_definition.strategy_type,
+                    "strategy_version": runtime_definition.version,
                     "plugin_id": "legacy_builtin",
                     "plugin_version": "1.0.0",
                     "parameter_hash": "legacy",
                     "required_features": ["macd", "macd_signal", "rsi14", "price"],
+                    "compiler_source": runtime_definition.compiler_source,
+                    "strategy_spec_v2": runtime_definition.strategy_spec,
+                    "compiled_targets": runtime_definition.compiled_targets,
                 },
                 forecast_contract=forecast_contract,
                 forecast_audit=forecast_audit,

@@ -16,6 +16,8 @@ from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional, cast
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 from uuid import UUID, uuid4
 
 from alpaca.trading.client import TradingClient
@@ -56,7 +58,7 @@ class SubmitOrderBody(BaseModel):
 class BacktestSubmitBody(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
-    lane: str = 'research'
+    lane: str = 'research_backtest'
     config: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -136,6 +138,161 @@ _idempotency_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _backtests: dict[str, _BacktestRecord] = {}
 
 
+def _normalize_backtest_lane(value: str) -> str:
+    normalized = value.strip().lower().replace('-', '_')
+    aliases = {
+        'research': 'research_backtest',
+        'research_backtest': 'research_backtest',
+        'shadow': 'shadow_replay',
+        'shadow_replay': 'shadow_replay',
+        'deterministic_scaffold': 'deterministic_scaffold',
+    }
+    return aliases.get(normalized, normalized or 'research_backtest')
+
+
+def _upstream_headers(*, correlation_id: str | None = None) -> dict[str, str]:
+    headers = {'accept': 'application/json'}
+    if correlation_id:
+        headers['X-Correlation-ID'] = correlation_id
+    return headers
+
+
+def _join_upstream_url(base_url: str, suffix: str = '') -> str:
+    root = base_url.rstrip('/')
+    if not suffix:
+        return root
+    return f'{root}/{suffix.lstrip("/")}'
+
+
+def _proxy_json_request(
+    *,
+    method: str,
+    url: str,
+    timeout_seconds: int,
+    payload: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    request_headers = dict(headers or {})
+    body: bytes | None = None
+    if payload is not None:
+        body = json.dumps(payload, separators=(',', ':')).encode('utf-8')
+        request_headers['content-type'] = 'application/json'
+    request = Request(url, data=body, headers=request_headers, method=method)
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            raw_body = response.read().decode('utf-8')
+    except HTTPError as exc:
+        detail = exc.read().decode('utf-8', errors='ignore')[:200]
+        raise RuntimeError(f'lean_upstream_http_{exc.code}:{detail}') from exc
+    except URLError as exc:
+        raise RuntimeError(f'lean_upstream_network_error:{exc.reason}') from exc
+    except TimeoutError as exc:
+        raise RuntimeError('lean_upstream_timeout') from exc
+    if not raw_body:
+        return {}
+    try:
+        decoded = json.loads(raw_body)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f'lean_upstream_invalid_json:{raw_body[:200]}') from exc
+    if not isinstance(decoded, dict):
+        raise RuntimeError('lean_upstream_invalid_payload')
+    return cast(dict[str, Any], decoded)
+
+
+def _proxy_backtest_submit(
+    *,
+    body: BacktestSubmitBody,
+    correlation_id: str,
+) -> dict[str, Any] | None:
+    upstream_url = (settings.trading_lean_backtest_upstream_url or '').strip()
+    if not upstream_url:
+        return None
+    return _proxy_json_request(
+        method='POST',
+        url=_join_upstream_url(upstream_url, 'submit'),
+        timeout_seconds=settings.trading_lean_runner_upstream_timeout_seconds,
+        payload=body.model_dump(mode='json'),
+        headers=_upstream_headers(correlation_id=correlation_id),
+    )
+
+
+def _proxy_backtest_get(backtest_id: str) -> dict[str, Any] | None:
+    upstream_url = (settings.trading_lean_backtest_upstream_url or '').strip()
+    if not upstream_url:
+        return None
+    payload = _proxy_json_request(
+        method='GET',
+        url=_join_upstream_url(upstream_url, backtest_id),
+        timeout_seconds=settings.trading_lean_runner_upstream_timeout_seconds,
+        headers=_upstream_headers(),
+    )
+    result = payload.get('result')
+    if isinstance(result, dict) and 'artifact_authority' not in result:
+        cast(dict[str, Any], result)['artifact_authority'] = evidence_contract_payload(
+            provenance=ArtifactProvenance.HISTORICAL_MARKET_REPLAY,
+            maturity=EvidenceMaturity.EMPIRICALLY_VALIDATED,
+            notes='LEAN backtest result returned from configured upstream integration.',
+        )
+    if isinstance(result, dict):
+        result_map = cast(dict[str, Any], result)
+        result_map.setdefault('authority_mode', str(payload.get('lane') or 'research_backtest'))
+        result_map.setdefault('promotion_authority_eligible', True)
+        result_map.setdefault(
+            'execution_assumptions',
+            {'mode': result_map['authority_mode'], 'source': 'configured_upstream'},
+        )
+        result_map.setdefault(
+            'calibration_inputs',
+            {'status': 'provided_by_upstream'},
+        )
+        artifacts = result_map.get('artifacts')
+        if not isinstance(artifacts, dict):
+            artifacts = {}
+            result_map['artifacts'] = artifacts
+        cast(dict[str, Any], artifacts).setdefault(
+            'replay_dataset_ref',
+            f's3://torghut/lean/backtests/{backtest_id}/replay-dataset.parquet',
+        )
+        cast(dict[str, Any], artifacts).setdefault('fees_model_ref', 'fees/default-v1')
+        cast(dict[str, Any], artifacts).setdefault('spread_model_ref', 'spread/default-v1')
+        cast(dict[str, Any], artifacts).setdefault('slippage_model_ref', 'slippage/default-v1')
+    return payload
+
+
+def _proxy_shadow_simulate(
+    *,
+    body: ShadowSimulateBody,
+    correlation_id: str,
+) -> dict[str, Any] | None:
+    upstream_url = (settings.trading_lean_shadow_upstream_url or '').strip()
+    if not upstream_url:
+        return None
+    return _proxy_json_request(
+        method='POST',
+        url=upstream_url.rstrip('/'),
+        timeout_seconds=settings.trading_lean_runner_upstream_timeout_seconds,
+        payload=body.model_dump(mode='json'),
+        headers=_upstream_headers(correlation_id=correlation_id),
+    )
+
+
+def _proxy_strategy_shadow(
+    *,
+    body: StrategyShadowBody,
+    correlation_id: str,
+) -> dict[str, Any] | None:
+    upstream_url = (settings.trading_lean_strategy_shadow_upstream_url or '').strip()
+    if not upstream_url:
+        return None
+    return _proxy_json_request(
+        method='POST',
+        url=upstream_url.rstrip('/'),
+        timeout_seconds=settings.trading_lean_runner_upstream_timeout_seconds,
+        payload=body.model_dump(mode='json'),
+        headers=_upstream_headers(correlation_id=correlation_id),
+    )
+
+
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -153,12 +310,46 @@ def healthz() -> dict[str, str]:
     return {'status': 'ok', 'service': 'torghut-lean-runner'}
 
 
+@app.get('/readyz')
+def readyz() -> dict[str, Any]:
+    authoritative_modes: list[str] = []
+    if settings.trading_lean_backtest_upstream_url:
+        authoritative_modes.append('research_backtest')
+    if settings.trading_lean_shadow_upstream_url or settings.trading_lean_strategy_shadow_upstream_url:
+        authoritative_modes.append('shadow_replay')
+    return {
+        'status': 'ok',
+        'service': 'torghut-lean-runner',
+        'authoritative_modes': authoritative_modes,
+        'deterministic_scaffold_enabled': True,
+    }
+
+
 @app.get('/v1/observability')
 def observability() -> dict[str, Any]:
     return {
         'service': 'torghut-lean-runner',
         'contract_version': 'lean-v2',
         'metrics': _metrics.snapshot(),
+        'authority': {
+            'backtest_upstream_configured': bool(settings.trading_lean_backtest_upstream_url),
+            'shadow_upstream_configured': bool(settings.trading_lean_shadow_upstream_url),
+            'strategy_shadow_upstream_configured': bool(
+                settings.trading_lean_strategy_shadow_upstream_url
+            ),
+            'authoritative_modes': [
+                mode
+                for mode, enabled in (
+                    ('research_backtest', bool(settings.trading_lean_backtest_upstream_url)),
+                    (
+                        'shadow_replay',
+                        bool(settings.trading_lean_shadow_upstream_url)
+                        or bool(settings.trading_lean_strategy_shadow_upstream_url),
+                    ),
+                )
+                if enabled
+            ],
+        },
     }
 
 
@@ -308,6 +499,11 @@ def submit_backtest(
     started = time.perf_counter()
     operation = 'submit_backtest'
     correlation_id = _resolve_correlation_id(x_correlation_id)
+    body = BacktestSubmitBody(lane=_normalize_backtest_lane(body.lane), config=body.config)
+    proxied = _proxy_backtest_submit(body=body, correlation_id=correlation_id)
+    if proxied is not None:
+        _metrics.record(operation=operation, latency_ms=_latency_ms(started))
+        return proxied
     canonical = _canonical_json(body.config)
     reproducibility_hash = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
     backtest_id = hashlib.sha256(f'{body.lane}:{reproducibility_hash}'.encode('utf-8')).hexdigest()[:20]
@@ -328,15 +524,29 @@ def submit_backtest(
     return {
         'backtest_id': backtest_id,
         'status': _backtests[backtest_id].status,
+        'lane': body.lane,
         'reproducibility_hash': reproducibility_hash,
+        'authority_mode': body.lane,
         '_lean_audit': _audit_payload(operation=operation, correlation_id=correlation_id),
     }
+
+
+@app.post('/v1/backtests')
+def submit_backtest_alias(
+    body: BacktestSubmitBody,
+    x_correlation_id: str | None = Header(default=None, alias='X-Correlation-ID'),
+) -> dict[str, Any]:
+    return submit_backtest(body=body, x_correlation_id=x_correlation_id)
 
 
 @app.get('/v1/backtests/{backtest_id}')
 def get_backtest(backtest_id: str) -> dict[str, Any]:
     started = time.perf_counter()
     operation = 'get_backtest'
+    proxied = _proxy_backtest_get(backtest_id)
+    if proxied is not None:
+        _metrics.record(operation=operation, latency_ms=_latency_ms(started))
+        return proxied
     with _cache_lock:
         record = _backtests.get(backtest_id)
         if record is None:
@@ -359,6 +569,51 @@ def get_backtest(backtest_id: str) -> dict[str, Any]:
     return payload
 
 
+@app.get('/v1/runs/{run_id}')
+def get_run(run_id: str) -> dict[str, Any]:
+    return get_backtest(run_id)
+
+
+@app.get('/v1/runs/{run_id}/artifacts')
+def get_run_artifacts(run_id: str) -> dict[str, Any]:
+    payload = get_backtest(run_id)
+    result = cast(dict[str, Any], payload.get('result')) if isinstance(payload.get('result'), dict) else None
+    artifacts = cast(dict[str, Any], result.get('artifacts') or {}) if result is not None else {}
+    artifact_authority = (
+        result.get('artifact_authority')
+        if result is not None and isinstance(result.get('artifact_authority'), dict)
+        else evidence_contract_payload(
+            provenance=ArtifactProvenance.SYNTHETIC_GENERATED,
+            maturity=EvidenceMaturity.STUB,
+            authoritative=False,
+            placeholder=True,
+            notes='Artifacts are being served from deterministic scaffold mode.',
+        )
+    )
+    promotion_authority_eligible = (
+        bool(result.get('promotion_authority_eligible', False))
+        if result is not None
+        else False
+    )
+    return {
+        'run_id': run_id,
+        'artifacts': artifacts,
+        'artifact_authority': artifact_authority,
+        'promotion_authority_eligible': promotion_authority_eligible,
+    }
+
+
+@app.post('/v1/shadow-replay')
+def submit_shadow_replay(
+    body: BacktestSubmitBody,
+    x_correlation_id: str | None = Header(default=None, alias='X-Correlation-ID'),
+) -> dict[str, Any]:
+    return submit_backtest(
+        body=BacktestSubmitBody(lane='shadow_replay', config=body.config),
+        x_correlation_id=x_correlation_id,
+    )
+
+
 @app.post('/v1/shadow/simulate')
 def shadow_simulate(
     body: ShadowSimulateBody,
@@ -367,6 +622,10 @@ def shadow_simulate(
     started = time.perf_counter()
     operation = 'shadow_simulate'
     correlation_id = _resolve_correlation_id(x_correlation_id)
+    proxied = _proxy_shadow_simulate(body=body, correlation_id=correlation_id)
+    if proxied is not None:
+        _metrics.record(operation=operation, latency_ms=_latency_ms(started))
+        return proxied
     seed = hashlib.sha256(f'{body.symbol}:{body.side}:{body.qty}:{body.order_type}'.encode('utf-8')).hexdigest()
     basis = int(seed[:8], 16)
     slippage_bps = ((basis % 29) - 14) / 10.0
@@ -378,10 +637,20 @@ def shadow_simulate(
         'symbol': body.symbol,
         'side': body.side,
         'qty': body.qty,
+        'authority_mode': 'deterministic_scaffold',
+        'promotion_authority_eligible': False,
+        'replay_dataset_ref': None,
         'simulated_fill_price': round(simulated_fill, 8),
         'simulated_slippage_bps': round(slippage_bps, 4),
         'parity_status': parity_status,
         'failure_taxonomy': None if parity_status == 'pass' else 'execution_quality_drift',
+        'artifact_authority': evidence_contract_payload(
+            provenance=ArtifactProvenance.SYNTHETIC_GENERATED,
+            maturity=EvidenceMaturity.STUB,
+            authoritative=False,
+            placeholder=True,
+            notes='LEAN shadow replay is using deterministic scaffold simulation.',
+        ),
         '_lean_audit': _audit_payload(operation=operation, correlation_id=correlation_id),
     }
 
@@ -394,6 +663,10 @@ def evaluate_strategy_shadow(
     started = time.perf_counter()
     operation = 'strategy_shadow'
     correlation_id = _resolve_correlation_id(x_correlation_id)
+    proxied = _proxy_strategy_shadow(body=body, correlation_id=correlation_id)
+    if proxied is not None:
+        _metrics.record(operation=operation, latency_ms=_latency_ms(started))
+        return proxied
     signature = hashlib.sha256(
         f'{body.strategy_id}:{body.symbol}:{_canonical_json(body.intent)}'.encode('utf-8')
     ).hexdigest()
@@ -412,8 +685,17 @@ def evaluate_strategy_shadow(
         'run_id': signature[:24],
         'strategy_id': body.strategy_id,
         'symbol': body.symbol,
+        'authority_mode': 'deterministic_scaffold',
+        'promotion_authority_eligible': False,
         'parity_status': parity_status,
         'governance': governance,
+        'artifact_authority': evidence_contract_payload(
+            provenance=ArtifactProvenance.SYNTHETIC_GENERATED,
+            maturity=EvidenceMaturity.STUB,
+            authoritative=False,
+            placeholder=True,
+            notes='LEAN strategy shadow evaluation is using deterministic scaffold simulation.',
+        ),
         '_lean_audit': _audit_payload(operation=operation, correlation_id=correlation_id),
     }
 
@@ -641,15 +923,31 @@ def _deterministic_backtest_result(record: _BacktestRecord) -> dict[str, Any]:
         f'{record.reproducibility_hash}:{gross_pnl}:{drawdown}:{trades}'.encode('utf-8')
     ).hexdigest()
     return {
+        'integration_mode': 'deterministic_scaffold',
+        'authority_mode': 'deterministic_scaffold',
+        'promotion_authority_eligible': False,
         'summary': {
             'gross_pnl': gross_pnl,
             'net_pnl': round(gross_pnl * 0.93, 4),
             'max_drawdown': round(drawdown, 6),
             'trade_count': trades,
         },
+        'execution_assumptions': {
+            'mode': record.lane,
+            'venue': 'deterministic_scaffold',
+            'partial_fill_model': 'scaffold-fill-v1',
+        },
+        'calibration_inputs': {
+            'status': 'missing',
+            'reason': 'deterministic_scaffold_mode',
+        },
         'artifacts': {
             'report_uri': f's3://torghut/lean/backtests/{record.backtest_id}/report.json',
             'trades_uri': f's3://torghut/lean/backtests/{record.backtest_id}/trades.parquet',
+            'replay_dataset_ref': f's3://torghut/lean/backtests/{record.backtest_id}/replay-dataset.parquet',
+            'fees_model_ref': 'fees/scaffold-v1',
+            'spread_model_ref': 'spread/scaffold-v1',
+            'slippage_model_ref': 'slippage/scaffold-v1',
         },
         'replay_hash': replay_hash,
         'deterministic_replay_passed': True,

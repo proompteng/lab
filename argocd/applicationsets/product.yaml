@@ -243,6 +243,14 @@ spec:
                       - /spec/template/spec/enableServiceLinks
                 automation: auto
                 enabled: "true"
+              - name: torghut-forecast
+                path: argocd/applications/torghut-forecast
+                namespace: torghut
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: auto
+                enabled: "true"
               - name: posthog
                 path: argocd/applications/posthog
                 namespace: posthog

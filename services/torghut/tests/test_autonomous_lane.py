@@ -54,6 +54,14 @@ from app.models import (
     ResearchPromotion,
     ResearchRun,
     ResearchStressMetrics,
+    VNextDatasetSnapshot,
+    VNextExperimentRun,
+    VNextExperimentSpec,
+    VNextFeatureViewSpec,
+    VNextModelArtifact,
+    VNextPromotionDecision,
+    VNextShadowLiveDeviation,
+    VNextSimulationCalibration,
 )
 
 
@@ -225,6 +233,8 @@ class TestAutonomousLane(TestCase):
             )
             self.assertIn("gates", gate_payload)
             self.assertNotEqual(gate_payload["recommended_mode"], "paper")
+            self.assertIn("dependency_quorum", gate_payload)
+            self.assertIn("alpha_readiness", gate_payload)
             self.assertIn("promotion_evidence", gate_payload)
             self.assertIn("promotion_decision", gate_payload)
             self.assertFalse(gate_payload["promotion_decision"]["promotion_allowed"])
@@ -249,6 +259,11 @@ class TestAutonomousLane(TestCase):
                 evidence["advisor_fallback_slo"]["artifact_ref"],
                 str(output_dir / "execution" / "advisor-fallback-slo-report-v1.json"),
             )
+            candidate_spec = json.loads(
+                result.candidate_spec_path.read_text(encoding="utf-8")
+            )
+            self.assertIn("dependency_quorum", candidate_spec)
+            self.assertIn("alpha_readiness", candidate_spec)
             self.assertEqual(
                 evidence["contamination_registry"]["artifact_ref"],
                 str(output_dir / "gates" / "contamination-leakage-report-v1.json"),
@@ -1194,6 +1209,7 @@ class TestAutonomousLane(TestCase):
         ) -> PromotionPrerequisiteResult:
             call_payload["policy_payload"] = dict(policy_payload)
             call_payload["artifact_root"] = str(artifact_root)
+            call_payload["candidate_state_payload"] = dict(candidate_state_payload)
             return PromotionPrerequisiteResult(
                 allowed=False,
                 reasons=["profitability_stage_manifest_stage_chain_not_passed"],
@@ -1225,10 +1241,20 @@ class TestAutonomousLane(TestCase):
         self.assertTrue(
             policy_payload.get("promotion_require_profitability_stage_manifest")
         )
+        self.assertTrue(
+            policy_payload.get("promotion_require_jangar_dependency_quorum")
+        )
+        self.assertTrue(
+            policy_payload.get("promotion_require_alpha_readiness_contract")
+        )
         self.assertEqual(
             policy_payload.get("promotion_profitability_stage_manifest_artifact"),
             "profitability/profitability-stage-manifest-v1.json",
         )
+        candidate_state_payload = call_payload["candidate_state_payload"]
+        assert isinstance(candidate_state_payload, dict)
+        self.assertIn("dependencyQuorum", candidate_state_payload)
+        self.assertIn("alphaReadiness", candidate_state_payload)
 
     @patch(
         "app.trading.autonomy.lane._evaluate_drift_promotion_gate",
@@ -1834,6 +1860,54 @@ class TestAutonomousLane(TestCase):
                         ResearchPromotion.candidate_id == result.candidate_id
                     )
                 ).scalar_one()
+                dataset_snapshot = session.execute(
+                    select(VNextDatasetSnapshot).where(
+                        VNextDatasetSnapshot.run_id == result.run_id
+                    )
+                ).scalar_one()
+                feature_specs = (
+                    session.execute(
+                        select(VNextFeatureViewSpec).where(
+                            VNextFeatureViewSpec.candidate_id == result.candidate_id
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                model_artifacts = (
+                    session.execute(
+                        select(VNextModelArtifact).where(
+                            VNextModelArtifact.candidate_id == result.candidate_id
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                experiment_spec = session.execute(
+                    select(VNextExperimentSpec).where(
+                        VNextExperimentSpec.candidate_id == result.candidate_id
+                    )
+                ).scalar_one()
+                experiment_run = session.execute(
+                    select(VNextExperimentRun).where(
+                        VNextExperimentRun.candidate_id == result.candidate_id
+                    )
+                ).scalar_one()
+                simulation_calibration = session.execute(
+                    select(VNextSimulationCalibration).where(
+                        VNextSimulationCalibration.candidate_id == result.candidate_id
+                    )
+                ).scalar_one()
+                shadow_live_deviation = session.execute(
+                    select(VNextShadowLiveDeviation).where(
+                        VNextShadowLiveDeviation.candidate_id == result.candidate_id
+                    )
+                ).scalar_one()
+                promotion_decision = session.execute(
+                    select(VNextPromotionDecision).where(
+                        VNextPromotionDecision.candidate_id == result.candidate_id
+                    )
+                ).scalar_one()
 
             self.assertEqual(run_row.status, "passed")
             self.assertIsNotNone(run_row.dataset_from)
@@ -1853,6 +1927,16 @@ class TestAutonomousLane(TestCase):
             self.assertEqual(len(stress_rows), 4)
             self.assertEqual(promotion_row.requested_mode, "paper")
             self.assertIn(promotion_row.approved_mode, {"paper", None})
+            self.assertEqual(dataset_snapshot.run_id, result.run_id)
+            self.assertEqual(dataset_snapshot.source, "historical_market_replay")
+            self.assertTrue(feature_specs)
+            self.assertTrue(model_artifacts)
+            self.assertEqual(experiment_spec.run_id, result.run_id)
+            self.assertEqual(experiment_run.run_id, result.run_id)
+            self.assertEqual(simulation_calibration.run_id, result.run_id)
+            self.assertEqual(shadow_live_deviation.run_id, result.run_id)
+            self.assertEqual(promotion_decision.run_id, result.run_id)
+            self.assertEqual(promotion_decision.promotion_target, "paper")
             self.assertIn(candidate.lifecycle_role, {"champion", "challenger"})
             self.assertIsInstance(candidate.metadata_bundle, dict)
             self.assertIsInstance(candidate.recommendation_bundle, dict)

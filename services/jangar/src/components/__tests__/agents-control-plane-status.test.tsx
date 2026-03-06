@@ -95,6 +95,31 @@ const baseStatus: ControlPlaneStatus = {
     deployments: [],
     message: 'healthy',
   },
+  empirical_services: {
+    forecast: {
+      status: 'healthy',
+      endpoint: 'http://torghut-forecast.torghut.svc.cluster.local:8089/readyz',
+      message: 'forecast service ready',
+      authoritative: true,
+      calibration_status: 'ready',
+      eligible_models: ['chronos', 'moment'],
+    },
+    lean: {
+      status: 'healthy',
+      endpoint: 'http://torghut-lean-runner.torghut.svc.cluster.local:8088/readyz',
+      message: 'LEAN runner ready',
+      authoritative: true,
+      authoritative_modes: ['research_backtest', 'shadow_replay'],
+    },
+    jobs: {
+      status: 'healthy',
+      endpoint: 'http://torghut.torghut.svc.cluster.local/trading/empirical-jobs',
+      message: 'empirical jobs fresh',
+      authoritative: true,
+      eligible_jobs: ['benchmark_parity', 'foundation_router_parity'],
+      stale_jobs: [],
+    },
+  },
   namespaces: [
     {
       namespace: 'agents',
@@ -111,6 +136,9 @@ describe('ControlPlaneStatusPanel', () => {
 
     expect(normalizedHtml).toContain('Top failure reasons: BackoffLimitExceeded (2), ImagePullBackOff (1)')
     expect(normalizedHtml).toContain('Data confidence: high')
+    expect(normalizedHtml).toContain('Eligible models: chronos, moment')
+    expect(normalizedHtml).toContain('Eligible jobs: benchmark_parity, foundation_router_parity')
+    expect(normalizedHtml).toContain('Modes: research_backtest, shadow_replay')
     expect(normalizedHtml).not.toContain('Top failure reasons: [object Object], [object Object]')
   })
 })

@@ -1,5 +1,5 @@
 """Deterministic autonomous lane: research -> gate evaluation -> paper candidate patch."""
-# pyright: reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false
+# pyright: reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedImport=false, reportUnusedFunction=false, reportUnusedVariable=false, reportGeneralTypeIssues=false
 
 from __future__ import annotations
 
@@ -27,6 +27,14 @@ from ...models import (
     ResearchRun,
     ResearchStressMetrics,
     Strategy,
+    VNextDatasetSnapshot,
+    VNextExperimentRun,
+    VNextExperimentSpec,
+    VNextFeatureViewSpec,
+    VNextModelArtifact,
+    VNextPromotionDecision,
+    VNextShadowLiveDeviation,
+    VNextSimulationCalibration,
 )
 from ..evaluation import (
     FoldResult,
@@ -55,6 +63,7 @@ from ..features import (
     normalize_feature_vector_v3,
 )
 from ..forecasting import build_default_forecast_router
+from ..hypotheses import load_hypothesis_registry, load_jangar_dependency_quorum
 from ..llm.evaluation import build_llm_evaluation_metrics
 from ..models import SignalEnvelope
 from ..parity import (
@@ -79,6 +88,8 @@ from ..reporting import (
 from ..strategy_specs import (
     build_compiled_strategy_artifacts,
     build_experiment_spec_from_strategy,
+    compile_strategy_spec_v2,
+    load_strategy_spec_v2_payload,
     strategy_type_supports_spec_v2,
 )
 from ..tca import build_tca_gate_inputs
@@ -233,6 +244,8 @@ def _build_candidate_state_payload(
     now: datetime,
     code_version: str,
     runbook_validated: bool,
+    dependency_quorum_payload: dict[str, Any],
+    alpha_readiness_payload: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "candidateId": candidate_id,
@@ -242,6 +255,8 @@ def _build_candidate_state_payload(
         "datasetSnapshotRef": "signals_window",
         "noSignalReason": None,
         "runbookValidated": runbook_validated,
+        "dependencyQuorum": dependency_quorum_payload,
+        "alphaReadiness": alpha_readiness_payload,
         "rollbackReadiness": {
             "killSwitchDryRunPassed": bool(runtime_strategies),
             "gitopsRevertDryRunPassed": (
@@ -253,6 +268,65 @@ def _build_candidate_state_payload(
             "rollbackTarget": f"{code_version or 'unknown'}",
         },
     }
+
+
+def _build_candidate_alpha_readiness_payload(
+    *,
+    runtime_strategies: Sequence[StrategyRuntimeConfig],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    registry = load_hypothesis_registry()
+    dependency_quorum = load_jangar_dependency_quorum()
+    strategy_families = sorted(
+        {
+            str(strategy.strategy_type).strip()
+            for strategy in runtime_strategies
+            if str(strategy.strategy_type).strip()
+        }
+    )
+    matched_hypotheses = [
+        manifest
+        for manifest in registry.items
+        if manifest.strategy_family in strategy_families
+    ]
+    matched_strategy_families = {
+        manifest.strategy_family for manifest in matched_hypotheses
+    }
+    missing_strategy_families = sorted(
+        family
+        for family in strategy_families
+        if family not in matched_strategy_families
+    )
+    reasons: list[str] = []
+    if not registry.loaded:
+        reasons.append("hypothesis_registry_unavailable")
+    if registry.errors:
+        reasons.append("hypothesis_registry_errors_present")
+    if missing_strategy_families:
+        reasons.append("strategy_family_hypothesis_unmapped")
+    if dependency_quorum.decision != "allow":
+        reasons.append(f"jangar_dependency_quorum_{dependency_quorum.decision}")
+    return (
+        {
+            "mode": "candidate_alignment_v1",
+            "registry_loaded": registry.loaded,
+            "registry_path": registry.path,
+            "registry_errors": list(registry.errors),
+            "strategy_families": strategy_families,
+            "matched_hypothesis_ids": sorted(
+                {manifest.hypothesis_id for manifest in matched_hypotheses}
+            ),
+            "missing_strategy_families": missing_strategy_families,
+            "promotion_eligible": (
+                registry.loaded
+                and not registry.errors
+                and not missing_strategy_families
+                and dependency_quorum.decision == "allow"
+            ),
+            "reasons": reasons,
+            "dependency_quorum": dependency_quorum.as_payload(),
+        },
+        dependency_quorum.as_payload(),
+    )
 
 
 @dataclass(frozen=True)
@@ -601,6 +675,112 @@ def _artifact_authority_for_evidence(name: str) -> dict[str, Any]:
     )
 
 
+def _empirical_artifact_authority(
+    *,
+    evidence_name: str,
+    provenance: ArtifactProvenance = ArtifactProvenance.HISTORICAL_MARKET_REPLAY,
+) -> dict[str, Any]:
+    return evidence_contract_payload(
+        provenance=provenance,
+        maturity=EvidenceMaturity.EMPIRICALLY_VALIDATED,
+        authoritative=True,
+        placeholder=False,
+        calibration_summary={
+            "status": "external_empirical_source",
+            "evidence_name": evidence_name,
+        },
+        notes="Artifact loaded from configured empirical source.",
+    )
+
+
+def _resolve_optional_service_path(raw_value: str | None) -> Path | None:
+    normalized = (raw_value or '').strip()
+    if not normalized:
+        return None
+    path = Path(normalized).expanduser()
+    if path.is_absolute():
+        return path
+    service_root = Path(__file__).resolve().parents[3]
+    return service_root / path
+
+
+def _load_configured_empirical_payload(
+    *,
+    path_value: str | None,
+    expected_schema_version: str | None,
+    evidence_name: str,
+    provenance: ArtifactProvenance = ArtifactProvenance.HISTORICAL_MARKET_REPLAY,
+) -> dict[str, Any] | None:
+    resolved = _resolve_optional_service_path(path_value)
+    if resolved is None or not resolved.exists() or not resolved.is_file():
+        return None
+    raw_payload = json.loads(resolved.read_text(encoding='utf-8'))
+    if not isinstance(raw_payload, dict):
+        raise RuntimeError(f'configured_empirical_payload_invalid:{resolved}')
+    payload = dict(cast(dict[str, Any], raw_payload))
+    schema_version = str(payload.get('schema_version') or '').strip()
+    if expected_schema_version and schema_version != expected_schema_version:
+        raise RuntimeError(
+            f'configured_empirical_payload_schema_mismatch:{resolved}:{schema_version}'
+        )
+    if not isinstance(payload.get('artifact_authority'), dict):
+        payload['artifact_authority'] = _empirical_artifact_authority(
+            evidence_name=evidence_name,
+            provenance=provenance,
+        )
+    return payload
+
+
+def _build_janus_q_summary_from_payloads(
+    *,
+    event_car_payload: dict[str, Any],
+    hgrm_reward_payload: dict[str, Any],
+    event_car_artifact_ref: str,
+    hgrm_reward_artifact_ref: str,
+) -> dict[str, object]:
+    event_summary = (
+        cast(dict[str, Any], event_car_payload.get('summary'))
+        if isinstance(event_car_payload.get('summary'), dict)
+        else {}
+    )
+    reward_summary = (
+        cast(dict[str, Any], hgrm_reward_payload.get('summary'))
+        if isinstance(hgrm_reward_payload.get('summary'), dict)
+        else {}
+    )
+    event_count = int(event_summary.get('event_count', 0) or 0)
+    reward_count = int(reward_summary.get('reward_count', 0) or 0)
+    mapped_count = int(reward_summary.get('event_mapped_count', 0) or 0)
+    reasons: list[str] = []
+    if event_count <= 0:
+        reasons.append('janus_event_count_missing')
+    if reward_count <= 0:
+        reasons.append('janus_reward_count_missing')
+    if reward_count > 0 and mapped_count < reward_count:
+        reasons.append('janus_reward_event_mapping_incomplete')
+    return {
+        'schema_version': 'janus-q-evidence-v1',
+        'evidence_complete': not reasons,
+        'reasons': reasons,
+        'event_car': {
+            'schema_version': event_car_payload.get('schema_version'),
+            'event_count': event_count,
+            'manifest_hash': event_car_payload.get('manifest_hash'),
+            'artifact_ref': event_car_artifact_ref,
+        },
+        'hgrm_reward': {
+            'schema_version': hgrm_reward_payload.get('schema_version'),
+            'reward_count': reward_count,
+            'event_mapped_count': mapped_count,
+            'direction_gate_pass_ratio': str(
+                reward_summary.get('direction_gate_pass_ratio', '0')
+            ),
+            'manifest_hash': hgrm_reward_payload.get('manifest_hash'),
+            'artifact_ref': hgrm_reward_artifact_ref,
+        },
+    }
+
+
 def _build_bridge_evidence_payload(
     report_payload: dict[str, Any],
     *,
@@ -629,8 +809,10 @@ def _build_vnext_gate_summary(
     runtime_strategies: list[StrategyRuntimeConfig],
     simulation_calibration_payload: dict[str, Any],
     shadow_live_deviation_payload: dict[str, Any],
+    dependency_quorum_payload: Mapping[str, Any] | None = None,
+    hypothesis_registry_payload: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "strategy_compilation": [
             {
                 "strategy_id": strategy.strategy_id,
@@ -670,6 +852,88 @@ def _build_vnext_gate_summary(
             )
             if key in shadow_live_deviation_payload
         },
+        "portfolio_promotion": _build_portfolio_promotion_summary(runtime_strategies),
+    }
+    if dependency_quorum_payload is not None:
+        payload["dependency_quorum"] = dict(dependency_quorum_payload)
+    if hypothesis_registry_payload is not None:
+        payload["hypothesis_registry"] = dict(hypothesis_registry_payload)
+    return payload
+
+
+def _build_portfolio_promotion_summary(
+    runtime_strategies: Sequence[StrategyRuntimeConfig],
+) -> dict[str, Any]:
+    strategy_items = list(runtime_strategies)
+    spec_compiled_count = sum(
+        1 for item in strategy_items if item.compiler_source == "spec_v2"
+    )
+    symbol_usage: dict[str, list[str]] = {}
+    missing_policy_refs: set[str] = set()
+    promotion_policy_refs: set[str] = set()
+    risk_profile_refs: set[str] = set()
+    sizing_policy_refs: set[str] = set()
+    execution_policy_refs: set[str] = set()
+
+    for strategy in strategy_items:
+        universe = (
+            cast(dict[str, Any], strategy.strategy_spec.get("universe"))
+            if isinstance(strategy.strategy_spec.get("universe"), dict)
+            else {}
+        )
+        raw_symbols = universe.get("symbols")
+        if isinstance(raw_symbols, list):
+            for raw_symbol in cast(list[object], raw_symbols):
+                symbol = str(raw_symbol).strip().upper()
+                if not symbol:
+                    continue
+                symbol_usage.setdefault(symbol, []).append(strategy.strategy_id)
+        promotion_metadata = (
+            cast(dict[str, Any], strategy.compiled_targets.get("promotion_metadata"))
+            if isinstance(strategy.compiled_targets.get("promotion_metadata"), dict)
+            else {}
+        )
+        promotion_policy_ref = str(
+            promotion_metadata.get("promotion_policy_ref") or ""
+        ).strip()
+        risk_profile_ref = str(promotion_metadata.get("risk_profile_ref") or "").strip()
+        sizing_policy_ref = str(
+            promotion_metadata.get("sizing_policy_ref") or ""
+        ).strip()
+        execution_policy_ref = str(
+            promotion_metadata.get("execution_policy_ref") or ""
+        ).strip()
+        if promotion_policy_ref:
+            promotion_policy_refs.add(promotion_policy_ref)
+        else:
+            missing_policy_refs.add(f"{strategy.strategy_id}:promotion_policy_ref")
+        if risk_profile_ref:
+            risk_profile_refs.add(risk_profile_ref)
+        else:
+            missing_policy_refs.add(f"{strategy.strategy_id}:risk_profile_ref")
+        if sizing_policy_ref:
+            sizing_policy_refs.add(sizing_policy_ref)
+        else:
+            missing_policy_refs.add(f"{strategy.strategy_id}:sizing_policy_ref")
+        if execution_policy_ref:
+            execution_policy_refs.add(execution_policy_ref)
+        else:
+            missing_policy_refs.add(f"{strategy.strategy_id}:execution_policy_ref")
+
+    overlapping_symbols = sorted(
+        symbol for symbol, owners in symbol_usage.items() if len(set(owners)) > 1
+    )
+    return {
+        "mode": "portfolio_aware" if len(strategy_items) > 1 else "single_strategy",
+        "strategy_count": len(strategy_items),
+        "spec_compiled_count": spec_compiled_count,
+        "unique_symbol_count": len(symbol_usage),
+        "overlapping_symbols": overlapping_symbols,
+        "promotion_policy_refs": sorted(promotion_policy_refs),
+        "risk_profile_refs": sorted(risk_profile_refs),
+        "sizing_policy_refs": sorted(sizing_policy_refs),
+        "execution_policy_refs": sorted(execution_policy_refs),
+        "missing_policy_refs": sorted(missing_policy_refs),
     }
 
 
@@ -2182,6 +2446,12 @@ def run_autonomous_lane(
             ),
             encoding="utf-8",
         )
+        (
+            candidate_alpha_readiness_payload,
+            candidate_dependency_quorum_payload,
+        ) = _build_candidate_alpha_readiness_payload(
+            runtime_strategies=runtime_strategies,
+        )
         candidate_state_payload = _build_candidate_state_payload(
             candidate_id=candidate_id,
             run_id=run_id,
@@ -2191,6 +2461,8 @@ def run_autonomous_lane(
             now=now,
             code_version=code_version,
             runbook_validated=_is_runbook_valid(strategy_configmap_path),
+            dependency_quorum_payload=candidate_dependency_quorum_payload,
+            alpha_readiness_payload=candidate_alpha_readiness_payload,
         )
         candidate_state_readiness_raw = candidate_state_payload.get("rollbackReadiness", {})
         candidate_state_readiness = (
@@ -2499,6 +2771,8 @@ def run_autonomous_lane(
             },
         }
         gate_report_trace_id = _trace_id(gate_report_payload)
+        gate_report_payload["dependency_quorum"] = candidate_dependency_quorum_payload
+        gate_report_payload["alpha_readiness"] = candidate_alpha_readiness_payload
         gate_report_payload["provenance"] = {
             "gate_report_trace_id": gate_report_trace_id,
             "promotion_evidence_authority": {
@@ -2578,6 +2852,58 @@ def run_autonomous_lane(
                 for strategy in runtime_strategies
                 if strategy.compiler_source == "spec_v2" and strategy.compiled_targets
             },
+            "bridge_persistence_v2": {
+                "dataset_snapshots": [
+                    {
+                        "dataset_id": f"dataset-{run_id}",
+                        "source": "historical_market_replay",
+                        "artifact_ref": str(walk_results_path),
+                    }
+                ],
+                "feature_view_specs": [
+                    {
+                        "strategy_id": strategy.strategy_id,
+                        "feature_view_spec_ref": str(
+                            cast(dict[str, Any], strategy.strategy_spec).get(
+                                "feature_view_spec_ref", ""
+                            )
+                        ).strip()
+                        if strategy.strategy_spec
+                        else "",
+                    }
+                    for strategy in runtime_strategies
+                    if strategy.strategy_spec
+                ],
+                "model_artifacts": [
+                    {
+                        "strategy_id": strategy.strategy_id,
+                        "model_ref": str(
+                            cast(dict[str, Any], strategy.strategy_spec).get("model_ref")
+                            or cast(dict[str, Any], strategy.strategy_spec).get(
+                                "deterministic_rule_ref", ""
+                            )
+                        ).strip(),
+                    }
+                    for strategy in runtime_strategies
+                    if strategy.strategy_spec
+                ],
+                "simulation_calibrations": [
+                    {
+                        "artifact_ref": str(simulation_calibration_report_path),
+                    }
+                ],
+                "shadow_live_deviations": [
+                    {
+                        "artifact_ref": str(shadow_live_deviation_report_path),
+                    }
+                ],
+                "promotion_decisions_v2": [],
+            },
+            "portfolio_promotion_v2": _build_portfolio_promotion_summary(
+                runtime_strategies
+            ),
+            "dependency_quorum": candidate_dependency_quorum_payload,
+            "alpha_readiness": candidate_alpha_readiness_payload,
         }
         if runtime_strategies:
             primary_strategy = runtime_strategies[0]
@@ -2594,7 +2920,18 @@ def run_autonomous_lane(
                     experiment_id=f"exp-{run_id}",
                     hypothesis=f"compiled-{primary_strategy.strategy_type}-evaluation",
                     strategy_spec=compiled_spec.strategy_spec,
+                    parent_experiment_ids=[f"candidate-{candidate_id}"],
                     llm_provenance={"mode": "advisory_only", "source": "none"},
+                    lineage={
+                        "candidate_id": candidate_id,
+                        "run_id": run_id,
+                        "source": "autonomous_lane",
+                    },
+                    research_memory={
+                        "summary": f"{primary_strategy.strategy_id}:{primary_strategy.version}",
+                        "runtime_errors": sorted(runtime_errors),
+                        "baseline_runtime_errors": sorted(baseline_runtime_errors),
+                    },
                 ).to_payload()
         candidate_spec_path = research_dir / "candidate-spec.json"
 
@@ -2680,6 +3017,20 @@ def run_autonomous_lane(
         promotion_policy_payload = dict(raw_gate_policy)
         promotion_policy_payload["promotion_require_profitability_stage_manifest"] = True
         promotion_policy_payload["promotion_require_truthful_evidence_contracts"] = True
+        promotion_policy_payload["promotion_require_jangar_dependency_quorum"] = True
+        promotion_policy_payload.setdefault(
+            "promotion_jangar_dependency_quorum_required_targets",
+            ["paper", "live"],
+        )
+        promotion_policy_payload["promotion_require_alpha_readiness_contract"] = True
+        promotion_policy_payload.setdefault(
+            "promotion_alpha_readiness_required_targets",
+            ["paper", "live"],
+        )
+        promotion_policy_payload.setdefault(
+            "promotion_alpha_readiness_require_registry_match",
+            True,
+        )
         promotion_policy_payload.setdefault(
             "promotion_require_simulation_calibration",
             True,
@@ -3031,6 +3382,8 @@ def run_autonomous_lane(
             "reason_codes": promotion_reasons,
             "promotion_gate_artifact": str(promotion_gate_path),
         }
+        gate_report_payload["dependency_quorum"] = candidate_dependency_quorum_payload
+        gate_report_payload["alpha_readiness"] = candidate_alpha_readiness_payload
         gate_report_payload["provenance"] = {
             "gate_report_trace_id": gate_report_trace_id,
             "recommendation_trace_id": recommendation_trace_id,
@@ -3229,12 +3582,56 @@ def run_autonomous_lane(
         research_spec["stage_lineage_root"] = (
             stage_lineage_payload.get("root_lineage_hash")
         )
+        experiment_spec_payload = (
+            cast(dict[str, Any], research_spec.get("experiment_spec"))
+            if isinstance(research_spec.get("experiment_spec"), dict)
+            else None
+        )
+        if experiment_spec_payload is not None:
+            lineage_payload = (
+                cast(dict[str, Any], experiment_spec_payload.get("lineage"))
+                if isinstance(experiment_spec_payload.get("lineage"), dict)
+                else {}
+            )
+            lineage_payload["stage_lineage_root"] = stage_lineage_payload.get(
+                "root_lineage_hash"
+            )
+            lineage_payload["stage_trace_ids"] = dict(stage_trace_ids)
+            experiment_spec_payload["lineage"] = lineage_payload
         research_spec["stage_manifest_refs"] = {
             _STAGE_CANDIDATE_GENERATION: str(manifest_paths[_STAGE_CANDIDATE_GENERATION]),
             _STAGE_EVALUATION: str(manifest_paths[_STAGE_EVALUATION]),
             _STAGE_RECOMMENDATION: str(manifest_paths[_STAGE_RECOMMENDATION]),
             _STAGE_PROFITABILITY: str(profitability_manifest_path),
         }
+        bridge_payload = (
+            cast(dict[str, Any], research_spec.get("bridge_persistence_v2"))
+            if isinstance(research_spec.get("bridge_persistence_v2"), dict)
+            else {}
+        )
+        bridge_payload["experiment_runs"] = [
+            {
+                "experiment_id": (
+                    str(experiment_spec_payload.get("experiment_id"))
+                    if experiment_spec_payload is not None
+                    else None
+                ),
+                "run_id": run_id,
+                "candidate_id": candidate_id,
+                "stage_lineage_root": stage_lineage_payload.get("root_lineage_hash"),
+            }
+        ]
+        bridge_payload["promotion_decisions_v2"] = [
+            {
+                "candidate_id": candidate_id,
+                "run_id": run_id,
+                "promotion_target": promotion_target,
+                "recommended_mode": promotion_recommendation_payload.get("recommended_mode"),
+                "eligible": promotion_check.allowed,
+                "artifact_ref": str(promotion_recommendation_path),
+            }
+        ]
+        research_spec["bridge_persistence_v2"] = bridge_payload
         research_spec["artifacts"] = {
             **research_spec["artifacts"],
             **{
@@ -4523,6 +4920,17 @@ def _persist_run_outputs(
 ) -> None:
     robustness_by_fold = {fold.fold_name: fold for fold in report.robustness.folds}
     effective_promotion_allowed = bool(promotion_allowed and actuation_allowed)
+    candidate_spec_payload = _load_json_if_exists(candidate_spec_path) or {}
+    candidate_dependency_quorum_payload = (
+        cast(dict[str, Any], candidate_spec_payload.get("dependency_quorum"))
+        if isinstance(candidate_spec_payload.get("dependency_quorum"), dict)
+        else {}
+    )
+    candidate_alpha_readiness_payload = (
+        cast(dict[str, Any], candidate_spec_payload.get("alpha_readiness"))
+        if isinstance(candidate_spec_payload.get("alpha_readiness"), dict)
+        else {}
+    )
 
     with session_factory() as session:
         with session.begin():
@@ -4555,6 +4963,46 @@ def _persist_run_outputs(
                     ResearchCandidate.candidate_id == candidate_id
                 )
             )
+            session.execute(
+                delete(VNextDatasetSnapshot).where(
+                    VNextDatasetSnapshot.run_id == run_id
+                )
+            )
+            session.execute(
+                delete(VNextFeatureViewSpec).where(
+                    VNextFeatureViewSpec.candidate_id == candidate_id
+                )
+            )
+            session.execute(
+                delete(VNextModelArtifact).where(
+                    VNextModelArtifact.candidate_id == candidate_id
+                )
+            )
+            session.execute(
+                delete(VNextExperimentSpec).where(
+                    VNextExperimentSpec.candidate_id == candidate_id
+                )
+            )
+            session.execute(
+                delete(VNextExperimentRun).where(
+                    VNextExperimentRun.candidate_id == candidate_id
+                )
+            )
+            session.execute(
+                delete(VNextSimulationCalibration).where(
+                    VNextSimulationCalibration.candidate_id == candidate_id
+                )
+            )
+            session.execute(
+                delete(VNextShadowLiveDeviation).where(
+                    VNextShadowLiveDeviation.candidate_id == candidate_id
+                )
+            )
+            session.execute(
+                delete(VNextPromotionDecision).where(
+                    VNextPromotionDecision.candidate_id == candidate_id
+                )
+            )
             should_promote = (
                 effective_promotion_allowed
                 and promotion_recommendation.action == "promote"
@@ -4581,6 +5029,8 @@ def _persist_run_outputs(
                     else None
                 ),
                 "actuation_allowed": effective_promotion_allowed,
+                "dependency_quorum": candidate_dependency_quorum_payload,
+                "alpha_readiness": candidate_alpha_readiness_payload,
                 "actuation_intent_artifact": (
                     str(actuation_intent_path) if actuation_intent_path else None
                 ),
@@ -4722,6 +5172,8 @@ def _persist_run_outputs(
                 "stage_trace_ids": dict(stage_trace_ids),
                 "stage_manifest_refs": dict(stage_manifest_refs),
                 "replay_artifact_hashes": replay_artifact_hashes,
+                "dependency_quorum": candidate_dependency_quorum_payload,
+                "alpha_readiness": candidate_alpha_readiness_payload,
                 "reasons": list(promotion_recommendation.evidence.reasons),
                 "actuation_intent_artifact": (
                     str(actuation_intent_path) if actuation_intent_path else None
@@ -4873,6 +5325,211 @@ def _persist_run_outputs(
                 run.recommendation_trace_id = recommendation_trace_id
                 run.updated_at = now
                 session.add(run)
+
+            _persist_vnext_objects(
+                session=session,
+                run_id=run_id,
+                candidate_id=candidate_id,
+                runtime_strategies=runtime_strategies,
+                candidate_spec_payload=candidate_spec_payload,
+                signals=signals,
+                walk_results=walk_results,
+                report=report,
+                promotion_target=promotion_target,
+                promotion_recommendation=promotion_recommendation,
+                effective_promotion_allowed=effective_promotion_allowed,
+                gate_report_trace_id=gate_report_trace_id,
+                recommendation_trace_id=recommendation_trace_id,
+                now=now,
+                simulation_calibration_report_payload=simulation_calibration_report_payload,
+                shadow_live_deviation_report_payload=shadow_live_deviation_report_payload,
+            )
+
+
+def _persist_vnext_objects(
+    *,
+    session: Session,
+    run_id: str,
+    candidate_id: str,
+    runtime_strategies: Sequence[StrategyRuntimeConfig],
+    candidate_spec_payload: dict[str, Any],
+    signals: Sequence[SignalEnvelope],
+    walk_results: WalkForwardResults,
+    report: EvaluationReport,
+    promotion_target: str,
+    promotion_recommendation: PromotionRecommendation,
+    effective_promotion_allowed: bool,
+    gate_report_trace_id: str,
+    recommendation_trace_id: str,
+    now: datetime,
+    simulation_calibration_report_payload: dict[str, Any],
+    shadow_live_deviation_report_payload: dict[str, Any],
+) -> None:
+    experiment_payload = (
+        cast(dict[str, Any], candidate_spec_payload.get("experiment_spec"))
+        if isinstance(candidate_spec_payload.get("experiment_spec"), dict)
+        else {}
+    )
+    bridge_payload = (
+        cast(dict[str, Any], candidate_spec_payload.get("bridge_persistence_v2"))
+        if isinstance(candidate_spec_payload.get("bridge_persistence_v2"), dict)
+        else {}
+    )
+    dependency_quorum_payload = (
+        cast(dict[str, Any], candidate_spec_payload.get("dependency_quorum"))
+        if isinstance(candidate_spec_payload.get("dependency_quorum"), dict)
+        else {}
+    )
+    alpha_readiness_payload = (
+        cast(dict[str, Any], candidate_spec_payload.get("alpha_readiness"))
+        if isinstance(candidate_spec_payload.get("alpha_readiness"), dict)
+        else {}
+    )
+    portfolio_payload = (
+        cast(dict[str, Any], candidate_spec_payload.get("portfolio_promotion_v2"))
+        if isinstance(candidate_spec_payload.get("portfolio_promotion_v2"), dict)
+        else {}
+    )
+
+    dataset_snapshot_ref = str(candidate_spec_payload.get("artifacts", {}).get("walkforward_results", "")).strip() if isinstance(candidate_spec_payload.get("artifacts"), dict) else ""
+    ordered_signals = sorted(signals, key=lambda item: item.event_ts)
+    dataset_from = ordered_signals[0].event_ts if ordered_signals else None
+    dataset_to = ordered_signals[-1].event_ts if ordered_signals else None
+    session.add(
+        VNextDatasetSnapshot(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            dataset_id=f"dataset-{run_id}",
+            source="historical_market_replay",
+            dataset_version=str(candidate_spec_payload.get("run_id") or run_id),
+            dataset_from=dataset_from,
+            dataset_to=dataset_to,
+            artifact_ref=dataset_snapshot_ref or None,
+            payload_json=bridge_payload.get("dataset_snapshots")
+            if isinstance(bridge_payload.get("dataset_snapshots"), list)
+            else candidate_spec_payload,
+        )
+    )
+
+    for strategy in runtime_strategies:
+        strategy_spec = dict(strategy.strategy_spec)
+        if not strategy_spec:
+            continue
+        feature_view_spec_ref = str(strategy_spec.get("feature_view_spec_ref") or "").strip()
+        if feature_view_spec_ref:
+            session.add(
+                VNextFeatureViewSpec(
+                    run_id=run_id,
+                    candidate_id=candidate_id,
+                    strategy_id=strategy.strategy_id,
+                    feature_view_spec_ref=feature_view_spec_ref,
+                    payload_json=strategy_spec,
+                )
+            )
+        artifact_ref = str(
+            strategy_spec.get("model_ref") or strategy_spec.get("deterministic_rule_ref") or ""
+        ).strip()
+        if artifact_ref:
+            session.add(
+                VNextModelArtifact(
+                    run_id=run_id,
+                    candidate_id=candidate_id,
+                    strategy_id=strategy.strategy_id,
+                    artifact_ref=artifact_ref,
+                    artifact_kind="model"
+                    if str(strategy_spec.get("model_ref") or "").strip()
+                    else "deterministic_rule",
+                    payload_json={
+                        "strategy_spec_v2": strategy_spec,
+                        "compiled_targets": strategy.compiled_targets,
+                    },
+                )
+            )
+
+    if experiment_payload:
+        experiment_id = str(experiment_payload.get("experiment_id") or f"exp-{run_id}").strip()
+        session.add(
+            VNextExperimentSpec(
+                run_id=run_id,
+                candidate_id=candidate_id,
+                experiment_id=experiment_id,
+                payload_json=experiment_payload,
+            )
+        )
+        session.add(
+            VNextExperimentRun(
+                run_id=run_id,
+                candidate_id=candidate_id,
+                experiment_id=experiment_id,
+                stage_lineage_root=str(
+                    cast(dict[str, Any], experiment_payload.get("lineage", {})).get(
+                        "stage_lineage_root", ""
+                    )
+                ).strip()
+                or None,
+                payload_json={
+                    "bridge_experiment_runs": bridge_payload.get("experiment_runs"),
+                    "created_at": now.isoformat(),
+                },
+            )
+        )
+
+    simulation_artifact_ref = str(
+        candidate_spec_payload.get("artifacts", {}).get("simulation_calibration", "")
+    ).strip() if isinstance(candidate_spec_payload.get("artifacts"), dict) else ""
+    if simulation_artifact_ref:
+        session.add(
+            VNextSimulationCalibration(
+                run_id=run_id,
+                candidate_id=candidate_id,
+                artifact_ref=simulation_artifact_ref,
+                status=str(simulation_calibration_report_payload.get("status") or "").strip() or None,
+                order_count=_metric_counter_int(
+                    simulation_calibration_report_payload.get("order_count")
+                ),
+                payload_json=simulation_calibration_report_payload,
+            )
+        )
+
+    shadow_artifact_ref = str(
+        candidate_spec_payload.get("artifacts", {}).get("shadow_live_deviation", "")
+    ).strip() if isinstance(candidate_spec_payload.get("artifacts"), dict) else ""
+    if shadow_artifact_ref:
+        session.add(
+            VNextShadowLiveDeviation(
+                run_id=run_id,
+                candidate_id=candidate_id,
+                artifact_ref=shadow_artifact_ref,
+                status=str(shadow_live_deviation_report_payload.get("status") or "").strip() or None,
+                order_count=_metric_counter_int(
+                    shadow_live_deviation_report_payload.get("order_count")
+                ),
+                payload_json=shadow_live_deviation_report_payload,
+            )
+        )
+
+    session.add(
+        VNextPromotionDecision(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            promotion_target=promotion_target,
+            recommended_mode=promotion_recommendation.recommended_mode,
+            decision_action=promotion_recommendation.action,
+            allowed=effective_promotion_allowed,
+            gate_report_trace_id=gate_report_trace_id,
+            recommendation_trace_id=recommendation_trace_id,
+            payload_json={
+                "promotion_rationale": promotion_recommendation.rationale,
+                "portfolio_promotion_v2": portfolio_payload,
+                "dependency_quorum": dependency_quorum_payload,
+                "alpha_readiness": alpha_readiness_payload,
+                "experiment_spec_ref": str(experiment_payload.get("experiment_id") or "").strip()
+                or None,
+                "decision_count": report.metrics.decision_count,
+                "trade_count": report.metrics.trade_count,
+            },
+        )
+    )
 
 
 def _compute_candidate_hash(
@@ -5076,34 +5733,19 @@ def load_runtime_strategy_config(path: Path) -> list[StrategyRuntimeConfig]:
             raise ValueError(f"invalid strategy entry at index {index}")
         strategy_id = str(item.get("strategy_id") or item.get("name") or f"strategy-{index + 1}")
         if isinstance(item.get("strategy_spec_v2"), dict):
-            compiled = build_compiled_strategy_artifacts(
-                strategy_id=strategy_id,
-                strategy_type=str(
-                    cast(dict[str, Any], item["strategy_spec_v2"]).get(
-                        "deterministic_rule_ref",
-                        cast(dict[str, Any], item["strategy_spec_v2"]).get("model_ref", "legacy_macd_rsi"),
-                    )
-                ).rsplit("/", 1)[-1],
-                semantic_version=str(
-                    cast(dict[str, Any], item["strategy_spec_v2"]).get("semantic_version", "1.0.0")
-                ),
-                params=cast(dict[str, Any], item.get("params", {}))
-                if isinstance(item.get("params", {}), dict)
-                else {},
-                base_timeframe=str(
-                    cast(dict[str, Any], cast(dict[str, Any], item["strategy_spec_v2"]).get("universe", {})).get(
-                        "base_timeframe",
-                        item.get("base_timeframe", "1Min"),
-                    )
-                ),
-                universe_symbols=cast(list[str], cast(dict[str, Any], cast(dict[str, Any], item["strategy_spec_v2"]).get("universe", {})).get("symbols"))
-                if isinstance(cast(dict[str, Any], cast(dict[str, Any], item["strategy_spec_v2"]).get("universe", {})).get("symbols"), list)
-                else None,
-                source='spec_v2',
-            )
+            strategy_spec = load_strategy_spec_v2_payload(item["strategy_spec_v2"])
+            strategy_params = item.get("params", {})
+            if isinstance(strategy_params, dict) and strategy_params:
+                strategy_spec_payload = strategy_spec.to_payload()
+                strategy_spec_payload["runtime_parameters"] = {
+                    **dict(strategy_spec.runtime_parameters),
+                    **cast(dict[str, Any], strategy_params),
+                }
+                strategy_spec = load_strategy_spec_v2_payload(strategy_spec_payload)
+            compiled = compile_strategy_spec_v2(strategy_spec)
             strategies.append(
                 StrategyRuntimeConfig(
-                    strategy_id=strategy_id,
+                    strategy_id=strategy_spec.strategy_id or strategy_id,
                     strategy_type=str(compiled.shadow_runtime_config.get("strategy_type", "legacy_macd_rsi")),
                     version=str(compiled.shadow_runtime_config.get("version", "1.0.0")),
                     params=cast(dict[str, Any], compiled.shadow_runtime_config.get("params", {}))

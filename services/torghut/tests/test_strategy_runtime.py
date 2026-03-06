@@ -397,3 +397,39 @@ class TestStrategyRuntime(TestCase):
 
         decision = runtime.evaluate(strategy, feature_contract, timeframe="1Min")
         self.assertIsNone(decision)
+
+    def test_definition_from_strategy_uses_catalog_metadata_bridge_for_compiled_identity(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="intraday-tsmom-db-row",
+            description=(
+                "intraday compiled spec\n[catalog_metadata]\n"
+                '{"compiled_targets":{"promotion_metadata":{"promotion_policy_ref":"torghut-promotion/vnext-default-v1"}},'
+                '"compiler_source":"spec_v2",'
+                '"params":{"qty":3,"bullish_hist_min":"0.03"},'
+                '"strategy_id":"intraday_tsmom_v1@prod",'
+                '"strategy_spec_v2":{"feature_view_spec_ref":"features/intraday-momentum-v1","semantic_version":"1.1.0","strategy_id":"intraday_tsmom_v1@prod","universe":{"symbols":["NVDA"],"strategy_type":"intraday_tsmom_v1"}},'
+                '"strategy_type":"intraday_tsmom_v1",'
+                '"version":"1.1.0"}'
+            ),
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="intraday_tsmom_v1",
+            universe_symbols=["NVDA"],
+            max_position_pct_equity=Decimal("0.02"),
+            max_notional_per_trade=Decimal("2500"),
+        )
+
+        definition = StrategyRuntime.definition_from_strategy(strategy)
+
+        self.assertEqual(definition.strategy_id, str(strategy.id))
+        self.assertEqual(definition.declared_strategy_id, "intraday_tsmom_v1@prod")
+        self.assertEqual(definition.version, "1.1.0")
+        self.assertEqual(definition.params["qty"], 3)
+        self.assertEqual(definition.compiler_source, "spec_v2")
+        self.assertEqual(
+            definition.strategy_spec["feature_view_spec_ref"],
+            "features/intraday-momentum-v1",
+        )

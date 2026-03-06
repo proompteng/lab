@@ -302,6 +302,24 @@ class TestDecisionEngine(TestCase):
             runtime_meta.get("source_strategy_ids"),
             [str(buy_strategy.id)],
         )
+        self.assertEqual(
+            runtime_meta.get("primary_strategy_row_id"),
+            str(buy_strategy.id),
+        )
+        self.assertEqual(
+            runtime_meta.get("primary_declared_strategy_id"),
+            "buy",
+        )
+        self.assertEqual(runtime_meta.get("compiler_sources"), ["legacy_runtime"])
+        source_runtime = runtime_meta.get("source_strategy_runtime")
+        assert isinstance(source_runtime, list)
+        self.assertEqual(len(source_runtime), 1)
+        self.assertEqual(source_runtime[0].get("strategy_row_id"), str(buy_strategy.id))
+        self.assertEqual(
+            source_runtime[0].get("declared_strategy_id"),
+            "buy",
+        )
+        self.assertEqual(source_runtime[0].get("compiler_source"), "legacy_runtime")
 
     def test_scheduler_runtime_falls_back_to_legacy_when_plugin_missing(self) -> None:
         engine = DecisionEngine(price_fetcher=None)

@@ -32,6 +32,14 @@ from .models import (
     ExecutionTCAMetric,
     Strategy,
     TradeDecision,
+    VNextDatasetSnapshot,
+    VNextExperimentRun,
+    VNextExperimentSpec,
+    VNextFeatureViewSpec,
+    VNextModelArtifact,
+    VNextPromotionDecision,
+    VNextShadowLiveDeviation,
+    VNextSimulationCalibration,
     WhitepaperAnalysisRun,
     WhitepaperCodexAgentRun,
     WhitepaperDesignPullRequest,
@@ -44,6 +52,7 @@ from .trading.autonomy import (
     assert_runtime_gate_policy_contract,
     evaluate_evidence_continuity,
 )
+from .trading.empirical_jobs import build_empirical_jobs_status
 from .trading.hypotheses import (
     JangarDependencyQuorumStatus,
     compile_hypothesis_runtime_statuses,
@@ -1644,6 +1653,9 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
         "llm_evaluation": llm_evaluation,
         "tca": tca_summary,
         "hypotheses": hypothesis_payload,
+        "forecast_service": _forecast_service_status(),
+        "lean_authority": _lean_authority_status(),
+        "empirical_jobs": _empirical_jobs_status(),
         "control_plane_contract": control_plane_contract,
         "evidence_continuity": state.last_evidence_continuity_report,
     }
@@ -1791,6 +1803,9 @@ def trading_autonomy() -> dict[str, object]:
         "last_ingest_window_start": state.last_ingest_window_start,
         "last_ingest_window_end": state.last_ingest_window_end,
         "failure_streak": state.autonomy_failure_streak,
+        "forecast_service": _forecast_service_status(),
+        "lean_authority": _lean_authority_status(),
+        "empirical_jobs": _empirical_jobs_status(),
         "bridge_status": _build_autonomy_bridge_status(scheduler),
         "signal_continuity": {
             "universe_source": settings.trading_universe_source,
@@ -1829,6 +1844,13 @@ def trading_autonomy() -> dict[str, object]:
         },
         "evidence_continuity": state.last_evidence_continuity_report,
     }
+
+
+@app.get("/trading/empirical-jobs")
+def trading_empirical_jobs() -> dict[str, object]:
+    """Return freshness and authority status for empirical parity and Janus workflows."""
+
+    return _empirical_jobs_status()
 
 
 @app.get("/trading/autonomy/evidence-continuity")
@@ -2320,6 +2342,201 @@ def _check_clickhouse() -> dict[str, object]:
     if not payload.strip():
         return {"ok": False, "detail": "clickhouse empty response"}
     return {"ok": True, "detail": "ok"}
+
+
+def _http_json_request(
+    *,
+    url: str,
+    timeout_seconds: int,
+    method: str = "GET",
+    body: dict[str, object] | None = None,
+) -> dict[str, object]:
+    parsed = urlsplit(url)
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"}:
+        return {"ok": False, "detail": f"invalid url scheme: {scheme or 'missing'}"}
+    if not parsed.hostname:
+        return {"ok": False, "detail": "invalid url host"}
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    payload_bytes = (
+        json.dumps(body, separators=(",", ":")).encode("utf-8")
+        if body is not None
+        else None
+    )
+    headers = {"accept": "application/json"}
+    if payload_bytes is not None:
+        headers["content-type"] = "application/json"
+    connection_class = HTTPSConnection if scheme == "https" else HTTPConnection
+    connection = connection_class(parsed.hostname, parsed.port, timeout=max(timeout_seconds, 1))
+    response: Any | None = None
+    raw = ""
+    try:
+        connection.request(method, path, body=payload_bytes, headers=headers)
+        response = connection.getresponse()
+        raw = response.read().decode("utf-8")
+    except Exception as exc:  # pragma: no cover - depends on network
+        return {"ok": False, "detail": f"http error: {exc}"}
+    finally:
+        connection.close()
+    if response is None:
+        return {"ok": False, "detail": "missing response"}
+    if response.status < 200 or response.status >= 300:
+        return {
+            "ok": False,
+            "detail": f"http status {response.status}",
+            "status_code": response.status,
+            "body": raw[:200],
+        }
+    if not raw.strip():
+        return {"ok": True, "payload": {}}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return {"ok": False, "detail": "invalid json response"}
+    if not isinstance(payload, dict):
+        return {"ok": False, "detail": "invalid payload shape"}
+    return {"ok": True, "payload": cast(dict[str, object], payload)}
+
+
+def _forecast_service_status() -> dict[str, object]:
+    endpoint = settings.trading_forecast_service_url or ""
+    if not endpoint:
+        return {
+            "configured": False,
+            "endpoint": None,
+            "status": "disabled",
+            "authority": "blocked",
+            "message": "forecast service not configured",
+            "calibration_status": "unknown",
+            "promotion_authority_eligible_models": [],
+            "allowed_model_families": sorted(
+                settings.trading_forecast_service_allowed_model_families
+            ),
+        }
+    ready = _http_json_request(
+        url=f"{endpoint.rstrip('/')}/readyz",
+        timeout_seconds=settings.trading_forecast_service_timeout_seconds,
+    )
+    calibration = _http_json_request(
+        url=f"{endpoint.rstrip('/')}/v1/calibration/report",
+        timeout_seconds=settings.trading_forecast_service_timeout_seconds,
+        method="POST",
+        body={},
+    )
+    calibration_payload = (
+        cast(dict[str, object], calibration.get("payload"))
+        if calibration.get("ok") and isinstance(calibration.get("payload"), dict)
+        else {}
+    )
+    models = (
+        cast(list[object], calibration_payload.get("models"))
+        if isinstance(calibration_payload.get("models"), list)
+        else []
+    )
+    eligible_models = sorted(
+        str(cast(dict[str, object], item).get("model_family") or "").strip()
+        for item in models
+        if isinstance(item, dict)
+        and bool(cast(dict[str, object], item).get("promotion_authority_eligible"))
+        and str(cast(dict[str, object], item).get("model_family") or "").strip()
+    )
+    healthy = bool(ready.get("ok"))
+    authority = "empirical" if healthy and eligible_models else "blocked"
+    return {
+        "configured": True,
+        "endpoint": endpoint,
+        "status": "healthy" if healthy else "degraded",
+        "authority": authority,
+        "message": (
+            "ok"
+            if healthy
+            else str(ready.get("detail") or "forecast service readiness failed")
+        ),
+        "calibration_status": str(calibration_payload.get("status") or "unknown"),
+        "registry_ref": calibration_payload.get("registry_ref"),
+        "promotion_authority_eligible_models": eligible_models,
+        "allowed_model_families": sorted(
+            settings.trading_forecast_service_allowed_model_families
+        ),
+        "require_healthy": settings.trading_forecast_service_require_healthy,
+        "fail_mode": settings.trading_forecast_service_fail_mode,
+    }
+
+
+def _lean_authority_status() -> dict[str, object]:
+    endpoint = settings.trading_lean_runner_url or ""
+    if not endpoint:
+        return {
+            "configured": False,
+            "endpoint": None,
+            "status": "disabled",
+            "authority": "blocked",
+            "message": "LEAN runner not configured",
+            "authoritative_modes": [],
+        }
+    ready = _http_json_request(
+        url=f"{endpoint.rstrip('/')}/readyz",
+        timeout_seconds=settings.trading_lean_runner_timeout_seconds,
+    )
+    observability = _http_json_request(
+        url=f"{endpoint.rstrip('/')}/v1/observability",
+        timeout_seconds=settings.trading_lean_runner_timeout_seconds,
+    )
+    observability_payload = (
+        cast(dict[str, object], observability.get("payload"))
+        if observability.get("ok") and isinstance(observability.get("payload"), dict)
+        else {}
+    )
+    authority_payload = (
+        cast(dict[str, object], observability_payload.get("authority"))
+        if isinstance(observability_payload.get("authority"), dict)
+        else {}
+    )
+    authoritative_modes = (
+        [
+            str(item).strip()
+            for item in cast(list[object], authority_payload.get("authoritative_modes"))
+            if str(item).strip()
+        ]
+        if isinstance(authority_payload.get("authoritative_modes"), list)
+        else []
+    )
+    healthy = bool(ready.get("ok"))
+    ready_payload = (
+        cast(dict[str, object], ready.get("payload"))
+        if isinstance(ready.get("payload"), dict)
+        else {}
+    )
+    return {
+        "configured": True,
+        "endpoint": endpoint,
+        "status": "healthy" if healthy else "degraded",
+        "authority": "empirical" if healthy and authoritative_modes else "blocked",
+        "message": "ok" if healthy else str(ready.get("detail") or "LEAN readiness failed"),
+        "authoritative_modes": authoritative_modes,
+        "deterministic_scaffold_enabled": bool(
+            ready_payload.get("deterministic_scaffold_enabled", True)
+        ),
+    }
+
+
+def _empirical_jobs_status() -> dict[str, object]:
+    try:
+        with SessionLocal() as session:
+            return build_empirical_jobs_status(
+                session=session,
+                stale_after_seconds=settings.trading_empirical_job_stale_after_seconds,
+            )
+    except Exception as exc:
+        return {
+            "status": "degraded",
+            "authority": "blocked",
+            "stale_after_seconds": settings.trading_empirical_job_stale_after_seconds,
+            "jobs": {},
+            "message": f"empirical job status unavailable: {type(exc).__name__}",
+        }
 
 
 def _check_alpaca() -> dict[str, object]:
@@ -2930,14 +3147,15 @@ def _build_autonomy_bridge_status(
             },
             "simulation_calibration": None,
             "shadow_live_deviation": None,
-            "evidence_authority": {
-                "gate_report_trace_id": None,
-                "recommendation_trace_id": None,
-                "authoritative_count": 0,
-                "total_count": 0,
-                "missing": [],
-            },
-        }
+        "evidence_authority": {
+            "gate_report_trace_id": None,
+            "recommendation_trace_id": None,
+            "authoritative_count": 0,
+            "total_count": 0,
+            "missing": [],
+        },
+        "persisted_vnext_objects": None,
+    }
 
     source = "gate_report"
     if (
@@ -2953,6 +3171,16 @@ def _build_autonomy_bridge_status(
         if isinstance(promotion_evidence_raw, dict)
         else {}
     )
+    dependency_quorum_payload = (
+        cast(dict[str, object], gate_payload.get("dependency_quorum"))
+        if isinstance(gate_payload.get("dependency_quorum"), dict)
+        else {}
+    )
+    alpha_readiness_payload = (
+        cast(dict[str, object], gate_payload.get("alpha_readiness"))
+        if isinstance(gate_payload.get("alpha_readiness"), dict)
+        else {}
+    )
     authority_raw = provenance_payload.get("promotion_evidence_authority")
     authority_payload = (
         cast(dict[str, object], authority_raw)
@@ -2962,6 +3190,7 @@ def _build_autonomy_bridge_status(
     vnext_raw = gate_payload.get("vnext")
     vnext_payload = cast(dict[str, object], vnext_raw) if isinstance(vnext_raw, dict) else {}
     strategy_compilation_raw = vnext_payload.get("strategy_compilation")
+    portfolio_promotion_raw = vnext_payload.get("portfolio_promotion")
     strategy_compilation_items = (
         [
             cast(dict[str, object], item)
@@ -3001,6 +3230,17 @@ def _build_autonomy_bridge_status(
             "spec_compiled": spec_compiled,
             "compiler_sources": compiler_sources,
         },
+        "dependency_quorum": (
+            dependency_quorum_payload if dependency_quorum_payload else None
+        ),
+        "alpha_readiness": (
+            alpha_readiness_payload if alpha_readiness_payload else None
+        ),
+        "portfolio_promotion": (
+            cast(dict[str, object], portfolio_promotion_raw)
+            if isinstance(portfolio_promotion_raw, dict)
+            else None
+        ),
         "simulation_calibration": (
             promotion_evidence.get("simulation_calibration")
             if isinstance(promotion_evidence.get("simulation_calibration"), dict)
@@ -3055,6 +3295,69 @@ def _build_autonomy_bridge_status(
             "total_count": len(promotion_evidence),
             "missing": sorted(set(missing_authority)),
         },
+        "persisted_vnext_objects": _build_persisted_vnext_status(
+            str(gate_payload.get("run_id") or "").strip() or None
+        ),
+    }
+
+
+def _build_persisted_vnext_status(run_id: str | None) -> dict[str, object] | None:
+    if not run_id:
+        return None
+    try:
+        with SessionLocal() as session:
+            dataset_snapshots = session.execute(
+                select(func.count(VNextDatasetSnapshot.id)).where(
+                    VNextDatasetSnapshot.run_id == run_id
+                )
+            ).scalar_one()
+            feature_view_specs = session.execute(
+                select(func.count(VNextFeatureViewSpec.id)).where(
+                    VNextFeatureViewSpec.run_id == run_id
+                )
+            ).scalar_one()
+            model_artifacts = session.execute(
+                select(func.count(VNextModelArtifact.id)).where(
+                    VNextModelArtifact.run_id == run_id
+                )
+            ).scalar_one()
+            experiment_specs = session.execute(
+                select(func.count(VNextExperimentSpec.id)).where(
+                    VNextExperimentSpec.run_id == run_id
+                )
+            ).scalar_one()
+            experiment_runs = session.execute(
+                select(func.count(VNextExperimentRun.id)).where(
+                    VNextExperimentRun.run_id == run_id
+                )
+            ).scalar_one()
+            simulation_calibrations = session.execute(
+                select(func.count(VNextSimulationCalibration.id)).where(
+                    VNextSimulationCalibration.run_id == run_id
+                )
+            ).scalar_one()
+            shadow_live_deviations = session.execute(
+                select(func.count(VNextShadowLiveDeviation.id)).where(
+                    VNextShadowLiveDeviation.run_id == run_id
+                )
+            ).scalar_one()
+            promotion_decisions = session.execute(
+                select(func.count(VNextPromotionDecision.id)).where(
+                    VNextPromotionDecision.run_id == run_id
+                )
+            ).scalar_one()
+    except Exception:
+        return None
+
+    return {
+        "dataset_snapshots": int(dataset_snapshots),
+        "feature_view_specs": int(feature_view_specs),
+        "model_artifacts": int(model_artifacts),
+        "experiment_specs": int(experiment_specs),
+        "experiment_runs": int(experiment_runs),
+        "simulation_calibrations": int(simulation_calibrations),
+        "shadow_live_deviations": int(shadow_live_deviations),
+        "promotion_decisions_v2": int(promotion_decisions),
     }
 
 

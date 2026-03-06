@@ -246,6 +246,21 @@ def evaluate_promotion_prerequisites(
         gate_report_payload=gate_report_payload,
         candidate_state_payload=candidate_state_payload,
     )
+    _append_jangar_dependency_quorum_reasons(
+        reasons=reasons,
+        reason_details=reason_details,
+        policy_payload=policy_payload,
+        gate_report_payload=gate_report_payload,
+        candidate_state_payload=candidate_state_payload,
+        promotion_target=promotion_target,
+    )
+    _append_alpha_readiness_reasons(
+        reasons=reasons,
+        reason_details=reason_details,
+        policy_payload=policy_payload,
+        candidate_state_payload=candidate_state_payload,
+        promotion_target=promotion_target,
+    )
     if profitability_required:
         _append_profitability_evidence_reasons(
             reasons=reasons,
@@ -517,6 +532,127 @@ def _append_run_id_mismatch_reasons(
             "gate_report_run_id": gate_run_id,
         }
     )
+
+
+def _append_jangar_dependency_quorum_reasons(
+    *,
+    reasons: list[str],
+    reason_details: list[dict[str, object]],
+    policy_payload: dict[str, Any],
+    gate_report_payload: dict[str, Any],
+    candidate_state_payload: dict[str, Any],
+    promotion_target: str,
+) -> None:
+    if not _requires_jangar_dependency_quorum(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    ):
+        return
+    quorum_payload = _as_dict(candidate_state_payload.get("dependencyQuorum"))
+    if not quorum_payload:
+        quorum_payload = _as_dict(gate_report_payload.get("dependency_quorum"))
+    if not quorum_payload:
+        reasons.append("jangar_dependency_quorum_missing")
+        reason_details.append(
+            {
+                "reason": "jangar_dependency_quorum_missing",
+                "promotion_target": promotion_target,
+            }
+        )
+        return
+    decision = str(quorum_payload.get("decision") or "").strip()
+    source_reasons = _list_of_strings(quorum_payload.get("reasons"))
+    if decision == "allow":
+        return
+    if decision == "delay":
+        reasons.append("jangar_dependency_quorum_delay")
+        reason_details.append(
+            {
+                "reason": "jangar_dependency_quorum_delay",
+                "promotion_target": promotion_target,
+                "dependency_quorum": quorum_payload,
+                "dependency_reasons": source_reasons,
+            }
+        )
+        return
+    reasons.append("jangar_dependency_quorum_blocked")
+    reason_details.append(
+        {
+            "reason": "jangar_dependency_quorum_blocked",
+            "promotion_target": promotion_target,
+            "decision": decision or "unknown",
+            "dependency_quorum": quorum_payload,
+            "dependency_reasons": source_reasons,
+        }
+    )
+
+
+def _append_alpha_readiness_reasons(
+    *,
+    reasons: list[str],
+    reason_details: list[dict[str, object]],
+    policy_payload: dict[str, Any],
+    candidate_state_payload: dict[str, Any],
+    promotion_target: str,
+) -> None:
+    if not _requires_alpha_readiness_contract(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    ):
+        return
+    readiness_payload = _as_dict(candidate_state_payload.get("alphaReadiness"))
+    if not readiness_payload:
+        reasons.append("alpha_readiness_contract_missing")
+        reason_details.append(
+            {
+                "reason": "alpha_readiness_contract_missing",
+                "promotion_target": promotion_target,
+            }
+        )
+        return
+    if not bool(readiness_payload.get("registry_loaded", False)):
+        reasons.append("alpha_readiness_registry_unavailable")
+        reason_details.append(
+            {
+                "reason": "alpha_readiness_registry_unavailable",
+                "promotion_target": promotion_target,
+                "alpha_readiness": readiness_payload,
+            }
+        )
+    registry_errors = _list_of_strings(readiness_payload.get("registry_errors"))
+    if registry_errors:
+        reasons.append("alpha_readiness_registry_errors_present")
+        reason_details.append(
+            {
+                "reason": "alpha_readiness_registry_errors_present",
+                "promotion_target": promotion_target,
+                "registry_errors": registry_errors,
+            }
+        )
+    if bool(
+        policy_payload.get("promotion_alpha_readiness_require_registry_match", True)
+    ):
+        missing_strategy_families = _list_of_strings(
+            readiness_payload.get("missing_strategy_families")
+        )
+        if missing_strategy_families:
+            reasons.append("alpha_readiness_strategy_family_unmapped")
+            reason_details.append(
+                {
+                    "reason": "alpha_readiness_strategy_family_unmapped",
+                    "promotion_target": promotion_target,
+                    "missing_strategy_families": missing_strategy_families,
+                }
+            )
+    if not bool(readiness_payload.get("promotion_eligible", False)):
+        reasons.append("alpha_readiness_not_promotion_eligible")
+        reason_details.append(
+            {
+                "reason": "alpha_readiness_not_promotion_eligible",
+                "promotion_target": promotion_target,
+                "alpha_readiness": readiness_payload,
+            }
+        )
 
 
 def _append_profitability_stage_manifest_reasons(
@@ -1668,6 +1804,42 @@ def _shadow_live_deviation_required_artifact_refs(
     return ["gates/shadow-live-deviation-report-v1.json"]
 
 
+def _requires_jangar_dependency_quorum(
+    *, policy_payload: dict[str, Any], promotion_target: str
+) -> bool:
+    if promotion_target == "shadow":
+        return False
+    if not bool(policy_payload.get("promotion_require_jangar_dependency_quorum", False)):
+        return False
+    required_targets = _list_of_strings(
+        policy_payload.get(
+            "promotion_jangar_dependency_quorum_required_targets",
+            ["paper", "live"],
+        )
+    )
+    if not required_targets:
+        return False
+    return promotion_target in required_targets
+
+
+def _requires_alpha_readiness_contract(
+    *, policy_payload: dict[str, Any], promotion_target: str
+) -> bool:
+    if promotion_target == "shadow":
+        return False
+    if not bool(policy_payload.get("promotion_require_alpha_readiness_contract", False)):
+        return False
+    required_targets = _list_of_strings(
+        policy_payload.get(
+            "promotion_alpha_readiness_required_targets",
+            ["paper", "live"],
+        )
+    )
+    if not required_targets:
+        return False
+    return promotion_target in required_targets
+
+
 def _requires_hmm_state_posterior(
     *, policy_payload: dict[str, Any], promotion_target: str
 ) -> bool:
@@ -1927,6 +2099,12 @@ def _evaluate_promotion_evidence(
     evidence = (
         cast(dict[str, Any], evidence_raw) if isinstance(evidence_raw, dict) else {}
     )
+    deterministic_reasons, deterministic_details = _evaluate_deterministic_authority_firewall(
+        evidence=evidence,
+        promotion_target=promotion_target,
+    )
+    reasons.extend(deterministic_reasons)
+    details.extend(deterministic_details)
     if bool(policy_payload.get("promotion_require_truthful_evidence_contracts", False)):
         authority_reasons, authority_details = _evaluate_promotion_evidence_authority(
             evidence=evidence,
@@ -1934,6 +2112,20 @@ def _evaluate_promotion_evidence(
         )
         reasons.extend(authority_reasons)
         details.extend(authority_details)
+    portfolio_reasons, portfolio_details = _evaluate_portfolio_promotion_summary(
+        gate_report_payload=gate_report_payload,
+        promotion_target=promotion_target,
+    )
+    reasons.extend(portfolio_reasons)
+    details.extend(portfolio_details)
+    alpha_readiness_reasons, alpha_readiness_details = (
+        _evaluate_alpha_readiness_summary(
+            gate_report_payload=gate_report_payload,
+            promotion_target=promotion_target,
+        )
+    )
+    reasons.extend(alpha_readiness_reasons)
+    details.extend(alpha_readiness_details)
     stress_required = _requires_stress_evidence(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
@@ -2091,6 +2283,40 @@ def _evaluate_promotion_evidence(
     return sorted(set(reasons)), details, sorted(set(refs))
 
 
+def _evaluate_deterministic_authority_firewall(
+    *,
+    evidence: dict[str, Any],
+    promotion_target: str,
+) -> tuple[list[str], list[dict[str, object]]]:
+    reasons: list[str] = []
+    details: list[dict[str, object]] = []
+    if promotion_target not in {"paper", "live"}:
+        return reasons, details
+    for evidence_name, raw_payload in evidence.items():
+        payload = _as_dict(raw_payload)
+        if not payload:
+            continue
+        contract_payload = _extract_evidence_authority_payload(payload)
+        if not contract_payload:
+            continue
+        contract = parse_evidence_contract(contract_payload)
+        provenance = str(contract.get("provenance", "")).strip()
+        if provenance not in {item.value for item in NON_AUTHORITATIVE_PROVENANCE}:
+            continue
+        reasons.append("promotion_evidence_deterministic_authority_blocked")
+        details.append(
+            {
+                "reason": "promotion_evidence_deterministic_authority_blocked",
+                "evidence_name": str(evidence_name),
+                "promotion_target": promotion_target,
+                "provenance": provenance,
+                "maturity": contract.get("maturity"),
+                "authoritative": bool(contract.get("authoritative", False)),
+            }
+        )
+    return reasons, details
+
+
 def _evaluate_promotion_evidence_authority(
     *,
     evidence: dict[str, Any],
@@ -2151,6 +2377,110 @@ def _evaluate_promotion_evidence_authority(
                     'provenance': provenance,
                 }
             )
+    return reasons, details
+
+
+def _evaluate_portfolio_promotion_summary(
+    *,
+    gate_report_payload: dict[str, Any],
+    promotion_target: str,
+) -> tuple[list[str], list[dict[str, object]]]:
+    if promotion_target not in {"paper", "live"}:
+        return [], []
+    vnext_payload = _as_dict(gate_report_payload.get("vnext"))
+    portfolio_summary = _as_dict(vnext_payload.get("portfolio_promotion"))
+    if not portfolio_summary:
+        return [], []
+    strategy_count = _int_or_default(portfolio_summary.get("strategy_count"), 0)
+    if strategy_count <= 1:
+        return [], []
+    reasons: list[str] = []
+    details: list[dict[str, object]] = []
+    spec_compiled_count = _int_or_default(portfolio_summary.get("spec_compiled_count"), 0)
+    if spec_compiled_count < strategy_count:
+        reasons.append("portfolio_promotion_strategy_compilation_incomplete")
+        details.append(
+            {
+                "reason": "portfolio_promotion_strategy_compilation_incomplete",
+                "strategy_count": strategy_count,
+                "spec_compiled_count": spec_compiled_count,
+            }
+        )
+    missing_policy_refs = _list_of_strings(portfolio_summary.get("missing_policy_refs"))
+    if missing_policy_refs:
+        reasons.append("portfolio_promotion_policy_refs_missing")
+        details.append(
+            {
+                "reason": "portfolio_promotion_policy_refs_missing",
+                "missing_policy_refs": missing_policy_refs,
+            }
+        )
+    return reasons, details
+
+
+def _evaluate_alpha_readiness_summary(
+    *,
+    gate_report_payload: dict[str, Any],
+    promotion_target: str,
+) -> tuple[list[str], list[dict[str, object]]]:
+    if promotion_target not in {"paper", "live"}:
+        return [], []
+    alpha_readiness = _as_dict(gate_report_payload.get("alpha_readiness"))
+    dependency_quorum = _as_dict(gate_report_payload.get("dependency_quorum"))
+    reasons: list[str] = []
+    details: list[dict[str, object]] = []
+
+    if not alpha_readiness:
+        reasons.append("alpha_readiness_summary_missing")
+        details.append(
+            {
+                "reason": "alpha_readiness_summary_missing",
+                "promotion_target": promotion_target,
+            }
+        )
+    else:
+        if not bool(alpha_readiness.get("promotion_eligible", False)):
+            reasons.append("alpha_readiness_not_promotion_eligible")
+            details.append(
+                {
+                    "reason": "alpha_readiness_not_promotion_eligible",
+                    "promotion_target": promotion_target,
+                    "reasons": _list_of_strings(alpha_readiness.get("reasons")),
+                    "strategy_families": _list_of_strings(
+                        alpha_readiness.get("strategy_families")
+                    ),
+                    "matched_hypothesis_ids": _list_of_strings(
+                        alpha_readiness.get("matched_hypothesis_ids")
+                    ),
+                }
+            )
+
+    if not dependency_quorum:
+        reasons.append("jangar_dependency_quorum_missing")
+        details.append(
+            {
+                "reason": "jangar_dependency_quorum_missing",
+                "promotion_target": promotion_target,
+            }
+        )
+        return reasons, details
+
+    decision = str(dependency_quorum.get("decision") or "").strip().lower()
+    if decision == "allow":
+        return reasons, details
+    if decision == "delay":
+        reasons.append("jangar_dependency_quorum_delay")
+    else:
+        reasons.append("jangar_dependency_quorum_block")
+    details.append(
+        {
+            "reason": reasons[-1],
+            "promotion_target": promotion_target,
+            "decision": decision or "unknown",
+            "dependency_reasons": _list_of_strings(dependency_quorum.get("reasons")),
+            "message": str(dependency_quorum.get("message") or "").strip() or None,
+        }
+    )
     return reasons, details
 
 

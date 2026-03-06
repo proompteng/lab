@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.models import Base, Strategy
-from app.strategies.catalog import StrategyCatalog
+from app.strategies.catalog import StrategyCatalog, extract_catalog_metadata
 
 
 class TestStrategyCatalog(TestCase):
@@ -107,5 +107,45 @@ class TestStrategyCatalog(TestCase):
                 legacy = session.execute(select(Strategy).where(Strategy.name == "legacy")).scalar_one_or_none()
                 self.assertIsNotNone(legacy)
                 self.assertFalse(legacy.enabled)
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_catalog_persists_compiled_strategy_metadata_in_description_bridge(self) -> None:
+        path = self._write_catalog(
+            {
+                "strategies": [
+                    {
+                        "name": "intraday-tsmom",
+                        "strategy_id": "intraday_tsmom_v1@prod",
+                        "strategy_type": "intraday_tsmom_v1",
+                        "version": "1.1.0",
+                        "params": {"qty": 3, "bullish_hist_min": "0.03"},
+                        "description": "intraday compiled spec",
+                        "enabled": True,
+                        "base_timeframe": "1Min",
+                        "symbols": ["NVDA", "AAPL"],
+                    }
+                ]
+            }
+        )
+        catalog = StrategyCatalog(path=path, mode="merge", reload_seconds=0)
+
+        try:
+            with self.session_local() as session:
+                changed = catalog.refresh(session)
+                self.assertTrue(changed)
+
+                strategy = session.execute(
+                    select(Strategy).where(Strategy.name == "intraday-tsmom")
+                ).scalar_one()
+                metadata = extract_catalog_metadata(strategy.description)
+
+                self.assertEqual(metadata["strategy_id"], "intraday_tsmom_v1@prod")
+                self.assertEqual(metadata["strategy_type"], "intraday_tsmom_v1")
+                self.assertEqual(metadata["version"], "1.1.0")
+                self.assertEqual(metadata["params"]["qty"], 3)
+                self.assertEqual(metadata["compiler_source"], "spec_v2")
+                self.assertIn("strategy_spec_v2", metadata)
+                self.assertIn("compiled_targets", metadata)
         finally:
             path.unlink(missing_ok=True)

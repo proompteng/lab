@@ -24,6 +24,10 @@ resources:
   - lean-runner-service.yaml
   - whitepapers-objectbucketclaim.yaml
   - whitepapers-bucket-bootstrap-job.yaml
+  - empirical-artifacts-objectbucketclaim.yaml
+  - empirical-jobs-backfill-job.yaml
+  - empirical-artifacts-retention-cronjob.yaml
+  - empirical-promotion-workflowtemplate.yaml
   - historical-simulation-workflowtemplate.yaml
   - clickhouse
   - ws

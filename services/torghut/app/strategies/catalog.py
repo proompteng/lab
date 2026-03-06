@@ -26,8 +26,14 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..models import Strategy
+from ..trading.strategy_specs import (
+    build_compiled_strategy_artifacts,
+    strategy_type_supports_spec_v2,
+)
 
 logger = logging.getLogger(__name__)
+
+_CATALOG_METADATA_MARKER = "\n[catalog_metadata]\n"
 
 
 class StrategyConfig(BaseModel):
@@ -206,7 +212,7 @@ def _apply_catalog(session: Session, catalog: StrategyCatalogConfig, mode: Liter
         if strategy is None:
             strategy = Strategy(name=strategy_name)
             session.add(strategy)
-        strategy.description = config.description
+        strategy.description = _compose_strategy_description(config)
         strategy.enabled = config.enabled
         strategy.base_timeframe = config.base_timeframe
         strategy.universe_type = config.universe_type
@@ -224,3 +230,83 @@ def _apply_catalog(session: Session, catalog: StrategyCatalogConfig, mode: Liter
     if updated:
         session.commit()
     return updated
+
+
+def extract_catalog_metadata(description: str | None) -> dict[str, Any]:
+    if description is None:
+        return {}
+    marker_index = description.rfind(_CATALOG_METADATA_MARKER)
+    if marker_index < 0:
+        return {}
+    raw = description[marker_index + len(_CATALOG_METADATA_MARKER) :].strip()
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return cast(dict[str, Any], payload)
+
+
+def strip_catalog_metadata(description: str | None) -> str | None:
+    if description is None:
+        return None
+    marker_index = description.rfind(_CATALOG_METADATA_MARKER)
+    if marker_index < 0:
+        cleaned = description.strip()
+        return cleaned or None
+    cleaned = description[:marker_index].strip()
+    return cleaned or None
+
+
+def _compose_strategy_description(config: StrategyConfig) -> str | None:
+    base_description = strip_catalog_metadata(config.description)
+    metadata = _strategy_catalog_metadata(config)
+    if not metadata:
+        return base_description
+    encoded = json.dumps(metadata, sort_keys=True, separators=(",", ":"), default=str)
+    if base_description:
+        return f"{base_description}{_CATALOG_METADATA_MARKER}{encoded}"
+    return f"catalog-managed{_CATALOG_METADATA_MARKER}{encoded}"
+
+
+def _strategy_catalog_metadata(config: StrategyConfig) -> dict[str, Any]:
+    strategy_id = str(config.strategy_id or config.name or "").strip()
+    strategy_type = str(config.strategy_type or config.universe_type or "").strip()
+    version = str(config.version or "").strip()
+    params = dict(config.params or {})
+    if not strategy_id and not strategy_type and not version and not params:
+        return {}
+
+    metadata: dict[str, Any] = {
+        "strategy_id": strategy_id or None,
+        "strategy_type": strategy_type or None,
+        "version": version or None,
+        "params": params,
+        "catalog_source": "strategy_catalog",
+    }
+
+    if strategy_type and strategy_type_supports_spec_v2(strategy_type):
+        compiled = build_compiled_strategy_artifacts(
+            strategy_id=strategy_id or str(config.name or strategy_type),
+            strategy_type=strategy_type,
+            semantic_version=version or "1.0.0",
+            params=params,
+            base_timeframe=config.base_timeframe,
+            universe_symbols=list(config.universe_symbols),
+            source="spec_v2",
+        )
+        metadata["compiler_source"] = "spec_v2"
+        metadata["strategy_spec_v2"] = compiled.strategy_spec.to_payload()
+        metadata["compiled_targets"] = {
+            "evaluator_config": compiled.evaluator_config,
+            "shadow_runtime_config": compiled.shadow_runtime_config,
+            "live_runtime_config": compiled.live_runtime_config,
+            "promotion_metadata": compiled.promotion_metadata,
+        }
+    else:
+        metadata["compiler_source"] = "legacy_runtime"
+
+    return {key: value for key, value in metadata.items() if value is not None}
