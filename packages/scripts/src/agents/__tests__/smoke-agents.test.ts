@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'bun:test'
 import { resolve } from 'node:path'
 
-import { buildHelmArgs, buildKubectlApplyArgs } from '../smoke-agents'
+import {
+  buildHelmArgs,
+  buildKubectlApplyArgs,
+  isPermissionDeniedKubectlError,
+  isTransientKubectlError,
+} from '../smoke-agents'
 
 describe('buildHelmArgs', () => {
   it('applies image repository, tag, and empty digest overrides', () => {
@@ -82,5 +87,23 @@ describe('buildKubectlApplyArgs', () => {
       '-f',
       resolve(process.cwd(), 'charts/agents/examples/agent-smoke.yaml'),
     ])
+  })
+})
+
+describe('kubectl error classification', () => {
+  it('treats fresh-kind API resets as transient instead of RBAC failures', () => {
+    const error = `E0306 08:40:45.536606   21508 memcache.go:265] couldn't get current server API group list: Get "https://127.0.0.1:45497/api?timeout=32s": read tcp 127.0.0.1:46302->127.0.0.1:45497: read: connection reset by peer - error from a previous attempt: read tcp 127.0.0.1:46300->127.0.0.1:45497: read: connection reset by peer
+Error from server (Forbidden): unknown`
+
+    expect(isTransientKubectlError(error)).toBe(true)
+    expect(isPermissionDeniedKubectlError(error)).toBe(false)
+  })
+
+  it('keeps real namespace RBAC denials classified as permission errors', () => {
+    const error =
+      'Error from server (Forbidden): namespaces is forbidden: User "system:serviceaccount:agents:agents-sa" cannot get resource "namespaces" in API group "" at the cluster scope'
+
+    expect(isTransientKubectlError(error)).toBe(false)
+    expect(isPermissionDeniedKubectlError(error)).toBe(true)
   })
 })

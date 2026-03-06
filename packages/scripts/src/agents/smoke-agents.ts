@@ -82,6 +82,32 @@ const buildEnv = (env?: Record<string, string | undefined>) =>
     Object.entries(env ? { ...process.env, ...env } : process.env).filter(([, value]) => value !== undefined),
   ) as Record<string, string>
 
+const transientKubectlErrorPatterns = [
+  /couldn't get current server API group list/i,
+  /connection reset by peer/i,
+  /error from a previous attempt/i,
+  /\beof\b/i,
+  /context deadline exceeded/i,
+  /context canceled/i,
+  /i\/o timeout/i,
+  /tls handshake timeout/i,
+  /connection refused/i,
+  /unable to connect to the server/i,
+  /no route to host/i,
+  /server is currently unable to handle the request/i,
+  /service unavailable/i,
+  /Error from server \(Forbidden\): unknown/i,
+] as const
+
+const formatCommandResult = ({ stdout, stderr }: Pick<Awaited<ReturnType<typeof execCapture>>, 'stdout' | 'stderr'>) =>
+  [stderr, stdout].filter(Boolean).join('\n').trim()
+
+export const isTransientKubectlError = (message: string) =>
+  transientKubectlErrorPatterns.some((pattern) => pattern.test(message))
+
+export const isPermissionDeniedKubectlError = (message: string) =>
+  /forbidden|cannot/i.test(message) && !isTransientKubectlError(message)
+
 type BuildHelmArgsInput = {
   releaseName: string
   namespace: string
@@ -147,6 +173,78 @@ export const buildKubectlApplyArgs = ({ namespace, file }: BuildKubectlApplyArgs
   const kubectlArgs = ['-n', namespace, 'apply', '--validate=false', '-f']
   kubectlArgs.push(file ?? '-')
   return kubectlArgs
+}
+
+const waitForKubectlApi = async (timeoutMs: number) => {
+  const start = Date.now()
+  let lastError = ''
+
+  while (Date.now() - start < timeoutMs) {
+    const result = await execCapture(['kubectl', 'version', '--request-timeout=5s'])
+    if (result.exitCode === 0) return
+
+    lastError = formatCommandResult(result)
+    if (!isTransientKubectlError(lastError)) {
+      fatal('Kubernetes API did not become ready.', lastError)
+    }
+
+    await sleep(2000)
+  }
+
+  fatal('Timed out waiting for Kubernetes API readiness.', lastError)
+}
+
+const ensureNamespace = async (namespace: string, createNamespace: boolean) => {
+  const deadline = Date.now() + 60_000
+  let lastError = ''
+
+  while (Date.now() < deadline) {
+    const namespaceCheck = await execCapture(['kubectl', 'get', 'namespace', namespace])
+    if (namespaceCheck.exitCode === 0) {
+      return
+    }
+
+    const namespaceError = formatCommandResult(namespaceCheck)
+    lastError = namespaceError
+
+    if (isTransientKubectlError(namespaceError)) {
+      await sleep(2000)
+      continue
+    }
+
+    if (isPermissionDeniedKubectlError(namespaceError)) {
+      if (createNamespace) {
+        fatal(`Insufficient permissions to verify or create namespace ${namespace}.`, namespaceError)
+      }
+      log(`Skipping namespace existence check for ${namespace} due to RBAC.`)
+      return
+    }
+
+    if (!createNamespace) {
+      fatal(`Namespace ${namespace} does not exist and AGENTS_CREATE_NAMESPACE=false.`, namespaceError)
+    }
+
+    const createResult = await execCapture(['kubectl', 'create', 'namespace', namespace])
+    if (createResult.exitCode === 0) {
+      return
+    }
+
+    const createError = formatCommandResult(createResult)
+    lastError = createError
+
+    if (isTransientKubectlError(createError)) {
+      await sleep(2000)
+      continue
+    }
+
+    if (/already exists/i.test(createError)) {
+      return
+    }
+
+    fatal(`Failed to create namespace ${namespace}.`, createError)
+  }
+
+  fatal(`Timed out ensuring namespace ${namespace}.`, lastError)
 }
 
 const listPodNames = async (namespace: string) => {
@@ -325,20 +423,10 @@ const main = async () => {
     fatal(`AgentRun file not found: ${agentRunFile}`)
   }
 
+  await waitForKubectlApi(60_000)
+
   if (dbBootstrap) {
-    const namespaceCheck = await execCapture(['kubectl', 'get', 'namespace', namespace])
-    if (namespaceCheck.exitCode !== 0) {
-      if (/forbidden|cannot/i.test(namespaceCheck.stderr)) {
-        if (createNamespace) {
-          fatal(`Insufficient permissions to verify or create namespace ${namespace}.`, namespaceCheck.stderr)
-        }
-        log(`Skipping namespace existence check for ${namespace} due to RBAC.`)
-      } else if (createNamespace) {
-        await run('kubectl', ['create', 'namespace', namespace])
-      } else {
-        fatal(`Namespace ${namespace} does not exist and AGENTS_CREATE_NAMESPACE=false.`)
-      }
-    }
+    await ensureNamespace(namespace, createNamespace)
 
     let databaseUrl = dbUrl
     let dbPassword = process.env.AGENTS_DB_PASSWORD
