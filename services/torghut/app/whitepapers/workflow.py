@@ -3819,6 +3819,15 @@ class WhitepaperKafkaIssueIngestor:
                 "Whitepaper issue intake had %s failed messages; skipping offset commit",
                 counters["failed_total"],
             )
+        if counters["messages_total"] or counters["consumer_errors_total"]:
+            logger.info(
+                "Whitepaper Kafka ingest cycle messages=%s accepted=%s ignored=%s failed=%s consumer_errors=%s",
+                counters["messages_total"],
+                counters["accepted_total"],
+                counters["ignored_total"],
+                counters["failed_total"],
+                counters["consumer_errors_total"],
+            )
         return counters
 
     def close(self) -> None:
@@ -3940,13 +3949,27 @@ class WhitepaperKafkaWorker:
         if self._task is not None:
             return
         if not whitepaper_workflow_enabled() or not whitepaper_kafka_enabled():
+            logger.info("Whitepaper Kafka worker disabled; not starting")
             return
+        interval_seconds = max(
+            0.25,
+            float(_int_env("WHITEPAPER_KAFKA_LOOP_INTERVAL_MS", 1000)) / 1000.0,
+        )
+        logger.info(
+            "Whitepaper Kafka worker starting topic=%s group_id=%s client_id=%s interval_seconds=%s",
+            _str_env("WHITEPAPER_KAFKA_TOPIC", "github.webhook.events")
+            or "github.webhook.events",
+            _str_env("WHITEPAPER_KAFKA_GROUP_ID", "torghut-whitepaper-v1"),
+            _str_env("WHITEPAPER_KAFKA_CLIENT_ID", "torghut-whitepaper"),
+            interval_seconds,
+        )
         self._task = asyncio.create_task(self._run(), name="whitepaper-kafka-worker")
 
     async def stop(self) -> None:
         if self._task is None:
             self._ingestor.close()
             return
+        logger.info("Whitepaper Kafka worker stopping")
         self._task.cancel()
         try:
             await self._task
@@ -3955,6 +3978,7 @@ class WhitepaperKafkaWorker:
         finally:
             self._task = None
             self._ingestor.close()
+            logger.info("Whitepaper Kafka worker stopped")
 
     async def _run(self) -> None:
         interval = max(0.25, float(_int_env("WHITEPAPER_KAFKA_LOOP_INTERVAL_MS", 1000)) / 1000.0)
