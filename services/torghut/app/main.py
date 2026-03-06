@@ -217,6 +217,12 @@ def _register_whitepaper_inngest_routes(app: FastAPI) -> inngest.Inngest | None:
 
     app.state.whitepaper_inngest_registered = True
     WHITEPAPER_WORKFLOW.set_inngest_client(client)
+    logger.info(
+        "Registered whitepaper Inngest routes app_id=%s requested_fn_id=%s finalized_fn_id=%s",
+        app_id,
+        requested_fn_id,
+        finalized_fn_id,
+    )
     return client
 
 
@@ -228,6 +234,16 @@ async def lifespan(app: FastAPI):
     whitepaper_worker = WhitepaperKafkaWorker(session_factory=SessionLocal)
     app.state.trading_scheduler = scheduler
     app.state.whitepaper_worker = whitepaper_worker
+    logger.info(
+        "Torghut startup initiated build_version=%s build_commit=%s app_env=%s log_level=%s log_format=%s trading_enabled=%s whitepaper_workflow_enabled=%s",
+        BUILD_VERSION,
+        BUILD_COMMIT,
+        settings.app_env,
+        settings.log_level,
+        settings.log_format,
+        settings.trading_enabled,
+        whitepaper_workflow_enabled(),
+    )
 
     try:
         ensure_schema()
@@ -243,11 +259,20 @@ async def lifespan(app: FastAPI):
     if whitepaper_workflow_enabled():
         await whitepaper_worker.start()
 
+    logger.info(
+        "Torghut startup complete trading_scheduler_started=%s whitepaper_worker_started=%s inngest_registered=%s",
+        bool(getattr(scheduler, "_task", None)),
+        bool(getattr(whitepaper_worker, "_task", None)),
+        bool(getattr(app.state, "whitepaper_inngest_registered", False)),
+    )
+
     yield
 
+    logger.info("Torghut shutdown initiated")
     await whitepaper_worker.stop()
     await scheduler.stop()
     shutdown_posthog_telemetry()
+    logger.info("Torghut shutdown complete")
 
 
 app = FastAPI(title="torghut", lifespan=lifespan)

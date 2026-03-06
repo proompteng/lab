@@ -33,6 +33,12 @@ spec:
           env:
             - name: APP_ENV
               value: prod
+            - name: LOG_LEVEL
+              value: INFO
+            - name: LOG_FORMAT
+              value: json
+            - name: LOG_ACCESS_LOG
+              value: "true"
             - name: DB_DSN
               valueFrom:
                 secretKeyRef:
