@@ -397,6 +397,8 @@ spec:
                       type: integer
                     invalidChannel:
                       type: integer
+                    duplicates:
+                      type: integer
                     error:
                       type: string
                 discoveries24h:
