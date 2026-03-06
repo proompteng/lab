@@ -9,10 +9,11 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from ..models import Strategy
 from .features import FeatureVectorV3, validate_declared_features
+from .strategy_specs import build_compiled_strategy_artifacts, strategy_type_supports_spec_v2
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,9 @@ class StrategyDefinition:
     execution_profile: str
     enabled: bool
     base_timeframe: str
+    compiler_source: str = "legacy_runtime"
+    strategy_spec: dict[str, Any] = field(default_factory=dict)
+    compiled_targets: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -39,6 +43,7 @@ class StrategyContext:
     symbol: str
     timeframe: str
     params: dict[str, Any]
+    strategy_spec: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -81,6 +86,8 @@ class RuntimeDecision:
     plugin_version: str
     parameter_hash: str
     feature_hash: str
+    compiler_source: str = "legacy_runtime"
+    strategy_spec: dict[str, Any] = field(default_factory=dict)
 
     def metadata(self) -> dict[str, Any]:
         return {
@@ -89,6 +96,8 @@ class RuntimeDecision:
             "parameter_hash": self.parameter_hash,
             "feature_hash": self.feature_hash,
             "required_features": list(self.intent.required_features),
+            "compiler_source": self.compiler_source,
+            "strategy_spec_v2": dict(self.strategy_spec),
         }
 
 
@@ -458,6 +467,7 @@ class StrategyRuntime:
             symbol=features.symbol,
             timeframe=timeframe,
             params=definition.params,
+            strategy_spec=dict(definition.strategy_spec),
         )
         intent = plugin.evaluate(context, features)
         if intent is None:
@@ -468,6 +478,8 @@ class StrategyRuntime:
             plugin_version=plugin.version,
             parameter_hash=self._parameter_hash(context.params),
             feature_hash=features.normalization_hash,
+            compiler_source=definition.compiler_source,
+            strategy_spec=dict(definition.strategy_spec),
         )
 
     def evaluate_all(
@@ -526,6 +538,7 @@ class StrategyRuntime:
                 symbol=features.symbol,
                 timeframe=timeframe,
                 params=definition.params,
+                strategy_spec=dict(definition.strategy_spec),
             )
 
             try:
@@ -541,6 +554,8 @@ class StrategyRuntime:
                     plugin_version=plugin.version,
                     parameter_hash=self._parameter_hash(context.params),
                     feature_hash=features.normalization_hash,
+                    compiler_source=definition.compiler_source,
+                    strategy_spec=dict(definition.strategy_spec),
                 )
                 raw_intents.append(decision)
                 all_intents.append(intent)
@@ -575,6 +590,29 @@ class StrategyRuntime:
         strategy_type = StrategyRuntime._strategy_plugin_type(strategy)
         version = StrategyRuntime._strategy_version(strategy)
         params = StrategyRuntime._strategy_params(strategy)
+        compiler_source = "legacy_runtime"
+        strategy_spec: dict[str, Any] = {}
+        compiled_targets: dict[str, Any] = {}
+        if strategy_type_supports_spec_v2(strategy_type):
+            compiled = build_compiled_strategy_artifacts(
+                strategy_id=str(strategy.id),
+                strategy_type=strategy_type,
+                semantic_version=version,
+                params=params,
+                base_timeframe=str(strategy.base_timeframe),
+                universe_symbols=cast(list[str], strategy.universe_symbols)
+                if isinstance(strategy.universe_symbols, list)
+                else None,
+                source="spec_v2",
+            )
+            compiler_source = "spec_v2"
+            strategy_spec = compiled.strategy_spec.to_payload()
+            compiled_targets = {
+                "evaluator_config": compiled.evaluator_config,
+                "shadow_runtime_config": compiled.shadow_runtime_config,
+                "live_runtime_config": compiled.live_runtime_config,
+                "promotion_metadata": compiled.promotion_metadata,
+            }
         return StrategyDefinition(
             strategy_id=str(strategy.id),
             strategy_name=str(strategy.name),
@@ -586,6 +624,9 @@ class StrategyRuntime:
             execution_profile="market",
             enabled=bool(strategy.enabled),
             base_timeframe=str(strategy.base_timeframe),
+            compiler_source=compiler_source,
+            strategy_spec=strategy_spec,
+            compiled_targets=compiled_targets,
         )
 
     @staticmethod
@@ -601,11 +642,25 @@ class StrategyRuntime:
 
     @staticmethod
     def _strategy_version(strategy: Strategy) -> str:
-        if strategy.description and "version=" in strategy.description:
-            segments = [segment.strip() for segment in strategy.description.split(",")]
-            for segment in segments:
-                if segment.startswith("version="):
-                    return segment.split("=", 1)[1] or "1.0.0"
+        if strategy.description:
+            description = str(strategy.description)
+            if "version=" in description:
+                segments = [segment.strip() for segment in description.split(",")]
+                for segment in segments:
+                    if segment.startswith("version="):
+                        return segment.split("=", 1)[1] or "1.0.0"
+            marker_start = description.rfind("@")
+            marker_end = description.rfind(")")
+            if marker_start >= 0:
+                candidate_end = marker_end if marker_end > marker_start else len(description)
+                candidate = description[marker_start + 1 : candidate_end].strip()
+                if candidate:
+                    return candidate
+            tokens = description.split()
+            if tokens:
+                last = tokens[-1].lstrip("v")
+                if last and any(ch.isdigit() for ch in last):
+                    return last
         return "1.0.0"
 
     @staticmethod

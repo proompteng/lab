@@ -12,6 +12,12 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlparse
 
+from ..evidence_contracts import (
+    ArtifactProvenance,
+    NON_AUTHORITATIVE_PROVENANCE,
+    contract_from_artifact_payload,
+    parse_evidence_contract,
+)
 from ..parity import (
     ADVISOR_FALLBACK_SLO_CONTRACT_SCHEMA_VERSION,
     ADVISOR_FALLBACK_SLO_REQUIRED_REASONS,
@@ -758,6 +764,53 @@ def _append_profitability_stage_manifest_reasons(
                         }
                     )
                     continue
+                authority_payload = _as_dict(artifact_payload.get("artifact_authority"))
+                if not authority_payload:
+                    authority_payload = contract_from_artifact_payload(
+                        _load_json_if_exists(artifact_file)
+                    )
+                if stage_name in {"validation", "execution"}:
+                    if not authority_payload:
+                        reasons.append(
+                            "profitability_stage_manifest_artifact_authority_missing"
+                        )
+                        reason_details.append(
+                            {
+                                "reason": "profitability_stage_manifest_artifact_authority_missing",
+                                "artifact_ref": str(artifact_file),
+                                "stage": stage_name,
+                            }
+                        )
+                    else:
+                        normalized_contract = parse_evidence_contract(authority_payload)
+                        provenance = str(
+                            normalized_contract.get("provenance", "")
+                        ).strip()
+                        if provenance in {item.value for item in NON_AUTHORITATIVE_PROVENANCE}:
+                            reasons.append(
+                                "profitability_stage_manifest_artifact_non_authoritative"
+                            )
+                            reason_details.append(
+                                {
+                                    "reason": "profitability_stage_manifest_artifact_non_authoritative",
+                                    "artifact_ref": str(artifact_file),
+                                    "stage": stage_name,
+                                    "provenance": provenance,
+                                    "maturity": normalized_contract.get("maturity"),
+                                }
+                            )
+                        if not bool(normalized_contract.get("authoritative", False)):
+                            reasons.append(
+                                "profitability_stage_manifest_artifact_authoritative_flag_false"
+                            )
+                            reason_details.append(
+                                {
+                                    "reason": "profitability_stage_manifest_artifact_authoritative_flag_false",
+                                    "artifact_ref": str(artifact_file),
+                                    "stage": stage_name,
+                                    "provenance": provenance,
+                                }
+                            )
                 if (
                     artifact_file.suffix.lower() == ".json"
                     and _load_json_if_exists(artifact_file) is None
@@ -1775,6 +1828,13 @@ def _evaluate_promotion_evidence(
     evidence = (
         cast(dict[str, Any], evidence_raw) if isinstance(evidence_raw, dict) else {}
     )
+    if bool(policy_payload.get("promotion_require_truthful_evidence_contracts", False)):
+        authority_reasons, authority_details = _evaluate_promotion_evidence_authority(
+            evidence=evidence,
+            promotion_target=promotion_target,
+        )
+        reasons.extend(authority_reasons)
+        details.extend(authority_details)
     stress_required = _requires_stress_evidence(
         policy_payload=policy_payload,
         promotion_target=promotion_target,
@@ -1907,6 +1967,82 @@ def _evaluate_promotion_evidence(
     refs.extend(advisor_refs)
 
     return sorted(set(reasons)), details, sorted(set(refs))
+
+
+def _evaluate_promotion_evidence_authority(
+    *,
+    evidence: dict[str, Any],
+    promotion_target: str,
+) -> tuple[list[str], list[dict[str, object]]]:
+    reasons: list[str] = []
+    details: list[dict[str, object]] = []
+    required = (
+        'fold_metrics',
+        'stress_metrics',
+        'janus_q',
+        'benchmark_parity',
+        'foundation_router_parity',
+        'deeplob_bdlob_contract',
+        'advisor_fallback_slo',
+        'hmm_state_posterior',
+        'expert_router_registry',
+        'contamination_registry',
+        'promotion_rationale',
+    )
+    for evidence_name in required:
+        payload = _as_dict(evidence.get(evidence_name))
+        if not payload:
+            continue
+        contract_payload = _extract_evidence_authority_payload(payload)
+        if not contract_payload:
+            reasons.append('promotion_evidence_authority_missing')
+            details.append(
+                {
+                    'reason': 'promotion_evidence_authority_missing',
+                    'evidence_name': evidence_name,
+                    'promotion_target': promotion_target,
+                }
+            )
+            continue
+        contract = parse_evidence_contract(contract_payload)
+        provenance = str(contract.get('provenance', '')).strip()
+        if provenance in {item.value for item in NON_AUTHORITATIVE_PROVENANCE}:
+            reasons.append('promotion_evidence_non_authoritative')
+            details.append(
+                {
+                    'reason': 'promotion_evidence_non_authoritative',
+                    'evidence_name': evidence_name,
+                    'promotion_target': promotion_target,
+                    'provenance': provenance,
+                    'maturity': contract.get('maturity'),
+                }
+            )
+        if not bool(contract.get('authoritative', False)):
+            reasons.append('promotion_evidence_authoritative_flag_false')
+            details.append(
+                {
+                    'reason': 'promotion_evidence_authoritative_flag_false',
+                    'evidence_name': evidence_name,
+                    'promotion_target': promotion_target,
+                    'provenance': provenance,
+                }
+            )
+    return reasons, details
+
+
+def _extract_evidence_authority_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    direct = _as_dict(payload.get('artifact_authority'))
+    if direct:
+        return direct
+    contract = contract_from_artifact_payload(payload)
+    if contract:
+        return contract
+    for nested_key in ('event_car', 'hgrm_reward'):
+        nested_payload = _as_dict(payload.get(nested_key))
+        nested_contract = _as_dict(nested_payload.get('artifact_authority'))
+        if nested_contract:
+            return nested_contract
+    return {}
 
 
 def _requires_foundation_router_parity(

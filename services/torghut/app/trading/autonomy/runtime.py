@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_DOWN
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from ..features import (
     FeatureNormalizationError,
@@ -14,6 +14,7 @@ from ..features import (
     validate_declared_features,
 )
 from ..models import SignalEnvelope, StrategyDecision
+from ..strategy_specs import build_compiled_strategy_artifacts, strategy_type_supports_spec_v2
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,9 @@ class StrategyRuntimeConfig:
     base_timeframe: str = '1Min'
     enabled: bool = True
     priority: int = 100
+    compiler_source: str = 'legacy_runtime'
+    strategy_spec: dict[str, Any] = field(default_factory=_empty_meta)
+    compiled_targets: dict[str, Any] = field(default_factory=_empty_meta)
 
 
 @dataclass(frozen=True)
@@ -43,6 +47,7 @@ class StrategyContext:
     strategy_type: str
     version: str
     params: dict[str, Any]
+    strategy_spec: dict[str, Any] = field(default_factory=_empty_meta)
 
 
 @dataclass(frozen=True)
@@ -142,6 +147,7 @@ class LegacyMacdRsiPlugin:
                     'strategy_type': ctx.strategy_type,
                     'schema': fv.feature_schema_version,
                     'feature_hash': fv.normalization_hash,
+                    'compiler_source': 'spec_v2' if ctx.strategy_spec else 'legacy_runtime',
                 },
             )
 
@@ -248,6 +254,7 @@ class IntradayTsmomV1Plugin:
                     'schema': fv.feature_schema_version,
                     'feature_hash': fv.normalization_hash,
                     'macd_hist': str(macd_hist),
+                    'compiler_source': 'spec_v2' if ctx.strategy_spec else 'legacy_runtime',
                 },
             )
 
@@ -273,6 +280,7 @@ class IntradayTsmomV1Plugin:
                     'schema': fv.feature_schema_version,
                     'feature_hash': fv.normalization_hash,
                     'macd_hist': str(macd_hist),
+                    'compiler_source': 'spec_v2' if ctx.strategy_spec else 'legacy_runtime',
                 },
             )
 
@@ -310,6 +318,7 @@ class StrategyRuntime:
                 strategy_type=strategy.strategy_type,
                 version=strategy.version,
                 params=dict(strategy.params),
+                strategy_spec=dict(strategy.strategy_spec),
             )
 
             try:
@@ -370,8 +379,41 @@ def _intent_to_decision(intent: StrategyIntent, signal: SignalEnvelope) -> Strat
                 'schema': intent.meta.get('schema'),
                 'confidence': str(intent.confidence),
                 'horizon': intent.horizon,
+                'compiler_source': intent.meta.get('compiler_source'),
             },
             'feature_hash': intent.meta.get('feature_hash'),
+        },
+    )
+
+
+def compile_runtime_config(config: StrategyRuntimeConfig) -> StrategyRuntimeConfig:
+    if not strategy_type_supports_spec_v2(config.strategy_type):
+        return config
+    compiled = build_compiled_strategy_artifacts(
+        strategy_id=config.strategy_id,
+        strategy_type=config.strategy_type,
+        semantic_version=config.version,
+        params=config.params,
+        base_timeframe=config.base_timeframe,
+        source='spec_v2',
+    )
+    shadow_runtime = dict(compiled.shadow_runtime_config)
+    params = shadow_runtime.get('params', config.params)
+    return StrategyRuntimeConfig(
+        strategy_id=config.strategy_id,
+        strategy_type=str(shadow_runtime.get('strategy_type', config.strategy_type)),
+        version=str(shadow_runtime.get('version', config.version)),
+        params=cast(dict[str, Any], params) if isinstance(params, dict) else dict(config.params),
+        base_timeframe=str(shadow_runtime.get('base_timeframe', config.base_timeframe)),
+        enabled=config.enabled,
+        priority=config.priority,
+        compiler_source='spec_v2',
+        strategy_spec=compiled.strategy_spec.to_payload(),
+        compiled_targets={
+            'evaluator_config': compiled.evaluator_config,
+            'shadow_runtime_config': compiled.shadow_runtime_config,
+            'live_runtime_config': compiled.live_runtime_config,
+            'promotion_metadata': compiled.promotion_metadata,
         },
     )
 
@@ -425,5 +467,6 @@ __all__ = [
     'StrategyPluginRegistry',
     'StrategyRuntime',
     'StrategyRuntimeConfig',
+    'compile_runtime_config',
     'default_runtime_registry',
 ]

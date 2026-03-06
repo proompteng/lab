@@ -10,6 +10,11 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
+from .evidence_contracts import (
+    ArtifactProvenance,
+    EvidenceMaturity,
+    evidence_contract_payload,
+)
 from .features import FEATURE_VECTOR_V3_VALUE_FIELDS, FeatureNormalizationError, normalize_feature_vector_v3
 from .models import SignalEnvelope
 
@@ -320,6 +325,13 @@ def build_benchmark_parity_report(
         "degradation_summary": degradation_summary,
         "artifact_hash": "",
         "created_at_utc": now.isoformat(),
+        "artifact_authority": evidence_contract_payload(
+            provenance=ArtifactProvenance.SYNTHETIC_GENERATED,
+            maturity=EvidenceMaturity.STUB,
+            authoritative=False,
+            placeholder=True,
+            notes="Benchmark parity report is currently deterministic scaffold output.",
+        ),
     }
     report["artifact_hash"] = _benchmark_report_hash(report)
     return report
@@ -452,6 +464,13 @@ def build_foundation_router_parity_report(
         "overall_status": "pass",
         "created_at_utc": now.isoformat(),
         "artifact_hash": "",
+        "artifact_authority": evidence_contract_payload(
+            provenance=ArtifactProvenance.SYNTHETIC_GENERATED,
+            maturity=EvidenceMaturity.STUB,
+            authoritative=False,
+            placeholder=True,
+            notes="Foundation router parity report is currently deterministic scaffold output.",
+        ),
     }
     report["artifact_hash"] = _foundation_router_report_hash(report)
     return report
@@ -534,6 +553,13 @@ def build_deeplob_bdlob_report(
         "overall_status": "pass",
         "created_at_utc": now.isoformat(),
         "artifact_hash": "",
+        "artifact_authority": evidence_contract_payload(
+            provenance=ArtifactProvenance.SYNTHETIC_GENERATED,
+            maturity=EvidenceMaturity.STUB,
+            authoritative=False,
+            placeholder=True,
+            notes="DeepLOB/BDLOB report is currently deterministic scaffold output.",
+        ),
     }
     report["artifact_hash"] = _deeplob_bdlob_report_hash(report)
     return report
@@ -612,6 +638,11 @@ def build_advisor_fallback_slo_report(
         "overall_status": "pass",
         "created_at_utc": now.isoformat(),
         "artifact_hash": "",
+        "artifact_authority": evidence_contract_payload(
+            provenance=ArtifactProvenance.HISTORICAL_MARKET_REPLAY,
+            maturity=EvidenceMaturity.UNCALIBRATED,
+            calibration_summary={"status": "pending_calibration"},
+        ),
     }
     report["artifact_hash"] = _advisor_fallback_slo_report_hash(report)
     return report

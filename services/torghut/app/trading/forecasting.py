@@ -11,6 +11,11 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Protocol, cast
 
+from .evidence_contracts import (
+    ArtifactProvenance,
+    EvidenceMaturity,
+    evidence_contract_payload,
+)
 from .features import FeatureVectorV3, optional_decimal
 from .regime_hmm import resolve_hmm_context, resolve_regime_route_label
 
@@ -59,6 +64,23 @@ def _coerce_model_family(value: str) -> str:
         'chronos': 'chronos',
     }
     return aliases.get(normalized, normalized)
+
+
+def _forecast_artifact_authority(model_family: str) -> dict[str, Any]:
+    normalized = _coerce_model_family(model_family)
+    if normalized in {'chronos', 'moment', 'financial_tsfm', 'baseline'}:
+        return evidence_contract_payload(
+            provenance=ArtifactProvenance.SYNTHETIC_GENERATED,
+            maturity=EvidenceMaturity.STUB,
+            authoritative=False,
+            placeholder=True,
+            notes='Forecast output is produced by deterministic scaffold adapters.',
+        )
+    return evidence_contract_payload(
+        provenance=ArtifactProvenance.HISTORICAL_MARKET_REPLAY,
+        maturity=EvidenceMaturity.UNCALIBRATED,
+        calibration_summary={'status': 'pending_calibration'},
+    )
 
 
 @dataclass(frozen=True)
@@ -133,6 +155,7 @@ class ForecastContractV1:
             'regime_entropy': self.regime_entropy,
             'regime_predicted_next': self.regime_predicted_next,
             'regime_inference_version': self.regime_inference_version,
+            'artifact_authority': _forecast_artifact_authority(self.model_family),
         }
 
 
@@ -175,6 +198,7 @@ class ForecastDecisionAudit:
             'regime_entropy': self.regime_entropy,
             'regime_predicted_next': self.regime_predicted_next,
             'regime_inference_version': self.regime_inference_version,
+            'artifact_authority': _forecast_artifact_authority(self.final_model_family),
         }
 
 
