@@ -500,6 +500,18 @@ spec:
             - .spec.template.spec.restartPolicy
             - .spec.template.spec.schedulerName
             - .spec.template.spec.volumes[].configMap.defaultMode
+        - kind: StatefulSet
+          group: apps
+          namespace: forgejo-runners
+          name: forgejo-runners-amd64
+          jqPathExpressions:
+            - '.spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"]'
+        - kind: StatefulSet
+          group: apps
+          namespace: forgejo-runners
+          name: forgejo-runners-arm64
+          jqPathExpressions:
+            - '.spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"]'
         - kind: Service
           group: serving.knative.dev
           namespace: graf
