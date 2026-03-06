@@ -3235,10 +3235,6 @@ export const runCodexImplementation = async (eventPath: string) => {
   exportScalarEventParametersToEnv(event)
 
   process.env.CODEX_STAGE = stage
-  const configuredModel = normalizeOptionalString(sanitizeNullableString(process.env.CODEX_MODEL))
-  if (!configuredModel) {
-    process.env.CODEX_MODEL = 'codex-spark'
-  }
   process.env.RUST_LOG = process.env.RUST_LOG ?? 'codex_core=info,codex_exec=info'
   process.env.RUST_BACKTRACE = process.env.RUST_BACKTRACE ?? '1'
 
@@ -3511,10 +3507,10 @@ export const runCodexImplementation = async (eventPath: string) => {
 
     const maxSessionAttempts = parsePositiveIntEnv(process.env.CODEX_MAX_SESSION_ATTEMPTS, 3)
     let sessionResult: RunCodexSessionResult = { agentMessages: [], sessionId: undefined, exitCode: 0 }
-    const primaryModel = process.env.CODEX_MODEL?.trim() || 'codex-spark'
-    const modelFallbackQueue = parseModelCandidates(
-      process.env.CODEX_MODEL_FALLBACKS ?? (primaryModel === 'codex-spark' ? 'codex' : ''),
-    ).filter((candidate) => candidate !== primaryModel)
+    const primaryModel = normalizeOptionalString(sanitizeNullableString(process.env.CODEX_MODEL))
+    const modelFallbackQueue = parseModelCandidates(process.env.CODEX_MODEL_FALLBACKS ?? '').filter(
+      (candidate) => candidate !== primaryModel,
+    )
     const runSession = async (sessionPrompt: string) => {
       return await runCodexSession({
         stage: stage as Parameters<typeof runCodexSession>[0]['stage'],

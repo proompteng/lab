@@ -568,7 +568,7 @@ describe('supporting primitives controller', () => {
     expect(status.stageStates).toBeTruthy()
   })
 
-  it('derives transactor huly api base url from front owner channel', async () => {
+  it('does not derive huly api base url from owner channel transport-like values', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})
     const get = vi.fn().mockResolvedValue({
@@ -617,7 +617,7 @@ describe('supporting primitives controller', () => {
       .find((payload) => payload.kind === 'Schedule') as { metadata?: Record<string, unknown> } | undefined
     expect(schedulePayload).toBeDefined()
     const annotations = (schedulePayload?.metadata?.annotations ?? {}) as Record<string, string>
-    expect(annotations['swarm.proompteng.ai/huly-base-url']).toBe('http://transactor.huly.svc.cluster.local')
+    expect(annotations['swarm.proompteng.ai/huly-base-url']).toBe('https://huly.proompteng.ai')
   })
 
   it('dispatches Huly requirement signals into implement runs', async () => {
@@ -1779,6 +1779,110 @@ describe('supporting primitives controller', () => {
     const status = (firstStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
     expect(status.phase).toBe('Frozen')
     expect(status.freeze).toBeTruthy()
+  })
+
+  it('includes nested workflow failure detail in freeze evidence when top-level status is empty', async () => {
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn().mockResolvedValue(null)
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          items: [
+            {
+              metadata: {
+                name: 'run-2',
+                creationTimestamp: '2026-01-20T00:01:00Z',
+                labels: {
+                  'swarm.proompteng.ai/name': 'torghut-quant',
+                  'swarm.proompteng.ai/stage': 'implement',
+                },
+              },
+              status: {
+                phase: 'Failed',
+                workflow: {
+                  steps: [
+                    {
+                      name: 'deploy-step',
+                      phase: 'Failed',
+                      message: 'workflow step deploy-step: container exited with code 17',
+                    },
+                  ],
+                },
+              },
+            },
+            {
+              metadata: {
+                name: 'run-1',
+                creationTimestamp: '2026-01-20T00:00:00Z',
+                labels: {
+                  'swarm.proompteng.ai/name': 'torghut-quant',
+                  'swarm.proompteng.ai/stage': 'implement',
+                },
+              },
+              status: {
+                phase: 'Failed',
+                workflow: {
+                  steps: [
+                    {
+                      name: 'deploy-step',
+                      phase: 'Failed',
+                      message: 'workflow step deploy-step: container exited with code 17',
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        }
+      }
+      if (resource === RESOURCE_MAP.OrchestrationRun) {
+        return { items: [] }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'torghut-quant', namespace: 'agents', generation: 1, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'trading-owner', channel: 'swarm://owner/trading' },
+        domains: ['autonomous-trading'],
+        objectives: ['improve risk-adjusted return'],
+        mode: 'lights-out',
+        cadence: {
+          discoverEvery: '1m',
+          planEvery: '5m',
+          implementEvery: '15m',
+          verifyEvery: '1m',
+        },
+        discovery: { sources: [{ name: 'market-feed' }] },
+        delivery: { deploymentTargets: ['torghut'] },
+        risk: { freezeAfterFailures: 2, freezeDuration: '60m' },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'OrchestrationRun', name: 'orchestrationrun-sample' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    const firstStatusCall = applyStatus.mock.calls[0]
+    const status = (firstStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    expect(status.freeze).toMatchObject({
+      reason: 'ConsecutiveFailures',
+      evidence: {
+        triggeringRuns: expect.arrayContaining([
+          expect.objectContaining({ reason: 'workflow step deploy-step: container exited with code 17' }),
+        ]),
+      },
+    })
   })
 
   it('freezes when consecutive timed-out implement failures remain active', async () => {

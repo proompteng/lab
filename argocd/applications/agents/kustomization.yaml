@@ -13,6 +13,9 @@ resources:
   - codex-spark-review-agentprovider.yaml
   - codex-agent.yaml
   - codex-spark-agent.yaml
+  - codex-spark-smoke-agent.yaml
+  - codex-spark-smoke-agent-system-prompt-configmap.yaml
+  - codex-spark-smoke-implspec.yaml
   - codex-whitepaper-secretbinding.yaml
   - codex-whitepaper-agent.yaml
   - codex-agentprovider.yaml

@@ -31,7 +31,7 @@ spec:
     swarmAgentIdentity: architector-jangar-discover
     swarmHumanName: architector
     swarmTeamName: Jangar Engineering
-    ownerChannel: http://transactor.huly.svc.cluster.local
+    ownerChannel: swarm://owner/platform
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
     hulyProject: DefaultProject
@@ -85,7 +85,7 @@ spec:
     swarmAgentIdentity: architector-jangar-plan
     swarmHumanName: architector
     swarmTeamName: Jangar Engineering
-    ownerChannel: http://transactor.huly.svc.cluster.local
+    ownerChannel: swarm://owner/platform
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
     hulyProject: DefaultProject
@@ -143,7 +143,7 @@ spec:
     swarmHumanName: engineer
     swarmTeamName: Jangar Engineering
     objective: grab the system design document, implement high-quality engineering changes, update impacted documentation, and deliver a production-ready PR
-    ownerChannel: http://transactor.huly.svc.cluster.local
+    ownerChannel: swarm://owner/platform
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
     hulyProject: DefaultProject
@@ -196,7 +196,7 @@ spec:
     swarmAgentIdentity: deployer-jangar-verify
     swarmHumanName: deployer
     swarmTeamName: Jangar Engineering
-    ownerChannel: http://transactor.huly.svc.cluster.local
+    ownerChannel: swarm://owner/platform
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
     hulyProject: DefaultProject
@@ -250,7 +250,7 @@ spec:
     swarmAgentIdentity: architector-torghut-discover
     swarmHumanName: architector
     swarmTeamName: Torghut Traders
-    ownerChannel: http://transactor.huly.svc.cluster.local
+    ownerChannel: swarm://owner/trading
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
     hulyProject: DefaultProject
@@ -304,7 +304,7 @@ spec:
     swarmAgentIdentity: architector-torghut-plan
     swarmHumanName: architector
     swarmTeamName: Torghut Traders
-    ownerChannel: http://transactor.huly.svc.cluster.local
+    ownerChannel: swarm://owner/trading
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
     hulyProject: DefaultProject
@@ -362,7 +362,7 @@ spec:
     swarmHumanName: engineer
     swarmTeamName: Torghut Traders
     objective: grab the system design document, implement high-quality engineering changes, update impacted documentation, and deliver a production-ready PR
-    ownerChannel: http://transactor.huly.svc.cluster.local
+    ownerChannel: swarm://owner/trading
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
     hulyProject: DefaultProject
@@ -415,7 +415,7 @@ spec:
     swarmAgentIdentity: deployer-torghut-verify
     swarmHumanName: deployer
     swarmTeamName: Torghut Traders
-    ownerChannel: http://transactor.huly.svc.cluster.local
+    ownerChannel: swarm://owner/trading
     hulyApiBaseUrl: http://transactor.huly.svc.cluster.local
     hulyWorkspace: proompteng
     hulyProject: DefaultProject

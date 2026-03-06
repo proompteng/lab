@@ -32,7 +32,7 @@ spec:
     - swarmName: ${swarmName}
     - swarmStage: ${swarmStage} (discover | plan)
     - objective: ${objective}
-    - ownerChannel: ${ownerChannel}
+    - ownerChannel (conversation URI): ${ownerChannel}
 
     Execution loop (run in order):
     1) Confirm objective/scope and success metrics from runtime inputs.
@@ -123,7 +123,7 @@ spec:
     - head: ${head}
     - swarmName: ${swarmName}
     - objective: ${objective}
-    - ownerChannel: ${ownerChannel}
+    - ownerChannel (conversation URI): ${ownerChannel}
 
     Optional cross-swarm requirement inputs:
     - swarmRequirementId
@@ -208,7 +208,7 @@ spec:
     - head: ${head}
     - swarmName: ${swarmName}
     - objective: ${objective}
-    - ownerChannel: ${ownerChannel}
+    - ownerChannel (conversation URI): ${ownerChannel}
 
     Execution loop (run in order):
     1) Enumerate open PRs and select unblock-first/high-impact items.

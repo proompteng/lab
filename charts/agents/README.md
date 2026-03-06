@@ -461,6 +461,10 @@ Example:
 helm upgrade agents charts/agents --namespace agents --reuse-values   --set controller.authSecret.name=codex-auth   --set controller.authSecret.key=auth.json
 ```
 
+`codex-auth` is the mounted autonomous Codex auth contract for production runners. This chart only references the
+Secret name/key and mount path; the actual secret payload is managed outside these manifests and must use API-backed
+credentials rather than ChatGPT-account auth.
+
 ### Admission control policy
 
 Use admission policy values to reject unsafe AgentRuns before submission. Rejections surface as `InvalidSpec`.
@@ -507,6 +511,9 @@ Effective `JANGAR_AGENT_RUNNER_IMAGE` precedence in rendered Deployments:
 1. `env.vars.JANGAR_AGENT_RUNNER_IMAGE` (explicit operator override)
 2. `runner.image.*`
 3. `runtime.agentRunnerImage`
+
+For GitOps-managed production rollouts, treat `runner.image.*` as the authoritative promoted tag+digest pin for Codex
+runner jobs. Promote validated image pairs there and keep controller/runtime consumers in lockstep.
 
 ### Agent comms subjects (optional)
 

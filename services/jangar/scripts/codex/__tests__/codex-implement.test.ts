@@ -2045,4 +2045,35 @@ exit 1
     expect(runCodexSessionMock).toHaveBeenCalledTimes(2)
     expect(process.env.CODEX_MODEL).toBe('codex')
   }, 40_000)
+
+  it('does not inject a default CODEX_MODEL when provider config is the source of truth', async () => {
+    delete process.env.CODEX_MODEL
+    delete process.env.CODEX_MODEL_FALLBACKS
+
+    runCodexSessionMock.mockImplementationOnce(async () => {
+      expect(process.env.CODEX_MODEL).toBeUndefined()
+      return {
+        agentMessages: ['done'],
+        sessionId: 'provider-model-session',
+        exitCode: 0,
+        forcedTermination: false,
+      }
+    })
+
+    const result = await runCodexImplementation(eventPath)
+    expect(result.sessionId).toBe('provider-model-session')
+    expect(process.env.CODEX_MODEL).toBeUndefined()
+  })
+
+  it('does not enable implicit fallback models when CODEX_MODEL_FALLBACKS is unset', async () => {
+    process.env.CODEX_MODEL = 'gpt-5.3-codex-spark'
+    delete process.env.CODEX_MODEL_FALLBACKS
+    process.env.CODEX_MAX_SESSION_ATTEMPTS = '2'
+
+    runCodexSessionMock.mockRejectedValueOnce(new Error('429 rate limit exceeded for gpt-5.3-codex-spark'))
+
+    await expect(runCodexImplementation(eventPath)).rejects.toThrow('429 rate limit exceeded for gpt-5.3-codex-spark')
+    expect(runCodexSessionMock).toHaveBeenCalledTimes(1)
+    expect(process.env.CODEX_MODEL).toBe('gpt-5.3-codex-spark')
+  })
 })
