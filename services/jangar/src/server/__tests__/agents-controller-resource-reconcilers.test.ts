@@ -104,7 +104,7 @@ describe('agents controller resource reconcilers module', () => {
     )
   })
 
-  it('marks autonomous codex providers not ready when auth secret uses chatgpt mode', async () => {
+  it('marks autonomous codex providers ready when auth secret uses chatgpt mode', async () => {
     const { deps, setStatus } = makeDeps()
     const { reconcileAgentProvider } = createResourceReconcilers(deps)
 
@@ -129,9 +129,7 @@ describe('agents controller resource reconcilers module', () => {
 
     const [, , status] = setStatus.mock.calls[0]
     expect(status.conditions).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ type: 'Ready', status: 'False', reason: 'UnsupportedAuthMode' }),
-      ]),
+      expect.arrayContaining([expect.objectContaining({ type: 'Ready', status: 'True', reason: 'ValidSpec' })]),
     )
   })
 
@@ -166,6 +164,37 @@ describe('agents controller resource reconcilers module', () => {
     const [, , status] = setStatus.mock.calls[0]
     expect(status.conditions).toEqual(
       expect.arrayContaining([expect.objectContaining({ type: 'Ready', status: 'True', reason: 'ValidSpec' })]),
+    )
+  })
+
+  it('marks autonomous codex providers not ready when auth secret uses an unknown auth mode', async () => {
+    const { deps, setStatus } = makeDeps()
+    const { reconcileAgentProvider } = createResourceReconcilers(deps)
+
+    await reconcileAgentProvider(
+      {
+        get: vi.fn(async () => ({
+          data: {
+            'auth.json': Buffer.from(JSON.stringify({ auth_mode: 'mystery' })).toString('base64'),
+          },
+        })),
+      },
+      {
+        metadata: { generation: 1, namespace: 'agents' },
+        spec: {
+          binary: '/usr/local/bin/agent-runner',
+          envTemplate: {
+            AGENT_PROVIDER_PATH: '/root/.codex/provider-codex-spark.json',
+          },
+        },
+      },
+    )
+
+    const [, , status] = setStatus.mock.calls[0]
+    expect(status.conditions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'Ready', status: 'False', reason: 'UnsupportedAuthMode' }),
+      ]),
     )
   })
 })

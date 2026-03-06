@@ -12,7 +12,7 @@ type AuthSecretLike = {
   key?: string
 }
 
-const CODEX_API_AUTH_MODES = new Set(['apikey'])
+const CODEX_AUTH_MODES = new Set(['apikey', 'chatgpt'])
 
 const normalizeOptionalString = (value: unknown) => {
   if (typeof value !== 'string') return null
@@ -221,27 +221,22 @@ export const validateAutonomousCodexAuthSecret = (input: {
   }
 
   const authMode = normalizeOptionalString(record.auth_mode)?.toLowerCase() ?? null
-  if (authMode === 'chatgpt') {
+  if (authMode && !CODEX_AUTH_MODES.has(authMode)) {
     return {
       ok: false as const,
       reason: 'UnsupportedAuthMode',
-      message: `auth secret ${input.authSecret.name} uses unsupported chatgpt auth_mode; autonomous Codex providers require API-backed credentials`,
-    }
-  }
-  if (authMode && !CODEX_API_AUTH_MODES.has(authMode)) {
-    return {
-      ok: false as const,
-      reason: 'UnsupportedAuthMode',
-      message: `auth secret ${input.authSecret.name} uses unsupported auth_mode ${authMode}; expected API-backed credentials`,
+      message: `auth secret ${input.authSecret.name} uses unsupported auth_mode ${authMode}`,
     }
   }
 
-  const apiKey = findStringByKey(record, new Set(['OPENAI_API_KEY', 'openai_api_key', 'apiKey', 'api_key']))
-  if (!apiKey) {
-    return {
-      ok: false as const,
-      reason: 'MissingOpenAIApiKey',
-      message: `auth secret ${input.authSecret.name} must include OPENAI_API_KEY for autonomous Codex providers`,
+  if (authMode === 'apikey') {
+    const apiKey = findStringByKey(record, new Set(['OPENAI_API_KEY', 'openai_api_key', 'apiKey', 'api_key']))
+    if (!apiKey) {
+      return {
+        ok: false as const,
+        reason: 'MissingOpenAIApiKey',
+        message: `auth secret ${input.authSecret.name} must include OPENAI_API_KEY when auth_mode is apikey`,
+      }
     }
   }
 
