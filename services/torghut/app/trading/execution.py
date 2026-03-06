@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, NamedTuple, Optional, cast
@@ -200,6 +200,53 @@ class OrderExecutor:
         if simulation_context is not None:
             submission_extra_params["simulation_context"] = simulation_context
         self._raise_if_conflicting_open_order(execution_client, request)
+        sell_inventory_conflict = self._find_sell_inventory_conflict(
+            execution_client,
+            request,
+            self._list_open_orders(execution_client),
+        )
+        if sell_inventory_conflict is not None:
+            request, sell_qty_adjustment, unresolved_conflict = (
+                self._resolve_sell_inventory_conflict(
+                    request,
+                    conflict=sell_inventory_conflict,
+                    fractional_equities_enabled=fractional_equities_enabled,
+                )
+            )
+            sell_inventory_recovery: dict[str, Any] | None = None
+            if unresolved_conflict is not None:
+                (
+                    request,
+                    sell_qty_adjustment,
+                    unresolved_conflict,
+                    sell_inventory_recovery,
+                ) = self._retry_sell_inventory_conflict_after_cancel(
+                    execution_client=execution_client,
+                    request=request,
+                    conflict=unresolved_conflict,
+                    fractional_equities_enabled=fractional_equities_enabled,
+                )
+            if unresolved_conflict is not None:
+                if sell_inventory_recovery is not None:
+                    self.update_decision_json(
+                        session,
+                        decision_row,
+                        {"broker_precheck_recovery": sell_inventory_recovery},
+                    )
+                raise RuntimeError(json.dumps(unresolved_conflict))
+            metadata_update: dict[str, Any] = {}
+            if sell_qty_adjustment is not None:
+                metadata_update["broker_precheck_adjustment"] = sell_qty_adjustment
+            if sell_inventory_recovery is not None:
+                metadata_update["broker_precheck_recovery"] = sell_inventory_recovery
+            if metadata_update or request.qty != decision.qty:
+                decision = decision.model_copy(update={"qty": request.qty})
+                self.sync_decision_state(
+                    session,
+                    decision_row,
+                    decision,
+                    metadata_update=metadata_update or None,
+                )
         order_response = self._submit_order_with_retry(
             execution_client=execution_client,
             request=request,
@@ -331,14 +378,6 @@ class OrderExecutor:
             }
             raise RuntimeError(json.dumps(payload))
 
-        sell_inventory_conflict = self._find_sell_inventory_conflict(
-            execution_client,
-            request,
-            open_orders,
-        )
-        if sell_inventory_conflict is not None:
-            raise RuntimeError(json.dumps(sell_inventory_conflict))
-
     def _submit_order_with_retry(
         self,
         *,
@@ -450,11 +489,31 @@ class OrderExecutor:
         session.add(decision_row)
         session.commit()
 
+    def sync_decision_state(
+        self,
+        session: Session,
+        decision_row: TradeDecision,
+        decision: StrategyDecision,
+        *,
+        metadata_update: Mapping[str, Any] | None = None,
+    ) -> None:
+        update = _decision_state_payload(decision)
+        if metadata_update:
+            update.update({str(key): value for key, value in metadata_update.items()})
+        self.update_decision_json(session, decision_row, update)
+
     def prime_shorting_metadata_cache(self, execution_client: Any) -> None:
         self._get_account(execution_client, force_refresh=True)
 
     def shorting_metadata_status(self) -> dict[str, Any]:
         return dict(self._shorting_metadata_status)
+
+    def position_qty_for_symbol(
+        self,
+        execution_client: Any,
+        symbol: str,
+    ) -> Decimal | None:
+        return self._position_qty_for_symbol(execution_client, symbol)
 
     @staticmethod
     def _fetch_existing_order(
@@ -582,6 +641,122 @@ class OrderExecutor:
             "existing_order_id": existing_order_ids[0] if existing_order_ids else None,
             "existing_order_ids": existing_order_ids,
         }
+
+    @classmethod
+    def _resolve_sell_inventory_conflict(
+        cls,
+        request: ExecutionRequest,
+        *,
+        conflict: Mapping[str, Any],
+        fractional_equities_enabled: bool,
+    ) -> tuple[ExecutionRequest, dict[str, Any] | None, dict[str, Any] | None]:
+        available_qty = _optional_decimal(conflict.get("available_qty"))
+        if available_qty is None or available_qty <= 0:
+            return request, None, dict(conflict)
+        if request.qty <= available_qty:
+            return request, None, None
+        adjusted_qty = quantize_qty_for_symbol(
+            request.symbol,
+            available_qty,
+            fractional_equities_enabled=fractional_equities_enabled,
+        )
+        min_qty = min_qty_for_symbol(
+            request.symbol, fractional_equities_enabled=fractional_equities_enabled
+        )
+        if adjusted_qty <= 0 or adjusted_qty < min_qty or adjusted_qty >= request.qty:
+            return request, None, dict(conflict)
+        adjusted_request = request.model_copy(update={"qty": adjusted_qty})
+        adjustment = {
+            "source": "broker_precheck",
+            "code": "sell_qty_clipped_to_available_inventory",
+            "symbol": request.symbol,
+            "requested_qty": str(request.qty),
+            "adjusted_qty": str(adjusted_qty),
+            "available_qty": str(available_qty),
+            "held_for_open_sells": conflict.get("held_for_open_sells"),
+            "position_qty": conflict.get("position_qty"),
+            "existing_order_id": conflict.get("existing_order_id"),
+            "existing_order_ids": conflict.get("existing_order_ids"),
+        }
+        return adjusted_request, adjustment, None
+
+    def _retry_sell_inventory_conflict_after_cancel(
+        self,
+        *,
+        execution_client: Any,
+        request: ExecutionRequest,
+        conflict: Mapping[str, Any],
+        fractional_equities_enabled: bool,
+    ) -> tuple[
+        ExecutionRequest,
+        dict[str, Any] | None,
+        dict[str, Any] | None,
+        dict[str, Any] | None,
+    ]:
+        existing_order_ids = self._sell_inventory_conflict_order_ids(conflict)
+        if not existing_order_ids:
+            return request, None, dict(conflict), None
+
+        canceled_order_ids: list[str] = []
+        for order_id in existing_order_ids:
+            try:
+                cancel_order = getattr(execution_client, "cancel_order", None)
+                if not callable(cancel_order):
+                    break
+                if cancel_order(order_id):
+                    canceled_order_ids.append(order_id)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to cancel sell inventory conflict order symbol=%s order_id=%s error=%s",
+                    request.symbol,
+                    order_id,
+                    exc,
+                )
+        if not canceled_order_ids:
+            return request, None, dict(conflict), None
+
+        refreshed_conflict = self._find_sell_inventory_conflict(
+            execution_client,
+            request,
+            self._list_open_orders(execution_client),
+        )
+        recovery: dict[str, Any] = {
+            "source": "broker_precheck",
+            "code": "sell_inventory_conflict_retried_after_cancel",
+            "symbol": request.symbol,
+            "requested_qty": str(request.qty),
+            "canceled_existing_order_ids": canceled_order_ids,
+        }
+        if refreshed_conflict is None:
+            recovery["status"] = "cleared"
+            return request, None, None, recovery
+
+        adjusted_request, adjustment, unresolved_conflict = (
+            self._resolve_sell_inventory_conflict(
+                request,
+                conflict=refreshed_conflict,
+                fractional_equities_enabled=fractional_equities_enabled,
+            )
+        )
+        recovery["status"] = "adjusted" if unresolved_conflict is None else "blocked"
+        recovery["remaining_conflict"] = dict(refreshed_conflict)
+        return adjusted_request, adjustment, unresolved_conflict, recovery
+
+    @staticmethod
+    def _sell_inventory_conflict_order_ids(conflict: Mapping[str, Any]) -> list[str]:
+        order_ids: list[str] = []
+        existing_order_ids = conflict.get("existing_order_ids")
+        if isinstance(existing_order_ids, Sequence) and not isinstance(
+            existing_order_ids, (str, bytes)
+        ):
+            existing_order_sequence = cast(Sequence[Any], existing_order_ids)
+            order_ids.extend(
+                str(order_id) for order_id in existing_order_sequence if order_id
+            )
+        existing_order_id = conflict.get("existing_order_id")
+        if existing_order_id and str(existing_order_id) not in order_ids:
+            order_ids.append(str(existing_order_id))
+        return order_ids
 
     @classmethod
     def _remaining_order_qty(cls, order: Mapping[str, Any]) -> Decimal:
@@ -975,6 +1150,12 @@ def _normalize_reject_reason(reason: str) -> _NormalizedRejectReason:
         return _NormalizedRejectReason("symbol_capacity_exhausted", "capacity", "portfolio_sizing")
     if normalized == "qty_below_min":
         return _NormalizedRejectReason("qty_below_min", "capacity", "portfolio_sizing")
+    if normalized == "max_position_pct_exceeded":
+        return _NormalizedRejectReason("max_position_pct_exceeded", "policy", "risk_engine")
+    if normalized.startswith("runtime_uncertainty_gate_"):
+        return _NormalizedRejectReason(normalized, "policy", "runtime_uncertainty_gate")
+    if "code=precheck_sell_qty_exceeds_available" in normalized:
+        return _NormalizedRejectReason("sell_inventory_unavailable", "broker_precheck", "broker_precheck")
     if "code=shorting_metadata_unavailable" in normalized or "code=local_account_metadata_unavailable" in normalized:
         return _NormalizedRejectReason("shorting_metadata_unavailable", "broker_precheck", "local_pre_submit")
     if normalized.startswith("local_pre_submit_rejected"):
@@ -1010,6 +1191,17 @@ def _extract_sizing_debug(decision_json: Mapping[str, Any]) -> dict[str, Any]:
         "remaining_room_notional": output_mapping.get("remaining_room_notional"),
         "fractional_allowed": output_mapping.get("fractional_allowed"),
         "limiting_constraint": output_mapping.get("limiting_constraint"),
+    }
+
+
+def _decision_state_payload(decision: StrategyDecision) -> dict[str, Any]:
+    return {
+        "action": decision.action,
+        "qty": str(decision.qty),
+        "order_type": decision.order_type,
+        "time_in_force": decision.time_in_force,
+        "limit_price": str(decision.limit_price) if decision.limit_price is not None else None,
+        "stop_price": str(decision.stop_price) if decision.stop_price is not None else None,
     }
 
 

@@ -156,6 +156,136 @@ class TestRiskEngine(TestCase):
         self.assertFalse(verdict.approved)
         self.assertIn("max_position_pct_exceeded", verdict.reasons)
 
+    def test_portfolio_sizing_cap_prevents_false_position_pct_reject(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="GOOG",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("0.2766"),
+            order_type="market",
+            time_in_force="day",
+            params={
+                "price": Decimal("303.2669439236761"),
+                "portfolio_sizing": {
+                    "output": {
+                        "status": "approved",
+                        "final_qty": "0.2766",
+                        "final_notional": "83.9119507357623000",
+                        "remaining_room_notional": "83.9119507357623000",
+                    }
+                },
+            },
+        )
+        strategy = Strategy(
+            name="test-cap",
+            description=None,
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=None,
+            max_position_pct_equity=Decimal("0.08"),
+            max_notional_per_trade=Decimal("20000"),
+        )
+        account = {
+            "equity": "31211.38",
+            "cash": "10000",
+            "buying_power": "10000",
+        }
+        positions = [{"symbol": "GOOG", "qty": "8", "market_value": "2412.9984492642377"}]
+        with self.session_local() as session:
+            verdict = self.risk_engine.evaluate(
+                session, decision, strategy, account, positions, {"GOOG"}
+            )
+        self.assertTrue(verdict.approved)
+        self.assertNotIn("max_position_pct_exceeded", verdict.reasons)
+
+    def test_stale_portfolio_sizing_audit_does_not_bypass_position_pct_reject(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="GOOG",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            params={
+                "price": Decimal("400"),
+                "portfolio_sizing": {
+                    "output": {
+                        "status": "approved",
+                        "final_qty": "0.2",
+                        "final_notional": "80",
+                        "remaining_room_notional": "80",
+                    }
+                },
+            },
+        )
+        strategy = Strategy(
+            name="test-stale-cap",
+            description=None,
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=None,
+            max_position_pct_equity=Decimal("0.08"),
+            max_notional_per_trade=Decimal("20000"),
+        )
+        account = {
+            "equity": "1000",
+            "cash": "1000",
+            "buying_power": "1000",
+        }
+        positions = [{"symbol": "GOOG", "qty": "1", "market_value": "200"}]
+        with self.session_local() as session:
+            verdict = self.risk_engine.evaluate(
+                session, decision, strategy, account, positions, {"GOOG"}
+            )
+        self.assertFalse(verdict.approved)
+        self.assertIn("max_position_pct_exceeded", verdict.reasons)
+
+    def test_max_position_pct_uses_portfolio_sizing_final_notional(self) -> None:
+        strategy = Strategy(
+            name="sized",
+            description=None,
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=None,
+            max_position_pct_equity=Decimal("0.5"),
+            max_notional_per_trade=Decimal("20000"),
+        )
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("3.3333"),
+            order_type="market",
+            time_in_force="day",
+            params={
+                "price": Decimal("30"),
+                "portfolio_sizing": {
+                    "output": {
+                        "status": "approved",
+                        "final_qty": "3.3333",
+                        "final_notional": "100",
+                    }
+                },
+            },
+        )
+        account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
+        positions = [{"symbol": "AAPL", "qty": "163.3333", "market_value": "4900"}]
+        with self.session_local() as session:
+            verdict = self.risk_engine.evaluate(
+                session, decision, strategy, account, positions, {"AAPL"}
+            )
+        self.assertTrue(verdict.approved)
+        self.assertNotIn("max_position_pct_exceeded", verdict.reasons)
+
     def test_cooldown_ignores_rejected_decisions(self) -> None:
         config.settings.trading_cooldown_seconds = 60
         decision = StrategyDecision(

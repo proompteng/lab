@@ -20,6 +20,43 @@ describe('torghut trading summary reason parsing', () => {
     expect(__private.splitRiskReason('llm_error')).toEqual(['llm_error'])
   })
 
+  it('classifies normalized broker and policy reasons from atomic tokens', () => {
+    expect(
+      __private.classifyRejectClass({
+        id: '1',
+        createdAt: '2026-01-15T14:45:00.000Z',
+        alpacaAccountLabel: 'paper',
+        symbol: 'AAPL',
+        timeframe: '1m',
+        status: 'rejected',
+        rationale: null,
+        riskReasons: [],
+        rejectReasonAtomic: ['sell_inventory_unavailable'],
+        rejectClass: null,
+        rejectOrigin: 'broker_precheck',
+        strategyId: '1',
+        strategyName: 'test',
+      }),
+    ).toBe('broker_precheck')
+    expect(
+      __private.classifyRejectClass({
+        id: '2',
+        createdAt: '2026-01-15T14:45:00.000Z',
+        alpacaAccountLabel: 'paper',
+        symbol: 'AAPL',
+        timeframe: '1m',
+        status: 'rejected',
+        rationale: null,
+        riskReasons: [],
+        rejectReasonAtomic: ['runtime_uncertainty_gate_fail_block_new_entries'],
+        rejectClass: null,
+        rejectOrigin: 'runtime_uncertainty_gate',
+        strategyId: '1',
+        strategyName: 'test',
+      }),
+    ).toBe('policy')
+  })
+
   it('classifies market session by post-open and pre-open rules', () => {
     expect(__private.classifySessionByMarketTime('2026-01-15T13:45:00.000Z', rollingTrendInterval.tz)).toBe('pre-open')
     expect(__private.classifySessionByMarketTime('2026-01-15T14:30:00.000Z', rollingTrendInterval.tz)).toBe('post-open')

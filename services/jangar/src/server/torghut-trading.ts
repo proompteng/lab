@@ -82,8 +82,20 @@ const classifyRejectClass = (decision: TorghutRejectedDecisionRow) => {
     return 'market_context'
   }
   if (reasons.some((reason) => reason === 'symbol_capacity_exhausted' || reason === 'qty_below_min')) return 'capacity'
-  if (reasons.some((reason) => reason === 'shorting_metadata_unavailable' || reason === 'broker_precheck_rejected')) {
+  if (
+    reasons.some(
+      (reason) =>
+        reason === 'shorting_metadata_unavailable' ||
+        reason === 'broker_precheck_rejected' ||
+        reason === 'sell_inventory_unavailable',
+    )
+  ) {
     return 'broker_precheck'
+  }
+  if (
+    reasons.some((reason) => reason === 'max_position_pct_exceeded' || reason.startsWith('runtime_uncertainty_gate_'))
+  ) {
+    return 'policy'
   }
   if (reasons.some((reason) => reason.startsWith('llm_'))) return 'policy'
   return null
@@ -599,6 +611,7 @@ export const parseTorghutTradingStrategyId = (url: URL) => {
 
 export const __private = {
   splitRiskReason,
+  classifyRejectClass,
   classifySessionByMarketTime,
   buildRolling5DayRejectionTrend,
 }
