@@ -59,6 +59,7 @@ This pack is positioned as the next architecture layer above:
 25. `23-trading-startup-readiness-warmup-2026-03-04.md`
 26. `26-database-migration-lineage-and-readiness-contract-2026-03-05.md`
 27. `27-live-hypothesis-ledger-and-capital-allocation-contract-2026-03-06.md`
+28. `28-hypothesis-led-alpha-readiness-and-profit-circuit-2026-03-06.md`
 
 ## Recommended Build Order
 
@@ -89,6 +90,7 @@ This pack is positioned as the next architecture layer above:
 25. `23-trading-startup-readiness-warmup-2026-03-04.md`
 26. `26-database-migration-lineage-and-readiness-contract-2026-03-05.md`
 27. `27-live-hypothesis-ledger-and-capital-allocation-contract-2026-03-06.md`
+28. `28-hypothesis-led-alpha-readiness-and-profit-circuit-2026-03-06.md`
 
 ## Why This Sequence
 
@@ -101,3 +103,4 @@ This pack is positioned as the next architecture layer above:
 - Production rollout and governance closes with explicit SLO, rollback, and incident controls.
 - Live profitability must ultimately be governed by a database-backed hypothesis ledger, not only by static artifacts.
 - PostHog observability design is sequenced late to instrument stable runtime paths and avoid telemetry contract churn.
+- The hypothesis-led alpha readiness and profit circuit closes the remaining gap between runtime health and capital promotion, ensuring profitable scale-up is evidence-backed instead of inferred from process uptime.
