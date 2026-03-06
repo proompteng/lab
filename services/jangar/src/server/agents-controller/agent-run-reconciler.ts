@@ -181,10 +181,10 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
     const finishedAt = asString(status.finishedAt)
     const agentName = asString(readNested(spec, ['agentRef', 'name']))
     const finalizer = 'agents.proompteng.ai/runtime-cleanup'
-    const finalizers = Array.isArray(metadata.finalizers)
+    let finalizers = Array.isArray(metadata.finalizers)
       ? metadata.finalizers.filter((item): item is string => typeof item === 'string')
       : []
-    const hasFinalizer = finalizers.includes(finalizer)
+    let hasFinalizer = finalizers.includes(finalizer)
     const deleting = Boolean(metadata.deletionTimestamp)
 
     let conditions = buildConditions(agentRun)
@@ -289,11 +289,11 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
           metadata: { finalizers: [...finalizers, finalizer] },
         })
       } catch (error) {
-        if (!isKubeNotFoundError(error)) {
-          throw error
-        }
+        if (isKubeNotFoundError(error)) return
+        throw error
       }
-      return
+      finalizers = [...finalizers, finalizer]
+      hasFinalizer = true
     }
 
     if (phase === 'Succeeded' || phase === 'Failed' || phase === 'Cancelled') {

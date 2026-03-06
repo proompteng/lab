@@ -579,6 +579,47 @@ describe('agents controller reconcileAgentRun', () => {
     })
   })
 
+  it('continues first reconcile after adding the AgentRun finalizer', async () => {
+    let lastJob: Record<string, unknown> | null = null
+    const kube = buildKube({
+      apply: vi.fn(async (resource: Record<string, unknown>) => {
+        const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+        const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+        const applied = { ...resource, metadata: { ...metadata, uid } }
+        if (resource.kind === 'Job') lastJob = applied
+        return applied
+      }),
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        return null
+      }),
+    })
+    const agentRun = buildAgentRun()
+    agentRun.metadata.finalizers = []
+
+    await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+    expect(kube.patch).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-1', 'agents', {
+      metadata: { finalizers: [finalizer] },
+    })
+    expect(lastJob).toBeTruthy()
+
+    const status = getLastStatus(kube)
+    expect(status.phase).toBe('Running')
+    expect(findCondition(status, 'Accepted')?.status).toBe('True')
+  })
+
   it('allows immutable spec mutations before Accepted', async () => {
     const kube = buildKube({
       get: vi.fn(async (resource: string) => {
