@@ -280,3 +280,13 @@ class TestHypothesisReadiness(TestCase):
 
         self.assertEqual(status.decision, 'block')
         self.assertEqual(status.reasons, ['workflows_data_unknown'])
+
+    def test_load_jangar_dependency_quorum_handles_malformed_url(self) -> None:
+        settings.trading_jangar_control_plane_status_url = 'jangar.example/status'
+        settings.trading_jangar_control_plane_cache_ttl_seconds = 0
+
+        status = load_jangar_dependency_quorum()
+
+        self.assertEqual(status.decision, 'unknown')
+        self.assertEqual(status.reasons, ['jangar_status_fetch_failed'])
+        self.assertIn('fetch failed', status.message)

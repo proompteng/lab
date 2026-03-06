@@ -331,9 +331,9 @@ def load_jangar_dependency_quorum() -> JangarDependencyQuorumStatus:
                 ):
                     return cast(JangarDependencyQuorumStatus, cached['status'])
 
-    request = Request(status_url, method='GET', headers={'accept': 'application/json'})
     decoded: Any = None
     try:
+        request = Request(status_url, method='GET', headers={'accept': 'application/json'})
         with urlopen(request, timeout=settings.trading_jangar_control_plane_timeout_seconds) as response:
             if response.status < 200 or response.status >= 300:
                 return JangarDependencyQuorumStatus(
