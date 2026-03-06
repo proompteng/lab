@@ -166,7 +166,7 @@ def _build_logging_dict_config(config: LoggingRuntimeConfig) -> dict[str, Any]:
                 'class': 'logging.StreamHandler',
                 'filters': ['service_context'],
                 'formatter': config.format,
-                'stream': 'ext://sys.stdout',
+                'stream': 'ext://sys.stderr',
             }
         },
         'root': {

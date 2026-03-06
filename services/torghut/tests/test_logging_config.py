@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
+from typing import Any, cast
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -18,17 +20,22 @@ class _FakeWorkflowService:
     def __init__(self, *, accepted: bool = True) -> None:
         self.accepted = accepted
 
-    def ingest_github_issue_event(self, session, payload, source):
+    def ingest_github_issue_event(
+        self,
+        session: Any,
+        payload: dict[str, object],
+        source: str,
+    ) -> _FakeWorkflowResult:
         del session, payload, source
         return _FakeWorkflowResult(accepted=self.accepted)
 
 
 class _FakeKafkaConsumer:
-    def __init__(self, records):
+    def __init__(self, records: list['_FakeRecord']) -> None:
         self._records = records
         self.commit_calls = 0
 
-    def poll(self, *, timeout_ms: int, max_records: int):
+    def poll(self, *, timeout_ms: int, max_records: int) -> dict[tuple[str, int], list['_FakeRecord']]:
         del timeout_ms
         batch = self._records[:max_records]
         self._records = self._records[max_records:]
@@ -74,6 +81,8 @@ class TestLoggingConfig(TestCase):
         self.assertEqual(runtime_config.format, 'json')
         self.assertIsInstance(root_logger.handlers[0].formatter, JsonFormatter)
         self.assertEqual(root_logger.level, logging.DEBUG)
+        handler = cast(logging.StreamHandler[Any], root_logger.handlers[0])
+        self.assertIs(handler.stream, sys.stderr)
 
     def test_json_formatter_emits_structured_payload(self) -> None:
         formatter = JsonFormatter()
@@ -98,8 +107,10 @@ class TestLoggingConfig(TestCase):
         self.assertEqual(payload['extra']['run_id'], 'run-123')
 
     def test_whitepaper_kafka_ingest_logs_cycle_summary(self) -> None:
-        ingestor = WhitepaperKafkaIssueIngestor(workflow_service=_FakeWorkflowService())
-        ingestor._consumer = _FakeKafkaConsumer(
+        ingestor = WhitepaperKafkaIssueIngestor(
+            workflow_service=cast(Any, _FakeWorkflowService())
+        )
+        cast(Any, ingestor)._consumer = _FakeKafkaConsumer(
             [_FakeRecord(b'{"action":"opened","issue":{"number":1}}')]
         )
         session = _FakeSession()
@@ -108,7 +119,7 @@ class TestLoggingConfig(TestCase):
             'app.whitepapers.workflow.whitepaper_kafka_enabled',
             return_value=True,
         ), patch('app.whitepapers.workflow.logger.info') as mock_info:
-            counters = ingestor.ingest_once(session)
+            counters = ingestor.ingest_once(cast(Any, session))
 
         self.assertEqual(counters['messages_total'], 1)
         self.assertEqual(counters['accepted_total'], 1)
