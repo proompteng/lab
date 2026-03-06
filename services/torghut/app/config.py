@@ -36,6 +36,9 @@ FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "trading_readiness_dependency_cache_enabled": (
         "torghut_trading_readiness_dependency_cache_enabled"
     ),
+    "trading_db_schema_graph_allow_divergence_roots": (
+        "torghut_trading_db_schema_graph_allow_divergence_roots"
+    ),
     "trading_execution_prefer_limit": "torghut_trading_execution_prefer_limit",
     "trading_allocator_enabled": "torghut_trading_allocator_enabled",
     "trading_forecast_router_enabled": "torghut_trading_forecast_router_enabled",
@@ -1307,6 +1310,22 @@ class Settings(BaseSettings):
         description=(
             "Additional seconds allowed to reuse stale readiness dependency cache "
             "on /readyz requests before a hard refresh is forced."
+        ),
+    )
+    trading_db_schema_graph_branch_tolerance: int = Field(
+        default=1,
+        alias="TRADING_DB_SCHEMA_GRAPH_BRANCH_TOLERANCE",
+        description=(
+            "Maximum allowed migration graph branch count before readiness marks "
+            "lineage divergence."
+        ),
+    )
+    trading_db_schema_graph_allow_divergence_roots: bool = Field(
+        default=False,
+        alias="TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS",
+        description=(
+            "Allow schema graph branch-count divergence as a warning instead of a "
+            "hard readiness failure."
         ),
     )
     trading_startup_readiness_grace_seconds: int = Field(

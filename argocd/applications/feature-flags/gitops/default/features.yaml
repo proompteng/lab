@@ -180,6 +180,11 @@ flags:
     description: Enables caching for readiness dependency checks in trading probes.
     type: BOOLEAN_FLAG_TYPE
     enabled: true
+  - key: torghut_trading_db_schema_graph_allow_divergence_roots
+    name: Torghut Trading DB Schema Graph Allow Divergence Roots
+    description: Allows schema-graph divergence in readiness as warnings during controlled migration windows.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: false
   - key: torghut_llm_enabled
     name: Torghut LLM Enabled
     description: Global LLM review enablement for Torghut.
