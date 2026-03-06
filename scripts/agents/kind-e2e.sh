@@ -54,6 +54,29 @@ if [ "${BUILD_IMAGE}" = "1" ]; then
 
   OUTPUT_ENTRY="${REPO_ROOT}/services/jangar/.output/server/index.mjs"
   OUTPUT_PROTO="${REPO_ROOT}/services/jangar/.output/server/proto/proompteng/jangar/v1/agentctl.proto"
+
+  copy_output_directory() {
+    local source_dir="$1"
+    local destination_dir="$2"
+
+    if [ ! -d "${source_dir}" ]; then
+      return 0
+    fi
+
+    local source_real
+    local destination_real
+
+    source_real="$(realpath "${source_dir}")"
+    destination_real="$(realpath -m "${destination_dir}")"
+    if [ "${source_real}" = "${destination_real}" ] || [[ "${destination_real}" == "${source_real}/"* ]] || [[ "${source_real}" == "${destination_real}/"* ]]; then
+      echo "Skipping output copy to avoid recursive copy: ${source_real} -> ${destination_real}"
+      return 0
+    fi
+
+    mkdir -p "${destination_dir}"
+    cp -R "${source_dir}/." "${destination_dir}/"
+  }
+
   BUILD_OUTPUT=0
   if [ ! -f "${OUTPUT_ENTRY}" ] || [ ! -f "${OUTPUT_PROTO}" ]; then
     BUILD_OUTPUT=1
@@ -82,10 +105,10 @@ if [ "${BUILD_IMAGE}" = "1" ]; then
     cp -R "${PRUNE_DIR}/full/." "${BUILD_DIR}/"
     (cd "${BUILD_DIR}/services/jangar" && bun run build)
     mkdir -p "${PRUNE_DIR}/full/services/jangar"
-    cp -R "${BUILD_DIR}/services/jangar/.output" "${PRUNE_DIR}/full/services/jangar/.output"
+    copy_output_directory "${BUILD_DIR}/services/jangar/.output" "${PRUNE_DIR}/full/services/jangar/.output"
   elif [ -f "${OUTPUT_ENTRY}" ] && [ -f "${OUTPUT_PROTO}" ]; then
     mkdir -p "${PRUNE_DIR}/full/services/jangar"
-    cp -R "${OUTPUT_SOURCE}" "${PRUNE_DIR}/full/services/jangar/.output"
+    copy_output_directory "${OUTPUT_SOURCE}" "${PRUNE_DIR}/full/services/jangar/.output"
   elif [ -d "${OUTPUT_SOURCE}" ]; then
     echo "Skipping prebuilt .output: missing ${OUTPUT_ENTRY} or ${OUTPUT_PROTO}"
   fi

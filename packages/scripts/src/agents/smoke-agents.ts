@@ -82,6 +82,171 @@ const buildEnv = (env?: Record<string, string | undefined>) =>
     Object.entries(env ? { ...process.env, ...env } : process.env).filter(([, value]) => value !== undefined),
   ) as Record<string, string>
 
+const transientKubectlErrorPatterns = [
+  /couldn't get current server API group list/i,
+  /connection reset by peer/i,
+  /error from a previous attempt/i,
+  /\beof\b/i,
+  /context deadline exceeded/i,
+  /context canceled/i,
+  /i\/o timeout/i,
+  /tls handshake timeout/i,
+  /connection refused/i,
+  /unable to connect to the server/i,
+  /no route to host/i,
+  /server is currently unable to handle the request/i,
+  /service unavailable/i,
+  /Error from server \(Forbidden\): unknown/i,
+] as const
+
+const formatCommandResult = ({ stdout, stderr }: Pick<Awaited<ReturnType<typeof execCapture>>, 'stdout' | 'stderr'>) =>
+  [stderr, stdout].filter(Boolean).join('\n').trim()
+
+export const isTransientKubectlError = (message: string) =>
+  transientKubectlErrorPatterns.some((pattern) => pattern.test(message))
+
+export const isPermissionDeniedKubectlError = (message: string) =>
+  /forbidden|cannot/i.test(message) && !isTransientKubectlError(message)
+
+type BuildHelmArgsInput = {
+  releaseName: string
+  namespace: string
+  valuesFile: string
+  createNamespace: boolean
+  databaseUrl?: string
+  imageRepository?: string
+  imageTag?: string
+  imageDigestSet: boolean
+  imageDigest: string
+}
+
+export const buildHelmArgs = ({
+  releaseName,
+  namespace,
+  valuesFile,
+  createNamespace,
+  databaseUrl,
+  imageRepository,
+  imageTag,
+  imageDigestSet,
+  imageDigest,
+}: BuildHelmArgsInput) => {
+  const helmArgs = [
+    'upgrade',
+    '--install',
+    releaseName,
+    resolve(repoRoot, 'charts/agents'),
+    '--namespace',
+    namespace,
+    '--values',
+    valuesFile,
+  ]
+
+  if (createNamespace) {
+    helmArgs.push('--create-namespace')
+  }
+
+  if (databaseUrl) {
+    helmArgs.push('--set-string', `database.url=${databaseUrl}`)
+  }
+  if (imageRepository) {
+    helmArgs.push('--set', `image.repository=${imageRepository}`)
+  }
+  if (imageTag) {
+    helmArgs.push('--set', `image.tag=${imageTag}`)
+  }
+  if (imageDigestSet) {
+    helmArgs.push('--set', `image.digest=${imageDigest}`)
+  }
+
+  return helmArgs
+}
+
+type BuildKubectlApplyArgsInput = {
+  namespace: string
+  file?: string
+}
+
+export const buildKubectlApplyArgs = ({ namespace, file }: BuildKubectlApplyArgsInput) => {
+  // Smoke manifests are generated at runtime; skip OpenAPI validation so fresh kind API servers
+  // do not fail the test on transient schema fetch EOFs.
+  const kubectlArgs = ['-n', namespace, 'apply', '--validate=false', '-f']
+  kubectlArgs.push(file ?? '-')
+  return kubectlArgs
+}
+
+const waitForKubectlApi = async (timeoutMs: number) => {
+  const start = Date.now()
+  let lastError = ''
+
+  while (Date.now() - start < timeoutMs) {
+    const result = await execCapture(['kubectl', 'version', '--request-timeout=5s'])
+    if (result.exitCode === 0) return
+
+    lastError = formatCommandResult(result)
+    if (!isTransientKubectlError(lastError)) {
+      fatal('Kubernetes API did not become ready.', lastError)
+    }
+
+    await sleep(2000)
+  }
+
+  fatal('Timed out waiting for Kubernetes API readiness.', lastError)
+}
+
+const ensureNamespace = async (namespace: string, createNamespace: boolean) => {
+  const deadline = Date.now() + 60_000
+  let lastError = ''
+
+  while (Date.now() < deadline) {
+    const namespaceCheck = await execCapture(['kubectl', 'get', 'namespace', namespace])
+    if (namespaceCheck.exitCode === 0) {
+      return
+    }
+
+    const namespaceError = formatCommandResult(namespaceCheck)
+    lastError = namespaceError
+
+    if (isTransientKubectlError(namespaceError)) {
+      await sleep(2000)
+      continue
+    }
+
+    if (isPermissionDeniedKubectlError(namespaceError)) {
+      if (createNamespace) {
+        fatal(`Insufficient permissions to verify or create namespace ${namespace}.`, namespaceError)
+      }
+      log(`Skipping namespace existence check for ${namespace} due to RBAC.`)
+      return
+    }
+
+    if (!createNamespace) {
+      fatal(`Namespace ${namespace} does not exist and AGENTS_CREATE_NAMESPACE=false.`, namespaceError)
+    }
+
+    const createResult = await execCapture(['kubectl', 'create', 'namespace', namespace])
+    if (createResult.exitCode === 0) {
+      return
+    }
+
+    const createError = formatCommandResult(createResult)
+    lastError = createError
+
+    if (isTransientKubectlError(createError)) {
+      await sleep(2000)
+      continue
+    }
+
+    if (/already exists/i.test(createError)) {
+      return
+    }
+
+    fatal(`Failed to create namespace ${namespace}.`, createError)
+  }
+
+  fatal(`Timed out ensuring namespace ${namespace}.`, lastError)
+}
+
 const listPodNames = async (namespace: string) => {
   const result = await execCapture([
     'kubectl',
@@ -114,14 +279,14 @@ const dumpNamespaceDiagnostics = async (namespace: string, releaseName: string) 
 }
 
 const applyYaml = async (namespace: string, manifest: string) => {
-  const subprocess = Bun.spawn(['kubectl', '-n', namespace, 'apply', '-f', '-'], {
+  const subprocess = Bun.spawn(['kubectl', ...buildKubectlApplyArgs({ namespace })], {
     stdin: 'pipe',
     stdout: 'inherit',
     stderr: 'inherit',
   })
 
-  subprocess.stdin?.write(manifest)
-  subprocess.stdin?.end()
+  void subprocess.stdin?.write(manifest)
+  void subprocess.stdin?.end()
 
   const exitCode = await subprocess.exited
   if (exitCode !== 0) {
@@ -236,6 +401,10 @@ const main = async () => {
   const kubeconfigPath =
     process.env.AGENTCTL_KUBECONFIG ?? process.env.KUBECONFIG ?? resolve(homedir(), '.kube', 'config')
   const caFile = process.env.KUBE_CA_FILE ?? '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
+  const imageRepository = process.env.AGENTS_IMAGE_REPOSITORY
+  const imageTag = process.env.AGENTS_IMAGE_TAG
+  const imageDigestSet = Object.prototype.hasOwnProperty.call(process.env, 'AGENTS_IMAGE_DIGEST')
+  const imageDigest = process.env.AGENTS_IMAGE_DIGEST ?? ''
 
   const agentctlCommand = agentctlBin.endsWith('.js') ? ['node', agentctlBin] : [agentctlBin]
   const agentctlExecutable = agentctlCommand[0]
@@ -254,20 +423,10 @@ const main = async () => {
     fatal(`AgentRun file not found: ${agentRunFile}`)
   }
 
+  await waitForKubectlApi(60_000)
+
   if (dbBootstrap) {
-    const namespaceCheck = await execCapture(['kubectl', 'get', 'namespace', namespace])
-    if (namespaceCheck.exitCode !== 0) {
-      if (/forbidden|cannot/i.test(namespaceCheck.stderr)) {
-        if (createNamespace) {
-          fatal(`Insufficient permissions to verify or create namespace ${namespace}.`, namespaceCheck.stderr)
-        }
-        log(`Skipping namespace existence check for ${namespace} due to RBAC.`)
-      } else if (createNamespace) {
-        await run('kubectl', ['create', 'namespace', namespace])
-      } else {
-        fatal(`Namespace ${namespace} does not exist and AGENTS_CREATE_NAMESPACE=false.`)
-      }
-    }
+    await ensureNamespace(namespace, createNamespace)
 
     let databaseUrl = dbUrl
     let dbPassword = process.env.AGENTS_DB_PASSWORD
@@ -376,25 +535,17 @@ spec:
     process.env.AGENTS_DB_URL = databaseUrl
   }
 
-  const helmArgs = [
-    'upgrade',
-    '--install',
+  const helmArgs = buildHelmArgs({
     releaseName,
-    resolve(repoRoot, 'charts/agents'),
-    '--namespace',
     namespace,
-    '--values',
     valuesFile,
-  ]
-
-  if (createNamespace) {
-    helmArgs.push('--create-namespace')
-  }
-
-  if (process.env.AGENTS_DB_URL) {
-    helmArgs.push('--set-string', `database.url=${process.env.AGENTS_DB_URL}`)
-  }
-
+    createNamespace,
+    databaseUrl: process.env.AGENTS_DB_URL,
+    imageRepository,
+    imageTag,
+    imageDigestSet,
+    imageDigest,
+  })
   await run('helm', helmArgs)
   {
     const exitCode = await runInherit([
@@ -414,21 +565,27 @@ spec:
     }
   }
 
-  await run('kubectl', [
-    '-n',
-    namespace,
-    'apply',
-    '-f',
-    resolve(repoRoot, 'charts/agents/examples/agentprovider-smoke.yaml'),
-  ])
-  await run('kubectl', ['-n', namespace, 'apply', '-f', resolve(repoRoot, 'charts/agents/examples/agent-smoke.yaml')])
-  await run('kubectl', [
-    '-n',
-    namespace,
-    'apply',
-    '-f',
-    resolve(repoRoot, 'charts/agents/examples/implementationspec-smoke.yaml'),
-  ])
+  await run(
+    'kubectl',
+    buildKubectlApplyArgs({
+      namespace,
+      file: resolve(repoRoot, 'charts/agents/examples/agentprovider-smoke.yaml'),
+    }),
+  )
+  await run(
+    'kubectl',
+    buildKubectlApplyArgs({
+      namespace,
+      file: resolve(repoRoot, 'charts/agents/examples/agent-smoke.yaml'),
+    }),
+  )
+  await run(
+    'kubectl',
+    buildKubectlApplyArgs({
+      namespace,
+      file: resolve(repoRoot, 'charts/agents/examples/implementationspec-smoke.yaml'),
+    }),
+  )
 
   await run('kubectl', ['-n', namespace, 'delete', 'agentrun', agentRunName, '--ignore-not-found'])
 

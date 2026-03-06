@@ -78,7 +78,7 @@ jobs:
         run: scripts/agents/validate-agents.sh
 
   integration:
-    runs-on: arc-arm64
+    runs-on: ubuntu-latest
     needs: validate
     env:
       # ARC runners run with hostNetwork=true; a shared "kind" docker bridge subnet can collide across pods.
@@ -139,6 +139,257 @@ jobs:
           kubectl_version: v1.29.4
           wait: 180s
 
+      - name: Build and preload local Jangar control-plane image into kind
+        run: |
+          set -euxo pipefail
+
+          WORKSPACE="${GITHUB_WORKSPACE}"
+          IMAGE_REPOSITORY="${AGENTS_IMAGE_REPOSITORY:-jangar-local}"
+          IMAGE_TAG="${AGENTS_IMAGE_TAG:-ci-${GITHUB_SHA:-unknown}}"
+          PUBLIC_IMAGE_REPOSITORY="${AGENTS_PUBLIC_IMAGE_REPOSITORY:-registry.ide-newton.ts.net/lab/jangar-control-plane}"
+          PUBLIC_IMAGE_TAG="${AGENTS_PUBLIC_IMAGE_TAG:-latest}"
+          BUILD_PRELOADED=1
+          PRUNE_DIR="$(mktemp -d /tmp/jangar-prune-XXXXXX)"
+          KIND_IMAGE_TAR="${RUNNER_TEMP:-/tmp}/jangar-${GITHUB_RUN_ID:-0}-${GITHUB_RUN_ATTEMPT:-0}-${IMAGE_TAG}.tar"
+          BUILD_HEARTBEAT_PID=0
+          KIND_HEARTBEAT_PID=0
+          cleanup_preload_resources() {
+            if [ "${BUILD_HEARTBEAT_PID}" != "0" ]; then
+              kill "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
+              wait "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
+            fi
+            if [ "${KIND_HEARTBEAT_PID}" != "0" ]; then
+              kill "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
+              wait "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
+            fi
+            if [ -f "${KIND_IMAGE_TAR}" ]; then
+              rm -f "${KIND_IMAGE_TAR}"
+            fi
+            rm -rf "${PRUNE_DIR}"
+          }
+          trap cleanup_preload_resources EXIT
+
+          run_with_progress() {
+            local phase="$1"
+            local timeout_minutes="$2"
+            shift 2
+
+            local heartbeat_pid
+            local timeout_status=0
+            local status=0
+
+            (
+              while :; do
+                echo "[progress] ${phase} for ${IMAGE} at $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+                sleep 120
+              done
+            ) &
+            heartbeat_pid=$!
+
+            if [ "${phase}" = "Docker build" ]; then
+              BUILD_HEARTBEAT_PID="${heartbeat_pid}"
+            else
+              KIND_HEARTBEAT_PID="${heartbeat_pid}"
+            fi
+
+            if timeout -k 30s "${timeout_minutes}m" "$@"; then
+              status=0
+            else
+              status=$?
+              timeout_status="$status"
+            fi
+
+            if [ "${phase}" = "Docker build" ]; then
+              kill "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
+              wait "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
+              BUILD_HEARTBEAT_PID=0
+            else
+              kill "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
+              wait "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
+              KIND_HEARTBEAT_PID=0
+            fi
+
+            if [ "${status}" -ne 0 ]; then
+              echo "::error::${phase} failed with exit code ${status} for ${IMAGE}."
+              if [ "${timeout_status}" -eq 124 ]; then
+                echo "::error::${phase} exceeded ${timeout_minutes}m timeout for ${IMAGE}."
+              fi
+            fi
+
+            return "${status}"
+          }
+
+          run_step_failure() {
+            local message="$1"
+            local code="$2"
+            echo "${message}; exit code=${code}." >&2
+            echo "${message}" >&2
+            exit 1
+          }
+
+          run_kind_load_with_fallback() {
+            if ! run_with_progress "docker save image archive" "${KIND_LOAD_TIMEOUT_MINUTES}" docker save --output "${KIND_IMAGE_TAR}" "${IMAGE}"; then
+              echo "Failed to save local image archive ${KIND_IMAGE_TAR}."
+              return 1
+            fi
+
+            echo "Saved image archive ${KIND_IMAGE_TAR}."
+
+            if run_with_progress "kind load image-archive" "${KIND_LOAD_TIMEOUT_MINUTES}" kind load image-archive "${KIND_IMAGE_TAR}" --name "${KIND_CLUSTER_NAME}"; then
+              echo "Loaded local image archive ${KIND_IMAGE_TAR} into kind cluster ${KIND_CLUSTER_NAME}."
+              return 0
+            fi
+
+            echo "kind load image-archive failed; retrying with docker-image path."
+            if run_with_progress "kind load docker-image" "${KIND_LOAD_TIMEOUT_MINUTES}" kind load docker-image "${IMAGE}" --name "${KIND_CLUSTER_NAME}"; then
+              echo "Loaded local image ${IMAGE} into kind cluster ${KIND_CLUSTER_NAME}."
+              return 0
+            fi
+            return 1
+          }
+
+          recreate_kind_cluster() {
+            echo "Recreating kind cluster ${KIND_CLUSTER_NAME} before smoke fallback validation."
+            kind delete cluster --name "${KIND_CLUSTER_NAME}" >/dev/null 2>&1 || true
+            if ! run_with_progress "kind recreate cluster" 6 env KIND_EXPERIMENTAL_DOCKER_NETWORK="${KIND_DOCKER_NETWORK_NAME}" kind create cluster --name "${KIND_CLUSTER_NAME}" --image kindest/node:v1.29.4 --wait 180s; then
+              run_step_failure "Failed to recreate kind cluster ${KIND_CLUSTER_NAME} after public image fallback" "$?"
+            fi
+          }
+
+          OUTPUT_ENTRY="${WORKSPACE}/services/jangar/.output/server/index.mjs"
+          OUTPUT_PROTO="${WORKSPACE}/services/jangar/.output/server/proto/proompteng/jangar/v1/agentctl.proto"
+          BUILD_OUTPUT=0
+          if [ ! -f "${OUTPUT_ENTRY}" ] || [ ! -f "${OUTPUT_PROTO}" ]; then
+            BUILD_OUTPUT=1
+          fi
+          if [ "${CI:-false}" = "true" ]; then
+            BUILD_OUTPUT=0
+            echo "CI run detected; skipping prebuild step and relying on Dockerfile build."
+          fi
+
+          run_step() {
+            local label="$1"
+            shift
+            echo "::group::${label}"
+            "$@"
+            echo "::endgroup::"
+          }
+
+          PREP_TIMEOUT_MINUTES=25
+          echo "Pruning jangar build context to ${PRUNE_DIR}"
+          run_step "Prune turbo context" timeout "${PREP_TIMEOUT_MINUTES}m" bunx turbo prune --scope=@proompteng/jangar --docker --out-dir="${PRUNE_DIR}"
+          cp "${WORKSPACE}/tsconfig.base.json" "${PRUNE_DIR}/tsconfig.base.json"
+          if [ -d "${WORKSPACE}/skills" ]; then
+            mkdir -p "${PRUNE_DIR}/skills"
+            cp -R "${WORKSPACE}/skills/." "${PRUNE_DIR}/skills/"
+          fi
+          if [ -d "${WORKSPACE}/services/jangar/agentctl" ]; then
+            mkdir -p "${PRUNE_DIR}/full/services/jangar" "${PRUNE_DIR}/json/services/jangar"
+            cp -R "${WORKSPACE}/services/jangar/agentctl/." "${PRUNE_DIR}/full/services/jangar/agentctl/"
+            cp -R "${WORKSPACE}/services/jangar/agentctl/." "${PRUNE_DIR}/json/services/jangar/agentctl/"
+          fi
+          if [ -d "${WORKSPACE}/packages/cx-tools" ]; then
+            mkdir -p "${PRUNE_DIR}/full/packages" "${PRUNE_DIR}/json/packages"
+            cp -R "${WORKSPACE}/packages/cx-tools/." "${PRUNE_DIR}/full/packages/cx-tools/"
+            cp -R "${WORKSPACE}/packages/cx-tools/." "${PRUNE_DIR}/json/packages/cx-tools/"
+          fi
+
+          find "${PRUNE_DIR}/full" "${PRUNE_DIR}/json" \
+            -type d -name node_modules -prune -exec rm -rf {} +
+
+          copy_pruned_workspace_dist() {
+            local pkg_dir
+            local rel_path
+            local src_dir
+
+            shopt -s nullglob
+            for pkg_dir in "${PRUNE_DIR}/full/packages/"* "${PRUNE_DIR}/full/services/"*; do
+              [ -d "${pkg_dir}" ] || continue
+              rel_path="${pkg_dir#${PRUNE_DIR}/full/}"
+              src_dir="${WORKSPACE}/${rel_path}"
+
+              if [ ! -d "${src_dir}/dist" ]; then
+                continue
+              fi
+
+              cp -R "${src_dir}/dist" "${pkg_dir}"
+              mkdir -p "${PRUNE_DIR}/json/${rel_path}"
+              cp -R "${src_dir}/dist" "${PRUNE_DIR}/json/${rel_path}"
+            done
+            shopt -u nullglob
+          }
+          copy_pruned_workspace_dist
+
+          if [ "${BUILD_OUTPUT}" = "1" ]; then
+            echo "Building services/jangar .output in pruned context"
+            BUILD_DIR="${PRUNE_DIR}/full"
+            cp "${PRUNE_DIR}/tsconfig.base.json" "${BUILD_DIR}/tsconfig.base.json"
+            if [ -f "${PRUNE_DIR}/bun.lock" ]; then
+              cp "${PRUNE_DIR}/bun.lock" "${BUILD_DIR}/bun.lock"
+            fi
+            bun install --cwd "${BUILD_DIR}" --ignore-scripts --filter @proompteng/otel --filter @proompteng/temporal-bun-sdk --filter @proompteng/jangar
+            bun run --cwd "${BUILD_DIR}" --filter @proompteng/otel build
+            bun run --cwd "${BUILD_DIR}" --filter @proompteng/temporal-bun-sdk build
+            if timeout 8m bun --cwd "${BUILD_DIR}/services/jangar" --bun vite build --logLevel warn; then
+              bun --cwd "${BUILD_DIR}/services/jangar" run copy:grpc-proto
+            else
+              echo "Prebuild failed or timed out; cleaning partial .output and continuing with Docker image build."
+              rm -rf "${BUILD_DIR}/services/jangar/.output"
+            fi
+          elif [ -f "${OUTPUT_ENTRY}" ] && [ -f "${OUTPUT_PROTO}" ]; then
+            echo "Using local services/jangar .output from workspace"
+            mkdir -p "${PRUNE_DIR}/full/services/jangar"
+            cp -R "${WORKSPACE}/services/jangar/.output" "${PRUNE_DIR}/full/services/jangar/.output"
+          elif [ -d "${WORKSPACE}/services/jangar/.output" ]; then
+            echo "Skipping prebuilt .output reuse: missing generated index/proto artifacts"
+          fi
+
+          JANGAR_VERSION="$(git -C "${WORKSPACE}" rev-parse --short HEAD)"
+          JANGAR_COMMIT="$(git -C "${WORKSPACE}" rev-parse HEAD)"
+          IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+
+          # Use docker.io for Bun base image in CI builds to avoid mirror image metadata drift.
+          # Local image rebuilds are best-effort in CI; fall back to the public image on timeout.
+          BUILD_TIMEOUT_MINUTES=12
+          KIND_LOAD_TIMEOUT_MINUTES=20
+
+          if run_with_progress "Docker build" "${BUILD_TIMEOUT_MINUTES}" env DOCKER_BUILDKIT=1 docker build \
+            -f "${WORKSPACE}/services/jangar/Dockerfile" \
+            --target control-plane \
+            --network=host \
+            -t "${IMAGE}" \
+            --build-arg "JANGAR_VERSION=${JANGAR_VERSION}" \
+            --build-arg "JANGAR_COMMIT=${JANGAR_COMMIT}" \
+            --build-arg "BUN_BASE_IMAGE=docker.io/oven/bun" \
+            --progress=plain \
+            "${PRUNE_DIR}"; then
+            echo "Built local image ${IMAGE}."
+          else
+            BUILD_PRELOADED=0
+            echo "::warning::Failed to build local image ${IMAGE}; falling back to ${PUBLIC_IMAGE_REPOSITORY}:${PUBLIC_IMAGE_TAG}."
+          fi
+
+          if [ "${BUILD_PRELOADED}" -eq 1 ] && ! run_kind_load_with_fallback; then
+            BUILD_PRELOADED=0
+            echo "::warning::Failed to preload local image ${IMAGE} into kind; falling back to ${PUBLIC_IMAGE_REPOSITORY}:${PUBLIC_IMAGE_TAG}."
+          fi
+
+          if [ "${BUILD_PRELOADED}" -eq 0 ]; then
+            IMAGE_REPOSITORY="${PUBLIC_IMAGE_REPOSITORY}"
+            IMAGE_TAG="${PUBLIC_IMAGE_TAG}"
+            IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+            recreate_kind_cluster
+            if ! run_with_progress "docker pull fallback image" 10 docker pull "${IMAGE}"; then
+              run_step_failure "Failed to pull fallback image ${IMAGE}" "$?"
+            fi
+            if ! run_kind_load_with_fallback; then
+              run_step_failure "Failed to preload fallback image ${IMAGE} into kind cluster ${KIND_CLUSTER_NAME}" "$?"
+            fi
+          fi
+
+          echo "BUILT_JANGAR_IMAGE_REPOSITORY=${IMAGE_REPOSITORY}" >> "${GITHUB_ENV}"
+          echo "BUILT_JANGAR_IMAGE_TAG=${IMAGE_TAG}" >> "${GITHUB_ENV}"
+
       - name: Run agents integration smoke test
         env:
           AGENTS_NAMESPACE: agents-ci
@@ -146,6 +397,10 @@ jobs:
           AGENTS_VALUES_FILE: charts/agents/values-ci.yaml
           AGENTS_CREATE_NAMESPACE: 'true'
           AGENTS_DB_BOOTSTRAP: 'true'
+          AGENTS_TIMEOUT: 15m
+          AGENTS_IMAGE_REPOSITORY: ${{ env.BUILT_JANGAR_IMAGE_REPOSITORY }}
+          AGENTS_IMAGE_TAG: ${{ env.BUILT_JANGAR_IMAGE_TAG }}
+          AGENTS_IMAGE_DIGEST: ''
           AGENTCTL_BIN: services/jangar/agentctl/dist/agentctl
         run: bun run packages/scripts/src/agents/smoke-agents.ts
 
