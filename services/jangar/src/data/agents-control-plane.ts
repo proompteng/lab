@@ -206,6 +206,16 @@ export type ControlPlaneWatchReliability = {
   streams: ControlPlaneWatchReliabilityStream[]
 }
 
+export type AgentRunIngestionStatus = {
+  namespace: string
+  status: 'healthy' | 'degraded' | 'unknown'
+  message: string
+  last_watch_event_at: string
+  last_resync_at: string
+  untouched_run_count: number
+  oldest_untouched_age_seconds: number | null
+}
+
 export type GrpcStatus = {
   enabled: boolean
   address: string
@@ -262,6 +272,7 @@ export type ControlPlaneStatus = {
   database: DatabaseStatus
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
+  agentrun_ingestion: AgentRunIngestionStatus
   rollout_health: ControlPlaneRolloutHealth
   empirical_services: EmpiricalServicesStatus
   namespaces: NamespaceStatus[]

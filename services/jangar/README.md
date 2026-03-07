@@ -226,6 +226,24 @@ Control-plane cache freshness (API read path):
 - `JANGAR_CONTROL_PLANE_CACHE_ALLOW_STALE` (optional; default: `true`)
   - Set to `false`/`0` to force live Kubernetes reads when cache rows exceed the freshness window.
 
+Agents controller AgentRun ingestion:
+
+- `JANGAR_AGENTS_CONTROLLER_RESYNC_INTERVAL_SECONDS` (optional; default: `60`)
+  - Periodic relist interval used to adopt new or drifted `AgentRun` resources even if a live watch event is missed.
+- `JANGAR_AGENTS_CONTROLLER_UNTOUCHED_WARN_AFTER_SECONDS` (optional; default: `120`)
+  - Age threshold for marking `agentrun_ingestion` degraded when untouched runs are accumulating.
+- `JANGAR_AGENTS_CONTROLLER_DEBUG_LOGS` (optional; default: `false`)
+  - Enables queue/watch/adoption debug logs in the agents controller; default logging remains decision-focused.
+
+Control-plane status now includes an additive `agentrun_ingestion` block in
+`/api/agents/control-plane/status?namespace=<ns>` with:
+
+- `status` / `message`
+- `last_watch_event_at`
+- `last_resync_at`
+- `untouched_run_count`
+- `oldest_untouched_age_seconds`
+
 ## Control-plane cache freshness behavior
 
 When cache reads are enabled for `/api/agents/control-plane/resource` and `/api/agents/control-plane/resources`, responses may include a `cache` object:

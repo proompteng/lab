@@ -6,6 +6,9 @@ import { describe, expect, it, vi } from 'vitest'
 const metricsMocks = vi.hoisted(() => ({
   recordReconcileDurationMs: vi.fn(),
   recordAgentRunOutcome: vi.fn(),
+  recordAgentRunResyncAdoptions: vi.fn(),
+  recordAgentRunUntouchedBacklog: vi.fn(),
+  recordAgentRunUntouchedOldestAgeSeconds: vi.fn(),
   recordAgentConcurrency: vi.fn(),
   recordAgentQueueDepth: vi.fn(),
   recordAgentRateLimitRejection: vi.fn(),
@@ -242,6 +245,270 @@ describe('agents controller startup', () => {
     stopAgentsController()
 
     expect(stopWatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('adopts untouched AgentRuns during controller resync', async () => {
+    stopAgentsController()
+    const state = { namespaces: new Map() }
+    const kube = buildKube({
+      list: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.AgentRun) {
+          return {
+            items: [
+              buildAgentRun({
+                metadata: {
+                  name: 'run-resync',
+                  namespace: 'agents',
+                  generation: 1,
+                  creationTimestamp: '2026-01-20T00:00:00Z',
+                  finalizers: [],
+                },
+                status: {},
+              }),
+            ],
+          }
+        }
+        return { items: [] }
+      }),
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        return null
+      }),
+    })
+
+    await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+
+    expect(kube.patch).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-resync', 'agents', {
+      metadata: { finalizers: [finalizer] },
+    })
+    expect(getLastStatus(kube as never).phase).toBe('Running')
+    expect(__test.getRuntimeMutableState().agentRunIngestionState.get('agents')?.untouchedRunCount).toBe(1)
+  })
+
+  it('adopts missed AgentRuns on watch restart resync', async () => {
+    stopAgentsController()
+    const state = { namespaces: new Map() }
+    const kube = buildKube({
+      list: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.AgentRun) {
+          return {
+            items: [
+              buildAgentRun({
+                metadata: {
+                  name: 'run-watch-restart',
+                  namespace: 'agents',
+                  generation: 2,
+                  creationTimestamp: '2026-01-20T00:00:00Z',
+                  finalizers: [],
+                },
+                status: {
+                  observedGeneration: 1,
+                },
+              }),
+            ],
+          }
+        }
+        return { items: [] }
+      }),
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        return null
+      }),
+    })
+
+    await __test.resyncAgentRunsForNamespace(
+      kube as never,
+      'agents',
+      state as never,
+      defaultConcurrency,
+      'watch_restart',
+    )
+
+    expect(kube.patch).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-watch-restart', 'agents', {
+      metadata: { finalizers: [finalizer] },
+    })
+    expect(getLastStatus(kube as never).phase).toBe('Running')
+  })
+
+  it('emits structured reconcile logs for successful first-touch submission', async () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const kube = buildKube({
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        return null
+      }),
+    })
+
+    let messages: string[] = []
+    try {
+      await __test.reconcileAgentRun(
+        kube as never,
+        buildAgentRun(),
+        'agents',
+        [],
+        [],
+        defaultConcurrency,
+        buildInFlight(),
+        0,
+      )
+      messages = infoSpy.mock.calls.map((call) => String(call[0]))
+    } finally {
+      infoSpy.mockRestore()
+    }
+
+    expect(messages.some((message) => message.includes('reconcile_started'))).toBe(true)
+    expect(messages.some((message) => message.includes('reconcile_submitted'))).toBe(true)
+  })
+
+  it('gates debug adoption logs behind the debug env flag', async () => {
+    stopAgentsController()
+    const previousDebug = process.env.JANGAR_AGENTS_CONTROLLER_DEBUG_LOGS
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const state = { namespaces: new Map() }
+    const kube = buildKube({
+      list: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.AgentRun) {
+          return {
+            items: [
+              buildAgentRun({
+                metadata: {
+                  name: 'run-debug',
+                  namespace: 'agents',
+                  generation: 1,
+                  creationTimestamp: '2026-01-20T00:00:00Z',
+                  finalizers: [],
+                },
+                status: {},
+              }),
+            ],
+          }
+        }
+        return { items: [] }
+      }),
+      get: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'agent-1' },
+            spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+          }
+        }
+        if (resource === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+        }
+        if (resource === RESOURCE_MAP.ImplementationSpec) {
+          return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+        }
+        return null
+      }),
+    })
+
+    try {
+      delete process.env.JANGAR_AGENTS_CONTROLLER_DEBUG_LOGS
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+      let messages = infoSpy.mock.calls.map((call) => String(call[0]))
+      expect(messages.some((message) => message.includes('agentrun_resync_adopted'))).toBe(false)
+
+      infoSpy.mockClear()
+      process.env.JANGAR_AGENTS_CONTROLLER_DEBUG_LOGS = 'true'
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+      messages = infoSpy.mock.calls.map((call) => String(call[0]))
+      expect(messages.some((message) => message.includes('agentrun_resync_adopted'))).toBe(true)
+    } finally {
+      infoSpy.mockRestore()
+      if (previousDebug === undefined) {
+        delete process.env.JANGAR_AGENTS_CONTROLLER_DEBUG_LOGS
+      } else {
+        process.env.JANGAR_AGENTS_CONTROLLER_DEBUG_LOGS = previousDebug
+      }
+    }
+  })
+
+  it('dedupes repeated ingestion stall logs and emits recovery once', async () => {
+    stopAgentsController()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const state = { namespaces: new Map() }
+    const staleRun = buildAgentRun({
+      metadata: {
+        name: 'run-stale',
+        namespace: 'agents',
+        generation: 1,
+        creationTimestamp: '2026-01-20T00:00:00Z',
+        finalizers: [],
+      },
+      status: {},
+    })
+    const healthyList = { items: [] }
+    const staleList = { items: [staleRun] }
+    const kube = buildKube({
+      list: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.AgentRun) {
+          return staleList
+        }
+        return { items: [] }
+      }),
+      get: vi.fn(async () => null),
+    })
+
+    try {
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+
+      let stallMessages = warnSpy.mock.calls
+        .map((call) => String(call[0]))
+        .filter((line) => line.includes('agentrun_ingestion_stalled'))
+      expect(stallMessages).toHaveLength(1)
+
+      ;(kube.list as ReturnType<typeof vi.fn>).mockImplementation(async (resource: string) => {
+        if (resource === RESOURCE_MAP.AgentRun) {
+          return healthyList
+        }
+        return { items: [] }
+      })
+
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+
+      const recoveryMessages = infoSpy.mock.calls
+        .map((call) => String(call[0]))
+        .filter((line) => line.includes('agentrun_ingestion_recovered'))
+      expect(recoveryMessages).toHaveLength(1)
+    } finally {
+      warnSpy.mockRestore()
+      infoSpy.mockRestore()
+    }
   })
 })
 

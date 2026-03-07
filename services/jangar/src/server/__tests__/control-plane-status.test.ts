@@ -51,6 +51,15 @@ const healthyController = {
   crdsReady: true,
   missingCrds: [],
   lastCheckedAt: '2026-01-20T00:00:00Z',
+  agentRunIngestion: [
+    {
+      namespace: 'agents',
+      lastWatchEventAt: '2026-01-20T00:00:00Z',
+      lastResyncAt: '2026-01-20T00:00:00Z',
+      untouchedRunCount: 0,
+      oldestUntouchedAgeSeconds: null,
+    },
+  ],
 }
 
 const buildWorkflowsReliabilityStatus = (
@@ -253,6 +262,15 @@ describe('control-plane status', () => {
     expect(status.namespaces[0]?.degraded_components ?? []).toHaveLength(0)
     expect(status.watch_reliability).toEqual(watchReliabilityHealthy)
     expect(status.watch_reliability.streams).toHaveLength(2)
+    expect(status.agentrun_ingestion).toEqual({
+      namespace: 'agents',
+      status: 'healthy',
+      message: 'AgentRun ingestion healthy',
+      last_watch_event_at: '2026-01-20T00:00:00Z',
+      last_resync_at: '2026-01-20T00:00:00Z',
+      untouched_run_count: 0,
+      oldest_untouched_age_seconds: null,
+    })
     expect(status.rollout_health.status).toBe('healthy')
     expect(status.rollout_health.observed_deployments).toBe(1)
     expect(status.rollout_health.degraded_deployments).toBe(0)
@@ -271,6 +289,15 @@ describe('control-plane status', () => {
       crdsReady: false,
       missingCrds: ['agents.agents.proompteng.ai'],
       lastCheckedAt: '2026-01-20T00:00:00Z',
+      agentRunIngestion: [
+        {
+          namespace: 'agents',
+          lastWatchEventAt: '2026-01-20T00:00:00Z',
+          lastResyncAt: '2026-01-20T00:00:00Z',
+          untouchedRunCount: 3,
+          oldestUntouchedAgeSeconds: 180,
+        },
+      ],
     }
 
     const status = await buildControlPlaneStatus(
@@ -338,11 +365,15 @@ describe('control-plane status', () => {
     expect(degraded).toContain('runtime:temporal')
     expect(degraded).toContain('database')
     expect(degraded).toContain('watch_reliability')
+    expect(degraded).toContain('agentrun_ingestion')
     expect(degraded).toContain('empirical:forecast')
     expect(degraded).toContain('empirical:jobs')
     expect(degraded).not.toContain('grpc')
     expect(status.watch_reliability.status).toBe('degraded')
     expect(status.watch_reliability.total_errors).toBe(2)
+    expect(status.agentrun_ingestion.status).toBe('degraded')
+    expect(status.agentrun_ingestion.untouched_run_count).toBe(3)
+    expect(status.agentrun_ingestion.oldest_untouched_age_seconds).toBe(180)
     expect(status.dependency_quorum.reasons).toContain('forecast_service_unhealthy')
     expect(status.empirical_services.jobs.status).toBe('degraded')
   })

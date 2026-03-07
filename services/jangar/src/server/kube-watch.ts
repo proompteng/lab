@@ -19,6 +19,7 @@ type WatchOptions = {
   restartDelayMs?: number
   onEvent: (event: WatchEvent) => void | Promise<void>
   onError?: (error: Error) => void
+  onRestart?: (reason: string) => void | Promise<void>
   logPrefix?: string
 }
 
@@ -92,6 +93,7 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
     restartDelayMs = DEFAULT_RESTART_DELAY_MS,
     onEvent,
     onError,
+    onRestart,
     logPrefix = '[jangar][watch]',
   } = options
 
@@ -117,6 +119,7 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
       resource: normalizedResource,
       namespace: normalizedNamespace,
     })
+    void onRestart?.(reason)
   }
 
   const start = () => {

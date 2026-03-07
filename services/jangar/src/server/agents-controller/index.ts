@@ -5,7 +5,14 @@ import { Context, Effect, Layer, ManagedRuntime } from 'effect'
 import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
 import { createGitHubClient } from '~/server/github-client'
 import { startResourceWatch } from '~/server/kube-watch'
-import { recordAgentConcurrency, recordAgentRunOutcome, recordReconcileDurationMs } from '~/server/metrics'
+import {
+  recordAgentConcurrency,
+  recordAgentRunOutcome,
+  recordAgentRunResyncAdoptions,
+  recordAgentRunUntouchedBacklog,
+  recordAgentRunUntouchedOldestAgeSeconds,
+  recordReconcileDurationMs,
+} from '~/server/metrics'
 import { parseNamespaceScopeEnv } from '~/server/namespace-scope'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
@@ -35,7 +42,12 @@ import {
   requestAgentsControllerStart,
   requestAgentsControllerStop,
 } from './lifecycle-machine'
-import { type AgentsControllerMutableState, type CrdCheckState, createMutableState } from './mutable-state'
+import {
+  type AgentRunIngestionRuntimeState,
+  type AgentsControllerMutableState,
+  type CrdCheckState,
+  createMutableState,
+} from './mutable-state'
 import {
   type ControllerState,
   ensureNamespaceState,
@@ -61,6 +73,13 @@ import {
 } from './vcs-context'
 import { createWorkflowReconciler } from './workflow-reconciler'
 import { validateAutonomousCodexAuthSecret } from './policy'
+import {
+  logAgentsControllerDebug,
+  logAgentsControllerError,
+  logAgentsControllerInfo,
+  logAgentsControllerWarn,
+  toLogError,
+} from './operational-logging'
 
 const DEFAULT_NAMESPACES = ['agents']
 const DEFAULT_AGENTRUN_RETENTION_SECONDS = 30 * 24 * 60 * 60
@@ -70,6 +89,8 @@ const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PO
 const IMPLEMENTATION_TEXT_LIMIT = 128 * 1024
 const DEFAULT_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS = 30
 const DEFAULT_AGENTS_CONTROLLER_ENABLED_FLAG_KEY = 'jangar.agents_controller.enabled'
+const DEFAULT_AGENTRUN_RESYNC_INTERVAL_SECONDS = 60
+const DEFAULT_AGENTRUN_UNTOUCHED_WARN_AFTER_SECONDS = 120
 const WHITEPAPER_RUN_ID_PREFIX = 'wp-'
 const DEFAULT_WHITEPAPER_FINALIZE_BASE_URL = 'http://torghut.torghut.svc.cluster.local'
 const DEFAULT_SERVICE_ACCOUNT_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token'
@@ -99,6 +120,25 @@ type ControllerHealthState = {
   started: boolean
   crdCheckState: CrdCheckState | null
   namespaces: string[] | null
+  agentRunIngestion: AgentRunIngestionHealth[]
+}
+
+export type AgentRunIngestionHealth = {
+  namespace: string
+  lastWatchEventAt: string | null
+  lastResyncAt: string | null
+  untouchedRunCount: number
+  oldestUntouchedAgeSeconds: number | null
+}
+
+export type AgentsControllerHealth = {
+  enabled: boolean
+  started: boolean
+  namespaces: string[] | null
+  crdsReady: boolean | null
+  missingCrds: string[]
+  lastCheckedAt: string | null
+  agentRunIngestion?: AgentRunIngestionHealth[]
 }
 
 const globalState = globalThis as typeof globalThis & {
@@ -107,7 +147,7 @@ const globalState = globalThis as typeof globalThis & {
 
 const controllerState = (() => {
   if (globalState.__jangarAgentsControllerState) return globalState.__jangarAgentsControllerState
-  const initial = { started: false, crdCheckState: null, namespaces: null }
+  const initial = { started: false, crdCheckState: null, namespaces: null, agentRunIngestion: [] }
   globalState.__jangarAgentsControllerState = initial
   return initial
 })()
@@ -136,6 +176,89 @@ const initializeRuntimeMutableStateForLayer = () => {
 }
 
 const nowIso = () => new Date().toISOString()
+
+const resolveAgentRunResyncIntervalSeconds = () =>
+  parseNumberEnv(
+    process.env.JANGAR_AGENTS_CONTROLLER_RESYNC_INTERVAL_SECONDS,
+    DEFAULT_AGENTRUN_RESYNC_INTERVAL_SECONDS,
+    1,
+  )
+
+const resolveAgentRunUntouchedWarnAfterSeconds = () =>
+  parseNumberEnv(
+    process.env.JANGAR_AGENTS_CONTROLLER_UNTOUCHED_WARN_AFTER_SECONDS,
+    DEFAULT_AGENTRUN_UNTOUCHED_WARN_AFTER_SECONDS,
+    1,
+  )
+
+const createDefaultAgentRunIngestionRuntimeState = (): AgentRunIngestionRuntimeState => ({
+  lastWatchEventAtMs: null,
+  lastResyncAtMs: null,
+  untouchedRunCount: 0,
+  oldestUntouchedAgeSeconds: null,
+  lastResyncSummarySignature: null,
+  lastStallSignature: null,
+})
+
+const getAgentRunIngestionRuntimeState = (namespace: string) => {
+  const existing = runtimeMutableState.agentRunIngestionState.get(namespace)
+  if (existing) return existing
+  const created = createDefaultAgentRunIngestionRuntimeState()
+  runtimeMutableState.agentRunIngestionState.set(namespace, created)
+  return created
+}
+
+const buildAgentRunIngestionHealth = (
+  namespace: string,
+  state: AgentRunIngestionRuntimeState,
+): AgentRunIngestionHealth => ({
+  namespace,
+  lastWatchEventAt: state.lastWatchEventAtMs ? new Date(state.lastWatchEventAtMs).toISOString() : null,
+  lastResyncAt: state.lastResyncAtMs ? new Date(state.lastResyncAtMs).toISOString() : null,
+  untouchedRunCount: state.untouchedRunCount,
+  oldestUntouchedAgeSeconds: state.oldestUntouchedAgeSeconds,
+})
+
+const syncControllerAgentRunIngestionHealth = () => {
+  controllerState.agentRunIngestion = Array.from(runtimeMutableState.agentRunIngestionState.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([namespace, state]) => buildAgentRunIngestionHealth(namespace, state))
+}
+
+const recordAgentRunWatchEventSeen = (namespace: string) => {
+  getAgentRunIngestionRuntimeState(namespace).lastWatchEventAtMs = Date.now()
+  syncControllerAgentRunIngestionHealth()
+}
+
+const getAgentRunUntouchedReasons = (agentRun: Record<string, unknown>) => {
+  const reasons: string[] = []
+  const metadata = asRecord(agentRun.metadata) ?? {}
+  const status = asRecord(agentRun.status) ?? {}
+  const generation = metadata.generation
+  const observedGeneration = status.observedGeneration
+  const phase = asString(status.phase)
+  const finalizers = Array.isArray(metadata.finalizers)
+    ? metadata.finalizers.filter((item): item is string => typeof item === 'string')
+    : []
+
+  if (!phase) reasons.push('missing_phase')
+  if (observedGeneration == null) {
+    reasons.push('missing_observed_generation')
+  } else if (generation != null && observedGeneration !== generation) {
+    reasons.push('generation_drift')
+  }
+  if (!finalizers.includes('agents.proompteng.ai/runtime-cleanup')) {
+    reasons.push('missing_finalizer')
+  }
+  return reasons
+}
+
+const getAgentRunCreationTimestampMs = (agentRun: Record<string, unknown>) => {
+  const createdAt = asString(readNested(agentRun, ['metadata', 'creationTimestamp']))
+  if (!createdAt) return null
+  const parsed = Date.parse(createdAt)
+  return Number.isNaN(parsed) ? null : parsed
+}
 
 const safeParseJsonRecord = (value: string) => {
   try {
@@ -469,13 +592,14 @@ const resolveNamespaces = async () => {
   return resolved
 }
 
-export const getAgentsControllerHealth = () => ({
+export const getAgentsControllerHealth = (): AgentsControllerHealth => ({
   enabled: shouldStart(),
   started: controllerState.started,
   namespaces: controllerState.namespaces,
   crdsReady: controllerState.crdCheckState?.ok ?? null,
   missingCrds: controllerState.crdCheckState?.missing ?? [],
   lastCheckedAt: controllerState.crdCheckState?.checkedAt ?? null,
+  agentRunIngestion: controllerState.agentRunIngestion,
 })
 
 const isAgentRunIdempotencyEnabled = () => parseBooleanEnv(process.env.JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED, true)
@@ -653,14 +777,144 @@ const resetControllerRateState = () => {
 }
 
 const enqueueNamespaceTask = (namespace: string, task: () => Promise<void>) => {
+  logAgentsControllerDebug('namespace_task_enqueued', { namespace })
   const current = runtimeMutableState.namespaceQueues.get(namespace) ?? Promise.resolve()
   const next = current
     .catch(() => undefined)
-    .then(task)
+    .then(async () => {
+      const startedAt = Date.now()
+      logAgentsControllerDebug('namespace_task_started', { namespace })
+      try {
+        await task()
+      } finally {
+        logAgentsControllerDebug('namespace_task_completed', {
+          namespace,
+          durationMs: Date.now() - startedAt,
+        })
+      }
+    })
     .catch((error) => {
-      console.warn('[jangar] agents controller task failed', error)
+      logAgentsControllerWarn('namespace_task_failed', {
+        namespace,
+        ...toLogError(error),
+      })
     })
   runtimeMutableState.namespaceQueues.set(namespace, next)
+  return next
+}
+
+const resyncAgentRunsForNamespace = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  namespace: string,
+  state: ControllerState,
+  concurrency: ReturnType<typeof parseConcurrency>,
+  reason: 'periodic' | 'watch_restart' | 'manual',
+) => {
+  const nsState = ensureNamespaceState(state, namespace)
+  const runList = listItems(await kube.list(RESOURCE_MAP.AgentRun, namespace))
+  const refreshedRuns = new Map<string, Record<string, unknown>>()
+  const candidateRuns: Array<{ run: Record<string, unknown>; reasons: string[] }> = []
+  let untouchedRunCount = 0
+  let oldestUntouchedAgeSeconds: number | null = null
+  const now = Date.now()
+
+  for (const run of runList) {
+    const name = asString(readNested(run, ['metadata', 'name']))
+    if (!name) continue
+    refreshedRuns.set(name, run)
+    const reasons = getAgentRunUntouchedReasons(run)
+    const untouchedReasons = reasons.filter((entry) => entry !== 'generation_drift')
+    if (untouchedReasons.length > 0) {
+      untouchedRunCount += 1
+      const createdAtMs = getAgentRunCreationTimestampMs(run)
+      if (createdAtMs !== null) {
+        const ageSeconds = Math.max(0, Math.floor((now - createdAtMs) / 1000))
+        oldestUntouchedAgeSeconds =
+          oldestUntouchedAgeSeconds === null ? ageSeconds : Math.max(oldestUntouchedAgeSeconds, ageSeconds)
+      }
+    }
+    if (reasons.length > 0) {
+      candidateRuns.push({ run, reasons })
+    }
+  }
+
+  nsState.runs = refreshedRuns
+
+  const ingestionState = getAgentRunIngestionRuntimeState(namespace)
+  ingestionState.lastResyncAtMs = now
+  ingestionState.untouchedRunCount = untouchedRunCount
+  ingestionState.oldestUntouchedAgeSeconds = oldestUntouchedAgeSeconds
+  syncControllerAgentRunIngestionHealth()
+
+  recordAgentRunUntouchedBacklog(untouchedRunCount, { namespace, reason })
+  if (oldestUntouchedAgeSeconds !== null) {
+    recordAgentRunUntouchedOldestAgeSeconds(oldestUntouchedAgeSeconds, { namespace, reason })
+  }
+
+  if (candidateRuns.length > 0) {
+    recordAgentRunResyncAdoptions(candidateRuns.length, { namespace, reason })
+  }
+
+  const resyncSummarySignature = [
+    refreshedRuns.size,
+    candidateRuns.length,
+    untouchedRunCount,
+    oldestUntouchedAgeSeconds ?? 'none',
+  ].join(':')
+  const shouldLogResyncSummary =
+    reason !== 'periodic' ||
+    candidateRuns.length > 0 ||
+    ingestionState.lastResyncSummarySignature !== resyncSummarySignature
+  if (shouldLogResyncSummary) {
+    logAgentsControllerInfo('agentrun_resync_completed', {
+      namespace,
+      reason,
+      totalRuns: refreshedRuns.size,
+      candidateCount: candidateRuns.length,
+      untouchedRunCount,
+      oldestUntouchedAgeSeconds,
+    })
+    ingestionState.lastResyncSummarySignature = resyncSummarySignature
+  }
+
+  const warnAfterSeconds = resolveAgentRunUntouchedWarnAfterSeconds()
+  const stallSignature =
+    untouchedRunCount > 0 && oldestUntouchedAgeSeconds !== null && oldestUntouchedAgeSeconds >= warnAfterSeconds
+      ? [untouchedRunCount, oldestUntouchedAgeSeconds, warnAfterSeconds].join(':')
+      : null
+  if (stallSignature) {
+    if (ingestionState.lastStallSignature !== stallSignature) {
+      logAgentsControllerWarn('agentrun_ingestion_stalled', {
+        namespace,
+        reason,
+        untouchedRunCount,
+        oldestUntouchedAgeSeconds,
+        warnAfterSeconds,
+      })
+      ingestionState.lastStallSignature = stallSignature
+    }
+  } else if (ingestionState.lastStallSignature !== null) {
+    logAgentsControllerInfo('agentrun_ingestion_recovered', {
+      namespace,
+      reason,
+      untouchedRunCount,
+      oldestUntouchedAgeSeconds,
+    })
+    ingestionState.lastStallSignature = null
+  }
+
+  for (const candidate of candidateRuns) {
+    const runName = asString(readNested(candidate.run, ['metadata', 'name'])) ?? 'unknown'
+    logAgentsControllerDebug('agentrun_resync_adopted', {
+      namespace,
+      runName,
+      reason,
+      adoptionReasons: candidate.reasons,
+    })
+    await enqueueNamespaceTask(namespace, () =>
+      reconcileRunWithState(kube, namespace, candidate.run, state, concurrency),
+    )
+  }
 }
 
 const {
@@ -929,6 +1183,13 @@ const startNamespaceWatches = (
   const handleAgentRunEvent = (event: { type?: string; object?: Record<string, unknown> }) => {
     const resource = asRecord(event.object)
     if (!resource) return
+    const runName = asString(readNested(resource, ['metadata', 'name'])) ?? 'unknown'
+    recordAgentRunWatchEventSeen(namespace)
+    logAgentsControllerDebug('agentrun_watch_event_seen', {
+      namespace,
+      runName,
+      eventType: event.type ?? 'UNKNOWN',
+    })
     updateStateMap(nsState.runs, event.type, resource)
     if (event.type === 'DELETED') return
     enqueueNamespaceTask(namespace, () => reconcileRunWithState(kube, namespace, resource, state, concurrency))
@@ -995,7 +1256,18 @@ const startNamespaceWatches = (
       resource: RESOURCE_MAP.AgentRun,
       namespace,
       onEvent: handleAgentRunEvent,
-      onError: (error) => console.warn('[jangar] agent run watch failed', error),
+      onError: (error) =>
+        logAgentsControllerWarn('agentrun_watch_failed', {
+          namespace,
+          ...toLogError(error),
+        }),
+      onRestart: (restartReason) => {
+        logAgentsControllerWarn('agentrun_watch_restarted', {
+          namespace,
+          reason: restartReason,
+        })
+        void resyncAgentRunsForNamespace(kube, namespace, state, concurrency, 'watch_restart')
+      },
     }),
   )
   handles.push(
@@ -1057,6 +1329,16 @@ const startNamespaceWatches = (
       onError: (error) => console.warn('[jangar] agent job watch failed', error),
     }),
   )
+
+  const resyncInterval = resolveAgentRunResyncIntervalSeconds() * 1000
+  const timer = setInterval(() => {
+    void resyncAgentRunsForNamespace(kube, namespace, state, concurrency, 'periodic')
+  }, resyncInterval)
+  handles.push({
+    stop: () => clearInterval(timer),
+  })
+
+  void resyncAgentRunsForNamespace(kube, namespace, state, concurrency, 'manual')
 }
 
 const startAgentsControllerInternal = async () => {
@@ -1090,8 +1372,10 @@ const startAgentsControllerInternal = async () => {
       resolveCrdCheckNamespace,
       nowIso,
     })
+    runtimeMutableState.crdCheckState = crdsReady
+    controllerState.crdCheckState = crdsReady
   } catch (error) {
-    console.error('[jangar] agents controller failed to validate namespace scope', error)
+    logAgentsControllerError('startup_namespace_scope_failed', toLogError(error))
     runtimeMutableState.starting = false
     markAgentsControllerStartFailed(runtimeMutableState.lifecycleActor)
     if (error instanceof Error && error.name === 'NamespaceScopeConfigError') {
@@ -1100,7 +1384,9 @@ const startAgentsControllerInternal = async () => {
     throw error
   }
   if (!crdsReady.ok) {
-    console.error('[jangar] agents controller will not start without CRDs')
+    logAgentsControllerError('startup_missing_crds', {
+      missingCrds: crdsReady.missing,
+    })
     runtimeMutableState.starting = false
     markAgentsControllerStartFailed(runtimeMutableState.lifecycleActor)
     return
@@ -1110,7 +1396,7 @@ const startAgentsControllerInternal = async () => {
     const namespaces = await resolveNamespaces()
     if (runtimeMutableState.lifecycleToken !== token) return
     controllerState.namespaces = namespaces
-    console.info('[jangar] agents controller namespace scope:', JSON.stringify(namespaces))
+    logAgentsControllerInfo('startup_namespace_scope', { namespaces })
     const kube = createKubernetesClient()
     const concurrency = parseConcurrency()
     const state: ControllerState = { namespaces: new Map() }
@@ -1128,8 +1414,10 @@ const startAgentsControllerInternal = async () => {
     runtimeMutableState.started = true
     markAgentsControllerStarted(runtimeMutableState.lifecycleActor)
     controllerState.started = true
+    syncControllerAgentRunIngestionHealth()
+    logAgentsControllerInfo('startup_complete', { namespaces })
   } catch (error) {
-    console.error('[jangar] agents controller failed to start', error)
+    logAgentsControllerError('startup_failed', toLogError(error))
     if (runtimeMutableState.lifecycleToken === token) {
       markAgentsControllerStartFailed(runtimeMutableState.lifecycleActor)
     }
@@ -1162,12 +1450,12 @@ const stopAgentsControllerInternal = () => {
   runtimeMutableState.watchHandles = []
   runtimeMutableState.controllerSnapshot = null
   runtimeMutableState.namespaceQueues.clear()
+  runtimeMutableState.agentRunIngestionState.clear()
   runtimeMutableState.started = false
   controllerState.started = false
   controllerState.namespaces = null
+  controllerState.agentRunIngestion = []
 }
-
-export type AgentsControllerHealth = ReturnType<typeof getAgentsControllerHealth>
 
 export type AgentsControllerService = {
   start: Effect.Effect<void, Error>
@@ -1229,4 +1517,7 @@ export const __test = {
   resolveVcsPrRateLimits,
   resolveJobImage,
   resolveVcsContext,
+  getAgentRunUntouchedReasons,
+  resyncAgentRunsForNamespace,
+  syncControllerAgentRunIngestionHealth,
 }

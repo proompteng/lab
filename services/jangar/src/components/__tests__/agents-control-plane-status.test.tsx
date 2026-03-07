@@ -88,6 +88,15 @@ const baseStatus: ControlPlaneStatus = {
     total_restarts: 0,
     streams: [],
   },
+  agentrun_ingestion: {
+    namespace: 'agents',
+    status: 'healthy',
+    message: 'AgentRun ingestion healthy',
+    last_watch_event_at: '2026-01-20T00:00:00Z',
+    last_resync_at: '2026-01-20T00:00:00Z',
+    untouched_run_count: 0,
+    oldest_untouched_age_seconds: null,
+  },
   rollout_health: {
     status: 'healthy',
     observed_deployments: 0,

@@ -26,6 +26,7 @@ import {
   type WorkflowStepStatus,
   type WorkflowStepSpec,
 } from './workflow'
+import { logAgentsControllerInfo, logAgentsControllerWarn } from './operational-logging'
 
 type KubeClient = ReturnType<typeof createKubernetesClient>
 
@@ -402,6 +403,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
     memories: Record<string, unknown>[],
     options: { initialSubmit?: boolean } = {},
   ) => {
+    const reconcileStartedAt = Date.now()
     const metadata = asRecord(agentRun.metadata) ?? {}
     const runName = asString(metadata.name) ?? 'agentrun'
     const status = asRecord(agentRun.status) ?? {}
@@ -411,6 +413,24 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
     const baseWorkload = asRecord(readNested(agentRun, ['spec', 'workload'])) ?? {}
     const workflowValidation = validateWorkflowSteps(workflowSteps, { baseWorkload })
     const conditions = deps.buildConditions(agentRun)
+    const runtimeType = asString(readNested(agentRun, ['spec', 'runtime', 'type'])) ?? 'workflow'
+    const repository = asString(readNested(agentRun, ['spec', 'parameters', 'repository'])) ?? ''
+    const logContext = {
+      namespace,
+      runName,
+      generation: observedGeneration,
+      runtimeType,
+      repository,
+    }
+    const logInvalidSpec = (reason: string, message: string) => {
+      logAgentsControllerInfo('reconcile_invalid_spec', {
+        ...logContext,
+        decision: 'invalid_spec',
+        reason,
+        message,
+        durationMs: Date.now() - reconcileStartedAt,
+      })
+    }
 
     if (!workflowValidation.ok) {
       const updated = upsertCondition(conditions, {
@@ -419,6 +439,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         reason: workflowValidation.reason,
         message: workflowValidation.message,
       })
+      logInvalidSpec(workflowValidation.reason, workflowValidation.message)
       await deps.setStatus(kube, agentRun, {
         observedGeneration,
         phase: 'Failed',
@@ -444,6 +465,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         reason: imagePolicy.reason,
         message: imagePolicy.message,
       })
+      logInvalidSpec(imagePolicy.reason, imagePolicy.message)
       await deps.setStatus(kube, agentRun, {
         observedGeneration,
         phase: 'Failed',
@@ -461,6 +483,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         reason: dependencies.reason,
         message: dependencies.message,
       })
+      logInvalidSpec(dependencies.reason, dependencies.message)
       await deps.setStatus(kube, agentRun, {
         observedGeneration,
         phase: 'Failed',
@@ -492,6 +515,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         reason: systemPromptResolution.reason,
         message: systemPromptResolution.message,
       })
+      logInvalidSpec(systemPromptResolution.reason, systemPromptResolution.message)
       await deps.setStatus(kube, agentRun, {
         observedGeneration,
         phase: 'Failed',
@@ -816,6 +840,13 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
             reason: 'WorkflowJobMissing',
             message: `workflow step ${stepSpec.name} job ${jobName} not found`,
           })
+          logAgentsControllerWarn('reconcile_runtime_orphaned', {
+            ...logContext,
+            decision: 'runtime_orphaned',
+            reason: 'WorkflowJobMissing',
+            message: `workflow step ${stepSpec.name} job ${jobName} not found`,
+            durationMs: Date.now() - reconcileStartedAt,
+          })
           if (stepStatus.attempt < maxAttempts) {
             setWorkflowStepPhase(stepStatus, 'Retrying', 'Job missing; retrying')
             stepStatus.finishedAt = deps.nowIso()
@@ -1056,6 +1087,14 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         reason: workflowFailure.reason,
         message: workflowFailure.message,
       })
+      logAgentsControllerInfo('reconcile_terminal', {
+        ...logContext,
+        decision: 'terminal',
+        outcome: 'Failed',
+        reason: workflowFailure.reason,
+        message: workflowFailure.message,
+        durationMs: Date.now() - reconcileStartedAt,
+      })
       await deps.setStatus(kube, agentRun, {
         observedGeneration,
         phase: 'Failed',
@@ -1083,6 +1122,14 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
         status: 'True',
         reason: 'Completed',
       })
+      logAgentsControllerInfo('reconcile_terminal', {
+        ...logContext,
+        decision: 'terminal',
+        outcome: 'Succeeded',
+        reason: 'Completed',
+        message: 'workflow completed',
+        durationMs: Date.now() - reconcileStartedAt,
+      })
       await deps.setStatus(kube, agentRun, {
         observedGeneration,
         phase: 'Succeeded',
@@ -1106,6 +1153,13 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
       let updated = baseConditions
       if (options.initialSubmit) {
         updated = upsertCondition(updated, { type: 'Accepted', status: 'True', reason: 'Submitted' })
+        logAgentsControllerInfo('reconcile_submitted', {
+          ...logContext,
+          decision: 'submitted',
+          runtimeRefType: 'workflow',
+          runtimeRefName: runtimeRefUpdate?.name ?? '',
+          durationMs: Date.now() - reconcileStartedAt,
+        })
       }
       updated = upsertCondition(updated, { type: 'InProgress', status: 'True', reason: 'Running' })
       await deps.setStatus(kube, agentRun, {
