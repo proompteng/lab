@@ -39,7 +39,9 @@ from scripts.start_historical_simulation import (
     _redact_dsn_credentials,
     _restore_ta_configuration,
     _restore_argocd_after_run,
+    _restore_torghut_env,
     _replay_dump,
+    _run_full_lifecycle,
     _run_rollouts_analysis,
     _set_argocd_application_sync_policy,
     _set_argocd_automation_mode,
@@ -1226,6 +1228,92 @@ class TestStartHistoricalSimulation(TestCase):
             },
         )
 
+    def test_restore_torghut_env_reverts_forecast_overrides(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        state = {
+            'torghut_env_snapshot': {
+                'TRADING_FORECAST_SERVICE_URL': {
+                    'name': 'TRADING_FORECAST_SERVICE_URL',
+                    'value': 'http://torghut-forecast.torghut.svc.cluster.local:8089',
+                },
+                'TRADING_FORECAST_ROUTER_PROVIDER_MODE': {
+                    'name': 'TRADING_FORECAST_ROUTER_PROVIDER_MODE',
+                    'value': 'grpc',
+                },
+                'TRADING_FORECAST_ROUTER_PROVIDER_URL': None,
+            }
+        }
+        service_payload = {
+            'spec': {
+                'template': {
+                    'spec': {
+                        'containers': [
+                            {
+                                'name': 'user-container',
+                                'env': [
+                                    {
+                                        'name': 'TRADING_FORECAST_SERVICE_URL',
+                                        'value': 'http://torghut-forecast-sim.torghut.svc.cluster.local:8089',
+                                    },
+                                    {'name': 'TRADING_FORECAST_ROUTER_PROVIDER_MODE', 'value': 'http'},
+                                    {
+                                        'name': 'TRADING_FORECAST_ROUTER_PROVIDER_URL',
+                                        'value': 'http://torghut-forecast-sim.torghut.svc.cluster.local:8089',
+                                    },
+                                ],
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        captured_patch: dict[str, object] = {}
+
+        with (
+            patch('scripts.start_historical_simulation._kubectl_json', return_value=service_payload),
+            patch(
+                'scripts.start_historical_simulation._kubectl_patch',
+                side_effect=lambda namespace, kind, name, patch: captured_patch.update(
+                    {'namespace': namespace, 'kind': kind, 'name': name, 'patch': patch}
+                ),
+            ),
+        ):
+            _restore_torghut_env(resources, state)
+
+        patch_payload = captured_patch.get('patch')
+        self.assertIsInstance(patch_payload, dict)
+        assert isinstance(patch_payload, dict)
+        containers = (
+            patch_payload.get('spec', {})
+            .get('template', {})
+            .get('spec', {})
+            .get('containers', [])
+        )
+        self.assertIsInstance(containers, list)
+        assert isinstance(containers, list)
+        env_entries = containers[0].get('env') if containers else []
+        self.assertIsInstance(env_entries, list)
+        assert isinstance(env_entries, list)
+        env_by_name = {
+            str(item.get('name')): item
+            for item in env_entries
+            if isinstance(item, dict)
+        }
+        self.assertEqual(
+            env_by_name['TRADING_FORECAST_SERVICE_URL'].get('value'),
+            'http://torghut-forecast.torghut.svc.cluster.local:8089',
+        )
+        self.assertEqual(
+            env_by_name['TRADING_FORECAST_ROUTER_PROVIDER_MODE'].get('value'),
+            'grpc',
+        )
+        self.assertNotIn('TRADING_FORECAST_ROUTER_PROVIDER_URL', env_by_name)
+
     def test_validate_window_policy_us_equities_regular_profile(self) -> None:
         policy = _validate_window_policy(
             {
@@ -1328,6 +1416,89 @@ class TestStartHistoricalSimulation(TestCase):
             )
         self.assertEqual(report['status'], 'degraded')
         self.assertEqual(report['activity_classification'], 'executions_absent')
+
+    def test_run_full_lifecycle_fails_when_activity_verify_is_degraded(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        manifest = {
+            'dataset_id': 'dataset-a',
+            'window': {
+                'start': '2026-02-27T14:30:00Z',
+                'end': '2026-02-27T21:00:00Z',
+            },
+        }
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+        clickhouse_config = ClickHouseRuntimeConfig(
+            http_url='http://clickhouse:8123',
+            username='torghut',
+            password=None,
+        )
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1',
+            simulation_db='torghut_sim_sim_1',
+            migrations_command='true',
+        )
+        argocd_config = ArgocdAutomationConfig(
+            manage_automation=False,
+            applicationset_name='product',
+            applicationset_namespace='argocd',
+            app_name='torghut',
+            desired_mode_during_run='manual',
+            restore_mode_after_run='previous',
+            verify_timeout_seconds=600,
+        )
+        rollouts_config = RolloutsAnalysisConfig(
+            enabled=False,
+            namespace='agents',
+            runtime_template='torghut-runtime-ready-v1',
+            activity_template='torghut-sim-activity-v1',
+            teardown_template='torghut-teardown-v1',
+            artifact_template='torghut-artifact-v1',
+            verify_timeout_seconds=900,
+        )
+
+        with (
+            patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
+            patch('scripts.start_historical_simulation._update_run_state', return_value=None),
+            patch('scripts.start_historical_simulation._save_json', return_value=None),
+            patch('scripts.start_historical_simulation._apply', return_value={'status': 'ok'}),
+            patch('scripts.start_historical_simulation._runtime_verify', return_value={'runtime_state': 'ready'}),
+            patch(
+                'scripts.start_historical_simulation._monitor_run_completion',
+                return_value={
+                    'status': 'degraded',
+                    'activity_classification': 'decisions_absent',
+                    'final_snapshot': {},
+                },
+            ),
+            patch('scripts.start_historical_simulation._report_simulation', return_value={'status': 'ok'}),
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'simulation_run_failed:activity:decisions_absent'):
+                _run_full_lifecycle(
+                    resources=resources,
+                    manifest=manifest,
+                    manifest_path=Path('/tmp/manifest.json'),
+                    kafka_config=kafka_config,
+                    clickhouse_config=clickhouse_config,
+                    postgres_config=postgres_config,
+                    argocd_config=argocd_config,
+                    rollouts_config=rollouts_config,
+                    force_dump=False,
+                    force_replay=False,
+                    skip_teardown=True,
+                    report_only=False,
+                )
 
     def test_runtime_verify_accepts_dedicated_sim_runtime_with_ready_replicas(self) -> None:
         manifest = {

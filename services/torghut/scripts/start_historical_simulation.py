@@ -97,12 +97,18 @@ TORGHUT_ENV_KEYS = [
     'TRADING_SIMULATION_ENABLED',
     'TRADING_SIMULATION_RUN_ID',
     'TRADING_SIMULATION_DATASET_ID',
+    'TRADING_SIMULATION_CLOCK_MODE',
+    'TRADING_SIMULATION_WINDOW_START',
+    'TRADING_SIMULATION_WINDOW_END',
     'TRADING_SIMULATION_ORDER_UPDATES_TOPIC',
     'TRADING_SIMULATION_ORDER_UPDATES_BOOTSTRAP_SERVERS',
     'TRADING_SIMULATION_ORDER_UPDATES_SECURITY_PROTOCOL',
     'TRADING_SIMULATION_ORDER_UPDATES_SASL_MECHANISM',
     'TRADING_SIMULATION_ORDER_UPDATES_SASL_USERNAME',
     'TRADING_SIMULATION_ORDER_UPDATES_SASL_PASSWORD',
+    'TRADING_FORECAST_SERVICE_URL',
+    'TRADING_FORECAST_ROUTER_PROVIDER_MODE',
+    'TRADING_FORECAST_ROUTER_PROVIDER_URL',
 ]
 
 SIMULATION_TORGHUT_ENV_OVERRIDE_ALLOWLIST = frozenset(
@@ -3840,13 +3846,14 @@ def _run_full_lifecycle(
                 status='ok' if monitor_report.get('activity_classification') == 'success' else 'degraded',
                 details=monitor_report,
             )
-            activity_analysis_phase = _as_mapping(
-                cast(Mapping[str, Any], rollouts_report['activity_analysis_run'])
-            ).get('phase')
-            if monitor_report.get('activity_classification') in {'infra_not_active', 'environment_incomplete'} or (
-                bool(rollouts_report['enabled']) and activity_analysis_phase != 'Successful'
-            ):
-                errors.append(f'activity:{monitor_report.get("activity_classification")}')
+            activity_classification = _as_text(monitor_report.get('activity_classification')) or 'unknown'
+            activity_analysis_phase = _as_text(
+                _as_mapping(cast(Mapping[str, Any], rollouts_report['activity_analysis_run'])).get('phase')
+            )
+            if activity_classification != 'success':
+                errors.append(f'activity:{activity_classification}')
+            elif bool(rollouts_report['enabled']) and activity_analysis_phase != 'Successful':
+                errors.append('activity:analysis_unsuccessful')
         else:
             _update_run_state(
                 resources=resources,
