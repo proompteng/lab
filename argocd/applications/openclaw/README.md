@@ -1,11 +1,14 @@
 # openclaw VM bootstrap notes
 
-The `openclaw` VM currently consumes `cloud-init-secret.yaml` as a **SealedSecret**.
-Because the secret payload is encrypted, update flow is:
+The `openclaw` VM consumes `cloud-init-secret.yaml` as a **SealedSecret**.
 
-1. Prepare a local `cloud-init-userdata.yaml` file (do not commit plaintext).
-2. Seal it for the cluster using `kubeseal`.
-3. Replace `cloud-init-secret.yaml` with the generated SealedSecret.
+> This repo intentionally does **not** store plaintext cloud-init userdata.
+
+Because the payload is encrypted, update flow is:
+
+1. Prepare a local `cloud-init-userdata.yaml` file (temporary, do not commit).
+2. Seal it with `kubeseal`.
+3. Overwrite `argocd/applications/openclaw/cloud-init-secret.yaml` with the sealed output.
 
 ## Baseline bootstrap expectations
 
@@ -27,6 +30,8 @@ Cloud-init should ensure:
 - Cluster scope: read-only (`namespaces`, `nodes`, `storageclasses`) via ClusterRole
 
 ## Re-seal command (example)
+
+Run from repo root (`~/github.com/lab`):
 
 ```bash
 kubectl create secret generic openclaw-cloud-init \
