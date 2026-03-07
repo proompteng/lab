@@ -26,6 +26,7 @@ from scripts.start_historical_simulation import (
     _build_rollouts_analysis_config,
     _build_simulation_completion_trace,
     _configure_torghut_service_for_simulation,
+    _doc29_simulation_gate_ids,
     _discover_automation_pointer,
     _find_vector_extension_blocking_revision,
     _dump_topics,
@@ -1721,6 +1722,17 @@ class TestStartHistoricalSimulation(TestCase):
         )
         self.assertEqual(policy['profile'], 'us_equities_regular')
         self.assertEqual(policy['min_coverage_minutes'], 390)
+
+    def test_doc29_simulation_gate_ids_normalize_mixed_case_profile(self) -> None:
+        gate_ids = _doc29_simulation_gate_ids(
+            {
+                'window': {
+                    'profile': 'US_EQUITIES_REGULAR',
+                    'min_coverage_minutes': 60,
+                }
+            }
+        )
+        self.assertEqual(gate_ids, ['simulation_full_day_coverage'])
 
     def test_validate_window_policy_rejects_profile_mismatch(self) -> None:
         with self.assertRaisesRegex(RuntimeError, 'window_profile_mismatch:us_equities_regular'):

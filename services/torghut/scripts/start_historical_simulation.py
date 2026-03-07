@@ -3885,7 +3885,7 @@ def _report_simulation(
 
 def _doc29_simulation_gate_ids(manifest: Mapping[str, Any]) -> list[str]:
     window = _as_mapping(manifest.get('window'))
-    profile = _as_text(window.get('profile'))
+    profile = (_as_text(window.get('profile')) or '').strip().lower() or None
     min_coverage_minutes = _safe_int(window.get('min_coverage_minutes'), default=0)
     if profile == US_EQUITIES_REGULAR_PROFILE or min_coverage_minutes >= US_EQUITIES_REGULAR_MINUTES:
         return [DOC29_SIMULATION_FULL_DAY_GATE]
