@@ -917,6 +917,22 @@ const resyncAgentRunsForNamespace = async (
   }
 }
 
+const triggerAgentRunResync = (
+  kube: ReturnType<typeof createKubernetesClient>,
+  namespace: string,
+  state: ControllerState,
+  concurrency: ReturnType<typeof parseConcurrency>,
+  reason: 'periodic' | 'watch_restart' | 'manual',
+) => {
+  void resyncAgentRunsForNamespace(kube, namespace, state, concurrency, reason).catch((error) => {
+    logAgentsControllerWarn('agentrun_resync_failed', {
+      namespace,
+      reason,
+      ...toLogError(error),
+    })
+  })
+}
+
 const {
   reconcileAgent,
   reconcileAgentProvider,
@@ -1266,7 +1282,7 @@ const startNamespaceWatches = (
           namespace,
           reason: restartReason,
         })
-        void resyncAgentRunsForNamespace(kube, namespace, state, concurrency, 'watch_restart')
+        triggerAgentRunResync(kube, namespace, state, concurrency, 'watch_restart')
       },
     }),
   )
@@ -1332,13 +1348,13 @@ const startNamespaceWatches = (
 
   const resyncInterval = resolveAgentRunResyncIntervalSeconds() * 1000
   const timer = setInterval(() => {
-    void resyncAgentRunsForNamespace(kube, namespace, state, concurrency, 'periodic')
+    triggerAgentRunResync(kube, namespace, state, concurrency, 'periodic')
   }, resyncInterval)
   handles.push({
     stop: () => clearInterval(timer),
   })
 
-  void resyncAgentRunsForNamespace(kube, namespace, state, concurrency, 'manual')
+  triggerAgentRunResync(kube, namespace, state, concurrency, 'manual')
 }
 
 const startAgentsControllerInternal = async () => {
@@ -1519,5 +1535,6 @@ export const __test = {
   resolveVcsContext,
   getAgentRunUntouchedReasons,
   resyncAgentRunsForNamespace,
+  triggerAgentRunResync,
   syncControllerAgentRunIngestionHealth,
 }
