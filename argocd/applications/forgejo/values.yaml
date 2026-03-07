@@ -32,6 +32,7 @@ service:
 
 gitea:
   admin:
+    existingSecret: forgejo-admin
     username: kalmyk
     passwordMode: initialOnlyNoReset
   config:
