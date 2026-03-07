@@ -679,6 +679,12 @@ class TestStartHistoricalSimulation(TestCase):
         ):
             _configure_torghut_service_for_simulation(
                 resources=resources,
+                manifest={
+                    'window': {
+                        'start': '2026-02-27T14:30:00Z',
+                        'end': '2026-02-27T21:00:00Z',
+                    }
+                },
                 postgres_config=postgres_config,
                 kafka_config=kafka_config,
             )
@@ -800,6 +806,12 @@ class TestStartHistoricalSimulation(TestCase):
         ):
             _configure_torghut_service_for_simulation(
                 resources=resources,
+                manifest={
+                    'window': {
+                        'start': '2026-02-27T14:30:00Z',
+                        'end': '2026-02-27T21:00:00Z',
+                    }
+                },
                 postgres_config=postgres_config,
                 kafka_config=kafka_config,
                 torghut_env_overrides={
@@ -1277,6 +1289,12 @@ class TestStartHistoricalSimulation(TestCase):
                 'cursor_grace_seconds': 0,
             },
         }
+        resources = _build_resources('sim-1', {'dataset_id': 'dataset-a'})
+        clickhouse_config = ClickHouseRuntimeConfig(
+            http_url='http://clickhouse:8123',
+            username='torghut',
+            password=None,
+        )
         with (
             patch(
                 'scripts.start_historical_simulation._monitor_snapshot',
@@ -1288,16 +1306,21 @@ class TestStartHistoricalSimulation(TestCase):
                     'cursor_at': '2026-02-27T21:00:01Z',
                 },
             ),
-            patch('scripts.start_historical_simulation.time.sleep', return_value=None),
-            self.assertRaisesRegex(
-                RuntimeError,
-                'monitor_thresholds_not_met_after_cursor_reached .*execution_order_events=0',
+            patch(
+                'scripts.start_historical_simulation._signal_snapshot',
+                return_value={'signal_rows': 10, 'price_rows': 10},
             ),
+            patch('scripts.start_historical_simulation.time.sleep', return_value=None),
         ):
-            _monitor_run_completion(
+            report = _monitor_run_completion(
+                resources=resources,
                 manifest=manifest,
                 postgres_config=postgres_config,
+                clickhouse_config=clickhouse_config,
+                runtime_verify={'runtime_state': 'ready'},
             )
+        self.assertEqual(report['status'], 'degraded')
+        self.assertEqual(report['activity_classification'], 'executions_absent')
 
     def test_build_argocd_automation_config_defaults(self) -> None:
         config = _build_argocd_automation_config({})

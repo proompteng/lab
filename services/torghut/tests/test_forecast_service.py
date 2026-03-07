@@ -116,3 +116,37 @@ class TestForecastService(TestCase):
             response = client.get("/readyz")
 
         self.assertEqual(response.status_code, 503)
+
+    def test_readyz_honors_as_of_for_replay_freshness(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            manifest_path = f"{tmpdir}/registry.json"
+            with open(manifest_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "schema_version": "torghut-forecast-registry.v1",
+                        "models": [
+                            {
+                                "model_family": "moment",
+                                "model_version": "moment-empirical-v1",
+                                "model_registry_ref": "s3://models/moment/model.json",
+                                "training_run_ref": "train/moment/1",
+                                "dataset_snapshot_ref": "datasets/moment/1",
+                                "calibration_ref": "calibration/moment/1",
+                                "calibration_score": "0.91",
+                                "calibration_updated_at": "2026-03-06T00:00:00Z",
+                                "parameters": {},
+                            }
+                        ],
+                    },
+                    handle,
+                )
+            settings.trading_forecast_registry_manifest_path = manifest_path
+            settings.trading_forecast_registry_refresh_seconds = 1
+            settings.trading_forecast_calibration_stale_after_seconds = 60
+
+            client = TestClient(forecast_service.app)
+            stale_response = client.get("/readyz")
+            replay_response = client.get("/readyz?asOf=2026-03-06T00:00:30Z")
+
+        self.assertEqual(stale_response.status_code, 503)
+        self.assertEqual(replay_response.status_code, 200)

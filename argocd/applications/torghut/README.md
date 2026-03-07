@@ -52,11 +52,17 @@ argo submit --from workflowtemplate/torghut-historical-simulation -n argo-workfl
 The workflow output root can be overridden with `outputRoot` and replay/reapply behavior can be controlled with
 `forceReplay` / `forceDump`.
 
+By default, the workflow now targets the dedicated simulation surfaces managed in this app:
+`Service/torghut-sim`, `FlinkDeployment/torghut-ta-sim`, `ConfigMap/torghut-ta-sim-config`, and
+`Service/torghut-forecast-sim`. Supply explicit `runtime.*` overrides in the dataset manifest only when you
+intentionally need different resource names.
+
 ### Scope / target resources (as deployed)
 - Kubernetes namespace: `torghut`
-- Flink TA job: `FlinkDeployment/torghut-ta` (`argocd/applications/torghut/ta/flinkdeployment.yaml`)
-- TA config: `ConfigMap/torghut-ta-config` (`argocd/applications/torghut/ta/configmap.yaml`)
-- Trading service: Knative `Service/torghut` (`argocd/applications/torghut/knative-service.yaml`)
+- Flink TA job: `FlinkDeployment/torghut-ta-sim` (`argocd/applications/torghut/ta-sim/flinkdeployment.yaml`)
+- TA config: `ConfigMap/torghut-ta-sim-config` (`argocd/applications/torghut/ta-sim/configmap.yaml`)
+- Trading service: Knative `Service/torghut-sim` (`argocd/applications/torghut/knative-service-sim.yaml`)
+- Forecast service: `Service/torghut-forecast-sim` (`argocd/applications/torghut-forecast/sim/service.yaml`)
 - DB migration gate: `Job/torghut-db-migrations` (`argocd/applications/torghut/db-migrations-job.yaml`, Argo `PreSync` hook)
 - Kafka namespace/tools: `kafka` (Strimzi); bootstrap `kafka-kafka-bootstrap.kafka:9092`
 - Ceph RGW bucket: `ObjectBucketClaim/flink-checkpoints` (for Flink checkpoint/savepoint storage)

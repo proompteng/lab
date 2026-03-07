@@ -1,0 +1,189 @@
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata:
+  name: torghut-ta-sim
+  namespace: torghut
+  labels:
+    app: torghut-ta-sim
+spec:
+  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:436aecef1aae71f18fd01935ca97cb26866d149154edb4dab4222d66c4e849b3
+  imagePullPolicy: IfNotPresent
+  restartNonce: 0
+  flinkVersion: v2_0
+  serviceAccount: torghut-runtime
+  logConfiguration:
+    log4j-console.properties: |-
+      ################################################################################
+      #  Licensed to the Apache Software Foundation (ASF) under one
+      #  or more contributor license agreements.  See the NOTICE file
+      #  distributed with this work for additional information
+      #  regarding copyright ownership.  The ASF licenses this file
+      #  to you under the Apache License, Version 2.0 (the
+      #  "License"); you may not use this file except in compliance
+      #  with the License.  You may obtain a copy of the License at
+      #
+      #      http://www.apache.org/licenses/LICENSE-2.0
+      #
+      #  Unless required by applicable law or agreed to in writing, software
+      #  distributed under the License is distributed on an "AS IS" BASIS,
+      #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+      #  See the License for the specific language governing permissions and
+      # limitations under the License.
+      ################################################################################
+
+      # This affects logging for both user code and Flink
+      rootLogger.level = INFO
+      rootLogger.appenderRef.console.ref = ConsoleAppender
+      rootLogger.appenderRef.rolling.ref = RollingFileAppender
+
+      # Uncomment this if you want to _only_ change Flink's logging
+      #logger.flink.name = org.apache.flink
+      #logger.flink.level = INFO
+
+      # The following lines keep the log level of common libraries/connectors on
+      # log level INFO. The root logger does not override this. You have to manually
+      # change the log levels here.
+      logger.akka.name = akka
+      logger.akka.level = INFO
+      logger.kafka.name= org.apache.kafka
+      logger.kafka.level = INFO
+      logger.hadoop.name = org.apache.hadoop
+      logger.hadoop.level = INFO
+      logger.zookeeper.name = org.apache.zookeeper
+      logger.zookeeper.level = INFO
+      logger.metrics.name = org.apache.flink.metrics.MetricGroup
+      logger.metrics.level = ERROR
+
+      # Log all infos to the console
+      appender.console.name = ConsoleAppender
+      appender.console.type = CONSOLE
+      appender.console.layout.type = PatternLayout
+      appender.console.layout.pattern = %d{yyyy-MM-dd HH:mm:ss,SSS} %-5p %-60c %x - %m%n
+
+      # Log all infos in the given rolling file
+      appender.rolling.name = RollingFileAppender
+      appender.rolling.type = RollingFile
+      appender.rolling.append = false
+      appender.rolling.fileName = ${sys:log.file}
+      appender.rolling.filePattern = ${sys:log.file}.%i
+      appender.rolling.layout.type = PatternLayout
+      appender.rolling.layout.pattern = %d{yyyy-MM-dd HH:mm:ss,SSS} %-5p %-60c %x - %m%n
+      appender.rolling.policies.type = Policies
+      appender.rolling.policies.size.type = SizeBasedTriggeringPolicy
+      appender.rolling.policies.size.size=100MB
+      appender.rolling.strategy.type = DefaultRolloverStrategy
+      appender.rolling.strategy.max = 10
+
+      # Suppress the irrelevant (wrong) warnings from the Netty channel handler
+      logger.netty.name = org.apache.flink.shaded.akka.org.jboss.netty.channel.DefaultChannelPipeline
+      logger.netty.level = OFF
+
+      # The monitor interval in seconds to enable log4j automatic reconfiguration
+      # monitorInterval = 30
+      # Flink Deployment Logging Overrides
+      # rootLogger.level = DEBUG
+  flinkConfiguration:
+    state.checkpoints.dir: s3a://flink-checkpoints/torghut/technical-analysis-sim/checkpoints
+    state.savepoints.dir: s3a://flink-checkpoints/torghut/technical-analysis-sim/savepoints
+    execution.checkpointing.mode: EXACTLY_ONCE
+    execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
+    taskmanager.numberOfTaskSlots: "2"
+    restart-strategy.type: fixed-delay
+    restart-strategy.fixed-delay.attempts: "5"
+    restart-strategy.fixed-delay.delay: 5 s
+    execution.checkpointing.unaligned: "true"
+    execution.checkpointing.tolerable-failed-checkpoints: "3"
+    metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+    metrics.reporter.prom.port: "9249"
+    fs.s3a.endpoint: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
+    fs.s3a.connection.ssl.enabled: "false"
+    fs.s3a.path.style.access: "true"
+  podTemplate:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      labels:
+        app: torghut-ta-sim
+    spec:
+      serviceAccountName: torghut-runtime
+      containers:
+        - name: flink-main-container
+          envFrom:
+            - configMapRef:
+                name: torghut-ta-sim-config
+          env:
+            - name: TA_KAFKA_DELIVERY_GUARANTEE
+              value: EXACTLY_ONCE
+            - name: TA_KAFKA_USERNAME
+              value: torghut-ws
+            - name: TA_KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-ws
+                  key: password
+            - name: TA_CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-clickhouse-auth
+                  key: torghut_password
+            - name: TA_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flink-checkpoints
+                  key: AWS_ACCESS_KEY_ID
+            - name: TA_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flink-checkpoints
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: flink-checkpoints
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flink-checkpoints
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: AWS_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flink-checkpoints
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flink-checkpoints
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: TORGHUT_TA_VERSION
+              value: v0.560.0-20-ga2660f64
+            - name: TORGHUT_TA_COMMIT
+              value: a2660f64dfb913cc8cfcb1483508d79eef6b7f58
+          ports:
+            - containerPort: 9249
+              name: metrics
+  jobManager:
+    resource:
+      cpu: 0.5
+      memory: 2048m
+    podTemplate:
+      metadata:
+        labels:
+          app: torghut-ta-sim
+    replicas: 1
+  taskManager:
+    resource:
+      cpu: 2
+      memory: 4096m
+    podTemplate:
+      metadata:
+        labels:
+          app: torghut-ta-sim
+    replicas: 4
+  job:
+    entryClass: ai.proompteng.dorvud.ta.flink.FlinkTechnicalAnalysisJobKt
+    jarURI: local:///opt/flink/usrlib/app.jar
+    parallelism: 8
+    upgradeMode: last-state
+    state: suspended

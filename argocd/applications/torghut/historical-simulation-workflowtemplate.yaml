@@ -104,6 +104,10 @@ spec:
           runtime = payload.get("runtime")
           if not isinstance(runtime, dict):
             runtime = {}
+          runtime.setdefault("namespace", "torghut")
+          runtime.setdefault("ta_configmap", "torghut-ta-sim-config")
+          runtime.setdefault("ta_deployment", "torghut-ta-sim")
+          runtime.setdefault("torghut_service", "torghut-sim")
           runtime["output_root"] = output_root
           payload["runtime"] = runtime
 

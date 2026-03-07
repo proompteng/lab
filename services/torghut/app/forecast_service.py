@@ -97,19 +97,24 @@ class RegistryModelEntry:
     latency_ms_span: int
     notes: str | None
 
-    def promotion_authority_eligible(self) -> bool:
+    def promotion_authority_eligible(self, *, reference_time: datetime | None = None) -> bool:
         if self.calibration_updated_at is None:
             return False
-        age = _utc_now() - self.calibration_updated_at
+        effective_now = (
+            reference_time.astimezone(timezone.utc)
+            if reference_time is not None
+            else _utc_now()
+        )
+        age = effective_now - self.calibration_updated_at
         return age <= timedelta(
             seconds=max(settings.trading_forecast_calibration_stale_after_seconds, 1)
         )
 
-    def artifact_authority(self) -> dict[str, Any]:
+    def artifact_authority(self, *, reference_time: datetime | None = None) -> dict[str, Any]:
         freshness = (
             {
                 "status": "fresh"
-                if self.promotion_authority_eligible()
+                if self.promotion_authority_eligible(reference_time=reference_time)
                 else "stale",
                 "updated_at": self.calibration_updated_at.isoformat(),
             }
@@ -120,10 +125,10 @@ class RegistryModelEntry:
             provenance=ArtifactProvenance.HISTORICAL_MARKET_REPLAY,
             maturity=(
                 EvidenceMaturity.EMPIRICALLY_VALIDATED
-                if self.promotion_authority_eligible()
+                if self.promotion_authority_eligible(reference_time=reference_time)
                 else EvidenceMaturity.CALIBRATED
             ),
-            authoritative=self.promotion_authority_eligible(),
+            authoritative=self.promotion_authority_eligible(reference_time=reference_time),
             placeholder=False,
             calibration_summary=freshness,
             notes=self.notes or "Forecast generated from registry-backed empirical model entry.",
@@ -137,10 +142,13 @@ class RegistrySnapshot:
     generated_at: datetime | None
     models: dict[str, RegistryModelEntry]
 
-    def readiness(self) -> tuple[bool, str]:
+    def readiness(self, *, reference_time: datetime | None = None) -> tuple[bool, str]:
         if not self.models:
             return False, "registry_empty"
-        if not any(entry.promotion_authority_eligible() for entry in self.models.values()):
+        if not any(
+            entry.promotion_authority_eligible(reference_time=reference_time)
+            for entry in self.models.values()
+        ):
             return False, "calibration_stale"
         return True, "ready"
 
@@ -361,7 +369,9 @@ def _forecast_payload(request: ForecastRequest, entry: RegistryModelEntry) -> di
     point = _resolve_point_forecast(values=request.values, parameters=entry.parameters)
     interval = _resolve_interval(point=point, values=request.values, parameters=entry.parameters)
     uncertainty = _resolve_uncertainty(point=point, values=request.values, parameters=entry.parameters)
-    promotion_authority_eligible = entry.promotion_authority_eligible()
+    promotion_authority_eligible = entry.promotion_authority_eligible(
+        reference_time=request.event_ts
+    )
     return {
         "schema_version": "forecast_contract_v1",
         "symbol": request.symbol,
@@ -379,7 +389,7 @@ def _forecast_payload(request: ForecastRequest, entry: RegistryModelEntry) -> di
             reason=None if promotion_authority_eligible else "calibration_stale",
         ).to_payload(),
         "inference_latency_ms": _resolve_latency_ms(entry, request),
-        "artifact_authority": entry.artifact_authority(),
+        "artifact_authority": entry.artifact_authority(reference_time=request.event_ts),
         "model_registry_ref": entry.model_registry_ref,
         "training_run_ref": entry.training_run_ref,
         "dataset_snapshot_ref": entry.dataset_snapshot_ref,
@@ -388,7 +398,9 @@ def _forecast_payload(request: ForecastRequest, entry: RegistryModelEntry) -> di
     }
 
 
-def _calibration_report(snapshot: RegistrySnapshot) -> dict[str, Any]:
+def _calibration_report(
+    snapshot: RegistrySnapshot, *, reference_time: datetime | None = None
+) -> dict[str, Any]:
     models: list[dict[str, Any]] = []
     for entry in snapshot.models.values():
         models.append(
@@ -400,14 +412,16 @@ def _calibration_report(snapshot: RegistrySnapshot) -> dict[str, Any]:
                 "calibration_updated_at": entry.calibration_updated_at.isoformat()
                 if entry.calibration_updated_at is not None
                 else None,
-                "promotion_authority_eligible": entry.promotion_authority_eligible(),
+                "promotion_authority_eligible": entry.promotion_authority_eligible(
+                    reference_time=reference_time
+                ),
             }
         )
-    ready, reason = snapshot.readiness()
+    ready, reason = snapshot.readiness(reference_time=reference_time)
     return {
         "schema_version": "torghut-forecast-calibration-report.v1",
         "registry_ref": snapshot.registry_ref,
-        "generated_at": _utc_now().isoformat(),
+        "generated_at": (reference_time or _utc_now()).astimezone(timezone.utc).isoformat(),
         "status": "ready" if ready else "degraded",
         "reason": reason,
         "models": models,
@@ -420,9 +434,10 @@ def healthz() -> dict[str, str]:
 
 
 @app.get("/readyz")
-def readyz() -> dict[str, Any]:
+def readyz(asOf: str | None = None) -> dict[str, Any]:
     snapshot = _registry.snapshot()
-    ready, reason = snapshot.readiness()
+    reference_time = _parse_datetime(asOf)
+    ready, reason = snapshot.readiness(reference_time=reference_time)
     if not ready:
         raise HTTPException(
             status_code=503,
@@ -450,9 +465,11 @@ def metrics() -> dict[str, Any]:
 
 
 @app.post("/v1/calibration/report")
-def calibration_report(body: CalibrationReportRequest | None = None) -> dict[str, Any]:
+def calibration_report(
+    body: CalibrationReportRequest | None = None, asOf: str | None = None
+) -> dict[str, Any]:
     snapshot = _registry.snapshot()
-    report = _calibration_report(snapshot)
+    report = _calibration_report(snapshot, reference_time=_parse_datetime(asOf))
     if body is None or body.model_family is None:
         return report
     family = body.model_family.strip().lower().replace("-", "_")

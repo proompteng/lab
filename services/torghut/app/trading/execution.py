@@ -34,6 +34,7 @@ from .quantity_rules import (
     qty_step_for_symbol,
 )
 from .simulation import resolve_simulation_context
+from .time_source import trading_now
 from .tca import upsert_execution_tca_metric
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,7 @@ class OrderExecutor:
             rationale=decision.rationale,
             status="planned",
             decision_hash=digest,
+            created_at=decision.event_ts if settings.trading_simulation_enabled else trading_now(account_label=account_label),
         )
         session.add(decision_row)
         try:
@@ -291,7 +293,7 @@ class OrderExecutor:
             decision_row,
             execution,
             account_label,
-            submitted_at=datetime.now(timezone.utc),
+            submitted_at=decision.event_ts if settings.trading_simulation_enabled else trading_now(account_label=account_label),
             status_override="submitted",
         )
         session.add(decision_row)
@@ -1407,7 +1409,29 @@ def _apply_execution_status(
     if submitted_at is not None and decision_row.executed_at is None:
         decision_row.executed_at = submitted_at
     if execution.status == "filled" and decision_row.executed_at is None:
-        decision_row.executed_at = datetime.now(timezone.utc)
+        simulation_payload = getattr(execution, "simulation_json", None)
+        simulation_context = (
+            cast(Mapping[str, Any], simulation_payload)
+            if isinstance(simulation_payload, Mapping)
+            else None
+        )
+        signal_event_ts = simulation_context.get("signal_event_ts") if simulation_context is not None else None
+        if isinstance(signal_event_ts, str) and signal_event_ts.strip():
+            normalized = (
+                f'{signal_event_ts[:-1]}+00:00'
+                if signal_event_ts.endswith("Z")
+                else signal_event_ts
+            )
+            try:
+                parsed = datetime.fromisoformat(normalized)
+            except ValueError:
+                parsed = None
+            if parsed is not None:
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                decision_row.executed_at = parsed.astimezone(timezone.utc)
+                return
+        decision_row.executed_at = trading_now(account_label=account_label)
 
 
 def _persist_lean_shadow_event(

@@ -62,6 +62,7 @@ from .order_feed import OrderFeedIngestor
 from .reconcile import Reconciler
 from .risk import RiskEngine
 from .tca import AdaptiveExecutionPolicyDecision, derive_adaptive_execution_policy
+from .time_source import trading_now, trading_time_status
 from .regime_hmm import (
     HMMRegimeContext,
     resolve_regime_context_authority_reason,
@@ -263,6 +264,13 @@ def _is_market_session_open(
     *,
     now: datetime | None = None,
 ) -> bool:
+    if settings.trading_simulation_enabled:
+        current = (now or trading_now()).astimezone(ZoneInfo("America/New_York"))
+        if current.weekday() >= 5:
+            return False
+        session_open = current.replace(hour=9, minute=30, second=0, microsecond=0)
+        session_close = current.replace(hour=16, minute=0, second=0, microsecond=0)
+        return session_open <= current < session_close
     get_clock = cast(
         Callable[[], Any] | None, getattr(trading_client, "get_clock", None)
     )
@@ -3647,7 +3655,8 @@ class TradingPipeline:
 
         self.state.metrics.llm_requests_total += 1
         market_context, market_context_error = self._fetch_market_context(
-            decision.symbol
+            decision.symbol,
+            as_of=decision.event_ts,
         )
         self._record_market_context_observation(
             symbol=decision.symbol,
@@ -3830,7 +3839,7 @@ class TradingPipeline:
         market_context: Optional[MarketContextBundle],
         market_context_error: Optional[str],
     ) -> None:
-        now = datetime.now(timezone.utc)
+        now = trading_now(account_label=self.account_label)
         self.state.last_market_context_symbol = symbol
         self.state.last_market_context_checked_at = now
         self.state.last_market_context_fetch_error = market_context_error
@@ -4346,10 +4355,10 @@ class TradingPipeline:
         return f"dspy:{settings.llm_dspy_signature_version}"
 
     def _fetch_market_context(
-        self, symbol: str
+        self, symbol: str, *, as_of: datetime | None = None
     ) -> tuple[Optional[MarketContextBundle], Optional[str]]:
         try:
-            return self.market_context_client.fetch(symbol), None
+            return self.market_context_client.fetch(symbol, as_of=as_of), None
         except Exception as exc:
             logger.warning(
                 "market context fetch failed symbol=%s error=%s", symbol, exc
@@ -5206,10 +5215,12 @@ class TradingScheduler:
         )
         if not isinstance(market_context_client, MarketContextClient):
             market_context_client = MarketContextClient()
+        as_of = trading_now() if settings.trading_simulation_enabled else None
         if self.state.last_market_context_symbol:
             try:
                 health = market_context_client.fetch_health(
-                    self.state.last_market_context_symbol
+                    self.state.last_market_context_symbol,
+                    as_of=as_of,
                 )
             except Exception as exc:
                 health_error = str(exc)
@@ -5237,6 +5248,7 @@ class TradingScheduler:
             "alert_reason": self.state.market_context_alert_reason,
             "health": health,
             "health_error": health_error,
+            "time_source": trading_time_status(account_label=settings.trading_account_label),
         }
 
     def rejection_alert_status(self) -> dict[str, object]:

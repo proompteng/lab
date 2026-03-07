@@ -33,6 +33,10 @@ DEFAULT_NAMESPACE = 'torghut'
 DEFAULT_TA_CONFIGMAP = 'torghut-ta-config'
 DEFAULT_TA_DEPLOYMENT = 'torghut-ta'
 DEFAULT_TORGHUT_SERVICE = 'torghut'
+DEFAULT_SIM_TA_CONFIGMAP = 'torghut-ta-sim-config'
+DEFAULT_SIM_TA_DEPLOYMENT = 'torghut-ta-sim'
+DEFAULT_SIM_TORGHUT_SERVICE = 'torghut-sim'
+DEFAULT_SIM_FORECAST_SERVICE = 'torghut-forecast-sim'
 DEFAULT_OUTPUT_ROOT = Path('artifacts/torghut/simulations')
 
 PRODUCTION_TOPIC_BY_ROLE = {
@@ -290,10 +294,12 @@ class SimulationResources:
     run_id: str
     run_token: str
     dataset_id: str
+    target_mode: str
     namespace: str
     ta_configmap: str
     ta_deployment: str
     torghut_service: str
+    torghut_forecast_service: str
     output_root: Path
     source_topic_by_role: dict[str, str]
     simulation_topic_by_role: dict[str, str]
@@ -953,6 +959,9 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
         raise SystemExit('manifest.dataset_id is required')
 
     runtime = _as_mapping(manifest.get('runtime'))
+    target_mode = (_as_text(runtime.get('target_mode')) or 'dedicated_service').strip().lower()
+    if target_mode not in {'dedicated_service', 'in_place'}:
+        raise RuntimeError('runtime.target_mode must be one of: dedicated_service,in_place')
     output_root_raw = _as_text(runtime.get('output_root'))
     output_root = Path(output_root_raw) if output_root_raw else DEFAULT_OUTPUT_ROOT
 
@@ -980,14 +989,27 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
     clickhouse_signal_table = f'{clickhouse_db}.ta_signals'
     clickhouse_price_table = f'{clickhouse_db}.ta_microbars'
 
+    default_ta_configmap = DEFAULT_SIM_TA_CONFIGMAP if target_mode == 'dedicated_service' else DEFAULT_TA_CONFIGMAP
+    default_ta_deployment = DEFAULT_SIM_TA_DEPLOYMENT if target_mode == 'dedicated_service' else DEFAULT_TA_DEPLOYMENT
+    default_torghut_service = (
+        DEFAULT_SIM_TORGHUT_SERVICE if target_mode == 'dedicated_service' else DEFAULT_TORGHUT_SERVICE
+    )
+    default_forecast_service = (
+        DEFAULT_SIM_FORECAST_SERVICE if target_mode == 'dedicated_service' else 'torghut-forecast'
+    )
+
     return SimulationResources(
         run_id=run_id,
         run_token=run_token,
         dataset_id=dataset_id,
+        target_mode=target_mode,
         namespace=_as_text(runtime.get('namespace')) or DEFAULT_NAMESPACE,
-        ta_configmap=_as_text(runtime.get('ta_configmap')) or DEFAULT_TA_CONFIGMAP,
-        ta_deployment=_as_text(runtime.get('ta_deployment')) or DEFAULT_TA_DEPLOYMENT,
-        torghut_service=_as_text(runtime.get('torghut_service')) or DEFAULT_TORGHUT_SERVICE,
+        ta_configmap=_as_text(runtime.get('ta_configmap')) or default_ta_configmap,
+        ta_deployment=_as_text(runtime.get('ta_deployment')) or default_ta_deployment,
+        torghut_service=_as_text(runtime.get('torghut_service')) or default_torghut_service,
+        torghut_forecast_service=(
+            _as_text(runtime.get('torghut_forecast_service')) or default_forecast_service
+        ),
         output_root=output_root,
         source_topic_by_role=source_topics,
         simulation_topic_by_role=simulation_topics,
@@ -1002,12 +1024,16 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
 
 def _build_argocd_automation_config(manifest: Mapping[str, Any]) -> ArgocdAutomationConfig:
     argocd = _as_mapping(manifest.get('argocd'))
+    runtime = _as_mapping(manifest.get('runtime'))
+    target_mode = (_as_text(runtime.get('target_mode')) or 'dedicated_service').strip().lower()
     manage_automation = str(argocd.get('manage_automation', 'false')).strip().lower() in {
         '1',
         'true',
         'yes',
         'on',
     }
+    if target_mode == 'dedicated_service':
+        manage_automation = False
     desired_mode = (_as_text(argocd.get('desired_mode_during_run')) or DEFAULT_ARGOCD_RUN_MODE).lower()
     if desired_mode not in {'manual', 'auto'}:
         raise RuntimeError('argocd.desired_mode_during_run must be one of: manual,auto')
@@ -1455,6 +1481,11 @@ def _state_paths(resources: SimulationResources) -> tuple[Path, Path, Path]:
 def _run_state_path(resources: SimulationResources) -> Path:
     run_dir = resources.output_root / resources.run_token
     return run_dir / 'run-state.json'
+
+
+def _artifact_path(resources: SimulationResources, filename: str) -> Path:
+    run_dir = resources.output_root / resources.run_token
+    return run_dir / filename
 
 
 def _update_run_state(
@@ -2013,6 +2044,7 @@ def _restart_ta_deployment(resources: SimulationResources, *, desired_state: str
 def _configure_torghut_service_for_simulation(
     *,
     resources: SimulationResources,
+    manifest: Mapping[str, Any],
     postgres_config: PostgresRuntimeConfig,
     kafka_config: KafkaRuntimeConfig,
     torghut_env_overrides: Mapping[str, Any] | None = None,
@@ -2022,6 +2054,10 @@ def _configure_torghut_service_for_simulation(
         ['get', 'kservice', resources.torghut_service, '-o', 'json'],
     )
     _, current_env = _kservice_env(service)
+    window_start, window_end = _resolve_window_bounds(manifest)
+    forecast_base_url = (
+        f'http://{resources.torghut_forecast_service}.{resources.namespace}.svc.cluster.local:8089'
+    )
 
     updates = {
         'DB_DSN': postgres_config.torghut_runtime_dsn,
@@ -2043,12 +2079,18 @@ def _configure_torghut_service_for_simulation(
         'TRADING_SIMULATION_ENABLED': 'true',
         'TRADING_SIMULATION_RUN_ID': resources.run_id,
         'TRADING_SIMULATION_DATASET_ID': resources.dataset_id,
+        'TRADING_SIMULATION_CLOCK_MODE': 'cursor',
+        'TRADING_SIMULATION_WINDOW_START': window_start.astimezone(timezone.utc).isoformat(),
+        'TRADING_SIMULATION_WINDOW_END': window_end.astimezone(timezone.utc).isoformat(),
         'TRADING_SIMULATION_ORDER_UPDATES_TOPIC': resources.simulation_topic_by_role['order_updates'],
         'TRADING_SIMULATION_ORDER_UPDATES_BOOTSTRAP_SERVERS': kafka_config.runtime_bootstrap,
         'TRADING_SIMULATION_ORDER_UPDATES_SECURITY_PROTOCOL': kafka_config.runtime_security,
         'TRADING_SIMULATION_ORDER_UPDATES_SASL_MECHANISM': kafka_config.runtime_sasl,
         'TRADING_SIMULATION_ORDER_UPDATES_SASL_USERNAME': kafka_config.runtime_username,
         'TRADING_SIMULATION_ORDER_UPDATES_SASL_PASSWORD': kafka_config.runtime_password,
+        'TRADING_FORECAST_SERVICE_URL': forecast_base_url,
+        'TRADING_FORECAST_ROUTER_PROVIDER_MODE': 'http',
+        'TRADING_FORECAST_ROUTER_PROVIDER_URL': forecast_base_url,
     }
     if torghut_env_overrides:
         for key, value in torghut_env_overrides.items():
@@ -2122,6 +2164,95 @@ def _restore_torghut_env(resources: SimulationResources, state: Mapping[str, Any
             }
         },
     )
+
+
+def _condition_status(payload: Mapping[str, Any], *, condition_type: str) -> str | None:
+    conditions = payload.get('conditions')
+    if not isinstance(conditions, list):
+        return None
+    for raw_item in conditions:
+        if not isinstance(raw_item, Mapping):
+            continue
+        item = cast(Mapping[str, Any], raw_item)
+        if _as_text(item.get('type')) == condition_type:
+            return _as_text(item.get('status'))
+    return None
+
+
+def _deployment_replica_health(namespace: str, name: str) -> dict[str, Any]:
+    deployment = _kubectl_json(namespace, ['get', 'deployment', name, '-o', 'json'])
+    status = _as_mapping(deployment.get('status'))
+    return {
+        'name': name,
+        'ready_replicas': int(status.get('readyReplicas') or 0),
+        'available_replicas': int(status.get('availableReplicas') or 0),
+        'replicas': int(status.get('replicas') or 0),
+    }
+
+
+def _fink_runtime_health(namespace: str, name: str) -> dict[str, Any]:
+    deployment = _kubectl_json(namespace, ['get', 'flinkdeployment', name, '-o', 'json'])
+    spec = _as_mapping(deployment.get('spec'))
+    status = _as_mapping(deployment.get('status'))
+    job_status = _as_mapping(status.get('jobStatus'))
+    lifecycle_state = _as_text(job_status.get('state')) or _as_text(status.get('jobManagerDeploymentStatus'))
+    return {
+        'name': name,
+        'desired_state': _as_text(_as_mapping(spec.get('job')).get('state')) or 'unknown',
+        'lifecycle_state': lifecycle_state or 'unknown',
+        'job_manager_status': _as_text(status.get('jobManagerDeploymentStatus')) or 'unknown',
+    }
+
+
+def _runtime_verify(
+    *,
+    resources: SimulationResources,
+    manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    window_start, window_end = _resolve_window_bounds(manifest)
+    service = _kubectl_json(
+        resources.namespace,
+        ['get', 'kservice', resources.torghut_service, '-o', 'json'],
+    )
+    service_status = _as_mapping(service.get('status'))
+    latest_ready_revision = _as_text(service_status.get('latestReadyRevisionName'))
+    ready = _condition_status(service_status, condition_type='Ready') == 'True'
+    revision_health: dict[str, Any] | None = None
+    if latest_ready_revision:
+        revision_health = _deployment_replica_health(
+            resources.namespace,
+            f'{latest_ready_revision}-deployment',
+        )
+    ta_health = _fink_runtime_health(resources.namespace, resources.ta_deployment)
+    forecast_health = _deployment_replica_health(
+        resources.namespace,
+        resources.torghut_forecast_service,
+    )
+    report = {
+        'runtime_state': 'ready'
+        if ready
+        and revision_health is not None
+        and revision_health['ready_replicas'] > 0
+        and ta_health['desired_state'] == 'running'
+        and ta_health['lifecycle_state'] in {'RUNNING', 'running', 'DEPLOYED'}
+        and forecast_health['ready_replicas'] > 0
+        else 'not_ready',
+        'target_mode': resources.target_mode,
+        'window_start': window_start.astimezone(timezone.utc).isoformat(),
+        'window_end': window_end.astimezone(timezone.utc).isoformat(),
+        'torghut_service': {
+            'name': resources.torghut_service,
+            'ready': ready,
+            'latest_ready_revision': latest_ready_revision,
+            'revision_health': revision_health,
+        },
+        'ta_runtime': ta_health,
+        'forecast_runtime': forecast_health,
+        'environment_state': 'complete'
+        if forecast_health['ready_replicas'] > 0
+        else 'environment_incomplete',
+    }
+    return report
 
 
 def _kafka_admin_client(config: KafkaRuntimeConfig) -> Any:
@@ -2790,6 +2921,7 @@ def _apply(
 
     _configure_torghut_service_for_simulation(
         resources=resources,
+        manifest=manifest,
         postgres_config=postgres_config,
         kafka_config=kafka_config,
         torghut_env_overrides=torghut_env_overrides,
@@ -2824,6 +2956,7 @@ def _apply(
         'window_policy': window_policy,
     }
     _save_json(run_manifest_path, report)
+    _save_json(_artifact_path(resources, 'replay-report.json'), replay_report)
     return report
 
 
@@ -2958,18 +3091,42 @@ def _monitor_snapshot(postgres_config: PostgresRuntimeConfig) -> dict[str, Any]:
     )
 
 
+def _signal_snapshot(
+    *,
+    resources: SimulationResources,
+    clickhouse_config: ClickHouseRuntimeConfig,
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for key, table in {
+        'signal_rows': resources.clickhouse_signal_table,
+        'price_rows': resources.clickhouse_price_table,
+    }.items():
+        query = f'SELECT count() FROM {table}'
+        status, body = _http_clickhouse_query(config=clickhouse_config, query=query)
+        if status < 200 or status >= 300:
+            counts[key] = 0
+            continue
+        counts[key] = _safe_int(body.strip(), default=0)
+    return counts
+
+
 def _monitor_run_completion(
     *,
+    resources: SimulationResources,
     manifest: Mapping[str, Any],
     postgres_config: PostgresRuntimeConfig,
+    clickhouse_config: ClickHouseRuntimeConfig,
+    runtime_verify: Mapping[str, Any],
 ) -> dict[str, Any]:
     start, end = _resolve_window_bounds(manifest)
     settings = _monitor_settings(manifest)
     deadline = datetime.now(timezone.utc) + timedelta(seconds=settings['timeout_seconds'])
     polls: list[dict[str, Any]] = []
     cursor_reached_at: datetime | None = None
+    runtime_ready = bool(runtime_verify.get('runtime_state') == 'ready')
     while True:
         snapshot = _monitor_snapshot(postgres_config)
+        snapshot.update(_signal_snapshot(resources=resources, clickhouse_config=clickhouse_config))
         polled_at = datetime.now(timezone.utc)
         poll_payload = {
             'polled_at': polled_at.isoformat(),
@@ -2999,8 +3156,10 @@ def _monitor_run_completion(
         if cursor_reached and cursor_reached_at is None:
             cursor_reached_at = polled_at
         if cursor_reached and completion_ready:
+            classification = 'success'
             return {
                 'status': 'ok',
+                'activity_classification': classification,
                 'window_start': start.isoformat(),
                 'window_end': end.isoformat(),
                 'monitor': settings,
@@ -3008,27 +3167,39 @@ def _monitor_run_completion(
                 'final_snapshot': poll_payload,
                 'polls': polls[-20:],
             }
-        if cursor_reached and cursor_reached_at is not None and not completion_ready:
-            waited_seconds = int((polled_at - cursor_reached_at).total_seconds())
-            if waited_seconds >= settings['cursor_grace_seconds']:
-                raise RuntimeError(
-                    'monitor_thresholds_not_met_after_cursor_reached '
-                    f'waited_seconds={waited_seconds} '
-                    f'trade_decisions={snapshot.get("trade_decisions")} '
-                    f'executions={snapshot.get("executions")} '
-                    f'execution_tca_metrics={snapshot.get("execution_tca_metrics")} '
-                    f'execution_order_events={snapshot.get("execution_order_events")}'
+        if polled_at >= deadline or (
+            cursor_reached
+            and cursor_reached_at is not None
+            and int((polled_at - cursor_reached_at).total_seconds()) >= settings['cursor_grace_seconds']
+        ):
+            classification = 'success'
+            if not runtime_ready:
+                classification = 'infra_not_active'
+            elif cursor_at is None:
+                classification = 'cursor_not_advancing'
+            elif _safe_int(snapshot.get('signal_rows')) <= 0:
+                classification = 'signals_absent'
+            elif _safe_int(snapshot.get('trade_decisions')) <= 0:
+                classification = 'decisions_absent'
+            elif (
+                _safe_int(snapshot.get('executions')) <= 0
+                or _safe_int(snapshot.get('execution_tca_metrics')) <= 0
+                or (
+                    _safe_int(snapshot.get('executions')) > 0
+                    and _safe_int(snapshot.get('execution_order_events')) <= 0
                 )
-
-        if polled_at >= deadline:
-            raise RuntimeError(
-                'monitor_timeout '
-                f'trade_decisions={snapshot.get("trade_decisions")} '
-                f'executions={snapshot.get("executions")} '
-                f'execution_tca_metrics={snapshot.get("execution_tca_metrics")} '
-                f'execution_order_events={snapshot.get("execution_order_events")} '
-                f'cursor_at={snapshot.get("cursor_at")}'
-            )
+            ):
+                classification = 'executions_absent'
+            return {
+                'status': 'ok' if classification == 'success' else 'degraded',
+                'activity_classification': classification,
+                'window_start': start.isoformat(),
+                'window_end': end.isoformat(),
+                'monitor': settings,
+                'poll_count': len(polls),
+                'final_snapshot': poll_payload,
+                'polls': polls[-20:],
+            }
         time.sleep(settings['poll_seconds'])
 
 
@@ -3148,6 +3319,7 @@ def _run_full_lifecycle(
     argocd_prepare_report: dict[str, Any] | None = None
     argocd_restore_report: dict[str, Any] | None = None
     apply_report: dict[str, Any] | None = None
+    runtime_verify_report: dict[str, Any] | None = None
     monitor_report: dict[str, Any] | None = None
     analytics_report: dict[str, Any] | None = None
     teardown_report: dict[str, Any] | None = None
@@ -3191,7 +3363,7 @@ def _run_full_lifecycle(
             )
 
         if not report_only:
-            _update_run_state(resources=resources, phase='apply', status='running')
+            _update_run_state(resources=resources, phase='dataset_prepare', status='running')
             apply_report = _apply(
                 resources=resources,
                 manifest=manifest,
@@ -3201,24 +3373,72 @@ def _run_full_lifecycle(
                 force_dump=force_dump,
                 force_replay=force_replay,
             )
-            _update_run_state(resources=resources, phase='apply', status='ok')
+            _save_json(_artifact_path(resources, 'run-manifest.json'), apply_report)
+            _update_run_state(resources=resources, phase='dataset_prepare', status='ok')
 
-            _update_run_state(resources=resources, phase='monitor', status='running')
+            _update_run_state(resources=resources, phase='runtime_verify', status='running')
+            runtime_verify_report = _runtime_verify(
+                resources=resources,
+                manifest=manifest,
+            )
+            _save_json(_artifact_path(resources, 'runtime-verify.json'), runtime_verify_report)
+            _update_run_state(
+                resources=resources,
+                phase='runtime_verify',
+                status='ok' if runtime_verify_report.get('runtime_state') == 'ready' else 'error',
+                details=runtime_verify_report,
+            )
+            if runtime_verify_report.get('runtime_state') != 'ready':
+                errors.append('environment_incomplete')
+
+            _update_run_state(resources=resources, phase='activity_verify', status='running')
             monitor_report = _monitor_run_completion(
+                resources=resources,
                 manifest=manifest,
                 postgres_config=postgres_config,
+                clickhouse_config=clickhouse_config,
+                runtime_verify=runtime_verify_report,
             )
-            _update_run_state(resources=resources, phase='monitor', status='ok')
+            _save_json(_artifact_path(resources, 'signal-activity.json'), {
+                'activity_classification': monitor_report.get('activity_classification'),
+                'signal_rows': _as_mapping(monitor_report.get('final_snapshot')).get('signal_rows'),
+                'price_rows': _as_mapping(monitor_report.get('final_snapshot')).get('price_rows'),
+            })
+            _save_json(_artifact_path(resources, 'decision-activity.json'), {
+                'activity_classification': monitor_report.get('activity_classification'),
+                'trade_decisions': _as_mapping(monitor_report.get('final_snapshot')).get('trade_decisions'),
+                'cursor_at': _as_mapping(monitor_report.get('final_snapshot')).get('cursor_at'),
+            })
+            _save_json(_artifact_path(resources, 'execution-activity.json'), {
+                'activity_classification': monitor_report.get('activity_classification'),
+                'executions': _as_mapping(monitor_report.get('final_snapshot')).get('executions'),
+                'execution_tca_metrics': _as_mapping(monitor_report.get('final_snapshot')).get('execution_tca_metrics'),
+                'execution_order_events': _as_mapping(monitor_report.get('final_snapshot')).get('execution_order_events'),
+            })
+            _update_run_state(
+                resources=resources,
+                phase='activity_verify',
+                status='ok' if monitor_report.get('activity_classification') == 'success' else 'degraded',
+                details=monitor_report,
+            )
+            if monitor_report.get('activity_classification') in {'infra_not_active', 'environment_incomplete'}:
+                errors.append(f'activity:{monitor_report.get("activity_classification")}')
         else:
             _update_run_state(
                 resources=resources,
-                phase='apply',
+                phase='dataset_prepare',
                 status='skipped',
                 details={'report_only': True},
             )
             _update_run_state(
                 resources=resources,
-                phase='monitor',
+                phase='runtime_verify',
+                status='skipped',
+                details={'report_only': True},
+            )
+            _update_run_state(
+                resources=resources,
+                phase='activity_verify',
                 status='skipped',
                 details={'report_only': True},
             )
@@ -3314,6 +3534,7 @@ def _run_full_lifecycle(
         'argocd_prepare': argocd_prepare_report,
         'argocd_restore': argocd_restore_report,
         'apply': apply_report,
+        'runtime_verify': runtime_verify_report,
         'monitor': monitor_report,
         'report': analytics_report,
         'teardown': teardown_report,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from decimal import Decimal
 from typing import Any, Iterable, Mapping, Optional, cast
 
@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..models import Strategy, TradeDecision
 from .models import RiskCheckResult, StrategyDecision
+from .time_source import trading_now
 
 FINAL_STATUSES = {"filled", "canceled", "rejected", "expired"}
 MAX_ADVERSE_SELECTION_RISK = Decimal("0.85")
@@ -285,7 +286,7 @@ def _append_cooldown_reason(
     cooldown_seconds = settings.trading_cooldown_seconds
     if cooldown_seconds <= 0:
         return
-    recent_cutoff = datetime.now(timezone.utc) - timedelta(seconds=cooldown_seconds)
+    recent_cutoff = trading_now() - timedelta(seconds=cooldown_seconds)
     stmt = (
         select(TradeDecision)
         .where(TradeDecision.symbol == symbol)

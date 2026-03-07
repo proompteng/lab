@@ -64,6 +64,7 @@ from .trading.hypotheses import (
 from .trading.lean_lanes import LeanLaneManager
 from .trading.llm.evaluation import build_llm_evaluation_metrics
 from .trading.tca import build_tca_gate_inputs
+from .trading.time_source import trading_time_status
 from .whitepapers import (
     WhitepaperKafkaWorker,
     WhitepaperWorkflowService,
@@ -1656,6 +1657,14 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
         "forecast_service": _forecast_service_status(),
         "lean_authority": _lean_authority_status(),
         "empirical_jobs": _empirical_jobs_status(),
+        "simulation": {
+            "enabled": settings.trading_simulation_enabled,
+            "run_id": settings.trading_simulation_run_id,
+            "dataset_id": settings.trading_simulation_dataset_id,
+            "window_start": settings.trading_simulation_window_start,
+            "window_end": settings.trading_simulation_window_end,
+            "time_source": trading_time_status(account_label=settings.trading_account_label),
+        },
         "control_plane_contract": control_plane_contract,
         "evidence_continuity": state.last_evidence_continuity_report,
     }
@@ -1806,6 +1815,14 @@ def trading_autonomy() -> dict[str, object]:
         "forecast_service": _forecast_service_status(),
         "lean_authority": _lean_authority_status(),
         "empirical_jobs": _empirical_jobs_status(),
+        "simulation": {
+            "enabled": settings.trading_simulation_enabled,
+            "run_id": settings.trading_simulation_run_id,
+            "dataset_id": settings.trading_simulation_dataset_id,
+            "window_start": settings.trading_simulation_window_start,
+            "window_end": settings.trading_simulation_window_end,
+            "time_source": trading_time_status(account_label=settings.trading_account_label),
+        },
         "bridge_status": _build_autonomy_bridge_status(scheduler),
         "signal_continuity": {
             "universe_source": settings.trading_universe_source,

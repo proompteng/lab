@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: torghut-forecast-sim-registry
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut-forecast-sim
+    app.kubernetes.io/component: inference
+    app.kubernetes.io/part-of: lab
+data:
+  registry.json: |
+    {
+      "schema_version": "torghut-forecast-registry.v1",
+      "registry_ref": "s3://torghut-forecast-sim/registry/bootstrap-registry-v1.json",
+      "generated_at": "2026-03-06T00:00:00Z",
+      "models": [
+        {
+          "model_family": "chronos",
+          "model_version": "chronos-empirical-v1",
+          "model_registry_ref": "s3://torghut-forecast-sim/models/chronos/chronos-empirical-v1/model.json",
+          "training_run_ref": "train/chronos/2026-03-06-001",
+          "dataset_snapshot_ref": "datasets/market-replay/2026-03-05/chronos.parquet",
+          "calibration_ref": "calibrations/chronos/2026-03-06-001.json",
+          "calibration_score": "0.94",
+          "calibration_updated_at": "2026-03-06T00:00:00Z",
+          "latency_ms_floor": 35,
+          "latency_ms_span": 40,
+          "parameters": {
+            "macd_weight": "0.91",
+            "drift_bias_pct": "0.00015",
+            "spread_penalty": "0.18",
+            "interval_width_multiplier": "0.78",
+            "epistemic_offset": "0.05",
+            "aleatoric_multiplier": "18",
+            "aleatoric_offset": "0.05"
+          },
+          "notes": "Bootstrap empirical Chronos simulation registry entry."
+        },
+        {
+          "model_family": "moment",
+          "model_version": "moment-empirical-v1",
+          "model_registry_ref": "s3://torghut-forecast-sim/models/moment/moment-empirical-v1/model.json",
+          "training_run_ref": "train/moment/2026-03-06-001",
+          "dataset_snapshot_ref": "datasets/market-replay/2026-03-05/moment.parquet",
+          "calibration_ref": "calibrations/moment/2026-03-06-001.json",
+          "calibration_score": "0.92",
+          "calibration_updated_at": "2026-03-06T00:00:00Z",
+          "latency_ms_floor": 25,
+          "latency_ms_span": 35,
+          "parameters": {
+            "macd_weight": "0.84",
+            "drift_bias_pct": "0.00012",
+            "spread_penalty": "0.14",
+            "interval_width_multiplier": "0.74",
+            "epistemic_offset": "0.06",
+            "aleatoric_multiplier": "17",
+            "aleatoric_offset": "0.05"
+          },
+          "notes": "Bootstrap empirical Moment simulation registry entry."
+        },
+        {
+          "model_family": "financial_tsfm",
+          "model_version": "financial-tsfm-empirical-v1",
+          "model_registry_ref": "s3://torghut-forecast-sim/models/financial-tsfm/financial-tsfm-empirical-v1/model.json",
+          "training_run_ref": "train/financial-tsfm/2026-03-06-001",
+          "dataset_snapshot_ref": "datasets/market-replay/2026-03-05/financial-tsfm.parquet",
+          "calibration_ref": "calibrations/financial-tsfm/2026-03-06-001.json",
+          "calibration_score": "0.95",
+          "calibration_updated_at": "2026-03-06T00:00:00Z",
+          "latency_ms_floor": 45,
+          "latency_ms_span": 50,
+          "parameters": {
+            "macd_weight": "0.97",
+            "drift_bias_pct": "0.00018",
+            "spread_penalty": "0.22",
+            "interval_width_multiplier": "0.82",
+            "epistemic_offset": "0.05",
+            "aleatoric_multiplier": "19",
+            "aleatoric_offset": "0.05"
+          },
+          "notes": "Bootstrap empirical Financial TSFM simulation registry entry."
+        }
+      ]
+    }

@@ -16,6 +16,7 @@ from uuid import uuid4
 from ..alpaca_client import TorghutAlpacaClient
 from ..config import settings
 from .firewall import OrderFirewall
+from .time_source import trading_now
 
 logger = logging.getLogger(__name__)
 
@@ -177,7 +178,16 @@ class SimulationExecutionAdapter:
             client_order_id = f'sim-client-{uuid4().hex[:20]}'
         correlation_id = f'sim-{uuid4().hex[:20]}'
         idempotency_key = client_order_id
-        now = datetime.now(timezone.utc)
+        simulation_context = _resolve_simulation_context_payload(
+            simulation_run_id=self._simulation_run_id,
+            dataset_id=self._dataset_id,
+            symbol=symbol,
+            source=payload.get('simulation_context') if isinstance(payload.get('simulation_context'), Mapping) else None,
+        )
+        now = _resolve_simulation_event_ts(
+            simulation_context=simulation_context,
+            account_label=self._account_label,
+        )
         order_id = self._order_id_by_client_id.get(client_order_id)
         if order_id is None:
             order_id = f'sim-order-{uuid4().hex[:20]}'
@@ -206,12 +216,6 @@ class SimulationExecutionAdapter:
             '_execution_correlation_id': correlation_id,
             '_execution_idempotency_key': idempotency_key,
         }
-        simulation_context = _resolve_simulation_context_payload(
-            simulation_run_id=self._simulation_run_id,
-            dataset_id=self._dataset_id,
-            symbol=symbol,
-            source=payload.get('simulation_context') if isinstance(payload.get('simulation_context'), Mapping) else None,
-        )
         order['_simulation_context'] = simulation_context
         order['simulation_context'] = simulation_context
         order['_execution_audit'] = {
@@ -237,7 +241,7 @@ class SimulationExecutionAdapter:
         if current_status in {'filled', 'canceled', 'cancelled', 'rejected', 'expired'}:
             self.last_route = self.name
             return False
-        now = datetime.now(timezone.utc)
+        now = trading_now(account_label=self._account_label)
         order['status'] = 'canceled'
         order['updated_at'] = now.isoformat()
         order['filled_qty'] = order.get('filled_qty') or '0'
@@ -978,6 +982,25 @@ def _resolve_simulated_fill_price(
         if value > 0:
             return value
     return 1.0
+
+
+def _resolve_simulation_event_ts(
+    *,
+    simulation_context: Mapping[str, Any],
+    account_label: str,
+) -> datetime:
+    raw = simulation_context.get('signal_event_ts')
+    if isinstance(raw, str) and raw.strip():
+        normalized = f'{raw[:-1]}+00:00' if raw.endswith('Z') else raw
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            parsed = None
+        if parsed is not None:
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+    return trading_now(account_label=account_label)
 
 
 def _float_to_order_text(value: float) -> str:
