@@ -216,7 +216,10 @@ def evaluate_promotion_prerequisites(
         else None
     )
     for item in required_artifacts:
-        if item == "gates/benchmark-parity-report-v1.json" and existing_benchmark_path is not None:
+        if item in {
+            "gates/benchmark-parity-report-v1.json",
+            "benchmarks/benchmark-parity-report-v1.json",
+        } and existing_benchmark_path is not None:
             continue
         if not (artifact_root / item).exists():
             missing_artifacts.append(item)

@@ -3767,6 +3767,55 @@ class TestPolicyChecks(TestCase):
             promotion.required_artifacts,
         )
 
+    def test_promotion_prerequisites_allow_legacy_required_benchmark_parity_artifact(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "research").mkdir(parents=True, exist_ok=True)
+            (root / "backtest").mkdir(parents=True, exist_ok=True)
+            (root / "gates").mkdir(parents=True, exist_ok=True)
+            (root / "paper-candidate").mkdir(parents=True, exist_ok=True)
+            (root / "research" / "candidate-spec.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            (root / "backtest" / "evaluation-report.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            (root / "gates" / "gate-evaluation.json").write_text("{}", encoding="utf-8")
+            (root / "paper-candidate" / "strategy-configmap-patch.yaml").write_text(
+                "kind: ConfigMap", encoding="utf-8"
+            )
+            _write_benchmark_parity_payload(root)
+
+            promotion = evaluate_promotion_prerequisites(
+                policy_payload={
+                    "promotion_require_benchmark_parity": True,
+                    "promotion_benchmark_parity_required_targets": ["paper"],
+                    "promotion_benchmark_required_artifacts": [
+                        "benchmarks/benchmark-parity-report-v1.json"
+                    ],
+                    "gate6_require_profitability_evidence": False,
+                    "gate6_require_janus_evidence": False,
+                    "promotion_require_janus_evidence": False,
+                    "promotion_require_profitability_stage_manifest": False,
+                },
+                gate_report_payload=_gate_report(),
+                candidate_state_payload=_candidate_state(),
+                promotion_target="paper",
+                artifact_root=root,
+            )
+
+        self.assertTrue(promotion.allowed)
+        self.assertNotIn("benchmark_parity_artifact_missing", promotion.reasons)
+        self.assertNotIn("required_artifacts_missing", promotion.reasons)
+        self.assertIn(
+            "benchmarks/benchmark-parity-report-v1.json",
+            promotion.required_artifacts,
+        )
+
     def test_promotion_prerequisites_fail_when_benchmark_parity_degradation_threshold_is_exceeded(
         self,
     ) -> None:
