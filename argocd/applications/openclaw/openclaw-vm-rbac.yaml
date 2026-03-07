@@ -33,6 +33,22 @@ rules:
   - apiGroups: ["agents.proompteng.ai"]
     resources: ["agentruns"]
     verbs: ["create", "delete", "get", "list", "watch"]
+  - apiGroups: ["agents.proompteng.ai"]
+    resources: ["agents", "implementationspecs", "versioncontrolproviders"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["codex-github-token", "codex-openai-key"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["configmaps", "pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
