@@ -4,27 +4,49 @@ metadata:
   name: openclaw-vm
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
-  name: openclaw-vm-argocd-app
+  name: openclaw-vm-argocd-applications
+  namespace: argocd
 rules:
   - apiGroups: ["argoproj.io"]
     resources: ["applications"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["argoproj.io"]
-    resources: ["applications"]
-    resourceNames: ["openclaw"]
-    verbs: ["patch", "update"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
-  name: openclaw-vm-argocd-app
+  name: openclaw-vm-argocd-applications
+  namespace: argocd
 subjects:
   - kind: ServiceAccount
     name: openclaw-vm
     namespace: openclaw
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: openclaw-vm-argocd-app
+  kind: Role
+  name: openclaw-vm-argocd-applications
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: openclaw-vm-agentruns
+  namespace: agents
+rules:
+  - apiGroups: ["agents.proompteng.ai"]
+    resources: ["agentruns"]
+    verbs: ["create", "delete", "get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openclaw-vm-agentruns
+  namespace: agents
+subjects:
+  - kind: ServiceAccount
+    name: openclaw-vm
+    namespace: openclaw
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: openclaw-vm-agentruns

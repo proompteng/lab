@@ -26,9 +26,9 @@ Cloud-init should ensure:
 ## VM access model
 
 - ServiceAccount: `openclaw-vm` (namespace `openclaw`)
-- RBAC scope: **Argo CD application only**
-  - can `get/list/watch` Argo CD `applications`
-  - can `patch/update` only `argocd/Application/openclaw`
+- RBAC scope:
+  - can `create/delete/get/list/patch/update/watch` Argo CD `applications` in namespace `argocd`
+  - can `create/delete/get/list/watch` `agents.proompteng.ai/AgentRun` in namespace `agents`
 
 ## Re-seal command (example)
 
