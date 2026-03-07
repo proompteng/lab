@@ -3370,10 +3370,8 @@ def _prepare_argocd_for_run(
             'current_mode': None,
             'previous_mode': None,
         }
-    automation_report = _set_argocd_automation_mode(
-        config=config,
-        desired_mode=config.desired_mode_during_run,
-    )
+    automation_state = _read_argocd_automation_mode(config=config)
+    current_mode = _normalized_automation_mode(_as_text(automation_state.get('mode')))
     application_report = _set_argocd_application_sync_policy(
         config=config,
         desired_sync_policy=_manual_argocd_application_sync_policy(
@@ -3382,8 +3380,12 @@ def _prepare_argocd_for_run(
     )
     return {
         'managed': True,
-        'changed': automation_report['changed'] or application_report['changed'],
-        **automation_report,
+        'changed': application_report['changed'],
+        'pointer': automation_state.get('pointer'),
+        'previous_mode': current_mode,
+        'desired_mode': config.desired_mode_during_run,
+        'current_mode': current_mode,
+        'applicationset_managed': False,
         'application': application_report,
     }
 
@@ -3400,24 +3402,18 @@ def _restore_argocd_after_run(
             'changed': False,
             'restored_mode': None,
         }
-    restore_mode = config.restore_mode_after_run
-    if restore_mode == 'previous':
-        target_mode = previous_mode or 'auto'
-    else:
-        target_mode = restore_mode
-    report = _set_argocd_automation_mode(
-        config=config,
-        desired_mode=target_mode,
-    )
     application_report = _set_argocd_application_sync_policy(
         config=config,
         desired_sync_policy=previous_sync_policy,
     )
     return {
         'managed': True,
-        'restored_mode': target_mode,
+        'changed': application_report['changed'],
+        'restored_mode': previous_mode,
+        'previous_mode': previous_mode,
+        'current_mode': previous_mode,
+        'applicationset_managed': False,
         'application': application_report,
-        **report,
     }
 
 
