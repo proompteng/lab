@@ -53,6 +53,9 @@ cephClusterSpec:
   mgr:
     count: 2
     allowMultiplePerNode: false
+    modules:
+      - name: stats
+        enabled: true
 
   dashboard:
     enabled: true
@@ -106,7 +109,9 @@ cephClusterSpec:
 # Disable chart-managed default block/filesystem classes to avoid duplicates.
 # Canonical classes are managed in storageclasses.yaml as:
 # - rook-ceph-block (RWO)
-# - rook-cephfs (RWX)
+# - rook-cephfs (RWX, kernel-capable nodes only)
+# - rook-cephfs-fuse (RWX on Talos-compatible nodes)
+# - CephFilesystem details such as MDS resources
 cephBlockPools: []
 cephFileSystems: []
 

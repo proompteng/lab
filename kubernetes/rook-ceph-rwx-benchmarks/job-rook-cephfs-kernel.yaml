@@ -1,0 +1,41 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rook-cephfs-kernel-benchmark
+  namespace: rook-ceph-benchmarks
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        storage.proompteng.ai/cephfs-kernel-client: "true"
+      containers:
+        - name: benchmark
+          image: debian:bookworm-slim
+          command:
+            - /bin/bash
+            - -lc
+            - |
+              set -euo pipefail
+              apt-get update
+              apt-get install -y --no-install-recommends fio python3 ca-certificates
+              /scripts/run-benchmark-suite.sh /mnt/cephfs /results rook-cephfs
+          volumeMounts:
+            - name: benchmark-volume
+              mountPath: /mnt/cephfs
+            - name: benchmark-results
+              mountPath: /results
+            - name: benchmark-scripts
+              mountPath: /scripts
+      volumes:
+        - name: benchmark-volume
+          persistentVolumeClaim:
+            claimName: rook-cephfs-kernel-bench
+        - name: benchmark-results
+          emptyDir: {}
+        - name: benchmark-scripts
+          configMap:
+            name: rook-ceph-rwx-benchmark-scripts
+            defaultMode: 0755

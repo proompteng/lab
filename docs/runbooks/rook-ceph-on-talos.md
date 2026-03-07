@@ -67,6 +67,10 @@ Rook operator and cluster chart versions:
 
 1. `argocd/applications/rook-ceph/kustomization.yaml`
 
+RWX performance workflow:
+
+1. `docs/runbooks/rook-ceph-rwx-performance.md`
+
 ## Install / rollout steps
 
 1. Ensure you have verified the disk inventory on each node (example):
@@ -91,7 +95,10 @@ argocd app sync rook-ceph
 kubectl -n rook-ceph get pods
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph -s
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd tree
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph mgr module ls
 ```
+
+The cluster enables the Ceph mgr `stats` module declaratively so `ceph fs perf stats` is available during RWX investigations.
 
 ## Recovery: Talos node host jump (same disks, new hostname/IP)
 
