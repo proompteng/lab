@@ -500,7 +500,12 @@ def submit_backtest(
     operation = 'submit_backtest'
     correlation_id = _resolve_correlation_id(x_correlation_id)
     body = BacktestSubmitBody(lane=_normalize_backtest_lane(body.lane), config=body.config)
-    proxied = _proxy_backtest_submit(body=body, correlation_id=correlation_id)
+    try:
+        proxied = _proxy_backtest_submit(body=body, correlation_id=correlation_id)
+    except Exception as exc:
+        taxonomy = _classify_error_taxonomy(exc)
+        _metrics.record(operation=operation, latency_ms=_latency_ms(started), failure_taxonomy=taxonomy)
+        raise HTTPException(status_code=502, detail=f'lean_submit_backtest_failed:{taxonomy}:{exc}') from exc
     if proxied is not None:
         _metrics.record(operation=operation, latency_ms=_latency_ms(started))
         return proxied

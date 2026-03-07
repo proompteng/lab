@@ -2120,6 +2120,7 @@ def _evaluate_promotion_evidence(
     details.extend(portfolio_details)
     alpha_readiness_reasons, alpha_readiness_details = (
         _evaluate_alpha_readiness_summary(
+            policy_payload=policy_payload,
             gate_report_payload=gate_report_payload,
             promotion_target=promotion_target,
         )
@@ -2420,17 +2421,28 @@ def _evaluate_portfolio_promotion_summary(
 
 def _evaluate_alpha_readiness_summary(
     *,
+    policy_payload: dict[str, Any],
     gate_report_payload: dict[str, Any],
     promotion_target: str,
 ) -> tuple[list[str], list[dict[str, object]]]:
     if promotion_target not in {"paper", "live"}:
+        return [], []
+    require_alpha_readiness = _requires_alpha_readiness_contract(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    )
+    require_dependency_quorum = _requires_jangar_dependency_quorum(
+        policy_payload=policy_payload,
+        promotion_target=promotion_target,
+    )
+    if not require_alpha_readiness and not require_dependency_quorum:
         return [], []
     alpha_readiness = _as_dict(gate_report_payload.get("alpha_readiness"))
     dependency_quorum = _as_dict(gate_report_payload.get("dependency_quorum"))
     reasons: list[str] = []
     details: list[dict[str, object]] = []
 
-    if not alpha_readiness:
+    if require_alpha_readiness and not alpha_readiness:
         reasons.append("alpha_readiness_summary_missing")
         details.append(
             {
@@ -2438,7 +2450,7 @@ def _evaluate_alpha_readiness_summary(
                 "promotion_target": promotion_target,
             }
         )
-    else:
+    elif require_alpha_readiness:
         if not bool(alpha_readiness.get("promotion_eligible", False)):
             reasons.append("alpha_readiness_not_promotion_eligible")
             details.append(
@@ -2454,6 +2466,9 @@ def _evaluate_alpha_readiness_summary(
                     ),
                 }
             )
+
+    if not require_dependency_quorum:
+        return reasons, details
 
     if not dependency_quorum:
         reasons.append("jangar_dependency_quorum_missing")

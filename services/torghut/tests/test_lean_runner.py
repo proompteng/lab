@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from unittest import TestCase
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -74,6 +75,22 @@ class TestLeanRunner(TestCase):
         self.assertTrue(fetched.json().get('result', {}).get('deterministic_replay_passed'))
         self.assertEqual(fetched.json().get('result', {}).get('authority_mode'), 'deterministic_scaffold')
         self.assertFalse(fetched.json().get('result', {}).get('promotion_authority_eligible'))
+
+    def test_backtest_submit_maps_proxy_failures_to_502(self) -> None:
+        client = TestClient(lean_runner.app, raise_server_exceptions=False)
+
+        with patch.object(
+            lean_runner,
+            '_proxy_backtest_submit',
+            side_effect=RuntimeError('lean_upstream_network_error:boom'),
+        ):
+            response = client.post('/v1/backtests/submit', json={'lane': 'research', 'config': {'symbol': 'BTC/USD'}})
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(
+            response.json(),
+            {'detail': 'lean_submit_backtest_failed:upstream_error:lean_upstream_network_error:boom'},
+        )
 
     def test_readyz_and_run_artifacts_surface_authority_metadata(self) -> None:
         client = TestClient(lean_runner.app)

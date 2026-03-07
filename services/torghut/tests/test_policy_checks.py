@@ -33,6 +33,7 @@ from app.trading.parity import (
     FOUNDATION_ROUTER_PARITY_SCHEMA_VERSION,
 )
 from app.trading.autonomy.policy_checks import (
+    _evaluate_alpha_readiness_summary,
     evaluate_promotion_prerequisites,
     evaluate_rollback_readiness,
 )
@@ -41,6 +42,19 @@ _V6_08_GOVERNING_DESIGN_DOC = "docs/torghut/design-system/v6/08-profitability-re
 
 
 class TestPolicyChecks(TestCase):
+    def test_alpha_readiness_summary_skips_disabled_policy_gates(self) -> None:
+        reasons, details = _evaluate_alpha_readiness_summary(
+            policy_payload={
+                "promotion_require_alpha_readiness_contract": False,
+                "promotion_require_jangar_dependency_quorum": False,
+            },
+            gate_report_payload={},
+            promotion_target="paper",
+        )
+
+        self.assertEqual(reasons, [])
+        self.assertEqual(details, [])
+
     def test_promotion_prerequisites_fail_when_patch_missing_for_paper(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

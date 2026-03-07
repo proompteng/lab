@@ -329,7 +329,12 @@ class TestPromotionTruthfulness(TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             artifact_root = Path(tmpdir)
             result = evaluate_promotion_prerequisites(
-                policy_payload={},
+                policy_payload={
+                    'promotion_require_alpha_readiness_contract': True,
+                    'promotion_alpha_readiness_required_targets': ['paper', 'live'],
+                    'promotion_require_jangar_dependency_quorum': True,
+                    'promotion_jangar_dependency_quorum_required_targets': ['paper', 'live'],
+                },
                 gate_report_payload={
                     'promotion_allowed': True,
                     'recommended_mode': 'paper',
