@@ -57,7 +57,7 @@ spec:
   template:
     metadata:
       annotations:
-        client.knative.dev/updateTimestamp: "2025-01-01T00:00:00Z"
+        autoscaling.knative.dev/minScale: "1"
     spec:
       containers:
         - name: user-container
