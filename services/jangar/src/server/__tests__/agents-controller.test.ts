@@ -455,6 +455,61 @@ describe('agents controller startup', () => {
       }
     }
   })
+
+  it('dedupes repeated ingestion stall logs and emits recovery once', async () => {
+    stopAgentsController()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const state = { namespaces: new Map() }
+    const staleRun = buildAgentRun({
+      metadata: {
+        name: 'run-stale',
+        namespace: 'agents',
+        generation: 1,
+        creationTimestamp: '2026-01-20T00:00:00Z',
+        finalizers: [],
+      },
+      status: {},
+    })
+    const healthyList = { items: [] }
+    const staleList = { items: [staleRun] }
+    const kube = buildKube({
+      list: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.AgentRun) {
+          return staleList
+        }
+        return { items: [] }
+      }),
+      get: vi.fn(async () => null),
+    })
+
+    try {
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+
+      let stallMessages = warnSpy.mock.calls
+        .map((call) => String(call[0]))
+        .filter((line) => line.includes('agentrun_ingestion_stalled'))
+      expect(stallMessages).toHaveLength(1)
+
+      ;(kube.list as ReturnType<typeof vi.fn>).mockImplementation(async (resource: string) => {
+        if (resource === RESOURCE_MAP.AgentRun) {
+          return healthyList
+        }
+        return { items: [] }
+      })
+
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+
+      const recoveryMessages = infoSpy.mock.calls
+        .map((call) => String(call[0]))
+        .filter((line) => line.includes('agentrun_ingestion_recovered'))
+      expect(recoveryMessages).toHaveLength(1)
+    } finally {
+      warnSpy.mockRestore()
+      infoSpy.mockRestore()
+    }
+  })
 })
 
 describe('AgentRun artifacts limits', () => {

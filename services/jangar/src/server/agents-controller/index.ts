@@ -196,6 +196,8 @@ const createDefaultAgentRunIngestionRuntimeState = (): AgentRunIngestionRuntimeS
   lastResyncAtMs: null,
   untouchedRunCount: 0,
   oldestUntouchedAgeSeconds: null,
+  lastResyncSummarySignature: null,
+  lastStallSignature: null,
 })
 
 const getAgentRunIngestionRuntimeState = (namespace: string) => {
@@ -853,24 +855,52 @@ const resyncAgentRunsForNamespace = async (
     recordAgentRunResyncAdoptions(candidateRuns.length, { namespace, reason })
   }
 
-  logAgentsControllerInfo('agentrun_resync_completed', {
-    namespace,
-    reason,
-    totalRuns: refreshedRuns.size,
-    candidateCount: candidateRuns.length,
+  const resyncSummarySignature = [
+    refreshedRuns.size,
+    candidateRuns.length,
     untouchedRunCount,
-    oldestUntouchedAgeSeconds,
-  })
+    oldestUntouchedAgeSeconds ?? 'none',
+  ].join(':')
+  const shouldLogResyncSummary =
+    reason !== 'periodic' ||
+    candidateRuns.length > 0 ||
+    ingestionState.lastResyncSummarySignature !== resyncSummarySignature
+  if (shouldLogResyncSummary) {
+    logAgentsControllerInfo('agentrun_resync_completed', {
+      namespace,
+      reason,
+      totalRuns: refreshedRuns.size,
+      candidateCount: candidateRuns.length,
+      untouchedRunCount,
+      oldestUntouchedAgeSeconds,
+    })
+    ingestionState.lastResyncSummarySignature = resyncSummarySignature
+  }
 
   const warnAfterSeconds = resolveAgentRunUntouchedWarnAfterSeconds()
-  if (untouchedRunCount > 0 && oldestUntouchedAgeSeconds !== null && oldestUntouchedAgeSeconds >= warnAfterSeconds) {
-    logAgentsControllerWarn('agentrun_ingestion_stalled', {
+  const stallSignature =
+    untouchedRunCount > 0 && oldestUntouchedAgeSeconds !== null && oldestUntouchedAgeSeconds >= warnAfterSeconds
+      ? [untouchedRunCount, oldestUntouchedAgeSeconds, warnAfterSeconds].join(':')
+      : null
+  if (stallSignature) {
+    if (ingestionState.lastStallSignature !== stallSignature) {
+      logAgentsControllerWarn('agentrun_ingestion_stalled', {
+        namespace,
+        reason,
+        untouchedRunCount,
+        oldestUntouchedAgeSeconds,
+        warnAfterSeconds,
+      })
+      ingestionState.lastStallSignature = stallSignature
+    }
+  } else if (ingestionState.lastStallSignature !== null) {
+    logAgentsControllerInfo('agentrun_ingestion_recovered', {
       namespace,
       reason,
       untouchedRunCount,
       oldestUntouchedAgeSeconds,
-      warnAfterSeconds,
     })
+    ingestionState.lastStallSignature = null
   }
 
   for (const candidate of candidateRuns) {

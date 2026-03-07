@@ -16,6 +16,8 @@ export type AgentRunIngestionRuntimeState = {
   lastResyncAtMs: number | null
   untouchedRunCount: number
   oldestUntouchedAgeSeconds: number | null
+  lastResyncSummarySignature: string | null
+  lastStallSignature: string | null
 }
 
 export type AgentsControllerMutableState<TControllerState> = {
