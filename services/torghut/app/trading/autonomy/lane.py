@@ -143,7 +143,7 @@ _HMM_STATE_POSTERIOR_ARTIFACT_PATH = "gates/hmm-state-posterior-v1.json"
 _EXPERT_ROUTER_REGISTRY_ARTIFACT_PATH = "gates/expert-router-registry-v1.json"
 _FOLD_METRICS_ARTIFACT_PATH = "fold-metrics-v1.json"
 _STRESS_METRICS_CASES = ("spread", "volatility", "liquidity", "halt")
-_BENCHMARK_PARITY_REPORT_PATH = "benchmarks/benchmark-parity-report-v1.json"
+_BENCHMARK_PARITY_REPORT_PATH = "gates/benchmark-parity-report-v1.json"
 _FOUNDATION_ROUTER_PARITY_REPORT_PATH = "router/foundation-router-parity-report-v1.json"
 _DEEPLOB_BDLOB_REPORT_PATH = "microstructure/deeplob-bdlob-report-v1.json"
 _ADVISOR_FALLBACK_SLO_REPORT_PATH = "execution/advisor-fallback-slo-report-v1.json"
@@ -4259,7 +4259,7 @@ def _build_phase_manifest(
             str(output_dir / "gates" / "profitability-benchmark-v4.json"),
             str(output_dir / "gates" / "profitability-evidence-v4.json"),
             str(output_dir / "gates" / "profitability-evidence-validation.json"),
-            str(output_dir / "benchmarks" / "benchmark-parity-report-v1.json"),
+            str(output_dir / "gates" / "benchmark-parity-report-v1.json"),
             str(output_dir / "gates" / "janus-event-car-v1.json"),
             str(output_dir / "gates" / "janus-hgrm-reward-v1.json"),
             str(output_dir / "gates" / "promotion-evidence-gate.json"),

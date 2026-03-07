@@ -758,6 +758,41 @@ class VNextEmpiricalJobRun(Base, TimestampMixin):
     )
 
 
+class VNextCompletionGateResult(Base, TimestampMixin):
+    """Traceable completion results for doc-scoped vNext gates."""
+
+    __tablename__ = "vnext_completion_gate_results"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    gate_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    dataset_snapshot_ref: Mapped[Optional[str]] = mapped_column(
+        String(length=255), nullable=True
+    )
+    git_revision: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    image_digest: Mapped[Optional[str]] = mapped_column(String(length=255), nullable=True)
+    workflow_name: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    status: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    artifact_ref: Mapped[Optional[str]] = mapped_column(String(length=1024), nullable=True)
+    blocked_reason: Mapped[Optional[str]] = mapped_column(String(length=255), nullable=True)
+    details_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    measured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_vnext_completion_gate_results_gate_id", "gate_id"),
+        Index("ix_vnext_completion_gate_results_run_id", "run_id"),
+        Index("ix_vnext_completion_gate_results_candidate_id", "candidate_id"),
+        Index("ix_vnext_completion_gate_results_status", "status"),
+        Index(
+            "uq_vnext_completion_gate_results_gate_run",
+            "gate_id",
+            "run_id",
+            unique=True,
+        ),
+    )
+
+
 class WhitepaperDocument(Base, TimestampMixin):
     """Logical whitepaper record with source metadata and lifecycle status."""
 

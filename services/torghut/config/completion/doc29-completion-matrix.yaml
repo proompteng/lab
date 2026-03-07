@@ -1,0 +1,245 @@
+doc_id: doc29
+matrix_version: '2026-03-07'
+design_doc_path: docs/torghut/design-system/v6/29-code-investigated-vnext-architecture-reset-2026-03-06.md
+gates:
+  - gate_id: promotion_truthfulness_firewall
+    requirement_summary: Promotion to paper/live must fail closed on placeholder or synthetic evidence.
+    source_design_doc_section: Central Risk
+    acceptance_rule: No passing promotion evidence may rely on synthetic-generated or placeholder artifacts.
+    required_artifacts:
+      - gates/benchmark-parity-report-v1.json
+      - gates/janus-q-evidence-v1.json
+    required_db_queries:
+      - SELECT authority,promotion_authority_eligible FROM vnext_empirical_job_runs ORDER BY created_at DESC
+    required_status_fields:
+      - empirical_jobs.authority
+      - empirical_jobs.jobs.*.promotion_authority_eligible
+    required_cluster_resources:
+      - torghut
+      - torghut-empirical-promotion
+    blocking_conditions:
+      - Any required evidence artifact is synthetic, placeholder, stale, or ineligible.
+    evidence_freshness_rule:
+      max_age_seconds: 604800
+      stale_on_git_change: true
+    dependencies: []
+    evaluation_mode: recorded
+
+  - gate_id: strategy_spec_v2_runtime_lineage
+    requirement_summary: Runtime and promotion lineage must be attributable to canonical StrategySpecV2 or ExperimentSpec inputs.
+    source_design_doc_section: Design Decision
+    acceptance_rule: The proving run must identify canonical strategy or experiment lineage without plugin-only metadata gaps.
+    required_artifacts:
+      - run-manifest.json
+      - completion-trace.json
+    required_db_queries:
+      - SELECT payload_json FROM vnext_promotion_decisions ORDER BY created_at DESC
+    required_status_fields:
+      - strategy_migration_state
+    required_cluster_resources:
+      - torghut
+    blocking_conditions:
+      - No proving run recorded with spec-backed lineage.
+    evidence_freshness_rule:
+      max_age_seconds: 604800
+      stale_on_git_change: true
+    dependencies: []
+    evaluation_mode: recorded
+
+  - gate_id: simulation_smoke_execution_funnel
+    requirement_summary: Dedicated simulation smoke run must produce a real execution funnel.
+    source_design_doc_section: vNext Architecture / Evaluation and simulation plane
+    acceptance_rule: Smoke replay succeeds only when runtime/activity are successful and the simulation DB shows nonzero decisions, executions, TCA rows, and order events.
+    required_artifacts:
+      - run-manifest.json
+      - runtime-verify.json
+      - replay-report.json
+      - signal-activity.json
+      - decision-activity.json
+      - execution-activity.json
+      - completion-trace.json
+    required_db_queries:
+      - SELECT count(*) FROM trade_decisions
+      - SELECT count(*) FROM executions
+      - SELECT count(*) FROM execution_tca_metrics
+      - SELECT count(*) FROM execution_order_events
+    required_status_fields:
+      - runtime_verify.runtime_state
+      - monitor.activity_classification
+    required_cluster_resources:
+      - torghut-sim
+      - torghut-ta-sim
+      - torghut-forecast-sim
+      - torghut-simulation-runtime-ready
+      - torghut-simulation-activity
+    blocking_conditions:
+      - Activity classification is not success.
+      - Any required funnel row count is zero.
+    evidence_freshness_rule:
+      max_age_seconds: 604800
+      stale_on_git_change: true
+    dependencies: []
+    evaluation_mode: recorded
+
+  - gate_id: simulation_full_day_coverage
+    requirement_summary: Full-day replay must cover the target session and produce a complete execution funnel.
+    source_design_doc_section: vNext Architecture / Evaluation and simulation plane
+    acceptance_rule: Full-day replay succeeds only when coverage meets policy, activity is successful, and the DB shows nonzero decisions, executions, TCA rows, and order events.
+    required_artifacts:
+      - run-manifest.json
+      - run-full-lifecycle-manifest.json
+      - runtime-verify.json
+      - replay-report.json
+      - signal-activity.json
+      - decision-activity.json
+      - execution-activity.json
+      - completion-trace.json
+    required_db_queries:
+      - SELECT count(*) FROM trade_decisions
+      - SELECT count(*) FROM executions
+      - SELECT count(*) FROM execution_tca_metrics
+      - SELECT count(*) FROM execution_order_events
+    required_status_fields:
+      - apply.dump_coverage.coverage_ratio
+      - monitor.activity_classification
+    required_cluster_resources:
+      - torghut-sim
+      - torghut-ta-sim
+      - torghut-forecast-sim
+    blocking_conditions:
+      - Coverage ratio is below the configured full-session threshold.
+      - Activity classification is not success.
+    evidence_freshness_rule:
+      max_age_seconds: 604800
+      stale_on_git_change: true
+    dependencies:
+      - simulation_smoke_execution_funnel
+    evaluation_mode: recorded
+
+  - gate_id: empirical_manifest_schema_valid
+    requirement_summary: Empirical promotion input must be a validated mapping generated from simulation outputs.
+    source_design_doc_section: Central Risk
+    acceptance_rule: The empirical workflow only succeeds when the generated manifest is a mapping and carries non-empty run and dataset lineage.
+    required_artifacts:
+      - empirical-job-summary.json
+      - completion-trace.json
+    required_db_queries:
+      - SELECT run_id,dataset_snapshot_ref FROM vnext_empirical_job_runs ORDER BY created_at DESC
+    required_status_fields:
+      - empirical_jobs.jobs
+    required_cluster_resources:
+      - torghut-empirical-promotion
+    blocking_conditions:
+      - Manifest is malformed.
+      - dataset_snapshot_ref is blank.
+    evidence_freshness_rule:
+      max_age_seconds: 604800
+      stale_on_git_change: true
+    dependencies:
+      - simulation_smoke_execution_funnel
+    evaluation_mode: recorded
+
+  - gate_id: empirical_jobs_persisted
+    requirement_summary: Required empirical jobs must persist eligible rows with real dataset lineage.
+    source_design_doc_section: vNext Architecture / Evaluation and simulation plane
+    acceptance_rule: benchmark parity, foundation router parity, janus event car, and janus hgrm reward must all be authoritative, eligible, fresh, and tied to a non-empty dataset snapshot ref.
+    required_artifacts:
+      - gates/benchmark-parity-report-v1.json
+      - router/foundation-router-parity-report-v1.json
+      - gates/janus-event-car-v1.json
+      - gates/janus-hgrm-reward-v1.json
+      - gates/janus-q-evidence-v1.json
+      - empirical-job-summary.json
+      - completion-trace.json
+    required_db_queries:
+      - SELECT job_type,status,authority,promotion_authority_eligible,dataset_snapshot_ref FROM vnext_empirical_job_runs ORDER BY created_at DESC
+    required_status_fields:
+      - empirical_jobs.status
+      - empirical_jobs.jobs
+    required_cluster_resources:
+      - torghut
+      - torghut-empirical-promotion
+    blocking_conditions:
+      - Any required empirical job is missing, stale, blocked, or ineligible.
+      - dataset_snapshot_ref is blank for any required job.
+    evidence_freshness_rule:
+      max_age_seconds: 86400
+      stale_on_git_change: false
+    dependencies:
+      - empirical_manifest_schema_valid
+    evaluation_mode: derived
+
+  - gate_id: paper_gate_satisfied
+    requirement_summary: Paper promotion must be backed by calibrated replay evidence and full benchmark coverage.
+    source_design_doc_section: Promotion and Capital Stages
+    acceptance_rule: historical_market_replay plus calibrated maturity, at least 500 simulated decisions, 100 percent benchmark-family coverage, and a defined fill-price error budget are all required.
+    required_artifacts:
+      - completion-trace.json
+      - gates/benchmark-parity-report-v1.json
+      - empirical-job-summary.json
+    required_db_queries:
+      - SELECT payload_json FROM vnext_completion_gate_results WHERE gate_id = 'simulation_full_day_coverage'
+      - SELECT payload_json FROM vnext_empirical_job_runs WHERE job_type = 'benchmark_parity'
+    required_status_fields:
+      - empirical_jobs.status
+      - empirical_jobs.jobs.benchmark_parity
+    required_cluster_resources:
+      - torghut
+    blocking_conditions:
+      - fewer than 500 simulated decisions are proven
+      - benchmark-family coverage is incomplete
+      - fill-price error budget is not explicitly recorded
+    evidence_freshness_rule:
+      max_age_seconds: 86400
+      stale_on_git_change: false
+    dependencies:
+      - simulation_full_day_coverage
+      - empirical_jobs_persisted
+    evaluation_mode: derived
+
+  - gate_id: live_canary_observed
+    requirement_summary: Live canary needs observed paper-runtime evidence across enough sessions.
+    source_design_doc_section: Promotion and Capital Stages
+    acceptance_rule: paper_runtime_observed, empirically_validated maturity, at least 40 market-session samples, shadow/live alignment >= 95 percent, and slippage within budget.
+    required_artifacts:
+      - completion-trace.json
+    required_db_queries:
+      - SELECT payload_json FROM vnext_completion_gate_results WHERE gate_id = 'paper_gate_satisfied'
+    required_status_fields:
+      - hypothesis_runtime
+      - live_canary
+    required_cluster_resources:
+      - torghut
+    blocking_conditions:
+      - insufficient observed paper-runtime sessions
+      - slippage or alignment budgets are not met
+    evidence_freshness_rule:
+      max_age_seconds: 604800
+      stale_on_git_change: false
+    dependencies:
+      - paper_gate_satisfied
+    evaluation_mode: derived
+
+  - gate_id: live_scale_observed
+    requirement_summary: Scaled live requires sustained observed runtime proof across multiple sessions.
+    source_design_doc_section: Promotion and Capital Stages
+    acceptance_rule: live_runtime_observed, empirically_validated maturity, at least 120 market-session samples across at least 10 sessions, positive rolling post-cost expectancy, stable slippage, and no continuity or drift failure.
+    required_artifacts:
+      - completion-trace.json
+    required_db_queries:
+      - SELECT payload_json FROM vnext_completion_gate_results WHERE gate_id = 'live_canary_observed'
+    required_status_fields:
+      - hypothesis_runtime
+      - live_scale
+    required_cluster_resources:
+      - torghut
+    blocking_conditions:
+      - insufficient observed live sessions
+      - expectancy or slippage gates not satisfied
+      - continuity or drift failure active
+    evidence_freshness_rule:
+      max_age_seconds: 604800
+      stale_on_git_change: false
+    dependencies:
+      - live_canary_observed
+    evaluation_mode: derived

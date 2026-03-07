@@ -52,6 +52,7 @@ from .trading.autonomy import (
     assert_runtime_gate_policy_contract,
     evaluate_evidence_continuity,
 )
+from .trading.completion import build_doc29_completion_status
 from .trading.empirical_jobs import build_empirical_jobs_status
 from .trading.hypotheses import (
     JangarDependencyQuorumStatus,
@@ -78,6 +79,7 @@ logger = logging.getLogger(__name__)
 
 BUILD_VERSION = os.getenv("TORGHUT_VERSION", "dev")
 BUILD_COMMIT = os.getenv("TORGHUT_COMMIT", "unknown")
+BUILD_IMAGE_DIGEST = os.getenv("TORGHUT_IMAGE_DIGEST", "").strip() or None
 RUNTIME_PROFITABILITY_LOOKBACK_HOURS = 72
 RUNTIME_PROFITABILITY_SCHEMA_VERSION = "torghut.runtime-profitability.v1"
 LEAN_LANE_MANAGER = LeanLaneManager()
@@ -1868,6 +1870,39 @@ def trading_empirical_jobs() -> dict[str, object]:
     """Return freshness and authority status for empirical parity and Janus workflows."""
 
     return _empirical_jobs_status()
+
+
+@app.get("/trading/completion/doc29")
+def trading_completion_doc29(
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    """Return traceable completion status for doc 29 gates."""
+
+    return build_doc29_completion_status(
+        session=session,
+        stale_after_seconds=settings.trading_empirical_job_stale_after_seconds,
+        current_git_revision=BUILD_COMMIT,
+        current_image_digest=BUILD_IMAGE_DIGEST,
+    )
+
+
+@app.get("/trading/completion/doc29/{gate_id}")
+def trading_completion_doc29_gate(
+    gate_id: str,
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    """Return traceable completion status for one doc 29 gate."""
+
+    payload = build_doc29_completion_status(
+        session=session,
+        stale_after_seconds=settings.trading_empirical_job_stale_after_seconds,
+        current_git_revision=BUILD_COMMIT,
+        current_image_digest=BUILD_IMAGE_DIGEST,
+    )
+    for gate in cast(list[dict[str, object]], payload.get("gates", [])):
+        if str(gate.get("gate_id")) == gate_id:
+            return gate
+    raise HTTPException(status_code=404, detail=f"unknown_doc29_gate:{gate_id}")
 
 
 @app.get("/trading/autonomy/evidence-continuity")

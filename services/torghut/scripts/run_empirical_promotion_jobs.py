@@ -13,6 +13,14 @@ from typing import Any, Mapping
 import yaml
 
 from app.db import SessionLocal
+from app.trading.completion import (
+    DOC29_EMPIRICAL_JOBS_GATE,
+    DOC29_EMPIRICAL_MANIFEST_GATE,
+    TRACE_STATUS_BLOCKED,
+    TRACE_STATUS_SATISFIED,
+    build_completion_trace,
+    persist_completion_trace,
+)
 from app.trading.empirical_jobs import (
     build_empirical_benchmark_parity_report,
     build_empirical_foundation_router_parity_report,
@@ -49,6 +57,15 @@ def _as_dict(value: Any) -> dict[str, Any]:
 
 def _as_list(value: Any) -> list[Any]:
     return list(value) if isinstance(value, list) else []
+
+
+def _as_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text
 
 
 def _job_run_id(run_id: str, job_type: str, explicit: str | None = None) -> str:
@@ -201,6 +218,7 @@ def main() -> int:
     summary["jobs"] = jobs_summary
 
     with SessionLocal() as session:
+        job_row_ids: dict[str, str] = {}
         benchmark_manifest = _as_dict(manifest.get("benchmark_parity"))
         if benchmark_manifest:
             benchmark_job_run_id = _job_run_id(
@@ -233,7 +251,7 @@ def main() -> int:
                 bucket=bucket,
                 prefix=artifact_prefix,
             )
-            upsert_empirical_job_run(
+            benchmark_record = upsert_empirical_job_run(
                 session=session,
                 run_id=run_id,
                 candidate_id=candidate_id,
@@ -251,6 +269,7 @@ def main() -> int:
                 artifact_refs=[benchmark_ref],
                 payload=benchmark_payload,
             )
+            job_row_ids["benchmark_parity"] = str(benchmark_record.id)
             artifacts_summary["benchmark_parity"] = benchmark_ref
             jobs_summary["benchmark_parity"] = {
                 "job_run_id": benchmark_job_run_id,
@@ -289,7 +308,7 @@ def main() -> int:
                 bucket=bucket,
                 prefix=artifact_prefix,
             )
-            upsert_empirical_job_run(
+            foundation_record = upsert_empirical_job_run(
                 session=session,
                 run_id=run_id,
                 candidate_id=candidate_id,
@@ -307,6 +326,7 @@ def main() -> int:
                 artifact_refs=[foundation_ref],
                 payload=foundation_payload,
             )
+            job_row_ids["foundation_router_parity"] = str(foundation_record.id)
             artifacts_summary["foundation_router_parity"] = foundation_ref
             jobs_summary["foundation_router_parity"] = {
                 "job_run_id": foundation_job_run_id,
@@ -378,7 +398,7 @@ def main() -> int:
                 ("janus_event_car", "janus event car", event_payload, event_ref),
                 ("janus_hgrm_reward", "janus hgrm reward", reward_payload, reward_ref),
             ):
-                upsert_empirical_job_run(
+                janus_record = upsert_empirical_job_run(
                     session=session,
                     run_id=run_id,
                     candidate_id=candidate_id,
@@ -398,18 +418,105 @@ def main() -> int:
                     artifact_refs=[artifact_ref, summary_ref],
                     payload=payload,
                 )
+                job_row_ids[job_type] = str(janus_record.id)
             artifacts_summary["janus_event_car"] = event_ref
             artifacts_summary["janus_hgrm_reward"] = reward_ref
             artifacts_summary["janus_q"] = summary_ref
+            jobs_summary["janus_event_car"] = {
+                "job_run_id": f"{janus_job_run_id}:janus_event_car",
+                "eligible": bool(event_payload.get("promotion_authority_eligible")),
+            }
+            jobs_summary["janus_hgrm_reward"] = {
+                "job_run_id": f"{janus_job_run_id}:janus_hgrm_reward",
+                "eligible": bool(reward_payload.get("promotion_authority_eligible")),
+            }
             jobs_summary["janus_q"] = {
                 "job_run_id": janus_job_run_id,
                 "eligible": bool(summary_payload.get("promotion_authority_eligible")),
             }
 
+        manifest_gate_satisfied = bool(run_id) and bool(dataset_snapshot_ref)
+        empirical_jobs_satisfied = all(
+            bool(_as_dict(jobs_summary.get(job_type)).get("eligible"))
+            for job_type in (
+                "benchmark_parity",
+                "foundation_router_parity",
+                "janus_event_car",
+                "janus_hgrm_reward",
+            )
+        ) and all(
+            bool(_as_dict(artifacts_summary).get(job_type))
+            for job_type in (
+                "benchmark_parity",
+                "foundation_router_parity",
+                "janus_event_car",
+                "janus_hgrm_reward",
+            )
+        )
+        blocked_reasons: dict[str, str] = {}
+        if not manifest_gate_satisfied:
+            blocked_reasons[DOC29_EMPIRICAL_MANIFEST_GATE] = "manifest_missing_run_or_dataset_lineage"
+        if not empirical_jobs_satisfied:
+            blocked_reasons[DOC29_EMPIRICAL_JOBS_GATE] = "required_empirical_jobs_missing_or_ineligible"
+        summary_path = output_dir / "empirical-job-summary.json"
+        summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        completion_trace = build_completion_trace(
+            doc_id="doc29",
+            gate_ids_attempted=[DOC29_EMPIRICAL_MANIFEST_GATE, DOC29_EMPIRICAL_JOBS_GATE],
+            run_id=run_id,
+            dataset_snapshot_ref=dataset_snapshot_ref or None,
+            candidate_id=candidate_id,
+            workflow_name=_as_text(os.getenv("ARGO_WORKFLOW_NAME")) or "torghut-empirical-promotion",
+            analysis_run_names=[],
+            artifact_refs=[
+                str(item)
+                for item in (
+                    *(str(value) for value in artifacts_summary.values()),
+                    str(summary_path),
+                )
+                if str(item).strip()
+            ],
+            db_row_refs={"empirical_job_row_ids": job_row_ids},
+            status_snapshot={
+                "jobs": jobs_summary,
+                "dataset_snapshot_ref": dataset_snapshot_ref,
+            },
+            result_by_gate={
+                DOC29_EMPIRICAL_MANIFEST_GATE: {
+                    "status": TRACE_STATUS_SATISFIED if manifest_gate_satisfied else TRACE_STATUS_BLOCKED,
+                    "blocked_reason": blocked_reasons.get(DOC29_EMPIRICAL_MANIFEST_GATE),
+                    "artifact_ref": str(output_dir / "empirical-job-summary.json"),
+                    "acceptance_snapshot": {
+                        "run_id_present": bool(run_id),
+                        "dataset_snapshot_ref_present": bool(dataset_snapshot_ref),
+                    },
+                },
+                DOC29_EMPIRICAL_JOBS_GATE: {
+                    "status": TRACE_STATUS_SATISFIED if empirical_jobs_satisfied else TRACE_STATUS_BLOCKED,
+                    "blocked_reason": blocked_reasons.get(DOC29_EMPIRICAL_JOBS_GATE),
+                    "artifact_ref": str(output_dir / "empirical-job-summary.json"),
+                    "acceptance_snapshot": {
+                        "jobs": jobs_summary,
+                        "dataset_snapshot_ref": dataset_snapshot_ref,
+                    },
+                },
+            },
+            blocked_reasons=blocked_reasons,
+        )
+        completion_trace_path = output_dir / "completion-trace.json"
+        completion_trace_path.write_text(json.dumps(completion_trace, indent=2), encoding="utf-8")
+        gate_row_ids = persist_completion_trace(
+            session=session,
+            trace_payload=completion_trace,
+            default_artifact_ref=str(completion_trace_path),
+        )
+        completion_trace["db_row_refs"] = {
+            "empirical_job_row_ids": job_row_ids,
+            "completion_gate_row_ids": gate_row_ids,
+        }
+        completion_trace_path.write_text(json.dumps(completion_trace, indent=2), encoding="utf-8")
         session.commit()
 
-    summary_path = output_dir / "empirical-job-summary.json"
-    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     if args.json:
         print(json.dumps(summary, separators=(",", ":")))
     else:

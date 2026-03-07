@@ -249,7 +249,7 @@ class TestAutonomousLane(TestCase):
             )
             self.assertEqual(
                 evidence["benchmark_parity"]["artifact_ref"],
-                str(output_dir / "benchmarks" / "benchmark-parity-report-v1.json"),
+                str(output_dir / "gates" / "benchmark-parity-report-v1.json"),
             )
             self.assertEqual(
                 evidence["deeplob_bdlob_contract"]["artifact_ref"],
@@ -280,7 +280,7 @@ class TestAutonomousLane(TestCase):
                 (output_dir / "gates" / "stress-metrics-v1.json").exists()
             )
             self.assertTrue(
-                (output_dir / "benchmarks" / "benchmark-parity-report-v1.json").exists()
+                (output_dir / "gates" / "benchmark-parity-report-v1.json").exists()
             )
             self.assertTrue(
                 (output_dir / "microstructure" / "deeplob-bdlob-report-v1.json").exists()
@@ -311,7 +311,7 @@ class TestAutonomousLane(TestCase):
             self.assertIn("source_lineage", hmm_state_posterior_payload)
             self.assertEqual(
                 result.benchmark_parity_path,
-                output_dir / "benchmarks" / "benchmark-parity-report-v1.json",
+                output_dir / "gates" / "benchmark-parity-report-v1.json",
             )
             benchmark_parity_payload = json.loads(
                 result.benchmark_parity_path.read_text(encoding="utf-8")
@@ -395,7 +395,7 @@ class TestAutonomousLane(TestCase):
                 actuation_payload["artifact_refs"],
             )
             self.assertIn(
-                str(output_dir / "benchmarks" / "benchmark-parity-report-v1.json"),
+                str(output_dir / "gates" / "benchmark-parity-report-v1.json"),
                 actuation_payload["artifact_refs"],
             )
 
@@ -442,7 +442,7 @@ class TestAutonomousLane(TestCase):
                 )
                 self.assertEqual(
                     evidence["benchmark_parity"]["artifact_ref"],
-                    str(Path("benchmarks") / "benchmark-parity-report-v1.json"),
+                    str(Path("gates") / "benchmark-parity-report-v1.json"),
                 )
                 self.assertEqual(
                     evidence["deeplob_bdlob_contract"]["artifact_ref"],
@@ -468,7 +468,7 @@ class TestAutonomousLane(TestCase):
                     (output_dir / "gates" / "stress-metrics-v1.json").exists()
                 )
                 self.assertTrue(
-                    (output_dir / "benchmarks" / "benchmark-parity-report-v1.json").exists()
+                    (output_dir / "gates" / "benchmark-parity-report-v1.json").exists()
                 )
                 self.assertTrue(
                     (output_dir / "microstructure" / "deeplob-bdlob-report-v1.json").exists()

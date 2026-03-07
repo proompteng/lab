@@ -9,7 +9,7 @@ import json
 import os
 import math
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Sequence, cast
 from urllib.parse import urlparse
 
 from ..evidence_contracts import (
@@ -204,9 +204,22 @@ def evaluate_promotion_prerequisites(
         include_expert_router_artifacts=expert_router_registry_required,
         require_profitability_manifest=require_profitability_manifest,
     )
-    missing_artifacts = [
-        item for item in required_artifacts if not (artifact_root / item).exists()
-    ]
+    missing_artifacts: list[str] = []
+    benchmark_candidates = (
+        _benchmark_parity_artifact_candidates(policy_payload, gate_report_payload)
+        if benchmark_parity_required
+        else []
+    )
+    existing_benchmark_path = (
+        _first_existing_artifact_path(benchmark_candidates, artifact_root=artifact_root)
+        if benchmark_candidates
+        else None
+    )
+    for item in required_artifacts:
+        if item == "gates/benchmark-parity-report-v1.json" and existing_benchmark_path is not None:
+            continue
+        if not (artifact_root / item).exists():
+            missing_artifacts.append(item)
     artifact_refs = [str(artifact_root / item) for item in required_artifacts]
     throughput_requirements = _required_throughput(policy_payload)
     throughput_observed = _observed_throughput(
@@ -1387,10 +1400,16 @@ def _append_benchmark_parity_evidence_reasons(
         policy_payload=policy_payload,
         gate_report_payload=gate_report_payload,
     )
-    artifact_path = _normalize_artifact_path(
-        artifact_ref,
-        artifact_root=artifact_root,
-    )
+    candidate_paths = [
+        _normalize_artifact_path(candidate_ref, artifact_root=artifact_root)
+        for candidate_ref in _benchmark_parity_artifact_candidates(
+            policy_payload=policy_payload,
+            gate_report_payload=gate_report_payload,
+        )
+    ]
+    artifact_path = next((path for path in candidate_paths if path is not None and path.exists()), None)
+    if artifact_path is None and evidence_ref:
+        artifact_path = _normalize_artifact_path(evidence_ref, artifact_root=artifact_root)
     if artifact_path is None:
         if evidence_ref:
             reasons.append("benchmark_parity_artifact_ref_invalid")
@@ -1407,7 +1426,7 @@ def _append_benchmark_parity_evidence_reasons(
                     "reason": "benchmark_parity_artifact_ref_invalid",
                     "artifact_ref": artifact_ref,
                 }
-            )
+        )
         return
     parity_path = artifact_path
     if not parity_path.exists():
@@ -1623,7 +1642,7 @@ def _benchmark_parity_required_artifact_refs(
 ) -> list[str]:
     benchmark_artifacts_raw = policy_payload.get(
         "promotion_benchmark_required_artifacts",
-        ["benchmarks/benchmark-parity-report-v1.json"],
+        ["gates/benchmark-parity-report-v1.json"],
     )
     benchmark_artifacts = [
         str(artifact).strip()
@@ -1639,7 +1658,7 @@ def _benchmark_parity_required_artifact_refs(
     if legacy_artifact:
         return [legacy_artifact]
 
-    return ["benchmarks/benchmark-parity-report-v1.json"]
+    return ["gates/benchmark-parity-report-v1.json"]
 
 
 def _benchmark_parity_artifact_reference(
@@ -1654,6 +1673,36 @@ def _benchmark_parity_artifact_reference(
 
     required_artifacts = _benchmark_parity_required_artifact_refs(policy_payload)
     return required_artifacts[0]
+
+
+def _benchmark_parity_artifact_candidates(
+    policy_payload: dict[str, Any],
+    gate_report_payload: dict[str, Any],
+) -> list[str]:
+    evidence = _as_dict(_as_dict(gate_report_payload.get("promotion_evidence")).get("benchmark_parity"))
+    evidence_ref = str(evidence.get("artifact_ref") or "").strip()
+    candidates: list[str] = []
+    if evidence_ref:
+        candidates.append(evidence_ref)
+    for artifact_ref in _benchmark_parity_required_artifact_refs(policy_payload):
+        if artifact_ref not in candidates:
+            candidates.append(artifact_ref)
+    legacy_artifact = "benchmarks/benchmark-parity-report-v1.json"
+    if legacy_artifact not in candidates:
+        candidates.append(legacy_artifact)
+    return candidates
+
+
+def _first_existing_artifact_path(
+    artifact_refs: Sequence[str],
+    *,
+    artifact_root: Path,
+) -> Path | None:
+    for artifact_ref in artifact_refs:
+        artifact_path = _normalize_artifact_path(artifact_ref, artifact_root=artifact_root)
+        if artifact_path is not None and artifact_path.exists():
+            return artifact_path
+    return None
 
 
 def _foundation_router_required_artifact_refs(
@@ -2622,7 +2671,28 @@ def _evaluate_benchmark_parity_evidence(
         policy_payload=policy_payload,
         gate_report_payload=gate_report_payload,
     )
-    artifact_path = _normalize_artifact_path(artifact_ref, artifact_root=artifact_root)
+    artifact_candidates = _benchmark_parity_artifact_candidates(
+        policy_payload=policy_payload,
+        gate_report_payload=gate_report_payload,
+    )
+    artifact_path = _first_existing_artifact_path(
+        artifact_candidates,
+        artifact_root=artifact_root,
+    )
+    if artifact_path is None and evidence_ref:
+        artifact_path = _normalize_artifact_path(evidence_ref, artifact_root=artifact_root)
+    if artifact_path is None:
+        normalized_default_path = _normalize_artifact_path(artifact_ref, artifact_root=artifact_root)
+        if normalized_default_path is not None:
+            reasons.append("benchmark_parity_artifact_missing")
+            details.append(
+                {
+                    "reason": "benchmark_parity_artifact_missing",
+                    "artifact_ref": str(normalized_default_path),
+                }
+            )
+            return reasons, details, refs
+        artifact_path = normalized_default_path
     if artifact_path is None:
         reasons.append("benchmark_parity_artifact_ref_invalid")
         details.append(
