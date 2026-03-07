@@ -11,7 +11,16 @@ import { execGit } from '../shared/git'
 const defaultRegistry = 'registry.ide-newton.ts.net'
 const defaultRepository = 'lab/torghut'
 const defaultManifestPath = 'argocd/applications/torghut/knative-service.yaml'
+const defaultSimulationManifestPath = 'argocd/applications/torghut/knative-service-sim.yaml'
 const defaultMigrationManifestPath = 'argocd/applications/torghut/db-migrations-job.yaml'
+const defaultLeanRunnerManifestPath = 'argocd/applications/torghut/lean-runner-deployment.yaml'
+const defaultHistoricalSimulationWorkflowManifestPath =
+  'argocd/applications/torghut/historical-simulation-workflowtemplate.yaml'
+const defaultEmpiricalPromotionWorkflowManifestPath =
+  'argocd/applications/torghut/empirical-promotion-workflowtemplate.yaml'
+const defaultEmpiricalBackfillManifestPath = 'argocd/applications/torghut/empirical-jobs-backfill-job.yaml'
+const defaultForecastManifestPath = 'argocd/applications/torghut-forecast/deployment.yaml'
+const defaultForecastSimulationManifestPath = 'argocd/applications/torghut-forecast/sim/deployment.yaml'
 
 const digestPattern = /^sha256:[0-9a-f]{64}$/i
 
@@ -22,7 +31,14 @@ type UpdateManifestsOptions = {
   commit: string
   rolloutTimestamp: string
   manifestPath?: string
+  simulationManifestPath?: string
   migrationManifestPath?: string
+  leanRunnerManifestPath?: string
+  historicalSimulationWorkflowManifestPath?: string
+  empiricalPromotionWorkflowManifestPath?: string
+  empiricalBackfillManifestPath?: string
+  forecastManifestPath?: string
+  forecastSimulationManifestPath?: string
 }
 
 type CliOptions = {
@@ -34,7 +50,14 @@ type CliOptions = {
   commit?: string
   rolloutTimestamp?: string
   manifestPath?: string
+  simulationManifestPath?: string
   migrationManifestPath?: string
+  leanRunnerManifestPath?: string
+  historicalSimulationWorkflowManifestPath?: string
+  empiricalPromotionWorkflowManifestPath?: string
+  empiricalBackfillManifestPath?: string
+  forecastManifestPath?: string
+  forecastSimulationManifestPath?: string
 }
 
 const resolvePath = (path: string) => resolve(repoRoot, path)
@@ -120,10 +143,74 @@ const updateTorghutMigrationManifest = (options: UpdateManifestsOptions) => {
   }
 }
 
+const updateImageOnlyManifest = (options: UpdateManifestsOptions, manifestPathValue: string, label: string) => {
+  const manifestPath = resolvePath(manifestPathValue)
+  const source = readFileSync(manifestPath, 'utf8')
+  const imageRef = `${options.imageName}@${options.digest}`
+
+  const updated = replaceSingle(source, /(\n\s*image:\s*)([^\n]+)/, `$1${imageRef}`, label)
+
+  if (updated !== source) {
+    writeFileSync(manifestPath, updated, 'utf8')
+  }
+
+  return {
+    manifestPath,
+    imageRef,
+    changed: updated !== source,
+  }
+}
+
 const updateTorghutManifests = (options: UpdateManifestsOptions) => {
   const service = updateTorghutManifest(options)
+  const simulationService = updateTorghutManifest({
+    ...options,
+    manifestPath: options.simulationManifestPath ?? defaultSimulationManifestPath,
+  })
   const migration = updateTorghutMigrationManifest(options)
-  const changedPaths = [service, migration].filter((entry) => entry.changed).map((entry) => entry.manifestPath)
+  const leanRunner = updateImageOnlyManifest(
+    options,
+    options.leanRunnerManifestPath ?? defaultLeanRunnerManifestPath,
+    'torghut-lean-runner image reference',
+  )
+  const historicalSimulationWorkflow = updateImageOnlyManifest(
+    options,
+    options.historicalSimulationWorkflowManifestPath ?? defaultHistoricalSimulationWorkflowManifestPath,
+    'torghut-historical-simulation image reference',
+  )
+  const empiricalPromotionWorkflow = updateImageOnlyManifest(
+    options,
+    options.empiricalPromotionWorkflowManifestPath ?? defaultEmpiricalPromotionWorkflowManifestPath,
+    'torghut-empirical-promotion image reference',
+  )
+  const empiricalBackfill = updateImageOnlyManifest(
+    options,
+    options.empiricalBackfillManifestPath ?? defaultEmpiricalBackfillManifestPath,
+    'torghut-empirical-jobs-backfill image reference',
+  )
+  const forecast = updateImageOnlyManifest(
+    options,
+    options.forecastManifestPath ?? defaultForecastManifestPath,
+    'torghut-forecast image reference',
+  )
+  const forecastSimulation = updateImageOnlyManifest(
+    options,
+    options.forecastSimulationManifestPath ?? defaultForecastSimulationManifestPath,
+    'torghut-forecast-sim image reference',
+  )
+  const changedPaths = [
+    service,
+    simulationService,
+    migration,
+    leanRunner,
+    historicalSimulationWorkflow,
+    empiricalPromotionWorkflow,
+    empiricalBackfill,
+    forecast,
+    forecastSimulation,
+  ]
+    .filter((entry) => entry.changed)
+    .map((entry) => entry.manifestPath)
   return {
     imageRef: service.imageRef,
     changed: changedPaths.length > 0,
@@ -148,7 +235,14 @@ Options:
   --commit <sha40>
   --rollout-timestamp <ISO8601>
   --manifest-path <path>
-  --migration-manifest-path <path>`)
+  --simulation-manifest-path <path>
+  --migration-manifest-path <path>
+  --lean-runner-manifest-path <path>
+  --historical-simulation-workflow-manifest-path <path>
+  --empirical-promotion-workflow-manifest-path <path>
+  --empirical-backfill-manifest-path <path>
+  --forecast-manifest-path <path>
+  --forecast-simulation-manifest-path <path>`)
       process.exit(0)
     }
 
@@ -190,8 +284,29 @@ Options:
       case '--manifest-path':
         options.manifestPath = value
         break
+      case '--simulation-manifest-path':
+        options.simulationManifestPath = value
+        break
       case '--migration-manifest-path':
         options.migrationManifestPath = value
+        break
+      case '--lean-runner-manifest-path':
+        options.leanRunnerManifestPath = value
+        break
+      case '--historical-simulation-workflow-manifest-path':
+        options.historicalSimulationWorkflowManifestPath = value
+        break
+      case '--empirical-promotion-workflow-manifest-path':
+        options.empiricalPromotionWorkflowManifestPath = value
+        break
+      case '--empirical-backfill-manifest-path':
+        options.empiricalBackfillManifestPath = value
+        break
+      case '--forecast-manifest-path':
+        options.forecastManifestPath = value
+        break
+      case '--forecast-simulation-manifest-path':
+        options.forecastSimulationManifestPath = value
         break
       default:
         throw new Error(`Unknown option: ${flag}`)
@@ -226,7 +341,18 @@ export const main = (cliOptions?: CliOptions) => {
     commit,
     rolloutTimestamp,
     manifestPath: parsed.manifestPath ?? process.env.TORGHUT_MANIFEST_PATH,
+    simulationManifestPath: parsed.simulationManifestPath ?? process.env.TORGHUT_SIMULATION_MANIFEST_PATH,
     migrationManifestPath: parsed.migrationManifestPath ?? process.env.TORGHUT_MIGRATION_MANIFEST_PATH,
+    leanRunnerManifestPath: parsed.leanRunnerManifestPath ?? process.env.TORGHUT_LEAN_RUNNER_MANIFEST_PATH,
+    historicalSimulationWorkflowManifestPath:
+      parsed.historicalSimulationWorkflowManifestPath ?? process.env.TORGHUT_HISTORICAL_SIMULATION_WORKFLOW_PATH,
+    empiricalPromotionWorkflowManifestPath:
+      parsed.empiricalPromotionWorkflowManifestPath ?? process.env.TORGHUT_EMPIRICAL_PROMOTION_WORKFLOW_PATH,
+    empiricalBackfillManifestPath:
+      parsed.empiricalBackfillManifestPath ?? process.env.TORGHUT_EMPIRICAL_BACKFILL_MANIFEST_PATH,
+    forecastManifestPath: parsed.forecastManifestPath ?? process.env.TORGHUT_FORECAST_MANIFEST_PATH,
+    forecastSimulationManifestPath:
+      parsed.forecastSimulationManifestPath ?? process.env.TORGHUT_FORECAST_SIMULATION_MANIFEST_PATH,
   })
 
   if (result.changed) {
@@ -250,5 +376,6 @@ export const __private = {
   replaceSingle,
   updateTorghutManifest,
   updateTorghutMigrationManifest,
+  updateImageOnlyManifest,
   updateTorghutManifests,
 }
