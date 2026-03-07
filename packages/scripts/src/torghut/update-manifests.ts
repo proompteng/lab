@@ -89,18 +89,30 @@ const replaceSingle = (source: string, pattern: RegExp, replacement: string, lab
   return source.replace(pattern, replacement)
 }
 
+const upsertKnativeRolloutTimestamp = (source: string, rolloutTimestamp: string): string => {
+  const annotationPattern = /(client\.knative\.dev\/updateTimestamp:\s*)(?:"[^"]*"|'[^']*'|[^\n]+)/
+  if (annotationPattern.test(source)) {
+    return source.replace(annotationPattern, `$1"${rolloutTimestamp}"`)
+  }
+
+  const annotationsBlockPattern = /(\n\s*template:\n\s*metadata:\n\s*annotations:\n)/
+  if (!annotationsBlockPattern.test(source)) {
+    throw new Error('Unable to locate rollout timestamp annotation block in torghut manifest')
+  }
+
+  return source.replace(
+    annotationsBlockPattern,
+    `$1        client.knative.dev/updateTimestamp: "${rolloutTimestamp}"\n`,
+  )
+}
+
 const updateTorghutManifest = (options: UpdateManifestsOptions) => {
   const manifestPath = resolvePath(options.manifestPath ?? defaultManifestPath)
   const source = readFileSync(manifestPath, 'utf8')
   const imageRef = `${options.imageName}@${options.digest}`
 
   let updated = source
-  updated = replaceSingle(
-    updated,
-    /(client\.knative\.dev\/updateTimestamp:\s*)(?:"[^"]*"|'[^']*'|[^\n]+)/,
-    `$1"${options.rolloutTimestamp}"`,
-    'rollout timestamp annotation',
-  )
+  updated = upsertKnativeRolloutTimestamp(updated, options.rolloutTimestamp)
   updated = replaceSingle(
     updated,
     /(- name:\s*user-container[\s\S]*?\n\s*image:\s*)([^\n]+)/,
