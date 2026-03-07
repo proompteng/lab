@@ -1008,10 +1008,15 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
         PRODUCTION_TOPIC_BY_ROLE,
         _as_mapping(manifest.get('source_topics')),
     )
+    simulation_topic_overrides = _as_mapping(manifest.get('simulation_topics'))
     simulation_topics = _merge_topics(
         SIMULATION_TOPIC_BY_ROLE,
-        _as_mapping(manifest.get('simulation_topics')),
+        simulation_topic_overrides,
     )
+    for role, topic in list(simulation_topics.items()):
+        if role in simulation_topic_overrides:
+            continue
+        simulation_topics[role] = f'{topic}.{run_token}'
 
     replay_topic_by_source_topic = {
         source_topics['trades']: simulation_topics['trades'],
@@ -3219,14 +3224,6 @@ def _apply(
         manifest=manifest,
         dump_report=dump_report,
     )
-    replay_report = _replay_dump(
-        resources=resources,
-        kafka_config=kafka_config,
-        manifest=manifest,
-        dump_path=dump_path,
-        force=force_replay,
-    )
-
     replay_cfg = _as_mapping(manifest.get('replay'))
     auto_offset_reset = (_as_text(replay_cfg.get('auto_offset_reset')) or 'earliest').lower()
     _configure_ta_for_simulation(
@@ -3254,7 +3251,6 @@ def _apply(
         'state_path': str(state_path),
         'dump': dump_report,
         'dump_coverage': dump_coverage,
-        'replay': replay_report,
         'topics': topics_report,
         'ta_restart_nonce': ta_restart_nonce,
         'resources': asdict(resources)
@@ -3274,7 +3270,6 @@ def _apply(
         'window_policy': window_policy,
     }
     _save_json(run_manifest_path, report)
-    _save_json(_artifact_path(resources, 'replay-report.json'), replay_report)
     return report
 
 
@@ -3882,6 +3877,7 @@ def _run_full_lifecycle(
     argocd_prepare_report: dict[str, Any] | None = None
     argocd_restore_report: dict[str, Any] | None = None
     apply_report: dict[str, Any] | None = None
+    replay_report: dict[str, Any] | None = None
     runtime_verify_report: dict[str, Any] | None = None
     monitor_report: dict[str, Any] | None = None
     analytics_report: dict[str, Any] | None = None
@@ -3992,6 +3988,22 @@ def _run_full_lifecycle(
             ):
                 errors.append('environment_incomplete')
 
+            _update_run_state(resources=resources, phase='replay', status='running')
+            replay_report = _replay_dump(
+                resources=resources,
+                kafka_config=kafka_config,
+                manifest=manifest,
+                dump_path=_state_paths(resources)[2],
+                force=force_replay,
+            )
+            _save_json(_artifact_path(resources, 'replay-report.json'), replay_report)
+            _update_run_state(
+                resources=resources,
+                phase='replay',
+                status='ok',
+                details=replay_report,
+            )
+
             _update_run_state(resources=resources, phase='activity_verify', status='running')
             if bool(rollouts_report['enabled']):
                 activity_analysis_run = _run_rollouts_analysis(
@@ -4063,6 +4075,12 @@ def _run_full_lifecycle(
             _update_run_state(
                 resources=resources,
                 phase='runtime_verify',
+                status='skipped',
+                details={'report_only': True},
+            )
+            _update_run_state(
+                resources=resources,
+                phase='replay',
                 status='skipped',
                 details={'report_only': True},
             )
@@ -4181,6 +4199,7 @@ def _run_full_lifecycle(
         'argocd_prepare': argocd_prepare_report,
         'argocd_restore': argocd_restore_report,
         'apply': apply_report,
+        'replay': replay_report,
         'runtime_verify': runtime_verify_report,
         'monitor': monitor_report,
         'report': analytics_report,
@@ -4191,6 +4210,7 @@ def _run_full_lifecycle(
     run_manifest_path = _state_paths(resources)[1]
     if apply_report is not None:
         updated_apply_report = dict(apply_report)
+        updated_apply_report['replay'] = replay_report
         updated_apply_report['rollouts'] = rollouts_report
         _save_json(run_manifest_path, updated_apply_report)
     _save_json(run_manifest_path.with_name('run-full-lifecycle-manifest.json'), report)
