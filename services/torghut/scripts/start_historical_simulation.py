@@ -146,6 +146,9 @@ DEFAULT_ROLLOUTS_ACTIVITY_TEMPLATE = 'torghut-simulation-activity'
 DEFAULT_ROLLOUTS_TEARDOWN_TEMPLATE = 'torghut-simulation-teardown-clean'
 DEFAULT_ROLLOUTS_ARTIFACT_TEMPLATE = 'torghut-simulation-artifact-bundle'
 DEFAULT_ROLLOUTS_VERIFY_TIMEOUT_SECONDS = 1800
+DEFAULT_ROLLOUTS_VERIFY_POLL_SECONDS = 5
+SIMULATION_CLICKHOUSE_SCHEMA_SOURCE_DATABASE = 'torghut'
+SIMULATION_CLICKHOUSE_RUNTIME_TABLES = ('ta_microbars', 'ta_signals')
 TRANSIENT_POSTGRES_ERROR_PATTERNS = (
     'connection refused',
     'connection reset by peer',
@@ -347,6 +350,7 @@ class RolloutsAnalysisConfig:
     teardown_template: str
     artifact_template: str
     verify_timeout_seconds: int
+    verify_poll_seconds: int
 
 
 def _parse_args() -> argparse.Namespace:
@@ -1100,6 +1104,12 @@ def _build_rollouts_analysis_config(manifest: Mapping[str, Any]) -> RolloutsAnal
     )
     if verify_timeout_seconds <= 0:
         raise RuntimeError('rollouts.verify_timeout_seconds must be > 0')
+    verify_poll_seconds = _safe_int(
+        rollouts.get('verify_poll_seconds'),
+        default=DEFAULT_ROLLOUTS_VERIFY_POLL_SECONDS,
+    )
+    if verify_poll_seconds <= 0:
+        raise RuntimeError('rollouts.verify_poll_seconds must be > 0')
     return RolloutsAnalysisConfig(
         enabled=enabled,
         namespace=_as_text(rollouts.get('namespace')) or DEFAULT_ROLLOUTS_NAMESPACE,
@@ -1108,6 +1118,7 @@ def _build_rollouts_analysis_config(manifest: Mapping[str, Any]) -> RolloutsAnal
         teardown_template=_as_text(rollouts.get('teardown_template')) or DEFAULT_ROLLOUTS_TEARDOWN_TEMPLATE,
         artifact_template=_as_text(rollouts.get('artifact_template')) or DEFAULT_ROLLOUTS_ARTIFACT_TEMPLATE,
         verify_timeout_seconds=verify_timeout_seconds,
+        verify_poll_seconds=verify_poll_seconds,
     )
 
 
@@ -2021,6 +2032,69 @@ def _ensure_clickhouse_database(
     status, body = _http_clickhouse_query(config=config, query=create_query)
     if status < 200 or status >= 300:
         raise RuntimeError(f'clickhouse_create_database_failed:{status}:{body[:200]}')
+
+
+def _show_create_clickhouse_table(
+    *,
+    config: ClickHouseRuntimeConfig,
+    table: str,
+) -> str:
+    status, body = _http_clickhouse_query(config=config, query=f'SHOW CREATE TABLE {table}')
+    if status < 200 or status >= 300:
+        raise RuntimeError(f'clickhouse_show_create_failed:{table}:{status}:{body[:200]}')
+    ddl = body.strip()
+    if '\\n' in ddl:
+        ddl = ddl.replace('\\n', '\n')
+    if "\\'" in ddl:
+        ddl = ddl.replace("\\'", "'")
+    return ddl.strip()
+
+
+def _rewrite_clickhouse_table_ddl_for_simulation(
+    *,
+    source_ddl: str,
+    source_table: str,
+    database: str,
+    table: str,
+) -> str:
+    ddl = source_ddl.strip().rstrip(';')
+    ddl = ddl.replace(
+        f'CREATE TABLE {source_table}',
+        f'CREATE TABLE IF NOT EXISTS {database}.{table}',
+        1,
+    )
+    engine_pattern = re.compile(
+        r"ReplicatedReplacingMergeTree\('([^']+)',\s*'\{replica\}'",
+        re.MULTILINE,
+    )
+    replicated_path = f"/clickhouse/tables/{{cluster}}/{{shard}}/{database}/{table}"
+    if not engine_pattern.search(ddl):
+        raise RuntimeError(f'clickhouse_schema_missing_replicated_engine:{source_table}')
+    ddl = engine_pattern.sub(
+        f"ReplicatedReplacingMergeTree('{replicated_path}', '{{replica}}'",
+        ddl,
+        count=1,
+    )
+    return ddl
+
+
+def _ensure_clickhouse_runtime_tables(
+    *,
+    config: ClickHouseRuntimeConfig,
+    database: str,
+) -> None:
+    for table in SIMULATION_CLICKHOUSE_RUNTIME_TABLES:
+        source_table = f'{SIMULATION_CLICKHOUSE_SCHEMA_SOURCE_DATABASE}.{table}'
+        source_ddl = _show_create_clickhouse_table(config=config, table=source_table)
+        create_query = _rewrite_clickhouse_table_ddl_for_simulation(
+            source_ddl=source_ddl,
+            source_table=source_table,
+            database=database,
+            table=table,
+        )
+        status, body = _http_clickhouse_query(config=config, query=create_query)
+        if status < 200 or status >= 300:
+            raise RuntimeError(f'clickhouse_create_table_failed:{database}.{table}:{status}:{body[:200]}')
 
 
 def _ensure_postgres_database(config: PostgresRuntimeConfig) -> None:
@@ -3124,6 +3198,7 @@ def _apply(
         manifest=manifest,
     )
     _ensure_clickhouse_database(config=clickhouse_config, database=resources.clickhouse_db)
+    _ensure_clickhouse_runtime_tables(config=clickhouse_config, database=resources.clickhouse_db)
     _ensure_postgres_database(postgres_config)
     postgres_permissions_report = _ensure_postgres_runtime_permissions(postgres_config)
     _run_migrations(postgres_config)
@@ -3550,6 +3625,7 @@ def _analysis_run_args(
     manifest: Mapping[str, Any],
     postgres_config: PostgresRuntimeConfig,
     clickhouse_config: ClickHouseRuntimeConfig,
+    rollouts_config: RolloutsAnalysisConfig,
 ) -> dict[str, str]:
     window_start, window_end = _resolve_window_bounds(manifest)
     args: dict[str, str] = {
@@ -3568,6 +3644,8 @@ def _analysis_run_args(
         'postgresDatabase': postgres_config.simulation_db,
         'clickhouseHttpUrl': clickhouse_config.http_url,
         'clickhouseUsername': clickhouse_config.username or '',
+        'runtimeVerifyTimeoutSeconds': str(rollouts_config.verify_timeout_seconds),
+        'runtimeVerifyPollSeconds': str(rollouts_config.verify_poll_seconds),
     }
     monitor = _as_mapping(manifest.get('monitor'))
     if phase == 'activity':
@@ -3719,6 +3797,7 @@ def _run_rollouts_analysis(
             manifest=manifest,
             postgres_config=postgres_config,
             clickhouse_config=clickhouse_config,
+            rollouts_config=rollouts_config,
         ),
     )
     _kubectl_apply(rollouts_config.namespace, payload)

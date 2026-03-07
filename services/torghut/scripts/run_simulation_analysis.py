@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,6 +78,8 @@ def _parser() -> argparse.ArgumentParser:
     runtime.add_argument('--forecast-service', required=True)
     runtime.add_argument('--window-start', required=True)
     runtime.add_argument('--window-end', required=True)
+    runtime.add_argument('--runtime-timeout-seconds', type=int, default=180)
+    runtime.add_argument('--runtime-poll-seconds', type=int, default=5)
 
     activity = subparsers.add_parser('activity')
     activity.add_argument('--json', action='store_true', help=argparse.SUPPRESS)
@@ -200,6 +203,25 @@ def _clickhouse_config(args: argparse.Namespace) -> _ClickHouseConfig:
     )
 
 
+def _wait_for_runtime_ready(
+    *,
+    resources: _Resources,
+    manifest: Mapping[str, Any],
+    timeout_seconds: int,
+    poll_seconds: int,
+) -> dict[str, Any]:
+    if timeout_seconds <= 0:
+        raise SystemExit('runtime-timeout-seconds must be > 0')
+    if poll_seconds <= 0:
+        raise SystemExit('runtime-poll-seconds must be > 0')
+    deadline = time.monotonic() + timeout_seconds
+    latest_report = _runtime_verify(resources=resources, manifest=manifest)
+    while latest_report.get('runtime_state') != 'ready' and time.monotonic() < deadline:
+        time.sleep(poll_seconds)
+        latest_report = _runtime_verify(resources=resources, manifest=manifest)
+    return latest_report
+
+
 def main() -> None:
     args = _parser().parse_args()
     if args.command == 'artifact-bundle':
@@ -213,7 +235,12 @@ def main() -> None:
     manifest = _manifest_from_args(args)
 
     if args.command == 'runtime-ready':
-        report = _runtime_verify(resources=resources, manifest=manifest)
+        report = _wait_for_runtime_ready(
+            resources=resources,
+            manifest=manifest,
+            timeout_seconds=args.runtime_timeout_seconds,
+            poll_seconds=args.runtime_poll_seconds,
+        )
         _emit(report, json_only=bool(args.json))
         if report.get('runtime_state') != 'ready':
             raise SystemExit(1)
