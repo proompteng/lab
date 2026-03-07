@@ -16,7 +16,7 @@ spec:
   template:
     metadata:
       annotations:
-        client.knative.dev/updateTimestamp: "2026-03-06T23:13:35Z"
+        client.knative.dev/updateTimestamp: "2026-03-07T00:33:41Z"
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/target: "80"
@@ -26,7 +26,7 @@ spec:
       containers:
         - name: user-container
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:5fb50a1948ccf6960b8bede3dc1f0cddfb76275ad962c909ce5ee7f79dcbfd0c
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:f6b6da2f4b5d85ce83ee2f86b4a2e8143943c561e5863514d8c13a22016c1b3f
           ports:
             - name: http1
               containerPort: 8181
@@ -456,9 +456,9 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.562.0-365-gb52bc53e
+              value: v0.562.0-373-gb977fd86
             - name: TORGHUT_COMMIT
-              value: b52bc53e2275e4e080cf399cd23b10730f9b33ca
+              value: b977fd86e9ced9af2a6aa1880fe88be2dfe86ff1
           envFrom:
             - configMapRef:
                 name: torghut-autonomy-config
