@@ -31,6 +31,7 @@ class _Resources:
     torghut_forecast_service: str
     clickhouse_signal_table: str
     clickhouse_price_table: str
+    simulation_topic_by_role: dict[str, str]
     order_feed_group_id: str
     ta_group_id: str
 
@@ -150,6 +151,9 @@ def _resources_from_args(args: argparse.Namespace) -> _Resources:
         torghut_forecast_service=args.forecast_service,
         clickhouse_signal_table=getattr(args, 'signal_table', ''),
         clickhouse_price_table=getattr(args, 'price_table', ''),
+        simulation_topic_by_role={
+            'order_updates': f'torghut.sim.trade-updates.v1.{run_token}',
+        },
         order_feed_group_id=f'torghut-order-feed-sim-{run_token}',
         ta_group_id=f'torghut-ta-sim-{run_token}',
     )
