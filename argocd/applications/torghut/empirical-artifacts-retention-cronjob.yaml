@@ -31,17 +31,17 @@ spec:
                       key: AWS_SECRET_ACCESS_KEY
                 - name: BUCKET_NAME
                   valueFrom:
-                    secretKeyRef:
+                    configMapKeyRef:
                       name: torghut-empirical-artifacts
                       key: BUCKET_NAME
                 - name: BUCKET_HOST
                   valueFrom:
-                    secretKeyRef:
+                    configMapKeyRef:
                       name: torghut-empirical-artifacts
                       key: BUCKET_HOST
                 - name: BUCKET_PORT
                   valueFrom:
-                    secretKeyRef:
+                    configMapKeyRef:
                       name: torghut-empirical-artifacts
                       key: BUCKET_PORT
                 - name: RETENTION_DAYS

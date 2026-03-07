@@ -602,7 +602,7 @@ class Settings(BaseSettings):
         description="Refresh cadence for torghut-forecast registry manifest reloads.",
     )
     trading_forecast_calibration_stale_after_seconds: int = Field(
-        default=3600,
+        default=604800,
         alias="TRADING_FORECAST_CALIBRATION_STALE_AFTER_SECONDS",
         description="Forecast calibration freshness budget used by torghut-forecast readiness checks.",
     )

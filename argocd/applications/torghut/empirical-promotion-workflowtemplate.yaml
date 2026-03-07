@@ -34,17 +34,17 @@ spec:
                 key: uri
           - name: TORGHUT_EMPIRICAL_CEPH_BUCKET
             valueFrom:
-              secretKeyRef:
+              configMapKeyRef:
                 name: torghut-empirical-artifacts
                 key: BUCKET_NAME
           - name: TORGHUT_EMPIRICAL_CEPH_BUCKET_HOST
             valueFrom:
-              secretKeyRef:
+              configMapKeyRef:
                 name: torghut-empirical-artifacts
                 key: BUCKET_HOST
           - name: TORGHUT_EMPIRICAL_CEPH_BUCKET_PORT
             valueFrom:
-              secretKeyRef:
+              configMapKeyRef:
                 name: torghut-empirical-artifacts
                 key: BUCKET_PORT
           - name: TORGHUT_EMPIRICAL_CEPH_ACCESS_KEY
