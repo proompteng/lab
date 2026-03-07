@@ -1257,6 +1257,12 @@ def _normalized_automation_mode(value: str | None) -> str:
     return normalized
 
 
+def _clone_json_mapping(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    return cast(dict[str, Any], json.loads(json.dumps(dict(value))))
+
+
 def _read_argocd_automation_mode(
     *,
     config: ArgocdAutomationConfig,
@@ -1336,6 +1342,92 @@ def _set_argocd_automation_mode(
         'previous_mode': current_mode,
         'desired_mode': normalized_desired,
         'current_mode': verified_mode,
+        'changed': changed,
+    }
+
+
+def _read_argocd_application_sync_policy(
+    *,
+    config: ArgocdAutomationConfig,
+) -> dict[str, Any]:
+    payload = _kubectl_json_global(
+        [
+            '-n',
+            config.applicationset_namespace,
+            'get',
+            'application',
+            config.app_name,
+            '-o',
+            'json',
+        ]
+    )
+    spec = _as_mapping(payload.get('spec'))
+    sync_policy_raw = spec.get('syncPolicy')
+    sync_policy = _clone_json_mapping(_as_mapping(sync_policy_raw) if isinstance(sync_policy_raw, Mapping) else None)
+    automated = _as_mapping(sync_policy.get('automated')) if sync_policy is not None else {}
+    automated_enabled = bool(automated.get('enabled')) if automated else False
+    return {
+        'sync_policy': sync_policy,
+        'automated_enabled': automated_enabled,
+    }
+
+
+def _manual_argocd_application_sync_policy(
+    current_sync_policy: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    manual_policy = _clone_json_mapping(current_sync_policy) or {}
+    automated = _as_mapping(manual_policy.get('automated'))
+    manual_automated = dict(automated)
+    manual_automated['enabled'] = False
+    manual_automated['prune'] = False
+    manual_automated['selfHeal'] = False
+    manual_policy['automated'] = manual_automated
+    return manual_policy
+
+
+def _set_argocd_application_sync_policy(
+    *,
+    config: ArgocdAutomationConfig,
+    desired_sync_policy: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    desired_policy = _clone_json_mapping(desired_sync_policy)
+    state = _read_argocd_application_sync_policy(config=config)
+    current_policy = _clone_json_mapping(cast(Mapping[str, Any] | None, state.get('sync_policy')))
+    changed = current_policy != desired_policy
+    if changed:
+        if desired_policy is None:
+            _kubectl_patch_json(
+                config.applicationset_namespace,
+                'application',
+                config.app_name,
+                [{'op': 'remove', 'path': '/spec/syncPolicy'}],
+            )
+        else:
+            _kubectl_patch(
+                config.applicationset_namespace,
+                'application',
+                config.app_name,
+                {'spec': {'syncPolicy': desired_policy}},
+            )
+
+    deadline = datetime.now(timezone.utc) + timedelta(seconds=config.verify_timeout_seconds)
+    verified_policy = current_policy
+    while True:
+        verified_state = _read_argocd_application_sync_policy(config=config)
+        verified_policy = _clone_json_mapping(cast(Mapping[str, Any] | None, verified_state.get('sync_policy')))
+        if verified_policy == desired_policy:
+            break
+        if datetime.now(timezone.utc) >= deadline:
+            raise RuntimeError(
+                'argocd_application_sync_policy_verify_timeout '
+                f'desired={json.dumps(desired_policy, sort_keys=True)} '
+                f'observed={json.dumps(verified_policy, sort_keys=True)}'
+            )
+        time.sleep(2)
+
+    return {
+        'previous_sync_policy': current_policy,
+        'current_sync_policy': verified_policy,
         'changed': changed,
     }
 
@@ -3210,13 +3302,21 @@ def _prepare_argocd_for_run(
             'current_mode': None,
             'previous_mode': None,
         }
-    patch_report = _set_argocd_automation_mode(
+    automation_report = _set_argocd_automation_mode(
         config=config,
         desired_mode=config.desired_mode_during_run,
     )
+    application_report = _set_argocd_application_sync_policy(
+        config=config,
+        desired_sync_policy=_manual_argocd_application_sync_policy(
+            cast(Mapping[str, Any] | None, _read_argocd_application_sync_policy(config=config).get('sync_policy'))
+        ),
+    )
     return {
         'managed': True,
-        **patch_report,
+        'changed': automation_report['changed'] or application_report['changed'],
+        **automation_report,
+        'application': application_report,
     }
 
 
@@ -3224,6 +3324,7 @@ def _restore_argocd_after_run(
     *,
     config: ArgocdAutomationConfig,
     previous_mode: str | None,
+    previous_sync_policy: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     if not config.manage_automation:
         return {
@@ -3240,9 +3341,14 @@ def _restore_argocd_after_run(
         config=config,
         desired_mode=target_mode,
     )
+    application_report = _set_argocd_application_sync_policy(
+        config=config,
+        desired_sync_policy=previous_sync_policy,
+    )
     return {
         'managed': True,
         'restored_mode': target_mode,
+        'application': application_report,
         **report,
     }
 
@@ -3323,6 +3429,7 @@ def _run_full_lifecycle(
     previous_automation_mode: str | None = None
     argocd_prepare_succeeded = False
     argocd_restore_required = False
+    previous_application_sync_policy: dict[str, Any] | None = None
 
     try:
         if report_only:
@@ -3344,12 +3451,23 @@ def _run_full_lifecycle(
                 previous_automation_mode = _normalized_automation_mode(
                     _as_text(current_state.get('mode'))
                 )
+                current_app_state = _read_argocd_application_sync_policy(config=argocd_config)
+                previous_application_sync_policy = _clone_json_mapping(
+                    cast(Mapping[str, Any] | None, current_app_state.get('sync_policy'))
+                )
                 argocd_restore_required = (
                     previous_automation_mode != _normalized_automation_mode(argocd_config.desired_mode_during_run)
                 )
+                if current_app_state.get('automated_enabled'):
+                    argocd_restore_required = True
             argocd_prepare_report = _prepare_argocd_for_run(config=argocd_config)
             if previous_automation_mode is None:
                 previous_automation_mode = _as_text(argocd_prepare_report.get('previous_mode'))
+            if previous_application_sync_policy is None:
+                application_report = _as_mapping(argocd_prepare_report.get('application'))
+                previous_application_sync_policy = _clone_json_mapping(
+                    cast(Mapping[str, Any] | None, application_report.get('previous_sync_policy'))
+                )
             argocd_prepare_succeeded = True
             _update_run_state(
                 resources=resources,
@@ -3510,6 +3628,7 @@ def _run_full_lifecycle(
                 argocd_restore_report = _restore_argocd_after_run(
                     config=argocd_config,
                     previous_mode=previous_automation_mode,
+                    previous_sync_policy=previous_application_sync_policy,
                 )
                 _update_run_state(resources=resources, phase='argocd_restore', status='ok')
             except Exception as exc:
