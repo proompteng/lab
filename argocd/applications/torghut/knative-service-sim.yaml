@@ -159,7 +159,6 @@ spec:
             - name: TRADING_ORDER_FEED_ENABLED
               value: "false"
             - name: TRADING_ORDER_FEED_TOPIC_V2
-              value: ""
             - name: TRADING_EXECUTION_ADAPTER
               value: simulation
             - name: TRADING_EXECUTION_FALLBACK_ADAPTER
@@ -399,7 +398,7 @@ spec:
             - name: LLM_EFFECTIVE_CHALLENGE_ID
               value: torghut-llm-mrm-review-2026-02-12
             - name: LLM_SHADOW_COMPLETED_AT
-              value: 2026-02-12T06:45:00Z
+              value: "2026-02-12T06:45:00Z"
             - name: LLM_FAIL_MODE
               value: veto
             - name: LLM_FAIL_MODE_ENFORCEMENT
