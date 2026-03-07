@@ -39,7 +39,7 @@ spec:
         - name: allowMissingState
         - name: outputRoot
     container:
-      image: registry.ide-newton.ts.net/lab/torghut@sha256:5fb50a1948ccf6960b8bede3dc1f0cddfb76275ad962c909ce5ee7f79dcbfd0c
+      image: registry.ide-newton.ts.net/lab/torghut@sha256:ed936c6d5d5263aa170f97d37ce866a26316ab74bd313d941ae302fb43f65277
       imagePullPolicy: Always
       env:
         - name: TORGHUT_SIM_KAFKA_PASSWORD
