@@ -15,17 +15,22 @@ from sqlalchemy.orm import Session
 from ..models import VNextCompletionGateResult, VNextEmpiricalJobRun
 from .empirical_jobs import EMPIRICAL_JOB_TYPES, build_empirical_jobs_status
 
-DOC29_COMPLETION_MATRIX_RUNTIME_PATH = (
-    Path(__file__).resolve().parents[2] / 'config' / 'completion' / 'doc29-completion-matrix.yaml'
-)
-DOC29_COMPLETION_MATRIX_DOC_PATH = (
-    Path(__file__).resolve().parents[4]
-    / 'docs'
-    / 'torghut'
-    / 'design-system'
-    / 'v6'
-    / '29-completion-matrix-2026-03-07.yaml'
-)
+
+def _runtime_matrix_path() -> Path:
+    return Path(__file__).resolve().parents[2] / 'config' / 'completion' / 'doc29-completion-matrix.yaml'
+
+
+def _doc_matrix_path() -> Path:
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        candidate = parent / 'docs' / 'torghut' / 'design-system' / 'v6' / '29-completion-matrix-2026-03-07.yaml'
+        if candidate.exists():
+            return candidate
+    return _runtime_matrix_path()
+
+
+DOC29_COMPLETION_MATRIX_RUNTIME_PATH = _runtime_matrix_path()
+DOC29_COMPLETION_MATRIX_DOC_PATH = _doc_matrix_path()
 
 DOC29_COMPLETION_ENDPOINT = '/trading/completion/doc29'
 
