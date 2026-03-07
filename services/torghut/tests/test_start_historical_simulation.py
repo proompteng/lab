@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import patch
 
+from scripts import start_historical_simulation
 from scripts.start_historical_simulation import (
     ArgocdAutomationConfig,
     ClickHouseRuntimeConfig,
@@ -399,6 +400,7 @@ class TestStartHistoricalSimulation(TestCase):
                 applicationset_name='product',
                 applicationset_namespace='argocd',
                 app_name='torghut',
+                root_app_name='root',
                 desired_mode_during_run='manual',
                 restore_mode_after_run='previous',
                 verify_timeout_seconds=600,
@@ -1464,6 +1466,7 @@ class TestStartHistoricalSimulation(TestCase):
             applicationset_name='product',
             applicationset_namespace='argocd',
             app_name='torghut',
+            root_app_name='root',
             desired_mode_during_run='manual',
             restore_mode_after_run='previous',
             verify_timeout_seconds=600,
@@ -1758,6 +1761,7 @@ class TestStartHistoricalSimulation(TestCase):
                     applicationset_name='product',
                     applicationset_namespace='argocd',
                     app_name='torghut',
+                    root_app_name='root',
                     desired_mode_during_run='manual',
                     restore_mode_after_run='previous',
                     verify_timeout_seconds=30,
@@ -1806,6 +1810,7 @@ class TestStartHistoricalSimulation(TestCase):
                     applicationset_name='product',
                     applicationset_namespace='argocd',
                     app_name='torghut',
+                    root_app_name='root',
                     desired_mode_during_run='manual',
                     restore_mode_after_run='previous',
                     verify_timeout_seconds=30,
@@ -1819,12 +1824,27 @@ class TestStartHistoricalSimulation(TestCase):
             {'enabled': False, 'prune': False, 'selfHeal': False},
         )
 
-    def test_prepare_argocd_for_run_patches_application_only(self) -> None:
+    def test_argocd_application_mode_from_sync_policy_treats_missing_automation_as_manual(self) -> None:
+        self.assertEqual(
+            start_historical_simulation._argocd_application_mode_from_sync_policy(
+                {'syncOptions': ['CreateNamespace=true']}
+            ),
+            'manual',
+        )
+        self.assertEqual(
+            start_historical_simulation._argocd_application_mode_from_sync_policy(
+                {'automated': {'enabled': True}}
+            ),
+            'auto',
+        )
+
+    def test_prepare_argocd_for_run_pauses_root_and_applicationset(self) -> None:
         config = ArgocdAutomationConfig(
             manage_automation=True,
             applicationset_name='product',
             applicationset_namespace='argocd',
             app_name='torghut',
+            root_app_name='root',
             desired_mode_during_run='manual',
             restore_mode_after_run='previous',
             verify_timeout_seconds=30,
@@ -1835,15 +1855,15 @@ class TestStartHistoricalSimulation(TestCase):
                 return_value={'pointer': '/spec/generators/0/list/elements/0/automation', 'mode': 'auto'},
             ) as automation_read_mock,
             patch(
-                'scripts.start_historical_simulation._read_argocd_application_sync_policy',
+                'scripts.start_historical_simulation._read_named_argocd_application_sync_policy',
                 return_value={
                     'sync_policy': {
                         'automated': {'enabled': True, 'prune': True, 'selfHeal': True},
                         'syncOptions': ['CreateNamespace=true'],
                     },
-                    'automated_enabled': True,
+                    'automation_mode': 'auto',
                 },
-            ),
+            ) as application_read_mock,
             patch(
                 'scripts.start_historical_simulation._set_argocd_application_sync_policy',
                 return_value={
@@ -1855,23 +1875,48 @@ class TestStartHistoricalSimulation(TestCase):
                     },
                     'changed': True,
                 },
-            ) as application_mock,
+            ) as root_application_mock,
+            patch(
+                'scripts.start_historical_simulation._set_argocd_automation_mode',
+                return_value={
+                    'pointer': '/spec/generators/0/list/elements/0/automation',
+                    'previous_mode': 'auto',
+                    'desired_mode': 'manual',
+                    'current_mode': 'manual',
+                    'changed': True,
+                },
+            ) as applicationset_mock,
+            patch(
+                'scripts.start_historical_simulation._wait_for_argocd_application_mode',
+                return_value={
+                    'app_name': 'torghut',
+                    'current_mode': 'manual',
+                },
+            ) as application_mode_mock,
         ):
             report = _prepare_argocd_for_run(config=config)
         automation_read_mock.assert_called_once()
-        application_mock.assert_called_once()
+        application_read_mock.assert_called_once_with(
+            namespace='argocd',
+            app_name='root',
+        )
+        root_application_mock.assert_called_once()
+        applicationset_mock.assert_called_once()
+        application_mode_mock.assert_called_once()
         self.assertTrue(report['changed'])
         self.assertIn('application', report)
-        self.assertFalse(report['applicationset_managed'])
+        self.assertIn('root_application', report)
+        self.assertTrue(report['applicationset_managed'])
         self.assertEqual(report['previous_mode'], 'auto')
-        self.assertEqual(report['current_mode'], 'auto')
+        self.assertEqual(report['current_mode'], 'manual')
 
-    def test_restore_argocd_after_run_restores_application_only(self) -> None:
+    def test_restore_argocd_after_run_restores_root_and_applicationset(self) -> None:
         config = ArgocdAutomationConfig(
             manage_automation=True,
             applicationset_name='product',
             applicationset_namespace='argocd',
             app_name='torghut',
+            root_app_name='root',
             desired_mode_during_run='manual',
             restore_mode_after_run='previous',
             verify_timeout_seconds=30,
@@ -1880,23 +1925,44 @@ class TestStartHistoricalSimulation(TestCase):
             'automated': {'enabled': True, 'prune': True, 'selfHeal': True},
             'syncOptions': ['CreateNamespace=true'],
         }
-        with patch(
-            'scripts.start_historical_simulation._set_argocd_application_sync_policy',
-            return_value={
-                'previous_sync_policy': {
-                    'automated': {'enabled': False, 'prune': False, 'selfHeal': False},
+        with (
+            patch(
+                'scripts.start_historical_simulation._set_argocd_automation_mode',
+                return_value={
+                    'pointer': '/spec/generators/0/list/elements/0/automation',
+                    'previous_mode': 'manual',
+                    'desired_mode': 'auto',
+                    'current_mode': 'auto',
+                    'changed': True,
                 },
-                'current_sync_policy': previous_sync_policy,
-                'changed': True,
-            },
-        ) as application_mock:
+            ) as applicationset_mock,
+            patch(
+                'scripts.start_historical_simulation._set_argocd_application_sync_policy',
+                return_value={
+                    'previous_sync_policy': {
+                        'automated': {'enabled': False, 'prune': False, 'selfHeal': False},
+                    },
+                    'current_sync_policy': previous_sync_policy,
+                    'changed': True,
+                },
+            ) as application_mock,
+            patch(
+                'scripts.start_historical_simulation._wait_for_argocd_application_mode',
+                return_value={
+                    'app_name': 'torghut',
+                    'current_mode': 'auto',
+                },
+            ) as application_mode_mock,
+        ):
             report = _restore_argocd_after_run(
                 config=config,
                 previous_mode='auto',
                 previous_sync_policy=previous_sync_policy,
             )
+        applicationset_mock.assert_called_once()
         application_mock.assert_called_once()
+        application_mode_mock.assert_called_once()
         self.assertTrue(report['changed'])
         self.assertEqual(report['restored_mode'], 'auto')
-        self.assertFalse(report['applicationset_managed'])
+        self.assertTrue(report['applicationset_managed'])
         self.assertEqual(report['current_mode'], 'auto')
