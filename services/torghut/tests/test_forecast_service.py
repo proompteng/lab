@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from tempfile import TemporaryDirectory
+from datetime import datetime, timezone
 from unittest import TestCase
 
 from fastapi.testclient import TestClient
@@ -26,12 +27,13 @@ class TestForecastService(TestCase):
     def test_forecast_service_emits_lineage_and_authority_fields(self) -> None:
         with TemporaryDirectory() as tmpdir:
             manifest_path = f"{tmpdir}/registry.json"
+            now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
             with open(manifest_path, "w", encoding="utf-8") as handle:
                 json.dump(
                     {
                         "schema_version": "torghut-forecast-registry.v1",
                         "registry_ref": "s3://torghut-forecast/registry/test.json",
-                        "generated_at": "2026-03-06T00:00:00Z",
+                        "generated_at": now_iso,
                         "models": [
                             {
                                 "model_family": "chronos",
@@ -41,7 +43,7 @@ class TestForecastService(TestCase):
                                 "dataset_snapshot_ref": "datasets/chronos/1",
                                 "calibration_ref": "calibration/chronos/1",
                                 "calibration_score": "0.95",
-                                "calibration_updated_at": "2026-03-06T00:00:00Z",
+                                "calibration_updated_at": now_iso,
                                 "parameters": {
                                     "macd_weight": "0.9",
                                     "drift_bias_pct": "0.0001",
@@ -62,7 +64,7 @@ class TestForecastService(TestCase):
                 json={
                     "symbol": "AAPL",
                     "horizon": "1m",
-                    "event_ts": "2026-03-06T00:00:00Z",
+                    "event_ts": now_iso,
                     "model_family": "chronos",
                     "values": {
                         "price": "195.1",
