@@ -25,9 +25,10 @@ Cloud-init should ensure:
 
 ## VM access model
 
-- ServiceAccount: `openclaw-vm`
-- Namespace scope: admin inside `openclaw` namespace via Role/RoleBinding
-- Cluster scope: read-only (`namespaces`, `nodes`, `storageclasses`) via ClusterRole
+- ServiceAccount: `openclaw-vm` (namespace `openclaw`)
+- RBAC scope: **Argo CD application only**
+  - can `get/list/watch` Argo CD `applications`
+  - can `patch/update` only `argocd/Application/openclaw`
 
 ## Re-seal command (example)
 

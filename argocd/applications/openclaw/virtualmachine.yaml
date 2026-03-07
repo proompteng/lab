@@ -2,6 +2,7 @@ apiVersion: kubevirt.io/v1
 kind: VirtualMachine
 metadata:
   name: openclaw
+  namespace: openclaw
   labels:
     app.kubernetes.io/name: openclaw
   annotations:

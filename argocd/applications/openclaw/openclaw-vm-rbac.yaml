@@ -7,18 +7,22 @@ metadata:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: openclaw-vm-namespace-admin
-  namespace: openclaw
+  name: openclaw-vm-argocd-app
+  namespace: argocd
 rules:
-  - apiGroups: ["", "apps", "batch", "networking.k8s.io", "autoscaling", "policy", "rbac.authorization.k8s.io", "kubevirt.io", "cdi.kubevirt.io", "postgresql.cnpg.io"]
-    resources: ["*"]
-    verbs: ["*"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications"]
+    resourceNames: ["openclaw"]
+    verbs: ["patch", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: openclaw-vm-namespace-admin
-  namespace: openclaw
+  name: openclaw-vm-argocd-app
+  namespace: argocd
 subjects:
   - kind: ServiceAccount
     name: openclaw-vm
@@ -26,29 +30,4 @@ subjects:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: openclaw-vm-namespace-admin
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: openclaw-vm-cluster-read
-rules:
-  - apiGroups: [""]
-    resources: ["namespaces", "nodes"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["storage.k8s.io"]
-    resources: ["storageclasses"]
-    verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: openclaw-vm-cluster-read
-subjects:
-  - kind: ServiceAccount
-    name: openclaw-vm
-    namespace: openclaw
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: openclaw-vm-cluster-read
+  name: openclaw-vm-argocd-app
