@@ -32,10 +32,12 @@ from scripts.start_historical_simulation import (
     _normalize_run_token,
     _offset_for_time_lookup,
     _pacing_delay_seconds,
+    _prepare_argocd_for_run,
     _producer_for_replay,
     _redact_dsn_credentials,
     _restore_ta_configuration,
     _replay_dump,
+    _set_argocd_application_sync_policy,
     _set_argocd_automation_mode,
     _runtime_verify,
     _run_migrations,
@@ -1486,3 +1488,98 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertTrue(report['changed'])
         patch_mock.assert_called_once()
         self.assertEqual(report['current_mode'], 'manual')
+
+    def test_set_argocd_application_sync_policy_patches_and_verifies(self) -> None:
+        payload_auto = {
+            'spec': {
+                'syncPolicy': {
+                    'automated': {
+                        'enabled': True,
+                        'prune': True,
+                        'selfHeal': True,
+                    },
+                    'syncOptions': ['CreateNamespace=true'],
+                }
+            }
+        }
+        payload_manual = {
+            'spec': {
+                'syncPolicy': {
+                    'automated': {
+                        'enabled': False,
+                        'prune': False,
+                        'selfHeal': False,
+                    },
+                    'syncOptions': ['CreateNamespace=true'],
+                }
+            }
+        }
+        with (
+            patch(
+                'scripts.start_historical_simulation._kubectl_json_global',
+                side_effect=[payload_auto, payload_manual],
+            ),
+            patch('scripts.start_historical_simulation._kubectl_patch') as patch_mock,
+        ):
+            report = _set_argocd_application_sync_policy(
+                config=ArgocdAutomationConfig(
+                    manage_automation=True,
+                    applicationset_name='product',
+                    applicationset_namespace='argocd',
+                    app_name='torghut',
+                    desired_mode_during_run='manual',
+                    restore_mode_after_run='previous',
+                    verify_timeout_seconds=30,
+                ),
+                desired_sync_policy=payload_manual['spec']['syncPolicy'],
+            )
+        self.assertTrue(report['changed'])
+        patch_mock.assert_called_once()
+        self.assertEqual(
+            report['current_sync_policy']['automated'],
+            {'enabled': False, 'prune': False, 'selfHeal': False},
+        )
+
+    def test_prepare_argocd_for_run_patches_application_and_applicationset(self) -> None:
+        config = ArgocdAutomationConfig(
+            manage_automation=True,
+            applicationset_name='product',
+            applicationset_namespace='argocd',
+            app_name='torghut',
+            desired_mode_during_run='manual',
+            restore_mode_after_run='previous',
+            verify_timeout_seconds=30,
+        )
+        with (
+            patch(
+                'scripts.start_historical_simulation._set_argocd_automation_mode',
+                return_value={'previous_mode': 'auto', 'current_mode': 'manual', 'changed': True},
+            ) as automation_mock,
+            patch(
+                'scripts.start_historical_simulation._read_argocd_application_sync_policy',
+                return_value={
+                    'sync_policy': {
+                        'automated': {'enabled': True, 'prune': True, 'selfHeal': True},
+                        'syncOptions': ['CreateNamespace=true'],
+                    },
+                    'automated_enabled': True,
+                },
+            ),
+            patch(
+                'scripts.start_historical_simulation._set_argocd_application_sync_policy',
+                return_value={
+                    'previous_sync_policy': {
+                        'automated': {'enabled': True, 'prune': True, 'selfHeal': True},
+                    },
+                    'current_sync_policy': {
+                        'automated': {'enabled': False, 'prune': False, 'selfHeal': False},
+                    },
+                    'changed': True,
+                },
+            ) as application_mock,
+        ):
+            report = _prepare_argocd_for_run(config=config)
+        automation_mock.assert_called_once()
+        application_mock.assert_called_once()
+        self.assertTrue(report['changed'])
+        self.assertIn('application', report)
