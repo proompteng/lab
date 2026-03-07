@@ -29,6 +29,9 @@ Cloud-init should ensure:
 - RBAC scope:
   - can `create/delete/get/list/patch/update/watch` Argo CD `applications`
   - can `create/delete/get/list/watch` `agents.proompteng.ai/AgentRun`
+  - can `get/list/watch` `Agent`, `ImplementationSpec`, and `VersionControlProvider` in `agents`
+  - can `get` the allowlisted AgentRun Secrets `codex-github-token` and `codex-openai-key`
+  - can `get/list/watch` Jobs, Pods, and ConfigMaps plus `get` Pod logs for AgentRun inspection
 - Implementation note:
   - these permissions are bound with `ClusterRole`/`ClusterRoleBinding` because the OpenClaw app applies `namespace: openclaw`, which would rewrite namespaced RBAC objects into the wrong namespace during GitOps sync
 
