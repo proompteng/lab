@@ -1,0 +1,86 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: torghut-simulation-activity
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+spec:
+  args:
+    - name: runId
+    - name: datasetId
+    - name: namespace
+    - name: torghutService
+    - name: taDeployment
+    - name: forecastService
+    - name: windowStart
+    - name: windowEnd
+    - name: signalTable
+    - name: priceTable
+    - name: postgresDatabase
+    - name: clickhouseHttpUrl
+    - name: clickhouseUsername
+    - name: monitorTimeoutSeconds
+    - name: monitorPollSeconds
+    - name: minTradeDecisions
+    - name: minExecutions
+    - name: minExecutionTcaMetrics
+    - name: minExecutionOrderEvents
+    - name: cursorGraceSeconds
+  metrics:
+    - name: activity
+      provider:
+        job:
+          spec:
+            backoffLimit: 0
+            ttlSecondsAfterFinished: 300
+            template:
+              spec:
+                serviceAccountName: torghut-runtime
+                restartPolicy: Never
+                containers:
+                  - name: analysis
+                    image: registry.ide-newton.ts.net/lab/torghut@sha256:ed936c6d5d5263aa170f97d37ce866a26316ab74bd313d941ae302fb43f65277
+                    imagePullPolicy: IfNotPresent
+                    env:
+                      - name: DB_DSN
+                        valueFrom:
+                          secretKeyRef:
+                            name: torghut-db-app
+                            key: uri
+                      - name: TORGHUT_CLICKHOUSE_PASSWORD
+                        valueFrom:
+                          secretKeyRef:
+                            name: torghut-clickhouse-auth
+                            key: torghut_password
+                    command:
+                      - /bin/bash
+                      - -lc
+                    args:
+                      - >-
+                        set -euo pipefail &&
+                        cd /app &&
+                        /opt/venv/bin/python scripts/run_simulation_analysis.py activity
+                        --run-id "{{args.runId}}"
+                        --dataset-id "{{args.datasetId}}"
+                        --namespace "{{args.namespace}}"
+                        --torghut-service "{{args.torghutService}}"
+                        --ta-deployment "{{args.taDeployment}}"
+                        --forecast-service "{{args.forecastService}}"
+                        --window-start "{{args.windowStart}}"
+                        --window-end "{{args.windowEnd}}"
+                        --signal-table "{{args.signalTable}}"
+                        --price-table "{{args.priceTable}}"
+                        --postgres-base-dsn-env DB_DSN
+                        --postgres-database "{{args.postgresDatabase}}"
+                        --clickhouse-http-url "{{args.clickhouseHttpUrl}}"
+                        --clickhouse-username "{{args.clickhouseUsername}}"
+                        --clickhouse-password-env TORGHUT_CLICKHOUSE_PASSWORD
+                        --monitor-timeout-seconds "{{args.monitorTimeoutSeconds}}"
+                        --monitor-poll-seconds "{{args.monitorPollSeconds}}"
+                        --min-trade-decisions "{{args.minTradeDecisions}}"
+                        --min-executions "{{args.minExecutions}}"
+                        --min-execution-tca-metrics "{{args.minExecutionTcaMetrics}}"
+                        --min-execution-order-events "{{args.minExecutionOrderEvents}}"
+                        --cursor-grace-seconds "{{args.cursorGraceSeconds}}"
+                        --json

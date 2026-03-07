@@ -47,6 +47,14 @@ runtime:
   torghut_forecast_service: torghut-forecast-sim
   output_root: artifacts/torghut/simulations
 
+rollouts:
+  enabled: true
+  namespace: torghut
+  runtime_template: torghut-simulation-runtime-ready
+  activity_template: torghut-simulation-activity
+  teardown_template: torghut-simulation-teardown-clean
+  artifact_template: torghut-simulation-artifact-bundle
+
 replay:
   pace_mode: max_throughput
   acceleration: 1

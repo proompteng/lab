@@ -113,6 +113,17 @@ spec:
           runtime["output_root"] = output_root
           payload["runtime"] = runtime
 
+          rollouts = payload.get("rollouts")
+          if not isinstance(rollouts, dict):
+            rollouts = {}
+          rollouts.setdefault("enabled", True)
+          rollouts.setdefault("namespace", runtime.get("namespace", "torghut"))
+          rollouts.setdefault("runtime_template", "torghut-simulation-runtime-ready")
+          rollouts.setdefault("activity_template", "torghut-simulation-activity")
+          rollouts.setdefault("teardown_template", "torghut-simulation-teardown-clean")
+          rollouts.setdefault("artifact_template", "torghut-simulation-artifact-bundle")
+          payload["rollouts"] = rollouts
+
           with open(manifest_path, 'w', encoding='utf-8') as handle:
             yaml.safe_dump(payload, handle, default_flow_style=False, sort_keys=False)
           PY

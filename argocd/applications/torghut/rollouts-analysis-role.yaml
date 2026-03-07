@@ -1,0 +1,24 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: torghut-rollouts-analysis
+  namespace: torghut
+rules:
+  - apiGroups: ['argoproj.io']
+    resources: ['analysisruns']
+    verbs: ['create', 'get', 'list', 'watch', 'patch', 'delete']
+  - apiGroups: ['argoproj.io']
+    resources: ['analysistemplates']
+    verbs: ['get', 'list', 'watch']
+  - apiGroups: ['']
+    resources: ['pods', 'pods/log', 'configmaps', 'services']
+    verbs: ['get', 'list', 'watch']
+  - apiGroups: ['apps']
+    resources: ['deployments']
+    verbs: ['get', 'list', 'watch']
+  - apiGroups: ['serving.knative.dev']
+    resources: ['services', 'revisions']
+    verbs: ['get', 'list', 'watch']
+  - apiGroups: ['flink.apache.org']
+    resources: ['flinkdeployments']
+    verbs: ['get', 'list', 'watch']

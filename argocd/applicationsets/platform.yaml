@@ -238,6 +238,13 @@ spec:
                   argocd.argoproj.io/sync-wave: "2"
                 automation: auto
                 enabled: "true"
+              - name: argo-rollouts
+                path: argocd/applications/argo-rollouts
+                namespace: argo-rollouts
+                annotations:
+                  argocd.argoproj.io/sync-wave: "3"
+                automation: manual
+                enabled: "true"
               - name: argo-workflows
                 path: argocd/applications/argo-workflows
                 namespace: argo-workflows

@@ -1,0 +1,853 @@
+from __future__ import annotations
+
+import json
+import subprocess
+import time
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import asdict, is_dataclass
+from datetime import date, datetime, timedelta, timezone
+from http.client import HTTPConnection, HTTPSConnection
+from pathlib import Path
+from typing import Any, cast
+from urllib.parse import quote_plus, urlsplit
+from zoneinfo import ZoneInfo
+
+import psycopg
+
+PRODUCTION_TOPIC_BY_ROLE = {
+    'trades': 'torghut.trades.v1',
+    'quotes': 'torghut.quotes.v1',
+    'bars': 'torghut.bars.1m.v1',
+    'status': 'torghut.status.v1',
+    'ta_microbars': 'torghut.ta.bars.1s.v1',
+    'ta_signals': 'torghut.ta.signals.v1',
+    'ta_status': 'torghut.ta.status.v1',
+    'order_updates': 'torghut.trade-updates.v1',
+}
+
+TORGHUT_ENV_KEYS = [
+    'DB_DSN',
+    'TRADING_MODE',
+    'TRADING_FEATURE_FLAGS_ENABLED',
+    'TRADING_FEATURE_QUALITY_ENABLED',
+    'TRADING_FEATURE_MAX_REQUIRED_NULL_RATE',
+    'TRADING_FEATURE_MAX_STALENESS_MS',
+    'TRADING_FEATURE_MAX_DUPLICATE_RATIO',
+    'TRADING_STRATEGY_RUNTIME_MODE',
+    'TRADING_STRATEGY_SCHEDULER_ENABLED',
+    'TRADING_SIGNAL_TABLE',
+    'TRADING_PRICE_TABLE',
+    'TRADING_ORDER_FEED_ENABLED',
+    'TRADING_ORDER_FEED_BOOTSTRAP_SERVERS',
+    'TRADING_ORDER_FEED_SECURITY_PROTOCOL',
+    'TRADING_ORDER_FEED_SASL_MECHANISM',
+    'TRADING_ORDER_FEED_SASL_USERNAME',
+    'TRADING_ORDER_FEED_SASL_PASSWORD',
+    'TRADING_ORDER_FEED_TOPIC',
+    'TRADING_ORDER_FEED_TOPIC_V2',
+    'TRADING_ORDER_FEED_GROUP_ID',
+    'TRADING_EXECUTION_ADAPTER',
+    'TRADING_EXECUTION_FALLBACK_ADAPTER',
+    'TRADING_SIMULATION_ENABLED',
+    'TRADING_SIMULATION_RUN_ID',
+    'TRADING_SIMULATION_DATASET_ID',
+    'TRADING_SIMULATION_ORDER_UPDATES_TOPIC',
+    'TRADING_SIMULATION_ORDER_UPDATES_BOOTSTRAP_SERVERS',
+    'TRADING_SIMULATION_ORDER_UPDATES_SECURITY_PROTOCOL',
+    'TRADING_SIMULATION_ORDER_UPDATES_SASL_MECHANISM',
+    'TRADING_SIMULATION_ORDER_UPDATES_SASL_USERNAME',
+    'TRADING_SIMULATION_ORDER_UPDATES_SASL_PASSWORD',
+]
+
+US_EQUITIES_REGULAR_PROFILE = 'us_equities_regular'
+US_EQUITIES_REGULAR_TIMEZONE = 'America/New_York'
+US_EQUITIES_REGULAR_MINUTES = 390
+DEFAULT_COVERAGE_STRICT_RATIO = 0.95
+DEFAULT_RUN_MONITOR_TIMEOUT_SECONDS = 900
+DEFAULT_RUN_MONITOR_POLL_SECONDS = 15
+DEFAULT_RUN_MONITOR_MIN_DECISIONS = 1
+DEFAULT_RUN_MONITOR_MIN_EXECUTIONS = 1
+DEFAULT_RUN_MONITOR_MIN_TCA = 1
+DEFAULT_RUN_MONITOR_MIN_ORDER_EVENTS = 0
+DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS = 120
+TRANSIENT_POSTGRES_ERROR_PATTERNS = (
+    'connection refused',
+    'connection reset by peer',
+    'could not receive data from server',
+    'server closed the connection unexpectedly',
+    'connection to server at',
+    'terminating connection due to administrator command',
+    'timeout expired',
+)
+
+
+def _as_mapping(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {str(key): item for key, item in cast(Mapping[str, Any], value).items()}
+
+
+def _as_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text
+
+
+def _safe_int(value: Any, *, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped:
+            try:
+                return int(stripped)
+            except ValueError:
+                return default
+    return default
+
+
+def _safe_float(value: Any, *, default: float = 0.0) -> float:
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped:
+            try:
+                return float(stripped)
+            except ValueError:
+                return default
+    return default
+
+
+def _resource_attr(resource: Any, key: str, *, default: Any = None) -> Any:
+    if isinstance(resource, Mapping):
+        return resource.get(key, default)
+    return getattr(resource, key, default)
+
+
+def _resource_asdict(resource: Any) -> dict[str, Any]:
+    if isinstance(resource, Mapping):
+        return {str(key): value for key, value in cast(Mapping[str, Any], resource).items()}
+    if is_dataclass(resource):
+        payload = asdict(resource)
+        return {str(key): value for key, value in cast(dict[str, Any], payload).items()}
+    return dict(vars(resource))
+
+
+def _parse_rfc3339_timestamp(value: str | None, *, label: str) -> datetime:
+    if value is None:
+        raise SystemExit(f'{label} is required in manifest')
+    cleaned = value.replace('Z', '+00:00')
+    try:
+        parsed = datetime.fromisoformat(cleaned)
+    except ValueError as exc:
+        raise SystemExit(f'invalid {label} timestamp: {value}') from exc
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _resolve_window_bounds(manifest: Mapping[str, Any]) -> tuple[datetime, datetime]:
+    window = _as_mapping(manifest.get('window'))
+    start = _parse_rfc3339_timestamp(_as_text(window.get('start')), label='window.start')
+    end = _parse_rfc3339_timestamp(_as_text(window.get('end')), label='window.end')
+    if end <= start:
+        raise RuntimeError('window.end must be after window.start')
+    return start, end
+
+
+def _window_min_coverage_minutes(window: Mapping[str, Any], *, profile: str | None) -> int | None:
+    raw_minutes = window.get('min_coverage_minutes')
+    if raw_minutes is not None:
+        minutes = _safe_int(raw_minutes, default=-1)
+        if minutes <= 0:
+            raise RuntimeError('window.min_coverage_minutes must be > 0 when provided')
+        return minutes
+    if profile == US_EQUITIES_REGULAR_PROFILE:
+        return US_EQUITIES_REGULAR_MINUTES
+    return None
+
+
+def _validate_us_equities_regular_profile(
+    *,
+    start: datetime,
+    end: datetime,
+    window: Mapping[str, Any],
+) -> None:
+    trading_day_raw = _as_text(window.get('trading_day'))
+    if trading_day_raw is None:
+        raise RuntimeError('window.trading_day is required when window.profile=us_equities_regular')
+    timezone_name = _as_text(window.get('timezone')) or US_EQUITIES_REGULAR_TIMEZONE
+    try:
+        local_tz = ZoneInfo(timezone_name)
+    except Exception as exc:
+        raise RuntimeError(f'invalid_window_timezone:{timezone_name}') from exc
+    try:
+        trading_day = date.fromisoformat(trading_day_raw)
+    except ValueError as exc:
+        raise RuntimeError(f'invalid_window_trading_day:{trading_day_raw}') from exc
+
+    expected_start_local = datetime(trading_day.year, trading_day.month, trading_day.day, 9, 30, tzinfo=local_tz)
+    expected_end_local = datetime(trading_day.year, trading_day.month, trading_day.day, 16, 0, tzinfo=local_tz)
+    expected_start_utc = expected_start_local.astimezone(timezone.utc)
+    expected_end_utc = expected_end_local.astimezone(timezone.utc)
+    if start != expected_start_utc or end != expected_end_utc:
+        raise RuntimeError(
+            'window_profile_mismatch:us_equities_regular '
+            f'expected_start={expected_start_utc.isoformat()} '
+            f'expected_end={expected_end_utc.isoformat()} '
+            f'observed_start={start.isoformat()} '
+            f'observed_end={end.isoformat()}'
+        )
+
+
+def _validate_window_policy(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    start, end = _resolve_window_bounds(manifest)
+    window = _as_mapping(manifest.get('window'))
+    profile = (_as_text(window.get('profile')) or '').strip().lower() or None
+    if profile == US_EQUITIES_REGULAR_PROFILE:
+        _validate_us_equities_regular_profile(start=start, end=end, window=window)
+    elif profile is not None:
+        raise RuntimeError(f'unsupported_window_profile:{profile}')
+
+    min_coverage_minutes = _window_min_coverage_minutes(window, profile=profile)
+    observed_minutes = (end - start).total_seconds() / 60.0
+    if min_coverage_minutes is not None and observed_minutes < float(min_coverage_minutes):
+        raise RuntimeError(
+            'window_coverage_too_small '
+            f'observed_minutes={observed_minutes:.3f} '
+            f'minimum_required={min_coverage_minutes}'
+        )
+
+    strict_ratio = _safe_float(window.get('strict_coverage_ratio'), default=DEFAULT_COVERAGE_STRICT_RATIO)
+    if strict_ratio <= 0 or strict_ratio > 1:
+        raise RuntimeError('window.strict_coverage_ratio must be in (0, 1]')
+
+    return {
+        'window_start': start.isoformat(),
+        'window_end': end.isoformat(),
+        'profile': profile,
+        'min_coverage_minutes': min_coverage_minutes,
+        'observed_minutes': observed_minutes,
+        'strict_coverage_ratio': strict_ratio,
+    }
+
+
+def _validate_dump_coverage(
+    *,
+    manifest: Mapping[str, Any],
+    dump_report: Mapping[str, Any],
+) -> dict[str, Any]:
+    window = _as_mapping(manifest.get('window'))
+    profile = (_as_text(window.get('profile')) or '').strip().lower() or None
+    min_coverage_minutes = _window_min_coverage_minutes(
+        window,
+        profile=profile,
+    )
+    strict_ratio_raw = window.get('strict_coverage_ratio')
+    strict_ratio = (
+        _safe_float(strict_ratio_raw, default=DEFAULT_COVERAGE_STRICT_RATIO)
+        if strict_ratio_raw is not None
+        else DEFAULT_COVERAGE_STRICT_RATIO
+    )
+
+    records = _safe_int(dump_report.get('records'))
+    if records <= 0:
+        raise RuntimeError('dump_records_empty')
+
+    min_source_timestamp_ms = dump_report.get('min_source_timestamp_ms')
+    max_source_timestamp_ms = dump_report.get('max_source_timestamp_ms')
+    if min_source_timestamp_ms is None or max_source_timestamp_ms is None:
+        return {
+            'applied': False,
+            'reason': 'timestamp_coverage_unavailable',
+        }
+
+    min_ms = _safe_int(min_source_timestamp_ms, default=-1)
+    max_ms = _safe_int(max_source_timestamp_ms, default=-1)
+    if min_ms < 0 or max_ms < 0 or max_ms < min_ms:
+        raise RuntimeError('dump_timestamp_coverage_invalid')
+    observed_minutes = (max_ms - min_ms) / 60_000.0
+
+    if min_coverage_minutes is not None:
+        required_minutes = float(min_coverage_minutes) * strict_ratio
+        if observed_minutes < required_minutes:
+            raise RuntimeError(
+                'dump_coverage_too_short '
+                f'observed_minutes={observed_minutes:.2f} '
+                f'required_minutes={required_minutes:.2f} '
+                f'strict_ratio={strict_ratio:.4f}'
+            )
+        return {
+            'applied': True,
+            'observed_minutes': observed_minutes,
+            'required_minutes': required_minutes,
+            'min_source_timestamp_ms': min_ms,
+            'max_source_timestamp_ms': max_ms,
+            'strict_ratio': strict_ratio,
+            'profile': profile,
+        }
+    return {
+        'applied': False,
+        'observed_minutes': observed_minutes,
+        'reason': 'no_minimum_coverage_policy',
+        'min_source_timestamp_ms': min_ms,
+        'max_source_timestamp_ms': max_ms,
+    }
+
+
+def _replace_database_in_dsn(dsn: str, *, database: str, label: str) -> str:
+    parsed = urlsplit(dsn)
+    if not parsed.scheme or not parsed.netloc:
+        raise SystemExit(f'{label} must be a valid URL')
+    return parsed._replace(path='/' + quote_plus(database)).geturl()
+
+
+def _run_command(
+    args: Sequence[str],
+    *,
+    input_text: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            list(args),
+            check=True,
+            text=True,
+            capture_output=True,
+            input=input_text,
+        )
+    except subprocess.CalledProcessError as exc:
+        stdout = (exc.stdout or '').strip()
+        stderr = (exc.stderr or '').strip()
+        detail = stderr or stdout or str(exc)
+        raise RuntimeError(f'command_failed: {" ".join(args)}: {detail}') from exc
+
+
+def _kubectl_json(namespace: str, args: Sequence[str]) -> dict[str, Any]:
+    result = _run_command(['kubectl', '-n', namespace, *args])
+    payload = json.loads(result.stdout)
+    if not isinstance(payload, Mapping):
+        raise RuntimeError('kubectl did not return a mapping payload')
+    return {str(key): value for key, value in cast(Mapping[str, Any], payload).items()}
+
+
+def _is_transient_postgres_error(error: Exception) -> bool:
+    message = str(error).lower()
+    return any(pattern in message for pattern in TRANSIENT_POSTGRES_ERROR_PATTERNS)
+
+
+def _run_with_transient_postgres_retry(
+    *,
+    label: str,
+    operation: Callable[[], Any],
+    attempts: int = 8,
+    sleep_seconds: float = 0.5,
+) -> Any:
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return operation()
+        except Exception as exc:
+            if not _is_transient_postgres_error(exc):
+                raise
+            last_error = exc
+            if attempt >= attempts:
+                break
+            time.sleep(sleep_seconds * attempt)
+    if last_error is None:
+        raise RuntimeError(f'{label}: transient retry failed without captured exception')
+    raise RuntimeError(f'{label}: exhausted transient retries: {last_error}') from last_error
+
+
+def _http_clickhouse_query(
+    *,
+    config: Any,
+    query: str,
+) -> tuple[int, str]:
+    http_url = _as_text(_resource_attr(config, 'http_url'))
+    if http_url is None:
+        raise RuntimeError('clickhouse http_url is required')
+    parsed = urlsplit(http_url)
+    if not parsed.scheme or not parsed.hostname:
+        raise RuntimeError(f'invalid_clickhouse_http_url:{http_url}')
+
+    connection_class = HTTPSConnection if parsed.scheme == 'https' else HTTPConnection
+    connection = connection_class(parsed.hostname, parsed.port)
+    path = parsed.path or '/'
+    if parsed.query:
+        path = f'{path}?{parsed.query}'
+
+    headers = {'Content-Type': 'text/plain'}
+    username = _as_text(_resource_attr(config, 'username'))
+    password = _as_text(_resource_attr(config, 'password'))
+    if username is not None:
+        headers['X-ClickHouse-User'] = username
+    if password is not None:
+        headers['X-ClickHouse-Key'] = password
+
+    try:
+        connection.request('POST', path, body=query.encode('utf-8'), headers=headers)
+        response = connection.getresponse()
+        return response.status, response.read().decode('utf-8')
+    finally:
+        connection.close()
+
+
+def _condition_status(payload: Mapping[str, Any], *, condition_type: str) -> str | None:
+    conditions = payload.get('conditions')
+    if not isinstance(conditions, list):
+        return None
+    for raw_item in conditions:
+        if not isinstance(raw_item, Mapping):
+            continue
+        item = cast(Mapping[str, Any], raw_item)
+        if _as_text(item.get('type')) == condition_type:
+            return _as_text(item.get('status'))
+    return None
+
+
+def _deployment_replica_health(namespace: str, name: str) -> dict[str, Any]:
+    deployment = _kubectl_json(namespace, ['get', 'deployment', name, '-o', 'json'])
+    status = _as_mapping(deployment.get('status'))
+    return {
+        'name': name,
+        'ready_replicas': int(status.get('readyReplicas') or 0),
+        'available_replicas': int(status.get('availableReplicas') or 0),
+        'replicas': int(status.get('replicas') or 0),
+    }
+
+
+def _flink_runtime_health(namespace: str, name: str) -> dict[str, Any]:
+    deployment = _kubectl_json(namespace, ['get', 'flinkdeployment', name, '-o', 'json'])
+    spec = _as_mapping(deployment.get('spec'))
+    status = _as_mapping(deployment.get('status'))
+    job_status = _as_mapping(status.get('jobStatus'))
+    lifecycle_state = _as_text(job_status.get('state')) or _as_text(status.get('jobManagerDeploymentStatus'))
+    return {
+        'name': name,
+        'desired_state': _as_text(_as_mapping(spec.get('job')).get('state')) or 'unknown',
+        'lifecycle_state': lifecycle_state or 'unknown',
+        'job_manager_status': _as_text(status.get('jobManagerDeploymentStatus')) or 'unknown',
+    }
+
+
+def _kservice_env(service: Mapping[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+    spec = _as_mapping(service.get('spec'))
+    template = _as_mapping(spec.get('template'))
+    template_spec = _as_mapping(template.get('spec'))
+    containers = template_spec.get('containers')
+    if not isinstance(containers, list) or not containers:
+        raise RuntimeError('kservice container spec missing')
+    first = containers[0]
+    if not isinstance(first, Mapping):
+        raise RuntimeError('kservice container spec invalid')
+    container = _as_mapping(first)
+    container_name = _as_text(container.get('name')) or 'user-container'
+    env_raw = container.get('env')
+    env: list[dict[str, Any]] = []
+    if isinstance(env_raw, list):
+        for item in env_raw:
+            if isinstance(item, Mapping):
+                env.append(_as_mapping(item))
+    return container_name, env
+
+
+def _monitor_settings(manifest: Mapping[str, Any]) -> dict[str, int]:
+    monitor = _as_mapping(manifest.get('monitor'))
+    timeout_seconds = _safe_int(monitor.get('timeout_seconds'), default=DEFAULT_RUN_MONITOR_TIMEOUT_SECONDS)
+    poll_seconds = _safe_int(monitor.get('poll_seconds'), default=DEFAULT_RUN_MONITOR_POLL_SECONDS)
+    min_decisions = _safe_int(monitor.get('min_trade_decisions'), default=DEFAULT_RUN_MONITOR_MIN_DECISIONS)
+    min_executions = _safe_int(monitor.get('min_executions'), default=DEFAULT_RUN_MONITOR_MIN_EXECUTIONS)
+    min_tca = _safe_int(monitor.get('min_execution_tca_metrics'), default=DEFAULT_RUN_MONITOR_MIN_TCA)
+    min_order_events = _safe_int(
+        monitor.get('min_execution_order_events'),
+        default=DEFAULT_RUN_MONITOR_MIN_ORDER_EVENTS,
+    )
+    cursor_grace_seconds = _safe_int(
+        monitor.get('cursor_grace_seconds'),
+        default=DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS,
+    )
+    if timeout_seconds <= 0:
+        raise RuntimeError('monitor.timeout_seconds must be > 0')
+    if poll_seconds <= 0:
+        raise RuntimeError('monitor.poll_seconds must be > 0')
+    if min_decisions < 0 or min_executions < 0 or min_tca < 0 or min_order_events < 0:
+        raise RuntimeError('monitor minimum thresholds cannot be negative')
+    if cursor_grace_seconds < 0:
+        raise RuntimeError('monitor.cursor_grace_seconds cannot be negative')
+    return {
+        'timeout_seconds': timeout_seconds,
+        'poll_seconds': poll_seconds,
+        'min_trade_decisions': min_decisions,
+        'min_executions': min_executions,
+        'min_execution_tca_metrics': min_tca,
+        'min_execution_order_events': min_order_events,
+        'cursor_grace_seconds': cursor_grace_seconds,
+    }
+
+
+def _monitor_snapshot(postgres_config: Any) -> dict[str, Any]:
+    dsn = _as_text(_resource_attr(postgres_config, 'torghut_runtime_dsn')) or _as_text(_resource_attr(postgres_config, 'simulation_dsn'))
+    if dsn is None:
+        raise RuntimeError('postgres runtime dsn is required')
+
+    def _snapshot() -> dict[str, Any]:
+        with psycopg.connect(dsn) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute('SELECT count(*) FROM trade_decisions')
+                decision_row = cursor.fetchone()
+                trade_decisions = _safe_int(decision_row[0] if decision_row else 0)
+                cursor.execute('SELECT count(*) FROM executions')
+                execution_row = cursor.fetchone()
+                executions = _safe_int(execution_row[0] if execution_row else 0)
+                cursor.execute('SELECT count(*) FROM execution_tca_metrics')
+                tca_row = cursor.fetchone()
+                execution_tca_metrics = _safe_int(tca_row[0] if tca_row else 0)
+                cursor.execute('SELECT count(*) FROM execution_order_events')
+                order_event_row = cursor.fetchone()
+                execution_order_events = _safe_int(order_event_row[0] if order_event_row else 0)
+                cursor.execute("SELECT max(cursor_at) FROM trade_cursor WHERE source='clickhouse'")
+                row = cursor.fetchone()
+                cursor_at_raw = row[0] if row else None
+                cursor_at = cursor_at_raw.astimezone(timezone.utc) if isinstance(cursor_at_raw, datetime) else None
+        return {
+            'trade_decisions': trade_decisions,
+            'executions': executions,
+            'execution_tca_metrics': execution_tca_metrics,
+            'execution_order_events': execution_order_events,
+            'cursor_at': cursor_at.isoformat() if cursor_at is not None else None,
+        }
+
+    return cast(
+        dict[str, Any],
+        _run_with_transient_postgres_retry(label='monitor_snapshot', operation=_snapshot),
+    )
+
+
+def _signal_snapshot(*, resources: Any, clickhouse_config: Any) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for key, table in {
+        'signal_rows': _resource_attr(resources, 'clickhouse_signal_table'),
+        'price_rows': _resource_attr(resources, 'clickhouse_price_table'),
+    }.items():
+        query = f'SELECT count() FROM {table}'
+        status, body = _http_clickhouse_query(config=clickhouse_config, query=query)
+        if status < 200 or status >= 300:
+            counts[key] = 0
+            continue
+        counts[key] = _safe_int(body.strip(), default=0)
+    return counts
+
+
+def _classify_activity_snapshot(
+    *,
+    runtime_ready: bool,
+    snapshot: Mapping[str, Any],
+) -> str:
+    cursor_at_raw = snapshot.get('cursor_at')
+    if not runtime_ready:
+        return 'infra_not_active'
+    if cursor_at_raw is None:
+        return 'cursor_not_advancing'
+    if _safe_int(snapshot.get('signal_rows')) <= 0:
+        return 'signals_absent'
+    if _safe_int(snapshot.get('trade_decisions')) <= 0:
+        return 'decisions_absent'
+    if (
+        _safe_int(snapshot.get('executions')) <= 0
+        or _safe_int(snapshot.get('execution_tca_metrics')) <= 0
+        or (
+            _safe_int(snapshot.get('executions')) > 0
+            and _safe_int(snapshot.get('execution_order_events')) <= 0
+        )
+    ):
+        return 'executions_absent'
+    return 'success'
+
+
+def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str, Any]:
+    window_start, window_end = _resolve_window_bounds(manifest)
+    namespace = _as_text(_resource_attr(resources, 'namespace')) or 'torghut'
+    torghut_service = _as_text(_resource_attr(resources, 'torghut_service'))
+    ta_deployment = _as_text(_resource_attr(resources, 'ta_deployment'))
+    forecast_service = _as_text(_resource_attr(resources, 'torghut_forecast_service'))
+    if torghut_service is None or ta_deployment is None or forecast_service is None:
+        raise RuntimeError('simulation resources are incomplete')
+
+    service = _kubectl_json(namespace, ['get', 'kservice', torghut_service, '-o', 'json'])
+    service_status = _as_mapping(service.get('status'))
+    latest_ready_revision = _as_text(service_status.get('latestReadyRevisionName'))
+    ready = _condition_status(service_status, condition_type='Ready') == 'True'
+    revision_health: dict[str, Any] | None = None
+    if latest_ready_revision:
+        revision_health = _deployment_replica_health(namespace, f'{latest_ready_revision}-deployment')
+    ta_health = _flink_runtime_health(namespace, ta_deployment)
+    forecast_health = _deployment_replica_health(namespace, forecast_service)
+    return {
+        'runtime_state': 'ready'
+        if ready
+        and revision_health is not None
+        and revision_health['ready_replicas'] > 0
+        and ta_health['desired_state'] == 'running'
+        and ta_health['lifecycle_state'] in {'RUNNING', 'running', 'DEPLOYED'}
+        and forecast_health['ready_replicas'] > 0
+        else 'not_ready',
+        'target_mode': _as_text(_resource_attr(resources, 'target_mode')),
+        'window_start': window_start.astimezone(timezone.utc).isoformat(),
+        'window_end': window_end.astimezone(timezone.utc).isoformat(),
+        'torghut_service': {
+            'name': torghut_service,
+            'ready': ready,
+            'latest_ready_revision': latest_ready_revision,
+            'revision_health': revision_health,
+        },
+        'ta_runtime': ta_health,
+        'forecast_runtime': forecast_health,
+        'environment_state': 'complete' if forecast_health['ready_replicas'] > 0 else 'environment_incomplete',
+    }
+
+
+def _current_activity_report(
+    *,
+    resources: Any,
+    manifest: Mapping[str, Any],
+    postgres_config: Any,
+    clickhouse_config: Any,
+    runtime_verify: Mapping[str, Any],
+) -> dict[str, Any]:
+    start, end = _resolve_window_bounds(manifest)
+    settings = _monitor_settings(manifest)
+    snapshot = _monitor_snapshot(postgres_config)
+    snapshot.update(_signal_snapshot(resources=resources, clickhouse_config=clickhouse_config))
+    classification = _classify_activity_snapshot(
+        runtime_ready=bool(runtime_verify.get('runtime_state') == 'ready'),
+        snapshot=snapshot,
+    )
+    return {
+        'status': 'ok' if classification == 'success' else 'degraded',
+        'activity_classification': classification,
+        'window_start': start.isoformat(),
+        'window_end': end.isoformat(),
+        'monitor': settings,
+        'poll_count': 1,
+        'final_snapshot': {
+            'polled_at': datetime.now(timezone.utc).isoformat(),
+            **snapshot,
+        },
+        'polls': [],
+    }
+
+
+def _monitor_run_completion(
+    *,
+    resources: Any,
+    manifest: Mapping[str, Any],
+    postgres_config: Any,
+    clickhouse_config: Any,
+    runtime_verify: Mapping[str, Any],
+) -> dict[str, Any]:
+    start, end = _resolve_window_bounds(manifest)
+    settings = _monitor_settings(manifest)
+    deadline = datetime.now(timezone.utc) + timedelta(seconds=settings['timeout_seconds'])
+    polls: list[dict[str, Any]] = []
+    cursor_reached_at: datetime | None = None
+    runtime_ready = bool(runtime_verify.get('runtime_state') == 'ready')
+    while True:
+        snapshot = _monitor_snapshot(postgres_config)
+        snapshot.update(_signal_snapshot(resources=resources, clickhouse_config=clickhouse_config))
+        polled_at = datetime.now(timezone.utc)
+        poll_payload = {'polled_at': polled_at.isoformat(), **snapshot}
+        polls.append(poll_payload)
+        cursor_at_raw = snapshot.get('cursor_at')
+        cursor_at = _parse_rfc3339_timestamp(cast(str | None, cursor_at_raw), label='cursor_at') if isinstance(cursor_at_raw, str) else None
+        cursor_reached = cursor_at is not None and cursor_at >= end
+        thresholds_met = (
+            _safe_int(snapshot.get('trade_decisions')) >= settings['min_trade_decisions']
+            and _safe_int(snapshot.get('executions')) >= settings['min_executions']
+            and _safe_int(snapshot.get('execution_tca_metrics')) >= settings['min_execution_tca_metrics']
+            and _safe_int(snapshot.get('execution_order_events')) >= settings['min_execution_order_events']
+        )
+        executions = _safe_int(snapshot.get('executions'))
+        order_events = _safe_int(snapshot.get('execution_order_events'))
+        order_event_contract_met = executions <= 0 or order_events > 0
+        completion_ready = thresholds_met and order_event_contract_met
+
+        if cursor_reached and cursor_reached_at is None:
+            cursor_reached_at = polled_at
+        if cursor_reached and completion_ready:
+            return {
+                'status': 'ok',
+                'activity_classification': 'success',
+                'window_start': start.isoformat(),
+                'window_end': end.isoformat(),
+                'monitor': settings,
+                'poll_count': len(polls),
+                'final_snapshot': poll_payload,
+                'polls': polls[-20:],
+            }
+        if polled_at >= deadline or (
+            cursor_reached
+            and cursor_reached_at is not None
+            and int((polled_at - cursor_reached_at).total_seconds()) >= settings['cursor_grace_seconds']
+        ):
+            classification = _classify_activity_snapshot(runtime_ready=runtime_ready, snapshot=snapshot)
+            return {
+                'status': 'ok' if classification == 'success' else 'degraded',
+                'activity_classification': classification,
+                'window_start': start.isoformat(),
+                'window_end': end.isoformat(),
+                'monitor': settings,
+                'poll_count': len(polls),
+                'final_snapshot': poll_payload,
+                'polls': polls[-20:],
+            }
+        time.sleep(settings['poll_seconds'])
+
+
+def _verify_isolation_guards(
+    *,
+    resources: Any,
+    postgres_config: Any,
+    ta_data: Mapping[str, Any],
+) -> dict[str, Any]:
+    source_topic_by_role = cast(dict[str, str], _resource_attr(resources, 'source_topic_by_role'))
+    simulation_topic_by_role = cast(dict[str, str], _resource_attr(resources, 'simulation_topic_by_role'))
+    clickhouse_signal_table = _as_text(_resource_attr(resources, 'clickhouse_signal_table'))
+    clickhouse_price_table = _as_text(_resource_attr(resources, 'clickhouse_price_table'))
+    ta_group_id = _as_text(_resource_attr(resources, 'ta_group_id'))
+    simulation_db = _as_text(_resource_attr(postgres_config, 'simulation_db'))
+    simulation_dsn = _as_text(_resource_attr(postgres_config, 'simulation_dsn'))
+    simulation_topics_disjoint = all(
+        simulation_topic_by_role.get(role) != source_topic_by_role.get(role)
+        for role in ('trades', 'quotes', 'bars', 'status')
+    )
+    signal_table_isolated = bool(clickhouse_signal_table and '.ta_signals' in clickhouse_signal_table)
+    price_table_isolated = bool(clickhouse_price_table and '.ta_microbars' in clickhouse_price_table)
+    postgres_database_isolated = bool(simulation_db and simulation_db != 'torghut')
+    report = {
+        'simulation_topics_isolated_from_sources': simulation_topics_disjoint,
+        'ta_group_isolated': ta_group_id != _as_text(ta_data.get('TA_GROUP_ID')),
+        'signal_table_isolated': signal_table_isolated,
+        'price_table_isolated': price_table_isolated,
+        'postgres_database_isolated': postgres_database_isolated,
+        'simulation_dsn': simulation_dsn,
+    }
+    if not all(bool(item) for item in report.values() if isinstance(item, bool)):
+        failed = [key for key, passed in report.items() if isinstance(passed, bool) and not passed]
+        raise RuntimeError(f'isolation_guard_failed:{",".join(failed)}')
+    return report
+
+
+def _teardown_clean(
+    *,
+    resources: Any,
+    postgres_config: Any,
+) -> dict[str, Any]:
+    resource_payload = _resource_asdict(resources)
+    namespace = _as_text(resource_payload.get('namespace')) or 'torghut'
+    torghut_service = _as_text(resource_payload.get('torghut_service'))
+    ta_configmap = _as_text(resource_payload.get('ta_configmap'))
+    ta_deployment = _as_text(resource_payload.get('ta_deployment'))
+    run_id = _as_text(resource_payload.get('run_id')) or ''
+    run_token = _as_text(resource_payload.get('run_token')) or ''
+    clickhouse_signal_table = _as_text(resource_payload.get('clickhouse_signal_table')) or ''
+    clickhouse_price_table = _as_text(resource_payload.get('clickhouse_price_table')) or ''
+    order_feed_group_id = _as_text(resource_payload.get('order_feed_group_id')) or ''
+    ta_group_id = _as_text(resource_payload.get('ta_group_id')) or ''
+    runtime_dsn = _as_text(_resource_attr(postgres_config, 'torghut_runtime_dsn')) or ''
+
+    if torghut_service is None or ta_configmap is None or ta_deployment is None:
+        raise RuntimeError('simulation resources are incomplete for teardown validation')
+
+    service = _kubectl_json(namespace, ['get', 'kservice', torghut_service, '-o', 'json'])
+    _, env_entries = _kservice_env(service)
+    env_by_name = {
+        _as_text(entry.get('name')): entry
+        for entry in env_entries
+        if _as_text(entry.get('name'))
+    }
+    ta_config = _kubectl_json(namespace, ['get', 'configmap', ta_configmap, '-o', 'json'])
+    ta_data = _as_mapping(ta_config.get('data'))
+    ta_health = _flink_runtime_health(namespace, ta_deployment)
+
+    simulation_markers_present = {
+        'trading_simulation_enabled': _as_text(_as_mapping(env_by_name.get('TRADING_SIMULATION_ENABLED')).get('value')) == 'true',
+        'trading_simulation_run_id': _as_text(_as_mapping(env_by_name.get('TRADING_SIMULATION_RUN_ID')).get('value')) == run_id,
+        'db_dsn': _as_text(_as_mapping(env_by_name.get('DB_DSN')).get('value')) == runtime_dsn,
+        'signal_table': _as_text(_as_mapping(env_by_name.get('TRADING_SIGNAL_TABLE')).get('value')) == clickhouse_signal_table,
+        'price_table': _as_text(_as_mapping(env_by_name.get('TRADING_PRICE_TABLE')).get('value')) == clickhouse_price_table,
+        'order_feed_group_id': _as_text(_as_mapping(env_by_name.get('TRADING_ORDER_FEED_GROUP_ID')).get('value')) == order_feed_group_id,
+        'ta_group_id': _as_text(ta_data.get('TA_GROUP_ID')) == ta_group_id,
+        'ta_clickhouse_database': bool(run_token) and run_token in (_as_text(ta_data.get('TA_CLICKHOUSE_URL')) or ''),
+    }
+    restored = not any(simulation_markers_present.values())
+    return {
+        'status': 'ok' if restored else 'degraded',
+        'activity_classification': 'success' if restored else 'environment_incomplete',
+        'restored': restored,
+        'ta_runtime': ta_health,
+        'simulation_markers_present': simulation_markers_present,
+    }
+
+
+def _artifact_bundle(
+    *,
+    run_dir: Path,
+) -> dict[str, Any]:
+    required = [
+        'run-manifest.json',
+        'runtime-verify.json',
+        'replay-report.json',
+        'signal-activity.json',
+        'decision-activity.json',
+        'execution-activity.json',
+        'report/simulation-report.json',
+    ]
+    existing = [path for path in required if (run_dir / path).exists()]
+    missing = [path for path in required if path not in existing]
+    return {
+        'status': 'ok' if not missing else 'degraded',
+        'activity_classification': 'success' if not missing else 'environment_incomplete',
+        'run_dir': str(run_dir),
+        'existing': existing,
+        'missing': missing,
+    }
+
+
+__all__ = [
+    'DEFAULT_COVERAGE_STRICT_RATIO',
+    'DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS',
+    'DEFAULT_RUN_MONITOR_MIN_DECISIONS',
+    'DEFAULT_RUN_MONITOR_MIN_EXECUTIONS',
+    'DEFAULT_RUN_MONITOR_MIN_ORDER_EVENTS',
+    'DEFAULT_RUN_MONITOR_MIN_TCA',
+    'DEFAULT_RUN_MONITOR_POLL_SECONDS',
+    'DEFAULT_RUN_MONITOR_TIMEOUT_SECONDS',
+    'PRODUCTION_TOPIC_BY_ROLE',
+    'TORGHUT_ENV_KEYS',
+    '_artifact_bundle',
+    '_as_mapping',
+    '_as_text',
+    '_current_activity_report',
+    '_http_clickhouse_query',
+    '_monitor_run_completion',
+    '_monitor_snapshot',
+    '_resolve_window_bounds',
+    '_runtime_verify',
+    '_safe_float',
+    '_safe_int',
+    '_signal_snapshot',
+    '_teardown_clean',
+    '_validate_dump_coverage',
+    '_validate_window_policy',
+    '_verify_isolation_guards',
+]

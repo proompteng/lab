@@ -18,6 +18,10 @@ const defaultHistoricalSimulationWorkflowManifestPath =
   'argocd/applications/torghut/historical-simulation-workflowtemplate.yaml'
 const defaultEmpiricalPromotionWorkflowManifestPath =
   'argocd/applications/torghut/empirical-promotion-workflowtemplate.yaml'
+const defaultAnalysisRuntimeReadyManifestPath = 'argocd/applications/torghut/analysis-template-runtime-ready.yaml'
+const defaultAnalysisActivityManifestPath = 'argocd/applications/torghut/analysis-template-activity.yaml'
+const defaultAnalysisTeardownManifestPath = 'argocd/applications/torghut/analysis-template-teardown-clean.yaml'
+const defaultAnalysisArtifactManifestPath = 'argocd/applications/torghut/analysis-template-artifact-bundle.yaml'
 const defaultEmpiricalBackfillManifestPath = 'argocd/applications/torghut/empirical-jobs-backfill-job.yaml'
 const defaultForecastManifestPath = 'argocd/applications/torghut-forecast/deployment.yaml'
 const defaultForecastSimulationManifestPath = 'argocd/applications/torghut-forecast/sim/deployment.yaml'
@@ -36,6 +40,10 @@ type UpdateManifestsOptions = {
   leanRunnerManifestPath?: string
   historicalSimulationWorkflowManifestPath?: string
   empiricalPromotionWorkflowManifestPath?: string
+  analysisRuntimeReadyManifestPath?: string
+  analysisActivityManifestPath?: string
+  analysisTeardownManifestPath?: string
+  analysisArtifactManifestPath?: string
   empiricalBackfillManifestPath?: string
   forecastManifestPath?: string
   forecastSimulationManifestPath?: string
@@ -55,6 +63,10 @@ type CliOptions = {
   leanRunnerManifestPath?: string
   historicalSimulationWorkflowManifestPath?: string
   empiricalPromotionWorkflowManifestPath?: string
+  analysisRuntimeReadyManifestPath?: string
+  analysisActivityManifestPath?: string
+  analysisTeardownManifestPath?: string
+  analysisArtifactManifestPath?: string
   empiricalBackfillManifestPath?: string
   forecastManifestPath?: string
   forecastSimulationManifestPath?: string
@@ -183,6 +195,26 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     options.empiricalPromotionWorkflowManifestPath ?? defaultEmpiricalPromotionWorkflowManifestPath,
     'torghut-empirical-promotion image reference',
   )
+  const analysisRuntimeReady = updateImageOnlyManifest(
+    options,
+    options.analysisRuntimeReadyManifestPath ?? defaultAnalysisRuntimeReadyManifestPath,
+    'torghut-simulation-runtime-ready image reference',
+  )
+  const analysisActivity = updateImageOnlyManifest(
+    options,
+    options.analysisActivityManifestPath ?? defaultAnalysisActivityManifestPath,
+    'torghut-simulation-activity image reference',
+  )
+  const analysisTeardown = updateImageOnlyManifest(
+    options,
+    options.analysisTeardownManifestPath ?? defaultAnalysisTeardownManifestPath,
+    'torghut-simulation-teardown-clean image reference',
+  )
+  const analysisArtifact = updateImageOnlyManifest(
+    options,
+    options.analysisArtifactManifestPath ?? defaultAnalysisArtifactManifestPath,
+    'torghut-simulation-artifact-bundle image reference',
+  )
   const empiricalBackfill = updateImageOnlyManifest(
     options,
     options.empiricalBackfillManifestPath ?? defaultEmpiricalBackfillManifestPath,
@@ -205,6 +237,10 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     leanRunner,
     historicalSimulationWorkflow,
     empiricalPromotionWorkflow,
+    analysisRuntimeReady,
+    analysisActivity,
+    analysisTeardown,
+    analysisArtifact,
     empiricalBackfill,
     forecast,
     forecastSimulation,
@@ -240,6 +276,10 @@ Options:
   --lean-runner-manifest-path <path>
   --historical-simulation-workflow-manifest-path <path>
   --empirical-promotion-workflow-manifest-path <path>
+  --analysis-runtime-ready-manifest-path <path>
+  --analysis-activity-manifest-path <path>
+  --analysis-teardown-manifest-path <path>
+  --analysis-artifact-manifest-path <path>
   --empirical-backfill-manifest-path <path>
   --forecast-manifest-path <path>
   --forecast-simulation-manifest-path <path>`)
@@ -299,6 +339,18 @@ Options:
       case '--empirical-promotion-workflow-manifest-path':
         options.empiricalPromotionWorkflowManifestPath = value
         break
+      case '--analysis-runtime-ready-manifest-path':
+        options.analysisRuntimeReadyManifestPath = value
+        break
+      case '--analysis-activity-manifest-path':
+        options.analysisActivityManifestPath = value
+        break
+      case '--analysis-teardown-manifest-path':
+        options.analysisTeardownManifestPath = value
+        break
+      case '--analysis-artifact-manifest-path':
+        options.analysisArtifactManifestPath = value
+        break
       case '--empirical-backfill-manifest-path':
         options.empiricalBackfillManifestPath = value
         break
@@ -348,6 +400,14 @@ export const main = (cliOptions?: CliOptions) => {
       parsed.historicalSimulationWorkflowManifestPath ?? process.env.TORGHUT_HISTORICAL_SIMULATION_WORKFLOW_PATH,
     empiricalPromotionWorkflowManifestPath:
       parsed.empiricalPromotionWorkflowManifestPath ?? process.env.TORGHUT_EMPIRICAL_PROMOTION_WORKFLOW_PATH,
+    analysisRuntimeReadyManifestPath:
+      parsed.analysisRuntimeReadyManifestPath ?? process.env.TORGHUT_ANALYSIS_RUNTIME_READY_MANIFEST_PATH,
+    analysisActivityManifestPath:
+      parsed.analysisActivityManifestPath ?? process.env.TORGHUT_ANALYSIS_ACTIVITY_MANIFEST_PATH,
+    analysisTeardownManifestPath:
+      parsed.analysisTeardownManifestPath ?? process.env.TORGHUT_ANALYSIS_TEARDOWN_MANIFEST_PATH,
+    analysisArtifactManifestPath:
+      parsed.analysisArtifactManifestPath ?? process.env.TORGHUT_ANALYSIS_ARTIFACT_MANIFEST_PATH,
     empiricalBackfillManifestPath:
       parsed.empiricalBackfillManifestPath ?? process.env.TORGHUT_EMPIRICAL_BACKFILL_MANIFEST_PATH,
     forecastManifestPath: parsed.forecastManifestPath ?? process.env.TORGHUT_FORECAST_MANIFEST_PATH,

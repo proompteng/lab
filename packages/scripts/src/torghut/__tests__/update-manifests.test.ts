@@ -14,6 +14,10 @@ const createFixture = () => {
   const leanRunnerManifestPath = join(dir, 'lean-runner-deployment.yaml')
   const historicalWorkflowManifestPath = join(dir, 'historical-simulation-workflowtemplate.yaml')
   const empiricalWorkflowManifestPath = join(dir, 'empirical-promotion-workflowtemplate.yaml')
+  const analysisRuntimeReadyManifestPath = join(dir, 'analysis-template-runtime-ready.yaml')
+  const analysisActivityManifestPath = join(dir, 'analysis-template-activity.yaml')
+  const analysisTeardownManifestPath = join(dir, 'analysis-template-teardown-clean.yaml')
+  const analysisArtifactManifestPath = join(dir, 'analysis-template-artifact-bundle.yaml')
   const empiricalBackfillManifestPath = join(dir, 'empirical-jobs-backfill-job.yaml')
   const forecastManifestPath = join(dir, 'forecast-deployment.yaml')
   const forecastSimulationManifestPath = join(dir, 'forecast-sim-deployment.yaml')
@@ -83,6 +87,10 @@ spec:
     leanRunnerManifestPath,
     historicalWorkflowManifestPath,
     empiricalWorkflowManifestPath,
+    analysisRuntimeReadyManifestPath,
+    analysisActivityManifestPath,
+    analysisTeardownManifestPath,
+    analysisArtifactManifestPath,
     empiricalBackfillManifestPath,
     forecastManifestPath,
     forecastSimulationManifestPath,
@@ -109,6 +117,10 @@ spec:
     leanRunnerManifestPath,
     historicalWorkflowManifestPath,
     empiricalWorkflowManifestPath,
+    analysisRuntimeReadyManifestPath,
+    analysisActivityManifestPath,
+    analysisTeardownManifestPath,
+    analysisArtifactManifestPath,
     empiricalBackfillManifestPath,
     forecastManifestPath,
     forecastSimulationManifestPath,
@@ -130,6 +142,10 @@ describe('update-manifests', () => {
       leanRunnerManifestPath: relative(repoRoot, fixture.leanRunnerManifestPath),
       historicalSimulationWorkflowManifestPath: relative(repoRoot, fixture.historicalWorkflowManifestPath),
       empiricalPromotionWorkflowManifestPath: relative(repoRoot, fixture.empiricalWorkflowManifestPath),
+      analysisRuntimeReadyManifestPath: relative(repoRoot, fixture.analysisRuntimeReadyManifestPath),
+      analysisActivityManifestPath: relative(repoRoot, fixture.analysisActivityManifestPath),
+      analysisTeardownManifestPath: relative(repoRoot, fixture.analysisTeardownManifestPath),
+      analysisArtifactManifestPath: relative(repoRoot, fixture.analysisArtifactManifestPath),
       empiricalBackfillManifestPath: relative(repoRoot, fixture.empiricalBackfillManifestPath),
       forecastManifestPath: relative(repoRoot, fixture.forecastManifestPath),
       forecastSimulationManifestPath: relative(repoRoot, fixture.forecastSimulationManifestPath),
@@ -141,6 +157,10 @@ describe('update-manifests', () => {
     const leanRunnerManifest = readFileSync(fixture.leanRunnerManifestPath, 'utf8')
     const historicalWorkflowManifest = readFileSync(fixture.historicalWorkflowManifestPath, 'utf8')
     const empiricalWorkflowManifest = readFileSync(fixture.empiricalWorkflowManifestPath, 'utf8')
+    const analysisRuntimeReadyManifest = readFileSync(fixture.analysisRuntimeReadyManifestPath, 'utf8')
+    const analysisActivityManifest = readFileSync(fixture.analysisActivityManifestPath, 'utf8')
+    const analysisTeardownManifest = readFileSync(fixture.analysisTeardownManifestPath, 'utf8')
+    const analysisArtifactManifest = readFileSync(fixture.analysisArtifactManifestPath, 'utf8')
     const empiricalBackfillManifest = readFileSync(fixture.empiricalBackfillManifestPath, 'utf8')
     const forecastManifest = readFileSync(fixture.forecastManifestPath, 'utf8')
     const forecastSimulationManifest = readFileSync(fixture.forecastSimulationManifestPath, 'utf8')
@@ -164,6 +184,10 @@ describe('update-manifests', () => {
       leanRunnerManifest,
       historicalWorkflowManifest,
       empiricalWorkflowManifest,
+      analysisRuntimeReadyManifest,
+      analysisActivityManifest,
+      analysisTeardownManifest,
+      analysisArtifactManifest,
       empiricalBackfillManifest,
       forecastManifest,
       forecastSimulationManifest,
@@ -176,7 +200,7 @@ describe('update-manifests', () => {
     expect(result.imageRef).toBe(
       'registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
-    expect(result.changedPaths.length).toBe(9)
+    expect(result.changedPaths.length).toBe(13)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })
@@ -195,6 +219,10 @@ describe('update-manifests', () => {
       leanRunnerManifestPath: relative(repoRoot, fixture.leanRunnerManifestPath),
       historicalSimulationWorkflowManifestPath: relative(repoRoot, fixture.historicalWorkflowManifestPath),
       empiricalPromotionWorkflowManifestPath: relative(repoRoot, fixture.empiricalWorkflowManifestPath),
+      analysisRuntimeReadyManifestPath: relative(repoRoot, fixture.analysisRuntimeReadyManifestPath),
+      analysisActivityManifestPath: relative(repoRoot, fixture.analysisActivityManifestPath),
+      analysisTeardownManifestPath: relative(repoRoot, fixture.analysisTeardownManifestPath),
+      analysisArtifactManifestPath: relative(repoRoot, fixture.analysisArtifactManifestPath),
       empiricalBackfillManifestPath: relative(repoRoot, fixture.empiricalBackfillManifestPath),
       forecastManifestPath: relative(repoRoot, fixture.forecastManifestPath),
       forecastSimulationManifestPath: relative(repoRoot, fixture.forecastSimulationManifestPath),
