@@ -243,6 +243,32 @@ spec:
                 namespace: argo-rollouts
                 annotations:
                   argocd.argoproj.io/sync-wave: "3"
+                ignoreDifferences:
+                  - kind: CustomResourceDefinition
+                    group: apiextensions.k8s.io
+                    name: analysisruns.argoproj.io
+                    jqPathExpressions:
+                      - .spec.conversion
+                  - kind: CustomResourceDefinition
+                    group: apiextensions.k8s.io
+                    name: analysistemplates.argoproj.io
+                    jqPathExpressions:
+                      - .spec.conversion
+                  - kind: CustomResourceDefinition
+                    group: apiextensions.k8s.io
+                    name: clusteranalysistemplates.argoproj.io
+                    jqPathExpressions:
+                      - .spec.conversion
+                  - kind: CustomResourceDefinition
+                    group: apiextensions.k8s.io
+                    name: experiments.argoproj.io
+                    jqPathExpressions:
+                      - .spec.conversion
+                  - kind: CustomResourceDefinition
+                    group: apiextensions.k8s.io
+                    name: rollouts.argoproj.io
+                    jqPathExpressions:
+                      - .spec.conversion
                 automation: manual
                 enabled: "true"
               - name: argo-workflows
@@ -373,6 +399,55 @@ spec:
                     pod-security.kubernetes.io/warn: privileged
                   annotations:
                     argocd.argoproj.io/sync-options: Prune=false
+                ignoreDifferences:
+                  - kind: StatefulSet
+                    group: apps
+                    namespace: forgejo-runners
+                    name: forgejo-runners-amd64
+                    jqPathExpressions:
+                      - .spec.persistentVolumeClaimRetentionPolicy
+                      - .spec.revisionHistoryLimit
+                      - .spec.updateStrategy
+                      - .spec.volumeClaimTemplates[].apiVersion
+                      - .spec.volumeClaimTemplates[].kind
+                      - .spec.volumeClaimTemplates[].spec.volumeMode
+                      - .spec.volumeClaimTemplates[].status
+                      - '.spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"]'
+                      - .spec.template.spec.containers[].terminationMessagePath
+                      - .spec.template.spec.containers[].terminationMessagePolicy
+                      - .spec.template.spec.initContainers[].resources
+                      - .spec.template.spec.initContainers[].terminationMessagePath
+                      - .spec.template.spec.initContainers[].terminationMessagePolicy
+                      - .spec.template.spec.dnsPolicy
+                      - .spec.template.spec.restartPolicy
+                      - .spec.template.spec.schedulerName
+                      - .spec.template.spec.securityContext
+                      - .spec.template.spec.serviceAccount
+                      - .spec.template.spec.volumes[].configMap.defaultMode
+                  - kind: StatefulSet
+                    group: apps
+                    namespace: forgejo-runners
+                    name: forgejo-runners-arm64
+                    jqPathExpressions:
+                      - .spec.persistentVolumeClaimRetentionPolicy
+                      - .spec.revisionHistoryLimit
+                      - .spec.updateStrategy
+                      - .spec.volumeClaimTemplates[].apiVersion
+                      - .spec.volumeClaimTemplates[].kind
+                      - .spec.volumeClaimTemplates[].spec.volumeMode
+                      - .spec.volumeClaimTemplates[].status
+                      - '.spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"]'
+                      - .spec.template.spec.containers[].terminationMessagePath
+                      - .spec.template.spec.containers[].terminationMessagePolicy
+                      - .spec.template.spec.initContainers[].resources
+                      - .spec.template.spec.initContainers[].terminationMessagePath
+                      - .spec.template.spec.initContainers[].terminationMessagePolicy
+                      - .spec.template.spec.dnsPolicy
+                      - .spec.template.spec.restartPolicy
+                      - .spec.template.spec.schedulerName
+                      - .spec.template.spec.securityContext
+                      - .spec.template.spec.serviceAccount
+                      - .spec.template.spec.volumes[].configMap.defaultMode
                 automation: manual
                 enabled: "true"
               - name: backstage
