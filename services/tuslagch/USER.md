@@ -3,7 +3,7 @@
 - **Name:** Greg
 - **What to call them:** Greg
 - **Pronouns:** _(optional)_
-- **Timezone:** UTC _(inferred from chat timestamp; confirm)_
+- **Timezone:** PST
 - **Notes:**
 
 ## Context
