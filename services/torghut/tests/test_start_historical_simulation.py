@@ -1398,6 +1398,16 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(config.applicationset_namespace, 'argocd')
         self.assertEqual(config.app_name, 'torghut')
 
+    def test_build_argocd_automation_config_preserves_dedicated_service_opt_in(self) -> None:
+        config = _build_argocd_automation_config(
+            {
+                'runtime': {'target_mode': 'dedicated_service'},
+                'argocd': {'manage_automation': True},
+            }
+        )
+
+        self.assertTrue(config.manage_automation)
+
     def test_discover_automation_pointer_finds_nested_element(self) -> None:
         payload = {
             'spec': {
