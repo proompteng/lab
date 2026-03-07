@@ -22,7 +22,7 @@ spec:
           resources:
             requests:
               storage: 80Gi
-          storageClassName: rook-ceph-block
+          storageClassName: local-path
   template:
     metadata:
       labels:
