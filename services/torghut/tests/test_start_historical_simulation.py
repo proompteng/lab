@@ -472,6 +472,54 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(headers.get('X-ClickHouse-User'), 'torghut')
         self.assertEqual(headers.get('X-ClickHouse-Key'), 'secret')
 
+    def test_ensure_clickhouse_runtime_tables_clones_simulation_schema(self) -> None:
+        queries: list[str] = []
+        source_microbars = (
+            "CREATE TABLE torghut.ta_microbars\\n"
+            "(\\n`symbol` LowCardinality(String)\\n)\\n"
+            "ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{cluster}/{shard}/ta_microbars', '{replica}', ingest_ts)"
+        )
+        source_signals = (
+            "CREATE TABLE torghut.ta_signals\\n"
+            "(\\n`symbol` LowCardinality(String)\\n)\\n"
+            "ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{cluster}/{shard}/ta_signals', '{replica}', ingest_ts)"
+        )
+
+        def _fake_clickhouse_query(*, config: ClickHouseRuntimeConfig, query: str) -> tuple[int, str]:
+            _ = config
+            queries.append(query)
+            if query == 'SHOW CREATE TABLE torghut.ta_microbars':
+                return 200, source_microbars
+            if query == 'SHOW CREATE TABLE torghut.ta_signals':
+                return 200, source_signals
+            return 200, ''
+
+        with patch(
+            'scripts.start_historical_simulation._http_clickhouse_query',
+            side_effect=_fake_clickhouse_query,
+        ):
+            start_historical_simulation._ensure_clickhouse_runtime_tables(
+                config=ClickHouseRuntimeConfig(
+                    http_url='http://clickhouse:8123',
+                    username='torghut',
+                    password='secret',
+                ),
+                database='torghut_sim_sim_1',
+            )
+
+        self.assertEqual(queries[0], 'SHOW CREATE TABLE torghut.ta_microbars')
+        self.assertIn('CREATE TABLE IF NOT EXISTS torghut_sim_sim_1.ta_microbars', queries[1])
+        self.assertIn(
+            "/clickhouse/tables/{cluster}/{shard}/torghut_sim_sim_1/ta_microbars",
+            queries[1],
+        )
+        self.assertEqual(queries[2], 'SHOW CREATE TABLE torghut.ta_signals')
+        self.assertIn('CREATE TABLE IF NOT EXISTS torghut_sim_sim_1.ta_signals', queries[3])
+        self.assertIn(
+            "/clickhouse/tables/{cluster}/{shard}/torghut_sim_sim_1/ta_signals",
+            queries[3],
+        )
+
     def test_ensure_topics_caps_partitions_to_available_brokers(self) -> None:
         resources = _build_resources(
             'sim-1',
@@ -1479,6 +1527,7 @@ class TestStartHistoricalSimulation(TestCase):
             teardown_template='torghut-teardown-v1',
             artifact_template='torghut-artifact-v1',
             verify_timeout_seconds=900,
+            verify_poll_seconds=5,
         )
 
         with (
@@ -1605,6 +1654,7 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(config.runtime_template, 'torghut-simulation-runtime-ready')
         self.assertEqual(config.activity_template, 'torghut-simulation-activity')
         self.assertEqual(config.teardown_template, 'torghut-simulation-teardown-clean')
+        self.assertEqual(config.verify_poll_seconds, 5)
 
     def test_run_rollouts_analysis_materializes_analysisrun_from_template(self) -> None:
         resources = _build_resources('sim-2026-03-06-open-hour', {'dataset_id': 'dataset-a'})
@@ -1642,6 +1692,7 @@ class TestStartHistoricalSimulation(TestCase):
             teardown_template='torghut-simulation-teardown-clean',
             artifact_template='torghut-simulation-artifact-bundle',
             verify_timeout_seconds=60,
+            verify_poll_seconds=5,
         )
         captured_apply: dict[str, object] = {}
 
@@ -1659,6 +1710,8 @@ class TestStartHistoricalSimulation(TestCase):
                             {'name': 'forecastService'},
                             {'name': 'windowStart'},
                             {'name': 'windowEnd'},
+                            {'name': 'runtimeVerifyTimeoutSeconds'},
+                            {'name': 'runtimeVerifyPollSeconds'},
                         ],
                         'metrics': [{'name': 'runtime-ready'}],
                     }
@@ -1691,6 +1744,8 @@ class TestStartHistoricalSimulation(TestCase):
         assert isinstance(payload, dict)
         self.assertEqual(payload['kind'], 'AnalysisRun')
         self.assertEqual(payload['metadata']['name'], 'torghut-sim-runtime-ready-sim-2026-03-06-open-hour')
+        self.assertEqual(payload['spec']['args'][-2]['value'], '60')
+        self.assertEqual(payload['spec']['args'][-1]['value'], '5')
 
     def test_discover_automation_pointer_finds_nested_element(self) -> None:
         payload = {
