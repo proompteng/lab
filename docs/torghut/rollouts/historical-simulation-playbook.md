@@ -269,10 +269,10 @@ argo submit --from workflowtemplate/torghut-historical-simulation \
 
 Verify:
 
-- `TA_*_TOPIC` values restored to production topics
-- `TA_GROUP_ID` restored to production value
-- Torghut restored to `TRADING_MODE=live`, `TRADING_EXECUTION_ADAPTER=lean`
-- `TRADING_SIMULATION_ENABLED` unset
+- `torghut-ta-sim-config` returns to the neutral sim defaults expected by GitOps
+- `TA_GROUP_ID` no longer carries the run-specific suffix
+- `torghut-sim` no longer carries run-scoped DB/topic overrides
+- the live `torghut` service revision and traffic remain unchanged because the dedicated-service path never mutates them
 
 ## Step 7: Verify Argo Automation Restore
 
