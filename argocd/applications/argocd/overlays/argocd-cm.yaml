@@ -14,6 +14,46 @@ data:
     hs.status = "Healthy"
     hs.message = "SealedSecret health is ignored; decryption is handled by the sealed-secrets controller."
     return hs
+  resource.customizations.health.flink.apache.org_FlinkDeployment: |
+    hs = {}
+    local spec = obj.spec or {}
+    local status = obj.status or {}
+    local jobSpec = spec.job or {}
+    local jobStatus = status.jobStatus or {}
+    local reconciliation = status.reconciliationStatus or {}
+    local desiredState = jobSpec.state or ""
+    local jobManagerStatus = status.jobManagerDeploymentStatus or ""
+    local lifecycleState = status.lifecycleState or ""
+    local reconciliationState = reconciliation.state or ""
+    local currentJobState = jobStatus.state or ""
+
+    if desiredState == "suspended" then
+      if jobManagerStatus == "READY" and (currentJobState == "" or currentJobState == "CANCELED" or currentJobState == "FINISHED" or currentJobState == "SUSPENDED") and (lifecycleState == "" or lifecycleState == "STABLE" or lifecycleState == "UPGRADING") and (reconciliationState == "" or reconciliationState == "DEPLOYED" or reconciliationState == "UPGRADING") then
+        hs.status = "Healthy"
+        hs.message = "FlinkDeployment is intentionally suspended and ready for activation."
+        return hs
+      end
+
+      hs.status = "Progressing"
+      hs.message = "FlinkDeployment is converging on the suspended state."
+      return hs
+    end
+
+    if jobManagerStatus == "READY" and currentJobState == "RUNNING" and (lifecycleState == "STABLE" or lifecycleState == "DEPLOYED" or reconciliationState == "DEPLOYED") then
+      hs.status = "Healthy"
+      hs.message = "FlinkDeployment is running."
+      return hs
+    end
+
+    if lifecycleState == "FAILED" or reconciliationState == "FAILED" or currentJobState == "FAILED" then
+      hs.status = "Degraded"
+      hs.message = "FlinkDeployment reported a failed state."
+      return hs
+    end
+
+    hs.status = "Progressing"
+    hs.message = "FlinkDeployment is reconciling."
+    return hs
   users.session.duration: "168h"
   dex.config: |
     issuer: https://argocd.proompteng.ai/api/dex
