@@ -178,7 +178,7 @@ gates:
       - gates/benchmark-parity-report-v1.json
       - empirical-job-summary.json
     required_db_queries:
-      - SELECT payload_json FROM vnext_completion_gate_results WHERE gate_id = 'simulation_full_day_coverage'
+      - SELECT payload_json FROM vnext_dataset_snapshots WHERE run_id = '<full_day_run_id>' AND dataset_id = '<dataset_snapshot_ref>'
       - SELECT payload_json FROM vnext_empirical_job_runs WHERE job_type = 'benchmark_parity'
     required_status_fields:
       - empirical_jobs.status
@@ -204,7 +204,7 @@ gates:
     required_artifacts:
       - completion-trace.json
     required_db_queries:
-      - SELECT payload_json FROM vnext_completion_gate_results WHERE gate_id = 'paper_gate_satisfied'
+      - SELECT payload_json FROM vnext_dataset_snapshots WHERE run_id = '<paper_lineage_run_id>' AND dataset_id = '<dataset_snapshot_ref>'
     required_status_fields:
       - hypothesis_runtime
       - live_canary
@@ -227,7 +227,7 @@ gates:
     required_artifacts:
       - completion-trace.json
     required_db_queries:
-      - SELECT payload_json FROM vnext_completion_gate_results WHERE gate_id = 'live_canary_observed'
+      - SELECT payload_json FROM vnext_dataset_snapshots WHERE run_id = '<live_canary_lineage_run_id>' AND dataset_id = '<dataset_snapshot_ref>'
     required_status_fields:
       - hypothesis_runtime
       - live_scale

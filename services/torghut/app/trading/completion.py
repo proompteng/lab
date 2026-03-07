@@ -12,7 +12,7 @@ import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import VNextCompletionGateResult, VNextEmpiricalJobRun
+from ..models import VNextDatasetSnapshot, VNextEmpiricalJobRun
 from .empirical_jobs import EMPIRICAL_JOB_TYPES, build_empirical_jobs_status
 
 
@@ -214,59 +214,13 @@ def build_completion_trace(
     }
 
 
-def upsert_completion_gate_result(
-    *,
-    session: Session,
-    gate_id: str,
-    run_id: str,
-    candidate_id: str | None,
-    dataset_snapshot_ref: str | None,
-    git_revision: str | None,
-    image_digest: str | None,
-    status: str,
-    artifact_ref: str | None,
-    blocked_reason: str | None,
-    details_json: Mapping[str, Any],
-    workflow_name: str | None,
-    measured_at: datetime | None = None,
-) -> VNextCompletionGateResult:
-    if status not in TRACE_STATUSES:
-        raise RuntimeError(f'invalid completion gate result status: {status}')
-    existing = session.execute(
-        select(VNextCompletionGateResult).where(
-            VNextCompletionGateResult.gate_id == gate_id,
-            VNextCompletionGateResult.run_id == run_id,
-        )
-    ).scalar_one_or_none()
-    record = existing or VNextCompletionGateResult(
-        gate_id=gate_id,
-        run_id=run_id,
-        candidate_id=candidate_id,
-        dataset_snapshot_ref=dataset_snapshot_ref,
-        git_revision=git_revision,
-        image_digest=image_digest,
-        workflow_name=workflow_name,
-        status=status,
-        artifact_ref=artifact_ref,
-        blocked_reason=blocked_reason,
-        details_json=dict(details_json),
-        measured_at=measured_at or datetime.now(timezone.utc),
-    )
-    record.gate_id = gate_id
-    record.run_id = run_id
-    record.candidate_id = candidate_id
-    record.dataset_snapshot_ref = dataset_snapshot_ref
-    record.git_revision = git_revision
-    record.image_digest = image_digest
-    record.workflow_name = workflow_name
-    record.status = status
-    record.artifact_ref = artifact_ref
-    record.blocked_reason = blocked_reason
-    record.details_json = dict(details_json)
-    record.measured_at = measured_at or datetime.now(timezone.utc)
-    session.add(record)
-    session.flush()
-    return record
+def _trace_bucket(gate_ids_attempted: Sequence[str]) -> str:
+    gate_ids = {str(item) for item in gate_ids_attempted if str(item).strip()}
+    if DOC29_SIMULATION_SMOKE_GATE in gate_ids or DOC29_SIMULATION_FULL_DAY_GATE in gate_ids:
+        return 'simulation'
+    if DOC29_EMPIRICAL_MANIFEST_GATE in gate_ids or DOC29_EMPIRICAL_JOBS_GATE in gate_ids:
+        return 'empirical'
+    return 'derived'
 
 
 def persist_completion_trace(
@@ -285,50 +239,107 @@ def persist_completion_trace(
             measured_at = datetime.fromisoformat(measured_at_raw.replace('Z', '+00:00')).astimezone(timezone.utc)
         except ValueError:
             measured_at = datetime.now(timezone.utc)
+    run_id = _as_text(trace_payload.get('run_id')) or ''
+    candidate_id = _as_text(trace_payload.get('candidate_id'))
+    dataset_snapshot_ref = _as_text(trace_payload.get('dataset_snapshot_ref'))
+    dataset_id = dataset_snapshot_ref or f'doc29:{run_id}'
+    existing = session.execute(
+        select(VNextDatasetSnapshot).where(
+            VNextDatasetSnapshot.run_id == run_id,
+            VNextDatasetSnapshot.dataset_id == dataset_id,
+        )
+    ).scalar_one_or_none()
+    record = existing or VNextDatasetSnapshot(
+        run_id=run_id,
+        candidate_id=candidate_id,
+        dataset_id=dataset_id,
+        source='historical_market_replay',
+        dataset_version=None,
+        artifact_ref=default_artifact_ref or (artifact_refs[0] if artifact_refs else None),
+        payload_json={},
+    )
+    payload = _as_dict(record.payload_json)
+    completion_payload = _as_dict(payload.get('doc29_completion'))
+    traces = _as_dict(completion_payload.get('traces'))
+    trace_bucket = _trace_bucket(cast(list[str], trace_payload.get('gate_ids_attempted') or []))
+    traces[trace_bucket] = dict(trace_payload)
+    latest_result_by_gate = _as_dict(completion_payload.get('latest_result_by_gate'))
+    latest_gate_metadata = _as_dict(completion_payload.get('latest_gate_metadata'))
+    workflow_name = _as_text(trace_payload.get('workflow_name'))
+    git_revision = _as_text(trace_payload.get('git_revision'))
+    image_digest = _as_text(trace_payload.get('image_digest'))
+    blocked_reasons = _as_dict(trace_payload.get('blocked_reasons'))
     for gate_id, result in result_by_gate.items():
         result_payload = _as_dict(result)
         status = _as_text(result_payload.get('status')) or TRACE_STATUS_BLOCKED
-        blocked_reason = _as_text(result_payload.get('blocked_reason'))
         artifact_ref = _as_text(result_payload.get('artifact_ref')) or default_artifact_ref
         if artifact_ref is None and artifact_refs:
             artifact_ref = artifact_refs[0]
-        record = upsert_completion_gate_result(
-            session=session,
-            gate_id=gate_id,
-            run_id=_as_text(trace_payload.get('run_id')) or '',
-            candidate_id=_as_text(trace_payload.get('candidate_id')),
-            dataset_snapshot_ref=_as_text(trace_payload.get('dataset_snapshot_ref')),
-            git_revision=_as_text(trace_payload.get('git_revision')),
-            image_digest=_as_text(trace_payload.get('image_digest')),
-            workflow_name=_as_text(trace_payload.get('workflow_name')),
-            status=status,
-            artifact_ref=artifact_ref,
-            blocked_reason=blocked_reason,
-            details_json={
-                'gate_id': gate_id,
-                'doc_id': _as_text(trace_payload.get('doc_id')) or 'doc29',
-                'artifact_refs': artifact_refs,
-                'db_row_refs': _as_dict(trace_payload.get('db_row_refs')),
-                'status_snapshot': _as_dict(trace_payload.get('status_snapshot')),
-                'gate_result': result_payload,
-                'analysis_run_names': _as_list(trace_payload.get('analysis_run_names')),
-                'blocked_reasons': _as_dict(trace_payload.get('blocked_reasons')),
-            },
-            measured_at=measured_at,
-        )
+        latest_result_by_gate[gate_id] = dict(result_payload)
+        latest_gate_metadata[gate_id] = {
+            'status': status,
+            'artifact_ref': artifact_ref,
+            'blocked_reason': _as_text(result_payload.get('blocked_reason'))
+            or _as_text(blocked_reasons.get(gate_id)),
+            'measured_at': measured_at.isoformat(),
+            'workflow_name': workflow_name,
+            'git_revision': git_revision,
+            'image_digest': image_digest,
+            'artifact_refs': artifact_refs,
+            'db_row_refs': _as_dict(trace_payload.get('db_row_refs')),
+            'status_snapshot': _as_dict(trace_payload.get('status_snapshot')),
+            'analysis_run_names': _as_list(trace_payload.get('analysis_run_names')),
+        }
         gate_row_ids[gate_id] = str(record.id)
+    completion_payload.update(
+        {
+            'doc_id': _as_text(trace_payload.get('doc_id')) or 'doc29',
+            'measured_at': measured_at.isoformat(),
+            'dataset_snapshot_ref': dataset_snapshot_ref,
+            'candidate_id': candidate_id,
+            'git_revision': git_revision,
+            'image_digest': image_digest,
+            'workflow_name': workflow_name,
+            'artifact_refs': artifact_refs,
+            'db_row_refs': _as_dict(trace_payload.get('db_row_refs')),
+            'traces': traces,
+            'latest_result_by_gate': latest_result_by_gate,
+            'latest_gate_metadata': latest_gate_metadata,
+        }
+    )
+    payload['doc29_completion'] = completion_payload
+    record.candidate_id = candidate_id
+    record.artifact_ref = default_artifact_ref or (artifact_refs[0] if artifact_refs else record.artifact_ref)
+    record.payload_json = payload
+    session.add(record)
+    session.flush()
     return gate_row_ids
 
 
-def _latest_completion_rows(session: Session) -> dict[str, VNextCompletionGateResult]:
+def _latest_completion_rows(session: Session) -> dict[str, dict[str, Any]]:
     rows = session.execute(
-        select(VNextCompletionGateResult).order_by(VNextCompletionGateResult.measured_at.desc())
+        select(VNextDatasetSnapshot).order_by(VNextDatasetSnapshot.created_at.desc())
     ).scalars()
-    latest: dict[str, VNextCompletionGateResult] = {}
+    latest: dict[str, dict[str, Any]] = {}
     for row in rows:
-        if row.gate_id in latest:
+        completion_payload = _as_dict(_as_dict(row.payload_json).get('doc29_completion'))
+        latest_gate_metadata = _as_dict(completion_payload.get('latest_gate_metadata'))
+        latest_result_by_gate = _as_dict(completion_payload.get('latest_result_by_gate'))
+        for gate_id, gate_metadata in latest_gate_metadata.items():
+            if gate_id in latest:
+                continue
+            latest[gate_id] = {
+                'row_id': str(row.id),
+                'run_id': row.run_id,
+                'candidate_id': row.candidate_id,
+                'dataset_snapshot_ref': _as_text(completion_payload.get('dataset_snapshot_ref')),
+                'artifact_ref': row.artifact_ref,
+                'payload': completion_payload,
+                'gate_metadata': _as_dict(gate_metadata),
+                'gate_result': _as_dict(latest_result_by_gate.get(gate_id)),
+            }
+        if len(latest) >= len(cast(list[Any], load_doc29_completion_matrix()['gates'])):
             continue
-        latest[row.gate_id] = row
     return latest
 
 
@@ -384,7 +395,7 @@ def _evaluate_empirical_jobs_gate(
 def _evaluate_paper_gate(
     *,
     empirical_gate: Mapping[str, Any],
-    full_day_row: VNextCompletionGateResult | None,
+    full_day_row: Mapping[str, Any] | None,
     empirical_rows: Mapping[str, VNextEmpiricalJobRun],
 ) -> dict[str, Any]:
     if empirical_gate.get('status') != TRACE_STATUS_SATISFIED:
@@ -403,8 +414,7 @@ def _evaluate_paper_gate(
             'db_row_refs': {},
             'dataset_snapshot_ref': empirical_gate.get('dataset_snapshot_ref'),
         }
-    full_day_details = _as_dict(full_day_row.details_json)
-    gate_result = _as_dict(full_day_details.get('gate_result'))
+    gate_result = _as_dict(full_day_row.get('gate_result'))
     acceptance = _as_dict(gate_result.get('acceptance_snapshot'))
     trade_decisions = _safe_int(acceptance.get('trade_decisions'))
     if trade_decisions < 500:
@@ -412,7 +422,7 @@ def _evaluate_paper_gate(
             'status': TRACE_STATUS_BLOCKED,
             'blocked_reason': 'insufficient_simulated_decisions',
             'artifact_refs': cast(list[str], empirical_gate.get('artifact_refs') or []),
-            'db_row_refs': {'simulation_full_day_coverage': str(full_day_row.id)},
+            'db_row_refs': {'simulation_full_day_coverage': _as_text(full_day_row.get('row_id'))},
             'dataset_snapshot_ref': empirical_gate.get('dataset_snapshot_ref'),
         }
     benchmark_row = empirical_rows.get('benchmark_parity')
@@ -421,7 +431,7 @@ def _evaluate_paper_gate(
             'status': TRACE_STATUS_BLOCKED,
             'blocked_reason': 'missing_benchmark_parity_row',
             'artifact_refs': cast(list[str], empirical_gate.get('artifact_refs') or []),
-            'db_row_refs': {'simulation_full_day_coverage': str(full_day_row.id)},
+            'db_row_refs': {'simulation_full_day_coverage': _as_text(full_day_row.get('row_id'))},
             'dataset_snapshot_ref': empirical_gate.get('dataset_snapshot_ref'),
         }
     benchmark_payload = _as_dict(benchmark_row.payload_json)
@@ -432,7 +442,7 @@ def _evaluate_paper_gate(
             'blocked_reason': f'benchmark_family_coverage_incomplete:{",".join(str(item) for item in missing_families)}',
             'artifact_refs': cast(list[str], empirical_gate.get('artifact_refs') or []),
             'db_row_refs': {
-                'simulation_full_day_coverage': str(full_day_row.id),
+                'simulation_full_day_coverage': _as_text(full_day_row.get('row_id')),
                 'benchmark_parity': str(benchmark_row.id),
             },
             'dataset_snapshot_ref': empirical_gate.get('dataset_snapshot_ref'),
@@ -442,7 +452,7 @@ def _evaluate_paper_gate(
         'blocked_reason': 'fill_price_error_budget_not_recorded',
         'artifact_refs': cast(list[str], empirical_gate.get('artifact_refs') or []),
         'db_row_refs': {
-            'simulation_full_day_coverage': str(full_day_row.id),
+            'simulation_full_day_coverage': _as_text(full_day_row.get('row_id')),
             'benchmark_parity': str(benchmark_row.id),
         },
         'dataset_snapshot_ref': empirical_gate.get('dataset_snapshot_ref'),
@@ -452,24 +462,32 @@ def _evaluate_paper_gate(
 def _effective_row_status(
     *,
     gate_definition: Mapping[str, Any],
-    row: VNextCompletionGateResult | None,
+    row: Mapping[str, Any] | None,
     current_git_revision: str | None,
 ) -> tuple[str, str | None]:
     if row is None:
         return TRACE_STATUS_BLOCKED, 'no_proving_result_recorded'
-    status = row.status if row.status in TRACE_STATUSES else TRACE_STATUS_BLOCKED
-    blocked_reason = row.blocked_reason
+    gate_metadata = _as_dict(row.get('gate_metadata'))
+    status_value = _as_text(gate_metadata.get('status'))
+    status = status_value if status_value in TRACE_STATUSES else TRACE_STATUS_BLOCKED
+    blocked_reason = _as_text(gate_metadata.get('blocked_reason'))
     freshness = _as_dict(gate_definition.get('evidence_freshness_rule'))
     if status == TRACE_STATUS_SATISFIED:
         max_age_seconds = _safe_int(freshness.get('max_age_seconds'), default=0)
         if max_age_seconds > 0:
-            measured_at = row.measured_at
-            if measured_at.tzinfo is None:
-                measured_at = measured_at.replace(tzinfo=timezone.utc)
+            measured_at_raw = _as_text(gate_metadata.get('measured_at'))
+            measured_at = datetime.now(timezone.utc)
+            if measured_at_raw is not None:
+                try:
+                    measured_at = datetime.fromisoformat(measured_at_raw.replace('Z', '+00:00')).astimezone(
+                        timezone.utc
+                    )
+                except ValueError:
+                    measured_at = datetime.now(timezone.utc)
             if measured_at < datetime.now(timezone.utc) - timedelta(seconds=max_age_seconds):
                 return TRACE_STATUS_STALE, 'evidence_exceeded_freshness_window'
         if bool(freshness.get('stale_on_git_change')) and current_git_revision:
-            row_revision = _as_text(row.git_revision)
+            row_revision = _as_text(gate_metadata.get('git_revision'))
             if row_revision and row_revision != current_git_revision:
                 return TRACE_STATUS_STALE, 'git_revision_changed_since_proof'
     return status, blocked_reason
@@ -545,10 +563,11 @@ def build_doc29_completion_status(
             row=row,
             current_git_revision=current_git_revision,
         )
-        details = _as_dict(row.details_json) if row is not None else {}
-        artifact_refs = [str(item) for item in _as_list(details.get('artifact_refs')) if str(item).strip()]
-        if row is not None and row.artifact_ref and row.artifact_ref not in artifact_refs:
-            artifact_refs.insert(0, row.artifact_ref)
+        gate_metadata = _as_dict(row.get('gate_metadata')) if row is not None else {}
+        artifact_refs = [str(item) for item in _as_list(gate_metadata.get('artifact_refs')) if str(item).strip()]
+        artifact_ref = _as_text(gate_metadata.get('artifact_ref')) if row is not None else None
+        if artifact_ref and artifact_ref not in artifact_refs:
+            artifact_refs.insert(0, artifact_ref)
         freshness_state = (
             'missing'
             if row is None
@@ -564,14 +583,14 @@ def build_doc29_completion_status(
             **gate_definition,
             'status': status,
             'blocked_reason': blocked_reason,
-            'latest_run': row.run_id if row is not None else None,
-            'dataset_snapshot_ref': row.dataset_snapshot_ref if row is not None else None,
+            'latest_run': _as_text(row.get('run_id')) if row is not None else None,
+            'dataset_snapshot_ref': _as_text(row.get('dataset_snapshot_ref')) if row is not None else None,
             'artifact_refs': artifact_refs,
-            'db_row_refs': _as_dict(details.get('db_row_refs')),
-            'persisted_result_id': str(row.id) if row is not None else None,
-            'measured_at': row.measured_at.isoformat() if row is not None else None,
+            'db_row_refs': _as_dict(gate_metadata.get('db_row_refs')),
+            'persisted_result_id': _as_text(row.get('row_id')) if row is not None else None,
+            'measured_at': _as_text(gate_metadata.get('measured_at')) if row is not None else None,
             'freshness_state': freshness_state,
-            'source': 'persisted_completion_trace' if row is not None else 'matrix_only',
+            'source': 'dataset_snapshot_completion_trace' if row is not None else 'matrix_only',
         }
 
     gates = [gate_status_map[str(gate['gate_id'])] for gate in cast(list[dict[str, Any]], matrix['gates'])]
@@ -613,6 +632,5 @@ __all__ = [
     'load_doc29_completion_matrix',
     'persist_completion_trace',
     'runtime_and_doc_completion_matrices_match',
-    'upsert_completion_gate_result',
     'validate_doc29_completion_matrix',
 ]
