@@ -1139,6 +1139,133 @@ class TestStartHistoricalSimulation(TestCase):
             self.assertEqual(report['records_by_topic'], {'torghut.trades.v1': 3})
             self.assertFalse(report['reused_existing_dump'])
 
+    def test_dump_topics_completes_when_global_expected_record_count_is_reached(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        resources = replace(
+            resources,
+            replay_topic_by_source_topic={
+                'torghut.quotes.v1': 'torghut.sim.quotes.v1',
+                'torghut.trades.v1': 'torghut.sim.trades.v1',
+            },
+        )
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+
+        class _OffsetMeta:
+            def __init__(self, offset: int) -> None:
+                self.offset = offset
+
+        class _Record:
+            def __init__(self, topic: str, partition: int, offset: int, timestamp: int) -> None:
+                self.topic = topic
+                self.partition = partition
+                self.offset = offset
+                self.timestamp = timestamp
+                self.key = None
+                self.value = None
+                self.headers: list[tuple[str, bytes]] = []
+
+        class _FakeConsumer:
+            def __init__(self) -> None:
+                self._positions = {
+                    ('torghut.quotes.v1', 0): 0,
+                    ('torghut.trades.v1', 0): 0,
+                }
+                self._poll_calls = 0
+                self._offset_lookup_calls = 0
+
+            def partitions_for_topic(self, topic: str) -> set[int]:
+                _ = topic
+                return {0}
+
+            def assign(self, topic_partitions: list[tuple[str, int]]) -> None:
+                self._topic_partitions = topic_partitions
+
+            def beginning_offsets(self, topic_partitions: list[tuple[str, int]]) -> dict[tuple[str, int], int]:
+                return {tp: 0 for tp in topic_partitions}
+
+            def end_offsets(self, topic_partitions: list[tuple[str, int]]) -> dict[tuple[str, int], int]:
+                return {
+                    ('torghut.quotes.v1', 0): 0,
+                    ('torghut.trades.v1', 0): 3,
+                }
+
+            def offsets_for_times(
+                self,
+                request: dict[tuple[str, int], int],
+            ) -> dict[tuple[str, int], _OffsetMeta]:
+                self._offset_lookup_calls += 1
+                quotes_offset = 0
+                trades_offset = 0 if self._offset_lookup_calls == 1 else 3
+                return {
+                    ('torghut.quotes.v1', 0): _OffsetMeta(quotes_offset),
+                    ('torghut.trades.v1', 0): _OffsetMeta(trades_offset),
+                }
+
+            def seek(self, tp: tuple[str, int], offset: int) -> None:
+                self._positions[tp] = offset
+
+            def poll(self, timeout_ms: int = 0, max_records: int = 0) -> dict[tuple[str, int], list[_Record]]:
+                _ = (timeout_ms, max_records)
+                self._poll_calls += 1
+                if self._poll_calls == 1:
+                    return {
+                        ('torghut.trades.v1', 0): [
+                            _Record('torghut.trades.v1', 0, 0, 1735695000000),
+                            _Record('torghut.trades.v1', 0, 1, 1735695000100),
+                            _Record('torghut.trades.v1', 0, 2, 1735695000200),
+                        ]
+                    }
+                if self._poll_calls > 3:
+                    raise AssertionError('dump loop did not terminate after global expected record count')
+                return {}
+
+            def position(self, tp: tuple[str, int]) -> int:
+                if tp == ('torghut.quotes.v1', 0):
+                    # Simulate a partition that never self-marks done even though it has zero expected records.
+                    return -1
+                return 2
+
+            def close(self) -> None:
+                return None
+
+        with TemporaryDirectory() as tmp_dir:
+            dump_path = Path(tmp_dir) / 'source-dump.ndjson'
+            fake_consumer = _FakeConsumer()
+
+            with (
+                patch.dict(
+                    'sys.modules',
+                    {'kafka': SimpleNamespace(TopicPartition=lambda topic, partition: (topic, partition))},
+                ),
+                patch(
+                    'scripts.start_historical_simulation._consumer_for_dump',
+                    return_value=fake_consumer,
+                ),
+            ):
+                report = _dump_topics(
+                    resources=resources,
+                    kafka_config=kafka_config,
+                    manifest={'window': {'start': '2025-01-01T00:00:00Z', 'end': '2025-01-01T00:00:01Z'}},
+                    dump_path=dump_path,
+                    force=True,
+                )
+
+            self.assertEqual(report['records'], 3)
+            self.assertEqual(report['expected_records'], 3)
+            self.assertEqual(report['records_by_topic'], {'torghut.trades.v1': 3})
+            self.assertFalse(report['reused_existing_dump'])
+
     def test_verify_isolation_guards_rejects_simulation_topic_overlap(self) -> None:
         resources = _build_resources(
             'sim-1',
