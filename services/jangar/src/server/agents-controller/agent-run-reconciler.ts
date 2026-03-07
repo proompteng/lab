@@ -32,6 +32,7 @@ import { cancelRuntime, parseRuntimeRef, type RuntimeRef } from './runtime-resou
 import { resolveSystemPrompt } from './system-prompt'
 import { collectBlockedSecrets, resolveAuthSecretConfig, resolveVcsContext } from './vcs-context'
 import { validateParameters } from './workflow'
+import { logAgentsControllerInfo, logAgentsControllerWarn, toLogError } from './operational-logging'
 
 type KubeClient = ReturnType<typeof createKubernetesClient>
 
@@ -173,6 +174,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
     inFlight: InFlightCounts,
     globalInFlight: number,
   ) => {
+    const reconcileStartedAt = Date.now()
     const metadata = asRecord(agentRun.metadata) ?? {}
     const name = asString(metadata.name) ?? ''
     const spec = asRecord(agentRun.spec) ?? {}
@@ -254,6 +256,65 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
     const workload = asRecord(readNested(spec, ['workload'])) ?? {}
     let workloadImage: string | null = null
     const repository = resolveRunRepository(agentRun)
+    const logContext = {
+      namespace,
+      runName: name,
+      generation: observedGeneration,
+      runtimeType: runtimeType ?? 'unknown',
+      repository: repository || '',
+    }
+    const logBlocked = (reason: string, message: string) => {
+      logAgentsControllerInfo('reconcile_blocked', {
+        ...logContext,
+        decision: 'blocked',
+        reason,
+        message,
+        durationMs: Date.now() - reconcileStartedAt,
+      })
+    }
+    const logInvalidSpec = (reason: string, message: string) => {
+      logAgentsControllerInfo('reconcile_invalid_spec', {
+        ...logContext,
+        decision: 'invalid_spec',
+        reason,
+        message,
+        durationMs: Date.now() - reconcileStartedAt,
+      })
+    }
+    const logSubmitted = (runtimeRef: RuntimeRef | null) => {
+      logAgentsControllerInfo('reconcile_submitted', {
+        ...logContext,
+        decision: 'submitted',
+        runtimeRefType: runtimeRef?.type ?? 'unknown',
+        runtimeRefName: runtimeRef?.name ?? '',
+        durationMs: Date.now() - reconcileStartedAt,
+      })
+    }
+    const logSubmitFailed = (reason: string, message: string) => {
+      logAgentsControllerWarn('reconcile_submit_failed', {
+        ...logContext,
+        decision: 'submit_failed',
+        reason,
+        message,
+        durationMs: Date.now() - reconcileStartedAt,
+      })
+    }
+    const logTerminalOutcome = (outcome: 'Succeeded' | 'Failed', reason: string, message: string) => {
+      logAgentsControllerInfo('reconcile_terminal', {
+        ...logContext,
+        decision: 'terminal',
+        outcome,
+        reason,
+        message,
+        durationMs: Date.now() - reconcileStartedAt,
+      })
+    }
+
+    logAgentsControllerInfo('reconcile_started', {
+      ...logContext,
+      decision: 'start',
+      phase,
+    })
 
     if (deleting) {
       if (hasFinalizer) {
@@ -267,7 +328,10 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
               getTemporalClient: getTemporalClient as () => Promise<TemporalCancelClient>,
             })
           } catch (error) {
-            console.warn('[jangar] runtime cleanup failed', error)
+            logAgentsControllerWarn('runtime_cleanup_failed', {
+              ...logContext,
+              ...toLogError(error),
+            })
           }
         }
         try {
@@ -404,12 +468,14 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
     }
 
     if (shouldSubmit && agentName && (inFlight.perAgent.get(agentName) ?? 0) >= concurrency.perAgent) {
+      const message = `Agent ${agentName} reached concurrency limit`
       const updated = upsertCondition(conditions, {
         type: 'Blocked',
         status: 'True',
         reason: 'ConcurrencyLimit',
-        message: `Agent ${agentName} reached concurrency limit`,
+        message,
       })
+      logBlocked('ConcurrencyLimit', message)
       await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Pending' })
       return
     }
@@ -418,35 +484,41 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
     if (shouldSubmit && repoLimit !== null) {
       const repoKey = normalizeRepositoryKey(repository)
       if ((inFlight.perRepository.get(repoKey) ?? 0) >= repoLimit) {
+        const message = `Repository ${repository} reached concurrency limit`
         const updated = upsertCondition(conditions, {
           type: 'Blocked',
           status: 'True',
           reason: 'ConcurrencyLimit',
-          message: `Repository ${repository} reached concurrency limit`,
+          message,
         })
+        logBlocked('ConcurrencyLimit', message)
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Pending' })
         return
       }
     }
 
     if (shouldSubmit && inFlight.total >= concurrency.perNamespace) {
+      const message = `Namespace ${namespace} reached concurrency limit`
       const updated = upsertCondition(conditions, {
         type: 'Blocked',
         status: 'True',
         reason: 'ConcurrencyLimit',
-        message: `Namespace ${namespace} reached concurrency limit`,
+        message,
       })
+      logBlocked('ConcurrencyLimit', message)
       await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Pending' })
       return
     }
 
     if (shouldSubmit && globalInFlight >= concurrency.cluster) {
+      const message = 'Cluster concurrency limit reached'
       const updated = upsertCondition(conditions, {
         type: 'Blocked',
         status: 'True',
         reason: 'ConcurrencyLimit',
-        message: 'Cluster concurrency limit reached',
+        message,
       })
+      logBlocked('ConcurrencyLimit', message)
       await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Pending' })
       return
     }
@@ -470,34 +542,40 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       }
 
       if (queueLimits.perNamespace > 0 && queueCounts.queuedNamespace >= queueLimits.perNamespace) {
+        const message = `Namespace ${namespace} reached queue limit`
         const updated = upsertCondition(conditions, {
           type: 'Blocked',
           status: 'True',
           reason: 'QueueLimit',
-          message: `Namespace ${namespace} reached queue limit`,
+          message,
         })
+        logBlocked('QueueLimit', message)
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Pending' })
         return
       }
 
       if (queueLimits.cluster > 0 && queueCounts.queuedCluster >= queueLimits.cluster) {
+        const message = 'Cluster queue limit reached'
         const updated = upsertCondition(conditions, {
           type: 'Blocked',
           status: 'True',
           reason: 'QueueLimit',
-          message: 'Cluster queue limit reached',
+          message,
         })
+        logBlocked('QueueLimit', message)
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Pending' })
         return
       }
 
       if (normalizedRepo && queueLimits.perRepo > 0 && queueCounts.queuedRepo >= queueLimits.perRepo) {
+        const message = `Repository ${repository} reached queue limit`
         const updated = upsertCondition(conditions, {
           type: 'Blocked',
           status: 'True',
           reason: 'QueueLimit',
-          message: `Repository ${repository} reached queue limit`,
+          message,
         })
+        logBlocked('QueueLimit', message)
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Pending' })
         return
       }
@@ -522,6 +600,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
           reason: 'RateLimit',
           message: `${rateDecision.message} (retry after ${rateDecision.retryAfterSeconds}s)`,
         })
+        logBlocked('RateLimit', `${rateDecision.message} (retry after ${rateDecision.retryAfterSeconds}s)`)
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Pending' })
         return
       }
@@ -529,12 +608,14 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
 
     if (shouldSubmit) {
       if (!runtimeType) {
+        const message = 'spec.runtime.type is required'
         const updated = upsertCondition(conditions, {
           type: 'InvalidSpec',
           status: 'True',
           reason: 'MissingRuntime',
-          message: 'spec.runtime.type is required',
+          message,
         })
+        logInvalidSpec('MissingRuntime', message)
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
         return
       }
@@ -547,6 +628,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
           reason: parameterCheck.reason,
           message: parameterCheck.message,
         })
+        logInvalidSpec(parameterCheck.reason, parameterCheck.message)
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
         return
       }
@@ -558,6 +640,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
           reason: labelPolicy.reason,
           message: labelPolicy.message,
         })
+        logInvalidSpec(labelPolicy.reason, labelPolicy.message)
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
         return
       }
@@ -566,13 +649,15 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       if (runtimeType === 'job') {
         workloadImage = resolveJobImage(workload)
         if (!workloadImage) {
+          const message =
+            'spec.workload.image, JANGAR_AGENT_RUNNER_IMAGE, or JANGAR_AGENT_IMAGE is required for job runtime'
           const updated = upsertCondition(conditions, {
             type: 'InvalidSpec',
             status: 'True',
             reason: 'MissingWorkloadImage',
-            message:
-              'spec.workload.image, JANGAR_AGENT_RUNNER_IMAGE, or JANGAR_AGENT_IMAGE is required for job runtime',
+            message,
           })
+          logInvalidSpec('MissingWorkloadImage', message)
           await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
           return
         }
@@ -584,6 +669,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
             reason: imagePolicy.reason,
             message: imagePolicy.message,
           })
+          logInvalidSpec(imagePolicy.reason, imagePolicy.message)
           await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
           return
         }
@@ -592,12 +678,14 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       if (runtimeType === 'custom') {
         const endpoint = asString(runtimeConfig.endpoint)
         if (!endpoint) {
+          const message = 'spec.runtime.config.endpoint is required for custom runtime'
           const updated = upsertCondition(conditions, {
             type: 'InvalidSpec',
             status: 'True',
             reason: 'MissingEndpoint',
-            message: 'spec.runtime.config.endpoint is required for custom runtime',
+            message,
           })
+          logInvalidSpec('MissingEndpoint', message)
           await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
           return
         }
@@ -607,13 +695,15 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         const workflowType = asString(runtimeConfig.workflowType)
         const taskQueue = asString(runtimeConfig.taskQueue)
         if (!workflowType || !taskQueue) {
+          const message =
+            'spec.runtime.config.workflowType and spec.runtime.config.taskQueue are required for temporal runtime'
           const updated = upsertCondition(conditions, {
             type: 'InvalidSpec',
             status: 'True',
             reason: 'MissingTemporalConfig',
-            message:
-              'spec.runtime.config.workflowType and spec.runtime.config.taskQueue are required for temporal runtime',
+            message,
           })
+          logInvalidSpec('MissingTemporalConfig', message)
           await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
           return
         }
@@ -626,12 +716,14 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
 
       const agent = agentName ? await kube.get(RESOURCE_MAP.Agent, agentName, namespace) : null
       if (!agent) {
+        const message = `agent ${agentName} not found`
         const updated = upsertCondition(conditions, {
           type: 'InvalidSpec',
           status: 'True',
           reason: 'MissingAgent',
-          message: `agent ${agentName} not found`,
+          message,
         })
+        logInvalidSpec('MissingAgent', message)
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
         return
       }
@@ -639,12 +731,14 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       const providerName = asString(readNested(agent, ['spec', 'providerRef', 'name']))
       const provider = providerName ? await kube.get(RESOURCE_MAP.AgentProvider, providerName, namespace) : null
       if (!provider) {
+        const message = `agent provider ${providerName ?? 'unknown'} not found`
         const updated = upsertCondition(conditions, {
           type: 'InvalidSpec',
           status: 'True',
           reason: 'MissingProvider',
-          message: `agent provider ${providerName ?? 'unknown'} not found`,
+          message,
         })
+        logInvalidSpec('MissingProvider', message)
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
         return
       }
@@ -658,12 +752,14 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       if (allowedSecrets.length > 0) {
         const forbidden = runSecrets.filter((secret) => !allowedSecrets.includes(secret))
         if (forbidden.length > 0) {
+          const message = `spec.secrets contains disallowed entries: ${forbidden.join(', ')}`
           const updated = upsertCondition(conditions, {
             type: 'InvalidSpec',
             status: 'True',
             reason: 'SecretNotAllowed',
-            message: `spec.secrets contains disallowed entries: ${forbidden.join(', ')}`,
+            message,
           })
+          logInvalidSpec('SecretNotAllowed', message)
           await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
           return
         }
@@ -673,12 +769,14 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         const rawServiceAccount = resolveRunnerServiceAccount(runtimeConfig)
         const effectiveServiceAccount = rawServiceAccount || 'default'
         if (!allowedServiceAccounts.includes(effectiveServiceAccount)) {
+          const message = `serviceAccount ${effectiveServiceAccount} is not allowlisted`
           const updated = upsertCondition(conditions, {
             type: 'InvalidSpec',
             status: 'True',
             reason: 'ServiceAccountNotAllowed',
-            message: `serviceAccount ${effectiveServiceAccount} is not allowlisted`,
+            message,
           })
+          logInvalidSpec('ServiceAccountNotAllowed', message)
           await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
           return
         }
@@ -695,12 +793,14 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       }
 
       if (!implResource) {
+        const message = 'implementationSpecRef or implementation.inline is required'
         const updated = upsertCondition(conditions, {
           type: 'InvalidSpec',
           status: 'True',
           reason: 'MissingImplementation',
-          message: 'implementationSpecRef or implementation.inline is required',
+          message,
         })
+        logInvalidSpec('MissingImplementation', message)
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
         return
       }
@@ -714,6 +814,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
           reason: contractCheck.reason,
           message: contractCheck.message,
         })
+        logInvalidSpec(contractCheck.reason, contractCheck.message)
         await setStatus(kube, agentRun, {
           observedGeneration,
           conditions: updated,
@@ -728,12 +829,14 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       const agentMemoryRef = asString(readNested(agent, ['spec', 'memoryRef', 'name']))
       if ((runMemoryRef || agentMemoryRef) && !memory) {
         const missingName = runMemoryRef || agentMemoryRef || 'unknown'
+        const message = `memory ${missingName} not found`
         const updated = upsertCondition(conditions, {
           type: 'InvalidSpec',
           status: 'True',
           reason: 'MissingMemory',
-          message: `memory ${missingName} not found`,
+          message,
         })
+        logInvalidSpec('MissingMemory', message)
         await setStatus(kube, agentRun, {
           observedGeneration,
           conditions: updated,
@@ -749,12 +852,14 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         ...(authSecret ? [authSecret.name] : []),
       ])
       if (blockedSecrets.length > 0) {
+        const message = `secrets blocked by controller policy: ${blockedSecrets.join(', ')}`
         const updated = upsertCondition(conditions, {
           type: 'InvalidSpec',
           status: 'True',
           reason: 'SecretBlocked',
-          message: `secrets blocked by controller policy: ${blockedSecrets.join(', ')}`,
+          message,
         })
+        logInvalidSpec('SecretBlocked', message)
         await setStatus(kube, agentRun, {
           observedGeneration,
           conditions: updated,
@@ -772,6 +877,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
           reason: authSecretPolicy.reason,
           message: authSecretPolicy.message,
         })
+        logInvalidSpec(authSecretPolicy.reason, authSecretPolicy.message)
         await setStatus(kube, agentRun, {
           observedGeneration,
           conditions: updated,
@@ -782,12 +888,14 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       }
       if (memorySecretName) {
         if (allowedSecrets.length > 0 && !allowedSecrets.includes(memorySecretName)) {
+          const message = `memory secret ${memorySecretName} is not allowlisted by the Agent`
           const updated = upsertCondition(conditions, {
             type: 'InvalidSpec',
             status: 'True',
             reason: 'SecretNotAllowed',
-            message: `memory secret ${memorySecretName} is not allowlisted by the Agent`,
+            message,
           })
+          logInvalidSpec('SecretNotAllowed', message)
           await setStatus(kube, agentRun, {
             observedGeneration,
             conditions: updated,
@@ -797,12 +905,14 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
           return
         }
         if (runSecrets.length > 0 && !runSecrets.includes(memorySecretName)) {
+          const message = `memory secret ${memorySecretName} is not included in spec.secrets`
           const updated = upsertCondition(conditions, {
             type: 'InvalidSpec',
             status: 'True',
             reason: 'SecretNotAllowed',
-            message: `memory secret ${memorySecretName} is not included in spec.secrets`,
+            message,
           })
+          logInvalidSpec('SecretNotAllowed', message)
           await setStatus(kube, agentRun, {
             observedGeneration,
             conditions: updated,
@@ -828,6 +938,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
           reason: systemPromptResolution.reason,
           message: systemPromptResolution.message,
         })
+        logInvalidSpec(systemPromptResolution.reason, systemPromptResolution.message)
         await setStatus(kube, agentRun, {
           observedGeneration,
           conditions: updated,
@@ -848,12 +959,15 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         existingRuns,
       })
       if (!vcsResolution.ok) {
+        const reason = vcsResolution.reason ?? 'VcsUnavailable'
+        const message = vcsResolution.message ?? 'vcs provider unavailable'
         const updated = upsertCondition(conditions, {
           type: 'InvalidSpec',
           status: 'True',
-          reason: vcsResolution.reason ?? 'VcsUnavailable',
-          message: vcsResolution.message ?? 'vcs provider unavailable',
+          reason,
+          message,
         })
+        logInvalidSpec(reason, message)
         await setStatus(kube, agentRun, {
           observedGeneration,
           phase: 'Failed',
@@ -934,6 +1048,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
           status: 'True',
           reason: 'Submitted',
         })
+        logSubmitted(newRuntimeRef)
         await setStatus(kube, agentRun, {
           observedGeneration,
           runtimeRef: newRuntimeRef,
@@ -948,12 +1063,14 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
             : {}),
         })
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
         const updated = upsertCondition(baseConditions, {
           type: 'Failed',
           status: 'True',
           reason: 'SubmitFailed',
-          message: error instanceof Error ? error.message : String(error),
+          message,
         })
+        logSubmitFailed('SubmitFailed', message)
         await setStatus(kube, agentRun, {
           observedGeneration,
           phase: 'Failed',
@@ -981,11 +1098,19 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       const jobObservedAt = asString(runtimeRefRecord.jobObservedAt)
       if (!job) {
         if (jobObservedAt) {
+          const message = `job ${asString(runtimeRef.name) ?? 'unknown'} not found`
           const updated = upsertCondition(conditions, {
             type: 'Warning',
             status: 'True',
             reason: 'JobMissing',
-            message: `job ${asString(runtimeRef.name) ?? 'unknown'} not found`,
+            message,
+          })
+          logAgentsControllerWarn('reconcile_runtime_orphaned', {
+            ...logContext,
+            decision: 'runtime_orphaned',
+            reason: 'JobMissing',
+            message,
+            durationMs: Date.now() - reconcileStartedAt,
           })
           await setStatus(kube, agentRun, {
             observedGeneration,
@@ -1003,6 +1128,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       const failed = Number(jobStatus.failed ?? 0)
       if (succeeded > 0 || isJobComplete(job)) {
         const updated = upsertCondition(conditions, { type: 'Succeeded', status: 'True', reason: 'Completed' })
+        logTerminalOutcome('Succeeded', 'Completed', `job ${asString(runtimeRef.name) ?? 'unknown'} completed`)
         await setStatus(kube, agentRun, {
           observedGeneration,
           phase: 'Succeeded',
@@ -1026,6 +1152,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
           reason: failureDetail.reason,
           message: failureDetail.message,
         })
+        logTerminalOutcome('Failed', failureDetail.reason, failureDetail.message)
         await setStatus(kube, agentRun, {
           observedGeneration,
           phase: 'Failed',

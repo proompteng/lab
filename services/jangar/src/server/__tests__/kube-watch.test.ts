@@ -142,4 +142,22 @@ describe('kube-watch', () => {
     vi.advanceTimersByTime(2000)
     expect(spawnMocks).toHaveBeenCalledTimes(2)
   })
+
+  it('invokes onRestart with the restart reason when the process exits non-zero', () => {
+    const watchProcess = createMockWatchProcess()
+    spawnMocks.mockReturnValue(watchProcess)
+
+    const onRestart = vi.fn()
+    watchHandle = startResourceWatch({
+      resource: 'agentruns',
+      namespace: 'agents',
+      onEvent: vi.fn(),
+      onRestart,
+      restartDelayMs: 2000,
+    })
+
+    watchProcess.emit('close', 1)
+
+    expect(onRestart).toHaveBeenCalledWith('nonzero_exit')
+  })
 })

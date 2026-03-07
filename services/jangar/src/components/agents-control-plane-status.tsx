@@ -166,6 +166,29 @@ export const ControlPlaneStatusPanel = ({
 
         <div className="space-y-2">
           <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            AgentRun ingestion
+          </div>
+          <div className="rounded-none border p-2 border-border/60 bg-muted/30 space-y-1">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-medium text-foreground">{status.agentrun_ingestion.namespace}</span>
+              <StatusBadge label={status.agentrun_ingestion.status} />
+            </div>
+            <div className="text-muted-foreground">{status.agentrun_ingestion.message || 'OK'}</div>
+            <div className="text-muted-foreground">
+              Last watch event: {formatTimestamp(status.agentrun_ingestion.last_watch_event_at || null)} · Last resync:{' '}
+              {formatTimestamp(status.agentrun_ingestion.last_resync_at || null)}
+            </div>
+            <div className="text-muted-foreground">
+              Untouched runs: {renderSummaryValue(status.agentrun_ingestion.untouched_run_count)} · Oldest age:{' '}
+              {status.agentrun_ingestion.oldest_untouched_age_seconds == null
+                ? '—'
+                : `${status.agentrun_ingestion.oldest_untouched_age_seconds}s`}
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
             Workflow reliability
           </div>
           <div className="rounded-none border p-3 border-border/60 bg-muted/30 space-y-1">

@@ -11,6 +11,13 @@ export type CrdCheckState = {
 
 export type RateBucket = { count: number; resetAt: number }
 
+export type AgentRunIngestionRuntimeState = {
+  lastWatchEventAtMs: number | null
+  lastResyncAtMs: number | null
+  untouchedRunCount: number
+  oldestUntouchedAgeSeconds: number | null
+}
+
 export type AgentsControllerMutableState<TControllerState> = {
   lifecycleActor: AgentsControllerLifecycleActor
   started: boolean
@@ -30,6 +37,7 @@ export type AgentsControllerMutableState<TControllerState> = {
     perNamespace: Map<string, RateBucket>
     perRepo: Map<string, RateBucket>
   }
+  agentRunIngestionState: Map<string, AgentRunIngestionRuntimeState>
 }
 
 export const createMutableState = <TControllerState>(input: {
@@ -54,4 +62,5 @@ export const createMutableState = <TControllerState>(input: {
     perNamespace: new Map<string, RateBucket>(),
     perRepo: new Map<string, RateBucket>(),
   },
+  agentRunIngestionState: new Map<string, AgentRunIngestionRuntimeState>(),
 })

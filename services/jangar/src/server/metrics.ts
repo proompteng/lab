@@ -29,6 +29,9 @@ type JangarMetrics = {
   agentRateLimitRejections: Counter
   agentConcurrency: Histogram
   agentRunOutcomes: Counter
+  agentRunResyncAdoptions: Counter
+  agentRunUntouchedBacklog: Histogram
+  agentRunUntouchedOldestAgeSeconds: Histogram
   reconcileDurationMs: Histogram
   torghutQuantFrames: Counter
   torghutQuantStaleFrames: Counter
@@ -146,6 +149,27 @@ export const recordAgentConcurrency = (count: number, attributes?: MetricsAttrib
 export const recordAgentRunOutcome = (outcome: string, attributes?: MetricsAttributes) => {
   if (!metricsState.enabled) return
   recordCounter(metricsState.metrics?.agentRunOutcomes, 1, { outcome, ...attributes })
+}
+
+export const recordAgentRunResyncAdoptions = (count: number, attributes?: MetricsAttributes) => {
+  if (!metricsState.enabled) return
+  if (Number.isFinite(count) && count > 0) {
+    recordCounter(metricsState.metrics?.agentRunResyncAdoptions, count, attributes)
+  }
+}
+
+export const recordAgentRunUntouchedBacklog = (count: number, attributes?: MetricsAttributes) => {
+  if (!metricsState.enabled) return
+  if (Number.isFinite(count) && count >= 0) {
+    recordHistogram(metricsState.metrics?.agentRunUntouchedBacklog, count, attributes)
+  }
+}
+
+export const recordAgentRunUntouchedOldestAgeSeconds = (ageSeconds: number, attributes?: MetricsAttributes) => {
+  if (!metricsState.enabled) return
+  if (Number.isFinite(ageSeconds) && ageSeconds >= 0) {
+    recordHistogram(metricsState.metrics?.agentRunUntouchedOldestAgeSeconds, ageSeconds, attributes)
+  }
 }
 
 export const recordReconcileDurationMs = (durationMs: number, attributes?: MetricsAttributes) => {
@@ -584,6 +608,16 @@ const createMetricsState = (): MetricsState => {
       }),
       agentRunOutcomes: meter.createCounter('jangar_agent_run_outcomes_total', {
         description: 'Count of AgentRun terminal outcomes by phase.',
+      }),
+      agentRunResyncAdoptions: meter.createCounter('jangar_agentrun_resync_adoptions_total', {
+        description: 'Count of AgentRuns adopted for reconciliation by controller resync sweeps.',
+      }),
+      agentRunUntouchedBacklog: meter.createHistogram('jangar_agentrun_untouched_backlog', {
+        description: 'Observed count of untouched AgentRuns detected by the controller.',
+      }),
+      agentRunUntouchedOldestAgeSeconds: meter.createHistogram('jangar_agentrun_untouched_oldest_age_seconds', {
+        description: 'Observed age in seconds of the oldest untouched AgentRun.',
+        unit: 's',
       }),
       reconcileDurationMs: meter.createHistogram('jangar_reconcile_duration_ms', {
         description: 'Time spent reconciling agents controller resources.',

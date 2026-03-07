@@ -140,6 +140,16 @@ export type ControlPlaneWatchReliability = {
   streams: ControlPlaneWatchReliabilitySummary['streams']
 }
 
+export type AgentRunIngestionStatus = {
+  namespace: string
+  status: 'healthy' | 'degraded' | 'unknown'
+  message: string
+  last_watch_event_at: string
+  last_resync_at: string
+  untouched_run_count: number
+  oldest_untouched_age_seconds: number | null
+}
+
 export type ControlPlaneStatus = {
   service: string
   generated_at: string
@@ -160,6 +170,7 @@ export type ControlPlaneStatus = {
   database: DatabaseStatus
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
+  agentrun_ingestion: AgentRunIngestionStatus
   workflows: WorkflowsReliabilityStatus
   dependency_quorum: DependencyQuorumStatus
   rollout_health: ControlPlaneRolloutHealth
@@ -186,6 +197,38 @@ export type ControlPlaneStatusDeps = {
 }
 
 const normalizeMessage = (value: unknown) => (value instanceof Error ? value.message : String(value))
+
+const buildAgentRunIngestionStatus = (
+  namespace: string,
+  health: ReturnType<typeof getAgentsControllerHealth>,
+): AgentRunIngestionStatus => {
+  const entry = (health.agentRunIngestion ?? []).find((item) => item.namespace === namespace) ?? {
+    namespace,
+    lastWatchEventAt: null,
+    lastResyncAt: null,
+    untouchedRunCount: 0,
+    oldestUntouchedAgeSeconds: null,
+  }
+  const warnAfterSeconds = parseOptionalNumber(process.env.JANGAR_AGENTS_CONTROLLER_UNTOUCHED_WARN_AFTER_SECONDS) ?? 120
+  const isDegraded =
+    entry.untouchedRunCount > 0 &&
+    entry.oldestUntouchedAgeSeconds !== null &&
+    entry.oldestUntouchedAgeSeconds >= warnAfterSeconds
+
+  return {
+    namespace,
+    status: isDegraded ? 'degraded' : health.started ? 'healthy' : 'unknown',
+    message: isDegraded
+      ? `untouched AgentRuns detected for ${entry.oldestUntouchedAgeSeconds}s`
+      : health.started
+        ? 'AgentRun ingestion healthy'
+        : 'agents controller not started',
+    last_watch_event_at: entry.lastWatchEventAt ?? '',
+    last_resync_at: entry.lastResyncAt ?? '',
+    untouched_run_count: entry.untouchedRunCount,
+    oldest_untouched_age_seconds: entry.oldestUntouchedAgeSeconds,
+  }
+}
 
 const buildMigrationConsistencyStatus = (input: {
   migrationTable: string | null
@@ -1198,6 +1241,7 @@ export const buildControlPlaneStatus = async (
   const isWorkflowsDataUnavailable = isWorkflowsDataUnknown || isWorkflowsDataDegraded
   const isWorkflowsWarning = workflows.backoff_limit_exceeded_jobs >= warningBackoffThreshold
   const isWorkflowsDegraded = workflows.backoff_limit_exceeded_jobs >= degradedBackoffThreshold
+  const agentRunIngestion = buildAgentRunIngestionStatus(options.namespace, agentsHealth)
   const dependencyQuorum = buildDependencyQuorum({
     controllers,
     runtimeAdapters,
@@ -1220,6 +1264,7 @@ export const buildControlPlaneStatus = async (
     ...(database.status === 'healthy' ? [] : ['database']),
     ...(grpcStatus.enabled && grpcStatus.status !== 'healthy' ? ['grpc'] : []),
     ...(watchReliability.status === 'degraded' ? ['watch_reliability'] : []),
+    ...(agentRunIngestion.status === 'degraded' ? ['agentrun_ingestion'] : []),
     ...(isWorkflowsDataUnavailable || isWorkflowsWarning || isWorkflowsDegraded ? ['workflows'] : []),
     ...(isWorkflowsDataUnknown || isWorkflowsDegraded ? ['runtime:workflows'] : []),
     ...(rolloutHealth.status === 'degraded' ? ['rollout_health'] : []),
@@ -1256,6 +1301,7 @@ export const buildControlPlaneStatus = async (
       total_restarts: watchReliability.total_restarts,
       streams: watchReliability.streams,
     },
+    agentrun_ingestion: agentRunIngestion,
     rollout_health: rolloutHealth,
     workflows,
     dependency_quorum: dependencyQuorum,
