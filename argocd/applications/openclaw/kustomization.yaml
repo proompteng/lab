@@ -6,4 +6,3 @@ resources:
   - virtualmachine.yaml
   - service-ssh.yaml
   - openclaw-vm-rbac.yaml
-  - openclaw-memory-cluster.yaml
