@@ -27,8 +27,10 @@ Cloud-init should ensure:
 
 - ServiceAccount: `openclaw-vm` (namespace `openclaw`)
 - RBAC scope:
-  - can `create/delete/get/list/patch/update/watch` Argo CD `applications` in namespace `argocd`
-  - can `create/delete/get/list/watch` `agents.proompteng.ai/AgentRun` in namespace `agents`
+  - can `create/delete/get/list/patch/update/watch` Argo CD `applications`
+  - can `create/delete/get/list/watch` `agents.proompteng.ai/AgentRun`
+- Implementation note:
+  - these permissions are bound with `ClusterRole`/`ClusterRoleBinding` because the OpenClaw app applies `namespace: openclaw`, which would rewrite namespaced RBAC objects into the wrong namespace during GitOps sync
 
 ## Re-seal command (example)
 
