@@ -2886,6 +2886,11 @@ def _dump_topics(
                             min_source_timestamp_ms = source_timestamp_ms
                         if max_source_timestamp_ms is None or source_timestamp_ms > max_source_timestamp_ms:
                             max_source_timestamp_ms = source_timestamp_ms
+                        # kafka-python position() may lag the exclusive stop offset until a later poll.
+                        # Mark the partition complete as soon as we write the final in-window record.
+                        if int(record.offset) + 1 >= stop_offset:
+                            done.add(tp)
+                            break
                     if consumer.position(tp) >= stop_offset:
                         done.add(tp)
 
