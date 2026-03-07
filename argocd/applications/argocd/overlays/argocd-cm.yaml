@@ -28,7 +28,12 @@ data:
     local currentJobState = jobStatus.state or ""
 
     if desiredState == "suspended" then
-      if jobManagerStatus == "READY" and (currentJobState == "" or currentJobState == "CANCELED" or currentJobState == "FINISHED" or currentJobState == "SUSPENDED") and (lifecycleState == "" or lifecycleState == "STABLE" or lifecycleState == "UPGRADING") and (reconciliationState == "" or reconciliationState == "DEPLOYED" or reconciliationState == "UPGRADING") then
+      local suspendedJobReady = currentJobState == "" or currentJobState == "CANCELED" or currentJobState == "FINISHED" or currentJobState == "SUSPENDED"
+      local suspendedLifecycleReady = lifecycleState == "" or lifecycleState == "STABLE" or lifecycleState == "UPGRADING" or lifecycleState == "SUSPENDED"
+      local suspendedReconciliationReady = reconciliationState == "" or reconciliationState == "DEPLOYED" or reconciliationState == "UPGRADING"
+      local suspendedJobManagerReady = jobManagerStatus == "READY" or jobManagerStatus == "MISSING"
+
+      if suspendedJobManagerReady and suspendedJobReady and suspendedLifecycleReady and suspendedReconciliationReady then
         hs.status = "Healthy"
         hs.message = "FlinkDeployment is intentionally suspended and ready for activation."
         return hs

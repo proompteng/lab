@@ -13,7 +13,7 @@ spec:
       serviceAccountName: torghut-runtime
       containers:
         - name: backfill
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:ed936c6d5d5263aa170f97d37ce866a26316ab74bd313d941ae302fb43f65277
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:e3dbf0a63c694367d9a067325eab6ce4a9b906e2c8576ddd6dff049c2c4669ea
           imagePullPolicy: IfNotPresent
           command:
             - /bin/bash
