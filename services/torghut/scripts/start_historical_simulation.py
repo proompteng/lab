@@ -1024,12 +1024,16 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
 
 def _build_argocd_automation_config(manifest: Mapping[str, Any]) -> ArgocdAutomationConfig:
     argocd = _as_mapping(manifest.get('argocd'))
+    runtime = _as_mapping(manifest.get('runtime'))
+    target_mode = (_as_text(runtime.get('target_mode')) or 'dedicated_service').strip().lower()
     manage_automation = str(argocd.get('manage_automation', 'false')).strip().lower() in {
         '1',
         'true',
         'yes',
         'on',
     }
+    if target_mode == 'dedicated_service':
+        manage_automation = False
     desired_mode = (_as_text(argocd.get('desired_mode_during_run')) or DEFAULT_ARGOCD_RUN_MODE).lower()
     if desired_mode not in {'manual', 'auto'}:
         raise RuntimeError('argocd.desired_mode_during_run must be one of: manual,auto')
