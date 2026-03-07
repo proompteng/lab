@@ -22,6 +22,12 @@ from app.main import (
     app,
 )
 from app.trading.scheduler import TradingScheduler
+from app.trading.completion import (
+    DOC29_SIMULATION_FULL_DAY_GATE,
+    TRACE_STATUS_SATISFIED,
+    build_completion_trace,
+    persist_completion_trace,
+)
 from app.trading.execution import OrderExecutor
 from app.config import settings
 from app.models import (
@@ -1906,6 +1912,65 @@ class TestTradingApi(TestCase):
         self.assertIn("jobs", payload)
         self.assertEqual(payload["jobs"]["benchmark_parity"]["authority"], "empirical")
         self.assertEqual(payload["jobs"]["benchmark_parity"]["job_run_id"], "job-benchmark-1")
+
+    def test_trading_completion_doc29_endpoint_exposes_traceable_gate_status(self) -> None:
+        with self.session_local() as session:
+            trace = build_completion_trace(
+                doc_id='doc29',
+                gate_ids_attempted=[DOC29_SIMULATION_FULL_DAY_GATE],
+                run_id='sim-2026-03-06-full-day',
+                dataset_snapshot_ref='snapshot-1',
+                candidate_id='cand-1',
+                workflow_name='torghut-historical-simulation',
+                analysis_run_names=[],
+                artifact_refs=['s3://artifacts/run-full-lifecycle-manifest.json'],
+                db_row_refs={},
+                status_snapshot={},
+                result_by_gate={
+                    DOC29_SIMULATION_FULL_DAY_GATE: {
+                        'status': TRACE_STATUS_SATISFIED,
+                        'artifact_ref': 's3://artifacts/run-full-lifecycle-manifest.json',
+                        'acceptance_snapshot': {
+                            'trade_decisions': 640,
+                            'executions': 320,
+                            'execution_tca_metrics': 320,
+                            'execution_order_events': 320,
+                            'coverage_ratio': 0.99,
+                        },
+                    }
+                },
+                blocked_reasons={},
+                git_revision='abc123',
+                image_digest='sha256:test',
+            )
+            persist_completion_trace(
+                session=session,
+                trace_payload=trace,
+                default_artifact_ref='s3://artifacts/completion-trace.json',
+            )
+            session.commit()
+
+        with (
+            patch("app.main.SessionLocal", self.session_local),
+            patch("app.main.BUILD_COMMIT", "abc123"),
+        ):
+            response = self.client.get("/trading/completion/doc29")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["doc_id"], "doc29")
+        gate = next(
+            item for item in payload["gates"] if item["gate_id"] == DOC29_SIMULATION_FULL_DAY_GATE
+        )
+        self.assertEqual(gate["status"], "satisfied")
+        self.assertEqual(gate["latest_run"], "sim-2026-03-06-full-day")
+
+        with (
+            patch("app.main.SessionLocal", self.session_local),
+            patch("app.main.BUILD_COMMIT", "abc123"),
+        ):
+            gate_response = self.client.get(f"/trading/completion/doc29/{DOC29_SIMULATION_FULL_DAY_GATE}")
+        self.assertEqual(gate_response.status_code, 200)
+        self.assertEqual(gate_response.json()["gate_id"], DOC29_SIMULATION_FULL_DAY_GATE)
 
     def test_trading_autonomy_evidence_continuity_endpoint_returns_state_report(
         self,

@@ -60,7 +60,7 @@ class TestPromotionTruthfulness(TestCase):
                     'uncertainty_gate_action': 'pass',
                     'promotion_evidence': {
                         'benchmark_parity': {
-                            'artifact_ref': 'benchmarks/benchmark-parity-report-v1.json',
+                            'artifact_ref': 'gates/benchmark-parity-report-v1.json',
                             'artifact_authority': evidence_contract_payload(
                                 provenance=ArtifactProvenance.SYNTHETIC_GENERATED,
                                 maturity=EvidenceMaturity.STUB,

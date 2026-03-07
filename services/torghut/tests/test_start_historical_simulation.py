@@ -24,6 +24,7 @@ from scripts.start_historical_simulation import (
     _build_postgres_runtime_config,
     _build_resources,
     _build_rollouts_analysis_config,
+    _build_simulation_completion_trace,
     _configure_torghut_service_for_simulation,
     _discover_automation_pointer,
     _find_vector_extension_blocking_revision,
@@ -1631,6 +1632,81 @@ class TestStartHistoricalSimulation(TestCase):
         )
         self.assertNotIn('TRADING_FORECAST_ROUTER_PROVIDER_URL', env_by_name)
 
+    def test_build_simulation_completion_trace_marks_smoke_gate_satisfied(self) -> None:
+        resources = _build_resources(
+            'sim-2026-03-06-open-hour',
+            {
+                'dataset_id': 'torghut-smoke-open-hour-20260306',
+                'dataset_snapshot_ref': 'torghut-smoke-open-hour-20260306',
+                'window': {
+                    'start': '2026-03-06T14:30:00Z',
+                    'end': '2026-03-06T15:30:00Z',
+                    'min_coverage_minutes': 60,
+                    'strict_coverage_ratio': 0.95,
+                },
+            },
+        )
+        postgres = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost/torghut_sim_smoke',
+            simulation_db='torghut_sim_smoke',
+            migrations_command='alembic upgrade heads',
+        )
+        with TemporaryDirectory() as tmpdir:
+            resources = replace(resources, output_root=Path(tmpdir))
+            for filename in (
+                'run-manifest.json',
+                'run-full-lifecycle-manifest.json',
+                'runtime-verify.json',
+                'replay-report.json',
+                'signal-activity.json',
+                'decision-activity.json',
+                'execution-activity.json',
+            ):
+                (resources.output_root / resources.run_token / filename).parent.mkdir(
+                    parents=True,
+                    exist_ok=True,
+                )
+                (resources.output_root / resources.run_token / filename).write_text(
+                    '{}',
+                    encoding='utf-8',
+                )
+
+            trace = _build_simulation_completion_trace(
+                resources=resources,
+                manifest={
+                    'dataset_snapshot_ref': 'torghut-smoke-open-hour-20260306',
+                    'window': {
+                        'start': '2026-03-06T14:30:00Z',
+                        'end': '2026-03-06T15:30:00Z',
+                        'min_coverage_minutes': 60,
+                        'strict_coverage_ratio': 0.95,
+                    },
+                },
+                postgres_config=postgres,
+                apply_report={
+                    'window_policy': {'min_coverage_minutes': 60, 'strict_coverage_ratio': 0.95},
+                    'dump_coverage': {'coverage_ratio': 1.0},
+                },
+                runtime_verify_report={'runtime_state': 'ready'},
+                monitor_report={
+                    'activity_classification': 'success',
+                    'final_snapshot': {
+                        'trade_decisions': 12,
+                        'executions': 8,
+                        'execution_tca_metrics': 8,
+                        'execution_order_events': 8,
+                    },
+                },
+                analytics_report={},
+                rollouts_report={},
+                errors=[],
+            )
+
+        smoke = trace['result_by_gate']['simulation_smoke_execution_funnel']
+        self.assertEqual(smoke['status'], 'satisfied')
+        self.assertEqual(trace['dataset_snapshot_ref'], 'torghut-smoke-open-hour-20260306')
+
     def test_validate_window_policy_us_equities_regular_profile(self) -> None:
         policy = _validate_window_policy(
             {
@@ -1791,6 +1867,8 @@ class TestStartHistoricalSimulation(TestCase):
             patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
             patch('scripts.start_historical_simulation._update_run_state', return_value=None),
             patch('scripts.start_historical_simulation._save_json', return_value=None),
+            patch('scripts.start_historical_simulation.persist_completion_trace', return_value={}),
+            patch('scripts.start_historical_simulation.SessionLocal') as mock_session_local,
             patch('scripts.start_historical_simulation._apply', return_value={'status': 'ok'}),
             patch('scripts.start_historical_simulation._runtime_verify', return_value={'runtime_state': 'ready'}),
             patch('scripts.start_historical_simulation._replay_dump', return_value={'status': 'ok'}),
@@ -1804,6 +1882,7 @@ class TestStartHistoricalSimulation(TestCase):
             ),
             patch('scripts.start_historical_simulation._report_simulation', return_value={'status': 'ok'}),
         ):
+            mock_session_local.return_value.__enter__.return_value = SimpleNamespace(commit=lambda: None)
             with self.assertRaisesRegex(RuntimeError, 'simulation_run_failed:activity:decisions_absent'):
                 _run_full_lifecycle(
                     resources=resources,
@@ -1878,6 +1957,8 @@ class TestStartHistoricalSimulation(TestCase):
             patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
             patch('scripts.start_historical_simulation._update_run_state', return_value=None),
             patch('scripts.start_historical_simulation._save_json', return_value=None),
+            patch('scripts.start_historical_simulation.persist_completion_trace', return_value={}),
+            patch('scripts.start_historical_simulation.SessionLocal') as mock_session_local,
             patch('scripts.start_historical_simulation._prepare_argocd_for_run', return_value={'managed': False}),
             patch('scripts.start_historical_simulation._restore_argocd_after_run', return_value={'managed': False}),
             patch(
@@ -1914,6 +1995,7 @@ class TestStartHistoricalSimulation(TestCase):
                 side_effect=lambda **_: call_order.append('report') or {'status': 'ok'},
             ),
         ):
+            mock_session_local.return_value.__enter__.return_value = SimpleNamespace(commit=lambda: None)
             _run_full_lifecycle(
                 resources=resources,
                 manifest=manifest,

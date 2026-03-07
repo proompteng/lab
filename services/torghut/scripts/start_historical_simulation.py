@@ -28,6 +28,15 @@ import psycopg
 from psycopg import sql
 import yaml
 
+from app.db import SessionLocal
+from app.trading.completion import (
+    DOC29_SIMULATION_FULL_DAY_GATE,
+    DOC29_SIMULATION_SMOKE_GATE,
+    TRACE_STATUS_BLOCKED,
+    TRACE_STATUS_SATISFIED,
+    build_completion_trace,
+    persist_completion_trace,
+)
 from scripts import historical_simulation_verification as simulation_verification
 
 APPLY_CONFIRMATION_PHRASE = 'START_HISTORICAL_SIMULATION'
@@ -3874,6 +3883,155 @@ def _report_simulation(
     return report
 
 
+def _doc29_simulation_gate_ids(manifest: Mapping[str, Any]) -> list[str]:
+    window = _as_mapping(manifest.get('window'))
+    profile = _as_text(window.get('profile'))
+    min_coverage_minutes = _safe_int(window.get('min_coverage_minutes'), default=0)
+    if profile == US_EQUITIES_REGULAR_PROFILE or min_coverage_minutes >= US_EQUITIES_REGULAR_MINUTES:
+        return [DOC29_SIMULATION_FULL_DAY_GATE]
+    return [DOC29_SIMULATION_SMOKE_GATE]
+
+
+def _existing_artifact_refs(resources: SimulationResources, analytics_report: Mapping[str, Any] | None) -> list[str]:
+    artifact_candidates = [
+        _artifact_path(resources, 'run-manifest.json'),
+        _artifact_path(resources, 'run-full-lifecycle-manifest.json'),
+        _artifact_path(resources, 'runtime-verify.json'),
+        _artifact_path(resources, 'replay-report.json'),
+        _artifact_path(resources, 'signal-activity.json'),
+        _artifact_path(resources, 'decision-activity.json'),
+        _artifact_path(resources, 'execution-activity.json'),
+    ]
+    report_dir = _as_text(_as_mapping(analytics_report).get('report_dir'))
+    if report_dir:
+        for path in sorted(Path(report_dir).glob('*')):
+            if path.is_file():
+                artifact_candidates.append(path)
+    refs: list[str] = []
+    for candidate in artifact_candidates:
+        if isinstance(candidate, Path) and candidate.exists():
+            refs.append(str(candidate))
+    return refs
+
+
+def _build_simulation_completion_trace(
+    *,
+    resources: SimulationResources,
+    manifest: Mapping[str, Any],
+    postgres_config: PostgresRuntimeConfig,
+    apply_report: Mapping[str, Any] | None,
+    runtime_verify_report: Mapping[str, Any] | None,
+    monitor_report: Mapping[str, Any] | None,
+    analytics_report: Mapping[str, Any] | None,
+    rollouts_report: Mapping[str, Any] | None,
+    errors: Sequence[str],
+) -> dict[str, Any]:
+    gate_ids_attempted = _doc29_simulation_gate_ids(manifest)
+    apply_payload = _as_mapping(apply_report)
+    runtime_payload = _as_mapping(runtime_verify_report)
+    monitor_payload = _as_mapping(monitor_report)
+    analytics_payload = _as_mapping(analytics_report)
+    rollouts_payload = _as_mapping(rollouts_report)
+    final_snapshot = _as_mapping(monitor_payload.get('final_snapshot'))
+    window_policy = _as_mapping(apply_payload.get('window_policy'))
+    dump_coverage = _as_mapping(apply_payload.get('dump_coverage'))
+    trade_decisions = _safe_int(final_snapshot.get('trade_decisions'))
+    executions = _safe_int(final_snapshot.get('executions'))
+    execution_tca_metrics = _safe_int(final_snapshot.get('execution_tca_metrics'))
+    execution_order_events = _safe_int(final_snapshot.get('execution_order_events'))
+    activity_classification = _as_text(monitor_payload.get('activity_classification')) or 'unknown'
+    runtime_state = _as_text(runtime_payload.get('runtime_state')) or 'unknown'
+    coverage_ratio = float(dump_coverage.get('coverage_ratio') or 0.0)
+    strict_ratio = float(window_policy.get('strict_coverage_ratio') or 0.0)
+    gate_results: dict[str, dict[str, Any]] = {}
+    blocked_reasons: dict[str, str] = {}
+    artifact_refs = _existing_artifact_refs(resources, analytics_payload)
+
+    for gate_id in gate_ids_attempted:
+        satisfied = (
+            runtime_state == 'ready'
+            and activity_classification == 'success'
+            and trade_decisions >= 1
+            and executions >= 1
+            and execution_tca_metrics >= 1
+            and execution_order_events >= 1
+        )
+        if gate_id == DOC29_SIMULATION_FULL_DAY_GATE:
+            satisfied = satisfied and coverage_ratio >= strict_ratio and _safe_int(
+                window_policy.get('min_coverage_minutes')
+            ) >= US_EQUITIES_REGULAR_MINUTES
+        blocked_reason = None
+        if not satisfied:
+            if runtime_state != 'ready':
+                blocked_reason = 'runtime_not_ready'
+            elif activity_classification != 'success':
+                blocked_reason = f'activity_classification:{activity_classification}'
+            elif trade_decisions <= 0:
+                blocked_reason = 'trade_decisions_empty'
+            elif executions <= 0:
+                blocked_reason = 'executions_empty'
+            elif execution_tca_metrics <= 0:
+                blocked_reason = 'execution_tca_metrics_empty'
+            elif execution_order_events <= 0:
+                blocked_reason = 'execution_order_events_empty'
+            else:
+                blocked_reason = 'coverage_threshold_not_met'
+            blocked_reasons[gate_id] = blocked_reason
+        gate_results[gate_id] = {
+            'status': TRACE_STATUS_SATISFIED if satisfied else TRACE_STATUS_BLOCKED,
+            'blocked_reason': blocked_reason,
+            'artifact_ref': str(_artifact_path(resources, 'run-full-lifecycle-manifest.json')),
+            'acceptance_snapshot': {
+                'runtime_state': runtime_state,
+                'activity_classification': activity_classification,
+                'trade_decisions': trade_decisions,
+                'executions': executions,
+                'execution_tca_metrics': execution_tca_metrics,
+                'execution_order_events': execution_order_events,
+                'coverage_ratio': coverage_ratio,
+                'strict_coverage_ratio': strict_ratio,
+                'min_coverage_minutes': _safe_int(window_policy.get('min_coverage_minutes')),
+            },
+        }
+
+        return build_completion_trace(
+            doc_id='doc29',
+            gate_ids_attempted=gate_ids_attempted,
+            run_id=resources.run_id,
+            dataset_snapshot_ref=_as_text(manifest.get('dataset_snapshot_ref')),
+            candidate_id=_as_text(manifest.get('candidate_id')),
+            workflow_name=_as_text(os.getenv('ARGO_WORKFLOW_NAME')) or f'torghut-historical-simulation:{resources.run_id}',
+            analysis_run_names=[
+                _as_text(_as_mapping(rollouts_payload.get('runtime_analysis_run')).get('name')) or '',
+                _as_text(_as_mapping(rollouts_payload.get('activity_analysis_run')).get('name')) or '',
+                _as_text(_as_mapping(rollouts_payload.get('teardown_analysis_run')).get('name')) or '',
+            ],
+            artifact_refs=artifact_refs,
+            db_row_refs={
+                'simulation_postgres_db': postgres_config.simulation_db,
+                'simulation_clickhouse_db': resources.clickhouse_db,
+            'funnel_counts': {
+                'trade_decisions': trade_decisions,
+                'executions': executions,
+                'execution_tca_metrics': execution_tca_metrics,
+                'execution_order_events': execution_order_events,
+            },
+        },
+            status_snapshot={
+                'runtime_state': runtime_state,
+                'activity_classification': activity_classification,
+                'errors': list(errors),
+                'rollouts': {
+                    'runtime_analysis_run': _as_text(_as_mapping(rollouts_payload.get('runtime_analysis_run')).get('name')),
+                    'activity_analysis_run': _as_text(_as_mapping(rollouts_payload.get('activity_analysis_run')).get('name')),
+                    'teardown_analysis_run': _as_text(_as_mapping(rollouts_payload.get('teardown_analysis_run')).get('name')),
+                },
+            },
+            result_by_gate=gate_results,
+            blocked_reasons=blocked_reasons,
+        )
+
+
 def _run_full_lifecycle(
     *,
     resources: SimulationResources,
@@ -4233,6 +4391,30 @@ def _run_full_lifecycle(
         updated_apply_report['rollouts'] = rollouts_report
         _save_json(run_manifest_path, updated_apply_report)
     _save_json(run_manifest_path.with_name('run-full-lifecycle-manifest.json'), report)
+    completion_trace = _build_simulation_completion_trace(
+        resources=resources,
+        manifest=manifest,
+        postgres_config=postgres_config,
+        apply_report=apply_report,
+        runtime_verify_report=runtime_verify_report,
+        monitor_report=monitor_report,
+        analytics_report=analytics_report,
+        rollouts_report=rollouts_report,
+        errors=errors,
+    )
+    completion_trace_path = _artifact_path(resources, 'completion-trace.json')
+    _save_json(completion_trace_path, completion_trace)
+    with SessionLocal() as session:
+        gate_row_ids = persist_completion_trace(
+            session=session,
+            trace_payload=completion_trace,
+            default_artifact_ref=str(completion_trace_path),
+        )
+        session.commit()
+    updated_db_refs = _as_mapping(completion_trace.get('db_row_refs'))
+    updated_db_refs['completion_gate_row_ids'] = gate_row_ids
+    completion_trace['db_row_refs'] = updated_db_refs
+    _save_json(completion_trace_path, completion_trace)
     if errors:
         raise RuntimeError('simulation_run_failed:' + '; '.join(errors))
     return report
