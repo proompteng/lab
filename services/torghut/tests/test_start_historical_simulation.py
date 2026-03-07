@@ -38,6 +38,7 @@ from scripts.start_historical_simulation import (
     _producer_for_replay,
     _redact_dsn_credentials,
     _restore_ta_configuration,
+    _restore_argocd_after_run,
     _replay_dump,
     _run_rollouts_analysis,
     _set_argocd_application_sync_policy,
@@ -1637,7 +1638,7 @@ class TestStartHistoricalSimulation(TestCase):
             {'enabled': False, 'prune': False, 'selfHeal': False},
         )
 
-    def test_prepare_argocd_for_run_patches_application_and_applicationset(self) -> None:
+    def test_prepare_argocd_for_run_patches_application_only(self) -> None:
         config = ArgocdAutomationConfig(
             manage_automation=True,
             applicationset_name='product',
@@ -1649,9 +1650,9 @@ class TestStartHistoricalSimulation(TestCase):
         )
         with (
             patch(
-                'scripts.start_historical_simulation._set_argocd_automation_mode',
-                return_value={'previous_mode': 'auto', 'current_mode': 'manual', 'changed': True},
-            ) as automation_mock,
+                'scripts.start_historical_simulation._read_argocd_automation_mode',
+                return_value={'pointer': '/spec/generators/0/list/elements/0/automation', 'mode': 'auto'},
+            ) as automation_read_mock,
             patch(
                 'scripts.start_historical_simulation._read_argocd_application_sync_policy',
                 return_value={
@@ -1676,7 +1677,45 @@ class TestStartHistoricalSimulation(TestCase):
             ) as application_mock,
         ):
             report = _prepare_argocd_for_run(config=config)
-        automation_mock.assert_called_once()
+        automation_read_mock.assert_called_once()
         application_mock.assert_called_once()
         self.assertTrue(report['changed'])
         self.assertIn('application', report)
+        self.assertFalse(report['applicationset_managed'])
+        self.assertEqual(report['previous_mode'], 'auto')
+        self.assertEqual(report['current_mode'], 'auto')
+
+    def test_restore_argocd_after_run_restores_application_only(self) -> None:
+        config = ArgocdAutomationConfig(
+            manage_automation=True,
+            applicationset_name='product',
+            applicationset_namespace='argocd',
+            app_name='torghut',
+            desired_mode_during_run='manual',
+            restore_mode_after_run='previous',
+            verify_timeout_seconds=30,
+        )
+        previous_sync_policy = {
+            'automated': {'enabled': True, 'prune': True, 'selfHeal': True},
+            'syncOptions': ['CreateNamespace=true'],
+        }
+        with patch(
+            'scripts.start_historical_simulation._set_argocd_application_sync_policy',
+            return_value={
+                'previous_sync_policy': {
+                    'automated': {'enabled': False, 'prune': False, 'selfHeal': False},
+                },
+                'current_sync_policy': previous_sync_policy,
+                'changed': True,
+            },
+        ) as application_mock:
+            report = _restore_argocd_after_run(
+                config=config,
+                previous_mode='auto',
+                previous_sync_policy=previous_sync_policy,
+            )
+        application_mock.assert_called_once()
+        self.assertTrue(report['changed'])
+        self.assertEqual(report['restored_mode'], 'auto')
+        self.assertFalse(report['applicationset_managed'])
+        self.assertEqual(report['current_mode'], 'auto')
