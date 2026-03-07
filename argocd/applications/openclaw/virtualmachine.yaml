@@ -2,6 +2,7 @@ apiVersion: kubevirt.io/v1
 kind: VirtualMachine
 metadata:
   name: openclaw
+  namespace: openclaw
   labels:
     app.kubernetes.io/name: openclaw
   annotations:
@@ -53,6 +54,10 @@ spec:
             - name: cloudinitdisk
               disk:
                 bus: virtio
+            - name: k8sserviceaccountdisk
+              disk:
+                bus: virtio
+              serial: K8S_SA_DISK
           interfaces:
             - name: default
               masquerade: {}
@@ -69,3 +74,6 @@ spec:
           cloudInitNoCloud:
             secretRef:
               name: openclaw-cloud-init
+        - name: k8sserviceaccountdisk
+          serviceAccount:
+            serviceAccountName: openclaw-vm
