@@ -1,0 +1,67 @@
+#cloud-config
+package_update: true
+package_upgrade: false
+packages:
+  - openssh-server
+  - ca-certificates
+  - curl
+  - git
+  - jq
+  - python3
+
+write_files:
+  - path: /usr/local/sbin/openclaw-bootstrap-tools
+    owner: root:root
+    permissions: '0755'
+    content: |-
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      arch="$(dpkg --print-architecture)"
+      case "$arch" in
+        amd64) bin_arch="amd64" ;;
+        arm64) bin_arch="arm64" ;;
+        *) echo "Unsupported architecture: $arch" >&2; exit 1 ;;
+      esac
+
+      install_kubectl() {
+        if command -v kubectl >/dev/null 2>&1; then return 0; fi
+        version="$(curl -fsSL https://dl.k8s.io/release/stable.txt)"
+        curl -fsSLo /tmp/kubectl "https://dl.k8s.io/release/${version}/bin/linux/${bin_arch}/kubectl"
+        chmod +x /tmp/kubectl
+        install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+      }
+
+      install_argocd() {
+        if command -v argocd >/dev/null 2>&1; then return 0; fi
+        tag="$(curl -fsSL https://api.github.com/repos/argoproj/argo-cd/releases/latest | python3 -c 'import sys,json; print(json.load(sys.stdin)["tag_name"])')"
+        curl -fsSLo /tmp/argocd "https://github.com/argoproj/argo-cd/releases/download/${tag}/argocd-linux-${bin_arch}"
+        chmod +x /tmp/argocd
+        install -m 0755 /tmp/argocd /usr/local/bin/argocd
+      }
+
+      install_kubeseal() {
+        if command -v kubeseal >/dev/null 2>&1; then return 0; fi
+        tag="$(curl -fsSL https://api.github.com/repos/bitnami-labs/sealed-secrets/releases/latest | python3 -c 'import sys,json; print(json.load(sys.stdin)["tag_name"])')"
+        version="${tag#v}"
+        file="kubeseal-${version}-linux-${bin_arch}.tar.gz"
+        curl -fsSLo "/tmp/${file}" "https://github.com/bitnami-labs/sealed-secrets/releases/download/${tag}/${file}"
+        tar -xzf "/tmp/${file}" -C /tmp kubeseal
+        install -m 0755 /tmp/kubeseal /usr/local/bin/kubeseal
+      }
+
+      configure_openclaw_workspace() {
+        if ! command -v openclaw >/dev/null 2>&1; then
+          return 0
+        fi
+        openclaw config set agents.defaults.workspace '"/home/ubuntu/github.com/lab/services/tuslagch"' || true
+      }
+
+      install_kubectl
+      install_argocd
+      install_kubeseal
+      configure_openclaw_workspace
+
+runcmd:
+  - [ bash, -lc, 'systemctl enable --now ssh' ]
+  - [ bash, -lc, '/usr/local/sbin/openclaw-bootstrap-tools' ]
