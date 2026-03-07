@@ -3,7 +3,7 @@
 The `openclaw` VM currently consumes `cloud-init-secret.yaml` as a **SealedSecret**.
 Because the secret payload is encrypted, update flow is:
 
-1. Edit `cloud-init-userdata.example` (source of truth template).
+1. Prepare a local `cloud-init-userdata.yaml` file (do not commit plaintext).
 2. Seal it for the cluster using `kubeseal`.
 3. Replace `cloud-init-secret.yaml` with the generated SealedSecret.
 
@@ -31,7 +31,7 @@ Cloud-init should ensure:
 ```bash
 kubectl create secret generic openclaw-cloud-init \
   --namespace openclaw \
-  --from-file=userdata=argocd/applications/openclaw/cloud-init-userdata.example \
+  --from-file=userdata=./cloud-init-userdata.yaml \
   --dry-run=client -o yaml \
 | kubeseal --format yaml --namespace openclaw --name openclaw-cloud-init \
 > argocd/applications/openclaw/cloud-init-secret.yaml
