@@ -27,6 +27,10 @@ Use this playbook when you need to:
 
 ## Prerequisites
 
+- Argo CD app `argo-rollouts` synced and healthy.
+- Rollouts CRDs available:
+  - `analysisruns.argoproj.io`
+  - `analysistemplates.argoproj.io`
 - `kubectl` access to the target cluster and namespace (`torghut`).
 - Access to the cluster services for Kafka, ClickHouse, and Postgres from Argo workflow runtime.
 - A dataset manifest file (YAML/JSON) with explicit `window.start` and `window.end`.
@@ -71,8 +75,17 @@ Expected dedicated resources:
 - `FlinkDeployment/torghut-ta-sim`
 - `ConfigMap/torghut-ta-sim-config`
 - `Service/torghut-forecast-sim`
+- `AnalysisTemplate/torghut-simulation-runtime-ready`
+- `AnalysisTemplate/torghut-simulation-activity`
+- `AnalysisTemplate/torghut-simulation-teardown-clean`
 
 This playbook is Argo-first and should not be executed locally.
+
+Phase 1 note:
+
+- Argo Workflows remains the simulation orchestrator.
+- Argo Rollouts is used as the gate/control plane via `AnalysisTemplate` and `AnalysisRun`.
+- `torghut-sim` and `torghut-ta-sim` are not migrated to `Rollout` resources in this phase.
 
 ## Step 2: Plan (Argo)
 
@@ -116,9 +129,23 @@ argo submit --from workflowtemplate/torghut-historical-simulation \
 
 - Argo automation switch to `manual` (if manifest enables management),
 - apply (dump/replay/configure),
-- monitor until cursor reaches run window and thresholds are met,
+- runtime verification through an `AnalysisRun`,
+- activity verification through an `AnalysisRun`,
 - post-run report generation,
-- teardown + Argo automation restore.
+- teardown + Argo automation restore,
+- teardown cleanliness verification through an `AnalysisRun`.
+
+Observe the gate plane while the workflow is running:
+
+```bash
+kubectl get analysisrun -n torghut -w
+```
+
+Expected AnalysisRuns per simulation run:
+
+- `torghut-sim-runtime-ready-<run-token>`
+- `torghut-sim-activity-<run-token>`
+- `torghut-sim-teardown-clean-<run-token>`
 
 Workflow pods run in the image environment, so ensure the manifest includes:
 
@@ -207,6 +234,8 @@ Expected values are `torghut.sim.*` topics and `TA_GROUP_ID=torghut-ta-sim-<run_
   - latest `RUN_STATE ...` lines visible in argo logs showing `subphase=replay` with non-zero records while waiting
  - `dump_coverage` present and passing
  - `window_policy` present
+ - `rollouts.runtime_analysis_run` populated after runtime gate completes
+ - `rollouts.activity_analysis_run` populated after activity gate completes
 
 ## Step 5: Collect Empirical Evidence
 
@@ -215,6 +244,10 @@ Collect all of:
 - `run-manifest.json`
 - `run-full-lifecycle-manifest.json`
 - `run-state.json`
+- `runtime-verify.json`
+- `signal-activity.json`
+- `decision-activity.json`
+- `execution-activity.json`
 - `source-dump.replay-marker.json`
 - `report/simulation-report.json`
 - `report/simulation-report.md`
@@ -223,6 +256,7 @@ Collect all of:
 - `report/llm-review-summary.csv`
 - Torghut `/trading/status` snapshot
 - TA + Torghut logs for the run window
+- `AnalysisRun` YAML/status for runtime, activity, and teardown gates
 - Postgres row counts in simulation DB:
   - `trade_decisions`
   - `executions`
@@ -252,6 +286,15 @@ kubectl exec -i -n torghut chi-torghut-clickhouse-default-0-0-0 -- \
            FROM system.parts
            WHERE active=1 AND database='<simulation_db>'
            GROUP BY table ORDER BY table FORMAT TabSeparated"
+```
+
+Gate inspection:
+
+```bash
+kubectl get analysisrun -n torghut
+kubectl get analysisrun -n torghut torghut-sim-runtime-ready-<run_token> -o yaml
+kubectl get analysisrun -n torghut torghut-sim-activity-<run_token> -o yaml
+kubectl get analysisrun -n torghut torghut-sim-teardown-clean-<run_token> -o yaml
 ```
 
 ## Step 6: Split-Mode Teardown (Only if you did not use `mode=run`)

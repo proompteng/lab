@@ -57,12 +57,57 @@ By default, the workflow now targets the dedicated simulation surfaces managed i
 `Service/torghut-forecast-sim`. Supply explicit `runtime.*` overrides in the dataset manifest only when you
 intentionally need different resource names.
 
+### Argo Rollouts gate plane
+
+Simulation gating now uses Argo Rollouts in phase 1:
+
+- sync the platform app `argo-rollouts` before using the simulation workflow
+- verify the Rollouts controller and CRDs are healthy
+- keep `torghut-historical-simulation` as the orchestrator in `argo-workflows`
+- use namespaced `AnalysisTemplate` / `AnalysisRun` resources in `torghut` for:
+  - runtime readiness
+  - activity success classification
+  - teardown cleanliness
+
+Phase 1 does not migrate `torghut-sim` or `torghut-ta-sim` to `Rollout` kinds. The dedicated simulation workloads
+remain:
+
+- Knative `Service/torghut-sim`
+- `FlinkDeployment/torghut-ta-sim`
+- `Deployment` and `Service/torghut-forecast-sim`
+
+Required namespaced AnalysisTemplates:
+
+- `torghut-simulation-runtime-ready`
+- `torghut-simulation-activity`
+- `torghut-simulation-teardown-clean`
+- `torghut-simulation-artifact-bundle`
+
+Canonical operator flow:
+
+1. Sync Argo CD app `argo-rollouts`.
+2. Verify Rollouts CRDs/controller are healthy.
+3. Sync Argo CD apps `torghut` and `torghut-forecast`.
+4. Verify the AnalysisTemplates exist in namespace `torghut`.
+5. Submit `torghut-historical-simulation`.
+6. Observe both the Argo Workflow phases and the `AnalysisRun` objects in `torghut`.
+7. Treat the `AnalysisRun` outcomes as the authoritative simulation gate results.
+
+Quick checks:
+
+```bash
+kubectl get crd analysisruns.argoproj.io analysistemplates.argoproj.io -o name
+kubectl get analysistemplate -n torghut
+kubectl get analysisrun -n torghut
+```
+
 ### Scope / target resources (as deployed)
 - Kubernetes namespace: `torghut`
 - Flink TA job: `FlinkDeployment/torghut-ta-sim` (`argocd/applications/torghut/ta-sim/flinkdeployment.yaml`)
 - TA config: `ConfigMap/torghut-ta-sim-config` (`argocd/applications/torghut/ta-sim/configmap.yaml`)
 - Trading service: Knative `Service/torghut-sim` (`argocd/applications/torghut/knative-service-sim.yaml`)
 - Forecast service: `Service/torghut-forecast-sim` (`argocd/applications/torghut-forecast/sim/service.yaml`)
+- Simulation gates: `AnalysisTemplate/*` and `AnalysisRun/*` in namespace `torghut`
 - DB migration gate: `Job/torghut-db-migrations` (`argocd/applications/torghut/db-migrations-job.yaml`, Argo `PreSync` hook)
 - Kafka namespace/tools: `kafka` (Strimzi); bootstrap `kafka-kafka-bootstrap.kafka:9092`
 - Ceph RGW bucket: `ObjectBucketClaim/flink-checkpoints` (for Flink checkpoint/savepoint storage)

@@ -1,0 +1,49 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: torghut-simulation-runtime-ready
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+spec:
+  args:
+    - name: runId
+    - name: datasetId
+    - name: namespace
+    - name: torghutService
+    - name: taDeployment
+    - name: forecastService
+    - name: windowStart
+    - name: windowEnd
+  metrics:
+    - name: runtime-ready
+      provider:
+        job:
+          spec:
+            backoffLimit: 0
+            ttlSecondsAfterFinished: 300
+            template:
+              spec:
+                serviceAccountName: torghut-runtime
+                restartPolicy: Never
+                containers:
+                  - name: analysis
+                    image: registry.ide-newton.ts.net/lab/torghut@sha256:ed936c6d5d5263aa170f97d37ce866a26316ab74bd313d941ae302fb43f65277
+                    imagePullPolicy: IfNotPresent
+                    command:
+                      - /bin/bash
+                      - -lc
+                    args:
+                      - >-
+                        set -euo pipefail &&
+                        cd /app &&
+                        /opt/venv/bin/python scripts/run_simulation_analysis.py runtime-ready
+                        --run-id "{{args.runId}}"
+                        --dataset-id "{{args.datasetId}}"
+                        --namespace "{{args.namespace}}"
+                        --torghut-service "{{args.torghutService}}"
+                        --ta-deployment "{{args.taDeployment}}"
+                        --forecast-service "{{args.forecastService}}"
+                        --window-start "{{args.windowStart}}"
+                        --window-end "{{args.windowEnd}}"
+                        --json

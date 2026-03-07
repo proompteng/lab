@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+helmCharts:
+  - name: argo-rollouts
+    repo: https://argoproj.github.io/argo-helm
+    version: 2.40.6
+    releaseName: argo-rollouts
+    namespace: argo-rollouts
+    valuesInline:
+      installCRDs: true
+      keepCRDs: true
+      clusterInstall: true
+      createClusterAggregateRoles: true
+      controller:
+        replicas: 2
+        metrics:
+          enabled: true
+        extraEnv:
+          - name: ARGO_ROLLOUTS_ANALYSIS_JOB_NAMESPACE
+            value: torghut

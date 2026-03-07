@@ -28,6 +28,8 @@ import psycopg
 from psycopg import sql
 import yaml
 
+from scripts import historical_simulation_verification as simulation_verification
+
 APPLY_CONFIRMATION_PHRASE = 'START_HISTORICAL_SIMULATION'
 DEFAULT_NAMESPACE = 'torghut'
 DEFAULT_TA_CONFIGMAP = 'torghut-ta-config'
@@ -131,6 +133,12 @@ DEFAULT_ARGOCD_APPSET_NAME = 'product'
 DEFAULT_ARGOCD_NAMESPACE = 'argocd'
 DEFAULT_ARGOCD_APP_NAME = 'torghut'
 DEFAULT_ARGOCD_RUN_MODE = 'manual'
+DEFAULT_ROLLOUTS_NAMESPACE = 'torghut'
+DEFAULT_ROLLOUTS_RUNTIME_TEMPLATE = 'torghut-simulation-runtime-ready'
+DEFAULT_ROLLOUTS_ACTIVITY_TEMPLATE = 'torghut-simulation-activity'
+DEFAULT_ROLLOUTS_TEARDOWN_TEMPLATE = 'torghut-simulation-teardown-clean'
+DEFAULT_ROLLOUTS_ARTIFACT_TEMPLATE = 'torghut-simulation-artifact-bundle'
+DEFAULT_ROLLOUTS_VERIFY_TIMEOUT_SECONDS = 1800
 TRANSIENT_POSTGRES_ERROR_PATTERNS = (
     'connection refused',
     'connection reset by peer',
@@ -319,6 +327,17 @@ class ArgocdAutomationConfig:
     app_name: str
     desired_mode_during_run: str
     restore_mode_after_run: str
+    verify_timeout_seconds: int
+
+
+@dataclass(frozen=True)
+class RolloutsAnalysisConfig:
+    enabled: bool
+    namespace: str
+    runtime_template: str
+    activity_template: str
+    teardown_template: str
+    artifact_template: str
     verify_timeout_seconds: int
 
 
@@ -1050,6 +1069,31 @@ def _build_argocd_automation_config(manifest: Mapping[str, Any]) -> ArgocdAutoma
     )
 
 
+def _build_rollouts_analysis_config(manifest: Mapping[str, Any]) -> RolloutsAnalysisConfig:
+    rollouts = _as_mapping(manifest.get('rollouts'))
+    enabled = str(rollouts.get('enabled', 'false')).strip().lower() in {
+        '1',
+        'true',
+        'yes',
+        'on',
+    }
+    verify_timeout_seconds = _safe_int(
+        rollouts.get('verify_timeout_seconds'),
+        default=DEFAULT_ROLLOUTS_VERIFY_TIMEOUT_SECONDS,
+    )
+    if verify_timeout_seconds <= 0:
+        raise RuntimeError('rollouts.verify_timeout_seconds must be > 0')
+    return RolloutsAnalysisConfig(
+        enabled=enabled,
+        namespace=_as_text(rollouts.get('namespace')) or DEFAULT_ROLLOUTS_NAMESPACE,
+        runtime_template=_as_text(rollouts.get('runtime_template')) or DEFAULT_ROLLOUTS_RUNTIME_TEMPLATE,
+        activity_template=_as_text(rollouts.get('activity_template')) or DEFAULT_ROLLOUTS_ACTIVITY_TEMPLATE,
+        teardown_template=_as_text(rollouts.get('teardown_template')) or DEFAULT_ROLLOUTS_TEARDOWN_TEMPLATE,
+        artifact_template=_as_text(rollouts.get('artifact_template')) or DEFAULT_ROLLOUTS_ARTIFACT_TEMPLATE,
+        verify_timeout_seconds=verify_timeout_seconds,
+    )
+
+
 def _ensure_supported_binary(name: str) -> None:
     if shutil.which(name) is None:
         raise SystemExit(f'{name} not found in PATH')
@@ -1145,6 +1189,28 @@ def _kubectl_json_global(args: Sequence[str]) -> dict[str, Any]:
     if not isinstance(payload, Mapping):
         raise RuntimeError('kubectl did not return a mapping payload')
     return {str(key): value for key, value in cast(Mapping[str, Any], payload).items()}
+
+
+def _kubectl_apply(namespace: str, payload: Mapping[str, Any]) -> None:
+    _run_command(
+        ['kubectl', '-n', namespace, 'apply', '-f', '-'],
+        input_text=yaml.safe_dump(dict(payload), sort_keys=False),
+    )
+
+
+def _kubectl_delete_if_exists(namespace: str, kind: str, name: str) -> None:
+    _run_command(
+        [
+            'kubectl',
+            '-n',
+            namespace,
+            'delete',
+            kind,
+            name,
+            '--ignore-not-found=true',
+            '--wait=false',
+        ]
+    )
 
 
 def _kubectl_patch(namespace: str, kind: str, name: str, patch: Mapping[str, Any]) -> None:
@@ -1777,6 +1843,7 @@ def _build_plan_report(
     window = _as_mapping(manifest.get('window'))
     torghut_env_overrides = _torghut_env_overrides_from_manifest(manifest)
     window_policy = _validate_window_policy(manifest)
+    rollouts_config = _build_rollouts_analysis_config(manifest)
     return {
         'status': 'ok',
         'run_id': resources.run_id,
@@ -1817,6 +1884,7 @@ def _build_plan_report(
             'username': clickhouse_config.username,
         },
         'argocd': asdict(argocd_config),
+        'rollouts': asdict(rollouts_config),
         'artifacts': {
             'state_path': str(state_path),
             'run_manifest_path': str(run_manifest_path),
@@ -3353,6 +3421,201 @@ def _restore_argocd_after_run(
     }
 
 
+def _analysis_run_name(*, phase: str, run_token: str) -> str:
+    base = f'torghut-sim-{phase}-{run_token}'
+    if len(base) <= 63:
+        return base
+    prefix = f'torghut-sim-{phase}-'
+    remaining = 63 - len(prefix)
+    return prefix + run_token[:remaining].rstrip('-')
+
+
+def _analysis_run_args(
+    *,
+    phase: str,
+    resources: SimulationResources,
+    manifest: Mapping[str, Any],
+    postgres_config: PostgresRuntimeConfig,
+    clickhouse_config: ClickHouseRuntimeConfig,
+) -> dict[str, str]:
+    window_start, window_end = _resolve_window_bounds(manifest)
+    args: dict[str, str] = {
+        'runId': resources.run_id,
+        'datasetId': resources.dataset_id,
+        'runToken': resources.run_token,
+        'namespace': resources.namespace,
+        'torghutService': resources.torghut_service,
+        'taConfigmap': resources.ta_configmap,
+        'taDeployment': resources.ta_deployment,
+        'forecastService': resources.torghut_forecast_service,
+        'windowStart': window_start.isoformat(),
+        'windowEnd': window_end.isoformat(),
+        'signalTable': resources.clickhouse_signal_table,
+        'priceTable': resources.clickhouse_price_table,
+        'postgresDatabase': postgres_config.simulation_db,
+        'clickhouseHttpUrl': clickhouse_config.http_url,
+        'clickhouseUsername': clickhouse_config.username or '',
+    }
+    monitor = _as_mapping(manifest.get('monitor'))
+    if phase == 'activity':
+        args.update(
+            {
+                'monitorTimeoutSeconds': str(
+                    _safe_int(monitor.get('timeout_seconds'), default=DEFAULT_RUN_MONITOR_TIMEOUT_SECONDS)
+                ),
+                'monitorPollSeconds': str(
+                    _safe_int(monitor.get('poll_seconds'), default=DEFAULT_RUN_MONITOR_POLL_SECONDS)
+                ),
+                'minTradeDecisions': str(
+                    _safe_int(monitor.get('min_trade_decisions'), default=DEFAULT_RUN_MONITOR_MIN_DECISIONS)
+                ),
+                'minExecutions': str(
+                    _safe_int(monitor.get('min_executions'), default=DEFAULT_RUN_MONITOR_MIN_EXECUTIONS)
+                ),
+                'minExecutionTcaMetrics': str(
+                    _safe_int(
+                        monitor.get('min_execution_tca_metrics'),
+                        default=DEFAULT_RUN_MONITOR_MIN_TCA,
+                    )
+                ),
+                'minExecutionOrderEvents': str(
+                    _safe_int(
+                        monitor.get('min_execution_order_events'),
+                        default=DEFAULT_RUN_MONITOR_MIN_ORDER_EVENTS,
+                    )
+                ),
+                'cursorGraceSeconds': str(
+                    _safe_int(
+                        monitor.get('cursor_grace_seconds'),
+                        default=DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS,
+                    )
+                ),
+            }
+        )
+    return args
+
+
+def _render_analysis_run_spec(
+    *,
+    rollouts_config: RolloutsAnalysisConfig,
+    template_name: str,
+    name: str,
+    args_by_name: Mapping[str, str],
+) -> dict[str, Any]:
+    template_payload = _kubectl_json(
+        rollouts_config.namespace,
+        ['get', 'analysistemplate', template_name, '-o', 'json'],
+    )
+    template_spec = _as_mapping(template_payload.get('spec'))
+    template_args = template_spec.get('args')
+    resolved_args: list[dict[str, Any]] = []
+    if isinstance(template_args, list):
+        for raw_arg in template_args:
+            if not isinstance(raw_arg, Mapping):
+                continue
+            entry = _as_mapping(raw_arg)
+            arg_name = _as_text(entry.get('name'))
+            if arg_name is None:
+                continue
+            resolved: dict[str, Any] = {'name': arg_name}
+            if arg_name in args_by_name:
+                resolved['value'] = args_by_name[arg_name]
+            elif 'value' in entry:
+                resolved['value'] = entry.get('value')
+            elif 'valueFrom' in entry:
+                resolved['valueFrom'] = entry.get('valueFrom')
+            else:
+                raise RuntimeError(f'missing_analysis_template_arg:{template_name}:{arg_name}')
+            resolved_args.append(resolved)
+
+    metrics = template_spec.get('metrics')
+    if not isinstance(metrics, list) or not metrics:
+        raise RuntimeError(f'invalid_analysis_template_metrics:{template_name}')
+
+    analysis_run_spec: dict[str, Any] = {
+        'args': resolved_args,
+        'metrics': metrics,
+    }
+    for key in ('dryRun', 'measurementRetention'):
+        if key in template_spec:
+            analysis_run_spec[key] = template_spec[key]
+
+    return {
+        'apiVersion': 'argoproj.io/v1alpha1',
+        'kind': 'AnalysisRun',
+        'metadata': {
+            'name': name,
+            'namespace': rollouts_config.namespace,
+            'labels': {
+                'app.kubernetes.io/name': 'torghut',
+                'torghut.proompteng.ai/analysis-template': template_name,
+            },
+        },
+        'spec': analysis_run_spec,
+    }
+
+
+def _wait_for_analysis_run(
+    *,
+    namespace: str,
+    name: str,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    deadline = datetime.now(timezone.utc) + timedelta(seconds=timeout_seconds)
+    while True:
+        payload = _kubectl_json(namespace, ['get', 'analysisrun', name, '-o', 'json'])
+        status = _as_mapping(payload.get('status'))
+        phase = _as_text(status.get('phase')) or 'Pending'
+        metric_results = status.get('metricResults')
+        report = {
+            'name': name,
+            'namespace': namespace,
+            'phase': phase,
+            'message': _as_text(status.get('message')),
+            'started_at': _as_text(status.get('startedAt')),
+            'completed_at': _as_text(status.get('completedAt')),
+            'metric_results': metric_results if isinstance(metric_results, list) else [],
+        }
+        if phase in {'Successful', 'Failed', 'Error', 'Inconclusive'}:
+            report['status'] = 'ok' if phase == 'Successful' else 'degraded'
+            return report
+        if datetime.now(timezone.utc) >= deadline:
+            raise RuntimeError(f'analysisrun_timeout:{name}:{phase}')
+        time.sleep(5)
+
+
+def _run_rollouts_analysis(
+    *,
+    resources: SimulationResources,
+    manifest: Mapping[str, Any],
+    postgres_config: PostgresRuntimeConfig,
+    clickhouse_config: ClickHouseRuntimeConfig,
+    rollouts_config: RolloutsAnalysisConfig,
+    phase: str,
+    template_name: str,
+) -> dict[str, Any]:
+    analysis_name = _analysis_run_name(phase=phase, run_token=resources.run_token)
+    _kubectl_delete_if_exists(rollouts_config.namespace, 'analysisrun', analysis_name)
+    payload = _render_analysis_run_spec(
+        rollouts_config=rollouts_config,
+        template_name=template_name,
+        name=analysis_name,
+        args_by_name=_analysis_run_args(
+            phase=phase,
+            resources=resources,
+            manifest=manifest,
+            postgres_config=postgres_config,
+            clickhouse_config=clickhouse_config,
+        ),
+    )
+    _kubectl_apply(rollouts_config.namespace, payload)
+    return _wait_for_analysis_run(
+        namespace=rollouts_config.namespace,
+        name=analysis_name,
+        timeout_seconds=rollouts_config.verify_timeout_seconds,
+    )
+
+
 def _report_simulation(
     *,
     resources: SimulationResources,
@@ -3409,6 +3672,7 @@ def _run_full_lifecycle(
     clickhouse_config: ClickHouseRuntimeConfig,
     postgres_config: PostgresRuntimeConfig,
     argocd_config: ArgocdAutomationConfig,
+    rollouts_config: RolloutsAnalysisConfig,
     force_dump: bool,
     force_replay: bool,
     skip_teardown: bool,
@@ -3425,6 +3689,16 @@ def _run_full_lifecycle(
     monitor_report: dict[str, Any] | None = None
     analytics_report: dict[str, Any] | None = None
     teardown_report: dict[str, Any] | None = None
+    rollouts_report: dict[str, Any] = {
+        'enabled': bool(
+            rollouts_config.enabled
+            and resources.target_mode == 'dedicated_service'
+        ),
+        'runtime_analysis_run': None,
+        'activity_analysis_run': None,
+        'teardown_analysis_run': None,
+        'artifact_analysis_run': None,
+    }
     errors: list[str] = []
     previous_automation_mode: str | None = None
     argocd_prepare_succeeded = False
@@ -3491,10 +3765,19 @@ def _run_full_lifecycle(
             _update_run_state(resources=resources, phase='dataset_prepare', status='ok')
 
             _update_run_state(resources=resources, phase='runtime_verify', status='running')
-            runtime_verify_report = _runtime_verify(
-                resources=resources,
-                manifest=manifest,
-            )
+            if bool(rollouts_report['enabled']):
+                runtime_analysis_run = _run_rollouts_analysis(
+                    resources=resources,
+                    manifest=manifest,
+                    postgres_config=postgres_config,
+                    clickhouse_config=clickhouse_config,
+                    rollouts_config=rollouts_config,
+                    phase='runtime-ready',
+                    template_name=rollouts_config.runtime_template,
+                )
+                rollouts_report['runtime_analysis_run'] = runtime_analysis_run
+            runtime_verify_report = _runtime_verify(resources=resources, manifest=manifest)
+            runtime_verify_report['analysis_run'] = rollouts_report['runtime_analysis_run']
             _save_json(_artifact_path(resources, 'runtime-verify.json'), runtime_verify_report)
             _update_run_state(
                 resources=resources,
@@ -3502,32 +3785,58 @@ def _run_full_lifecycle(
                 status='ok' if runtime_verify_report.get('runtime_state') == 'ready' else 'error',
                 details=runtime_verify_report,
             )
-            if runtime_verify_report.get('runtime_state') != 'ready':
+            if runtime_verify_report.get('runtime_state') != 'ready' or (
+                bool(rollouts_report['enabled'])
+                and _as_mapping(cast(Mapping[str, Any], rollouts_report['runtime_analysis_run'])).get('phase') != 'Successful'
+            ):
                 errors.append('environment_incomplete')
 
             _update_run_state(resources=resources, phase='activity_verify', status='running')
-            monitor_report = _monitor_run_completion(
-                resources=resources,
-                manifest=manifest,
-                postgres_config=postgres_config,
-                clickhouse_config=clickhouse_config,
-                runtime_verify=runtime_verify_report,
-            )
+            if bool(rollouts_report['enabled']):
+                activity_analysis_run = _run_rollouts_analysis(
+                    resources=resources,
+                    manifest=manifest,
+                    postgres_config=postgres_config,
+                    clickhouse_config=clickhouse_config,
+                    rollouts_config=rollouts_config,
+                    phase='activity',
+                    template_name=rollouts_config.activity_template,
+                )
+                rollouts_report['activity_analysis_run'] = activity_analysis_run
+                monitor_report = simulation_verification._current_activity_report(
+                    resources=resources,
+                    manifest=manifest,
+                    postgres_config=postgres_config,
+                    clickhouse_config=clickhouse_config,
+                    runtime_verify=runtime_verify_report,
+                )
+            else:
+                monitor_report = _monitor_run_completion(
+                    resources=resources,
+                    manifest=manifest,
+                    postgres_config=postgres_config,
+                    clickhouse_config=clickhouse_config,
+                    runtime_verify=runtime_verify_report,
+                )
+            monitor_report['analysis_run'] = rollouts_report['activity_analysis_run']
             _save_json(_artifact_path(resources, 'signal-activity.json'), {
                 'activity_classification': monitor_report.get('activity_classification'),
                 'signal_rows': _as_mapping(monitor_report.get('final_snapshot')).get('signal_rows'),
                 'price_rows': _as_mapping(monitor_report.get('final_snapshot')).get('price_rows'),
+                'analysis_run': rollouts_report['activity_analysis_run'],
             })
             _save_json(_artifact_path(resources, 'decision-activity.json'), {
                 'activity_classification': monitor_report.get('activity_classification'),
                 'trade_decisions': _as_mapping(monitor_report.get('final_snapshot')).get('trade_decisions'),
                 'cursor_at': _as_mapping(monitor_report.get('final_snapshot')).get('cursor_at'),
+                'analysis_run': rollouts_report['activity_analysis_run'],
             })
             _save_json(_artifact_path(resources, 'execution-activity.json'), {
                 'activity_classification': monitor_report.get('activity_classification'),
                 'executions': _as_mapping(monitor_report.get('final_snapshot')).get('executions'),
                 'execution_tca_metrics': _as_mapping(monitor_report.get('final_snapshot')).get('execution_tca_metrics'),
                 'execution_order_events': _as_mapping(monitor_report.get('final_snapshot')).get('execution_order_events'),
+                'analysis_run': rollouts_report['activity_analysis_run'],
             })
             _update_run_state(
                 resources=resources,
@@ -3535,7 +3844,12 @@ def _run_full_lifecycle(
                 status='ok' if monitor_report.get('activity_classification') == 'success' else 'degraded',
                 details=monitor_report,
             )
-            if monitor_report.get('activity_classification') in {'infra_not_active', 'environment_incomplete'}:
+            activity_analysis_phase = _as_mapping(
+                cast(Mapping[str, Any], rollouts_report['activity_analysis_run'])
+            ).get('phase')
+            if monitor_report.get('activity_classification') in {'infra_not_active', 'environment_incomplete'} or (
+                bool(rollouts_report['enabled']) and activity_analysis_phase != 'Successful'
+            ):
                 errors.append(f'activity:{monitor_report.get("activity_classification")}')
         else:
             _update_run_state(
@@ -3581,7 +3895,23 @@ def _run_full_lifecycle(
                     resources=resources,
                     allow_missing_state=True,
                 )
+                if bool(rollouts_report['enabled']):
+                    teardown_analysis_run = _run_rollouts_analysis(
+                        resources=resources,
+                        manifest=manifest,
+                        postgres_config=postgres_config,
+                        clickhouse_config=clickhouse_config,
+                        rollouts_config=rollouts_config,
+                        phase='teardown-clean',
+                        template_name=rollouts_config.teardown_template,
+                    )
+                    rollouts_report['teardown_analysis_run'] = teardown_analysis_run
+                teardown_report['analysis_run'] = rollouts_report['teardown_analysis_run']
                 _update_run_state(resources=resources, phase='teardown', status='ok')
+                if bool(rollouts_report['enabled']) and _as_mapping(
+                    cast(Mapping[str, Any], rollouts_report['teardown_analysis_run'])
+                ).get('phase') != 'Successful':
+                    errors.append('teardown:environment_incomplete')
             except Exception as exc:
                 errors.append(f'teardown:{exc}')
                 _update_run_state(
@@ -3653,9 +3983,14 @@ def _run_full_lifecycle(
         'monitor': monitor_report,
         'report': analytics_report,
         'teardown': teardown_report,
+        'rollouts': rollouts_report,
         'errors': errors,
     }
     run_manifest_path = _state_paths(resources)[1]
+    if apply_report is not None:
+        updated_apply_report = dict(apply_report)
+        updated_apply_report['rollouts'] = rollouts_report
+        _save_json(run_manifest_path, updated_apply_report)
     _save_json(run_manifest_path.with_name('run-full-lifecycle-manifest.json'), report)
     if errors:
         raise RuntimeError('simulation_run_failed:' + '; '.join(errors))
@@ -3667,6 +4002,16 @@ def _render_report(payload: Mapping[str, Any], *, json_only: bool) -> None:
         print(json.dumps(dict(payload), sort_keys=True, separators=(',', ':')))
         return
     print(json.dumps(dict(payload), indent=2, sort_keys=True))
+
+
+_http_clickhouse_query = simulation_verification._http_clickhouse_query
+_monitor_run_completion = simulation_verification._monitor_run_completion
+_monitor_snapshot = simulation_verification._monitor_snapshot
+_runtime_verify = simulation_verification._runtime_verify
+_signal_snapshot = simulation_verification._signal_snapshot
+_validate_dump_coverage = simulation_verification._validate_dump_coverage
+_validate_window_policy = simulation_verification._validate_window_policy
+_verify_isolation_guards = simulation_verification._verify_isolation_guards
 
 
 def main() -> None:
@@ -3727,6 +4072,15 @@ def main() -> None:
         applicationset_name=argocd_config.applicationset_name,
         app_name=argocd_config.app_name,
         desired_mode_during_run=argocd_config.desired_mode_during_run,
+    )
+    rollouts_config = _build_rollouts_analysis_config(manifest)
+    _log_script_event(
+        'rollouts_config_ready',
+        enabled=rollouts_config.enabled,
+        namespace=rollouts_config.namespace,
+        runtime_template=rollouts_config.runtime_template,
+        activity_template=rollouts_config.activity_template,
+        teardown_template=rollouts_config.teardown_template,
     )
     postgres_config = _build_postgres_runtime_config(
         manifest,
@@ -3804,6 +4158,7 @@ def main() -> None:
             clickhouse_config=clickhouse_config,
             postgres_config=postgres_config,
             argocd_config=argocd_config,
+            rollouts_config=rollouts_config,
             force_dump=bool(args.force_dump),
             force_replay=bool(args.force_replay),
             skip_teardown=bool(args.skip_teardown),

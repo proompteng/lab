@@ -17,6 +17,9 @@ resources:
   - serviceaccount.yaml
   - role.yaml
   - rolebinding.yaml
+  - rollouts-analysis-role.yaml
+  - rollouts-analysis-rolebinding-codex-workflow.yaml
+  - rollouts-analysis-rolebinding-runtime.yaml
   - alloy-rbac.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
@@ -31,6 +34,10 @@ resources:
   - empirical-artifacts-retention-cronjob.yaml
   - empirical-promotion-workflowtemplate.yaml
   - historical-simulation-workflowtemplate.yaml
+  - analysis-template-runtime-ready.yaml
+  - analysis-template-activity.yaml
+  - analysis-template-teardown-clean.yaml
+  - analysis-template-artifact-bundle.yaml
   - clickhouse
   - ws
   - ta
