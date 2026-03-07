@@ -17,6 +17,10 @@ authoritative benchmark parity, foundation router parity, and Janus evidence art
 replayed/observed manifests, uploads them to the `torghut-empirical-artifacts` bucket when
 configured, and persists freshness rows into `vnext_empirical_job_runs`.
 
+The empirical workflow depends on the namespace-local sealed secret
+`rook-ceph-rgw-argo-workflows` for Argo archive-log uploads. Keep that secret managed here so
+workflow submissions in `torghut` do not rely on manual secret copies from `argo-workflows`.
+
 Trigger a simulation run via Argo:
 
 ```bash
