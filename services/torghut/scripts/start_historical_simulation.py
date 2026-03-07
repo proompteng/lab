@@ -398,6 +398,14 @@ def _normalize_run_token(run_id: str) -> str:
     return token
 
 
+def _normalize_kubernetes_name_token(value: str) -> str:
+    token = re.sub(r'[^a-z0-9]+', '-', value.strip().lower()).strip('-')
+    token = re.sub(r'-+', '-', token)
+    if not token:
+        raise SystemExit('kubernetes name token must contain at least one alphanumeric character')
+    return token
+
+
 def _as_mapping(value: Any) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         return {}
@@ -3424,12 +3432,13 @@ def _restore_argocd_after_run(
 
 
 def _analysis_run_name(*, phase: str, run_token: str) -> str:
-    base = f'torghut-sim-{phase}-{run_token}'
+    kubernetes_run_token = _normalize_kubernetes_name_token(run_token)
+    base = f'torghut-sim-{phase}-{kubernetes_run_token}'
     if len(base) <= 63:
         return base
     prefix = f'torghut-sim-{phase}-'
     remaining = 63 - len(prefix)
-    return prefix + run_token[:remaining].rstrip('-')
+    return prefix + kubernetes_run_token[:remaining].rstrip('-')
 
 
 def _analysis_run_args(

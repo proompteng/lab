@@ -14,6 +14,7 @@ from scripts.start_historical_simulation import (
     KafkaRuntimeConfig,
     PostgresRuntimeConfig,
     RolloutsAnalysisConfig,
+    _analysis_run_name,
     _build_clickhouse_runtime_config,
     _build_argocd_automation_config,
     _build_kafka_runtime_config,
@@ -57,6 +58,15 @@ from scripts.start_historical_simulation import (
 class TestStartHistoricalSimulation(TestCase):
     def test_normalize_run_token(self) -> None:
         self.assertEqual(_normalize_run_token('Sim-2026/02/27#Run-01'), 'sim_2026_02_27_run_01')
+
+    def test_analysis_run_name_uses_dns1123_safe_token(self) -> None:
+        self.assertEqual(
+            _analysis_run_name(
+                phase='runtime-ready',
+                run_token='sim_2026_03_06_open_hour',
+            ),
+            'torghut-sim-runtime-ready-sim-2026-03-06-open-hour',
+        )
 
     def test_build_resources_derives_isolation_names(self) -> None:
         resources = _build_resources(
@@ -1650,7 +1660,7 @@ class TestStartHistoricalSimulation(TestCase):
                         'metrics': [{'name': 'runtime-ready'}],
                     }
                 }
-            if args[:3] == ['get', 'analysisrun', 'torghut-sim-runtime-ready-sim_2026_03_06_open_hour']:
+            if args[:3] == ['get', 'analysisrun', 'torghut-sim-runtime-ready-sim-2026-03-06-open-hour']:
                 return {'status': {'phase': 'Successful'}}
             raise AssertionError(f'unexpected kubectl args: {args}')
 
@@ -1677,7 +1687,7 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertIsInstance(payload, dict)
         assert isinstance(payload, dict)
         self.assertEqual(payload['kind'], 'AnalysisRun')
-        self.assertEqual(payload['metadata']['name'], 'torghut-sim-runtime-ready-sim_2026_03_06_open_hour')
+        self.assertEqual(payload['metadata']['name'], 'torghut-sim-runtime-ready-sim-2026-03-06-open-hour')
 
     def test_discover_automation_pointer_finds_nested_element(self) -> None:
         payload = {
