@@ -42,6 +42,11 @@ spec:
       image: registry.ide-newton.ts.net/lab/torghut@sha256:74d4f4b227a3d54926f24afc3d3762d8f7d868ddd214b5ed922b2200857e8a1d
       imagePullPolicy: Always
       env:
+        - name: DB_DSN
+          valueFrom:
+            secretKeyRef:
+              name: torghut-db-app
+              key: uri
         - name: TORGHUT_SIM_KAFKA_PASSWORD
           valueFrom:
             secretKeyRef:
