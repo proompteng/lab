@@ -2378,6 +2378,7 @@ def _configure_torghut_service_for_simulation(
 
     updates = {
         'DB_DSN': postgres_config.torghut_runtime_dsn,
+        'TRADING_ENABLED': 'true',
         'TRADING_MODE': 'paper',
         'TRADING_FEATURE_FLAGS_ENABLED': 'false',
         'TRADING_SIGNAL_TABLE': resources.clickhouse_signal_table,

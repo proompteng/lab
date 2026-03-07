@@ -825,6 +825,10 @@ class TestStartHistoricalSimulation(TestCase):
             env_by_name['TRADING_SIMULATION_ORDER_UPDATES_SASL_PASSWORD'].get('value'),
             'secret',
         )
+        self.assertEqual(
+            env_by_name['TRADING_ENABLED'].get('value'),
+            'true',
+        )
 
     def test_configure_torghut_service_applies_manifest_overrides(self) -> None:
         resources = _build_resources(
@@ -1943,6 +1947,27 @@ class TestStartHistoricalSimulation(TestCase):
             },
         )
         kservice_payload = {
+            'spec': {
+                'template': {
+                    'spec': {
+                        'containers': [
+                            {
+                                'name': 'user-container',
+                                'env': [
+                                    {'name': 'TRADING_ENABLED', 'value': 'true'},
+                                    {'name': 'TRADING_SIMULATION_ENABLED', 'value': 'true'},
+                                    {'name': 'TRADING_SIGNAL_TABLE', 'value': 'torghut_sim_sim_2026_03_06_open_hour.ta_signals'},
+                                    {'name': 'TRADING_PRICE_TABLE', 'value': 'torghut_sim_sim_2026_03_06_open_hour.ta_microbars'},
+                                    {'name': 'TRADING_ORDER_FEED_ENABLED', 'value': 'true'},
+                                    {'name': 'TRADING_ORDER_FEED_TOPIC', 'value': 'torghut.sim.trade-updates.v1.sim_2026_03_06_open_hour'},
+                                    {'name': 'TRADING_SIMULATION_ORDER_UPDATES_TOPIC', 'value': 'torghut.sim.trade-updates.v1.sim_2026_03_06_open_hour'},
+                                    {'name': 'TRADING_SIMULATION_RUN_ID', 'value': 'sim-2026-03-06-open-hour'},
+                                ],
+                            }
+                        ]
+                    }
+                }
+            },
             'status': {
                 'latestReadyRevisionName': 'torghut-sim-00001',
                 'conditions': [
@@ -1988,6 +2013,95 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(report['runtime_state'], 'ready')
         self.assertEqual(report['environment_state'], 'complete')
         self.assertEqual(report['torghut_service']['name'], 'torghut-sim')
+
+    def test_runtime_verify_rejects_trading_disabled_sim_revision(self) -> None:
+        manifest = {
+            'window': {
+                'start': '2026-03-06T14:30:00Z',
+                'end': '2026-03-06T15:30:00Z',
+            }
+        }
+        resources = _build_resources(
+            'sim-2026-03-06-open-hour',
+            {
+                'dataset_id': 'dataset-a',
+                'runtime': {
+                    'target_mode': 'dedicated_service',
+                    'namespace': 'torghut',
+                    'ta_configmap': 'torghut-ta-sim-config',
+                    'ta_deployment': 'torghut-ta-sim',
+                    'torghut_service': 'torghut-sim',
+                    'torghut_forecast_service': 'torghut-forecast-sim',
+                },
+            },
+        )
+        kservice_payload = {
+            'spec': {
+                'template': {
+                    'spec': {
+                        'containers': [
+                            {
+                                'name': 'user-container',
+                                'env': [
+                                    {'name': 'TRADING_ENABLED', 'value': 'false'},
+                                    {'name': 'TRADING_SIMULATION_ENABLED', 'value': 'true'},
+                                    {'name': 'TRADING_SIGNAL_TABLE', 'value': 'torghut_sim_sim_2026_03_06_open_hour.ta_signals'},
+                                    {'name': 'TRADING_PRICE_TABLE', 'value': 'torghut_sim_sim_2026_03_06_open_hour.ta_microbars'},
+                                    {'name': 'TRADING_ORDER_FEED_ENABLED', 'value': 'true'},
+                                    {'name': 'TRADING_ORDER_FEED_TOPIC', 'value': 'torghut.sim.trade-updates.v1.sim_2026_03_06_open_hour'},
+                                    {'name': 'TRADING_SIMULATION_ORDER_UPDATES_TOPIC', 'value': 'torghut.sim.trade-updates.v1.sim_2026_03_06_open_hour'},
+                                    {'name': 'TRADING_SIMULATION_RUN_ID', 'value': 'sim-2026-03-06-open-hour'},
+                                ],
+                            }
+                        ]
+                    }
+                }
+            },
+            'status': {
+                'latestReadyRevisionName': 'torghut-sim-00001',
+                'conditions': [
+                    {
+                        'type': 'Ready',
+                        'status': 'True',
+                    }
+                ],
+            },
+        }
+
+        with (
+            patch('scripts.historical_simulation_verification._kubectl_json', return_value=kservice_payload),
+            patch(
+                'scripts.historical_simulation_verification._deployment_replica_health',
+                side_effect=[
+                    {
+                        'name': 'torghut-sim-00001-deployment',
+                        'ready_replicas': 1,
+                        'available_replicas': 1,
+                        'replicas': 1,
+                    },
+                    {
+                        'name': 'torghut-forecast-sim',
+                        'ready_replicas': 1,
+                        'available_replicas': 1,
+                        'replicas': 1,
+                    },
+                ],
+            ),
+            patch(
+                'scripts.historical_simulation_verification._flink_runtime_health',
+                return_value={
+                    'name': 'torghut-ta-sim',
+                    'desired_state': 'running',
+                    'lifecycle_state': 'RUNNING',
+                    'job_manager_status': 'DEPLOYED',
+                },
+            ),
+        ):
+            report = _runtime_verify(resources=resources, manifest=manifest)
+
+        self.assertEqual(report['runtime_state'], 'not_ready')
+        self.assertEqual(report['environment_state'], 'environment_incomplete')
+        self.assertFalse(report['torghut_service']['trading_config']['trading_enabled'])
 
     def test_build_argocd_automation_config_defaults(self) -> None:
         config = _build_argocd_automation_config({})
