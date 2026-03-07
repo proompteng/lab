@@ -1536,7 +1536,7 @@ class TestStartHistoricalSimulation(TestCase):
             },
         )
 
-    def test_restore_torghut_env_reverts_forecast_overrides(self) -> None:
+    def test_restore_torghut_env_reverts_forecast_overrides_and_trading_enabled(self) -> None:
         resources = _build_resources(
             'sim-1',
             {
@@ -1545,6 +1545,10 @@ class TestStartHistoricalSimulation(TestCase):
         )
         state = {
             'torghut_env_snapshot': {
+                'TRADING_ENABLED': {
+                    'name': 'TRADING_ENABLED',
+                    'value': 'false',
+                },
                 'TRADING_FORECAST_SERVICE_URL': {
                     'name': 'TRADING_FORECAST_SERVICE_URL',
                     'value': 'http://torghut-forecast.torghut.svc.cluster.local:8089',
@@ -1564,6 +1568,7 @@ class TestStartHistoricalSimulation(TestCase):
                             {
                                 'name': 'user-container',
                                 'env': [
+                                    {'name': 'TRADING_ENABLED', 'value': 'true'},
                                     {
                                         'name': 'TRADING_FORECAST_SERVICE_URL',
                                         'value': 'http://torghut-forecast-sim.torghut.svc.cluster.local:8089',
@@ -1612,6 +1617,10 @@ class TestStartHistoricalSimulation(TestCase):
             for item in env_entries
             if isinstance(item, dict)
         }
+        self.assertEqual(
+            env_by_name['TRADING_ENABLED'].get('value'),
+            'false',
+        )
         self.assertEqual(
             env_by_name['TRADING_FORECAST_SERVICE_URL'].get('value'),
             'http://torghut-forecast.torghut.svc.cluster.local:8089',
