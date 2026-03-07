@@ -36,13 +36,13 @@ from app.trading.prices import PriceFetcher
 from app.trading.ingest import SignalBatch
 from app.trading.reconcile import Reconciler
 from app.trading.risk import RiskEngine
-from app.trading.scheduler import (
-    TradingPipeline,
-    TradingState,
+from app.trading.scheduler.pipeline import TradingPipeline
+from app.trading.scheduler.pipeline_helpers import (
     _apply_projected_position_decision,
     _build_dspy_lineage,
     _committee_trace_has_veto,
 )
+from app.trading.scheduler.state import TradingState
 from app.trading.tca import AdaptiveExecutionPolicyDecision
 from app.trading.universe import UniverseResolver
 
@@ -3806,7 +3806,7 @@ class TestTradingPipeline(TestCase):
             )
 
             with patch(
-                "app.trading.scheduler.derive_adaptive_execution_policy",
+                "app.trading.scheduler.pipeline.derive_adaptive_execution_policy",
                 return_value=fallback_policy,
             ):
                 pipeline.run_once()
@@ -5011,7 +5011,7 @@ class TestTradingPipeline(TestCase):
                 error=DSPyRuntimeUnsupportedStateError("dspy_runtime_disabled")
             )
             with patch(
-                "app.trading.scheduler.DSPyReviewRuntime.from_settings",
+                "app.trading.scheduler.pipeline.DSPyReviewRuntime.from_settings",
                 return_value=_UnavailableLiveRuntime(),
             ):
                 pipeline = TradingPipeline(
@@ -5164,7 +5164,7 @@ class TestTradingPipeline(TestCase):
 
             engine = CountingLLMReviewEngine()
             with patch(
-                "app.trading.scheduler.DSPyReviewRuntime.from_settings",
+                "app.trading.scheduler.pipeline.DSPyReviewRuntime.from_settings",
                 return_value=_AvailableLiveRuntime(),
             ):
                 pipeline = TradingPipeline(
@@ -5307,7 +5307,7 @@ class TestTradingPipeline(TestCase):
 
             engine = CountingLLMReviewEngine()
             with patch(
-                "app.trading.scheduler.DSPyReviewRuntime.from_settings",
+                "app.trading.scheduler.pipeline.DSPyReviewRuntime.from_settings",
                 return_value=_UnavailableLiveRuntime(),
             ):
                 pipeline = TradingPipeline(
@@ -5729,7 +5729,7 @@ class TestTradingPipeline(TestCase):
             )
 
             with patch(
-                "app.trading.scheduler.DSPyReviewRuntime.from_settings"
+                "app.trading.scheduler.pipeline.DSPyReviewRuntime.from_settings"
             ) as from_settings:
                 pipeline = TradingPipeline(
                     alpaca_client=FakeAlpacaClient(),
@@ -5865,7 +5865,7 @@ class TestTradingPipeline(TestCase):
 
             engine = CountingLLMReviewEngine()
             with patch(
-                "app.trading.scheduler.DSPyReviewRuntime.from_settings"
+                "app.trading.scheduler.pipeline.DSPyReviewRuntime.from_settings"
             ) as from_settings:
                 pipeline = TradingPipeline(
                     alpaca_client=FakeAlpacaClient(),
@@ -6452,7 +6452,7 @@ class TestTradingPipeline(TestCase):
                 error=DSPyRuntimeUnsupportedStateError("dspy_runtime_disabled")
             )
             with patch(
-                "app.trading.scheduler.DSPyReviewRuntime.from_settings",
+                "app.trading.scheduler.pipeline.DSPyReviewRuntime.from_settings",
                 return_value=_UnavailableLiveRuntime(),
             ):
                 pipeline = TradingPipeline(

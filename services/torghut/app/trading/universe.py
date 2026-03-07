@@ -7,11 +7,13 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from http.client import HTTPConnection, HTTPSConnection
+from pathlib import Path
 from typing import Any, Optional, cast
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 from ..config import settings
 from .clickhouse import normalize_symbol
+from .time_source import trading_now
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +98,7 @@ class UniverseResolver:
 
     def __init__(self) -> None:
         self._cache: Optional[UniverseCache] = None
+        self._simulation_symbols_cache: set[str] | None = None
         self._last_resolution: UniverseResolution = UniverseResolution(
             symbols=set(),
             source=settings.trading_universe_source,
@@ -161,6 +164,20 @@ class UniverseResolver:
             self._last_resolution = resolution
             return resolution
         if settings.trading_universe_source == "jangar":
+            simulation_symbols = self._load_simulation_symbols()
+            if simulation_symbols is not None:
+                resolution = UniverseResolution(
+                    symbols=simulation_symbols,
+                    source="simulation_snapshot",
+                    status="ok" if simulation_symbols else "empty",
+                    reason="simulation_snapshot_loaded"
+                    if simulation_symbols
+                    else "simulation_snapshot_empty",
+                    fetched_at=trading_now(),
+                    cache_age_seconds=0,
+                )
+                self._last_resolution = resolution
+                return resolution
             resolution = self._resolve_from_jangar()
             self._last_resolution = resolution
             return resolution
@@ -187,7 +204,7 @@ class UniverseResolver:
         - Fetch failure + cache too old -> `jangar_<reason>_cache_stale` (error).
         - Empty payload behaves like fetch failure and follows the same policy.
         """
-        now = datetime.now(timezone.utc)
+        now = trading_now()
         url = settings.trading_jangar_symbols_url
         if not url:
             return self._fallback_from_cache(
@@ -207,8 +224,15 @@ class UniverseResolver:
                 cache_age_seconds=int((now - self._cache.fetched_at).total_seconds()),
             )
 
+        request_url = url
+        if settings.trading_simulation_enabled:
+            delimiter = "&" if "?" in request_url else "?"
+            request_url = (
+                f'{request_url}{delimiter}'
+                + urlencode({"asOf": now.astimezone(timezone.utc).isoformat()})
+            )
         request = _HttpRequest(
-            full_url=url,
+            full_url=request_url,
             method='GET',
             headers={'accept': 'application/json'},
         )
@@ -264,6 +288,29 @@ class UniverseResolver:
             fetched_at=now,
             cache_age_seconds=0,
         )
+
+    def _load_simulation_symbols(self) -> set[str] | None:
+        if not settings.trading_simulation_enabled:
+            return None
+        path_raw = (settings.trading_simulation_universe_symbols_path or "").strip()
+        if not path_raw:
+            return None
+        if self._simulation_symbols_cache is not None:
+            return set(self._simulation_symbols_cache)
+        path = Path(path_raw)
+        if not path.exists():
+            logger.warning("Simulation universe snapshot missing path=%s", path)
+            self._simulation_symbols_cache = set()
+            return set()
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            logger.exception("Simulation universe snapshot invalid path=%s", path)
+            self._simulation_symbols_cache = set()
+            return set()
+        symbols = _filter_symbols(_parse_symbols(payload))
+        self._simulation_symbols_cache = set(symbols)
+        return set(symbols)
 
     def _fallback_from_cache(
         self,

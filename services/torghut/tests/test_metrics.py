@@ -4,7 +4,7 @@ from unittest import TestCase
 
 from app.metrics import render_trading_metrics
 from app.trading.decisions import DecisionRuntimeTelemetry
-from app.trading.scheduler import TradingMetrics
+from app.trading.scheduler.state import TradingMetrics
 from app.trading.strategy_runtime import RuntimeObservation
 
 

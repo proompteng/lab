@@ -37,6 +37,7 @@ from scripts.start_historical_simulation import (
     _restore_ta_configuration,
     _replay_dump,
     _set_argocd_automation_mode,
+    _runtime_verify,
     _run_migrations,
     _torghut_env_overrides_from_manifest,
     _validate_dump_coverage,
@@ -679,6 +680,12 @@ class TestStartHistoricalSimulation(TestCase):
         ):
             _configure_torghut_service_for_simulation(
                 resources=resources,
+                manifest={
+                    'window': {
+                        'start': '2026-02-27T14:30:00Z',
+                        'end': '2026-02-27T21:00:00Z',
+                    }
+                },
                 postgres_config=postgres_config,
                 kafka_config=kafka_config,
             )
@@ -800,6 +807,12 @@ class TestStartHistoricalSimulation(TestCase):
         ):
             _configure_torghut_service_for_simulation(
                 resources=resources,
+                manifest={
+                    'window': {
+                        'start': '2026-02-27T14:30:00Z',
+                        'end': '2026-02-27T21:00:00Z',
+                    }
+                },
                 postgres_config=postgres_config,
                 kafka_config=kafka_config,
                 torghut_env_overrides={
@@ -1277,6 +1290,12 @@ class TestStartHistoricalSimulation(TestCase):
                 'cursor_grace_seconds': 0,
             },
         }
+        resources = _build_resources('sim-1', {'dataset_id': 'dataset-a'})
+        clickhouse_config = ClickHouseRuntimeConfig(
+            http_url='http://clickhouse:8123',
+            username='torghut',
+            password=None,
+        )
         with (
             patch(
                 'scripts.start_historical_simulation._monitor_snapshot',
@@ -1288,16 +1307,89 @@ class TestStartHistoricalSimulation(TestCase):
                     'cursor_at': '2026-02-27T21:00:01Z',
                 },
             ),
-            patch('scripts.start_historical_simulation.time.sleep', return_value=None),
-            self.assertRaisesRegex(
-                RuntimeError,
-                'monitor_thresholds_not_met_after_cursor_reached .*execution_order_events=0',
+            patch(
+                'scripts.start_historical_simulation._signal_snapshot',
+                return_value={'signal_rows': 10, 'price_rows': 10},
             ),
+            patch('scripts.start_historical_simulation.time.sleep', return_value=None),
         ):
-            _monitor_run_completion(
+            report = _monitor_run_completion(
+                resources=resources,
                 manifest=manifest,
                 postgres_config=postgres_config,
+                clickhouse_config=clickhouse_config,
+                runtime_verify={'runtime_state': 'ready'},
             )
+        self.assertEqual(report['status'], 'degraded')
+        self.assertEqual(report['activity_classification'], 'executions_absent')
+
+    def test_runtime_verify_accepts_dedicated_sim_runtime_with_ready_replicas(self) -> None:
+        manifest = {
+            'window': {
+                'start': '2026-03-06T14:30:00Z',
+                'end': '2026-03-06T15:30:00Z',
+            }
+        }
+        resources = _build_resources(
+            'sim-2026-03-06-open-hour',
+            {
+                'dataset_id': 'dataset-a',
+                'runtime': {
+                    'target_mode': 'dedicated_service',
+                    'namespace': 'torghut',
+                    'ta_configmap': 'torghut-ta-sim-config',
+                    'ta_deployment': 'torghut-ta-sim',
+                    'torghut_service': 'torghut-sim',
+                    'torghut_forecast_service': 'torghut-forecast-sim',
+                },
+            },
+        )
+        kservice_payload = {
+            'status': {
+                'latestReadyRevisionName': 'torghut-sim-00001',
+                'conditions': [
+                    {
+                        'type': 'Ready',
+                        'status': 'True',
+                    }
+                ],
+            }
+        }
+
+        with (
+            patch('scripts.start_historical_simulation._kubectl_json', return_value=kservice_payload),
+            patch(
+                'scripts.start_historical_simulation._deployment_replica_health',
+                side_effect=[
+                    {
+                        'name': 'torghut-sim-00001-deployment',
+                        'ready_replicas': 1,
+                        'available_replicas': 1,
+                        'replicas': 1,
+                    },
+                    {
+                        'name': 'torghut-forecast-sim',
+                        'ready_replicas': 1,
+                        'available_replicas': 1,
+                        'replicas': 1,
+                    },
+                ],
+            ),
+            patch(
+                'scripts.start_historical_simulation._fink_runtime_health',
+                return_value={
+                    'name': 'torghut-ta-sim',
+                    'desired_state': 'running',
+                    'lifecycle_state': 'RUNNING',
+                    'job_manager_status': 'DEPLOYED',
+                },
+            ),
+        ):
+            report = _runtime_verify(resources=resources, manifest=manifest)
+
+        self.assertEqual(report['runtime_state'], 'ready')
+        self.assertEqual(report['environment_state'], 'complete')
+        self.assertEqual(report['torghut_service']['name'], 'torghut-sim')
 
     def test_build_argocd_automation_config_defaults(self) -> None:
         config = _build_argocd_automation_config({})

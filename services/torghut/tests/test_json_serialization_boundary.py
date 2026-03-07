@@ -14,7 +14,7 @@ from app.models import Base, Execution, LLMDecisionReview, PositionSnapshot, Str
 from app.snapshots import snapshot_account_and_positions, sync_order_to_db
 from app.trading.execution import OrderExecutor
 from app.trading.models import StrategyDecision
-from app.trading.scheduler import TradingPipeline
+from app.trading.scheduler.pipeline import TradingPipeline
 
 
 def _assert_no_uuid(value: Any) -> None:

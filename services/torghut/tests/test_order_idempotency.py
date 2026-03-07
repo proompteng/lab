@@ -14,7 +14,7 @@ from app.config import settings
 from app.trading.execution import OrderExecutor
 from app.trading.models import StrategyDecision, decision_hash
 from app.trading.reconcile import Reconciler
-from app.trading.scheduler import _format_order_submit_rejection
+from app.trading.scheduler.pipeline_helpers import _format_order_submit_rejection
 
 
 class FakeAlpacaClient:

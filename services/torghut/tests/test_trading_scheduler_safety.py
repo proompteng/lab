@@ -9,8 +9,8 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from app import config
-from app.trading.scheduler import (
-    TradingScheduler,
+from app.trading.scheduler.runtime import TradingScheduler
+from app.trading.scheduler.safety import (
     _coerce_recovery_reason_sequence,
     _is_recoverable_emergency_stop_reason,
     _split_emergency_stop_reasons,

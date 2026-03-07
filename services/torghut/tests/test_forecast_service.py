@@ -116,3 +116,89 @@ class TestForecastService(TestCase):
             response = client.get("/readyz")
 
         self.assertEqual(response.status_code, 503)
+
+    def test_readyz_honors_as_of_for_replay_freshness(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            manifest_path = f"{tmpdir}/registry.json"
+            with open(manifest_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "schema_version": "torghut-forecast-registry.v1",
+                        "models": [
+                            {
+                                "model_family": "moment",
+                                "model_version": "moment-empirical-v1",
+                                "model_registry_ref": "s3://models/moment/model.json",
+                                "training_run_ref": "train/moment/1",
+                                "dataset_snapshot_ref": "datasets/moment/1",
+                                "calibration_ref": "calibration/moment/1",
+                                "calibration_score": "0.91",
+                                "calibration_updated_at": "2026-03-06T00:00:00Z",
+                                "parameters": {},
+                            }
+                        ],
+                    },
+                    handle,
+                )
+            settings.trading_forecast_registry_manifest_path = manifest_path
+            settings.trading_forecast_registry_refresh_seconds = 1
+            settings.trading_forecast_calibration_stale_after_seconds = 60
+
+            client = TestClient(forecast_service.app)
+            stale_response = client.get("/readyz")
+            replay_response = client.get("/readyz?asOf=2026-03-06T00:00:30Z")
+
+        self.assertEqual(stale_response.status_code, 503)
+        self.assertEqual(replay_response.status_code, 200)
+
+    def test_forecast_rejects_future_calibration_for_replay_reference(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            manifest_path = f"{tmpdir}/registry.json"
+            with open(manifest_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "schema_version": "torghut-forecast-registry.v1",
+                        "models": [
+                            {
+                                "model_family": "chronos",
+                                "model_version": "chronos-empirical-v1",
+                                "model_registry_ref": "s3://models/chronos/model.json",
+                                "training_run_ref": "train/chronos/1",
+                                "dataset_snapshot_ref": "datasets/chronos/1",
+                                "calibration_ref": "calibration/chronos/1",
+                                "calibration_score": "0.95",
+                                "calibration_updated_at": "2026-03-06T15:00:00Z",
+                                "parameters": {
+                                    "macd_weight": "0.9",
+                                },
+                            }
+                        ],
+                    },
+                    handle,
+                )
+            settings.trading_forecast_registry_manifest_path = manifest_path
+            settings.trading_forecast_registry_refresh_seconds = 1
+            settings.trading_forecast_calibration_stale_after_seconds = 86400
+
+            client = TestClient(forecast_service.app)
+            response = client.post(
+                "/v1/forecasts",
+                json={
+                    "symbol": "AAPL",
+                    "horizon": "1m",
+                    "event_ts": "2026-03-06T14:30:00Z",
+                    "model_family": "chronos",
+                    "values": {
+                        "price": "195.1",
+                        "macd": "0.7",
+                        "macd_signal": "0.2",
+                        "vol_realized_w60s": "0.008",
+                        "spread": "0.02",
+                    },
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["promotion_authority_eligible"])
+        self.assertFalse(payload["artifact_authority"]["authoritative"])

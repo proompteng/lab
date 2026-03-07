@@ -3,7 +3,7 @@
 Last updated: **2026-02-28**
 
 This playbook is the production run procedure for Torghut historical simulations using
-`services/torghut/scripts/start_historical_simulation.py`.
+`services/torghut/scripts/start_historical_simulation.py` on the dedicated simulation surfaces.
 
 It is designed for runs that must preserve production safety while producing empirical evidence.
 
@@ -14,7 +14,7 @@ Use this playbook when you need to:
 - replay bounded historical topic windows into simulation topics,
 - run TA + Torghut with simulation storage/topic isolation,
 - collect measured outcomes from signals through execution metadata,
-- restore production runtime settings after the run.
+- restore dedicated simulation runtime settings after the run.
 
 ## Safety Guardrails
 
@@ -22,7 +22,8 @@ Use this playbook when you need to:
 - Never run simulation with production Postgres/ClickHouse targets.
 - Keep Torghut in paper mode during simulation (`TRADING_MODE=paper`, `TRADING_LIVE_ENABLED=false`).
 - Run `teardown` in the same `run_id` immediately after evidence collection.
-- Keep `argocd.manage_automation=true` in manifest so automation is switched/restored by the script.
+- Keep `runtime.target_mode=dedicated_service` and `argocd.manage_automation=true` in the manifest so the script uses
+  the dedicated simulation services and restores automation correctly.
 
 ## Prerequisites
 
@@ -45,6 +46,7 @@ Start from `services/torghut/config/simulation/example-dataset.yaml` and set:
 - `window.profile=us_equities_regular`, `window.trading_day`, and matching session `start/end`
 - `clickhouse.simulation_database` (example: `torghut_sim_<run_token>`)
 - `postgres.simulation_dsn_template` or `postgres.simulation_dsn`
+- `runtime.target_mode=dedicated_service`
 - `argocd.manage_automation=true` and ApplicationSet/app names
 - `torghut_env_overrides` for simulation-only runtime knobs (allowlist enforced by script)
 
@@ -62,6 +64,13 @@ Kafka credential handling:
 - `runtime_sasl_password_env` should stay `TORGHUT_SIM_KAFKA_PASSWORD`.
 - Do not pass plaintext credentials in commands or manifests.
 - Ensure the Kubernetes secret name in the workflow is `kafka-codex-credentials` and the key is `password`.
+
+Expected dedicated resources:
+
+- `Service/torghut-sim`
+- `FlinkDeployment/torghut-ta-sim`
+- `ConfigMap/torghut-ta-sim-config`
+- `Service/torghut-forecast-sim`
 
 This playbook is Argo-first and should not be executed locally.
 
@@ -154,10 +163,10 @@ Use `-p forceDump=false` for fresh dumps and `-p forceReplay=true` when replay a
 
 ## Step 4: Validate Simulation Runtime (During Run)
 
-1. Validate Torghut simulation env:
+1. Validate Torghut simulation env on `torghut-sim`:
 
 ```bash
-kubectl get ksvc torghut -n torghut -o jsonpath='
+kubectl get ksvc torghut-sim -n torghut -o jsonpath='
 {.spec.template.spec.containers[0].env[?(@.name=="TRADING_MODE")].value}{"\n"}
 {.spec.template.spec.containers[0].env[?(@.name=="TRADING_LIVE_ENABLED")].value}{"\n"}
 {.spec.template.spec.containers[0].env[?(@.name=="TRADING_EXECUTION_ADAPTER")].value}{"\n"}
@@ -175,10 +184,10 @@ Expected values:
 - `<simulation_db>.ta_signals`
 - `<historical override value>` (for example `43200000`)
 
-2. Validate TA topic rewiring:
+2. Validate TA topic rewiring on `torghut-ta-sim-config`:
 
 ```bash
-kubectl get configmap torghut-ta-config -n torghut -o jsonpath='
+kubectl get configmap torghut-ta-sim-config -n torghut -o jsonpath='
 {.data.TA_TRADES_TOPIC}{"\n"}
 {.data.TA_QUOTES_TOPIC}{"\n"}
 {.data.TA_BARS1M_TOPIC}{"\n"}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from datetime import datetime, timezone
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -55,6 +56,19 @@ class TestMarketContextClient(TestCase):
         self.assertIsNotNone(bundle)
         self.assertEqual(bundle.symbol, 'AAPL')
         self.assertEqual(bundle.context_version, 'torghut.market-context.v1')
+
+    def test_fetch_appends_as_of_timestamp(self) -> None:
+        config.settings.trading_market_context_url = 'http://jangar.test/api/torghut/market-context'
+        config.settings.trading_market_context_timeout_seconds = 2
+        payload = io.BytesIO(
+            b'{"ok":true,"context":{"contextVersion":"torghut.market-context.v1","symbol":"AAPL","asOfUtc":"2026-02-19T12:00:00Z","freshnessSeconds":10,"qualityScore":0.8,"sourceCount":1,"riskFlags":[],"domains":{"technicals":{"domain":"technicals","state":"ok","asOf":"2026-02-19T12:00:00Z","freshnessSeconds":10,"maxFreshnessSeconds":60,"sourceCount":1,"qualityScore":1,"payload":{"price":100},"citations":[],"riskFlags":[]},"fundamentals":{"domain":"fundamentals","state":"missing","asOf":null,"freshnessSeconds":null,"maxFreshnessSeconds":86400,"sourceCount":0,"qualityScore":0,"payload":{},"citations":[],"riskFlags":["fundamentals_missing"]},"news":{"domain":"news","state":"missing","asOf":null,"freshnessSeconds":null,"maxFreshnessSeconds":300,"sourceCount":0,"qualityScore":0,"payload":{},"citations":[],"riskFlags":["news_missing"]},"regime":{"domain":"regime","state":"ok","asOf":"2026-02-19T12:00:00Z","freshnessSeconds":10,"maxFreshnessSeconds":120,"sourceCount":1,"qualityScore":1,"payload":{"volatility":0.1},"citations":[],"riskFlags":[]}}}}'
+        )
+
+        as_of = datetime(2026, 3, 6, 18, 15, tzinfo=timezone.utc)
+        with patch('app.trading.market_context.urlopen', return_value=payload) as mock_urlopen:
+            MarketContextClient().fetch('AAPL', as_of=as_of)
+        request = mock_urlopen.call_args.args[0]
+        self.assertIn('asOf=2026-03-06T18%3A15%3A00%2B00%3A00', request.full_url)
 
     def test_evaluate_blocks_low_quality_or_stale(self) -> None:
         config.settings.trading_market_context_required = True

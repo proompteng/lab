@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from http.client import HTTPConnection, HTTPSConnection
 from typing import Any, Optional, cast
@@ -147,11 +148,16 @@ class MarketContextClient:
         self._timeout_seconds = max(settings.trading_market_context_timeout_seconds, 1)
         self._health_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
-    def fetch(self, symbol: str) -> Optional[MarketContextBundle]:
+    def fetch(
+        self, symbol: str, *, as_of: datetime | None = None
+    ) -> Optional[MarketContextBundle]:
         if not self._base_url:
             return None
 
-        query = urlencode({"symbol": symbol})
+        query_payload: dict[str, str] = {"symbol": symbol}
+        if as_of is not None:
+            query_payload["asOf"] = as_of.astimezone(timezone.utc).isoformat()
+        query = urlencode(query_payload)
         url = self._base_url
         delimiter = "&" if "?" in url else "?"
         request_url = f'{url}{delimiter}{query}'
@@ -179,17 +185,24 @@ class MarketContextClient:
             raise RuntimeError("market_context_missing_context")
         return MarketContextBundle.model_validate(context)
 
-    def fetch_health(self, symbol: str) -> Optional[dict[str, Any]]:
+    def fetch_health(
+        self, symbol: str, *, as_of: datetime | None = None
+    ) -> Optional[dict[str, Any]]:
         if not self._base_url:
             return None
         cache_key = symbol.strip().upper() or "default"
+        if as_of is not None:
+            cache_key = f'{cache_key}:{as_of.astimezone(timezone.utc).isoformat()}'
         now = time.monotonic()
         cached = self._health_cache.get(cache_key)
         if cached is not None and now - cached[0] <= 15.0:
             return dict(cached[1])
 
         health_url = self._derive_health_url()
-        query = urlencode({"symbol": symbol})
+        query_payload: dict[str, str] = {"symbol": symbol}
+        if as_of is not None:
+            query_payload["asOf"] = as_of.astimezone(timezone.utc).isoformat()
+        query = urlencode(query_payload)
         delimiter = "&" if "?" in health_url else "?"
         request_url = f"{health_url}{delimiter}{query}"
         request = _HttpRequest(

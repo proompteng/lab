@@ -26,6 +26,7 @@ class TestUniverseResolver(TestCase):
         self._original_static_fallback_symbols = (
             config.settings.trading_universe_static_fallback_symbols_raw
         )
+        self._original_simulation_enabled = config.settings.trading_simulation_enabled
 
     def tearDown(self) -> None:
         config.settings.trading_universe_source = self._original_source
@@ -43,6 +44,7 @@ class TestUniverseResolver(TestCase):
         config.settings.trading_universe_static_fallback_symbols_raw = (
             self._original_static_fallback_symbols
         )
+        config.settings.trading_simulation_enabled = self._original_simulation_enabled
 
     def test_static_universe_fails_closed_on_empty(self) -> None:
         config.settings.trading_universe_source = "static"
@@ -267,3 +269,22 @@ class TestUniverseResolver(TestCase):
         config.settings.trading_static_symbols_raw = "AAPL,BTC/USD,ETH/USD,MSFT"
         resolver = UniverseResolver()
         self.assertEqual(resolver.get_symbols(), {"AAPL", "BTC/USD", "ETH/USD", "MSFT"})
+
+    def test_jangar_resolution_appends_as_of_when_simulation_enabled(self) -> None:
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_jangar_symbols_url = "http://example/symbols"
+        config.settings.trading_universe_cache_seconds = 0
+        config.settings.trading_simulation_enabled = True
+
+        resolver = UniverseResolver()
+        with (
+            patch("app.trading.universe.trading_now", return_value=datetime(2026, 3, 6, 18, 15, tzinfo=timezone.utc)),
+            patch("app.trading.universe.urlopen") as mock_urlopen,
+        ):
+            response = mock_urlopen.return_value.__enter__.return_value
+            response.read.return_value = json.dumps(["MSFT"]).encode()
+            resolution = resolver.get_resolution()
+
+        request = mock_urlopen.call_args.args[0]
+        self.assertIn("asOf=2026-03-06T18%3A15%3A00%2B00%3A00", request.full_url)
+        self.assertEqual(resolution.status, "ok")

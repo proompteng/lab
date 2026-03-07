@@ -5,7 +5,7 @@ import tempfile
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 
-from app.trading.scheduler import _resolve_autonomy_artifact_root
+from app.trading.scheduler.governance import _resolve_autonomy_artifact_root
 
 
 class TestAutonomyArtifactRoot(TestCase):

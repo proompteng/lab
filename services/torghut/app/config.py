@@ -934,6 +934,31 @@ class Settings(BaseSettings):
         alias="TRADING_SIMULATION_DATASET_ID",
         description="Dataset identifier attached to simulation telemetry.",
     )
+    trading_simulation_clock_mode: Literal["live", "cursor"] = Field(
+        default="cursor",
+        alias="TRADING_SIMULATION_CLOCK_MODE",
+        description="Authoritative time source for the trading runtime when simulation mode is enabled.",
+    )
+    trading_simulation_window_start: Optional[str] = Field(
+        default=None,
+        alias="TRADING_SIMULATION_WINDOW_START",
+        description="Replay window start timestamp used as the fallback simulation clock when no cursor is available.",
+    )
+    trading_simulation_window_end: Optional[str] = Field(
+        default=None,
+        alias="TRADING_SIMULATION_WINDOW_END",
+        description="Replay window end timestamp attached to simulation runtime status.",
+    )
+    trading_simulation_clock_cache_seconds: int = Field(
+        default=1,
+        alias="TRADING_SIMULATION_CLOCK_CACHE_SECONDS",
+        description="Cache TTL for replay clock lookups against the simulation cursor store.",
+    )
+    trading_simulation_universe_symbols_path: Optional[str] = Field(
+        default=None,
+        alias="TRADING_SIMULATION_UNIVERSE_SYMBOLS_PATH",
+        description="Optional JSON file containing the replay-scoped symbol universe for dedicated simulation runs.",
+    )
     trading_simulation_order_updates_topic: str = Field(
         default="torghut.sim.trade-updates.v1",
         alias="TRADING_SIMULATION_ORDER_UPDATES_TOPIC",

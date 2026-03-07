@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: torghut-ta-sim-config
+  namespace: torghut
+data:
+  TA_HTTP_HOST: "0.0.0.0"
+  TA_HTTP_PORT: "8080"
+  TA_KAFKA_BOOTSTRAP: "kafka-kafka-bootstrap.kafka:9092"
+  TA_KAFKA_SECURITY: "SASL_PLAINTEXT"
+  TA_KAFKA_SASL_MECH: "SCRAM-SHA-512"
+  TA_SCHEMA_REGISTRY_URL: "http://karapace.kafka:8081"
+  TA_TRADES_TOPIC: "torghut.sim.trades.v1"
+  TA_QUOTES_TOPIC: "torghut.sim.quotes.v1"
+  TA_BARS1M_TOPIC: "torghut.sim.bars.1m.v1"
+  TA_MICROBARS_TOPIC: "torghut.sim.ta.bars.1s.v1"
+  TA_SIGNALS_TOPIC: "torghut.sim.ta.signals.v1"
+  TA_GROUP_ID: "torghut-ta-sim-default"
+  TA_CLIENT_ID: "torghut-ta-sim"
+  TA_AUTO_OFFSET_RESET: "latest"
+  TA_CHECKPOINT_DIR: "s3a://flink-checkpoints/torghut/technical-analysis-sim/checkpoints"
+  TA_SAVEPOINT_DIR: "s3a://flink-checkpoints/torghut/technical-analysis-sim/savepoints"
+  TA_CHECKPOINT_INTERVAL_MS: "60000"
+  TA_CHECKPOINT_TIMEOUT_MS: "300000"
+  TA_CHECKPOINT_PAUSE_MS: "10000"
+  TA_MAX_OUT_OF_ORDER_MS: "2000"
+  TA_PARALLELISM: "8"
+  TA_VWAP_WINDOW_SECONDS: "300"
+  TA_REALIZED_VOL_WINDOW: "60"
+  # Ceph RGW endpoint (MinIO is not deployed).
+  TA_S3_ENDPOINT: "http://rook-ceph-rgw-objectstore.rook-ceph.svc:80"
+  TA_S3_PATH_STYLE: "true"
+  TA_S3_SECURE: "false"
+  TA_KAFKA_TRANSACTION_TIMEOUT_MS: "120000"
+  TA_CLICKHOUSE_URL: "jdbc:clickhouse://torghut-clickhouse.torghut.svc.cluster.local:8123/torghut_sim_default"
+  TA_CLICKHOUSE_USERNAME: "torghut"
+  TA_CLICKHOUSE_BATCH_SIZE: "500"
+  TA_CLICKHOUSE_FLUSH_MS: "1000"
+  TA_CLICKHOUSE_MAX_RETRIES: "3"
+  TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS: "30"
+  TA_CLICKHOUSE_SCHEMA_INIT_MAX_RETRIES: "180"
+  TA_CLICKHOUSE_SCHEMA_INIT_RETRY_DELAY_MS: "2000"
+  TA_CLICKHOUSE_SCHEMA_INIT_STRICT: "true"

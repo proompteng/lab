@@ -5,7 +5,7 @@ from decimal import Decimal
 from unittest import TestCase
 
 from app.trading.models import SignalEnvelope, StrategyDecision
-from app.trading.scheduler import (
+from app.trading.scheduler.pipeline_helpers import (
     _resolve_decision_regime_label,
     _resolve_decision_regime_label_with_source,
     _resolve_signal_regime,

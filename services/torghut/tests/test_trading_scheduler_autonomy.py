@@ -16,7 +16,8 @@ from unittest.mock import patch
 from app.config import TradingAccountLane, settings
 from app.trading.ingest import SignalBatch
 from app.trading.models import SignalEnvelope
-from app.trading.scheduler import TradingScheduler, TradingState
+from app.trading.scheduler.runtime import TradingScheduler
+from app.trading.scheduler.state import TradingState
 
 
 @dataclass
@@ -330,7 +331,7 @@ class TestTradingSchedulerAutonomy(TestCase):
             )
             scheduler.state.drift_last_outcome_path = str(outcome_path)
             with patch(
-                "app.trading.scheduler.run_autonomous_lane",
+                "app.trading.scheduler.governance.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -346,7 +347,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 approval_token=None,
             )
             with patch(
-                "app.trading.scheduler.run_autonomous_lane",
+                "app.trading.scheduler.governance.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -364,7 +365,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 approval_token="live-approve-token",
             )
             with patch(
-                "app.trading.scheduler.run_autonomous_lane",
+                "app.trading.scheduler.governance.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -382,7 +383,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 approval_token=None,
             )
             with patch(
-                "app.trading.scheduler.run_autonomous_lane",
+                "app.trading.scheduler.governance.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -398,7 +399,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 approval_token=None,
             )
             with patch(
-                "app.trading.scheduler.run_autonomous_lane",
+                "app.trading.scheduler.governance.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -420,7 +421,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 approval_token=None,
             )
             with patch(
-                "app.trading.scheduler.run_autonomous_lane",
+                "app.trading.scheduler.governance.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -464,7 +465,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 approval_token=None,
             )
             with patch(
-                "app.trading.scheduler.run_autonomous_lane",
+                "app.trading.scheduler.governance.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle(
@@ -495,7 +496,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 approval_token=None,
             )
             with patch(
-                "app.trading.scheduler.run_autonomous_lane",
+                "app.trading.scheduler.governance.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -561,7 +562,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 },
             }
             with patch(
-                "app.trading.scheduler.run_autonomous_lane",
+                "app.trading.scheduler.governance.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -658,7 +659,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 },
             }
             with patch(
-                "app.trading.scheduler.run_autonomous_lane",
+                "app.trading.scheduler.governance.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -687,11 +688,11 @@ class TestTradingSchedulerAutonomy(TestCase):
                 no_signal_reason="cursor_ahead_of_stream",
             )
             with patch(
-                "app.trading.scheduler.upsert_autonomy_no_signal_run",
+                "app.trading.scheduler.governance.upsert_autonomy_no_signal_run",
                 return_value="no-signal-run-id",
             ) as persist_no_signal:
                 with patch(
-                    "app.trading.scheduler.run_autonomous_lane",
+                    "app.trading.scheduler.governance.run_autonomous_lane",
                     side_effect=RuntimeError("should_not_run"),
                 ):
                     scheduler._run_autonomous_cycle()
@@ -737,7 +738,7 @@ class TestTradingSchedulerAutonomy(TestCase):
             scheduler.state.last_ingest_reason = "stale-no-signal"
 
             with patch(
-                "app.trading.scheduler.run_autonomous_lane",
+                "app.trading.scheduler.governance.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -761,7 +762,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 no_signal_reason="cursor_ahead_of_stream",
             )
             with patch(
-                "app.trading.scheduler.upsert_autonomy_no_signal_run",
+                "app.trading.scheduler.governance.upsert_autonomy_no_signal_run",
                 return_value="no-signal-run-id",
             ):
                 scheduler._run_autonomous_cycle()
@@ -777,7 +778,7 @@ class TestTradingSchedulerAutonomy(TestCase):
             )
 
             with patch(
-                "app.trading.scheduler.upsert_autonomy_no_signal_run",
+                "app.trading.scheduler.governance.upsert_autonomy_no_signal_run",
                 return_value="no-signal-run-id",
             ):
                 scheduler._run_autonomous_cycle()
@@ -806,7 +807,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 no_signal_lag_seconds=61.2,
             )
             with patch(
-                "app.trading.scheduler.upsert_autonomy_no_signal_run",
+                "app.trading.scheduler.governance.upsert_autonomy_no_signal_run",
                 return_value="no-signal-run-id",
             ):
                 scheduler._run_autonomous_cycle()
@@ -844,7 +845,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 market_session_open=False,
             )
             with patch(
-                "app.trading.scheduler.upsert_autonomy_no_signal_run",
+                "app.trading.scheduler.governance.upsert_autonomy_no_signal_run",
                 return_value="no-signal-run-id",
             ):
                 scheduler._run_autonomous_cycle()
@@ -885,7 +886,7 @@ class TestTradingSchedulerAutonomy(TestCase):
             scheduler.state.last_autonomy_promotion_action = "promote"
             scheduler.state.last_autonomy_promotion_eligible = True
             with patch(
-                "app.trading.scheduler.run_autonomous_lane",
+                "app.trading.scheduler.governance.run_autonomous_lane",
                 side_effect=RuntimeError("lane_failed"),
             ):
                 scheduler._run_autonomous_cycle()
@@ -914,7 +915,7 @@ class TestTradingSchedulerAutonomy(TestCase):
             )
             settings.trading_evidence_continuity_run_limit = 3
             with patch(
-                "app.trading.scheduler.evaluate_evidence_continuity"
+                "app.trading.scheduler.governance.evaluate_evidence_continuity"
             ) as mock_check:
                 mock_check.return_value = SimpleNamespace(
                     checked_at=datetime(2026, 2, 19, 1, 0, tzinfo=timezone.utc),
@@ -1057,7 +1058,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 "metrics": {"max_drawdown": "0.25"},
             }
             with patch(
-                "app.trading.scheduler.run_autonomous_lane",
+                "app.trading.scheduler.governance.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -1146,7 +1147,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 )
 
                 with patch(
-                    "app.trading.scheduler.TradingScheduler._run_autonomous_cycle",
+                    "app.trading.scheduler.runtime.TradingScheduler._run_autonomous_cycle",
                     side_effect=RuntimeError("autonomy-cycle-failed"),
                 ):
                     asyncio.run(scheduler._run_autonomy_iteration())
@@ -1206,7 +1207,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 clear=False,
             ):
                 with patch(
-                    "app.trading.scheduler.run_autonomous_lane",
+                    "app.trading.scheduler.governance.run_autonomous_lane",
                     side_effect=self._fake_run_autonomous_lane(deps),
                 ):
                     scheduler._run_autonomous_cycle()
@@ -1232,7 +1233,7 @@ class TestTradingSchedulerAutonomy(TestCase):
                 approval_token=None,
             )
             with patch(
-                "app.trading.scheduler.run_autonomous_lane",
+                "app.trading.scheduler.governance.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(_deps),
             ):
                 scheduler._run_autonomous_cycle()
@@ -1581,11 +1582,11 @@ class TestTradingSchedulerAutonomy(TestCase):
             }
 
             with patch(
-                "app.trading.scheduler.run_autonomous_lane",
+                "app.trading.scheduler.governance.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 with patch(
-                    "app.trading.scheduler.TradingScheduler._evaluate_drift_governance",
+                    "app.trading.scheduler.runtime.TradingScheduler._evaluate_drift_governance",
                     return_value=drift_payload,
                 ):
                     scheduler._run_autonomous_cycle()
@@ -1637,11 +1638,11 @@ class TestTradingSchedulerAutonomy(TestCase):
             }
 
             with patch(
-                "app.trading.scheduler.run_autonomous_lane",
+                "app.trading.scheduler.governance.run_autonomous_lane",
                 side_effect=self._fake_run_autonomous_lane(deps),
             ):
                 with patch(
-                    "app.trading.scheduler.TradingScheduler._evaluate_drift_governance",
+                    "app.trading.scheduler.runtime.TradingScheduler._evaluate_drift_governance",
                     return_value=drift_payload,
                 ):
                     scheduler._run_autonomous_cycle()
@@ -1957,11 +1958,11 @@ class TestTradingSchedulerAutonomy(TestCase):
             }
 
             with patch(
-                "app.trading.scheduler.run_autonomous_lane",
+                "app.trading.scheduler.governance.run_autonomous_lane",
                 side_effect=_fake_run_autonomous_lane_with_canary_failure,
             ):
                 with patch(
-                    "app.trading.scheduler.TradingScheduler._evaluate_drift_governance",
+                    "app.trading.scheduler.runtime.TradingScheduler._evaluate_drift_governance",
                     return_value=drift_payload,
                 ):
                     scheduler._run_autonomous_cycle()
