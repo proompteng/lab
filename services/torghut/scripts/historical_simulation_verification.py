@@ -587,6 +587,33 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
     service_status = _as_mapping(service.get('status'))
     latest_ready_revision = _as_text(service_status.get('latestReadyRevisionName'))
     ready = _condition_status(service_status, condition_type='Ready') == 'True'
+    _, env_entries = _kservice_env(service)
+    env_by_name = {
+        _as_text(entry.get('name')): entry
+        for entry in env_entries
+        if _as_text(entry.get('name'))
+    }
+
+    def _env_value(name: str) -> str | None:
+        return _as_text(_as_mapping(env_by_name.get(name)).get('value'))
+
+    expected_order_updates_topic = _as_text(
+        _as_mapping(_resource_attr(resources, 'simulation_topic_by_role')).get('order_updates')
+    )
+    trading_config = {
+        'trading_enabled': _env_value('TRADING_ENABLED') == 'true',
+        'simulation_enabled': _env_value('TRADING_SIMULATION_ENABLED') == 'true',
+        'signal_table': _env_value('TRADING_SIGNAL_TABLE')
+        == _as_text(_resource_attr(resources, 'clickhouse_signal_table')),
+        'price_table': _env_value('TRADING_PRICE_TABLE')
+        == _as_text(_resource_attr(resources, 'clickhouse_price_table')),
+        'order_feed_enabled': _env_value('TRADING_ORDER_FEED_ENABLED') == 'true',
+        'order_feed_topic': _env_value('TRADING_ORDER_FEED_TOPIC') == expected_order_updates_topic,
+        'simulation_order_updates_topic': _env_value('TRADING_SIMULATION_ORDER_UPDATES_TOPIC')
+        == expected_order_updates_topic,
+        'simulation_run_id': _env_value('TRADING_SIMULATION_RUN_ID') == _as_text(_resource_attr(resources, 'run_id')),
+    }
+    trading_config_complete = all(trading_config.values())
     revision_health: dict[str, Any] | None = None
     if latest_ready_revision:
         revision_health = _deployment_replica_health(namespace, f'{latest_ready_revision}-deployment')
@@ -600,6 +627,7 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
         and ta_health['desired_state'] == 'running'
         and ta_health['lifecycle_state'] in {'RUNNING', 'running', 'DEPLOYED'}
         and forecast_health['ready_replicas'] > 0
+        and trading_config_complete
         else 'not_ready',
         'target_mode': _as_text(_resource_attr(resources, 'target_mode')),
         'window_start': window_start.astimezone(timezone.utc).isoformat(),
@@ -609,10 +637,13 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
             'ready': ready,
             'latest_ready_revision': latest_ready_revision,
             'revision_health': revision_health,
+            'trading_config': trading_config,
         },
         'ta_runtime': ta_health,
         'forecast_runtime': forecast_health,
-        'environment_state': 'complete' if forecast_health['ready_replicas'] > 0 else 'environment_incomplete',
+        'environment_state': 'complete'
+        if forecast_health['ready_replicas'] > 0 and trading_config_complete
+        else 'environment_incomplete',
     }
 
 
