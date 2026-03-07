@@ -22,7 +22,7 @@ spec:
           resources:
             requests:
               storage: 80Gi
-          storageClassName: local-path
+          storageClassName: rook-ceph-block
   template:
     metadata:
       labels:
@@ -53,6 +53,10 @@ spec:
             - name: cloudinitdisk
               disk:
                 bus: virtio
+            - name: k8sserviceaccountdisk
+              disk:
+                bus: virtio
+              serial: K8S_SA_DISK
           interfaces:
             - name: default
               masquerade: {}
@@ -69,3 +73,6 @@ spec:
           cloudInitNoCloud:
             secretRef:
               name: openclaw-cloud-init
+        - name: k8sserviceaccountdisk
+          serviceAccount:
+            serviceAccountName: openclaw-vm

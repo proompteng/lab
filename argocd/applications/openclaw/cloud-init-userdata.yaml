@@ -10,6 +10,74 @@ packages:
   - python3
 
 write_files:
+  - path: /usr/local/sbin/openclaw-bootstrap-kubeaccess
+    owner: root:root
+    permissions: '0755'
+    content: |-
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      serial="K8S_SA_DISK"
+      mount_dir="/mnt/k8s-serviceaccount"
+      kube_dir="/home/ubuntu/.kube"
+      kubeconfig="${kube_dir}/config"
+
+      mkdir -p "${mount_dir}" "${kube_dir}"
+
+      if ! mountpoint -q "${mount_dir}"; then
+        dev_name="$(lsblk --nodeps -no NAME,SERIAL | awk -v s="$serial" '$2==s {print $1; exit}')"
+        if [[ -n "${dev_name:-}" ]]; then
+          mount -o ro "/dev/${dev_name}" "${mount_dir}" || true
+        fi
+      fi
+
+      token_file="${mount_dir}/token"
+      ca_file="${mount_dir}/ca.crt"
+      ns_file="${mount_dir}/namespace"
+
+      if [[ -s "$token_file" && -s "$ca_file" ]]; then
+        namespace="openclaw"
+        if [[ -s "$ns_file" ]]; then
+          namespace="$(cat "$ns_file")"
+        fi
+
+        cat > "$kubeconfig" <<EOF
+      apiVersion: v1
+      kind: Config
+      clusters:
+      - name: in-cluster
+        cluster:
+          server: https://kubernetes.default.svc
+          certificate-authority: ${ca_file}
+      users:
+      - name: openclaw-vm
+        user:
+          tokenFile: ${token_file}
+      contexts:
+      - name: in-cluster
+        context:
+          cluster: in-cluster
+          user: openclaw-vm
+          namespace: ${namespace}
+      current-context: in-cluster
+      EOF
+
+        chown -R ubuntu:ubuntu "$kube_dir"
+        chmod 0700 "$kube_dir"
+        chmod 0600 "$kubeconfig"
+      fi
+  - path: /etc/profile.d/openclaw-kubeconfig.sh
+    owner: root:root
+    permissions: '0644'
+    content: |-
+      export KUBECONFIG=/home/ubuntu/.kube/config
+  - path: /var/lib/cloud/scripts/per-boot/20-openclaw-kubeaccess
+    owner: root:root
+    permissions: '0755'
+    content: |-
+      #!/usr/bin/env bash
+      set -euo pipefail
+      /usr/local/sbin/openclaw-bootstrap-kubeaccess
   - path: /usr/local/sbin/openclaw-bootstrap-tools
     owner: root:root
     permissions: '0755'
@@ -64,4 +132,5 @@ write_files:
 
 runcmd:
   - [ bash, -lc, 'systemctl enable --now ssh' ]
+  - [ bash, -lc, '/usr/local/sbin/openclaw-bootstrap-kubeaccess' ]
   - [ bash, -lc, '/usr/local/sbin/openclaw-bootstrap-tools' ]

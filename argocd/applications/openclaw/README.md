@@ -17,6 +17,14 @@ Cloud-init should ensure:
   - `kubeseal`
 - OpenClaw workspace default set to:
   - `/home/ubuntu/github.com/lab/services/tuslagch`
+- in-VM Kubernetes access is bootstrapped by mounting the `serviceAccount` disk
+  (`K8S_SA_DISK`) and writing `/home/ubuntu/.kube/config`.
+
+## VM access model
+
+- ServiceAccount: `openclaw-vm`
+- Namespace scope: admin inside `openclaw` namespace via Role/RoleBinding
+- Cluster scope: read-only (`namespaces`, `nodes`, `storageclasses`) via ClusterRole
 
 ## Re-seal command (example)
 

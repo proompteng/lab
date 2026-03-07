@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openclaw-vm
+  namespace: openclaw
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: openclaw-vm-namespace-admin
+  namespace: openclaw
+rules:
+  - apiGroups: ["", "apps", "batch", "networking.k8s.io", "autoscaling", "policy", "rbac.authorization.k8s.io", "kubevirt.io", "cdi.kubevirt.io", "postgresql.cnpg.io"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openclaw-vm-namespace-admin
+  namespace: openclaw
+subjects:
+  - kind: ServiceAccount
+    name: openclaw-vm
+    namespace: openclaw
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: openclaw-vm-namespace-admin
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: openclaw-vm-cluster-read
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces", "nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openclaw-vm-cluster-read
+subjects:
+  - kind: ServiceAccount
+    name: openclaw-vm
+    namespace: openclaw
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: openclaw-vm-cluster-read

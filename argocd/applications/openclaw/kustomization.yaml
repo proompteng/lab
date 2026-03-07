@@ -5,4 +5,5 @@ resources:
   - cloud-init-secret.yaml
   - virtualmachine.yaml
   - service-ssh.yaml
+  - openclaw-vm-rbac.yaml
   - openclaw-memory-cluster.yaml
