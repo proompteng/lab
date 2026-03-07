@@ -15,7 +15,7 @@ spec:
       cpu: "1"
       memory: "1Gi"
   storage:
-    storageClass: local-path
+    storageClass: rook-ceph-block
     size: 5Gi
   bootstrap:
     initdb:
