@@ -2836,15 +2836,25 @@ def _dump_topics(
             start_offsets[tp] = min(max(start_offset, partition_beginning), partition_end)
             stop_offsets[tp] = min(max(stop_offset, start_offsets[tp]), partition_end)
             consumer.seek(tp, start_offsets[tp])
+        expected_records = sum(
+            max(stop_offsets[tp] - start_offsets[tp], 0)
+            for tp in topic_partitions
+        )
 
         _ensure_directory(dump_path)
         done: set[Any] = set()
         with dump_path.open('w', encoding='utf-8') as handle:
             idle_polls = 0
             while len(done) < len(topic_partitions):
+                if count >= expected_records:
+                    done.update(topic_partitions)
+                    break
                 polled = consumer.poll(timeout_ms=1000, max_records=2000)
                 if not polled:
                     idle_polls += 1
+                    if count >= expected_records:
+                        done.update(topic_partitions)
+                        break
                     for tp in topic_partitions:
                         if tp in done:
                             continue
@@ -2896,12 +2906,19 @@ def _dump_topics(
                         if int(record.offset) + 1 >= stop_offset:
                             done.add(tp)
                             break
+                        if count >= expected_records:
+                            done.update(topic_partitions)
+                            break
                     if consumer.position(tp) >= stop_offset:
                         done.add(tp)
+                    if count >= expected_records:
+                        done.update(topic_partitions)
+                        break
 
         report = {
             'path': str(dump_path),
             'records': count,
+            'expected_records': expected_records,
             'sha256': hasher.hexdigest(),
             'records_by_topic': count_by_topic,
             'start': start.isoformat(),
