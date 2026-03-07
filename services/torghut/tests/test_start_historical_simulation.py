@@ -80,10 +80,13 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(resources.ta_group_id, 'torghut-ta-sim-sim_2026_02_27_01')
         self.assertEqual(resources.order_feed_group_id, 'torghut-order-feed-sim-sim_2026_02_27_01')
         self.assertEqual(resources.clickhouse_signal_table, 'torghut_sim_sim_2026_02_27_01.ta_signals')
-        self.assertEqual(resources.simulation_topic_by_role['order_updates'], 'torghut.sim.trade-updates.v1')
+        self.assertEqual(
+            resources.simulation_topic_by_role['order_updates'],
+            'torghut.sim.trade-updates.v1.sim_2026_02_27_01',
+        )
         self.assertEqual(
             resources.replay_topic_by_source_topic['torghut.trades.v1'],
-            'torghut.sim.trades.v1',
+            'torghut.sim.trades.v1.sim_2026_02_27_01',
         )
 
     def test_build_postgres_runtime_config_uses_template(self) -> None:
@@ -1650,6 +1653,7 @@ class TestStartHistoricalSimulation(TestCase):
             patch('scripts.start_historical_simulation._save_json', return_value=None),
             patch('scripts.start_historical_simulation._apply', return_value={'status': 'ok'}),
             patch('scripts.start_historical_simulation._runtime_verify', return_value={'runtime_state': 'ready'}),
+            patch('scripts.start_historical_simulation._replay_dump', return_value={'status': 'ok'}),
             patch(
                 'scripts.start_historical_simulation._monitor_run_completion',
                 return_value={
@@ -1675,6 +1679,120 @@ class TestStartHistoricalSimulation(TestCase):
                     skip_teardown=True,
                     report_only=False,
                 )
+
+    def test_run_full_lifecycle_replays_after_runtime_verify(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        manifest = {
+            'dataset_id': 'dataset-a',
+            'window': {
+                'start': '2026-02-27T14:30:00Z',
+                'end': '2026-02-27T21:00:00Z',
+            },
+        }
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+        clickhouse_config = ClickHouseRuntimeConfig(
+            http_url='http://clickhouse:8123',
+            username='torghut',
+            password=None,
+        )
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1',
+            simulation_db='torghut_sim_sim_1',
+            migrations_command='true',
+        )
+        argocd_config = ArgocdAutomationConfig(
+            manage_automation=False,
+            applicationset_name='product',
+            applicationset_namespace='argocd',
+            app_name='torghut',
+            root_app_name='root',
+            desired_mode_during_run='manual',
+            restore_mode_after_run='previous',
+            verify_timeout_seconds=600,
+        )
+        rollouts_config = RolloutsAnalysisConfig(
+            enabled=False,
+            namespace='agents',
+            runtime_template='torghut-runtime-ready-v1',
+            activity_template='torghut-sim-activity-v1',
+            teardown_template='torghut-teardown-v1',
+            artifact_template='torghut-artifact-v1',
+            verify_timeout_seconds=900,
+            verify_poll_seconds=5,
+        )
+        call_order: list[str] = []
+
+        with (
+            patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
+            patch('scripts.start_historical_simulation._update_run_state', return_value=None),
+            patch('scripts.start_historical_simulation._save_json', return_value=None),
+            patch('scripts.start_historical_simulation._prepare_argocd_for_run', return_value={'managed': False}),
+            patch('scripts.start_historical_simulation._restore_argocd_after_run', return_value={'managed': False}),
+            patch(
+                'scripts.start_historical_simulation._apply',
+                side_effect=lambda **_: call_order.append('apply') or {'status': 'ok'},
+            ),
+            patch(
+                'scripts.start_historical_simulation._runtime_verify',
+                side_effect=lambda **_: call_order.append('runtime_verify') or {'runtime_state': 'ready'},
+            ),
+            patch(
+                'scripts.start_historical_simulation._replay_dump',
+                side_effect=lambda **_: call_order.append('replay') or {'status': 'ok'},
+            ),
+            patch(
+                'scripts.start_historical_simulation._monitor_run_completion',
+                side_effect=lambda **_: call_order.append('monitor')
+                or {
+                    'status': 'ok',
+                    'activity_classification': 'success',
+                    'final_snapshot': {
+                        'signal_rows': 5,
+                        'price_rows': 5,
+                        'trade_decisions': 3,
+                        'cursor_at': '2026-02-27T21:00:00Z',
+                        'executions': 2,
+                        'execution_tca_metrics': 2,
+                        'execution_order_events': 2,
+                    },
+                },
+            ),
+            patch(
+                'scripts.start_historical_simulation._report_simulation',
+                side_effect=lambda **_: call_order.append('report') or {'status': 'ok'},
+            ),
+        ):
+            _run_full_lifecycle(
+                resources=resources,
+                manifest=manifest,
+                manifest_path=Path('/tmp/manifest.json'),
+                kafka_config=kafka_config,
+                clickhouse_config=clickhouse_config,
+                postgres_config=postgres_config,
+                argocd_config=argocd_config,
+                rollouts_config=rollouts_config,
+                force_dump=False,
+                force_replay=False,
+                skip_teardown=True,
+                report_only=False,
+            )
+
+        self.assertEqual(
+            call_order,
+            ['apply', 'runtime_verify', 'replay', 'monitor', 'report'],
+        )
 
     def test_runtime_verify_accepts_dedicated_sim_runtime_with_ready_replicas(self) -> None:
         manifest = {
