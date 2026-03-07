@@ -39,7 +39,7 @@ spec:
         - name: allowMissingState
         - name: outputRoot
     container:
-      image: registry.ide-newton.ts.net/lab/torghut:sim-run-fix-2026-03-01-02
+      image: registry.ide-newton.ts.net/lab/torghut@sha256:5fb50a1948ccf6960b8bede3dc1f0cddfb76275ad962c909ce5ee7f79dcbfd0c
       imagePullPolicy: Always
       env:
         - name: TORGHUT_SIM_KAFKA_PASSWORD
@@ -105,9 +105,11 @@ spec:
           if not isinstance(runtime, dict):
             runtime = {}
           runtime.setdefault("namespace", "torghut")
+          runtime.setdefault("target_mode", "dedicated_service")
           runtime.setdefault("ta_configmap", "torghut-ta-sim-config")
           runtime.setdefault("ta_deployment", "torghut-ta-sim")
           runtime.setdefault("torghut_service", "torghut-sim")
+          runtime.setdefault("torghut_forecast_service", "torghut-forecast-sim")
           runtime["output_root"] = output_root
           payload["runtime"] = runtime
 

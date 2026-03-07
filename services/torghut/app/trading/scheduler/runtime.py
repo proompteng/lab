@@ -8,7 +8,6 @@ import logging
 import os
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
 from typing import Any, Optional, cast
 
 from ...alpaca_client import TorghutAlpacaClient

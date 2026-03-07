@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
-from typing import Any, Optional, cast
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from ...config import settings

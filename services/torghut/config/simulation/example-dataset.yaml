@@ -39,10 +39,12 @@ postgres:
   migrations_command: /opt/venv/bin/alembic upgrade heads
 
 runtime:
+  target_mode: dedicated_service
   namespace: torghut
-  ta_configmap: torghut-ta-config
-  ta_deployment: torghut-ta
-  torghut_service: torghut
+  ta_configmap: torghut-ta-sim-config
+  ta_deployment: torghut-ta-sim
+  torghut_service: torghut-sim
+  torghut_forecast_service: torghut-forecast-sim
   output_root: artifacts/torghut/simulations
 
 replay:

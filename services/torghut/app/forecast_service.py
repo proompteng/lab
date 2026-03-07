@@ -106,6 +106,8 @@ class RegistryModelEntry:
             else _utc_now()
         )
         age = effective_now - self.calibration_updated_at
+        if age < timedelta(0):
+            return False
         return age <= timedelta(
             seconds=max(settings.trading_forecast_calibration_stale_after_seconds, 1)
         )

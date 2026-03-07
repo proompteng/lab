@@ -37,6 +37,7 @@ from scripts.start_historical_simulation import (
     _restore_ta_configuration,
     _replay_dump,
     _set_argocd_automation_mode,
+    _runtime_verify,
     _run_migrations,
     _torghut_env_overrides_from_manifest,
     _validate_dump_coverage,
@@ -1321,6 +1322,74 @@ class TestStartHistoricalSimulation(TestCase):
             )
         self.assertEqual(report['status'], 'degraded')
         self.assertEqual(report['activity_classification'], 'executions_absent')
+
+    def test_runtime_verify_accepts_dedicated_sim_runtime_with_ready_replicas(self) -> None:
+        manifest = {
+            'window': {
+                'start': '2026-03-06T14:30:00Z',
+                'end': '2026-03-06T15:30:00Z',
+            }
+        }
+        resources = _build_resources(
+            'sim-2026-03-06-open-hour',
+            {
+                'dataset_id': 'dataset-a',
+                'runtime': {
+                    'target_mode': 'dedicated_service',
+                    'namespace': 'torghut',
+                    'ta_configmap': 'torghut-ta-sim-config',
+                    'ta_deployment': 'torghut-ta-sim',
+                    'torghut_service': 'torghut-sim',
+                    'torghut_forecast_service': 'torghut-forecast-sim',
+                },
+            },
+        )
+        kservice_payload = {
+            'status': {
+                'latestReadyRevisionName': 'torghut-sim-00001',
+                'conditions': [
+                    {
+                        'type': 'Ready',
+                        'status': 'True',
+                    }
+                ],
+            }
+        }
+
+        with (
+            patch('scripts.start_historical_simulation._kubectl_json', return_value=kservice_payload),
+            patch(
+                'scripts.start_historical_simulation._deployment_replica_health',
+                side_effect=[
+                    {
+                        'name': 'torghut-sim-00001-deployment',
+                        'ready_replicas': 1,
+                        'available_replicas': 1,
+                        'replicas': 1,
+                    },
+                    {
+                        'name': 'torghut-forecast-sim',
+                        'ready_replicas': 1,
+                        'available_replicas': 1,
+                        'replicas': 1,
+                    },
+                ],
+            ),
+            patch(
+                'scripts.start_historical_simulation._fink_runtime_health',
+                return_value={
+                    'name': 'torghut-ta-sim',
+                    'desired_state': 'running',
+                    'lifecycle_state': 'RUNNING',
+                    'job_manager_status': 'DEPLOYED',
+                },
+            ),
+        ):
+            report = _runtime_verify(resources=resources, manifest=manifest)
+
+        self.assertEqual(report['runtime_state'], 'ready')
+        self.assertEqual(report['environment_state'], 'complete')
+        self.assertEqual(report['torghut_service']['name'], 'torghut-sim')
 
     def test_build_argocd_automation_config_defaults(self) -> None:
         config = _build_argocd_automation_config({})

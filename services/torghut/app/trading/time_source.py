@@ -48,8 +48,7 @@ class TradingTimeSource:
     """Resolve the authoritative trading timestamp for the current runtime."""
 
     def __init__(self) -> None:
-        self._cache_snapshot: TradingTimeSnapshot | None = None
-        self._cache_loaded_at = 0.0
+        self._cache_by_account: dict[str, tuple[TradingTimeSnapshot, float]] = {}
 
     def now(self, *, account_label: str | None = None) -> datetime:
         return self.snapshot(account_label=account_label).now
@@ -66,25 +65,29 @@ class TradingTimeSource:
             now = datetime.now(timezone.utc)
             return TradingTimeSnapshot(mode="live", now=now, source="wall_clock")
 
+        effective_account_label = self._effective_account_label(account_label=account_label)
         cache_ttl = max(settings.trading_simulation_clock_cache_seconds, 0)
         current_monotonic = time.monotonic()
-        if (
-            self._cache_snapshot is not None
-            and cache_ttl > 0
-            and current_monotonic - self._cache_loaded_at <= cache_ttl
-        ):
-            return self._cache_snapshot
+        cached_entry = self._cache_by_account.get(effective_account_label)
+        if cached_entry is not None and cache_ttl > 0:
+            cached_snapshot, loaded_at = cached_entry
+            if current_monotonic - loaded_at <= cache_ttl:
+                return cached_snapshot
 
-        resolved = self._resolve_simulation_snapshot(account_label=account_label)
-        self._cache_snapshot = resolved
-        self._cache_loaded_at = current_monotonic
+        resolved = self._resolve_simulation_snapshot(account_label=effective_account_label)
+        self._cache_by_account[effective_account_label] = (resolved, current_monotonic)
         return resolved
+
+    @staticmethod
+    def _effective_account_label(*, account_label: str | None) -> str:
+        account = (account_label or settings.trading_account_label).strip()
+        return account or settings.trading_account_label
 
     def _resolve_simulation_snapshot(
         self, *, account_label: str | None = None
     ) -> TradingTimeSnapshot:
         start = _parse_datetime(settings.trading_simulation_window_start)
-        account = (account_label or settings.trading_account_label).strip() or settings.trading_account_label
+        account = self._effective_account_label(account_label=account_label)
         cursor_at = self._load_clickhouse_cursor(account_label=account)
         if cursor_at is not None:
             return TradingTimeSnapshot(
