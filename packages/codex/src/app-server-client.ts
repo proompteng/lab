@@ -53,7 +53,7 @@ export type StreamDelta =
   | { type: 'rate_limits'; rateLimits: RateLimitSnapshot }
   | {
       type: 'tool'
-      toolKind: 'command' | 'file' | 'mcp' | 'webSearch'
+      toolKind: 'command' | 'file' | 'mcp' | 'webSearch' | 'dynamicTool' | 'imageGeneration'
       id: string
       status: 'started' | 'delta' | 'completed'
       title: string
@@ -81,6 +81,7 @@ type ApprovalModeInput = AskForApproval | LegacyApprovalMode
 
 export type CodexAppServerOptions = {
   binaryPath?: string
+  cliConfigOverrides?: string[]
   cwd?: string
   sandbox?: SandboxModeInput
   approval?: ApprovalModeInput
@@ -121,6 +122,9 @@ const normalizeApprovalPolicy = (approval: ApprovalModeInput): AskForApproval =>
   return approval
 }
 
+const resolveCliApprovalPolicy = (approval: AskForApproval): string | null =>
+  typeof approval === 'string' ? approval : null
+
 const defaultClientInfo: ClientInfo = { name: 'lab', title: 'lab app-server client', version: '0.0.0' }
 const DEFAULT_EFFORT: ReasoningEffort = 'high'
 const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 10_000
@@ -142,7 +146,11 @@ const toSandboxPolicy = (mode: SandboxMode): SandboxPolicy => {
     }
   }
   if (mode === 'read-only') {
-    return { type: 'readOnly' as const, access: { type: 'fullAccess' as const } }
+    return {
+      type: 'readOnly' as const,
+      access: { type: 'fullAccess' as const },
+      networkAccess: true,
+    }
   }
   return { type: 'dangerFullAccess' as const }
 }
@@ -245,6 +253,7 @@ export class CodexAppServerClient {
 
   constructor({
     binaryPath = 'codex',
+    cliConfigOverrides = [],
     cwd,
     sandbox = 'danger-full-access',
     approval = 'never',
@@ -267,7 +276,18 @@ export class CodexAppServerClient {
     this.persistExtendedHistory = persistExtendedHistory
     this.bootstrapTimeoutMs = bootstrapTimeoutMs
 
-    const args = ['--sandbox', this.sandbox, '--ask-for-approval', this.approval, '--model', defaultModel, 'app-server']
+    const args = ['--sandbox', this.sandbox]
+    for (const override of cliConfigOverrides) {
+      const trimmed = override.trim()
+      if (trimmed.length > 0) {
+        args.push('-c', trimmed)
+      }
+    }
+    const cliApproval = resolveCliApprovalPolicy(this.approval)
+    if (cliApproval) {
+      args.push('--ask-for-approval', cliApproval)
+    }
+    args.push('--model', defaultModel, 'app-server')
     this.child = spawn(binaryPath, args, {
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -523,6 +543,9 @@ export class CodexAppServerClient {
         break
       case 'item/fileChange/requestApproval':
         result = { decision: 'decline' }
+        break
+      case 'mcpServer/elicitation/request':
+        result = { action: 'decline', content: null }
         break
       case 'applyPatchApproval':
         result = { decision: 'denied' }
@@ -854,12 +877,39 @@ export class CodexAppServerClient {
             title: `${item.server}:${item.tool}`,
             data: { status: item.status, arguments: item.arguments, result: item.result, error: item.error },
           }
+        case 'dynamicToolCall':
+          return {
+            toolKind: 'dynamicTool',
+            id: item.id,
+            status,
+            title: item.tool,
+            data: {
+              status: item.status,
+              arguments: item.arguments,
+              contentItems: item.contentItems,
+              success: item.success,
+              durationMs: item.durationMs,
+            },
+          }
         case 'webSearch':
           return {
             toolKind: 'webSearch',
             id: item.id,
             status,
             title: item.query,
+          }
+        case 'imageGeneration':
+          return {
+            toolKind: 'imageGeneration',
+            id: item.id,
+            status,
+            title: 'image generation',
+            detail: item.revisedPrompt ?? item.result,
+            data: {
+              status: item.status,
+              revisedPrompt: item.revisedPrompt,
+              result: item.result,
+            },
           }
         default:
           return null
@@ -1204,7 +1254,7 @@ export class CodexAppServerClient {
       level,
       message,
       component: 'codex-app-server-client',
-      ...(meta ?? {}),
+      ...meta,
     }
 
     const line = JSON.stringify(entry)

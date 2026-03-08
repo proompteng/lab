@@ -1,0 +1,9 @@
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+network_access = true
+model = "gpt-5.4"
+model_reasoning_effort = "high"
+web_search = "live"
+personality = "pragmatic"
+suppress_unstable_features_warning = true
+notify = []

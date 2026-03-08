@@ -11,10 +11,23 @@ const webServerCommand = useNodeVite
   ? `./node_modules/.bin/vite dev --host --port ${port}`
   : `bun --bun vite dev --host --port ${port}`
 const webServerEnv = {
+  ...process.env,
   ...(useNodeVite ? { JANGAR_BUN_SHIM: '1' } : {}),
   VITEST: '1',
   PGSSLMODE: 'disable',
   JANGAR_SKIP_MIGRATIONS: '1',
+  ...(process.env.PLAYWRIGHT_OPENWEBUI_E2E === '1'
+    ? {
+        ...(process.env.JANGAR_CHAT_STATE_BACKEND ? {} : { JANGAR_CHAT_STATE_BACKEND: 'memory' }),
+        ...(process.env.JANGAR_MODELS ? {} : { JANGAR_MODELS: 'gpt-5.4' }),
+        ...(process.env.JANGAR_DEFAULT_MODEL ? {} : { JANGAR_DEFAULT_MODEL: 'gpt-5.4' }),
+      }
+    : {}),
+  JANGAR_AGENTS_CONTROLLER_ENABLED: '0',
+  JANGAR_ORCHESTRATION_CONTROLLER_ENABLED: '0',
+  JANGAR_SUPPORTING_CONTROLLER_ENABLED: '0',
+  JANGAR_PRIMITIVES_RECONCILER: '0',
+  JANGAR_LEADER_ELECTION_ENABLED: '0',
   ...(process.env.DATABASE_URL ? {} : { DATABASE_URL: 'postgres://localhost:5432/jangar' }),
 }
 

@@ -90,6 +90,44 @@ Troubleshooting:
 - If you see "lost connection to pod" on a port-forward, Tilt will automatically retry.
 - If a secret lookup fails, confirm your kube context has access to the `jangar` namespace.
 
+### Local OpenWebUI end-to-end regression
+
+Run the OpenWebUI browser regression against local Jangar:
+
+```bash
+bun --cwd services/jangar run test:e2e:openwebui
+```
+
+If you already have OpenWebUI running locally and want to reuse it instead of booting the disposable Docker stack:
+
+```bash
+bun --cwd services/jangar run test:e2e:openwebui:existing
+```
+
+What it does:
+
+- starts disposable local `postgres` and `openwebui` containers via `services/jangar/docker-compose.yml`
+- runs Jangar locally through the existing Playwright web-server harness
+- points Jangar at the host `codex app-server` binary (override with `JANGAR_CODEX_BINARY` if needed)
+- stages a temporary local `CODEX_HOME` for the regression by copying your auth plus a minimal config, so the browser run exercises the real binary without inheriting unrelated workstation MCP servers
+- uses an in-memory chat state backend inside the local Jangar Playwright web server so the regression does not depend on host Redis
+- validates both the OpenAI-compatible streaming endpoint and the browser chat flow in OpenWebUI against the real local Codex CLI across multiple turns
+
+Optional overrides:
+
+- `OPENWEBUI_PORT` (default `38080`)
+- `OPENWEBUI_IMAGE` (defaults to `ghcr.io/open-webui/open-webui:v0.6.41` for the local E2E script; override to exercise another tag)
+- `OPENWEBUI_BASE_URL` (used by `test:e2e:openwebui:existing`; defaults to `http://127.0.0.1:8080`)
+- `JANGAR_CODEX_BINARY` (defaults to `codex`)
+- `CODEX_AUTH_JSON` (defaults to `~/.codex/auth.json` when staging the isolated `CODEX_HOME`)
+- `OPENWEBUI_E2E_CODEX_HOME` (defaults to `services/jangar/output/playwright/codex-home`)
+- `JANGAR_MODELS` / `JANGAR_DEFAULT_MODEL` / `OPENWEBUI_E2E_MODEL` (default `gpt-5.4`)
+
+Requirements:
+
+- host `codex` CLI installed and authenticated
+- working OpenAI/Codex access for the configured model
+
 ## Scripts
 
 ```bash
@@ -211,7 +249,7 @@ Jangar also exposes JSON endpoints that mirror the MCP memory inputs:
 - `JANGAR_MODELS` (comma-separated list; optional)
 - `JANGAR_DEFAULT_MODEL` (optional)
 - `JANGAR_REDIS_URL` (required only when using `x-openwebui-chat-id` thread persistence)
-- `JANGAR_STATEFUL_CHAT_MODE` (optional; set to `1` to enable additive OpenWebUI transcript handling + reset-on-edit)
+- `JANGAR_STATEFUL_CHAT_MODE` (optional; defaults to additive OpenWebUI transcript handling + reset-on-edit; set to `0` to disable it)
 - `JANGAR_CHAT_KEY_PREFIX` (optional; defaults to `openwebui:chat`)
 - `JANGAR_WORKTREE_KEY_PREFIX` (optional; defaults to `openwebui:worktree`)
 - `JANGAR_TRANSCRIPT_KEY_PREFIX` (optional; defaults to `openwebui:transcript`)
