@@ -21,10 +21,15 @@ alias k='kubectl'
 alias kga='kubectl get all'
 alias kg='kubectl get'
 alias kgp='kubectl get pods'
+alias kgpvc='kubectl get pvc'
+alias kgpv='kubectl get pv'
+alias kgsc='kubectl get storageclass'
 alias kgd='kubectl get deployments'
 alias kgs='kubectl get services'
 alias kgns='kubectl get namespaces'
 alias kdes='kubectl describe'
+alias kdespvc='kubectl describe pvc'
+alias kdespv='kubectl describe pv'
 alias kaf='kubectl apply -f'
 alias kdel='kubectl delete'
 alias ktop='kubectl top pod'
@@ -105,6 +110,16 @@ kexec() {
   pod=${1:-$(__k_select_pod "$ns")} || return
   shell=${2:-/bin/sh}
   kubectl exec -it -n "$ns" "$pod" -- "${shell}"
+}
+
+alias kx='kexec'
+
+ksh() {
+  kexec "${1:-}" /bin/sh
+}
+
+kbash() {
+  kexec "${1:-}" /bin/bash
 }
 
 kflog() {
