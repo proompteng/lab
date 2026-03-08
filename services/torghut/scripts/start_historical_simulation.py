@@ -3909,6 +3909,23 @@ def _decimal_or_zero(value: Any) -> Decimal:
     return Decimal('0')
 
 
+def _has_decimal_value(value: Any) -> bool:
+    if isinstance(value, Decimal):
+        return True
+    if isinstance(value, (int, float)):
+        return True
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return False
+        try:
+            Decimal(stripped)
+        except Exception:
+            return False
+        return True
+    return False
+
+
 def _build_fill_price_error_budget_payload(
     *,
     resources: SimulationResources,
@@ -3922,6 +3939,10 @@ def _build_fill_price_error_budget_payload(
         return None, None
     reporting = _as_mapping(manifest.get('reporting'))
     budget_payload = _as_mapping(manifest.get('fill_price_error_budget'))
+    metric_observation_complete = all(
+        _has_decimal_value(slippage_payload.get(key))
+        for key in ('p50_abs', 'p95_abs', 'max_abs')
+    )
     venue = (
         _as_text(budget_payload.get('venue'))
         or _as_text(reporting.get('venue'))
@@ -3940,6 +3961,7 @@ def _build_fill_price_error_budget_payload(
         budget_p95_abs_slippage_bps=_decimal_or_zero(
             budget_payload.get('budget_p95_abs_slippage_bps') or reporting.get('budget_p95_abs_slippage_bps') or '25'
         ),
+        metric_observation_complete=metric_observation_complete,
     )
     artifact_path = _artifact_path(resources, 'gates/fill-price-error-budget-report-v1.json')
     _save_json(artifact_path, report.to_payload())

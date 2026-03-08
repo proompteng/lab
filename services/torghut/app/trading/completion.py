@@ -369,6 +369,7 @@ def _latest_hypothesis_windows(
     session: Session,
     *,
     observed_stage: str,
+    max_age_seconds: int | None = None,
 ) -> list[StrategyHypothesisMetricWindow]:
     rows = session.execute(
         select(StrategyHypothesisMetricWindow).where(
@@ -378,7 +379,17 @@ def _latest_hypothesis_windows(
             StrategyHypothesisMetricWindow.created_at.desc(),
         )
     ).scalars()
-    return [row for row in rows]
+    if max_age_seconds is None or max_age_seconds <= 0:
+        return [row for row in rows]
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=max_age_seconds)
+    filtered: list[StrategyHypothesisMetricWindow] = []
+    for row in rows:
+        measured_at = row.window_ended_at or row.created_at
+        if measured_at.tzinfo is None:
+            measured_at = measured_at.replace(tzinfo=timezone.utc)
+        if measured_at >= cutoff:
+            filtered.append(row)
+    return filtered
 
 
 def _window_gate_summary(
@@ -682,14 +693,35 @@ def build_doc29_completion_status(
     current_image_digest: str | None,
 ) -> dict[str, Any]:
     matrix = load_doc29_completion_matrix()
+    gate_definition_by_id = {
+        str(gate['gate_id']): gate for gate in cast(list[dict[str, Any]], matrix['gates'])
+    }
     latest_rows = _latest_completion_rows(session)
     empirical_jobs_status = build_empirical_jobs_status(
         session=session,
         stale_after_seconds=stale_after_seconds,
     )
     empirical_rows = _latest_empirical_rows(session)
-    paper_windows = _latest_hypothesis_windows(session, observed_stage='paper')
-    live_windows = _latest_hypothesis_windows(session, observed_stage='live')
+    paper_windows = _latest_hypothesis_windows(
+        session,
+        observed_stage='paper',
+        max_age_seconds=_safe_int(
+            _as_dict(
+                _as_dict(gate_definition_by_id.get(DOC29_LIVE_CANARY_GATE)).get('evidence_freshness_rule')
+            ).get('max_age_seconds'),
+            default=0,
+        ),
+    )
+    live_windows = _latest_hypothesis_windows(
+        session,
+        observed_stage='live',
+        max_age_seconds=_safe_int(
+            _as_dict(
+                _as_dict(gate_definition_by_id.get(DOC29_LIVE_SCALE_GATE)).get('evidence_freshness_rule')
+            ).get('max_age_seconds'),
+            default=0,
+        ),
+    )
     gate_status_map: dict[str, dict[str, Any]] = {}
 
     for gate_definition in cast(list[dict[str, Any]], matrix['gates']):

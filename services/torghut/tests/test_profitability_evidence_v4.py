@@ -216,6 +216,23 @@ class TestProfitabilityEvidenceV4(TestCase):
         self.assertEqual(payload['artifact_authority']['maturity'], 'calibrated')
         self.assertTrue(payload['artifact_authority']['authoritative'])
 
+    def test_fill_price_error_budget_report_stays_pending_when_metrics_missing(self) -> None:
+        report = build_fill_price_error_budget_report_v1(
+            run_id='run-5',
+            venue='us_equities',
+            order_count=24,
+            metric_observation_complete=False,
+            median_abs_slippage_bps=Decimal('0'),
+            p95_abs_slippage_bps=Decimal('0'),
+            max_abs_slippage_bps=Decimal('0'),
+            generated_at=datetime(2026, 2, 20, tzinfo=timezone.utc),
+        )
+
+        payload = report.to_payload()
+        self.assertEqual(payload['status'], 'pending_runtime_observation')
+        self.assertFalse(payload['metric_observation_complete'])
+        self.assertFalse(payload['artifact_authority']['authoritative'])
+
 
 def _report_payload(
     *,

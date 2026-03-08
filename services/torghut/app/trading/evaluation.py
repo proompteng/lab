@@ -381,6 +381,7 @@ class FillPriceErrorBudgetReportV1:
     run_id: str
     venue: str
     order_count: int
+    metric_observation_complete: bool
     median_abs_slippage_bps: Decimal
     p95_abs_slippage_bps: Decimal
     max_abs_slippage_bps: Decimal
@@ -396,6 +397,7 @@ class FillPriceErrorBudgetReportV1:
             "run_id": self.run_id,
             "venue": self.venue,
             "order_count": self.order_count,
+            "metric_observation_complete": self.metric_observation_complete,
             "median_abs_slippage_bps": str(self.median_abs_slippage_bps),
             "p95_abs_slippage_bps": str(self.p95_abs_slippage_bps),
             "max_abs_slippage_bps": str(self.max_abs_slippage_bps),
@@ -882,15 +884,19 @@ def build_fill_price_error_budget_report_v1(
     max_abs_slippage_bps: Decimal,
     budget_median_abs_slippage_bps: Decimal = Decimal("12"),
     budget_p95_abs_slippage_bps: Decimal = Decimal("25"),
+    metric_observation_complete: bool = True,
     generated_at: datetime | None = None,
 ) -> FillPriceErrorBudgetReportV1:
     within_budget = (
         order_count > 0
+        and metric_observation_complete
         and median_abs_slippage_bps <= budget_median_abs_slippage_bps
         and p95_abs_slippage_bps <= budget_p95_abs_slippage_bps
     )
     status = "within_budget" if within_budget else (
-        "pending_runtime_observation" if order_count <= 0 else "out_of_budget"
+        "pending_runtime_observation"
+        if order_count <= 0 or not metric_observation_complete
+        else "out_of_budget"
     )
     artifact_authority = evidence_contract_payload(
         provenance=ArtifactProvenance.HISTORICAL_MARKET_REPLAY,
@@ -900,6 +906,7 @@ def build_fill_price_error_budget_report_v1(
         calibration_summary={
             "status": status,
             "order_count": order_count,
+            "metric_observation_complete": metric_observation_complete,
             "median_abs_slippage_bps": str(median_abs_slippage_bps),
             "p95_abs_slippage_bps": str(p95_abs_slippage_bps),
         },
@@ -911,6 +918,7 @@ def build_fill_price_error_budget_report_v1(
         run_id=run_id,
         venue=venue,
         order_count=order_count,
+        metric_observation_complete=metric_observation_complete,
         median_abs_slippage_bps=median_abs_slippage_bps,
         p95_abs_slippage_bps=p95_abs_slippage_bps,
         max_abs_slippage_bps=max_abs_slippage_bps,
