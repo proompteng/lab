@@ -244,6 +244,87 @@ const normalizeDeltaText = (delta: unknown): string => {
 
 const sanitizeReasoningText = (text: string) => text.replace(/\*{4,}/g, '\n')
 
+type ReasoningDetailsState = {
+  carry: string
+  insideDetails: boolean
+  insideSummary: boolean
+}
+
+const createReasoningDetailsState = (): ReasoningDetailsState => ({
+  carry: '',
+  insideDetails: false,
+  insideSummary: false,
+})
+
+const stripReasoningDetailsMarkup = (input: string, state: ReasoningDetailsState): string => {
+  if (!input) return input
+
+  const openDetailsPattern = /^<details\b[^>]*\btype\s*=\s*["']reasoning["'][^>]*>/i
+  const openSummaryPattern = /^<summary\b[^>]*>/i
+  const closeSummaryPattern = /^<\/summary\s*>/i
+  const closeDetailsPattern = /^<\/details\s*>/i
+
+  const text = state.carry ? `${state.carry}${input}` : input
+  state.carry = ''
+
+  let output = ''
+  let index = 0
+
+  while (index < text.length) {
+    const tagStart = text.indexOf('<', index)
+    if (tagStart === -1) {
+      if (!state.insideSummary) {
+        output += text.slice(index)
+      }
+      return output
+    }
+
+    if (!state.insideSummary) {
+      output += text.slice(index, tagStart)
+    }
+
+    const tagEnd = text.indexOf('>', tagStart)
+    if (tagEnd === -1) {
+      state.carry = text.slice(tagStart)
+      return output
+    }
+
+    const tag = text.slice(tagStart, tagEnd + 1)
+
+    if (openDetailsPattern.test(tag)) {
+      state.insideDetails = true
+      index = tagEnd + 1
+      continue
+    }
+
+    if (state.insideDetails && openSummaryPattern.test(tag)) {
+      state.insideSummary = true
+      index = tagEnd + 1
+      continue
+    }
+
+    if (state.insideSummary && closeSummaryPattern.test(tag)) {
+      state.insideSummary = false
+      index = tagEnd + 1
+      continue
+    }
+
+    if (state.insideDetails && closeDetailsPattern.test(tag)) {
+      state.insideDetails = false
+      state.insideSummary = false
+      index = tagEnd + 1
+      continue
+    }
+
+    if (!state.insideSummary) {
+      output += tag
+    }
+    index = tagEnd + 1
+  }
+
+  return output
+}
+
 export const normalizeStreamError = (error: unknown) => {
   const normalized: Record<string, unknown> = { type: 'upstream', code: 'upstream_error' }
 
@@ -344,6 +425,7 @@ const createSession = (args: {
   let lastRateLimitsMarkdown: string | null = null
   let sawAnyMessageDelta = false
   let assistantContent = ''
+  const reasoningDetailsState = createReasoningDetailsState()
 
   const attachMeta = (chunk: Record<string, unknown>) => {
     const threadId = meta.threadId
@@ -514,7 +596,10 @@ const createSession = (args: {
     }
 
     if (type === 'reasoning') {
-      reasoningBuffer += sanitizeReasoningText(normalizeDeltaText(record?.delta))
+      closeCommandFence(frames)
+      reasoningBuffer += sanitizeReasoningText(
+        stripReasoningDetailsMarkup(normalizeDeltaText(record?.delta), reasoningDetailsState),
+      )
       // Emit reasoning immediately to avoid long silent periods that can trip upstream timeouts.
       flushReasoning(frames)
       return frames

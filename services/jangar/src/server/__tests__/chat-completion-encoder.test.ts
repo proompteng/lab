@@ -45,6 +45,13 @@ const getDeltaContent = (frame: Record<string, unknown>) => {
   return typeof content === 'string' ? content : undefined
 }
 
+const getDeltaReasoningContent = (frame: Record<string, unknown>) => {
+  const delta = getDeltaRecord(frame)
+  if (!delta) return undefined
+  const content = delta.reasoning_content
+  return typeof content === 'string' ? content : undefined
+}
+
 const getDeltaRole = (frame: Record<string, unknown>) => {
   const delta = getDeltaRecord(frame)
   if (!delta) return undefined
@@ -62,6 +69,12 @@ const getFinishReason = (frame: Record<string, unknown>) => {
 const collectContent = (frames: Record<string, unknown>[]) =>
   frames
     .map((frame) => getDeltaContent(frame))
+    .filter((value): value is string => Boolean(value))
+    .join('')
+
+const collectReasoningContent = (frames: Record<string, unknown>[]) =>
+  frames
+    .map((frame) => getDeltaReasoningContent(frame))
     .filter((value): value is string => Boolean(value))
     .join('')
 
@@ -93,6 +106,54 @@ describe('chat completion encoder', () => {
 
     expect(getDeltaRole(reasoningFrames[0] ?? {})).toBe('assistant')
     expect(getDeltaRole(messageFrames[0] ?? {})).toBeUndefined()
+  })
+
+  it('strips reasoning details markup from reasoning deltas', () => {
+    const session = createSession()
+
+    const frames = session.onDelta({
+      type: 'reasoning',
+      delta:
+        '<details type="reasoning" done="true" duration="1"><summary>Thought for 1 second</summary>\n> Investigating\n</details>',
+    })
+
+    expect(collectReasoningContent(frames)).toBe('\n> Investigating\n')
+    expect(collectContent(frames)).toBe('')
+  })
+
+  it('closes command fences before emitting reasoning deltas', () => {
+    const toolRenderer: ToolRenderer = {
+      onToolEvent: () => [{ type: 'openCommandFence' }, { type: 'emitContent', content: 'kubectl get pods\n' }],
+    }
+
+    const session = createSession({ toolRenderer })
+
+    const toolFrames = session.onDelta({ type: 'tool', id: 'tool-1', toolKind: 'command' })
+    const reasoningFrames = session.onDelta({
+      type: 'reasoning',
+      delta: '<details type="reasoning" done="true"><summary>Thought</summary>checking</details>',
+    })
+
+    expect(collectContent(toolFrames)).toContain('```ts\nkubectl get pods\n')
+    expect(collectContent(reasoningFrames)).toContain('\n```\n\n')
+    expect(collectReasoningContent(reasoningFrames)).toBe('checking')
+  })
+
+  it('strips reasoning details markup split across reasoning deltas', () => {
+    const session = createSession()
+
+    const firstFrames = session.onDelta({
+      type: 'reasoning',
+      delta: '<details type="reasoning" done="true"><summary>Thought for 1 second</summary>check',
+    })
+    const secondFrames = session.onDelta({
+      type: 'reasoning',
+      delta: 'ing</details>',
+    })
+
+    expect(collectReasoningContent(firstFrames)).toBe('check')
+    expect(collectReasoningContent(secondFrames)).toBe('ing')
+    expect(collectContent([...firstFrames, ...secondFrames])).toBe('')
   })
 
   it('attaches thread metadata to emitted chunks', () => {
