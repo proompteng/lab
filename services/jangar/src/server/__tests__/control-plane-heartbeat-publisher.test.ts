@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { publishControlPlaneHeartbeatsOnce } from '~/server/control-plane-heartbeat-publisher'
+import {
+  __test__,
+  publishControlPlaneHeartbeatsOnce,
+  startControlPlaneHeartbeatPublisher,
+} from '~/server/control-plane-heartbeat-publisher'
+import { resolveControlPlaneHeartbeatIntervalSeconds } from '~/server/control-plane-heartbeat-store'
 
 const leaderStatus = {
   enabled: true,
@@ -30,7 +35,9 @@ const healthyController = {
 }
 
 describe('control-plane heartbeat publisher', () => {
-  afterEach(() => {
+  afterEach(async () => {
+    await __test__.resetPublisherState()
+    vi.useRealTimers()
     vi.clearAllMocks()
   })
 
@@ -134,5 +141,56 @@ describe('control-plane heartbeat publisher', () => {
         message: 'workflow runtime disabled',
       }),
     )
+  })
+
+  it('recreates the shared store after a publish failure so the next tick can recover', async () => {
+    vi.useFakeTimers()
+
+    const failure = new Error('transient heartbeat store failure')
+    const failingStore = {
+      ready: Promise.reject(failure),
+      close: vi.fn(async () => undefined),
+      upsertHeartbeat: vi.fn(async () => Promise.reject(failure)),
+      getHeartbeat: vi.fn(async () => null),
+    }
+    const recoveredUpsert = vi.fn(async () => undefined)
+    const recoveredStore = {
+      ready: Promise.resolve(),
+      close: vi.fn(async () => undefined),
+      upsertHeartbeat: recoveredUpsert,
+      getHeartbeat: vi.fn(async () => null),
+    }
+
+    let createCount = 0
+    const createStore = vi.fn(() => {
+      createCount += 1
+      return createCount === 1 ? failingStore : recoveredStore
+    })
+    const logWarning = vi.fn()
+
+    startControlPlaneHeartbeatPublisher({
+      now: () => new Date('2026-03-08T12:00:00Z'),
+      getLeaderStatus: () => leaderStatus,
+      getAgentsHealth: () => healthyController,
+      getSupportingHealth: () => healthyController,
+      getOrchestrationHealth: () => healthyController,
+      resolvePodIdentity: () => ({
+        podName: 'agents-controllers-0',
+        deploymentName: 'agents-controllers',
+      }),
+      createStore,
+      logWarning,
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(createStore).toHaveBeenCalledTimes(1)
+    expect(failingStore.close).toHaveBeenCalledTimes(1)
+    expect(logWarning).toHaveBeenCalledWith('control-plane heartbeat publish failed', failure)
+
+    await vi.advanceTimersByTimeAsync(resolveControlPlaneHeartbeatIntervalSeconds() * 1000)
+
+    expect(createStore).toHaveBeenCalledTimes(2)
+    expect(recoveredUpsert).toHaveBeenCalledTimes(4)
   })
 })

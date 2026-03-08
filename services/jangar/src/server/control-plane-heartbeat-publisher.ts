@@ -68,6 +68,18 @@ const defaultLogWarning = (message: string, error: unknown) => {
 
 const uniqueStrings = (values: string[]) => Array.from(new Set(values))
 
+const closeStore = async (
+  store: ControlPlaneHeartbeatStore,
+  logWarning: (message: string, error: unknown) => void,
+  message: string,
+) => {
+  try {
+    await store.close()
+  } catch (error) {
+    logWarning(message, error)
+  }
+}
+
 const shouldPublishAuthoritativeHeartbeats = (leaderStatus: LeaderElectionStatus) =>
   !leaderStatus.enabled || !leaderStatus.required || leaderStatus.isLeader
 
@@ -248,28 +260,50 @@ export const publishControlPlaneHeartbeatsOnce = async (deps: PublisherDeps = {}
   return inputs.length
 }
 
-const resolveSharedStore = () => {
+const discardSharedStore = async (
+  store: ControlPlaneHeartbeatStore,
+  logWarning: (message: string, error: unknown) => void,
+) => {
+  if (publisherState.store !== store) {
+    return
+  }
+
+  publisherState.store = null
+  await closeStore(store, logWarning, 'failed to close control-plane heartbeat store')
+}
+
+const resolveSharedStore = (
+  createStore: () => ControlPlaneHeartbeatStore = createControlPlaneHeartbeatStore,
+  logWarning: (message: string, error: unknown) => void = defaultLogWarning,
+) => {
   if (publisherState.store) {
     return publisherState.store
   }
-  const store = createControlPlaneHeartbeatStore()
+
+  const store = createStore()
   publisherState.store = store
+  void store.ready.catch(() => {
+    void discardSharedStore(store, logWarning)
+  })
   return store
 }
 
-const closeSharedStore = async () => {
+const closeSharedStore = async (logWarning: (message: string, error: unknown) => void = defaultLogWarning) => {
   const store = publisherState.store
   publisherState.store = null
   if (!store) {
     return
   }
-  await store.close()
+  await closeStore(store, logWarning, 'failed to close control-plane heartbeat store')
 }
 
 export const startControlPlaneHeartbeatPublisher = (deps: PublisherDeps = {}) => {
   if (publisherState.timer) {
     return
   }
+
+  const logWarning = deps.logWarning ?? defaultLogWarning
+  const createStore = () => resolveSharedStore(deps.createStore, logWarning)
 
   const run = async () => {
     if (publisherState.tickInFlight) {
@@ -279,10 +313,11 @@ export const startControlPlaneHeartbeatPublisher = (deps: PublisherDeps = {}) =>
     try {
       await publishControlPlaneHeartbeatsOnce({
         ...deps,
-        createStore: deps.createStore ?? resolveSharedStore,
+        createStore,
       })
     } catch (error) {
-      ;(deps.logWarning ?? defaultLogWarning)('control-plane heartbeat publish failed', error)
+      await closeSharedStore(logWarning)
+      logWarning('control-plane heartbeat publish failed', error)
     } finally {
       publisherState.tickInFlight = false
     }
@@ -300,12 +335,21 @@ export const stopControlPlaneHeartbeatPublisher = () => {
     publisherState.timer = null
   }
   publisherState.tickInFlight = false
-  void closeSharedStore().catch((error) => {
-    defaultLogWarning('failed to close control-plane heartbeat store', error)
-  })
+  void closeSharedStore()
 }
 
 export const __test__ = {
   buildComponentState,
+  closeSharedStore,
+  discardSharedStore,
+  resetPublisherState: async () => {
+    if (publisherState.timer) {
+      clearInterval(publisherState.timer)
+      publisherState.timer = null
+    }
+    publisherState.tickInFlight = false
+    await closeSharedStore()
+  },
+  resolveSharedStore,
   shouldPublishAuthoritativeHeartbeats,
 }
