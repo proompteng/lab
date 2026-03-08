@@ -1,3 +1,5 @@
+fullnameOverride: open-webui
+
 ollama:
   enabled: false
 
@@ -18,14 +20,14 @@ websocket:
     enabled: false
 
 image:
-  tag: v0.8.5
+  tag: v0.8.9
 
 openaiApiKey: ""
 
 serviceAccount:
   enable: true
   create: true
-  name: ""
+  name: open-webui
 
 openaiBaseApiUrl: http://jangar.jangar.svc.cluster.local/openai/v1
 
