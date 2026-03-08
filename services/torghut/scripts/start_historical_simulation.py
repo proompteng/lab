@@ -18,6 +18,7 @@ import socket
 import time
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, cast
 from urllib.parse import quote, quote_plus, unquote_plus, urlsplit
@@ -37,6 +38,7 @@ from app.trading.completion import (
     build_completion_trace,
     persist_completion_trace,
 )
+from app.trading.evaluation import build_fill_price_error_budget_report_v1
 from scripts import historical_simulation_verification as simulation_verification
 
 APPLY_CONFIRMATION_PHRASE = 'START_HISTORICAL_SIMULATION'
@@ -3892,6 +3894,58 @@ def _doc29_simulation_gate_ids(manifest: Mapping[str, Any]) -> list[str]:
     return [DOC29_SIMULATION_SMOKE_GATE]
 
 
+def _decimal_or_zero(value: Any) -> Decimal:
+    if isinstance(value, Decimal):
+        return value
+    if isinstance(value, (int, float)):
+        return Decimal(str(value))
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped:
+            try:
+                return Decimal(stripped)
+            except Exception:
+                return Decimal('0')
+    return Decimal('0')
+
+
+def _build_fill_price_error_budget_payload(
+    *,
+    resources: SimulationResources,
+    analytics_report: Mapping[str, Any] | None,
+    manifest: Mapping[str, Any],
+) -> tuple[dict[str, Any] | None, Path | None]:
+    analytics_payload = _as_mapping(analytics_report)
+    execution_quality = _as_mapping(analytics_payload.get('execution_quality'))
+    slippage_payload = _as_mapping(execution_quality.get('slippage_bps'))
+    if not slippage_payload:
+        return None, None
+    reporting = _as_mapping(manifest.get('reporting'))
+    budget_payload = _as_mapping(manifest.get('fill_price_error_budget'))
+    venue = (
+        _as_text(budget_payload.get('venue'))
+        or _as_text(reporting.get('venue'))
+        or 'us_equities'
+    )
+    report = build_fill_price_error_budget_report_v1(
+        run_id=resources.run_id,
+        venue=venue,
+        order_count=_safe_int(_as_mapping(analytics_payload.get('funnel')).get('execution_tca_metrics')),
+        median_abs_slippage_bps=_decimal_or_zero(slippage_payload.get('p50_abs')),
+        p95_abs_slippage_bps=_decimal_or_zero(slippage_payload.get('p95_abs')),
+        max_abs_slippage_bps=_decimal_or_zero(slippage_payload.get('max_abs')),
+        budget_median_abs_slippage_bps=_decimal_or_zero(
+            budget_payload.get('budget_median_abs_slippage_bps') or reporting.get('budget_median_abs_slippage_bps') or '12'
+        ),
+        budget_p95_abs_slippage_bps=_decimal_or_zero(
+            budget_payload.get('budget_p95_abs_slippage_bps') or reporting.get('budget_p95_abs_slippage_bps') or '25'
+        ),
+    )
+    artifact_path = _artifact_path(resources, 'gates/fill-price-error-budget-report-v1.json')
+    _save_json(artifact_path, report.to_payload())
+    return report.to_payload(), artifact_path
+
+
 def _existing_artifact_refs(resources: SimulationResources, analytics_report: Mapping[str, Any] | None) -> list[str]:
     artifact_candidates = [
         _artifact_path(resources, 'run-manifest.json'),
@@ -3901,6 +3955,7 @@ def _existing_artifact_refs(resources: SimulationResources, analytics_report: Ma
         _artifact_path(resources, 'signal-activity.json'),
         _artifact_path(resources, 'decision-activity.json'),
         _artifact_path(resources, 'execution-activity.json'),
+        _artifact_path(resources, 'gates/fill-price-error-budget-report-v1.json'),
     ]
     report_dir = _as_text(_as_mapping(analytics_report).get('report_dir'))
     if report_dir:
@@ -3923,6 +3978,7 @@ def _build_simulation_completion_trace(
     runtime_verify_report: Mapping[str, Any] | None,
     monitor_report: Mapping[str, Any] | None,
     analytics_report: Mapping[str, Any] | None,
+    fill_price_error_budget_report: Mapping[str, Any] | None,
     rollouts_report: Mapping[str, Any] | None,
     errors: Sequence[str],
 ) -> dict[str, Any]:
@@ -3943,6 +3999,7 @@ def _build_simulation_completion_trace(
     runtime_state = _as_text(runtime_payload.get('runtime_state')) or 'unknown'
     coverage_ratio = float(dump_coverage.get('coverage_ratio') or 0.0)
     strict_ratio = float(window_policy.get('strict_coverage_ratio') or 0.0)
+    fill_price_payload = _as_mapping(fill_price_error_budget_report)
     gate_results: dict[str, dict[str, Any]] = {}
     blocked_reasons: dict[str, str] = {}
     artifact_refs = _existing_artifact_refs(resources, analytics_payload)
@@ -3991,45 +4048,51 @@ def _build_simulation_completion_trace(
                 'coverage_ratio': coverage_ratio,
                 'strict_coverage_ratio': strict_ratio,
                 'min_coverage_minutes': _safe_int(window_policy.get('min_coverage_minutes')),
+                'fill_price_error_budget_status': _as_text(fill_price_payload.get('status')),
+                'fill_price_error_budget_artifact_ref': (
+                    str(_artifact_path(resources, 'gates/fill-price-error-budget-report-v1.json'))
+                    if fill_price_payload
+                    else None
+                ),
             },
         }
-
-        return build_completion_trace(
-            doc_id='doc29',
-            gate_ids_attempted=gate_ids_attempted,
-            run_id=resources.run_id,
-            dataset_snapshot_ref=_as_text(manifest.get('dataset_snapshot_ref')),
-            candidate_id=_as_text(manifest.get('candidate_id')),
-            workflow_name=_as_text(os.getenv('ARGO_WORKFLOW_NAME')) or f'torghut-historical-simulation:{resources.run_id}',
-            analysis_run_names=[
-                _as_text(_as_mapping(rollouts_payload.get('runtime_analysis_run')).get('name')) or '',
-                _as_text(_as_mapping(rollouts_payload.get('activity_analysis_run')).get('name')) or '',
-                _as_text(_as_mapping(rollouts_payload.get('teardown_analysis_run')).get('name')) or '',
-            ],
-            artifact_refs=artifact_refs,
-            db_row_refs={
-                'simulation_postgres_db': postgres_config.simulation_db,
-                'simulation_clickhouse_db': resources.clickhouse_db,
+    return build_completion_trace(
+        doc_id='doc29',
+        gate_ids_attempted=gate_ids_attempted,
+        run_id=resources.run_id,
+        dataset_snapshot_ref=_as_text(manifest.get('dataset_snapshot_ref')),
+        candidate_id=_as_text(manifest.get('candidate_id')),
+        workflow_name=_as_text(os.getenv('ARGO_WORKFLOW_NAME')) or f'torghut-historical-simulation:{resources.run_id}',
+        analysis_run_names=[
+            _as_text(_as_mapping(rollouts_payload.get('runtime_analysis_run')).get('name')) or '',
+            _as_text(_as_mapping(rollouts_payload.get('activity_analysis_run')).get('name')) or '',
+            _as_text(_as_mapping(rollouts_payload.get('teardown_analysis_run')).get('name')) or '',
+        ],
+        artifact_refs=artifact_refs,
+        db_row_refs={
+            'simulation_postgres_db': postgres_config.simulation_db,
+            'simulation_clickhouse_db': resources.clickhouse_db,
             'funnel_counts': {
                 'trade_decisions': trade_decisions,
                 'executions': executions,
                 'execution_tca_metrics': execution_tca_metrics,
                 'execution_order_events': execution_order_events,
             },
+            'fill_price_error_budget': fill_price_payload,
         },
-            status_snapshot={
-                'runtime_state': runtime_state,
-                'activity_classification': activity_classification,
-                'errors': list(errors),
-                'rollouts': {
-                    'runtime_analysis_run': _as_text(_as_mapping(rollouts_payload.get('runtime_analysis_run')).get('name')),
-                    'activity_analysis_run': _as_text(_as_mapping(rollouts_payload.get('activity_analysis_run')).get('name')),
-                    'teardown_analysis_run': _as_text(_as_mapping(rollouts_payload.get('teardown_analysis_run')).get('name')),
-                },
+        status_snapshot={
+            'runtime_state': runtime_state,
+            'activity_classification': activity_classification,
+            'errors': list(errors),
+            'rollouts': {
+                'runtime_analysis_run': _as_text(_as_mapping(rollouts_payload.get('runtime_analysis_run')).get('name')),
+                'activity_analysis_run': _as_text(_as_mapping(rollouts_payload.get('activity_analysis_run')).get('name')),
+                'teardown_analysis_run': _as_text(_as_mapping(rollouts_payload.get('teardown_analysis_run')).get('name')),
             },
-            result_by_gate=gate_results,
-            blocked_reasons=blocked_reasons,
-        )
+        },
+        result_by_gate=gate_results,
+        blocked_reasons=blocked_reasons,
+    )
 
 
 def _run_full_lifecycle(
@@ -4058,6 +4121,7 @@ def _run_full_lifecycle(
     runtime_verify_report: dict[str, Any] | None = None
     monitor_report: dict[str, Any] | None = None
     analytics_report: dict[str, Any] | None = None
+    fill_price_error_budget_report: dict[str, Any] | None = None
     teardown_report: dict[str, Any] | None = None
     rollouts_report: dict[str, Any] = {
         'enabled': bool(
@@ -4275,6 +4339,11 @@ def _run_full_lifecycle(
             postgres_config=postgres_config,
             clickhouse_config=clickhouse_config,
         )
+        fill_price_error_budget_report, _ = _build_fill_price_error_budget_payload(
+            resources=resources,
+            analytics_report=analytics_report,
+            manifest=manifest,
+        )
         _update_run_state(resources=resources, phase='report', status='ok')
     except Exception as exc:
         errors.append(str(exc))
@@ -4380,6 +4449,7 @@ def _run_full_lifecycle(
         'runtime_verify': runtime_verify_report,
         'monitor': monitor_report,
         'report': analytics_report,
+        'fill_price_error_budget': fill_price_error_budget_report,
         'teardown': teardown_report,
         'rollouts': rollouts_report,
         'errors': errors,
@@ -4399,6 +4469,7 @@ def _run_full_lifecycle(
         runtime_verify_report=runtime_verify_report,
         monitor_report=monitor_report,
         analytics_report=analytics_report,
+        fill_price_error_budget_report=fill_price_error_budget_report,
         rollouts_report=rollouts_report,
         errors=errors,
     )

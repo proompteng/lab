@@ -1700,6 +1700,10 @@ class TestStartHistoricalSimulation(TestCase):
                     },
                 },
                 analytics_report={},
+                fill_price_error_budget_report={
+                    'status': 'within_budget',
+                    'schema_version': 'fill-price-error-budget-report-v1',
+                },
                 rollouts_report={},
                 errors=[],
             )
@@ -1707,6 +1711,10 @@ class TestStartHistoricalSimulation(TestCase):
         smoke = trace['result_by_gate']['simulation_smoke_execution_funnel']
         self.assertEqual(smoke['status'], 'satisfied')
         self.assertEqual(trace['dataset_snapshot_ref'], 'torghut-smoke-open-hour-20260306')
+        self.assertEqual(
+            smoke['acceptance_snapshot']['fill_price_error_budget_status'],
+            'within_budget',
+        )
 
     def test_validate_window_policy_us_equities_regular_profile(self) -> None:
         policy = _validate_window_policy(

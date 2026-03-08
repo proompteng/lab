@@ -375,6 +375,38 @@ class ShadowLiveDeviationReportV1:
 
 
 @dataclass(frozen=True)
+class FillPriceErrorBudgetReportV1:
+    schema_version: str
+    generated_at: datetime
+    run_id: str
+    venue: str
+    order_count: int
+    median_abs_slippage_bps: Decimal
+    p95_abs_slippage_bps: Decimal
+    max_abs_slippage_bps: Decimal
+    budget_median_abs_slippage_bps: Decimal
+    budget_p95_abs_slippage_bps: Decimal
+    status: str
+    artifact_authority: dict[str, object]
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "generated_at": self.generated_at.isoformat(),
+            "run_id": self.run_id,
+            "venue": self.venue,
+            "order_count": self.order_count,
+            "median_abs_slippage_bps": str(self.median_abs_slippage_bps),
+            "p95_abs_slippage_bps": str(self.p95_abs_slippage_bps),
+            "max_abs_slippage_bps": str(self.max_abs_slippage_bps),
+            "budget_median_abs_slippage_bps": str(self.budget_median_abs_slippage_bps),
+            "budget_p95_abs_slippage_bps": str(self.budget_p95_abs_slippage_bps),
+            "status": self.status,
+            "artifact_authority": dict(self.artifact_authority),
+        }
+
+
+@dataclass(frozen=True)
 class ProfitabilityEvidenceThresholdsV4:
     min_market_net_pnl_delta: Decimal = Decimal("0")
     min_risk_adjusted_return_over_drawdown: Decimal = Decimal("0")
@@ -835,6 +867,55 @@ def build_shadow_live_deviation_report_v1(
             "max_avg_abs_slippage_bps": str(max_avg_abs_slippage_bps),
             "max_avg_abs_divergence_bps": str(max_avg_abs_divergence_bps),
         },
+        status=status,
+        artifact_authority=artifact_authority,
+    )
+
+
+def build_fill_price_error_budget_report_v1(
+    *,
+    run_id: str,
+    venue: str,
+    order_count: int,
+    median_abs_slippage_bps: Decimal,
+    p95_abs_slippage_bps: Decimal,
+    max_abs_slippage_bps: Decimal,
+    budget_median_abs_slippage_bps: Decimal = Decimal("12"),
+    budget_p95_abs_slippage_bps: Decimal = Decimal("25"),
+    generated_at: datetime | None = None,
+) -> FillPriceErrorBudgetReportV1:
+    within_budget = (
+        order_count > 0
+        and median_abs_slippage_bps <= budget_median_abs_slippage_bps
+        and p95_abs_slippage_bps <= budget_p95_abs_slippage_bps
+    )
+    status = "within_budget" if within_budget else (
+        "pending_runtime_observation" if order_count <= 0 else "out_of_budget"
+    )
+    artifact_authority = evidence_contract_payload(
+        provenance=ArtifactProvenance.HISTORICAL_MARKET_REPLAY,
+        maturity=EvidenceMaturity.CALIBRATED if within_budget else EvidenceMaturity.UNCALIBRATED,
+        authoritative=within_budget,
+        placeholder=False,
+        calibration_summary={
+            "status": status,
+            "order_count": order_count,
+            "median_abs_slippage_bps": str(median_abs_slippage_bps),
+            "p95_abs_slippage_bps": str(p95_abs_slippage_bps),
+        },
+        notes="Replay-derived fill-price error budget for paper promotion.",
+    )
+    return FillPriceErrorBudgetReportV1(
+        schema_version="fill-price-error-budget-report-v1",
+        generated_at=generated_at or datetime.now(timezone.utc),
+        run_id=run_id,
+        venue=venue,
+        order_count=order_count,
+        median_abs_slippage_bps=median_abs_slippage_bps,
+        p95_abs_slippage_bps=p95_abs_slippage_bps,
+        max_abs_slippage_bps=max_abs_slippage_bps,
+        budget_median_abs_slippage_bps=budget_median_abs_slippage_bps,
+        budget_p95_abs_slippage_bps=budget_p95_abs_slippage_bps,
         status=status,
         artifact_authority=artifact_authority,
     )
@@ -1380,6 +1461,22 @@ def _safe_ratio(numerator: Decimal, denominator: Decimal) -> Decimal:
     return numerator / denominator
 
 
+def _decimal_percentile(values: list[Decimal], percentile: Decimal) -> Decimal:
+    if not values:
+        return Decimal("0")
+    if percentile <= 0:
+        return values[0]
+    if percentile >= 100:
+        return values[-1]
+    rank = (Decimal(len(values) - 1) * percentile) / Decimal("100")
+    low = int(rank)
+    high = min(low + 1, len(values) - 1)
+    if low == high:
+        return values[low]
+    fraction = rank - Decimal(low)
+    return values[low] + ((values[high] - values[low]) * fraction)
+
+
 def _as_dict(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
@@ -1397,6 +1494,7 @@ def _as_int(value: Any) -> int | None:
 
 __all__ = [
     "FixtureSignalSource",
+    "FillPriceErrorBudgetReportV1",
     "FoldResult",
     "ProfitabilityBenchmarkSliceV4",
     "ProfitabilityBenchmarkV4",
@@ -1407,6 +1505,7 @@ __all__ = [
     "WalkForwardDecision",
     "WalkForwardFold",
     "WalkForwardResults",
+    "build_fill_price_error_budget_report_v1",
     "build_profitability_evidence_v4",
     "execute_profitability_benchmark_v4",
     "generate_walk_forward_folds",
