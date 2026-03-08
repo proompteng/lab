@@ -1,3 +1,5 @@
+fullnameOverride: open-webui
+
 ollama:
   enabled: false
 
@@ -25,7 +27,7 @@ openaiApiKey: ""
 serviceAccount:
   enable: true
   create: true
-  name: ""
+  name: open-webui
 
 openaiBaseApiUrl: http://jangar.jangar.svc.cluster.local/openai/v1
 
