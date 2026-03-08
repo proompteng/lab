@@ -29,6 +29,8 @@ from app.trading.empirical_jobs import (
 )
 from app.whitepapers.workflow import CephS3Client
 
+DOC29_TRUTHFULNESS_GATE = 'promotion_truthfulness_firewall'
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -66,6 +68,19 @@ def _as_text(value: Any) -> str | None:
     if not text:
         return None
     return text
+
+
+def _artifact_is_truthful(payload: Mapping[str, Any]) -> bool:
+    authority = _as_dict(payload.get("artifact_authority"))
+    if not authority:
+        return False
+    return (
+        not bool(authority.get("placeholder", False))
+        and bool(authority.get("authoritative", False))
+        and str(authority.get("provenance") or "").strip()
+        not in {"synthetic_generated", "structural_placeholder"}
+        and bool(payload.get("promotion_authority_eligible", False))
+    )
 
 
 def _job_run_id(run_id: str, job_type: str, explicit: str | None = None) -> str:
@@ -219,6 +234,11 @@ def main() -> int:
 
     with SessionLocal() as session:
         job_row_ids: dict[str, str] = {}
+        benchmark_payload: dict[str, Any] = {}
+        foundation_payload: dict[str, Any] = {}
+        event_payload: dict[str, Any] = {}
+        reward_payload: dict[str, Any] = {}
+        summary_payload: dict[str, Any] = {}
         benchmark_manifest = _as_dict(manifest.get("benchmark_parity"))
         if benchmark_manifest:
             benchmark_job_run_id = _job_run_id(
@@ -453,16 +473,33 @@ def main() -> int:
                 "janus_hgrm_reward",
             )
         )
+        truthfulness_satisfied = all(
+            _artifact_is_truthful(payload)
+            for payload in (
+                benchmark_payload if benchmark_manifest else {},
+                foundation_payload if foundation_manifest else {},
+                event_payload if janus_manifest else {},
+                reward_payload if janus_manifest else {},
+                summary_payload if janus_manifest else {},
+            )
+            if payload
+        )
         blocked_reasons: dict[str, str] = {}
         if not manifest_gate_satisfied:
             blocked_reasons[DOC29_EMPIRICAL_MANIFEST_GATE] = "manifest_missing_run_or_dataset_lineage"
         if not empirical_jobs_satisfied:
             blocked_reasons[DOC29_EMPIRICAL_JOBS_GATE] = "required_empirical_jobs_missing_or_ineligible"
+        if not truthfulness_satisfied:
+            blocked_reasons[DOC29_TRUTHFULNESS_GATE] = "empirical_artifacts_not_truthful"
         summary_path = output_dir / "empirical-job-summary.json"
         summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
         completion_trace = build_completion_trace(
             doc_id="doc29",
-            gate_ids_attempted=[DOC29_EMPIRICAL_MANIFEST_GATE, DOC29_EMPIRICAL_JOBS_GATE],
+            gate_ids_attempted=[
+                DOC29_TRUTHFULNESS_GATE,
+                DOC29_EMPIRICAL_MANIFEST_GATE,
+                DOC29_EMPIRICAL_JOBS_GATE,
+            ],
             run_id=run_id,
             dataset_snapshot_ref=dataset_snapshot_ref or None,
             candidate_id=candidate_id,
@@ -482,6 +519,28 @@ def main() -> int:
                 "dataset_snapshot_ref": dataset_snapshot_ref,
             },
             result_by_gate={
+                DOC29_TRUTHFULNESS_GATE: {
+                    "status": TRACE_STATUS_SATISFIED if truthfulness_satisfied else TRACE_STATUS_BLOCKED,
+                    "blocked_reason": blocked_reasons.get(DOC29_TRUTHFULNESS_GATE),
+                    "artifact_ref": str(output_dir / "empirical-job-summary.json"),
+                    "acceptance_snapshot": {
+                        "benchmark_parity_truthful": _artifact_is_truthful(benchmark_payload)
+                        if benchmark_manifest
+                        else False,
+                        "foundation_router_truthful": _artifact_is_truthful(foundation_payload)
+                        if foundation_manifest
+                        else False,
+                        "janus_event_car_truthful": _artifact_is_truthful(event_payload)
+                        if janus_manifest
+                        else False,
+                        "janus_hgrm_reward_truthful": _artifact_is_truthful(reward_payload)
+                        if janus_manifest
+                        else False,
+                        "janus_summary_truthful": _artifact_is_truthful(summary_payload)
+                        if janus_manifest
+                        else False,
+                    },
+                },
                 DOC29_EMPIRICAL_MANIFEST_GATE: {
                     "status": TRACE_STATUS_SATISFIED if manifest_gate_satisfied else TRACE_STATUS_BLOCKED,
                     "blocked_reason": blocked_reasons.get(DOC29_EMPIRICAL_MANIFEST_GATE),

@@ -6,6 +6,7 @@ from unittest import TestCase
 
 from app.trading.evaluation import (
     ProfitabilityEvidenceThresholdsV4,
+    build_fill_price_error_budget_report_v1,
     build_profitability_evidence_v4,
     build_shadow_live_deviation_report_v1,
     build_simulation_calibration_report_v1,
@@ -195,6 +196,42 @@ class TestProfitabilityEvidenceV4(TestCase):
             deviation.to_payload()["artifact_authority"]["provenance"],
             "paper_runtime_observed",
         )
+
+    def test_fill_price_error_budget_report_emits_calibrated_contract_when_within_budget(self) -> None:
+        report = build_fill_price_error_budget_report_v1(
+            run_id='run-4',
+            venue='us_equities',
+            order_count=24,
+            median_abs_slippage_bps=Decimal('6'),
+            p95_abs_slippage_bps=Decimal('14'),
+            max_abs_slippage_bps=Decimal('19'),
+            budget_median_abs_slippage_bps=Decimal('8'),
+            budget_p95_abs_slippage_bps=Decimal('18'),
+            generated_at=datetime(2026, 2, 20, tzinfo=timezone.utc),
+        )
+
+        payload = report.to_payload()
+        self.assertEqual(payload['schema_version'], 'fill-price-error-budget-report-v1')
+        self.assertEqual(payload['status'], 'within_budget')
+        self.assertEqual(payload['artifact_authority']['maturity'], 'calibrated')
+        self.assertTrue(payload['artifact_authority']['authoritative'])
+
+    def test_fill_price_error_budget_report_stays_pending_when_metrics_missing(self) -> None:
+        report = build_fill_price_error_budget_report_v1(
+            run_id='run-5',
+            venue='us_equities',
+            order_count=24,
+            metric_observation_complete=False,
+            median_abs_slippage_bps=Decimal('0'),
+            p95_abs_slippage_bps=Decimal('0'),
+            max_abs_slippage_bps=Decimal('0'),
+            generated_at=datetime(2026, 2, 20, tzinfo=timezone.utc),
+        )
+
+        payload = report.to_payload()
+        self.assertEqual(payload['status'], 'pending_runtime_observation')
+        self.assertFalse(payload['metric_observation_complete'])
+        self.assertFalse(payload['artifact_authority']['authoritative'])
 
 
 def _report_payload(

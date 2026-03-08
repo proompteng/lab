@@ -779,6 +779,8 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
 
     tca_shortfall_total = Decimal('0')
     tca_realized_shortfall_values: list[float] = []
+    tca_abs_slippage_values: list[float] = []
+    tca_abs_divergence_values: list[float] = []
     for row in tca_rows:
         shortfall = _as_decimal(row.get('shortfall_notional'))
         if shortfall is not None:
@@ -786,6 +788,12 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
         realized_shortfall = _as_decimal(row.get('realized_shortfall_bps'))
         if realized_shortfall is not None:
             tca_realized_shortfall_values.append(float(realized_shortfall))
+        slippage = _as_decimal(row.get('slippage_bps'))
+        if slippage is not None:
+            tca_abs_slippage_values.append(float(abs(slippage)))
+        divergence = _as_decimal(row.get('divergence_bps'))
+        if divergence is not None:
+            tca_abs_divergence_values.append(float(abs(divergence)))
 
     reporting_cfg = _as_mapping(manifest.get('reporting'))
     commission_bps = _as_decimal(reporting_cfg.get('commission_bps')) or Decimal('0')
@@ -880,6 +888,18 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
             'decision_to_submit_p95': _percentile(decision_to_submit_ms, 95),
             'submit_to_first_update_p50': _percentile(submit_to_feed_update_ms, 50),
             'submit_to_first_update_p95': _percentile(submit_to_feed_update_ms, 95),
+        },
+        'slippage_bps': {
+            'avg_abs': _mean(tca_abs_slippage_values),
+            'p50_abs': _percentile(tca_abs_slippage_values, 50),
+            'p95_abs': _percentile(tca_abs_slippage_values, 95),
+            'max_abs': max(tca_abs_slippage_values) if tca_abs_slippage_values else None,
+        },
+        'divergence_bps': {
+            'avg_abs': _mean(tca_abs_divergence_values),
+            'p50_abs': _percentile(tca_abs_divergence_values, 50),
+            'p95_abs': _percentile(tca_abs_divergence_values, 95),
+            'max_abs': max(tca_abs_divergence_values) if tca_abs_divergence_values else None,
         },
     }
 

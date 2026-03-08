@@ -793,6 +793,135 @@ class VNextCompletionGateResult(Base, TimestampMixin):
     )
 
 
+class StrategyHypothesis(Base, TimestampMixin):
+    """Persistent hypothesis registry rows used for live capital governance."""
+
+    __tablename__ = "strategy_hypotheses"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    hypothesis_id: Mapped[str] = mapped_column(String(length=128), nullable=False, unique=True)
+    lane_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    strategy_family: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    source_manifest_ref: Mapped[Optional[str]] = mapped_column(String(length=255), nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("ix_strategy_hypotheses_hypothesis_id", "hypothesis_id"),
+        Index("ix_strategy_hypotheses_strategy_family", "strategy_family"),
+    )
+
+
+class StrategyHypothesisVersion(Base, TimestampMixin):
+    """Versioned hypothesis manifests loaded from source control."""
+
+    __tablename__ = "strategy_hypothesis_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    hypothesis_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    version_key: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    source_manifest_ref: Mapped[Optional[str]] = mapped_column(String(length=255), nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("ix_strategy_hypothesis_versions_hypothesis_id", "hypothesis_id"),
+        Index(
+            "uq_strategy_hypothesis_versions_hypothesis_version",
+            "hypothesis_id",
+            "version_key",
+            unique=True,
+        ),
+    )
+
+
+class StrategyHypothesisMetricWindow(Base, TimestampMixin):
+    """Observed paper/live metric windows used to derive doc29 live gates."""
+
+    __tablename__ = "strategy_hypothesis_metric_windows"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    hypothesis_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    observed_stage: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    window_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    window_ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    market_session_count: Mapped[int] = mapped_column(BigInteger(), nullable=False, server_default=text("1"))
+    decision_count: Mapped[int] = mapped_column(BigInteger(), nullable=False, server_default=text("0"))
+    trade_count: Mapped[int] = mapped_column(BigInteger(), nullable=False, server_default=text("0"))
+    order_count: Mapped[int] = mapped_column(BigInteger(), nullable=False, server_default=text("0"))
+    evidence_provenance: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    evidence_maturity: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    decision_alignment_ratio: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    avg_abs_slippage_bps: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    slippage_budget_bps: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    post_cost_expectancy_bps: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    continuity_ok: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    drift_ok: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    dependency_quorum_decision: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
+    capital_stage: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("ix_strategy_hypothesis_metric_windows_run_id", "run_id"),
+        Index("ix_strategy_hypothesis_metric_windows_candidate_id", "candidate_id"),
+        Index("ix_strategy_hypothesis_metric_windows_hypothesis_id", "hypothesis_id"),
+        Index("ix_strategy_hypothesis_metric_windows_observed_stage", "observed_stage"),
+    )
+
+
+class StrategyCapitalAllocation(Base, TimestampMixin):
+    """Capital-band transitions for each hypothesis lane."""
+
+    __tablename__ = "strategy_capital_allocations"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    hypothesis_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    prior_stage: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
+    stage: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    capital_multiplier: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    rollback_target_stage: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("ix_strategy_capital_allocations_run_id", "run_id"),
+        Index("ix_strategy_capital_allocations_candidate_id", "candidate_id"),
+        Index("ix_strategy_capital_allocations_hypothesis_id", "hypothesis_id"),
+    )
+
+
+class StrategyPromotionDecision(Base, TimestampMixin):
+    """Persisted promotion decisions scoped to hypothesis and target stage."""
+
+    __tablename__ = "strategy_promotion_decisions"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    hypothesis_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    promotion_target: Mapped[str] = mapped_column(String(length=16), nullable=False)
+    state: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
+    allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    reason_summary: Mapped[Optional[str]] = mapped_column(String(length=255), nullable=True)
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("ix_strategy_promotion_decisions_run_id", "run_id"),
+        Index("ix_strategy_promotion_decisions_candidate_id", "candidate_id"),
+        Index("ix_strategy_promotion_decisions_hypothesis_id", "hypothesis_id"),
+        Index(
+            "uq_strategy_promotion_decisions_run_hypothesis_target",
+            "run_id",
+            "hypothesis_id",
+            "promotion_target",
+            unique=True,
+        ),
+    )
+
+
 class WhitepaperDocument(Base, TimestampMixin):
     """Logical whitepaper record with source metadata and lifecycle status."""
 
@@ -1974,6 +2103,11 @@ __all__ = [
     "VNextSimulationCalibration",
     "VNextShadowLiveDeviation",
     "VNextPromotionDecision",
+    "StrategyHypothesis",
+    "StrategyHypothesisVersion",
+    "StrategyHypothesisMetricWindow",
+    "StrategyCapitalAllocation",
+    "StrategyPromotionDecision",
     "LeanBacktestRun",
     "LeanExecutionShadowEvent",
     "LeanCanaryIncident",
