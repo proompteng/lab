@@ -1470,6 +1470,12 @@ const startNamespaceWatches = async (
   await resyncAgentRunsForNamespace(kube, namespace, state, concurrency, 'manual')
 }
 
+const stopWatchHandles = (handles: Array<{ stop: () => void }>) => {
+  for (const handle of handles) {
+    handle.stop()
+  }
+}
+
 const startAgentsControllerInternal = async () => {
   const startAccepted = requestAgentsControllerStart(runtimeMutableState.lifecycleActor)
   if (!startAccepted) return
@@ -1522,6 +1528,7 @@ const startAgentsControllerInternal = async () => {
     return
   }
   const handles: Array<{ stop: () => void }> = []
+  let startupCommitted = false
   try {
     const namespaces = await resolveNamespaces()
     if (runtimeMutableState.lifecycleToken !== token) return
@@ -1543,6 +1550,7 @@ const startAgentsControllerInternal = async () => {
     runtimeMutableState.watchHandles = handles
     runtimeMutableState.controllerSnapshot = state
     runtimeMutableState.started = true
+    startupCommitted = true
     markAgentsControllerStarted(runtimeMutableState.lifecycleActor)
     controllerState.started = true
     syncControllerAgentRunIngestionHealth()
@@ -1557,10 +1565,8 @@ const startAgentsControllerInternal = async () => {
       throw error
     }
   } finally {
-    if (runtimeMutableState.lifecycleToken !== token) {
-      for (const handle of handles) {
-        handle.stop()
-      }
+    if (!startupCommitted) {
+      stopWatchHandles(handles)
     }
     if (runtimeMutableState.lifecycleToken === token) {
       runtimeMutableState.starting = false
@@ -1575,9 +1581,7 @@ const stopAgentsControllerInternal = () => {
   requestAgentsControllerStop(runtimeMutableState.lifecycleActor)
   runtimeMutableState.lifecycleToken += 1
   runtimeMutableState.starting = false
-  for (const handle of runtimeMutableState.watchHandles) {
-    handle.stop()
-  }
+  stopWatchHandles(runtimeMutableState.watchHandles)
   runtimeMutableState.watchHandles = []
   runtimeMutableState.controllerSnapshot = null
   runtimeMutableState.namespaceQueues.clear()
@@ -1652,4 +1656,5 @@ export const __test = {
   resyncAgentRunsForNamespace,
   syncControllerAgentRunIngestionHealth,
   assessAgentRunIngestion,
+  stopWatchHandles,
 }

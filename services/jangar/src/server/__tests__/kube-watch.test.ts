@@ -210,4 +210,32 @@ describe('kube-watch', () => {
     expect(spawnMocks).toHaveBeenCalledTimes(2)
     expect(spawnMocks.mock.calls[1]?.[1]).toContain('--resource-version=12399')
   })
+
+  it('drops the carried resource version when a restarted watch exits before any event', () => {
+    const watchProcesses: MockWatchProcess[] = []
+    spawnMocks.mockImplementation(() => {
+      const watchProcess = createMockWatchProcess()
+      watchProcesses.push(watchProcess)
+      return watchProcess
+    })
+
+    watchHandle = startResourceWatch({
+      resource: 'agentruns',
+      namespace: 'agents',
+      resourceVersion: '12345',
+      onEvent: vi.fn(),
+      restartDelayMs: 2000,
+    })
+
+    expect(spawnMocks.mock.calls[0]?.[1]).toContain('--resource-version=12345')
+
+    const first = watchProcesses[0]
+    expect(first).toBeDefined()
+    first.emit('close', 1)
+
+    vi.advanceTimersByTime(2000)
+
+    expect(spawnMocks).toHaveBeenCalledTimes(2)
+    expect(spawnMocks.mock.calls[1]?.[1]).not.toContain('--resource-version=12345')
+  })
 })

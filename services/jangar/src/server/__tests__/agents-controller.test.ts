@@ -247,6 +247,16 @@ describe('agents controller startup', () => {
     expect(stopWatch).toHaveBeenCalledTimes(1)
   })
 
+  it('stops every startup watch handle that was not committed', () => {
+    const stopFirst = vi.fn()
+    const stopSecond = vi.fn()
+
+    __test.stopWatchHandles([{ stop: stopFirst }, { stop: stopSecond }])
+
+    expect(stopFirst).toHaveBeenCalledTimes(1)
+    expect(stopSecond).toHaveBeenCalledTimes(1)
+  })
+
   it('adopts untouched AgentRuns during controller resync', async () => {
     stopAgentsController()
     const state = { namespaces: new Map() }

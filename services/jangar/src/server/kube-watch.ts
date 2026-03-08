@@ -103,8 +103,16 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
   let child: ReturnType<typeof spawn> | null = null
   let restartTimer: NodeJS.Timeout | null = null
   let currentResourceVersion = resourceVersion?.trim() ? resourceVersion.trim() : null
+  let watchStartResourceVersion: string | null = null
+  let sawEventSinceStart = false
   const normalizedResource = resource.trim() ? resource.trim() : 'unknown'
   const normalizedNamespace = namespace.trim() ? namespace.trim() : 'unknown'
+
+  const clearStaleResourceVersionBeforeRestart = () => {
+    if (!watchStartResourceVersion || sawEventSinceStart) return
+    if (currentResourceVersion !== watchStartResourceVersion) return
+    currentResourceVersion = null
+  }
 
   const scheduleRestart = (reason: string) => {
     recordKubeWatchRestart({
@@ -127,6 +135,8 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
 
   const start = () => {
     if (stopped) return
+    watchStartResourceVersion = currentResourceVersion
+    sawEventSinceStart = false
     const args = [
       'get',
       resource,
@@ -169,6 +179,7 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
         if (nextResourceVersion) {
           currentResourceVersion = nextResourceVersion
         }
+        sawEventSinceStart = true
         if (eventType === 'BOOKMARK') return
         recordKubeWatchEvent({
           resource: normalizedResource,
@@ -251,6 +262,7 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
     child.on('close', (code) => {
       if (stopped) return
       if (code !== 0) {
+        clearStaleResourceVersionBeforeRestart()
         recordKubeWatchError({
           resource: normalizedResource,
           namespace: normalizedNamespace,
