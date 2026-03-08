@@ -12,6 +12,15 @@ export type TranscriptEntry = {
   contentHash: string
 }
 
+export type PromptFitResult = {
+  prompt: string
+  messages: ChatMessage[]
+  trimmed: boolean
+  fits: boolean
+  totalChars: number
+  keptChars: number
+}
+
 const summarizeNonTextPart = (part: Record<string, unknown>) => {
   const type = typeof part.type === 'string' && part.type.length > 0 ? part.type : 'part'
   if (type === 'image_url') {
@@ -56,13 +65,84 @@ export const normalizeMessageContent = (content: unknown): string => {
   return content == null ? '' : String(content)
 }
 
-export const buildPrompt = (messages: ReadonlyArray<ChatMessage>) =>
-  messages
-    .map((msg) => {
-      const prefix = msg.name && msg.name.length > 0 ? `${msg.role}(${msg.name})` : msg.role
-      return `${prefix}: ${normalizeMessageContent(msg.content)}`
-    })
-    .join('\n')
+const toPromptLine = (message: Readonly<ChatMessage>) => {
+  const prefix = message.name && message.name.length > 0 ? `${message.role}(${message.name})` : message.role
+  return `${prefix}: ${normalizeMessageContent(message.content)}`
+}
+
+const measurePromptLength = (lines: ReadonlyArray<string>) =>
+  lines.reduce((total, line, index) => total + line.length + (index > 0 ? 1 : 0), 0)
+
+export const buildPrompt = (messages: ReadonlyArray<ChatMessage>) => messages.map((msg) => toPromptLine(msg)).join('\n')
+
+export const fitPromptMessages = (messages: ReadonlyArray<ChatMessage>, maxChars: number): PromptFitResult => {
+  const promptLines = messages.map((message) => ({ message, line: toPromptLine(message) }))
+  const totalChars = measurePromptLength(promptLines.map((entry) => entry.line))
+  if (totalChars <= maxChars) {
+    return {
+      prompt: promptLines.map((entry) => entry.line).join('\n'),
+      messages: [...messages],
+      trimmed: false,
+      fits: true,
+      totalChars,
+      keptChars: totalChars,
+    }
+  }
+
+  const selectedIndices = new Set<number>()
+  let keptChars = 0
+
+  for (let index = promptLines.length - 1; index >= 0; index -= 1) {
+    const line = promptLines[index]?.line ?? ''
+    const nextLength = keptChars + line.length + (selectedIndices.size > 0 ? 1 : 0)
+    if (nextLength > maxChars) {
+      break
+    }
+    selectedIndices.add(index)
+    keptChars = nextLength
+  }
+
+  const leadingSystemIndices: number[] = []
+  for (let index = 0; index < promptLines.length; index += 1) {
+    if (promptLines[index]?.message.role !== 'system') break
+    leadingSystemIndices.push(index)
+  }
+
+  for (const index of leadingSystemIndices) {
+    if (selectedIndices.has(index)) continue
+    const line = promptLines[index]?.line ?? ''
+    const nextLength = keptChars + line.length + (selectedIndices.size > 0 ? 1 : 0)
+    if (nextLength > maxChars) break
+    selectedIndices.add(index)
+    keptChars = nextLength
+  }
+
+  if (selectedIndices.size === 0 || !selectedIndices.has(promptLines.length - 1)) {
+    return {
+      prompt: '',
+      messages: [],
+      trimmed: true,
+      fits: false,
+      totalChars,
+      keptChars: 0,
+    }
+  }
+
+  const fittedMessages = promptLines
+    .map((entry, index) => ({ ...entry, index }))
+    .filter((entry) => selectedIndices.has(entry.index))
+    .sort((a, b) => a.index - b.index)
+
+  const prompt = fittedMessages.map((entry) => entry.line).join('\n')
+  return {
+    prompt,
+    messages: fittedMessages.map((entry) => entry.message),
+    trimmed: fittedMessages.length !== messages.length,
+    fits: prompt.length <= maxChars,
+    totalChars,
+    keptChars: prompt.length,
+  }
+}
 
 const hashContent = (content: string) => createHash('sha256').update(content).digest('hex')
 

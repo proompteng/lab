@@ -22,7 +22,7 @@ import {
 } from './chat-completion-encoder'
 import { safeJsonStringify, stripTerminalControl } from './chat-text'
 import { ChatToolEventRenderer, chatToolEventRendererLive, type ToolRenderer } from './chat-tool-event-renderer'
-import { buildPrompt, buildTranscriptSignature, compareTranscript, type TranscriptEntry } from './chat-transcript'
+import { buildTranscriptSignature, compareTranscript, fitPromptMessages, type TranscriptEntry } from './chat-transcript'
 import { getCodexClient, releaseCodexClient, resetCodexClient, setCodexClientFactory } from './codex-client'
 import { loadConfig } from './config'
 import { recordSseConnection, recordSseError } from './metrics'
@@ -162,6 +162,7 @@ const resolveChatClientKind = (request: Request, hasOpenWebUIChatId: boolean): C
 const WORKTREE_DIR_NAME = '.worktrees'
 const WORKTREE_NAME_PATTERN = /^[a-z0-9-]+$/
 const TRADE_EXECUTION_DIR_NAME = 'torghut'
+const DEFAULT_CODEX_MAX_INPUT_CHARS = 1_048_576
 
 const MISSING_UPSTREAM_THREAD_MESSAGE_FRAGMENTS = ['conversation not found', 'thread not found'] as const
 
@@ -227,6 +228,16 @@ const resolveCodexBaseCwd = () => {
 }
 
 const resolveCodexCwd = (worktreePath?: string) => worktreePath ?? resolveCodexBaseCwd()
+
+const resolveCodexMaxInputChars = () => {
+  const raw = process.env.JANGAR_CODEX_MAX_INPUT_CHARS?.trim()
+  if (!raw) return DEFAULT_CODEX_MAX_INPUT_CHARS
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error('JANGAR_CODEX_MAX_INPUT_CHARS must be a positive integer')
+  }
+  return parsed
+}
 
 const resolveWorktreeRoot = () => join(resolveCodexBaseCwd(), WORKTREE_DIR_NAME)
 const resolveTradeExecutionRoot = () => join(resolveCodexBaseCwd(), TRADE_EXECUTION_DIR_NAME)
@@ -1116,8 +1127,46 @@ export const handleChatCompletionEffect = (request: Request) =>
               }
             : undefined
 
-        const prompt = buildPrompt(promptMessages)
-        const retryPrompt = buildPrompt(parsed.messages)
+        const maxInputChars = resolveCodexMaxInputChars()
+        const promptFit = fitPromptMessages(promptMessages, maxInputChars)
+        const retryPromptFit = fitPromptMessages(parsed.messages, maxInputChars)
+
+        if (!promptFit.fits || !retryPromptFit.fits) {
+          return yield* Effect.fail(
+            new RequestError(
+              400,
+              'input_too_large',
+              `Chat input exceeds the maximum supported length of ${maxInputChars} characters. Start a new chat or shorten the latest message.`,
+            ),
+          )
+        }
+
+        if (promptFit.trimmed) {
+          console.info('[chat] trimmed prompt history to fit upstream input limit', {
+            chatId: threadContext?.chatId,
+            clientKind: chatClientKind,
+            originalMessages: promptMessages.length,
+            keptMessages: promptFit.messages.length,
+            originalChars: promptFit.totalChars,
+            keptChars: promptFit.keptChars,
+            maxChars: maxInputChars,
+          })
+        }
+
+        if (retryPromptFit.trimmed) {
+          console.info('[chat] trimmed retry prompt history to fit upstream input limit', {
+            chatId: threadContext?.chatId,
+            clientKind: chatClientKind,
+            originalMessages: parsed.messages.length,
+            keptMessages: retryPromptFit.messages.length,
+            originalChars: retryPromptFit.totalChars,
+            keptChars: retryPromptFit.keptChars,
+            maxChars: maxInputChars,
+          })
+        }
+
+        const prompt = promptFit.prompt
+        const retryPrompt = retryPromptFit.prompt
         const client = yield* getCodexClient()
         let clientReleased = false
         const releaseClient = () => {
