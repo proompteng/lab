@@ -10,13 +10,11 @@ const LOCAL_IMAGE_PREFIXES = [
   'packages/discord/',
   'packages/cx-tools/',
   'services/bumba/',
-  'scripts/agents/',
 ]
 
 const LOCAL_IMAGE_EXACT_PATHS = new Set([
   'bun.lock',
   'package.json',
-  '.github/workflows/agents-ci.yml',
   '.github/workflows/jangar-build-push.yaml',
   'packages/scripts/src/jangar/build-control-plane-image.ts',
   'packages/scripts/src/jangar/build-image.ts',
