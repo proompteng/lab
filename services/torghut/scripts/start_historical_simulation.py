@@ -30,8 +30,7 @@ from psycopg import sql
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 import yaml
-
-from app.db import SessionLocal
+from app.db import SessionLocal  # noqa: F401 - imported for unit-test patch targets
 from app.trading.completion import (
     DOC29_SIMULATION_FULL_DAY_GATE,
     DOC29_SIMULATION_SMOKE_GATE,
