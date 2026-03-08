@@ -27,6 +27,8 @@
 - `32-authoritative-alpha-readiness-and-empirical-promotion-closeout-2026-03-08.md` now records the next
   recommendation iteration: keep simulation gains, but prioritize authoritative dependency truth, deterministic
   empirical promotion, and a repeatedly exercised promotion ledger before resuming broader autonomy expansion.
+- `33-alpaca-options-market-data-and-technical-analysis-lane-2026-03-08.md` now records the production design for a
+  separate Alpaca options ingest and TA lane, grounded in the current equity-only Torghut runtime and cluster state.
 
 ## Purpose
 
@@ -80,6 +82,7 @@ This pack is positioned as the next architecture layer above:
 30. `30-live-state-disposition-and-implementation-rollout-gates-2026-03-06.md`
 31. `31-proven-autonomous-quant-llm-torghut-trading-system-2026-03-07.md`
 32. `32-authoritative-alpha-readiness-and-empirical-promotion-closeout-2026-03-08.md`
+33. `33-alpaca-options-market-data-and-technical-analysis-lane-2026-03-08.md`
 
 ## Recommended Build Order
 
@@ -115,6 +118,7 @@ This pack is positioned as the next architecture layer above:
 30. `30-live-state-disposition-and-implementation-rollout-gates-2026-03-06.md`
 31. `31-proven-autonomous-quant-llm-torghut-trading-system-2026-03-07.md`
 32. `32-authoritative-alpha-readiness-and-empirical-promotion-closeout-2026-03-08.md`
+33. `33-alpaca-options-market-data-and-technical-analysis-lane-2026-03-08.md`
 
 ## Why This Sequence
 
