@@ -1461,22 +1461,6 @@ def _safe_ratio(numerator: Decimal, denominator: Decimal) -> Decimal:
     return numerator / denominator
 
 
-def _decimal_percentile(values: list[Decimal], percentile: Decimal) -> Decimal:
-    if not values:
-        return Decimal("0")
-    if percentile <= 0:
-        return values[0]
-    if percentile >= 100:
-        return values[-1]
-    rank = (Decimal(len(values) - 1) * percentile) / Decimal("100")
-    low = int(rank)
-    high = min(low + 1, len(values) - 1)
-    if low == high:
-        return values[low]
-    fraction = rank - Decimal(low)
-    return values[low] + ((values[high] - values[low]) * fraction)
-
-
 def _as_dict(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
