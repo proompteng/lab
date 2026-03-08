@@ -116,7 +116,7 @@ What it does:
 Optional overrides:
 
 - `OPENWEBUI_PORT` (default `38080`)
-- `OPENWEBUI_IMAGE` (defaults to `ghcr.io/open-webui/open-webui:v0.6.41` for the local E2E script; override to exercise another tag)
+- `OPENWEBUI_IMAGE` (defaults to `ghcr.io/open-webui/open-webui:v0.8.9` for the local E2E script; override to exercise another tag)
 - `OPENWEBUI_BASE_URL` (used by `test:e2e:openwebui:existing`; defaults to `http://127.0.0.1:8080`)
 - `JANGAR_CODEX_BINARY` (defaults to `codex`)
 - `CODEX_AUTH_JSON` (defaults to `~/.codex/auth.json` when staging the isolated `CODEX_HOME`)
