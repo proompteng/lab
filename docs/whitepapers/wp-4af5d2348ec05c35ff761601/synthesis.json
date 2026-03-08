@@ -1,0 +1,254 @@
+{
+  "run_id": "wp-4af5d2348ec05c35ff761601",
+  "paper": {
+    "title": "Inelastic Hedging Demand and Intraday Momentum",
+    "pdf_url": "https://portal.northernfinanceassociation.org/viewp.php?n=2240183764&utm_source=chatgpt.com",
+    "ceph_object_uri": "s3://torghut-whitepapers/raw/checksum/16/168be515b25ff9b8100a1192ccfa9070757ba3d9bd9ed1ec38bee573aac7e439/source.pdf",
+    "date": "2025-09-06"
+  },
+  "synthesis_version": "v1",
+  "generated_by": "codex",
+  "model_name": "gpt-5-codex",
+  "prompt_version": "whitepaper-analysis-v1",
+  "full_paper_reviewed": true,
+  "review_scope": {
+    "pages_reviewed": 50,
+    "included_sections": [
+      "main_text",
+      "references",
+      "appendix_A",
+      "appendix_B",
+      "appendix_C",
+      "tables_1_to_10",
+      "tables_B1_to_B3",
+      "table_C4",
+      "figures_1_to_3"
+    ]
+  },
+  "executive_summary": "The paper proposes Gamma-Theta Breakeven Range (GTBR) as the state variable that turns short-gamma delta hedging into inelastic underlying demand. The strongest evidence is empirical: short gamma alone is not enough, but short gamma plus GTBR breach materially strengthens last-30-minute intraday momentum. For this repository, the paper is implementable only as a deterministic offline research and evidence pipeline because the current codebase lacks authoritative TAQ, ISE-account, and OptionMetrics-style options data feeds.",
+  "problem_statement": "Intraday momentum models often observe price continuation without identifying whether the move is being mechanically amplified by intermediary hedging. The paper attempts to isolate the conditions under which short-gamma option hedgers become inelastic buyers or sellers of the underlying and thereby exacerbate intraday momentum.",
+  "methodology_summary": "Section 2 derives a daily gamma-theta breakeven threshold from simplified option PnL attribution and shows GTBR is approximately plus/minus implied volatility divided by square root of 365 under Black-Scholes simplifications. Sections 3 and 4 combine TAQ intraday quotes, ISE account-category open/close options data, and OptionMetrics ATM 30-day standardized option data to test whether short-gamma exposure and GTBR breach explain stronger last-30-minute momentum, using interaction regressions, bucket sorts, decile analysis, and multiple subsamples.",
+  "key_findings": [
+    {
+      "id": "KF-1",
+      "finding": "GTBR breach carries explanatory power beyond the sign of market-maker short gamma.",
+      "evidence": [
+        "Section 4.1",
+        "Table 2"
+      ],
+      "details": {
+        "table_2_column_4": {
+          "r30_0": 1.05,
+          "r30_0_x_d_short_gamma": 0.71,
+          "r30_0_x_d_gtbr_hit360": 0.96
+        }
+      }
+    },
+    {
+      "id": "KF-2",
+      "finding": "Short gamma is not enough when the underlying remains inside GTBR; the effect becomes material only after GTBR breach.",
+      "evidence": [
+        "Section 4.1",
+        "Table 3"
+      ],
+      "details": {
+        "no_gtbr_break": [
+          0.413,
+          0.286
+        ],
+        "gtbr_break": [
+          0.9,
+          0.723
+        ]
+      }
+    },
+    {
+      "id": "KF-3",
+      "finding": "The normalized-return decile analysis places the momentum jump around the GTBR threshold itself.",
+      "evidence": [
+        "Section 4.3",
+        "Figure 3"
+      ],
+      "details": {
+        "gtbr_crossing_percentile": 67.7
+      }
+    },
+    {
+      "id": "KF-4",
+      "finding": "Long gamma behaves as a reversion force when the underlying never breaches GTBR during the pre-close window.",
+      "evidence": [
+        "Section 4.2",
+        "Table 4"
+      ],
+      "details": {
+        "cumul_hit_gtbr360_zero_normgamma5": -1.25
+      }
+    },
+    {
+      "id": "KF-5",
+      "finding": "The paper's downside-move subsample shows materially stronger short-gamma and GTBR-breach effects than the upside-move subsample.",
+      "evidence": [
+        "Section 4.6",
+        "Table 7"
+      ]
+    },
+    {
+      "id": "KF-6",
+      "finding": "The forecasting section contains a material prose-table inconsistency: the text claims all OOS R-squared values are positive, but Table 10 reports negative minimum OOS R-squared values.",
+      "evidence": [
+        "Section 4.9",
+        "Table 10"
+      ],
+      "details": {
+        "reported_min_oos_r2": [
+          -1.21,
+          -1.68,
+          -1.31,
+          -1.71
+        ]
+      }
+    }
+  ],
+  "novelty_claims": [
+    {
+      "claim": "GTBR is a practical state variable that links short-gamma option economics to a discrete intraday momentum trigger.",
+      "assessment": "supported_in_scope",
+      "notes": "This is the paper's most implementation-relevant contribution because it converts nonlinear hedging loss into a testable threshold variable."
+    },
+    {
+      "claim": "MM gamma exposure estimated from ISE account categories is a usable proxy for intermediary hedging pressure.",
+      "assessment": "partially_supported",
+      "notes": "The proxy is concrete and empirically useful, but it is not direct dealer inventory and depends on a strong account-mapping assumption."
+    },
+    {
+      "claim": "GTBR-enhanced regressions deliver robust predictive improvements across underlyings.",
+      "assessment": "undermined_by_internal_inconsistency",
+      "notes": "Section 4.9's prose conflicts with Table 10 minima, which weakens confidence in the strongest forecasting language."
+    }
+  ],
+  "risk_assessment": [
+    {
+      "risk": "licensed_data_dependency",
+      "severity": "high",
+      "detail": "The design depends on TAQ, ISE account-category options data, and OptionMetrics-style Greeks/IV. The current repo does not expose authoritative equivalents."
+    },
+    {
+      "risk": "mm_inventory_proxy",
+      "severity": "high",
+      "detail": "MM open interest is proxied as negative Firm plus Customer open interest rather than observed directly."
+    },
+    {
+      "risk": "gtbr_reference_option_simplification",
+      "severity": "medium_high",
+      "detail": "The implementation proxy uses a standardized ATM 30-day option instead of a full gamma-weighted options book."
+    },
+    {
+      "risk": "predictive_claim_inconsistency",
+      "severity": "high",
+      "detail": "Section 4.9 says every OOS R-squared is positive, but Table 10 reports negative minima."
+    },
+    {
+      "risk": "execution_gap",
+      "severity": "high",
+      "detail": "The paper explains a state variable and regression evidence, not a deployable autonomous execution, risk, or capital-allocation policy."
+    },
+    {
+      "risk": "repo_data_model_gap",
+      "severity": "medium_high",
+      "detail": "Torghut already has trading/autonomy scaffolding, but no options-book or dealer-inventory runtime state matching this paper."
+    }
+  ],
+  "assumptions": [
+    "The simplified Carr-Wu daily gamma-theta attribution is sufficient for the paper's daily GTBR threshold.",
+    "Standardized ATM 30-day option Greeks and implied volatility are adequate proxies for underlying-level GTBR state.",
+    "ISE account categories map closely enough to dealer versus non-dealer activity to support the MM gamma proxy."
+  ],
+  "current_repo_fit": {
+    "relevant_modules": [
+      "services/torghut/app/trading/backtest.py",
+      "services/torghut/app/trading/evaluation.py",
+      "services/torghut/app/trading/empirical_manifest.py",
+      "services/torghut/app/trading/autonomy/lane.py",
+      "services/torghut/app/trading/autonomy/gates.py",
+      "services/torghut/app/trading/autonomy/janus_q.py",
+      "services/torghut/app/trading/alpha/data_sources.py"
+    ],
+    "missing_capabilities": [
+      "authoritative TAQ-like intraday quote ingestion for this research path",
+      "ISE account-category options open-interest ingestion",
+      "OptionMetrics-style standardized option Greeks and implied volatility reference data",
+      "options inventory and Greek state in the live trading runtime"
+    ],
+    "fit_assessment": "research_only"
+  },
+  "unresolved_questions": [
+    "What authoritative licensed data source should back TAQ, ISE account categories, and standardized option Greeks inside Torghut?",
+    "Can the Section 4.9 OOS R-squared inconsistency be resolved from the authors' source files or replication package?",
+    "How much of the reported effect survives when GTBR is computed from a full option-book aggregate instead of a standardized ATM 30-day proxy?",
+    "What transaction-cost and capacity controls would be required before promoting a GTBR-based signal beyond research mode?"
+  ],
+  "citations": [
+    {
+      "section": "Abstract",
+      "pointer": "page 1",
+      "claim": "Short-gamma delta hedging outside breakeven ranges creates inelastic demand and strengthens intraday momentum."
+    },
+    {
+      "section": "2.3.1",
+      "pointer": "Equation 1, pages 9-10",
+      "claim": "Formal definition of GTBR from one-day theta and gamma PnL."
+    },
+    {
+      "section": "2.3.3",
+      "pointer": "Equation 4, page 11",
+      "claim": "GTBR is linked to the trader-side hedge trigger and serves as a practical benchmark."
+    },
+    {
+      "section": "Appendix A3",
+      "pointer": "Equation 9, pages 44-45",
+      "claim": "GTBR simplifies to approximately plus or minus implied volatility divided by square root of 365."
+    },
+    {
+      "section": "3.1",
+      "pointer": "page 12",
+      "claim": "TAQ midquotes are used to build intraday returns."
+    },
+    {
+      "section": "3.2",
+      "pointer": "pages 12-14",
+      "claim": "MM gamma exposure is estimated from ISE account-category trading and open interest."
+    },
+    {
+      "section": "3.3",
+      "pointer": "pages 14-15",
+      "claim": "GTBR uses OptionMetrics ATM 30-day standardized option data as the reference option."
+    },
+    {
+      "section": "4.1",
+      "pointer": "Table 2 and Table 3, pages 15-17 and 33-34",
+      "claim": "GTBR breach and short gamma interact to explain stronger last-30-minute momentum."
+    },
+    {
+      "section": "4.2",
+      "pointer": "Table 4, pages 18-19 and 35",
+      "claim": "Repeated GTBR breaches and gamma buckets sharpen the momentum/reversion pattern."
+    },
+    {
+      "section": "4.3",
+      "pointer": "Figure 3, pages 19-20 and 31",
+      "claim": "Momentum coefficients jump around the normalized-return threshold corresponding to GTBR."
+    },
+    {
+      "section": "4.6",
+      "pointer": "Table 7, pages 22 and 38",
+      "claim": "The effect is stronger on downside first-30-minute moves than upside moves."
+    },
+    {
+      "section": "4.9",
+      "pointer": "Table 10, pages 24-25 and 42",
+      "claim": "The paper's prose about universally positive OOS R-squared conflicts with the table minima."
+    }
+  ],
+  "implementation_plan_md": "## M0: Data Authority Gate\n\n1. Provision authoritative, licensed data for intraday underlying quotes, account-category options open interest, and per-option Greeks / implied volatility.\n2. Add immutable provenance manifests with source, version date, checksum, and coverage windows.\n3. Fail closed if GTBR or MM-gamma series are derived from mixed or non-authoritative inputs.\n\n## M1: Deterministic Research Feature Module\n\n1. Add a GTBR research module under `services/torghut/app/trading/alpha/` or `services/torghut/app/trading/microstructure.py`.\n2. Compute daily GTBR, GTBR-hit-by-minute, cumulative GTBR hits, normalized return by GTBR, and MM gamma sign / normalized exposure.\n3. Emit hash-stable manifests through `services/torghut/app/trading/empirical_manifest.py`.\n\n## M2: Evaluation Wiring\n\n1. Extend offline evaluation to reproduce the paper's core checks: Table 2 interactions, Table 3 conditional splits, Table 4 bucket sorts, and Figure 3 normalized-return deciles.\n2. Add explicit consistency checks for prose-versus-table contradictions, including OOS R-squared sign validation.\n3. Keep all outputs in research artifacts first; do not wire into live execution.\n\n## M3: Safety-Bounded Runtime Experiment\n\n1. If M0-M2 succeed, expose GTBR evidence to existing autonomy gates under `services/torghut/app/trading/autonomy/`.\n2. Allow only shadow or paper modes; do not enable live promotion.\n3. Fail closed when provenance is missing, OOS metrics are unstable, or reproduced effects drift materially from the paper's reported ranges.",
+  "confidence": 0.87
+}
