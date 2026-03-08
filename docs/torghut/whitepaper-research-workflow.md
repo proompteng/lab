@@ -53,6 +53,42 @@ Optional marker keys:
 - `attachment_url`: explicit PDF URL override
 - `head_branch`: explicit AgentRun head branch (defaults to `codex/whitepaper-<suffix>`)
 
+## Proper process for creating a GitHub issue for whitepaper analysis
+
+Use this exact sequence for reliable dispatch:
+
+1. Open the issue on `proompteng/lab`.
+2. Set the title with the paper identifier (example: `Analyze whitepaper: My Paper`).
+3. Include the marker block exactly once in the body.
+4. Include one reachable PDF URL on its own line.
+5. Do not include extra non-PDF attachments as the primary source.
+6. Save/publish and confirm the issue is opened in the correct repository.
+7. Verify Torghut intake via logs or `/whitepapers/runs/<run_id>` within ~1 minute.
+
+Minimal valid body template:
+
+```md
+<!-- TORGHUT_WHITEPAPER:START -->
+workflow: whitepaper-analysis-v1
+base_branch: main
+<!-- TORGHUT_WHITEPAPER:END -->
+
+Attachment:
+https://example.com/path/paper.pdf
+```
+
+You can make the source explicit with the provider block field:
+
+```md
+attachment_url: https://example.com/path/paper.pdf
+```
+
+Do not trigger by:
+- Editing only the title (no body marker).
+- Omitting the marker block.
+- Posting a non-PDF link as the only source.
+- Using `research whitepaper` as a creation trigger (this is only a requeue comment keyword, not a trigger string for new issues).
+
 ## Required runtime configuration
 
 Minimum:
