@@ -4,21 +4,47 @@ on:
   pull_request:
     paths:
       - 'bun.lock'
+      - 'package.json'
       - 'charts/agents/**'
+      - 'packages/bumba/**'
+      - 'packages/codex/**'
+      - 'packages/cx-tools/**'
+      - 'packages/design/**'
+      - 'packages/discord/**'
+      - 'packages/otel/**'
+      - 'packages/scripts/src/agents/**'
+      - 'packages/scripts/src/jangar/**'
+      - 'packages/scripts/src/shared/**'
+      - 'packages/temporal-bun-sdk/**'
+      - 'services/bumba/**'
       - 'services/jangar/**'
       - 'scripts/agents/**'
       - 'scripts/download_crd_schema.py'
       - '.github/workflows/agents-ci.yml'
+      - '.github/workflows/jangar-build-push.yaml'
   push:
     branches:
       - main
     paths:
       - 'bun.lock'
+      - 'package.json'
       - 'charts/agents/**'
+      - 'packages/bumba/**'
+      - 'packages/codex/**'
+      - 'packages/cx-tools/**'
+      - 'packages/design/**'
+      - 'packages/discord/**'
+      - 'packages/otel/**'
+      - 'packages/scripts/src/agents/**'
+      - 'packages/scripts/src/jangar/**'
+      - 'packages/scripts/src/shared/**'
+      - 'packages/temporal-bun-sdk/**'
+      - 'services/bumba/**'
       - 'services/jangar/**'
       - 'scripts/agents/**'
       - 'scripts/download_crd_schema.py'
       - '.github/workflows/agents-ci.yml'
+      - '.github/workflows/jangar-build-push.yaml'
 
 jobs:
   validate:
@@ -78,7 +104,7 @@ jobs:
         run: scripts/agents/validate-agents.sh
 
   integration:
-    runs-on: ubuntu-latest
+    runs-on: arc-arm64
     needs: validate
     env:
       # ARC runners run with hostNetwork=true; a shared "kind" docker bridge subnet can collide across pods.
@@ -88,6 +114,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -122,6 +150,33 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
 
+      - name: Classify Jangar image mode
+        id: jangar_image_mode
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          else
+            BASE_SHA="${{ github.event.before }}"
+            HEAD_SHA="${{ github.sha }}"
+          fi
+
+          CHANGED_FILES="$(mktemp)"
+          if [ -z "${BASE_SHA}" ] || [ "${BASE_SHA}" = "0000000000000000000000000000000000000000" ]; then
+            git ls-files > "${CHANGED_FILES}"
+          else
+            git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" > "${CHANGED_FILES}"
+          fi
+
+          echo "Changed files for image classification:"
+          cat "${CHANGED_FILES}"
+          bun packages/scripts/src/agents/resolve-jangar-image-mode.ts < "${CHANGED_FILES}" >> "${GITHUB_OUTPUT}"
+
+          echo "Selected Jangar image mode:"
+          cat "${GITHUB_OUTPUT}" | tail -n 3
+
       - name: Build agentctl binary
         run: bun run --filter @proompteng/agentctl build:bin
 
@@ -139,16 +194,25 @@ jobs:
           kubectl_version: v1.29.4
           wait: 180s
 
+      - name: Select published Jangar image
+        if: steps.jangar_image_mode.outputs.NEEDS_LOCAL_JANGAR_IMAGE != 'true'
+        run: |
+          set -euo pipefail
+          IMAGE_REPOSITORY="${AGENTS_PUBLIC_IMAGE_REPOSITORY:-registry.ide-newton.ts.net/lab/jangar-control-plane}"
+          IMAGE_TAG="${AGENTS_PUBLIC_IMAGE_TAG:-latest}"
+
+          echo "Using published Jangar image ${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+          echo "BUILT_JANGAR_IMAGE_REPOSITORY=${IMAGE_REPOSITORY}" >> "${GITHUB_ENV}"
+          echo "BUILT_JANGAR_IMAGE_TAG=${IMAGE_TAG}" >> "${GITHUB_ENV}"
+
       - name: Build and preload local Jangar control-plane image into kind
+        if: steps.jangar_image_mode.outputs.NEEDS_LOCAL_JANGAR_IMAGE == 'true'
         run: |
           set -euxo pipefail
 
           WORKSPACE="${GITHUB_WORKSPACE}"
           IMAGE_REPOSITORY="${AGENTS_IMAGE_REPOSITORY:-jangar-local}"
           IMAGE_TAG="${AGENTS_IMAGE_TAG:-ci-${GITHUB_SHA:-unknown}}"
-          PUBLIC_IMAGE_REPOSITORY="${AGENTS_PUBLIC_IMAGE_REPOSITORY:-registry.ide-newton.ts.net/lab/jangar-control-plane}"
-          PUBLIC_IMAGE_TAG="${AGENTS_PUBLIC_IMAGE_TAG:-latest}"
-          BUILD_PRELOADED=1
           PRUNE_DIR="$(mktemp -d /tmp/jangar-prune-XXXXXX)"
           KIND_IMAGE_TAR="${RUNNER_TEMP:-/tmp}/jangar-${GITHUB_RUN_ID:-0}-${GITHUB_RUN_ATTEMPT:-0}-${IMAGE_TAG}.tar"
           BUILD_HEARTBEAT_PID=0
@@ -248,25 +312,6 @@ jobs:
             return 1
           }
 
-          recreate_kind_cluster() {
-            echo "Recreating kind cluster ${KIND_CLUSTER_NAME} before smoke fallback validation."
-            kind delete cluster --name "${KIND_CLUSTER_NAME}" >/dev/null 2>&1 || true
-            if ! run_with_progress "kind recreate cluster" 6 env KIND_EXPERIMENTAL_DOCKER_NETWORK="${KIND_DOCKER_NETWORK_NAME}" kind create cluster --name "${KIND_CLUSTER_NAME}" --image kindest/node:v1.29.4 --wait 180s; then
-              run_step_failure "Failed to recreate kind cluster ${KIND_CLUSTER_NAME} after public image fallback" "$?"
-            fi
-          }
-
-          OUTPUT_ENTRY="${WORKSPACE}/services/jangar/.output/server/index.mjs"
-          OUTPUT_PROTO="${WORKSPACE}/services/jangar/.output/server/proto/proompteng/jangar/v1/agentctl.proto"
-          BUILD_OUTPUT=0
-          if [ ! -f "${OUTPUT_ENTRY}" ] || [ ! -f "${OUTPUT_PROTO}" ]; then
-            BUILD_OUTPUT=1
-          fi
-          if [ "${CI:-false}" = "true" ]; then
-            BUILD_OUTPUT=0
-            echo "CI run detected; skipping prebuild step and relying on Dockerfile build."
-          fi
-
           run_step() {
             local label="$1"
             shift
@@ -320,30 +365,6 @@ jobs:
           }
           copy_pruned_workspace_dist
 
-          if [ "${BUILD_OUTPUT}" = "1" ]; then
-            echo "Building services/jangar .output in pruned context"
-            BUILD_DIR="${PRUNE_DIR}/full"
-            cp "${PRUNE_DIR}/tsconfig.base.json" "${BUILD_DIR}/tsconfig.base.json"
-            if [ -f "${PRUNE_DIR}/bun.lock" ]; then
-              cp "${PRUNE_DIR}/bun.lock" "${BUILD_DIR}/bun.lock"
-            fi
-            bun install --cwd "${BUILD_DIR}" --ignore-scripts --filter @proompteng/otel --filter @proompteng/temporal-bun-sdk --filter @proompteng/jangar
-            bun run --cwd "${BUILD_DIR}" --filter @proompteng/otel build
-            bun run --cwd "${BUILD_DIR}" --filter @proompteng/temporal-bun-sdk build
-            if timeout 8m bun --cwd "${BUILD_DIR}/services/jangar" --bun vite build --logLevel warn; then
-              bun --cwd "${BUILD_DIR}/services/jangar" run copy:grpc-proto
-            else
-              echo "Prebuild failed or timed out; cleaning partial .output and continuing with Docker image build."
-              rm -rf "${BUILD_DIR}/services/jangar/.output"
-            fi
-          elif [ -f "${OUTPUT_ENTRY}" ] && [ -f "${OUTPUT_PROTO}" ]; then
-            echo "Using local services/jangar .output from workspace"
-            mkdir -p "${PRUNE_DIR}/full/services/jangar"
-            cp -R "${WORKSPACE}/services/jangar/.output" "${PRUNE_DIR}/full/services/jangar/.output"
-          elif [ -d "${WORKSPACE}/services/jangar/.output" ]; then
-            echo "Skipping prebuilt .output reuse: missing generated index/proto artifacts"
-          fi
-
           JANGAR_VERSION="$(git -C "${WORKSPACE}" rev-parse --short HEAD)"
           JANGAR_COMMIT="$(git -C "${WORKSPACE}" rev-parse HEAD)"
           IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
@@ -365,26 +386,11 @@ jobs:
             "${PRUNE_DIR}"; then
             echo "Built local image ${IMAGE}."
           else
-            BUILD_PRELOADED=0
-            echo "::warning::Failed to build local image ${IMAGE}; falling back to ${PUBLIC_IMAGE_REPOSITORY}:${PUBLIC_IMAGE_TAG}."
+            run_step_failure "Failed to build local image ${IMAGE}" "$?"
           fi
 
-          if [ "${BUILD_PRELOADED}" -eq 1 ] && ! run_kind_load_with_fallback; then
-            BUILD_PRELOADED=0
-            echo "::warning::Failed to preload local image ${IMAGE} into kind; falling back to ${PUBLIC_IMAGE_REPOSITORY}:${PUBLIC_IMAGE_TAG}."
-          fi
-
-          if [ "${BUILD_PRELOADED}" -eq 0 ]; then
-            IMAGE_REPOSITORY="${PUBLIC_IMAGE_REPOSITORY}"
-            IMAGE_TAG="${PUBLIC_IMAGE_TAG}"
-            IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
-            recreate_kind_cluster
-            if ! run_with_progress "docker pull fallback image" 10 docker pull "${IMAGE}"; then
-              run_step_failure "Failed to pull fallback image ${IMAGE}" "$?"
-            fi
-            if ! run_kind_load_with_fallback; then
-              run_step_failure "Failed to preload fallback image ${IMAGE} into kind cluster ${KIND_CLUSTER_NAME}" "$?"
-            fi
+          if ! run_kind_load_with_fallback; then
+            run_step_failure "Failed to preload local image ${IMAGE} into kind cluster ${KIND_CLUSTER_NAME}" "$?"
           fi
 
           echo "BUILT_JANGAR_IMAGE_REPOSITORY=${IMAGE_REPOSITORY}" >> "${GITHUB_ENV}"

@@ -175,6 +175,18 @@ export const buildKubectlApplyArgs = ({ namespace, file }: BuildKubectlApplyArgs
   return kubectlArgs
 }
 
+const agentsCrdsPath = resolve(repoRoot, 'charts/agents/crds')
+
+export const buildKubectlApplyCrdsArgs = () => ['apply', '-f', agentsCrdsPath]
+
+export const buildKubectlWaitForCrdsArgs = (timeout = '120s') => [
+  'wait',
+  '--for=condition=Established',
+  `--timeout=${timeout}`,
+  '-f',
+  agentsCrdsPath,
+]
+
 const waitForKubectlApi = async (timeoutMs: number) => {
   const start = Date.now()
   let lastError = ''
@@ -352,6 +364,23 @@ const waitForJobs = async (namespace: string, name: string, expected: number, ti
     ])
     const count = result.exitCode === 0 ? result.stdout.split(/\s+/).filter(Boolean).length : 0
     if (count >= expected) return
+
+    const phaseResult = await execCapture([
+      'kubectl',
+      '-n',
+      namespace,
+      'get',
+      'agentrun',
+      name,
+      '-o',
+      'jsonpath={.status.phase}',
+    ])
+    const phase = phaseResult.exitCode === 0 ? phaseResult.stdout.trim() : ''
+    if (phase === 'Failed') {
+      await run('kubectl', ['-n', namespace, 'get', 'agentrun', name, '-o', 'yaml'])
+      fatal(`AgentRun ${name} failed before creating ${expected} job(s).`)
+    }
+
     await sleep(1000)
   }
 
@@ -546,6 +575,11 @@ spec:
     imageDigestSet,
     imageDigest,
   })
+
+  log('Applying Agents chart CRDs...')
+  await run('kubectl', buildKubectlApplyCrdsArgs())
+  await run('kubectl', buildKubectlWaitForCrdsArgs())
+
   await run('helm', helmArgs)
   {
     const exitCode = await runInherit([

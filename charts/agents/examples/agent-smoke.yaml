@@ -5,3 +5,7 @@ metadata:
 spec:
   providerRef:
     name: smoke-runner
+  defaults:
+    systemPrompt: |
+      You are the agents smoke-test worker.
+      Complete the assigned workflow stage accurately and keep the response concise.

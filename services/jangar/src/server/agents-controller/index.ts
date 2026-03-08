@@ -110,11 +110,17 @@ const VCS_PROVIDER_CRD = 'versioncontrolproviders.agents.proompteng.ai'
 const isVcsProvidersEnabled = () => parseBooleanEnv(process.env.JANGAR_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED, true)
 
 const isAgentRunImmutabilityEnforced = () => parseBooleanEnv(process.env.JANGAR_AGENTRUN_IMMUTABILITY_ENFORCED, true)
+const isAgentCommsSubscriberEnabled = () => !parseBooleanEnv(process.env.JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED, false)
 
 const resolveRequiredCrds = () => {
   if (!isVcsProvidersEnabled()) return BASE_REQUIRED_CRDS
   return [...BASE_REQUIRED_CRDS.slice(0, 5), VCS_PROVIDER_CRD, ...BASE_REQUIRED_CRDS.slice(5)]
 }
+
+const resolveNatsDependency = () => ({
+  enabled: isAgentCommsSubscriberEnabled(),
+  url: process.env.NATS_URL?.trim(),
+})
 
 type ControllerHealthState = {
   started: boolean
@@ -1370,6 +1376,7 @@ const startAgentsControllerInternal = async () => {
     crdsReady = await checkCrds({
       resolveRequiredCrds,
       resolveCrdCheckNamespace,
+      resolveNatsDependency,
       nowIso,
     })
     runtimeMutableState.crdCheckState = crdsReady
