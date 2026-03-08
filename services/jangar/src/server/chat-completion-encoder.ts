@@ -415,6 +415,7 @@ const createSession = (args: {
   let messageRoleEmitted = false
   let reasoningBuffer = ''
   let commandFenceOpen = false
+  let pendingCommandFencePrefix = false
   let trailingNewlines = 1
   let lastUsage: Record<string, unknown> | null = null
   let hadError = false
@@ -486,13 +487,18 @@ const createSession = (args: {
     if (trailingNewlines === 0) {
       emitContentDelta(frames, '\n')
     }
-    // Start command output fence without leading/trailing blank lines and with explicit language for clarity.
-    emitContentDelta(frames, '```ts\n')
+    // Keep the opening fence attached to the first command chunk so incremental markdown renderers
+    // treat the command block as code instead of a literal ``` line.
+    pendingCommandFencePrefix = true
     commandFenceOpen = true
   }
 
   const closeCommandFence = (frames: Record<string, unknown>[]) => {
     if (!commandFenceOpen) return
+    if (pendingCommandFencePrefix) {
+      emitContentDelta(frames, '```ts\n')
+      pendingCommandFencePrefix = false
+    }
     // Ensure the closing fence is on its own line (and leave a trailing blank line) even when command output does not end with a newline.
     emitContentDelta(frames, '\n```\n\n')
     commandFenceOpen = false
@@ -647,7 +653,9 @@ const createSession = (args: {
           continue
         }
         if (action.type === 'emitContent' && typeof action.content === 'string' && action.content.length > 0) {
-          emitContentDelta(frames, action.content)
+          const content = pendingCommandFencePrefix ? `\`\`\`ts\n${action.content}` : action.content
+          pendingCommandFencePrefix = false
+          emitContentDelta(frames, content)
         }
       }
       return frames

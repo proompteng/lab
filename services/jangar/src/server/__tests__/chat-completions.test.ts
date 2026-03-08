@@ -17,7 +17,14 @@ import { WorktreeState, type WorktreeStateService } from '~/server/worktree-stat
 
 describe('chat completions handler', () => {
   const previousEnv: Partial<
-    Record<'JANGAR_MODELS' | 'JANGAR_DEFAULT_MODEL' | 'CODEX_CWD' | 'JANGAR_STATEFUL_CHAT_MODE', string | undefined>
+    Record<
+      | 'JANGAR_MODELS'
+      | 'JANGAR_DEFAULT_MODEL'
+      | 'CODEX_CWD'
+      | 'JANGAR_STATEFUL_CHAT_MODE'
+      | 'JANGAR_CODEX_MAX_INPUT_CHARS',
+      string | undefined
+    >
   > = {}
   let worktreeRoot: string | null = null
 
@@ -26,9 +33,11 @@ describe('chat completions handler', () => {
     previousEnv.JANGAR_DEFAULT_MODEL = process.env.JANGAR_DEFAULT_MODEL
     previousEnv.CODEX_CWD = process.env.CODEX_CWD
     previousEnv.JANGAR_STATEFUL_CHAT_MODE = process.env.JANGAR_STATEFUL_CHAT_MODE
+    previousEnv.JANGAR_CODEX_MAX_INPUT_CHARS = process.env.JANGAR_CODEX_MAX_INPUT_CHARS
     delete process.env.JANGAR_MODELS
     delete process.env.JANGAR_DEFAULT_MODEL
     delete process.env.JANGAR_STATEFUL_CHAT_MODE
+    delete process.env.JANGAR_CODEX_MAX_INPUT_CHARS
 
     worktreeRoot = await mkdtemp(join(tmpdir(), 'jangar-worktree-'))
     process.env.CODEX_CWD = worktreeRoot
@@ -79,6 +88,12 @@ describe('chat completions handler', () => {
       delete process.env.JANGAR_STATEFUL_CHAT_MODE
     } else {
       process.env.JANGAR_STATEFUL_CHAT_MODE = previousEnv.JANGAR_STATEFUL_CHAT_MODE
+    }
+
+    if (previousEnv.JANGAR_CODEX_MAX_INPUT_CHARS === undefined) {
+      delete process.env.JANGAR_CODEX_MAX_INPUT_CHARS
+    } else {
+      process.env.JANGAR_CODEX_MAX_INPUT_CHARS = previousEnv.JANGAR_CODEX_MAX_INPUT_CHARS
     }
   })
 
@@ -906,6 +921,80 @@ describe('chat completions handler', () => {
     expect(transcriptState.setTranscript).toHaveBeenCalled()
   })
 
+  it('does not reject append-only OpenWebUI turns just because the full transcript exceeds the retry budget', async () => {
+    process.env.JANGAR_STATEFUL_CHAT_MODE = '1'
+    process.env.JANGAR_CODEX_MAX_INPUT_CHARS = '80'
+
+    const initialMessages = [
+      { role: 'user', content: 'first context that makes the rebuilt transcript too large' },
+      { role: 'assistant', content: 'second context that also keeps the full transcript oversized' },
+    ]
+    const requestMessages = [...initialMessages, { role: 'user', content: 'follow up' }]
+
+    const threadState: ThreadStateService = {
+      getThreadId: vi.fn(() => Effect.succeed('thread-1')),
+      setThreadId: vi.fn(() => Effect.succeed(undefined)),
+      nextTurn: vi.fn(() => Effect.succeed(1)),
+      clearChat: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const worktreeState: WorktreeStateService = {
+      getWorktreeName: vi.fn(() => Effect.succeed('austin')),
+      setWorktreeName: vi.fn(() => Effect.succeed(undefined)),
+      clearWorktree: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const transcriptState: TranscriptStateService = {
+      getTranscript: vi.fn(() => Effect.succeed(buildTranscriptSignature(initialMessages))),
+      setTranscript: vi.fn(() => Effect.succeed(undefined)),
+      clearTranscript: vi.fn(() => Effect.succeed(undefined)),
+    }
+
+    const mockClient = {
+      runTurnStream: vi.fn(async (_prompt: string) => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'message', delta: 'ok' }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 1 } }
+        })(),
+      })),
+      interruptTurn: vi.fn(async () => {}),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const response = await Effect.runPromise(
+      pipe(
+        handleChatCompletionEffect(
+          new Request('http://localhost', {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'x-openwebui-chat-id': 'chat-1',
+            },
+            body: JSON.stringify({
+              model: 'gpt-5.4',
+              messages: requestMessages,
+              stream: true,
+            }),
+          }),
+        ),
+        Effect.provideService(ChatToolEventRenderer, chatToolEventRendererLive),
+        Effect.provideService(ChatCompletionEncoder, chatCompletionEncoderLive),
+        Effect.provideService(ThreadState, threadState),
+        Effect.provideService(WorktreeState, worktreeState),
+        Effect.provideService(TranscriptState, transcriptState),
+      ),
+    )
+
+    expect(response.status).toBe(200)
+    const text = await response.text()
+    expect(text).toContain('ok')
+    expect(mockClient.runTurnStream).toHaveBeenCalledTimes(1)
+    expect(mockClient.runTurnStream.mock.calls[0]?.[0]).toBe('user: follow up')
+  })
+
   it('defaults OpenWebUI transcript handling to additive mode', async () => {
     const threadState: ThreadStateService = {
       getThreadId: vi.fn(() => Effect.succeed('thread-1')),
@@ -1253,6 +1342,99 @@ describe('chat completions handler', () => {
     expect(retryPrompt).toBe('user: hello\nassistant: hi!\nuser: follow up')
   })
 
+  it('trims oversized OpenWebUI retry prompts to the newest messages when rebuilding a thread', async () => {
+    process.env.JANGAR_STATEFUL_CHAT_MODE = '1'
+    process.env.JANGAR_CODEX_MAX_INPUT_CHARS = '80'
+
+    const existingMessages = [
+      { role: 'user', content: 'first context that should be dropped' },
+      { role: 'assistant', content: 'second context that should still fit' },
+    ]
+    const requestMessages = [...existingMessages, { role: 'user', content: 'follow up' }]
+
+    const threadState: ThreadStateService = {
+      getThreadId: vi.fn(() => Effect.succeed('stale-thread')),
+      setThreadId: vi.fn(() => Effect.succeed(undefined)),
+      nextTurn: vi.fn(() => Effect.succeed(1)),
+      clearChat: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const worktreeState: WorktreeStateService = {
+      getWorktreeName: vi.fn(() => Effect.succeed('austin')),
+      setWorktreeName: vi.fn(() => Effect.succeed(undefined)),
+      clearWorktree: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const transcriptState: TranscriptStateService = {
+      getTranscript: vi.fn(() => Effect.succeed(buildTranscriptSignature(existingMessages))),
+      setTranscript: vi.fn(() => Effect.succeed(undefined)),
+      clearTranscript: vi.fn(() => Effect.succeed(undefined)),
+    }
+
+    const mockClient = {
+      runTurnStream: vi.fn(async (prompt: string, opts?: { threadId?: string }) => {
+        if (opts?.threadId === 'stale-thread') {
+          expect(prompt).toBe('user: follow up')
+          return {
+            turnId: 'turn-1',
+            threadId: 'stale-thread',
+            stream: (async function* () {
+              yield {
+                type: 'error',
+                error: { code: -32600, message: 'conversation not found: stale-thread' },
+              }
+            })(),
+          }
+        }
+
+        return {
+          turnId: 'turn-2',
+          threadId: 'fresh-thread',
+          stream: (async function* () {
+            yield { type: 'message', delta: 'hello after retry' }
+            yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 1 } }
+          })(),
+        }
+      }),
+      interruptTurn: vi.fn(async () => {}),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-openwebui-chat-id': 'chat-1',
+      },
+      body: JSON.stringify({
+        model: 'gpt-5.4',
+        messages: requestMessages,
+        stream: true,
+      }),
+    })
+
+    const response = await Effect.runPromise(
+      pipe(
+        handleChatCompletionEffect(request),
+        Effect.provideService(ChatToolEventRenderer, chatToolEventRendererLive),
+        Effect.provideService(ChatCompletionEncoder, chatCompletionEncoderLive),
+        Effect.provideService(ThreadState, threadState),
+        Effect.provideService(WorktreeState, worktreeState),
+        Effect.provideService(TranscriptState, transcriptState),
+      ),
+    )
+    await response.text()
+
+    expect(mockClient.runTurnStream).toHaveBeenCalledTimes(2)
+    const retryPrompt = mockClient.runTurnStream.mock.calls[1]?.[0]
+    expect(typeof retryPrompt).toBe('string')
+    expect(retryPrompt.length).toBeLessThanOrEqual(80)
+    expect(retryPrompt).not.toContain('first context that should be dropped')
+    expect(retryPrompt).toContain('second context that should still fit')
+    expect(retryPrompt).toContain('user: follow up')
+  })
+
   it('resets the thread when OpenWebUI transcript is edited', async () => {
     process.env.JANGAR_STATEFUL_CHAT_MODE = '1'
 
@@ -1472,6 +1654,39 @@ describe('chat completions handler', () => {
     expect(threadState.getThreadId).not.toHaveBeenCalled()
     expect(worktreeState.getWorktreeName).not.toHaveBeenCalled()
     expect(transcriptState.getTranscript).not.toHaveBeenCalled()
+  })
+
+  it('returns a clean SSE error when the latest message alone exceeds the upstream input cap', async () => {
+    process.env.JANGAR_CODEX_MAX_INPUT_CHARS = '20'
+
+    const mockClient = {
+      runTurnStream: vi.fn(),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const response = await chatCompletionsHandler(
+      new Request('http://localhost', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-openwebui-chat-id': 'chat-1',
+        },
+        body: JSON.stringify({
+          model: 'gpt-5.4',
+          messages: [{ role: 'user', content: 'x'.repeat(40) }],
+          stream: true,
+        }),
+      }),
+    )
+
+    expect(response.status).toBe(400)
+    expect(mockClient.runTurnStream).not.toHaveBeenCalled()
+
+    const text = await response.text()
+    expect(text).toContain('input_too_large')
+    expect(text).toContain('Start a new chat or shorten the latest message.')
   })
 
   it('runs trade-execution requests statelessly in a dedicated torghut workspace', async () => {
@@ -1871,7 +2086,7 @@ describe('chat completions handler', () => {
 
     const fences = contentDeltas.filter((c) => c.includes('```'))
     expect(fences.length).toBeGreaterThanOrEqual(2)
-    expect(contentDeltas.some((c) => c.startsWith('ls'))).toBe(true)
+    expect(contentDeltas.some((c) => c.startsWith('```ts\nls'))).toBe(true)
     expect(contentDeltas.some((c) => c.includes('output chunk'))).toBe(true)
     expect(contentDeltas.some((c) => c.includes('…'))).toBe(true)
     expect(contentDeltas.some((c) => c.includes('---'))).toBe(false)
@@ -2155,13 +2370,14 @@ describe('chat completions handler', () => {
       .map((c) => c.choices?.[0]?.delta?.content as string | undefined)
       .filter(Boolean) as string[]
 
-    // Expect exactly: open fence, command line, output, close fence.
-    expect(contentChunks.length).toBe(4)
-    const [openFence, commandLine, outputChunk] = contentChunks
+    // Keep the opening fence attached to the first command chunk so markdown clients render it as code while streaming.
+    expect(contentChunks.length).toBe(3)
+    const [commandChunk, outputChunk, closingFence] = contentChunks
 
-    expect(openFence.trim()).toBe('```ts')
-    expect(commandLine).toContain(displayCommand)
-    expect(commandLine).not.toContain(rawCommand)
+    expect(commandChunk.startsWith('```ts\n')).toBe(true)
+    expect(commandChunk).toContain(displayCommand)
+    expect(commandChunk).not.toContain(rawCommand)
+    expect(closingFence.includes('```')).toBe(true)
 
     // Command string should not reappear inside output chunk, and output starts on its own line.
     expect(outputChunk.startsWith(displayCommand)).toBe(false)
@@ -2228,7 +2444,7 @@ describe('chat completions handler', () => {
       .map((c) => c.choices?.[0]?.delta?.content as string | undefined)
       .filter(Boolean) as string[]
 
-    expect(contentChunks[0]?.trim()).toBe('```ts')
+    expect(contentChunks[0]?.startsWith('```ts\n')).toBe(true)
     expect(contentChunks.some((chunk) => chunk.includes(displayCommand))).toBe(true)
     expect(contentChunks.some((chunk) => chunk.includes(rawCommand))).toBe(false)
     expect(
