@@ -1871,7 +1871,7 @@ describe('chat completions handler', () => {
 
     const fences = contentDeltas.filter((c) => c.includes('```'))
     expect(fences.length).toBeGreaterThanOrEqual(2)
-    expect(contentDeltas.some((c) => c.startsWith('ls'))).toBe(true)
+    expect(contentDeltas.some((c) => c.startsWith('```ts\nls'))).toBe(true)
     expect(contentDeltas.some((c) => c.includes('output chunk'))).toBe(true)
     expect(contentDeltas.some((c) => c.includes('…'))).toBe(true)
     expect(contentDeltas.some((c) => c.includes('---'))).toBe(false)
@@ -2155,13 +2155,14 @@ describe('chat completions handler', () => {
       .map((c) => c.choices?.[0]?.delta?.content as string | undefined)
       .filter(Boolean) as string[]
 
-    // Expect exactly: open fence, command line, output, close fence.
-    expect(contentChunks.length).toBe(4)
-    const [openFence, commandLine, outputChunk] = contentChunks
+    // Keep the opening fence attached to the first command chunk so markdown clients render it as code while streaming.
+    expect(contentChunks.length).toBe(3)
+    const [commandChunk, outputChunk, closingFence] = contentChunks
 
-    expect(openFence.trim()).toBe('```ts')
-    expect(commandLine).toContain(displayCommand)
-    expect(commandLine).not.toContain(rawCommand)
+    expect(commandChunk.startsWith('```ts\n')).toBe(true)
+    expect(commandChunk).toContain(displayCommand)
+    expect(commandChunk).not.toContain(rawCommand)
+    expect(closingFence.includes('```')).toBe(true)
 
     // Command string should not reappear inside output chunk, and output starts on its own line.
     expect(outputChunk.startsWith(displayCommand)).toBe(false)
@@ -2228,7 +2229,7 @@ describe('chat completions handler', () => {
       .map((c) => c.choices?.[0]?.delta?.content as string | undefined)
       .filter(Boolean) as string[]
 
-    expect(contentChunks[0]?.trim()).toBe('```ts')
+    expect(contentChunks[0]?.startsWith('```ts\n')).toBe(true)
     expect(contentChunks.some((chunk) => chunk.includes(displayCommand))).toBe(true)
     expect(contentChunks.some((chunk) => chunk.includes(rawCommand))).toBe(false)
     expect(
