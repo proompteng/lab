@@ -1,22 +1,22 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: 7c7461aa
-  digest: sha256:efa975302418171aca3a1b6f9ec8daa73f167d276050a6da12e77e0a5d573f05
+  tag: 8f12c1ec
+  digest: sha256:057fa1616727a662b2b0a5f4fda6bbdc8d97592d39b0dccd5b97c410039e9cea
   pullPolicy: IfNotPresent
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar-control-plane
-    tag: 7c7461aa
-    digest: sha256:96774a938992c3fd8e38ebfe64a209884aa230489a17ef675c6c046b4f32be83
+    tag: 8f12c1ec
+    digest: sha256:bb352801e455d5c59186d9ec5aab857d2edf3abe04d5b3aad0eb223710402c5e
   env:
     vars:
       JANGAR_CONTROL_PLANE_CACHE_ENABLED: "true"
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar
-    tag: 7c7461aa
-    digest: sha256:efa975302418171aca3a1b6f9ec8daa73f167d276050a6da12e77e0a5d573f05
+    tag: 8f12c1ec
+    digest: sha256:057fa1616727a662b2b0a5f4fda6bbdc8d97592d39b0dccd5b97c410039e9cea
 argocdHooks:
   enabled: true
   image:
@@ -84,8 +84,6 @@ controller:
     perAgent: 10
   queue:
     perRepo: 200
-  # Agents namespace policy override to keep AgentRun history shorter in high-churn env.
-  # This intentionally overrides chart default with 7 days.
   agentRunRetentionSeconds: 604800
   jobTtlSeconds: 86400
   jobTtlSecondsAfterFinished: 86400
