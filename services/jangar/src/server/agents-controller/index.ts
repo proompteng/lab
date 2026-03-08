@@ -137,6 +137,12 @@ export type AgentRunIngestionHealth = {
   oldestUntouchedAgeSeconds: number | null
 }
 
+export type AgentRunIngestionAssessment = AgentRunIngestionHealth & {
+  status: 'healthy' | 'degraded' | 'unknown'
+  message: string
+  dispatchPaused: boolean
+}
+
 export type AgentsControllerHealth = {
   enabled: boolean
   started: boolean
@@ -202,6 +208,8 @@ const createDefaultAgentRunIngestionRuntimeState = (): AgentRunIngestionRuntimeS
   lastResyncAtMs: null,
   untouchedRunCount: 0,
   oldestUntouchedAgeSeconds: null,
+  degradedSinceMs: null,
+  healthyResyncStreak: 0,
   lastResyncSummarySignature: null,
   lastStallSignature: null,
 })
@@ -236,6 +244,69 @@ const recordAgentRunWatchEventSeen = (namespace: string) => {
   syncControllerAgentRunIngestionHealth()
 }
 
+const buildDefaultAgentRunIngestionHealth = (namespace: string): AgentRunIngestionHealth => ({
+  namespace,
+  lastWatchEventAt: null,
+  lastResyncAt: null,
+  untouchedRunCount: 0,
+  oldestUntouchedAgeSeconds: null,
+})
+
+const isAgentRunIngestionBlind = (entry: AgentRunIngestionHealth) =>
+  entry.untouchedRunCount > 0 && entry.lastResyncAt !== null && entry.lastWatchEventAt === null
+
+const isAgentRunIngestionStalled = (entry: AgentRunIngestionHealth) => {
+  const warnAfterSeconds = resolveAgentRunUntouchedWarnAfterSeconds()
+  const untouchedPastThreshold =
+    entry.untouchedRunCount > 0 &&
+    entry.oldestUntouchedAgeSeconds !== null &&
+    entry.oldestUntouchedAgeSeconds >= warnAfterSeconds
+  return untouchedPastThreshold || isAgentRunIngestionBlind(entry)
+}
+
+export const assessAgentRunIngestion = (
+  namespace: string,
+  health: AgentsControllerHealth = getAgentsControllerHealth(),
+): AgentRunIngestionAssessment => {
+  const entry =
+    (health.agentRunIngestion ?? []).find((item) => item.namespace === namespace) ??
+    buildDefaultAgentRunIngestionHealth(namespace)
+  const runtimeState = runtimeMutableState.agentRunIngestionState.get(namespace)
+  const blind = isAgentRunIngestionBlind(entry)
+  const stalled = isAgentRunIngestionStalled(entry)
+  const recoveryInProgress = Boolean(runtimeState?.degradedSinceMs) && !stalled
+
+  if (stalled || recoveryInProgress) {
+    const message = blind
+      ? 'no AgentRun watch events observed since controller start while untouched runs exist'
+      : stalled
+        ? `untouched AgentRuns detected for ${entry.oldestUntouchedAgeSeconds}s`
+        : `ingestion recovering (${runtimeState?.healthyResyncStreak ?? 0}/2 healthy resyncs)`
+    return {
+      ...entry,
+      status: 'degraded',
+      message,
+      dispatchPaused: stalled || Boolean(runtimeState?.degradedSinceMs),
+    }
+  }
+
+  if (!health.started) {
+    return {
+      ...entry,
+      status: 'unknown',
+      message: 'agents controller not started',
+      dispatchPaused: false,
+    }
+  }
+
+  return {
+    ...entry,
+    status: 'healthy',
+    message: 'AgentRun ingestion healthy',
+    dispatchPaused: false,
+  }
+}
+
 const getAgentRunUntouchedReasons = (agentRun: Record<string, unknown>) => {
   const reasons: string[] = []
   const metadata = asRecord(agentRun.metadata) ?? {}
@@ -264,6 +335,11 @@ const getAgentRunCreationTimestampMs = (agentRun: Record<string, unknown>) => {
   if (!createdAt) return null
   const parsed = Date.parse(createdAt)
   return Number.isNaN(parsed) ? null : parsed
+}
+
+const getListResourceVersion = (payload: Record<string, unknown>) => {
+  const resourceVersion = asString(readNested(payload, ['metadata', 'resourceVersion']))
+  return resourceVersion?.trim() ? resourceVersion : null
 }
 
 const safeParseJsonRecord = (value: string) => {
@@ -858,6 +934,54 @@ const resyncAgentRunsForNamespace = async (
   ingestionState.lastResyncAtMs = now
   ingestionState.untouchedRunCount = untouchedRunCount
   ingestionState.oldestUntouchedAgeSeconds = oldestUntouchedAgeSeconds
+  const warnAfterSeconds = resolveAgentRunUntouchedWarnAfterSeconds()
+  const blindSinceStart = untouchedRunCount > 0 && ingestionState.lastWatchEventAtMs === null
+  const stallSignature =
+    (untouchedRunCount > 0 && oldestUntouchedAgeSeconds !== null && oldestUntouchedAgeSeconds >= warnAfterSeconds) ||
+    blindSinceStart
+      ? [
+          untouchedRunCount,
+          oldestUntouchedAgeSeconds ?? 'none',
+          warnAfterSeconds,
+          blindSinceStart ? 'blind' : 'seen',
+        ].join(':')
+      : null
+  if (stallSignature) {
+    if (ingestionState.degradedSinceMs === null) {
+      ingestionState.degradedSinceMs = now
+    }
+    ingestionState.healthyResyncStreak = 0
+    if (ingestionState.lastStallSignature !== stallSignature) {
+      logAgentsControllerWarn('agentrun_ingestion_stalled', {
+        namespace,
+        reason,
+        untouchedRunCount,
+        oldestUntouchedAgeSeconds,
+        warnAfterSeconds,
+        blindSinceStart,
+      })
+      ingestionState.lastStallSignature = stallSignature
+    }
+  } else {
+    if (ingestionState.degradedSinceMs !== null) {
+      ingestionState.healthyResyncStreak += 1
+      if (ingestionState.healthyResyncStreak >= 2) {
+        logAgentsControllerInfo('agentrun_ingestion_recovered', {
+          namespace,
+          reason,
+          untouchedRunCount,
+          oldestUntouchedAgeSeconds,
+        })
+        ingestionState.degradedSinceMs = null
+        ingestionState.healthyResyncStreak = 0
+        ingestionState.lastStallSignature = null
+      }
+    } else {
+      ingestionState.healthyResyncStreak = 0
+      ingestionState.lastStallSignature = null
+    }
+  }
+
   syncControllerAgentRunIngestionHealth()
 
   recordAgentRunUntouchedBacklog(untouchedRunCount, { namespace, reason })
@@ -874,6 +998,8 @@ const resyncAgentRunsForNamespace = async (
     candidateRuns.length,
     untouchedRunCount,
     oldestUntouchedAgeSeconds ?? 'none',
+    blindSinceStart ? 'blind' : 'seen',
+    ingestionState.healthyResyncStreak,
   ].join(':')
   const shouldLogResyncSummary =
     reason !== 'periodic' ||
@@ -887,34 +1013,10 @@ const resyncAgentRunsForNamespace = async (
       candidateCount: candidateRuns.length,
       untouchedRunCount,
       oldestUntouchedAgeSeconds,
+      blindSinceStart,
+      healthyResyncStreak: ingestionState.healthyResyncStreak,
     })
     ingestionState.lastResyncSummarySignature = resyncSummarySignature
-  }
-
-  const warnAfterSeconds = resolveAgentRunUntouchedWarnAfterSeconds()
-  const stallSignature =
-    untouchedRunCount > 0 && oldestUntouchedAgeSeconds !== null && oldestUntouchedAgeSeconds >= warnAfterSeconds
-      ? [untouchedRunCount, oldestUntouchedAgeSeconds, warnAfterSeconds].join(':')
-      : null
-  if (stallSignature) {
-    if (ingestionState.lastStallSignature !== stallSignature) {
-      logAgentsControllerWarn('agentrun_ingestion_stalled', {
-        namespace,
-        reason,
-        untouchedRunCount,
-        oldestUntouchedAgeSeconds,
-        warnAfterSeconds,
-      })
-      ingestionState.lastStallSignature = stallSignature
-    }
-  } else if (ingestionState.lastStallSignature !== null) {
-    logAgentsControllerInfo('agentrun_ingestion_recovered', {
-      namespace,
-      reason,
-      untouchedRunCount,
-      oldestUntouchedAgeSeconds,
-    })
-    ingestionState.lastStallSignature = null
   }
 
   for (const candidate of candidateRuns) {
@@ -1160,15 +1262,22 @@ const seedNamespaceState = async (
   concurrency: ReturnType<typeof parseConcurrency>,
 ) => {
   const nsState = ensureNamespaceState(state, namespace)
-  const memories = listItems(await kube.list(RESOURCE_MAP.Memory, namespace))
-  const agents = listItems(await kube.list(RESOURCE_MAP.Agent, namespace))
-  const specs = listItems(await kube.list(RESOURCE_MAP.ImplementationSpec, namespace))
-  const sources = listItems(await kube.list(RESOURCE_MAP.ImplementationSource, namespace))
-  const vcsProviders = isVcsProvidersEnabled()
-    ? listItems(await kube.list(RESOURCE_MAP.VersionControlProvider, namespace))
-    : []
-  const providers = listItems(await kube.list(RESOURCE_MAP.AgentProvider, namespace))
-  const runs = listItems(await kube.list(RESOURCE_MAP.AgentRun, namespace))
+  const memoryList = await kube.list(RESOURCE_MAP.Memory, namespace)
+  const agentList = await kube.list(RESOURCE_MAP.Agent, namespace)
+  const specList = await kube.list(RESOURCE_MAP.ImplementationSpec, namespace)
+  const sourceList = await kube.list(RESOURCE_MAP.ImplementationSource, namespace)
+  const vcsProviderList = isVcsProvidersEnabled()
+    ? await kube.list(RESOURCE_MAP.VersionControlProvider, namespace)
+    : null
+  const providerList = await kube.list(RESOURCE_MAP.AgentProvider, namespace)
+  const runList = await kube.list(RESOURCE_MAP.AgentRun, namespace)
+  const memories = listItems(memoryList)
+  const agents = listItems(agentList)
+  const specs = listItems(specList)
+  const sources = listItems(sourceList)
+  const vcsProviders = vcsProviderList ? listItems(vcsProviderList) : []
+  const providers = listItems(providerList)
+  const runs = listItems(runList)
 
   for (const resource of memories) updateStateMap(nsState.memories, 'ADDED', resource)
   for (const resource of agents) updateStateMap(nsState.agents, 'ADDED', resource)
@@ -1181,14 +1290,19 @@ const seedNamespaceState = async (
   enqueueNamespaceTask(namespace, () =>
     reconcileNamespaceSnapshot(kube, namespace, snapshotNamespace(nsState), state, concurrency),
   )
+
+  return {
+    agentRunResourceVersion: getListResourceVersion(runList),
+  }
 }
 
-const startNamespaceWatches = (
+const startNamespaceWatches = async (
   kube: ReturnType<typeof createKubernetesClient>,
   namespace: string,
   state: ControllerState,
   concurrency: ReturnType<typeof parseConcurrency>,
   handles: Array<{ stop: () => void }>,
+  options?: { agentRunResourceVersion?: string | null },
 ) => {
   const nsState = ensureNamespaceState(state, namespace)
   const enqueueFull = () =>
@@ -1269,6 +1383,7 @@ const startNamespaceWatches = (
     startResourceWatch({
       resource: RESOURCE_MAP.AgentRun,
       namespace,
+      resourceVersion: options?.agentRunResourceVersion ?? undefined,
       onEvent: handleAgentRunEvent,
       onError: (error) =>
         logAgentsControllerWarn('agentrun_watch_failed', {
@@ -1352,7 +1467,13 @@ const startNamespaceWatches = (
     stop: () => clearInterval(timer),
   })
 
-  void resyncAgentRunsForNamespace(kube, namespace, state, concurrency, 'manual')
+  await resyncAgentRunsForNamespace(kube, namespace, state, concurrency, 'manual')
+}
+
+const stopWatchHandles = (handles: Array<{ stop: () => void }>) => {
+  for (const handle of handles) {
+    handle.stop()
+  }
 }
 
 const startAgentsControllerInternal = async () => {
@@ -1407,6 +1528,7 @@ const startAgentsControllerInternal = async () => {
     return
   }
   const handles: Array<{ stop: () => void }> = []
+  let startupCommitted = false
   try {
     const namespaces = await resolveNamespaces()
     if (runtimeMutableState.lifecycleToken !== token) return
@@ -1415,18 +1537,20 @@ const startAgentsControllerInternal = async () => {
     const kube = createKubernetesClient()
     const concurrency = parseConcurrency()
     const state: ControllerState = { namespaces: new Map() }
+    const namespaceSeedResults = new Map<string, { agentRunResourceVersion: string | null }>()
     for (const namespace of namespaces) {
-      await seedNamespaceState(kube, namespace, state, concurrency)
+      namespaceSeedResults.set(namespace, await seedNamespaceState(kube, namespace, state, concurrency))
       if (runtimeMutableState.lifecycleToken !== token) return
     }
     for (const namespace of namespaces) {
-      startNamespaceWatches(kube, namespace, state, concurrency, handles)
+      await startNamespaceWatches(kube, namespace, state, concurrency, handles, namespaceSeedResults.get(namespace))
       if (runtimeMutableState.lifecycleToken !== token) return
     }
     if (runtimeMutableState.lifecycleToken !== token) return
     runtimeMutableState.watchHandles = handles
     runtimeMutableState.controllerSnapshot = state
     runtimeMutableState.started = true
+    startupCommitted = true
     markAgentsControllerStarted(runtimeMutableState.lifecycleActor)
     controllerState.started = true
     syncControllerAgentRunIngestionHealth()
@@ -1441,10 +1565,8 @@ const startAgentsControllerInternal = async () => {
       throw error
     }
   } finally {
-    if (runtimeMutableState.lifecycleToken !== token) {
-      for (const handle of handles) {
-        handle.stop()
-      }
+    if (!startupCommitted) {
+      stopWatchHandles(handles)
     }
     if (runtimeMutableState.lifecycleToken === token) {
       runtimeMutableState.starting = false
@@ -1459,9 +1581,7 @@ const stopAgentsControllerInternal = () => {
   requestAgentsControllerStop(runtimeMutableState.lifecycleActor)
   runtimeMutableState.lifecycleToken += 1
   runtimeMutableState.starting = false
-  for (const handle of runtimeMutableState.watchHandles) {
-    handle.stop()
-  }
+  stopWatchHandles(runtimeMutableState.watchHandles)
   runtimeMutableState.watchHandles = []
   runtimeMutableState.controllerSnapshot = null
   runtimeMutableState.namespaceQueues.clear()
@@ -1535,4 +1655,6 @@ export const __test = {
   getAgentRunUntouchedReasons,
   resyncAgentRunsForNamespace,
   syncControllerAgentRunIngestionHealth,
+  assessAgentRunIngestion,
+  stopWatchHandles,
 }

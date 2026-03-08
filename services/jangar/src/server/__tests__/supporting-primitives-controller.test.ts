@@ -27,6 +27,7 @@ vi.mock('~/server/primitives-kube', async () => {
   }
 })
 
+import * as agentsControllerModule from '~/server/agents-controller'
 import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
 import { asString } from '~/server/primitives-http'
 import type { KubernetesClient } from '~/server/primitives-kube'
@@ -112,7 +113,9 @@ describe('supporting primitives controller', () => {
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     stopSupportingPrimitivesController()
+    agentsControllerModule.stopAgentsController()
     vi.useRealTimers()
     delete process.env.JANGAR_AGENT_RUNNER_IMAGE
   })
@@ -774,6 +777,116 @@ describe('supporting primitives controller', () => {
     const conditions = Array.isArray(status.conditions) ? status.conditions : []
     const bridge = conditions.find((condition) => condition.type === 'RequirementsBridge')
     expect(bridge?.status).toBe('True')
+  })
+
+  it('pauses requirement dispatch when AgentRun ingestion is degraded', async () => {
+    vi.spyOn(agentsControllerModule, 'assessAgentRunIngestion').mockReturnValue({
+      namespace: 'agents',
+      status: 'degraded',
+      message: 'no AgentRun watch events observed since controller start while untouched runs exist',
+      dispatchPaused: true,
+      lastWatchEventAt: null,
+      lastResyncAt: '2026-01-20T00:00:00Z',
+      untouchedRunCount: 2,
+      oldestUntouchedAgeSeconds: 180,
+    })
+
+    const applyStatus = vi.fn().mockResolvedValue({})
+    const apply = vi.fn().mockResolvedValue({})
+    const get = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Schedule) {
+        return { status: { phase: 'Active', lastRunTime: '2026-01-20T00:00:00Z' } }
+      }
+      if (resource === RESOURCE_MAP.AgentRun) {
+        return {
+          kind: 'AgentRun',
+          metadata: { name: 'agentrun-implement-template', namespace: 'agents' },
+          spec: {
+            agentRef: { name: 'codex-spark-agent' },
+            runtime: { type: 'job' },
+          },
+        }
+      }
+      return null
+    })
+    const list = vi.fn(async (resource: string) => {
+      if (resource === RESOURCE_MAP.Signal) {
+        return {
+          items: [
+            {
+              metadata: {
+                name: 'torghut-risk-handoff-paused',
+                namespace: 'agents',
+                labels: {
+                  'swarm.proompteng.ai/type': 'requirement',
+                  'swarm.proompteng.ai/from': 'torghut-quant',
+                  'swarm.proompteng.ai/to': 'jangar-control-plane',
+                },
+              },
+              spec: {
+                channel: 'huly://swarm-bridge/issues/TOR-PAUSE',
+                description: 'Pause dispatch until AgentRun ingestion recovers',
+                payload: { priority: 'critical' },
+              },
+            },
+          ],
+        }
+      }
+      return { items: [] }
+    })
+    const deleteFn = vi.fn().mockResolvedValue(null)
+    const kube = { applyStatus, apply, get, list, delete: deleteFn } as unknown as KubernetesClient
+
+    const swarm = {
+      apiVersion: 'swarm.proompteng.ai/v1alpha1',
+      kind: 'Swarm',
+      metadata: { name: 'jangar-control-plane', namespace: 'agents', generation: 2, uid: 'swarm-uid' },
+      spec: {
+        owner: { id: 'platform-owner', channel: 'swarm://owner/platform' },
+        mode: 'lights-out',
+        timezone: 'UTC',
+        cadence: {
+          discoverEvery: '5m',
+          planEvery: '10m',
+          implementEvery: '10m',
+          verifyEvery: '5m',
+        },
+        execution: {
+          discover: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          plan: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+          implement: { targetRef: { kind: 'AgentRun', name: 'agentrun-implement-template' } },
+          verify: { targetRef: { kind: 'AgentRun', name: 'agentrun-sample' } },
+        },
+      },
+    }
+
+    await __test__.reconcileSwarm(kube, swarm, 'agents')
+
+    const requirementRunPayloads = apply.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .filter((payload) => payload.kind === 'AgentRun' && typeof payload.metadata === 'object')
+      .filter((payload) => {
+        const metadata = payload.metadata as Record<string, unknown>
+        return typeof metadata.generateName === 'string' && (metadata.generateName as string).includes('req')
+      })
+    expect(requirementRunPayloads).toHaveLength(0)
+
+    const statusCall = applyStatus.mock.calls.at(-1)
+    const status = (statusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
+    const requirements = (status.requirements ?? {}) as Record<string, unknown>
+    expect(requirements.pending).toBe(1)
+    expect(requirements.dispatched).toBe(0)
+    expect(requirements.blocked).toBe(1)
+    expect(requirements.paused).toBe(true)
+    expect(requirements.pauseReason).toBe('AgentRunIngestionDegraded')
+    expect(String(requirements.pauseMessage)).toContain('AgentRun')
+
+    const conditions = Array.isArray(status.conditions) ? status.conditions : []
+    const bridge = conditions.find((condition) => condition.type === 'RequirementsBridge') as
+      | Record<string, unknown>
+      | undefined
+    expect(bridge?.status).toBe('False')
+    expect(bridge?.reason).toBe('AgentRunIngestionDegraded')
   })
 
   it('dispatches higher-priority requirement signals before lower-priority signals', async () => {

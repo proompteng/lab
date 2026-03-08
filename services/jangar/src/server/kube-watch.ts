@@ -16,6 +16,7 @@ type WatchOptions = {
   namespace: string
   labelSelector?: string
   fieldSelector?: string
+  resourceVersion?: string
   restartDelayMs?: number
   onEvent: (event: WatchEvent) => void | Promise<void>
   onError?: (error: Error) => void
@@ -90,6 +91,7 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
     namespace,
     labelSelector,
     fieldSelector,
+    resourceVersion,
     restartDelayMs = DEFAULT_RESTART_DELAY_MS,
     onEvent,
     onError,
@@ -100,8 +102,17 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
   let stopped = false
   let child: ReturnType<typeof spawn> | null = null
   let restartTimer: NodeJS.Timeout | null = null
+  let currentResourceVersion = resourceVersion?.trim() ? resourceVersion.trim() : null
+  let watchStartResourceVersion: string | null = null
+  let sawEventSinceStart = false
   const normalizedResource = resource.trim() ? resource.trim() : 'unknown'
   const normalizedNamespace = namespace.trim() ? namespace.trim() : 'unknown'
+
+  const clearStaleResourceVersionBeforeRestart = () => {
+    if (!watchStartResourceVersion || sawEventSinceStart) return
+    if (currentResourceVersion !== watchStartResourceVersion) return
+    currentResourceVersion = null
+  }
 
   const scheduleRestart = (reason: string) => {
     recordKubeWatchRestart({
@@ -124,6 +135,8 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
 
   const start = () => {
     if (stopped) return
+    watchStartResourceVersion = currentResourceVersion
+    sawEventSinceStart = false
     const args = [
       'get',
       resource,
@@ -135,6 +148,9 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
       'json',
       '--request-timeout=0',
     ]
+    if (currentResourceVersion) {
+      args.push(`--resource-version=${currentResourceVersion}`)
+    }
     if (labelSelector) {
       args.push('-l', labelSelector)
     }
@@ -148,6 +164,22 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
         const payload = JSON.parse(jsonText) as WatchEvent
         if (!payload || typeof payload !== 'object') return
         const eventType = typeof payload.type === 'string' ? payload.type : 'UNKNOWN'
+        const payloadObject =
+          payload.object && typeof payload.object === 'object' && !Array.isArray(payload.object)
+            ? (payload.object as Record<string, unknown>)
+            : null
+        const payloadMetadata =
+          payloadObject?.metadata &&
+          typeof payloadObject.metadata === 'object' &&
+          !Array.isArray(payloadObject.metadata)
+            ? (payloadObject.metadata as Record<string, unknown>)
+            : null
+        const nextResourceVersion =
+          typeof payloadMetadata?.resourceVersion === 'string' ? payloadMetadata.resourceVersion.trim() : ''
+        if (nextResourceVersion) {
+          currentResourceVersion = nextResourceVersion
+        }
+        sawEventSinceStart = true
         if (eventType === 'BOOKMARK') return
         recordKubeWatchEvent({
           resource: normalizedResource,
@@ -230,6 +262,7 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
     child.on('close', (code) => {
       if (stopped) return
       if (code !== 0) {
+        clearStaleResourceVersionBeforeRestart()
         recordKubeWatchError({
           resource: normalizedResource,
           namespace: normalizedNamespace,

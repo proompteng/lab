@@ -223,8 +223,8 @@ export type AgentRunIngestionStatus = {
   namespace: string
   status: 'healthy' | 'degraded' | 'unknown'
   message: string
-  last_watch_event_at: string
-  last_resync_at: string
+  last_watch_event_at: string | null
+  last_resync_at: string | null
   untouched_run_count: number
   oldest_untouched_age_seconds: number | null
 }

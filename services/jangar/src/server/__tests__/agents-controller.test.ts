@@ -247,6 +247,16 @@ describe('agents controller startup', () => {
     expect(stopWatch).toHaveBeenCalledTimes(1)
   })
 
+  it('stops every startup watch handle that was not committed', () => {
+    const stopFirst = vi.fn()
+    const stopSecond = vi.fn()
+
+    __test.stopWatchHandles([{ stop: stopFirst }, { stop: stopSecond }])
+
+    expect(stopFirst).toHaveBeenCalledTimes(1)
+    expect(stopSecond).toHaveBeenCalledTimes(1)
+  })
+
   it('adopts untouched AgentRuns during controller resync', async () => {
     stopAgentsController()
     const state = { namespaces: new Map() }
@@ -456,7 +466,7 @@ describe('agents controller startup', () => {
     }
   })
 
-  it('dedupes repeated ingestion stall logs and emits recovery once', async () => {
+  it('dedupes repeated ingestion stall logs and emits recovery after two healthy resyncs', async () => {
     stopAgentsController()
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
@@ -500,8 +510,14 @@ describe('agents controller startup', () => {
       })
 
       await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+      let recoveryMessages = infoSpy.mock.calls
+        .map((call) => String(call[0]))
+        .filter((line) => line.includes('agentrun_ingestion_recovered'))
+      expect(recoveryMessages).toHaveLength(0)
 
-      const recoveryMessages = infoSpy.mock.calls
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+
+      recoveryMessages = infoSpy.mock.calls
         .map((call) => String(call[0]))
         .filter((line) => line.includes('agentrun_ingestion_recovered'))
       expect(recoveryMessages).toHaveLength(1)
