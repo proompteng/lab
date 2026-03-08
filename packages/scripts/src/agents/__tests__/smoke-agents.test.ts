@@ -4,6 +4,8 @@ import { resolve } from 'node:path'
 import {
   buildHelmArgs,
   buildKubectlApplyArgs,
+  buildKubectlApplyCrdsArgs,
+  buildKubectlWaitForCrdsArgs,
   isPermissionDeniedKubectlError,
   isTransientKubectlError,
 } from '../smoke-agents'
@@ -86,6 +88,32 @@ describe('buildKubectlApplyArgs', () => {
       '--validate=false',
       '-f',
       resolve(process.cwd(), 'charts/agents/examples/agent-smoke.yaml'),
+    ])
+  })
+})
+
+describe('CRD bootstrap kubectl args', () => {
+  it('applies the chart CRD directory before helm install', () => {
+    expect(buildKubectlApplyCrdsArgs()).toEqual(['apply', '-f', resolve(process.cwd(), 'charts/agents/crds')])
+  })
+
+  it('waits for chart CRDs to become established', () => {
+    expect(buildKubectlWaitForCrdsArgs()).toEqual([
+      'wait',
+      '--for=condition=Established',
+      '--timeout=120s',
+      '-f',
+      resolve(process.cwd(), 'charts/agents/crds'),
+    ])
+  })
+
+  it('supports a custom CRD wait timeout', () => {
+    expect(buildKubectlWaitForCrdsArgs('45s')).toEqual([
+      'wait',
+      '--for=condition=Established',
+      '--timeout=45s',
+      '-f',
+      resolve(process.cwd(), 'charts/agents/crds'),
     ])
   })
 })

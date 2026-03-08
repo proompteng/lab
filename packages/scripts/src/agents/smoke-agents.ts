@@ -175,6 +175,18 @@ export const buildKubectlApplyArgs = ({ namespace, file }: BuildKubectlApplyArgs
   return kubectlArgs
 }
 
+const agentsCrdsPath = resolve(repoRoot, 'charts/agents/crds')
+
+export const buildKubectlApplyCrdsArgs = () => ['apply', '-f', agentsCrdsPath]
+
+export const buildKubectlWaitForCrdsArgs = (timeout = '120s') => [
+  'wait',
+  '--for=condition=Established',
+  `--timeout=${timeout}`,
+  '-f',
+  agentsCrdsPath,
+]
+
 const waitForKubectlApi = async (timeoutMs: number) => {
   const start = Date.now()
   let lastError = ''
@@ -546,6 +558,11 @@ spec:
     imageDigestSet,
     imageDigest,
   })
+
+  log('Applying Agents chart CRDs...')
+  await run('kubectl', buildKubectlApplyCrdsArgs())
+  await run('kubectl', buildKubectlWaitForCrdsArgs())
+
   await run('helm', helmArgs)
   {
     const exitCode = await runInherit([
