@@ -230,6 +230,53 @@ describe('chat completion encoder', () => {
     expect(content).toContain('> Credits: has credits · balance 12.34')
   })
 
+  it('suppresses later rate limit updates in the same session even when values change', () => {
+    const session = createSession()
+
+    const firstFrames = session.onDelta({
+      type: 'rate_limits',
+      rateLimits: {
+        planType: 'pro',
+        primary: { usedPercent: 42, windowDurationMins: 90, resetsAt: 1_735_000_000 },
+      },
+    })
+
+    const secondFrames = session.onDelta({
+      type: 'rate_limits',
+      rateLimits: {
+        planType: 'pro',
+        primary: { usedPercent: 57, windowDurationMins: 90, resetsAt: 1_735_000_900 },
+        secondary: { usedPercent: 18, windowDurationMins: 60, resetsAt: 1_735_001_200 },
+      },
+    })
+
+    expect(collectContent(firstFrames)).toContain('> **Rate limits**')
+    expect(secondFrames).toHaveLength(0)
+  })
+
+  it('renders rate limits again for a new session', () => {
+    const firstSession = createSession()
+    const secondSession = createSession()
+
+    firstSession.onDelta({
+      type: 'rate_limits',
+      rateLimits: {
+        planType: 'pro',
+        primary: { usedPercent: 42, windowDurationMins: 90, resetsAt: 1_735_000_000 },
+      },
+    })
+
+    const secondFrames = secondSession.onDelta({
+      type: 'rate_limits',
+      rateLimits: {
+        planType: 'pro',
+        primary: { usedPercent: 57, windowDurationMins: 90, resetsAt: 1_735_000_900 },
+      },
+    })
+
+    expect(collectContent(secondFrames)).toContain('> **Rate limits**')
+  })
+
   it('emits usage and stop chunks on finalize when successful', () => {
     const session = createSession({ includeUsage: true })
 
