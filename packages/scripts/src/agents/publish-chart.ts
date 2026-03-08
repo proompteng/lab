@@ -2,28 +2,48 @@
 
 import { mkdir, mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, isAbsolute, join, resolve } from 'node:path'
 
 const rootDir = resolve(import.meta.dir, '..', '..', '..', '..')
 const outputDir = resolve(rootDir, '.chart-packages')
 const localPackageDir = resolve(outputDir, 'local')
 const existingPackageDir = resolve(outputDir, 'existing')
-const chartRepoUrl = 'https://github.com/proompteng/charts.git'
-
-const chartWorkDir = await mkdtemp(join(tmpdir(), 'agents-chart-'))
-const chartRepoDir = join(chartWorkDir, 'charts')
-const chartDir = join(chartRepoDir, 'charts', 'agents')
+const defaultChartDir = resolve(rootDir, 'charts', 'agents')
 const chartPackageRef = 'oci://ghcr.io/proompteng/charts/agents'
+const chartPushRef = 'oci://ghcr.io/proompteng/charts'
 const decode = (bytes: Uint8Array<ArrayBufferLike>) => new TextDecoder().decode(bytes).trim()
 
-const cloneResult = Bun.spawnSync(['git', 'clone', '--depth', '1', chartRepoUrl, chartRepoDir])
-if (cloneResult.exitCode !== 0) {
-  const stderr = new TextDecoder().decode(cloneResult.stderr)
-  throw new Error(`git clone failed: ${stderr || 'unknown error'}`)
+const parseChartDirArg = () => {
+  const args = process.argv.slice(2)
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]
+    if (!arg) continue
+    if (arg === '--chart-dir') {
+      const value = args[index + 1]
+      if (!value) {
+        throw new Error('Missing value for --chart-dir')
+      }
+      return resolve(value)
+    }
+    if (arg.startsWith('--chart-dir=')) {
+      return resolve(arg.slice('--chart-dir='.length))
+    }
+  }
+  return defaultChartDir
+}
+
+const chartDir = parseChartDirArg()
+
+if (!(await Bun.file(resolve(chartDir, 'Chart.yaml')).exists())) {
+  throw new Error(`Chart.yaml not found in ${chartDir}`)
 }
 
 const chartYaml = await Bun.file(resolve(chartDir, 'Chart.yaml')).text()
+const chartName = chartYaml.match(/^name:\s*(.+)$/m)?.[1]?.trim()
 const chartVersion = chartYaml.match(/^version:\s*(.+)$/m)?.[1]?.trim()
+if (!chartName) {
+  throw new Error('Chart.yaml is missing a name')
+}
 if (!chartVersion) {
   throw new Error('Chart.yaml is missing a version')
 }
@@ -72,22 +92,23 @@ const comparePackagesByContents = async (newPackagePath: string, existingPackage
 }
 
 const packageResult = Bun.spawnSync(['helm', 'package', chartDir, '--destination', localPackageDir])
-
 if (packageResult.exitCode !== 0) {
-  const stderr = new TextDecoder().decode(packageResult.stderr)
-  throw new Error(`helm package failed: ${stderr || 'unknown error'}`)
+  throw new Error(`helm package failed: ${decode(packageResult.stderr) || 'unknown error'}`)
 }
 
-const stdout = new TextDecoder().decode(packageResult.stdout)
-const packagePathMatch = stdout.match(/saved it to:\s*(.+)$/m)
-const packagePath = packagePathMatch?.[1]?.trim()
-
-if (!packagePath) {
-  throw new Error(`Unable to detect packaged chart path from helm output: ${stdout}`)
+const packageOutput = decode(packageResult.stdout)
+const packagePathMatch = packageOutput.match(/saved it to:\s*(.+)$/m)
+const rawPackagePath = packagePathMatch?.[1]?.trim()
+if (!rawPackagePath) {
+  throw new Error(`Unable to detect packaged chart path from helm output: ${packageOutput}`)
 }
 
+const packagePath = isAbsolute(rawPackagePath) ? rawPackagePath : resolve(rawPackagePath)
 if (!packagePath.endsWith(`-${chartVersion}.tgz`)) {
   throw new Error(`Packaged chart version does not match Chart.yaml (${chartVersion}).`)
+}
+if (basename(packagePath) !== `${chartName}-${chartVersion}.tgz`) {
+  throw new Error(`Packaged chart name does not match Chart.yaml (${chartName}).`)
 }
 
 const pullResult = Bun.spawnSync([
@@ -100,7 +121,7 @@ const pullResult = Bun.spawnSync([
   existingPackageDir,
 ])
 if (pullResult.exitCode === 0) {
-  const existingPackagePath = resolve(existingPackageDir, `agents-${chartVersion}.tgz`)
+  const existingPackagePath = resolve(existingPackageDir, `${chartName}-${chartVersion}.tgz`)
   if (!(await Bun.file(existingPackagePath).exists())) {
     throw new Error(`helm pull succeeded but package not found at ${existingPackagePath}`)
   }
@@ -111,15 +132,13 @@ if (pullResult.exitCode === 0) {
   }
 
   throw new Error(
-    `Chart ${chartVersion} already exists in ghcr.io/proompteng/charts/agents with different contents. Bump Chart.yaml version before publishing.`,
+    `Chart ${chartVersion} already exists in ghcr.io/proompteng/charts/${chartName} with different contents. Bump Chart.yaml version before publishing.`,
   )
 }
 
-const pushResult = Bun.spawnSync(['helm', 'push', packagePath, 'oci://ghcr.io/proompteng/charts'])
-
+const pushResult = Bun.spawnSync(['helm', 'push', packagePath, chartPushRef])
 if (pushResult.exitCode !== 0) {
-  const stderr = new TextDecoder().decode(pushResult.stderr)
-  throw new Error(`helm push failed: ${stderr || 'unknown error'}`)
+  throw new Error(`helm push failed: ${decode(pushResult.stderr) || 'unknown error'}`)
 }
 
-console.log(`Published ${packagePath} to ghcr.io/proompteng/charts`)
+console.log(`Published ${packagePath} to ${chartPushRef}`)

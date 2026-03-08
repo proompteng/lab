@@ -400,7 +400,7 @@ jobs:
         env:
           AGENTS_NAMESPACE: agents-ci
           AGENTS_RELEASE_NAME: agents-ci
-          AGENTS_VALUES_FILE: charts/agents/values-ci.yaml
+          AGENTS_VALUES_FILE: scripts/agents/values-ci.yaml
           AGENTS_CREATE_NAMESPACE: 'true'
           AGENTS_DB_BOOTSTRAP: 'true'
           AGENTS_TIMEOUT: 15m

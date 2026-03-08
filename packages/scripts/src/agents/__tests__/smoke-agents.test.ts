@@ -13,7 +13,7 @@ import {
 
 describe('buildHelmArgs', () => {
   it('applies image repository, tag, and empty digest overrides', () => {
-    const valuesFile = resolve(process.cwd(), 'charts/agents/values-ci.yaml')
+    const valuesFile = resolve(process.cwd(), 'scripts/agents/values-ci.yaml')
     const chartPath = resolve(process.cwd(), 'charts/agents')
     const args = buildHelmArgs({
       releaseName: 'agents',

@@ -6,7 +6,8 @@ Docs index: [README](../README.md)
 
 ## Current State
 
-- Chart: values-dev.yaml, values-prod.yaml, values-ci.yaml, values-local.yaml, values-kind.yaml exist.
+- Chart: values-dev.yaml, values-prod.yaml, values-local.yaml, values-kind.yaml exist.
+- CI overlay: `scripts/agents/values-ci.yaml` exists outside the published chart package.
 - GitOps: argocd/applications/agents/values.yaml is the in-cluster overlay.
 - Cluster: the agents ArgoCD app currently applies only the in-repo values overlay.
 
@@ -25,7 +26,7 @@ Operators need consistent overlays for staging and prod.
 
 ## Design
 
-- Maintain values-dev.yaml, values-ci.yaml, values-prod.yaml.
+- Maintain chart overlays in `charts/agents/` and keep the CI-only overlay in `scripts/agents/values-ci.yaml`.
 - Ensure schema coverage for all values.
 
 ## Chart Changes
