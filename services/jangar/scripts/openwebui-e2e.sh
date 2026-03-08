@@ -70,10 +70,10 @@ cleanup() {
   fi
 
   if command -v lsof >/dev/null 2>&1; then
-    local jangar_port_pids
-    jangar_port_pids="$(lsof -ti "tcp:${JANGAR_PORT}" 2>/dev/null || true)"
-    if [[ -n "$jangar_port_pids" ]]; then
-      kill $jangar_port_pids >/dev/null 2>&1 || true
+    local -a jangar_port_pids
+    mapfile -t jangar_port_pids < <(lsof -ti "tcp:${JANGAR_PORT}" 2>/dev/null || true)
+    if ((${#jangar_port_pids[@]} > 0)); then
+      kill "${jangar_port_pids[@]}" >/dev/null 2>&1 || true
     fi
   fi
 
