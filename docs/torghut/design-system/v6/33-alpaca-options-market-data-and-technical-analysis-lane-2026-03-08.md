@@ -31,6 +31,9 @@ The selected design is:
 This keeps the current equity production path isolated, contains operational blast radius, and gives Torghut an
 implementation-ready plan for options-native analytics instead of an equity clone with option tickers pasted on top.
 
+The exact implementation contracts for topics, storage, SLOs, and secret wiring are defined in
+`34-alpaca-options-lane-implementation-contract-set-2026-03-08.md`.
+
 ## Context
 
 Torghut's current market-data platform is valuable because it already proves the shape of the production system:

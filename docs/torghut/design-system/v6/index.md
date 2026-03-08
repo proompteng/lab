@@ -29,6 +29,8 @@
   empirical promotion, and a repeatedly exercised promotion ledger before resuming broader autonomy expansion.
 - `33-alpaca-options-market-data-and-technical-analysis-lane-2026-03-08.md` now records the production design for a
   separate Alpaca options ingest and TA lane, grounded in the current equity-only Torghut runtime and cluster state.
+- `34-alpaca-options-lane-implementation-contract-set-2026-03-08.md` now turns that architecture into explicit event,
+  storage, identity, and SLO contracts for implementation.
 
 ## Purpose
 
@@ -83,6 +85,7 @@ This pack is positioned as the next architecture layer above:
 31. `31-proven-autonomous-quant-llm-torghut-trading-system-2026-03-07.md`
 32. `32-authoritative-alpha-readiness-and-empirical-promotion-closeout-2026-03-08.md`
 33. `33-alpaca-options-market-data-and-technical-analysis-lane-2026-03-08.md`
+34. `34-alpaca-options-lane-implementation-contract-set-2026-03-08.md`
 
 ## Recommended Build Order
 
@@ -119,6 +122,7 @@ This pack is positioned as the next architecture layer above:
 31. `31-proven-autonomous-quant-llm-torghut-trading-system-2026-03-07.md`
 32. `32-authoritative-alpha-readiness-and-empirical-promotion-closeout-2026-03-08.md`
 33. `33-alpaca-options-market-data-and-technical-analysis-lane-2026-03-08.md`
+34. `34-alpaca-options-lane-implementation-contract-set-2026-03-08.md`
 
 ## Why This Sequence
 
@@ -140,3 +144,5 @@ This pack is positioned as the next architecture layer above:
 - The proven autonomous quant system architecture comes last because it consolidates the earlier v6 work into the clean
   end-state topology: deterministic runtime authority, first-class mirrored simulation, generated empirical evidence,
   and time-gated live promotion.
+- The Alpaca options implementation contract set follows the architecture doc because options ingest is only safe to
+  build once the concrete topic, storage, rate-limit, and identity contracts are fixed.
