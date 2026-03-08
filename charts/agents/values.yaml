@@ -305,6 +305,7 @@ controller:
       baseDelaySeconds: 1
       maxDelaySeconds: 60
       maxAttempts: 5
+  # Default AgentRun retention window (seconds). 30 days when unset.
   agentRunRetentionSeconds: 2592000
   agentRunArtifacts:
     max: 50

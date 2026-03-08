@@ -84,7 +84,7 @@ See also:
 - SLOs: 99.5% controller availability monthly; 95th percentile run submit < 2s; 95th percentile reconcile delay < 10s.
 - Concurrency defaults: 10 in-flight AgentRuns per namespace, 5 per Agent, 100 cluster-wide.
 - Retry/backoff: exponential with base 5s, max 5m, jitter 20%.
-- Retention: AgentRun records 30 days; logs/artifacts 7 days (runtime configurable).
+- Retention: AgentRun records 7 days; logs/artifacts 7 days (runtime configurable).
 - Size limits: ImplementationSpec text 128KB, description 128KB, summary 256 chars, acceptanceCriteria 50 items;
   parameters max 100 entries, 2KB per value.
 - Supply chain: images signed (cosign), SBOMs (SPDX) published per release.
