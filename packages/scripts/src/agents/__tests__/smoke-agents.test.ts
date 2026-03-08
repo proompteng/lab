@@ -6,6 +6,7 @@ import {
   buildKubectlApplyArgs,
   buildKubectlApplyCrdsArgs,
   buildKubectlWaitForCrdsArgs,
+  buildNatsServiceManifest,
   isPermissionDeniedKubectlError,
   isTransientKubectlError,
 } from '../smoke-agents'
@@ -115,6 +116,22 @@ describe('CRD bootstrap kubectl args', () => {
       '-f',
       resolve(process.cwd(), 'charts/agents/crds'),
     ])
+  })
+})
+
+describe('smoke dependency manifests', () => {
+  it('creates a stub nats service in the target namespace', () => {
+    expect(buildNatsServiceManifest('agents-ci')).toBe(`apiVersion: v1
+kind: Service
+metadata:
+  name: nats
+  namespace: agents-ci
+spec:
+  ports:
+    - name: client
+      port: 4222
+      targetPort: 4222
+`)
   })
 })
 
