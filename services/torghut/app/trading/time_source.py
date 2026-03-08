@@ -13,6 +13,8 @@ from ..config import settings
 from ..db import SessionLocal
 from ..models import TradeCursor
 
+_SIMULATION_CURSOR_BASELINE = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
 
 def _parse_datetime(raw: str | None) -> datetime | None:
     value = (raw or "").strip()
@@ -121,7 +123,10 @@ class TradingTimeSource:
             row = session.execute(stmt).scalar_one_or_none()
             if row is None:
                 return None
-            return row.cursor_at.astimezone(timezone.utc)
+            cursor_at = row.cursor_at.astimezone(timezone.utc)
+            if settings.trading_simulation_enabled and cursor_at <= _SIMULATION_CURSOR_BASELINE:
+                return None
+            return cursor_at
 
 
 _TIME_SOURCE = TradingTimeSource()

@@ -152,14 +152,25 @@ class TradingPipeline:
 
             batch = self.ingestor.fetch_signals(session)
             self._record_ingest_window(batch)
-            if not self._prepare_batch_for_decisions(session, batch):
-                return
-
+            if not batch.signals:
+                if not self._prepare_batch_for_decisions(session, batch, quality_signals=batch.signals):
+                    return
             context = self._build_run_context(session)
             if context is None:
                 self.ingestor.commit_cursor(session, batch)
                 return
             account_snapshot, account, positions, allowed_symbols = context
+            quality_signals = self._quality_gate_signals(
+                signals=batch.signals,
+                strategies=strategies,
+                allowed_symbols=allowed_symbols,
+            )
+            if not self._prepare_batch_for_decisions(
+                session,
+                batch,
+                quality_signals=quality_signals,
+            ):
+                return
             self._process_batch_signals(
                 session=session,
                 batch=batch,
@@ -188,7 +199,11 @@ class TradingPipeline:
         self.state.last_ingest_reason = batch.no_signal_reason
 
     def _prepare_batch_for_decisions(
-        self, session: Session, batch: SignalBatch
+        self,
+        session: Session,
+        batch: SignalBatch,
+        *,
+        quality_signals: list[SignalEnvelope],
     ) -> bool:
         market_session_open = self._is_market_session_open()
         self.state.market_session_open = market_session_open
@@ -205,7 +220,7 @@ class TradingPipeline:
                 max_duplicate_ratio=settings.trading_feature_max_duplicate_ratio,
             )
             quality_report = evaluate_feature_batch_quality(
-                batch.signals, thresholds=quality_thresholds
+                quality_signals, thresholds=quality_thresholds
             )
             self.state.metrics.feature_batch_rows_total += quality_report.rows_total
             self.state.metrics.feature_null_rate = quality_report.null_rate_by_field
@@ -242,6 +257,27 @@ class TradingPipeline:
             ),
         )
         return True
+
+    def _quality_gate_signals(
+        self,
+        *,
+        signals: list[SignalEnvelope],
+        strategies: list[Strategy],
+        allowed_symbols: set[str],
+    ) -> list[SignalEnvelope]:
+        relevant_symbols: set[str] = set()
+        for strategy in strategies:
+            strategy_symbols = _coerce_strategy_symbols(strategy.universe_symbols)
+            if strategy_symbols and allowed_symbols:
+                relevant_symbols.update(strategy_symbols & allowed_symbols)
+            elif strategy_symbols:
+                relevant_symbols.update(strategy_symbols)
+            else:
+                relevant_symbols.update(allowed_symbols)
+        if not relevant_symbols:
+            return signals
+        filtered = [signal for signal in signals if signal.symbol in relevant_symbols]
+        return filtered
 
     def _build_run_context(
         self, session: Session
@@ -687,7 +723,9 @@ class TradingPipeline:
         created_at = decision_row.created_at
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=timezone.utc)
-        age_seconds = int((datetime.now(timezone.utc) - created_at).total_seconds())
+        age_seconds = int(
+            (trading_now(account_label=self.account_label) - created_at).total_seconds()
+        )
         if age_seconds < timeout_seconds:
             return False
         self.state.metrics.planned_decisions_stale_total += 1

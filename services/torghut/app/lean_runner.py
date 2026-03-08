@@ -136,6 +136,7 @@ _cache_lock = threading.Lock()
 _IDEMPOTENCY_TTL_SECONDS = 300
 _idempotency_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _backtests: dict[str, _BacktestRecord] = {}
+_SCAFFOLD_BLOCKED_STATUS = 'blocked_missing_empirical_authority'
 
 
 def _normalize_backtest_lane(value: str) -> str:
@@ -636,7 +637,6 @@ def shadow_simulate(
     slippage_bps = ((basis % 29) - 14) / 10.0
     base_price = body.intent_price or body.limit_price or max(body.qty, 1.0)
     simulated_fill = base_price * (1.0 + (slippage_bps / 10000.0))
-    parity_status = 'pass' if abs(slippage_bps) <= 3.0 else 'drift'
     _metrics.record(operation=operation, latency_ms=_latency_ms(started))
     return {
         'symbol': body.symbol,
@@ -644,11 +644,12 @@ def shadow_simulate(
         'qty': body.qty,
         'authority_mode': 'deterministic_scaffold',
         'promotion_authority_eligible': False,
+        'blocking_reason': _SCAFFOLD_BLOCKED_STATUS,
         'replay_dataset_ref': None,
         'simulated_fill_price': round(simulated_fill, 8),
         'simulated_slippage_bps': round(slippage_bps, 4),
-        'parity_status': parity_status,
-        'failure_taxonomy': None if parity_status == 'pass' else 'execution_quality_drift',
+        'parity_status': _SCAFFOLD_BLOCKED_STATUS,
+        'failure_taxonomy': 'missing_empirical_shadow_replay',
         'artifact_authority': evidence_contract_payload(
             provenance=ArtifactProvenance.SYNTHETIC_GENERATED,
             maturity=EvidenceMaturity.STUB,
@@ -676,13 +677,13 @@ def evaluate_strategy_shadow(
         f'{body.strategy_id}:{body.symbol}:{_canonical_json(body.intent)}'.encode('utf-8')
     ).hexdigest()
     score = (int(signature[:8], 16) % 1000) / 1000.0
-    parity_status = 'pass' if score >= 0.6 else 'drift'
     governance = {
         'parity_score': score,
-        'promotion_ready': score >= 0.75,
+        'promotion_ready': False,
+        'blocking_reason': _SCAFFOLD_BLOCKED_STATUS,
         'checks': {
-            'parity_minimum': score >= 0.6,
-            'governance_minimum': score >= 0.75,
+            'parity_minimum': False,
+            'governance_minimum': False,
         },
     }
     _metrics.record(operation=operation, latency_ms=_latency_ms(started))
@@ -692,7 +693,8 @@ def evaluate_strategy_shadow(
         'symbol': body.symbol,
         'authority_mode': 'deterministic_scaffold',
         'promotion_authority_eligible': False,
-        'parity_status': parity_status,
+        'blocking_reason': _SCAFFOLD_BLOCKED_STATUS,
+        'parity_status': _SCAFFOLD_BLOCKED_STATUS,
         'governance': governance,
         'artifact_authority': evidence_contract_payload(
             provenance=ArtifactProvenance.SYNTHETIC_GENERATED,
@@ -931,6 +933,7 @@ def _deterministic_backtest_result(record: _BacktestRecord) -> dict[str, Any]:
         'integration_mode': 'deterministic_scaffold',
         'authority_mode': 'deterministic_scaffold',
         'promotion_authority_eligible': False,
+        'blocking_reason': _SCAFFOLD_BLOCKED_STATUS,
         'summary': {
             'gross_pnl': gross_pnl,
             'net_pnl': round(gross_pnl * 0.93, 4),
@@ -955,7 +958,7 @@ def _deterministic_backtest_result(record: _BacktestRecord) -> dict[str, Any]:
             'slippage_model_ref': 'slippage/scaffold-v1',
         },
         'replay_hash': replay_hash,
-        'deterministic_replay_passed': True,
+        'deterministic_replay_passed': False,
         'artifact_authority': evidence_contract_payload(
             provenance=ArtifactProvenance.SYNTHETIC_GENERATED,
             maturity=EvidenceMaturity.STUB,

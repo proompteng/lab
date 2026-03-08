@@ -72,9 +72,13 @@ class TestLeanRunner(TestCase):
         fetched = client.get(f'/v1/backtests/{backtest_id}')
         self.assertEqual(fetched.status_code, 200)
         self.assertEqual(fetched.json().get('status'), 'completed')
-        self.assertTrue(fetched.json().get('result', {}).get('deterministic_replay_passed'))
+        self.assertFalse(fetched.json().get('result', {}).get('deterministic_replay_passed'))
         self.assertEqual(fetched.json().get('result', {}).get('authority_mode'), 'deterministic_scaffold')
         self.assertFalse(fetched.json().get('result', {}).get('promotion_authority_eligible'))
+        self.assertEqual(
+            fetched.json().get('result', {}).get('blocking_reason'),
+            'blocked_missing_empirical_authority',
+        )
 
     def test_backtest_submit_maps_proxy_failures_to_502(self) -> None:
         client = TestClient(lean_runner.app, raise_server_exceptions=False)
@@ -116,5 +120,19 @@ class TestLeanRunner(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertIn(payload.get('parity_status'), {'pass', 'drift'})
+        self.assertEqual(payload.get('parity_status'), 'blocked_missing_empirical_authority')
         self.assertIn('governance', payload)
+        self.assertFalse(payload.get('governance', {}).get('promotion_ready'))
+
+    def test_shadow_simulate_endpoint_is_fail_closed_without_empirical_replay(self) -> None:
+        client = TestClient(lean_runner.app)
+        response = client.post(
+            '/v1/shadow/simulate',
+            json={'symbol': 'BTC/USD', 'side': 'buy', 'qty': 1, 'intent_price': 100.0},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload.get('parity_status'), 'blocked_missing_empirical_authority')
+        self.assertEqual(payload.get('failure_taxonomy'), 'missing_empirical_shadow_replay')
+        self.assertFalse(payload.get('promotion_authority_eligible'))

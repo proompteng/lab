@@ -79,6 +79,8 @@ def _parser() -> argparse.ArgumentParser:
     runtime.add_argument('--forecast-service', required=True)
     runtime.add_argument('--window-start', required=True)
     runtime.add_argument('--window-end', required=True)
+    runtime.add_argument('--signal-table', required=True)
+    runtime.add_argument('--price-table', required=True)
     runtime.add_argument('--runtime-timeout-seconds', type=int, default=180)
     runtime.add_argument('--runtime-poll-seconds', type=int, default=5)
 

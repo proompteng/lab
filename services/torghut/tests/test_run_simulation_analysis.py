@@ -52,6 +52,10 @@ class TestRunSimulationAnalysis(TestCase):
                     '2026-03-06T14:30:00Z',
                     '--window-end',
                     '2026-03-06T15:30:00Z',
+                    '--signal-table',
+                    'torghut_sim_2026_03_06_open_30m.ta_signals',
+                    '--price-table',
+                    'torghut_sim_2026_03_06_open_30m.ta_microbars',
                     '--json',
                 ],
             ),
@@ -90,6 +94,10 @@ class TestRunSimulationAnalysis(TestCase):
                     '2026-03-06T14:30:00Z',
                     '--window-end',
                     '2026-03-06T15:30:00Z',
+                    '--signal-table',
+                    'torghut_sim_2026_03_06_open_30m.ta_signals',
+                    '--price-table',
+                    'torghut_sim_2026_03_06_open_30m.ta_microbars',
                     '--runtime-timeout-seconds',
                     '30',
                     '--runtime-poll-seconds',
@@ -113,6 +121,36 @@ class TestRunSimulationAnalysis(TestCase):
         sleep_mock.assert_called_once_with(1)
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload['runtime_state'], 'ready')
+
+    def test_runtime_ready_requires_signal_and_price_tables(self) -> None:
+        with patch(
+            'sys.argv',
+            [
+                'run_simulation_analysis.py',
+                'runtime-ready',
+                '--run-id',
+                'sim-1',
+                '--dataset-id',
+                'dataset-a',
+                '--namespace',
+                'torghut',
+                '--torghut-service',
+                'torghut-sim',
+                '--ta-deployment',
+                'torghut-ta-sim',
+                '--forecast-service',
+                'torghut-forecast-sim',
+                '--window-start',
+                '2026-03-06T14:30:00Z',
+                '--window-end',
+                '2026-03-06T15:30:00Z',
+                '--json',
+            ],
+        ):
+            with self.assertRaises(SystemExit) as ctx:
+                main()
+
+        self.assertEqual(ctx.exception.code, 2)
 
     def test_activity_exits_nonzero_when_report_is_degraded(self) -> None:
         stdout = io.StringIO()

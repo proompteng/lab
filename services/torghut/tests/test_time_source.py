@@ -70,3 +70,30 @@ class TestTradingTimeSource(TestCase):
         self.assertEqual(first_snapshot.now, cursor_by_account["paper-a"])
         self.assertEqual(second_snapshot.now, cursor_by_account["paper-b"])
         self.assertEqual(repeated_first_snapshot.now, cursor_by_account["paper-a"])
+
+    def test_baseline_clickhouse_cursor_is_ignored_in_simulation_mode(self) -> None:
+        config.settings.trading_simulation_enabled = True
+
+        class _Row:
+            cursor_at = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+        class _Result:
+            @staticmethod
+            def scalar_one_or_none() -> _Row:
+                return _Row()
+
+        class _Session:
+            def __enter__(self) -> _Session:
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                return None
+
+            @staticmethod
+            def execute(_stmt) -> _Result:
+                return _Result()
+
+        with patch('app.trading.time_source.SessionLocal', return_value=_Session()):
+            cursor_at = TradingTimeSource._load_clickhouse_cursor(account_label='paper-a')
+
+        self.assertIsNone(cursor_at)

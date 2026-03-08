@@ -338,6 +338,11 @@ class Settings(BaseSettings):
     trading_signal_schema: Literal["auto", "envelope", "flat"] = Field(
         default="auto", alias="TRADING_SIGNAL_SCHEMA"
     )
+    trading_signal_allowed_sources_raw: Optional[str] = Field(
+        default=None,
+        alias="TRADING_SIGNAL_ALLOWED_SOURCES",
+        description="Comma-separated allowlist of signal envelope sources to ingest (for example ws,autonomy_gate_report).",
+    )
     trading_signal_batch_size: int = Field(
         default=500, alias="TRADING_SIGNAL_BATCH_SIZE"
     )
@@ -1886,6 +1891,7 @@ class Settings(BaseSettings):
             "trading_execution_adapter_symbols_raw",
             "trading_forecast_service_allowed_model_families_raw",
             "trading_lean_live_canary_symbols_raw",
+            "trading_signal_allowed_sources_raw",
             "trading_signal_staleness_alert_critical_reasons_raw",
             "trading_signal_market_closed_expected_reasons_raw",
             "trading_drift_trigger_retrain_reason_codes_raw",

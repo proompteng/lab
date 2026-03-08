@@ -111,6 +111,17 @@ ADVISOR_FALLBACK_SLO_REQUIRED_SUMMARY_FIELDS: tuple[str, ...] = (
     "deterministic_policy_bypass_detected",
     "slo_pass",
 )
+DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS = "blocked_missing_empirical_authority"
+
+
+def _deterministic_scaffold_authority(note: str) -> dict[str, object]:
+    return evidence_contract_payload(
+        provenance=ArtifactProvenance.SYNTHETIC_GENERATED,
+        maturity=EvidenceMaturity.STUB,
+        authoritative=False,
+        placeholder=True,
+        notes=note,
+    )
 
 
 def _deterministic_ratio(seed: str) -> float:
@@ -154,11 +165,12 @@ def _build_benchmark_run(
         "policy_violations": {
             "count": int(violation_ratio * 5),
             "critical_count": int(violation_ratio * 2),
-            "deterministic_gate_compatible": True,
+            "deterministic_gate_compatible": False,
             "rate": 0.01 + (violation_ratio * 0.03),
             "baseline_rate": 0.01 + (baseline_violation_ratio * 0.03),
             "fallback_rate": 0.004 + (violation_ratio * 0.002),
             "timeout_rate": 0.002 + (baseline_violation_ratio * 0.0015),
+            "blocking_reason": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
         },
         "run_hash": run_hash,
     }
@@ -180,24 +192,26 @@ def _build_benchmark_scorecards(
     decision_output = 0.996 + (decision_ratio * 0.003)
     baseline_decision_output = 0.996 + (baseline_decision_ratio * 0.003)
     decision_card = {
-        "status": "pass",
+        "status": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
         "advisory_output_rate": decision_output,
         "advisory_output_rate_baseline": baseline_decision_output,
         "policy_violation_rate": 0.008 + (decision_ratio * 0.012),
         "policy_violation_rate_baseline": 0.006 + (baseline_decision_ratio * 0.012),
-        "deterministic_gate_compatible": True,
+        "deterministic_gate_compatible": False,
         "decision_count": 128 + int(decision_ratio * 24),
+        "blocking_reason": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
     }
     reasoning_card = {
-        "status": "pass",
+        "status": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
         "policy_violation_rate": 0.008 + (reasoning_ratio * 0.012),
         "policy_violation_rate_baseline": 0.007 + (baseline_reasoning_ratio * 0.012),
         "advisory_output_rate": 0.995 + (reasoning_ratio * 0.003),
         "advisory_output_rate_baseline": 0.995 + (baseline_reasoning_ratio * 0.003),
-        "deterministic_gate_compatible": True,
+        "deterministic_gate_compatible": False,
+        "blocking_reason": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
     }
     forecast_card = {
-        "status": "pass",
+        "status": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
         "confidence_calibration_error": 0.02 + (forecast_ratio * 0.03),
         "confidence_calibration_error_baseline": 0.018 + (baseline_forecast_ratio * 0.03),
         "risk_veto_alignment": 0.91 + (forecast_ratio * 0.08),
@@ -206,7 +220,8 @@ def _build_benchmark_scorecards(
         "policy_violation_rate_baseline": 0.007 + (baseline_forecast_ratio * 0.012),
         "advisory_output_rate": 0.995 + (forecast_ratio * 0.003),
         "advisory_output_rate_baseline": 0.995 + (baseline_forecast_ratio * 0.003),
-        "deterministic_gate_compatible": True,
+        "deterministic_gate_compatible": False,
+        "blocking_reason": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
     }
     return (
         dict(decision_card),
@@ -288,10 +303,6 @@ def build_benchmark_parity_report(
         baseline_candidate_id=baseline_candidate_id,
         now=now,
     )
-    scorecards_pass = all(
-        str(item.get("status", "")).strip() == "pass"
-        for item in scorecards.values()
-    )
     run_compatibility: list[bool] = []
     for run in benchmark_runs:
         policy_violations = run.get("policy_violations")
@@ -302,7 +313,6 @@ def build_benchmark_parity_report(
             )
         else:
             run_compatibility.append(False)
-    runs_det = all(run_compatibility)
     report: dict[str, object] = {
         "schema_version": BENCHMARK_PARITY_SCHEMA_VERSION,
         "candidate_id": candidate_id,
@@ -318,19 +328,17 @@ def build_benchmark_parity_report(
             "required_run_fields": list(BENCHMARK_PARITY_REQUIRED_RUN_FIELDS),
             "hash_algorithm": "sha256",
             "generation_mode": "deterministic_benchmark_parity_v1",
+            "authority_mode": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
         },
         "benchmark_runs": benchmark_runs,
         "scorecards": scorecards,
-        "overall_parity_status": "pass" if scorecards_pass and runs_det else "degrade",
+        "overall_parity_status": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
         "degradation_summary": degradation_summary,
+        "blocking_reason": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
         "artifact_hash": "",
         "created_at_utc": now.isoformat(),
-        "artifact_authority": evidence_contract_payload(
-            provenance=ArtifactProvenance.SYNTHETIC_GENERATED,
-            maturity=EvidenceMaturity.STUB,
-            authoritative=False,
-            placeholder=True,
-            notes="Benchmark parity report is currently deterministic scaffold output.",
+        "artifact_authority": _deterministic_scaffold_authority(
+            "Benchmark parity report is currently deterministic scaffold output.",
         ),
     }
     report["artifact_hash"] = _benchmark_report_hash(report)
@@ -367,38 +375,44 @@ def _build_foundation_router_slice_metrics(
     return {
         "by_symbol": {
             "AAPL": {
-                "status": "pass",
+                "status": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
                 "calibration_score": 0.91 + (symbol_ratio * 0.07),
                 "fallback_rate": 0.004 + (symbol_ratio * 0.003),
+                "blocking_reason": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
             },
             "MSFT": {
-                "status": "pass",
+                "status": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
                 "calibration_score": 0.90 + (symbol_ratio * 0.07),
                 "fallback_rate": 0.004 + (symbol_ratio * 0.003),
+                "blocking_reason": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
             },
         },
         "by_horizon": {
             "1m": {
-                "status": "pass",
+                "status": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
                 "calibration_score": 0.90 + (horizon_ratio * 0.07),
                 "fallback_rate": 0.004 + (horizon_ratio * 0.003),
+                "blocking_reason": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
             },
             "5m": {
-                "status": "pass",
+                "status": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
                 "calibration_score": 0.89 + (horizon_ratio * 0.08),
                 "fallback_rate": 0.004 + (horizon_ratio * 0.003),
+                "blocking_reason": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
             },
         },
         "by_regime": {
             "trend": {
-                "status": "pass",
+                "status": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
                 "calibration_score": 0.90 + (regime_ratio * 0.08),
                 "fallback_rate": 0.004 + (regime_ratio * 0.003),
+                "blocking_reason": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
             },
             "range": {
-                "status": "pass",
+                "status": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
                 "calibration_score": 0.89 + (regime_ratio * 0.08),
                 "fallback_rate": 0.004 + (regime_ratio * 0.003),
+                "blocking_reason": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
             },
         },
     }
@@ -426,6 +440,7 @@ def build_foundation_router_parity_report(
             "required_slice_metrics": list(FOUNDATION_ROUTER_PARITY_REQUIRED_SLICE_METRICS),
             "hash_algorithm": "sha256",
             "generation_mode": "deterministic_foundation_router_parity_v1",
+            "authority_mode": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
         },
         "adapters": list(FOUNDATION_ROUTER_PARITY_REQUIRED_ADAPTERS),
         "slice_metrics": _build_foundation_router_slice_metrics(seed=seed),
@@ -461,15 +476,12 @@ def build_foundation_router_parity_report(
                 "timesfm": 0.01 + (drift_ratio * 0.04),
             },
         },
-        "overall_status": "pass",
+        "overall_status": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
+        "blocking_reason": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
         "created_at_utc": now.isoformat(),
         "artifact_hash": "",
-        "artifact_authority": evidence_contract_payload(
-            provenance=ArtifactProvenance.SYNTHETIC_GENERATED,
-            maturity=EvidenceMaturity.STUB,
-            authoritative=False,
-            placeholder=True,
-            notes="Foundation router parity report is currently deterministic scaffold output.",
+        "artifact_authority": _deterministic_scaffold_authority(
+            "Foundation router parity report is currently deterministic scaffold output.",
         ),
     }
     report["artifact_hash"] = _foundation_router_report_hash(report)
@@ -521,44 +533,47 @@ def build_deeplob_bdlob_report(
             "required_summary_fields": list(DEEPLOB_BDLOB_REQUIRED_SUMMARY_FIELDS),
             "hash_algorithm": "sha256",
             "generation_mode": "deterministic_deeplob_bdlob_contract_v1",
+            "authority_mode": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
         },
         "supporting_artifacts": list(DEEPLOB_BDLOB_REQUIRED_SUPPORTING_ARTIFACTS),
         "feature_quality_summary": {
             "pass_rate": 0.992 + (feature_ratio * 0.007),
             "max_snapshot_staleness_ms": 42 + int(feature_ratio * 30),
             "missing_level_rate": 0.001 + (feature_ratio * 0.002),
-            "status": "pass",
+            "status": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
+            "blocking_reason": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
         },
         "prediction_quality_summary": {
             "score": 0.90 + (prediction_ratio * 0.08),
             "uncertainty_band_coverage": 0.90 + (prediction_ratio * 0.08),
-            "status": "pass",
+            "status": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
+            "blocking_reason": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
         },
         "execution_impact_summary": {
             "slippage_divergence_bps": 0.4 + (impact_ratio * 0.5),
-            "deterministic_gate_compatible": True,
-            "status": "pass",
+            "deterministic_gate_compatible": False,
+            "status": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
+            "blocking_reason": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
         },
         "cost_adjusted_outcomes": {
             "edge_bps": 1.2 + (edge_ratio * 0.8),
             "baseline_edge_bps": 0.9 + (edge_ratio * 0.6),
-            "status": "pass",
+            "status": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
+            "blocking_reason": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
         },
         "fallback_summary": {
             "reliability": 0.992 + (fallback_ratio * 0.007),
             "fallback_rate": 0.002 + (fallback_ratio * 0.004),
-            "slo_pass": True,
-            "status": "pass",
+            "slo_pass": False,
+            "status": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
+            "blocking_reason": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
         },
-        "overall_status": "pass",
+        "overall_status": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
+        "blocking_reason": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
         "created_at_utc": now.isoformat(),
         "artifact_hash": "",
-        "artifact_authority": evidence_contract_payload(
-            provenance=ArtifactProvenance.SYNTHETIC_GENERATED,
-            maturity=EvidenceMaturity.STUB,
-            authoritative=False,
-            placeholder=True,
-            notes="DeepLOB/BDLOB report is currently deterministic scaffold output.",
+        "artifact_authority": _deterministic_scaffold_authority(
+            "DeepLOB/BDLOB report is currently deterministic scaffold output.",
         ),
     }
     report["artifact_hash"] = _deeplob_bdlob_report_hash(report)
@@ -618,6 +633,7 @@ def build_advisor_fallback_slo_report(
             ),
             "hash_algorithm": "sha256",
             "generation_mode": "deterministic_advisor_fallback_slo_v1",
+            "authority_mode": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
         },
         "evaluated_samples": evaluated_samples,
         "fallback_reason_counts": {
@@ -632,16 +648,16 @@ def build_advisor_fallback_slo_report(
             "safe_fallback_rate": safe_fallback_rate,
             "fallback_event_total": fallback_event_total,
             "deterministic_policy_bypass_detected": False,
-            "slo_pass": True,
-            "status": "pass",
+            "slo_pass": False,
+            "status": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
+            "blocking_reason": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
         },
-        "overall_status": "pass",
+        "overall_status": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
+        "blocking_reason": DETERMINISTIC_SCAFFOLD_BLOCKED_STATUS,
         "created_at_utc": now.isoformat(),
         "artifact_hash": "",
-        "artifact_authority": evidence_contract_payload(
-            provenance=ArtifactProvenance.HISTORICAL_MARKET_REPLAY,
-            maturity=EvidenceMaturity.UNCALIBRATED,
-            calibration_summary={"status": "pending_calibration"},
+        "artifact_authority": _deterministic_scaffold_authority(
+            "Advisor fallback SLO report is currently deterministic scaffold output.",
         ),
     }
     report["artifact_hash"] = _advisor_fallback_slo_report_hash(report)

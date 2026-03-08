@@ -27,6 +27,10 @@ from app.trading.empirical_jobs import (
     promote_janus_payload_to_empirical,
     upsert_empirical_job_run,
 )
+from app.trading.empirical_manifest import (
+    normalize_empirical_promotion_manifest,
+    validate_empirical_promotion_manifest,
+)
 from app.whitepapers.workflow import CephS3Client
 
 DOC29_TRUTHFULNESS_GATE = 'promotion_truthfulness_firewall'
@@ -205,7 +209,15 @@ def _build_janus_summary(
 
 def main() -> int:
     args = _parse_args()
-    manifest = _load_manifest(Path(args.manifest))
+    manifest = normalize_empirical_promotion_manifest(
+        _load_manifest(Path(args.manifest))
+    )
+    manifest_errors = validate_empirical_promotion_manifest(manifest)
+    if manifest_errors:
+        raise RuntimeError(
+            "invalid_empirical_promotion_manifest:"
+            + ",".join(sorted(set(manifest_errors)))
+        )
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
