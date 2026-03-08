@@ -187,6 +187,48 @@ export const buildKubectlWaitForCrdsArgs = (timeout = '120s') => [
   agentsCrdsPath,
 ]
 
+const healthProbePort = '8080'
+
+export const buildPodHealthProbeArgs = (namespace: string, pod: string) => {
+  const script = [
+    `const url = 'http://127.0.0.1:${healthProbePort}/health'`,
+    'const main = async () => {',
+    '  const response = await fetch(url)',
+    '  const body = await response.text()',
+    '  console.log(`status=${response.status}`)',
+    '  console.log(body)',
+    '}',
+    'main().catch((error) => {',
+    '  console.error(error instanceof Error ? (error.stack ?? error.message) : String(error))',
+    '  process.exit(1)',
+    '})',
+  ].join('; ')
+  const quotedScript = JSON.stringify(script)
+  const shellScript = [
+    'if command -v node >/dev/null 2>&1; then',
+    `  node -e ${quotedScript}`,
+    'elif command -v bun >/dev/null 2>&1; then',
+    `  bun -e ${quotedScript}`,
+    'else',
+    '  echo "node-or-bun-unavailable"',
+    '  exit 1',
+    'fi',
+  ].join(' ')
+
+  return ['kubectl', '-n', namespace, 'exec', pod, '--', 'sh', '-lc', shellScript]
+}
+
+const dumpPodHealthEndpoint = async (namespace: string, pod: string) => {
+  const result = await execCapture(buildPodHealthProbeArgs(namespace, pod))
+  const details = formatCommandResult(result)
+  if (!details) {
+    console.error(`[diagnostics] /health probe for pod ${pod} returned no output`)
+    return
+  }
+
+  console.error(`\n[diagnostics] /health probe for pod=${pod}\n${details}`)
+}
+
 const waitForKubectlApi = async (timeoutMs: number) => {
   const start = Date.now()
   let lastError = ''
@@ -285,6 +327,7 @@ const dumpNamespaceDiagnostics = async (namespace: string, releaseName: string) 
   for (const pod of pods) {
     await runInherit(['kubectl', '-n', namespace, 'describe', 'pod', pod])
     await runInherit(['kubectl', '-n', namespace, 'logs', pod, '--all-containers=true', '--tail=200'])
+    await dumpPodHealthEndpoint(namespace, pod)
   }
 
   await runInherit(['kubectl', '-n', namespace, 'get', 'events', '--sort-by=.metadata.creationTimestamp'])

@@ -128,18 +128,23 @@ jobs:
         env:
           IMAGE_NAME: ${{ steps.meta.outputs.control_plane_image }}
           IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+          CONTRACT_DIGEST: ${{ steps.meta.outputs.contract_control_plane_digest }}
         run: |
           set -euo pipefail
 
-          DIGEST="$(
-            bun --eval "
-              import { inspectImageDigest } from './packages/scripts/src/shared/docker.ts'
-              const image = process.env.IMAGE_NAME + ':' + process.env.IMAGE_TAG
-              const repoDigest = inspectImageDigest(image)
-              const digest = repoDigest.includes('@') ? repoDigest.split('@')[1] : repoDigest
-              console.log(digest)
-            "
-          )"
+          if [ -n "${CONTRACT_DIGEST}" ]; then
+            DIGEST="${CONTRACT_DIGEST}"
+          else
+            DIGEST="$(
+              bun --eval "
+                import { inspectImageDigest } from './packages/scripts/src/shared/docker.ts'
+                const image = process.env.IMAGE_NAME + ':' + process.env.IMAGE_TAG
+                const repoDigest = inspectImageDigest(image)
+                const digest = repoDigest.includes('@') ? repoDigest.split('@')[1] : repoDigest
+                console.log(digest)
+              "
+            )"
+          fi
 
           DIGEST="${DIGEST#*@}"
           if [ -z "${DIGEST}" ]; then

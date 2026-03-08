@@ -5,7 +5,7 @@ import { classifyJangarImageMode } from '../resolve-jangar-image-mode'
 describe('classifyJangarImageMode', () => {
   it('reuses the published image for chart-only changes', () => {
     expect(
-      classifyJangarImageMode(['charts/agents/values-ci.yaml', 'charts/agents/templates/deployment.yaml']),
+      classifyJangarImageMode(['scripts/agents/values-ci.yaml', 'charts/agents/templates/deployment.yaml']),
     ).toEqual({
       mode: 'reuse-published-image',
       needsLocalJangarImage: false,
@@ -19,7 +19,7 @@ describe('classifyJangarImageMode', () => {
         '.github/workflows/agents-ci.yml',
         'packages/scripts/src/agents/resolve-jangar-image-mode.ts',
         'packages/scripts/src/agents/__tests__/resolve-jangar-image-mode.test.ts',
-        'charts/agents/values-ci.yaml',
+        'scripts/agents/values-ci.yaml',
       ]),
     ).toEqual({
       mode: 'reuse-published-image',

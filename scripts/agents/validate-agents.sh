@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CHART_DIR="${ROOT_DIR}/charts/agents"
 ARGOCD_AGENTS_DIR="${ROOT_DIR}/argocd/applications/agents"
+CI_VALUES_FILE="${ROOT_DIR}/scripts/agents/values-ci.yaml"
 # Backward-compatible: older callers used HELM_KUBE_VERSION.
 KUBE_VERSION_FOR_HELM="${KUBE_VERSION_FOR_HELM:-${HELM_KUBE_VERSION:-1.35.0}}"
 
@@ -56,7 +57,7 @@ render_and_check() {
 
 render_and_check "${CHART_DIR}/values-dev.yaml"
 render_and_check "${CHART_DIR}/values-local.yaml"
-render_and_check "${CHART_DIR}/values-ci.yaml"
+render_and_check "${CI_VALUES_FILE}"
 render_and_check "${CHART_DIR}/values-prod.yaml"
 
 render_kustomize() {

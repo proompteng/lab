@@ -32,7 +32,7 @@ CLUSTER_NAME="${CLUSTER_NAME:-agents-ci-local-$(date +%s)}"
 KUBECONFIG_PATH="${KUBECONFIG_PATH:-${ROOT_DIR}/.tmp/agents-ci-local/kubeconfig-${CLUSTER_NAME}}"
 NAMESPACE="${AGENTS_NAMESPACE:-agents-ci}"
 RELEASE_NAME="${AGENTS_RELEASE_NAME:-agents-ci}"
-VALUES_FILE="${AGENTS_VALUES_FILE:-charts/agents/values-ci.yaml}"
+VALUES_FILE="${AGENTS_VALUES_FILE:-scripts/agents/values-ci.yaml}"
 SKIP_CLEANUP="${SKIP_CLEANUP:-0}"
 
 mkdir -p "$(dirname "${KUBECONFIG_PATH}")"

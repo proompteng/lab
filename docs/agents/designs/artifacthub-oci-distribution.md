@@ -14,9 +14,10 @@ Define how the Agents Helm chart is packaged, published as an OCI artifact, and 
 - Package metadata: `charts/agents/artifacthub-pkg.yml` is versioned alongside the chart.
 - Repository metadata: `artifacthub-repo.yml` exists at repo root.
 - CI publishing: `.github/workflows/agents-sync.yml` filters `charts/agents` into the `proompteng/charts` repo,
-  packages the chart, and pushes it to `oci://ghcr.io/proompteng/charts`.
+  then calls `packages/scripts/src/agents/publish-chart.ts` to package the chart and push it to
+  `oci://ghcr.io/proompteng/charts`.
 - Manual publishing: `packages/scripts/src/agents/publish-chart.ts` packages and pushes the chart, verifying that
-  `artifacthub-pkg.yml` and `Chart.yaml` versions match.
+  `artifacthub-pkg.yml` and `Chart.yaml` versions match and that OCI contents remain immutable per chart version.
 - Cluster: not applicable; this is a packaging and distribution workflow.
 
 ## Distribution Model
@@ -49,7 +50,8 @@ Define how the Agents Helm chart is packaged, published as an OCI artifact, and 
 
 ## Risks and Mitigations
 
-- Version drift: `publish-chart.ts` and CI enforce version parity between `Chart.yaml` and `artifacthub-pkg.yml`.
+- Version drift: CI and manual publishing share `publish-chart.ts`, which enforces version parity between
+  `Chart.yaml` and `artifacthub-pkg.yml`.
 - Registry auth failures: use scoped tokens (`AGENTS_SPLIT_TOKEN`) in CI.
 - Split-repo drift: CI always re-splits from `main` using `git filter-repo`.
 

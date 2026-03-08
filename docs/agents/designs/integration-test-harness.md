@@ -30,7 +30,7 @@ High-scale changes need reliable integration testing.
 
 ## Chart Changes
 
-- Add values-ci.yaml enhancements for test harness.
+- Keep CI-only Helm overrides in `scripts/agents/values-ci.yaml` so smoke-test tuning does not force a chart release.
 
 ## Controller Changes
 

@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'charts/agents/**'
+      - 'packages/scripts/src/agents/publish-chart.ts'
       - '.github/workflows/agents-sync.yml'
   workflow_dispatch: {}
 
@@ -21,6 +22,9 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
 
       - name: Install git-filter-repo
         run: python3 -m pip install --no-cache-dir git-filter-repo
@@ -59,33 +63,6 @@ jobs:
 
           git push --force-with-lease=main -u origin HEAD:main
 
-          chart_version="$(awk '/^version:/ {print $2; exit}' charts/agents/Chart.yaml)"
-          package_dir="${tmpdir}/chart-packages"
-          existing_dir="${tmpdir}/existing-packages"
-          mkdir -p "${package_dir}" "${existing_dir}"
-
-          helm package charts/agents --destination "${package_dir}"
-          package_path="${package_dir}/agents-${chart_version}.tgz"
-          if [ ! -f "${package_path}" ]; then
-            echo "Expected packaged chart at ${package_path}" >&2
-            exit 1
-          fi
-
           echo "${AGENTS_SPLIT_TOKEN}" | helm registry login ghcr.io -u proompteng --password-stdin
-          if helm pull oci://ghcr.io/proompteng/charts/agents --version "${chart_version}" --destination "${existing_dir}" >/dev/null 2>&1; then
-            existing_path="${existing_dir}/agents-${chart_version}.tgz"
-            compare_new_dir="${tmpdir}/compare-new"
-            compare_existing_dir="${tmpdir}/compare-existing"
-            mkdir -p "${compare_new_dir}" "${compare_existing_dir}"
-            tar -xzf "${package_path}" -C "${compare_new_dir}"
-            tar -xzf "${existing_path}" -C "${compare_existing_dir}"
-
-            if diff -qr "${compare_new_dir}" "${compare_existing_dir}" >/dev/null; then
-              echo "Chart ${chart_version} already published and matches packaged contents; skipping helm push."
-            else
-              echo "Chart ${chart_version} already exists in OCI but differs from current contents. Bump charts/agents/Chart.yaml version." >&2
-              exit 1
-            fi
-          else
-            helm push "${package_path}" oci://ghcr.io/proompteng/charts
-          fi
+          bun "${GITHUB_WORKSPACE}/packages/scripts/src/agents/publish-chart.ts" \
+            --chart-dir "${tmpdir}/agents-split/charts/agents"
