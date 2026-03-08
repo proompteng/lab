@@ -1,7 +1,7 @@
 import { loadTemporalConfig } from '@proompteng/temporal-bun-sdk'
 import { sql } from 'kysely'
 
-import { getAgentsControllerHealth } from '~/server/agents-controller'
+import { assessAgentRunIngestion, getAgentsControllerHealth } from '~/server/agents-controller'
 import { getDb } from '~/server/db'
 import { getRegisteredMigrationNames } from '~/server/kysely-migrations'
 import { getLeaderElectionStatus } from '~/server/leader-election'
@@ -32,7 +32,7 @@ const DEFAULT_WORKFLOWS_SWARMS = ['jangar-control-plane']
 const DEFAULT_WORKFLOWS_NAMESPACES = ['agents']
 const DEFAULT_WORKFLOWS_WARNING_BACKOFF_THRESHOLD = 2
 const DEFAULT_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD = 3
-const DEFAULT_ROLLOUT_DEPLOYMENTS = ['agents']
+const DEFAULT_ROLLOUT_DEPLOYMENTS = ['agents', 'agents-controllers']
 const MAX_TOP_FAILURE_REASONS = 5
 const MAX_WORKFLOW_COLLECTION_ERROR_SAMPLE = 3
 const MIN_WINDOW_MINUTES = 1
@@ -162,8 +162,8 @@ export type AgentRunIngestionStatus = {
   namespace: string
   status: 'healthy' | 'degraded' | 'unknown'
   message: string
-  last_watch_event_at: string
-  last_resync_at: string
+  last_watch_event_at: string | null
+  last_resync_at: string | null
   untouched_run_count: number
   oldest_untouched_age_seconds: number | null
 }
@@ -298,31 +298,16 @@ const buildAgentRunIngestionStatus = (
   namespace: string,
   health: ReturnType<typeof getAgentsControllerHealth>,
 ): AgentRunIngestionStatus => {
-  const entry = (health.agentRunIngestion ?? []).find((item) => item.namespace === namespace) ?? {
-    namespace,
-    lastWatchEventAt: null,
-    lastResyncAt: null,
-    untouchedRunCount: 0,
-    oldestUntouchedAgeSeconds: null,
-  }
-  const warnAfterSeconds = parseOptionalNumber(process.env.JANGAR_AGENTS_CONTROLLER_UNTOUCHED_WARN_AFTER_SECONDS) ?? 120
-  const isDegraded =
-    entry.untouchedRunCount > 0 &&
-    entry.oldestUntouchedAgeSeconds !== null &&
-    entry.oldestUntouchedAgeSeconds >= warnAfterSeconds
+  const assessment = assessAgentRunIngestion(namespace, health)
 
   return {
     namespace,
-    status: isDegraded ? 'degraded' : health.started ? 'healthy' : 'unknown',
-    message: isDegraded
-      ? `untouched AgentRuns detected for ${entry.oldestUntouchedAgeSeconds}s`
-      : health.started
-        ? 'AgentRun ingestion healthy'
-        : 'agents controller not started',
-    last_watch_event_at: entry.lastWatchEventAt ?? '',
-    last_resync_at: entry.lastResyncAt ?? '',
-    untouched_run_count: entry.untouchedRunCount,
-    oldest_untouched_age_seconds: entry.oldestUntouchedAgeSeconds,
+    status: assessment.status,
+    message: assessment.message,
+    last_watch_event_at: assessment.lastWatchEventAt,
+    last_resync_at: assessment.lastResyncAt,
+    untouched_run_count: assessment.untouchedRunCount,
+    oldest_untouched_age_seconds: assessment.oldestUntouchedAgeSeconds,
   }
 }
 

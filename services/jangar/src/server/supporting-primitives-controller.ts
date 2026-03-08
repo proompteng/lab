@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 
+import { assessAgentRunIngestion } from '~/server/agents-controller'
 import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
 import { startResourceWatch } from '~/server/kube-watch'
 import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
@@ -2339,6 +2340,17 @@ const reconcileSwarm = async (
 
   let requirementTemplate: Record<string, unknown> | null | undefined
   let requirementTemplateError: string | null = null
+  const requirementDispatchNamespaces = new Set<string>()
+  if (implementStageConfig?.targetRef?.namespace) {
+    requirementDispatchNamespaces.add(implementStageConfig.targetRef.namespace)
+  } else {
+    requirementDispatchNamespaces.add(swarmNamespace)
+  }
+  const requirementDispatchAssessments = Array.from(requirementDispatchNamespaces).map((targetNamespace) =>
+    assessAgentRunIngestion(targetNamespace),
+  )
+  const requirementDispatchPauseAssessment =
+    requirementDispatchAssessments.find((assessment) => assessment.dispatchPaused) ?? null
   const requirementStats = {
     pending: 0,
     dispatched: 0,
@@ -2346,6 +2358,9 @@ const reconcileSwarm = async (
     completed: 0,
     invalidChannel: 0,
     duplicates: countIdempotencyDuplicates(implementRuns),
+    paused: requirementDispatchPauseAssessment !== null,
+    pauseReason: requirementDispatchPauseAssessment ? 'AgentRunIngestionDegraded' : null,
+    pauseMessage: requirementDispatchPauseAssessment?.message ?? null,
   }
 
   for (const signal of requirementSignals) {
@@ -2382,6 +2397,10 @@ const reconcileSwarm = async (
       continue
     }
     if (freezeActive) continue
+    if (requirementDispatchPauseAssessment) {
+      requirementStats.blocked += 1
+      continue
+    }
     if (requirementStats.dispatched >= SWARM_REQUIREMENT_MAX_DISPATCH_PER_RECONCILE) continue
     if (!implementStageConfig?.targetRef) {
       requirementStats.blocked += 1
@@ -2684,6 +2703,9 @@ const reconcileSwarm = async (
       completed: requirementStats.completed,
       invalidChannel: requirementStats.invalidChannel,
       duplicates: requirementStats.duplicates,
+      paused: requirementStats.paused,
+      ...(requirementStats.pauseReason ? { pauseReason: requirementStats.pauseReason } : {}),
+      ...(requirementStats.pauseMessage ? { pauseMessage: requirementStats.pauseMessage } : {}),
       ...(requirementTemplateError ? { error: requirementTemplateError } : {}),
     },
   }
@@ -2712,6 +2734,7 @@ const reconcileSwarm = async (
     requirementStats.invalidChannel === 0 &&
     requirementStats.blocked === 0 &&
     requirementStats.duplicates === 0 &&
+    !requirementStats.paused &&
     !requirementTemplateError
   const readyActive = unhealthyStages.length === 0 && requirementsHealthy
   if (freezeActive) {
@@ -2785,19 +2808,23 @@ const reconcileSwarm = async (
     reason:
       verifyFailures >= 2
         ? 'VerifyFailed'
-        : !requirementsHealthy
-          ? 'RequirementsBridgeDegraded'
-          : unhealthyStages.length > 0
-            ? 'StageHealthDegraded'
-            : 'Healthy',
+        : requirementStats.paused
+          ? 'AgentRunIngestionDegraded'
+          : !requirementsHealthy
+            ? 'RequirementsBridgeDegraded'
+            : unhealthyStages.length > 0
+              ? 'StageHealthDegraded'
+              : 'Healthy',
     message:
       verifyFailures >= 2
         ? `verify stage has ${verifyFailures} consecutive failures`
-        : !requirementsHealthy
-          ? 'requirement bridge is degraded'
-          : unhealthyStages.length > 0
-            ? `unhealthy stages: ${unhealthyStages.join(', ')}`
-            : 'all stage and requirement health checks passing',
+        : requirementStats.paused
+          ? (requirementStats.pauseMessage ?? 'requirement bridge paused because AgentRun ingestion is degraded')
+          : !requirementsHealthy
+            ? 'requirement bridge is degraded'
+            : unhealthyStages.length > 0
+              ? `unhealthy stages: ${unhealthyStages.join(', ')}`
+              : 'all stage and requirement health checks passing',
   })
 
   if (requirementStats.invalidChannel > 0) {
@@ -2806,6 +2833,13 @@ const reconcileSwarm = async (
       status: 'False',
       reason: 'InvalidRequirementChannel',
       message: `${requirementStats.invalidChannel} requirement signal(s) were rejected because channel is not Huly`,
+    })
+  } else if (requirementStats.paused) {
+    conditions = upsertCondition(conditions, {
+      type: 'RequirementsBridge',
+      status: 'False',
+      reason: 'AgentRunIngestionDegraded',
+      message: requirementStats.pauseMessage ?? 'requirement bridge paused because AgentRun ingestion is degraded',
     })
   } else if (requirementTemplateError) {
     conditions = upsertCondition(conditions, {

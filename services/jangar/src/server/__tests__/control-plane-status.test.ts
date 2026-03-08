@@ -48,6 +48,21 @@ const healthyRolloutDeployment = {
   },
 }
 
+const healthyAgentsControllersRolloutDeployment = {
+  metadata: { name: 'agents-controllers' },
+  spec: { replicas: 1 },
+  status: {
+    readyReplicas: 1,
+    availableReplicas: 1,
+    updatedReplicas: 1,
+    unavailableReplicas: 0,
+    conditions: [
+      { type: 'Available', status: 'True' },
+      { type: 'Progressing', status: 'True' },
+    ],
+  },
+}
+
 const healthyController = {
   enabled: true,
   started: true,
@@ -253,7 +268,7 @@ describe('control-plane status', () => {
   })
 
   it('returns healthy summary when components are healthy', async () => {
-    setRolloutDeploymentList([healthyRolloutDeployment])
+    setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
     const status = await buildControlPlaneStatus(
       {
         namespace: 'agents',
@@ -340,7 +355,7 @@ describe('control-plane status', () => {
       oldest_untouched_age_seconds: null,
     })
     expect(status.rollout_health.status).toBe('healthy')
-    expect(status.rollout_health.observed_deployments).toBe(1)
+    expect(status.rollout_health.observed_deployments).toBe(2)
     expect(status.rollout_health.degraded_deployments).toBe(0)
     expect(status.database.migration_consistency).toEqual(healthyMigrationConsistency)
     expect(status.empirical_services.forecast.authoritative).toBe(true)
@@ -349,7 +364,7 @@ describe('control-plane status', () => {
   })
 
   it('marks degraded components when controllers or database fail', async () => {
-    setRolloutDeploymentList([healthyRolloutDeployment])
+    setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
     const degradedController = {
       enabled: true,
       started: false,
@@ -460,7 +475,7 @@ describe('control-plane status', () => {
   it('marks workflows as degraded when backoff count crosses warning threshold', async () => {
     process.env.JANGAR_WORKFLOWS_WARNING_BACKOFF_THRESHOLD = '2'
     process.env.JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD = '3'
-    setRolloutDeploymentList([healthyRolloutDeployment])
+    setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
 
     const status = await buildControlPlaneStatus(
       {

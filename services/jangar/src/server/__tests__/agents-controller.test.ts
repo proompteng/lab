@@ -456,7 +456,7 @@ describe('agents controller startup', () => {
     }
   })
 
-  it('dedupes repeated ingestion stall logs and emits recovery once', async () => {
+  it('dedupes repeated ingestion stall logs and emits recovery after two healthy resyncs', async () => {
     stopAgentsController()
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
@@ -500,8 +500,14 @@ describe('agents controller startup', () => {
       })
 
       await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+      let recoveryMessages = infoSpy.mock.calls
+        .map((call) => String(call[0]))
+        .filter((line) => line.includes('agentrun_ingestion_recovered'))
+      expect(recoveryMessages).toHaveLength(0)
 
-      const recoveryMessages = infoSpy.mock.calls
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+
+      recoveryMessages = infoSpy.mock.calls
         .map((call) => String(call[0]))
         .filter((line) => line.includes('agentrun_ingestion_recovered'))
       expect(recoveryMessages).toHaveLength(1)

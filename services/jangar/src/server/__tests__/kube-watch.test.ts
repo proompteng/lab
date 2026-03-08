@@ -160,4 +160,54 @@ describe('kube-watch', () => {
 
     expect(onRestart).toHaveBeenCalledWith('nonzero_exit')
   })
+
+  it('starts the watch with the requested resource version', () => {
+    const watchProcess = createMockWatchProcess()
+    spawnMocks.mockReturnValue(watchProcess)
+
+    watchHandle = startResourceWatch({
+      resource: 'agentruns',
+      namespace: 'agents',
+      resourceVersion: '12345',
+      onEvent: vi.fn(),
+    })
+
+    expect(spawnMocks).toHaveBeenCalledWith(
+      'kubectl',
+      expect.arrayContaining(['--resource-version=12345']),
+      expect.any(Object),
+    )
+  })
+
+  it('restarts from the latest observed resource version after a non-zero exit', () => {
+    const watchProcesses: MockWatchProcess[] = []
+    spawnMocks.mockImplementation(() => {
+      const watchProcess = createMockWatchProcess()
+      watchProcesses.push(watchProcess)
+      return watchProcess
+    })
+
+    watchHandle = startResourceWatch({
+      resource: 'agentruns',
+      namespace: 'agents',
+      resourceVersion: '12345',
+      onEvent: vi.fn(),
+      restartDelayMs: 2000,
+    })
+
+    expect(spawnMocks.mock.calls[0]?.[1]).toContain('--resource-version=12345')
+
+    const first = watchProcesses[0]
+    expect(first).toBeDefined()
+    ;(first.stdout as MockWatchProcess['stdout']).emit(
+      'data',
+      '{"type":"MODIFIED","object":{"kind":"AgentRun","metadata":{"resourceVersion":"12399"}}}',
+    )
+    first.emit('close', 1)
+
+    vi.advanceTimersByTime(2000)
+
+    expect(spawnMocks).toHaveBeenCalledTimes(2)
+    expect(spawnMocks.mock.calls[1]?.[1]).toContain('--resource-version=12399')
+  })
 })

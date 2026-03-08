@@ -16,6 +16,8 @@ export type AgentRunIngestionRuntimeState = {
   lastResyncAtMs: number | null
   untouchedRunCount: number
   oldestUntouchedAgeSeconds: number | null
+  degradedSinceMs: number | null
+  healthyResyncStreak: number
   lastResyncSummarySignature: string | null
   lastStallSignature: string | null
 }
