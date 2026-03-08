@@ -9,6 +9,26 @@ has earned, and whether its paper/shadow/live performance still supports promoti
 hypothesis ledger that connects research, whitepaper-triggered engineering, rollout transitions, and capital
 allocation into one measurable control loop.
 
+## Implementation update (2026-03-07)
+
+The first repo slice of this design is now implemented.
+
+- `services/torghut/migrations/versions/0021_strategy_hypothesis_governance.py` adds persisted hypothesis-governance
+  tables for:
+  - `strategy_hypotheses`
+  - `strategy_hypothesis_versions`
+  - `strategy_hypothesis_metric_windows`
+  - `strategy_capital_allocations`
+  - `strategy_promotion_decisions`
+- `services/torghut/app/trading/autonomy/lane.py` and
+  `services/torghut/scripts/import_hypothesis_runtime_windows.py` now write the lineage, runtime-window, capital, and
+  promotion state that the doc29 completion gates consume.
+- The implemented schema intentionally stopped short of a dedicated `strategy_hypothesis_cohorts` table. For the
+  proving lane, cohort identity is represented by versioned hypotheses plus runtime metric windows and linked capital
+  allocation or promotion-decision records.
+- Multi-account awareness remains intentionally deferred. The landed contract is single-account safe and keeps the
+  account-scope extension as future work rather than pretending it is already solved.
+
 ## Assessment context
 
 - Cluster scope: `torghut` namespace, live service and rollout state on March 6, 2026.
@@ -80,14 +100,18 @@ The ledger extends existing whitepaper and rollout infrastructure rather than re
 
 ### 1. Hypothesis registry
 
-Create first-class persisted objects keyed by `hypothesis_id`:
+Create first-class persisted objects keyed by `hypothesis_id`.
+
+The current implementation landed:
 
 - `strategy_hypotheses`
 - `strategy_hypothesis_versions`
-- `strategy_hypothesis_cohorts`
 - `strategy_hypothesis_metric_windows`
 - `strategy_capital_allocations`
 - `strategy_promotion_decisions`
+
+`strategy_hypothesis_cohorts` remains an optional future normalization if the proving lane later needs a separate
+cohort entity beyond versioned hypotheses plus metric windows.
 
 Each hypothesis records:
 

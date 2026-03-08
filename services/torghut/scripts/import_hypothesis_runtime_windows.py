@@ -269,7 +269,7 @@ def main() -> int:
             hypothesis_id=args.hypothesis_id,
             observed_stage=args.observed_stage,
             strategy_family=args.strategy_family.strip() or manifest.strategy_family,
-            source_manifest_ref=args.source_manifest_ref.strip() or str(Path(manifest.hypothesis_id)),
+            source_manifest_ref=args.source_manifest_ref.strip() or None,
             buckets=buckets,
             slippage_budget_bps=manifest.max_allowed_slippage_bps,
             runtime_observation_payload=runtime_observation_payload,

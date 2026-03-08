@@ -3,9 +3,10 @@
 ## Status
 
 - Date: `2026-03-06`
-- Maturity: `architecture closeout + rollout gate update`
+- Maturity: `architecture closeout + rollout gate update + implementation update`
 - Scope: `torghut` live cluster/runtime, current `main` source shape, and database/readiness contracts
 - Primary objective: convert the March 6 architecture designs into a single current-state disposition that says what to keep, what to implement next, and what must stay blocked until live evidence becomes truthful.
+- Follow-up state: core runtime-truth slice landed in source on `2026-03-07`; live promotion can still remain operator-disabled
 
 ## Executive Summary
 
@@ -33,6 +34,24 @@ That means the March 6 designs remain directionally correct:
 2. improve the runtime truth surface before enabling any new live promotion path;
 3. innovate only after the system proves fresh signals, feature coverage, evidence continuity, and dependency truth in live or shadow windows.
 
+## Implementation update (2026-03-07)
+
+The live snapshot below remains valuable as the March 6 baseline, but it is no longer the full current story.
+
+Since this document was written, the core runtime-truth slice has landed in source and recorded proof:
+
+- persistent hypothesis-governance tables now exist for hypotheses, versions, runtime metric windows, capital
+  allocations, and promotion decisions;
+- replay fill-price budgets, empirical job persistence, spec-backed runtime lineage, and promotion-truthfulness gates
+  now feed `/trading/completion/doc29`;
+- recorded proof against the main Torghut DB now reports `9/9` doc29 gates satisfied with `summary.all_satisfied=true`;
+- the decisive proving replay was `sim-2026-03-06-full-day-r1`, covering the regular US session from
+  `2026-03-06T14:30:00Z` to `2026-03-06T21:00:00Z`, not a 24-hour window.
+
+Operationally, one conservative choice remains unchanged: the live cluster may continue to keep
+`TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION=false` until operators explicitly choose to trust the recorded windows for live
+capital. Proof-complete gating is not the same thing as silently enabling live capital.
+
 ## Assessment Basis
 
 ### Cluster/runtime evidence
@@ -57,6 +76,9 @@ That means the March 6 designs remain directionally correct:
 - `docs/torghut/postgres-table-reference.md`
 
 ## Verified Current State
+
+The subsections below intentionally preserve the observed March 6 baseline that motivated this work. Read them as the
+pre-closeout state, not as the current branch verdict after the March 7 implementation update above.
 
 ### 1. Cluster state: healthy runtime, absent alpha throughput
 
@@ -93,7 +115,7 @@ Even with `database.status=healthy` and workflow data confidence reported as hig
 live-capital promotion. A separate dependency quorum contract is still required so Torghut can treat this state as
 `delay` or `block` instead of leaving operators to infer it from several unrelated fields.
 
-### 3. Database state is healthy, but profitability state is still missing
+### 3. Database state was healthy on March 6, and profitability governance is now persisted
 
 The database/readiness contract is healthy:
 
@@ -102,39 +124,43 @@ The database/readiness contract is healthy:
 - the branched migration graph is currently tolerated and explicitly surfaced;
 - account-scope checks are bypassed only because multi-account trading remains disabled.
 
-The missing piece is not schema freshness. The missing piece is live profitability state.
+On March 6, the missing piece was not schema freshness. It was live profitability state.
 
-Current source still stops at whitepaper-trigger and rollout-transition metadata:
+That gap is now closed for the proving lane. Current source extends the earlier whitepaper-trigger and
+rollout-transition metadata with persisted profitability governance:
 
 - `services/torghut/app/whitepapers/workflow.py` derives and persists `hypothesis_id`;
 - `services/torghut/app/models/entities.py` defines `WhitepaperRolloutTransition`;
 - `services/torghut/migrations/versions/0016_whitepaper_engineering_triggers_and_rollout.py` persists rollout history.
+- `services/torghut/migrations/versions/0021_strategy_hypothesis_governance.py` now adds:
+  - `strategy_hypotheses`
+  - `strategy_hypothesis_versions`
+  - `strategy_hypothesis_metric_windows`
+  - `strategy_capital_allocations`
+  - `strategy_promotion_decisions`
 
-Current source does not yet define first-class hypothesis-ledger or capital-allocation tables such as:
+So the database is no longer just healthy enough to change. It now serves as the proving-lane source of truth for
+profitability governance while live-capital enablement remains a separate operational decision.
 
-- `strategy_hypotheses`
-- `strategy_hypothesis_versions`
-- `strategy_hypothesis_metric_windows`
-- `strategy_capital_allocations`
+### 4. Source state: the March 6 runtime gap is now closed for the doc29 truth slice
 
-So the database is healthy enough to change, but it is not yet the source of truth for profitability governance.
-
-### 4. Source state: merged designs exist, runtime implementation on `main` does not yet match them
-
-The architect outputs from March 6 are already merged in `main`:
+The architect outputs from March 6 are now partly realized in `main`:
 
 - hypothesis ledger and capital-allocation design,
 - hypothesis-led alpha readiness and profit circuit,
 - vNext reset away from synthetic evidence authority.
 
-But current `main` source still lacks the runtime slice those docs call for:
+The current source now includes the runtime slice those docs called for:
 
-- no `services/torghut/app/trading/hypotheses.py` runtime on `main`;
-- no hypothesis-manifest environment/configuration in `argocd/applications/torghut/knative-service.yaml`;
-- no `dependency_quorum` contract in `services/jangar/src/server/control-plane-status.ts`;
-- current runtime still exposes strong health and TCA surfaces without a first-class per-hypothesis capital state.
+- persisted hypothesis-governance entities and migration-backed tables;
+- runtime-window import and autonomy-lane write paths that record stage transitions, live evidence, and promotion
+  lineage;
+- doc29 gate derivation for promotion truthfulness, spec-backed lineage, paper eligibility, live canary, and live
+  scale from recorded evidence;
+- a completion surface that now reports the proving lane as fully satisfied instead of leaving operators to infer it.
 
-This means the architecture is ahead of the runtime, which is exactly the expected state for an architect closeout.
+This means the original architecture/runtime gap has been closed for the proving lane. The remaining separation is
+operational: whether and when the live cluster should enable live-capital automation on top of that truthful state.
 
 ## Disposition: Maintain, Improve, Innovate
 
@@ -179,6 +205,14 @@ Innovation remains necessary, but it must be sequenced behind truthful evidence:
 The innovation bar is therefore not "add more intelligence". It is "add more truthful evidence authority".
 
 ## Required Implementation Gates
+
+Implementation status on `2026-03-07`:
+
+- Gate 0 (`Runtime truth slice`): satisfied in source and proof environment.
+- Gate 1 (`Shadow evidence production`): satisfied for the doc29 proving lane.
+- Gate 2 (`Canary-live eligibility`): satisfied in persisted gate data, while live promotion may still remain disabled
+  in the cluster.
+- Gate 3 (`Ledger-backed capital governance`): satisfied for the proving lane data model and decision persistence.
 
 ### Gate 0: Runtime truth slice
 
@@ -240,6 +274,9 @@ Acceptance criteria:
 5. Require post-cost evidence plus dependency quorum `allow` before any lane is eligible for constrained-live or
    scaled-live promotion.
 
+This sequence has now been executed in the proving lane through doc29 closeout. The remaining live-cluster decision is
+whether to trust that recorded evidence enough to change the operator-controlled promotion flag.
+
 ## Rollback Plan
 
 1. If the runtime truth slice misclassifies readiness, revert to the current live contract and keep
@@ -253,11 +290,12 @@ Acceptance criteria:
 
 ## Architect Decision
 
-The March 6 architecture documents remain valid and should stay as source-of-truth. The current branch only needs one
-additional conclusion:
+The March 6 architecture documents remain valid and should stay as source-of-truth. The additional closeout conclusion
+is narrower now:
 
-`torghut` should not pursue broader live autonomy until the runtime can tell the truth about alpha readiness and
-dependency quorum in one contract.
+`torghut` can tell the truth about alpha readiness and dependency quorum in one contract for the proving lane, so the
+remaining question is no longer implementation truthfulness. It is whether operators want to enable live capital on top
+of that truthful state.
 
 That is the correct closeout for the discover/architect lane because it preserves what is already safe, improves the
 next implementation target, and keeps innovation gated behind empirical evidence instead of optimistic status.

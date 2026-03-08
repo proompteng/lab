@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
@@ -11,6 +12,7 @@ from scripts.import_hypothesis_runtime_windows import (
     EXECUTION_ELIGIBLE_DECISION_STATUSES,
     _load_report_post_cost_expectancy_bps,
     _query_timestamps,
+    main,
 )
 
 
@@ -54,6 +56,20 @@ class _FakeConnection:
 
     def cursor(self) -> _FakeCursor:
         return self._cursor
+
+
+class _FakeSession:
+    def __init__(self) -> None:
+        self.committed = False
+
+    def __enter__(self) -> _FakeSession:
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def commit(self) -> None:
+        self.committed = True
 
 
 class TestImportHypothesisRuntimeWindows(TestCase):
@@ -107,3 +123,63 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertIn('d.created_at < %s', tca_query)
         self.assertNotIn('e.created_at >= %s', tca_query)
         self.assertNotIn('t.computed_at >= %s', tca_query)
+
+    def test_main_preserves_registry_manifest_fallback_when_source_manifest_ref_missing(self) -> None:
+        args = SimpleNamespace(
+            run_id='run-1',
+            candidate_id='cand-1',
+            hypothesis_id='H-CONT-01',
+            observed_stage='paper',
+            strategy_family='',
+            source_dsn='postgresql://example',
+            source_dsn_env='DB_DSN',
+            strategy_name='intraday-tsmom-profit-v2',
+            account_label='TORGHUT_SIM',
+            window_start='2026-03-06T14:30:00Z',
+            window_end='2026-03-06T15:00:00Z',
+            bucket_minutes=30,
+            sample_minutes=5,
+            source_manifest_ref='',
+            source_kind='simulation_paper_runtime',
+            artifact_ref=[],
+            dependency_quorum_decision='allow',
+            continuity_ok='true',
+            drift_ok='true',
+            json=False,
+        )
+        fake_session = _FakeSession()
+        manifest = SimpleNamespace(
+            strategy_family='intraday_continuation',
+            max_allowed_slippage_bps=Decimal('12'),
+        )
+
+        with (
+            patch('scripts.import_hypothesis_runtime_windows._parse_args', return_value=args),
+            patch(
+                'scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest',
+                return_value=(SimpleNamespace(path='config/trading/hypotheses/h-cont-01.json'), manifest),
+            ),
+            patch(
+                'scripts.import_hypothesis_runtime_windows._query_timestamps',
+                return_value=([], [], []),
+            ),
+            patch(
+                'scripts.import_hypothesis_runtime_windows.build_regular_session_buckets',
+                return_value=[],
+            ),
+            patch(
+                'scripts.import_hypothesis_runtime_windows.build_observed_runtime_buckets',
+                return_value=[],
+            ),
+            patch(
+                'scripts.import_hypothesis_runtime_windows.persist_observed_runtime_windows',
+                return_value={'run_id': 'run-1'},
+            ) as persist_windows,
+            patch('scripts.import_hypothesis_runtime_windows.SessionLocal', return_value=fake_session),
+            patch('builtins.print'),
+        ):
+            exit_code = main()
+
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(fake_session.committed)
+        self.assertEqual(persist_windows.call_args.kwargs['source_manifest_ref'], None)

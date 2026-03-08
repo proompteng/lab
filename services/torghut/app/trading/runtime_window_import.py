@@ -311,7 +311,7 @@ def persist_observed_runtime_windows(
             'shadow'
             if observed_stage == 'paper'
             else '0.50x live'
-            if total_session_samples + bucket.market_session_count >= manifest.min_sample_count_for_scale_up
+            if total_session_samples >= manifest.min_sample_count_for_scale_up
             else '0.10x canary'
         )
         session.add(
