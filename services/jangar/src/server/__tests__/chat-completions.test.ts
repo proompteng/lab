@@ -2524,6 +2524,66 @@ describe('chat completions handler', () => {
     expect(reasoningChunks.some((c) => c.choices?.[0]?.delta?.content)).toBe(false)
   })
 
+  it('closes command fences and strips reasoning details markup before emitting reasoning', async () => {
+    const mockClient = {
+      runTurnStream: async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield {
+            type: 'tool',
+            toolKind: 'command',
+            id: 'tool-1',
+            status: 'started',
+            title: 'kubectl get pods -n agents',
+          }
+          yield {
+            type: 'reasoning',
+            delta:
+              '<details type="reasoning" done="true" duration="1"><summary>Thought for 1 second</summary>\n> Verifying cronjobs\n</details>',
+          }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 2 } }
+        })(),
+      }),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.4',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    const text = await response.text()
+    const chunks = text
+      .trim()
+      .split('\n\n')
+      .map((part) => part.replace(/^data: /, ''))
+      .filter((part) => part !== '[DONE]')
+      .map((part) => JSON.parse(part))
+
+    const contentText = chunks
+      .map((c) => c.choices?.[0]?.delta?.content as string | undefined)
+      .filter(Boolean)
+      .join('')
+    const reasoningText = chunks
+      .map((c) => c.choices?.[0]?.delta?.reasoning_content as string | undefined)
+      .filter(Boolean)
+      .join('')
+
+    expect(contentText).toContain('```ts\nkubectl get pods -n agents')
+    expect(contentText).toContain('\n```\n\n')
+    expect(contentText).not.toContain('<details')
+    expect(reasoningText).toBe('\n> Verifying cronjobs\n')
+  })
+
   it('converts four asterisks in reasoning to a newline', async () => {
     const mockClient = {
       runTurnStream: async () => ({

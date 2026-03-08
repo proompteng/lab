@@ -377,6 +377,43 @@ describe('CodexAppServerClient v2 notifications', () => {
     await drainStream(stream as unknown as AsyncGenerator<unknown, unknown, void>)
   })
 
+  it('strips embedded reasoning details from command output deltas', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello')
+    await respondToThreadStart(child, 'thread-1')
+    await respondToTurnStart(child, 'turn-1')
+    const { stream } = await runPromise
+
+    writeLine(child, {
+      method: 'item/commandExecution/outputDelta',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'cmd-1',
+        delta: 'Installing\n<details type="reasoning" done="true"><summary>Thought</summary>\nWaiting</details>\nDone',
+      },
+    })
+
+    const output = await stream.next()
+    expect(output.value).toEqual({
+      type: 'tool',
+      toolKind: 'command',
+      id: 'cmd-1',
+      status: 'delta',
+      title: 'command output',
+      detail: 'Installing\n\nDone',
+    })
+
+    writeLine(child, {
+      method: 'turn/completed',
+      params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed', items: [], error: null } },
+    })
+    await drainStream(stream as unknown as AsyncGenerator<unknown, unknown, void>)
+  })
+
   it('emits mcp tool deltas from item lifecycle', async () => {
     const { child, client } = setupClient()
     await respondToInitialize(child)
@@ -617,6 +654,84 @@ describe('CodexAppServerClient v2 notifications', () => {
 
     const deltas = await drainStream(stream as unknown as AsyncGenerator<unknown, unknown, void>)
     expect(deltas).toEqual([{ type: 'message', delta: 'Cool' }])
+  })
+
+  it('splits embedded reasoning details out of agent message deltas', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello')
+    await respondToThreadStart(child, 'thread-1')
+    await respondToTurnStart(child, 'turn-1')
+    const { stream } = await runPromise
+
+    writeLine(child, {
+      method: 'item/agentMessage/delta',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'item-1',
+        delta:
+          'Working\n<details type="reasoning" done="true"><summary>Thought</summary>\nInvestigating</details>\nDone',
+      },
+    })
+
+    writeLine(child, {
+      method: 'turn/completed',
+      params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed', items: [], error: null } },
+    })
+
+    const deltas = await drainStream(stream as unknown as AsyncGenerator<unknown, unknown, void>)
+    expect(deltas).toEqual([
+      { type: 'message', delta: 'Working\n' },
+      { type: 'reasoning', delta: '\nInvestigating' },
+      { type: 'message', delta: '\nDone' },
+    ])
+  })
+
+  it('splits reasoning details that span multiple agent message deltas', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello')
+    await respondToThreadStart(child, 'thread-1')
+    await respondToTurnStart(child, 'turn-1')
+    const { stream } = await runPromise
+
+    writeLine(child, {
+      method: 'item/agentMessage/delta',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'item-1',
+        delta: 'Working\n<details type="reasoning" done="true"><summary>Thought</summary>\nInvest',
+      },
+    })
+
+    writeLine(child, {
+      method: 'item/agentMessage/delta',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'item-1',
+        delta: 'igating</details>\nDone',
+      },
+    })
+
+    writeLine(child, {
+      method: 'turn/completed',
+      params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed', items: [], error: null } },
+    })
+
+    const deltas = await drainStream(stream as unknown as AsyncGenerator<unknown, unknown, void>)
+    expect(deltas).toEqual([
+      { type: 'message', delta: 'Working\n' },
+      { type: 'reasoning', delta: '\nInvest' },
+      { type: 'reasoning', delta: 'igating' },
+      { type: 'message', delta: '\nDone' },
+    ])
   })
 
   it('emits reasoning deltas from item/reasoning/textDelta', async () => {

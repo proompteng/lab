@@ -72,6 +72,14 @@ type TurnStream = {
   iterator: AsyncGenerator<StreamDelta, Turn | null, void>
   lastReasoningDelta: string | null
   lastMessageDelta: string | null
+  embeddedReasoningState: EmbeddedReasoningState
+  commandReasoningStates: Map<string, EmbeddedReasoningState>
+}
+
+type EmbeddedReasoningState = {
+  carry: string
+  insideDetails: boolean
+  insideSummary: boolean
 }
 
 type LegacySandboxMode = 'dangerFullAccess' | 'workspaceWrite' | 'readOnly'
@@ -219,8 +227,99 @@ const createTurnStream = (): TurnStream => {
     iterator,
     lastReasoningDelta: null,
     lastMessageDelta: null,
+    embeddedReasoningState: { carry: '', insideDetails: false, insideSummary: false },
+    commandReasoningStates: new Map(),
   }
   return stream
+}
+
+const createEmbeddedReasoningState = (): EmbeddedReasoningState => ({
+  carry: '',
+  insideDetails: false,
+  insideSummary: false,
+})
+
+const splitEmbeddedReasoningDelta = (
+  input: string,
+  state: EmbeddedReasoningState,
+): Array<{ type: 'message' | 'reasoning'; delta: string }> => {
+  if (!input) return []
+
+  const openDetailsPattern = /^<details\b[^>]*\btype\s*=\s*["']reasoning["'][^>]*>/i
+  const openSummaryPattern = /^<summary\b[^>]*>/i
+  const closeSummaryPattern = /^<\/summary\s*>/i
+  const closeDetailsPattern = /^<\/details\s*>/i
+
+  const text = state.carry ? `${state.carry}${input}` : input
+  state.carry = ''
+
+  const deltas: Array<{ type: 'message' | 'reasoning'; delta: string }> = []
+  const append = (type: 'message' | 'reasoning', delta: string) => {
+    if (!delta) return
+    const previous = deltas.at(-1)
+    if (previous?.type === type) {
+      previous.delta += delta
+      return
+    }
+    deltas.push({ type, delta })
+  }
+
+  let index = 0
+  while (index < text.length) {
+    const tagStart = text.indexOf('<', index)
+    const currentType: 'message' | 'reasoning' = state.insideDetails ? 'reasoning' : 'message'
+
+    if (tagStart === -1) {
+      if (!state.insideSummary) {
+        append(currentType, text.slice(index))
+      }
+      return deltas
+    }
+
+    if (!state.insideSummary) {
+      append(currentType, text.slice(index, tagStart))
+    }
+
+    const tagEnd = text.indexOf('>', tagStart)
+    if (tagEnd === -1) {
+      state.carry = text.slice(tagStart)
+      return deltas
+    }
+
+    const tag = text.slice(tagStart, tagEnd + 1)
+
+    if (!state.insideDetails && openDetailsPattern.test(tag)) {
+      state.insideDetails = true
+      index = tagEnd + 1
+      continue
+    }
+
+    if (state.insideDetails && openSummaryPattern.test(tag)) {
+      state.insideSummary = true
+      index = tagEnd + 1
+      continue
+    }
+
+    if (state.insideSummary && closeSummaryPattern.test(tag)) {
+      state.insideSummary = false
+      index = tagEnd + 1
+      continue
+    }
+
+    if (state.insideDetails && closeDetailsPattern.test(tag)) {
+      state.insideDetails = false
+      state.insideSummary = false
+      index = tagEnd + 1
+      continue
+    }
+
+    if (!state.insideSummary) {
+      append(currentType, tag)
+    }
+    index = tagEnd + 1
+  }
+
+  return deltas
 }
 
 export class CodexAppServerClient {
@@ -633,14 +732,76 @@ export class CodexAppServerClient {
             return
           }
 
-          stream.push({ type: 'message', delta })
+          const pieces = splitEmbeddedReasoningDelta(delta, stream.embeddedReasoningState)
+          for (const piece of pieces) {
+            if (piece.type === 'message') {
+              if (stream.lastMessageDelta === piece.delta) {
+                this.log('info', 'skipping duplicate split agent message delta', {
+                  method,
+                  deltaBytes: piece.delta.length,
+                })
+                continue
+              }
+              stream.lastMessageDelta = piece.delta
+              stream.push(piece)
+              continue
+            }
+
+            if (stream.lastReasoningDelta === piece.delta) {
+              this.log('info', 'skipping duplicate split reasoning delta', {
+                method,
+                deltaBytes: piece.delta.length,
+              })
+              continue
+            }
+            stream.lastReasoningDelta = piece.delta
+            stream.push(piece)
+          }
         },
         { trackItem },
       )
     }
 
     const pushTool = (targetParams: unknown, payload: ToolPayload, { trackItem }: { trackItem?: boolean } = {}) => {
-      routeToStream(targetParams, (stream) => stream.push({ type: 'tool', ...payload }), { trackItem })
+      routeToStream(
+        targetParams,
+        (stream) => {
+          if (payload.toolKind === 'command') {
+            const itemId = this.findItemId(targetParams) ?? payload.id
+            let state = stream.commandReasoningStates.get(itemId)
+            if (!state) {
+              state = createEmbeddedReasoningState()
+              stream.commandReasoningStates.set(itemId, state)
+            }
+
+            const sanitizeCommandText = (value: string | undefined, parserState: EmbeddedReasoningState) => {
+              if (typeof value !== 'string') return value
+              return splitEmbeddedReasoningDelta(value, parserState)
+                .filter((piece) => piece.type === 'message')
+                .map((piece) => piece.delta)
+                .join('')
+            }
+
+            if (typeof payload.detail === 'string') {
+              payload = { ...payload, detail: sanitizeCommandText(payload.detail, state) }
+            }
+
+            const aggregatedOutput = payload.data?.aggregatedOutput
+            if (typeof aggregatedOutput === 'string') {
+              payload = {
+                ...payload,
+                data: {
+                  ...payload.data,
+                  aggregatedOutput: sanitizeCommandText(aggregatedOutput, createEmbeddedReasoningState()),
+                },
+              }
+            }
+          }
+
+          stream.push({ type: 'tool', ...payload })
+        },
+        { trackItem },
+      )
     }
 
     const pushUsage = (usage: unknown) => {
