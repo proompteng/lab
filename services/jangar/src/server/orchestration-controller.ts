@@ -34,6 +34,7 @@ type CrdCheckState = {
 type ControllerHealthState = {
   started: boolean
   crdCheckState: CrdCheckState | null
+  namespaces: string[] | null
 }
 
 const globalState = globalThis as typeof globalThis & {
@@ -42,7 +43,7 @@ const globalState = globalThis as typeof globalThis & {
 
 const controllerState = (() => {
   if (globalState.__jangarOrchestrationControllerState) return globalState.__jangarOrchestrationControllerState
-  const initial = { started: false, crdCheckState: null }
+  const initial = { started: false, crdCheckState: null, namespaces: null }
   globalState.__jangarOrchestrationControllerState = initial
   return initial
 })()
@@ -137,6 +138,14 @@ const resolveCrdCheckNamespace = () => {
   return namespaces[0] ?? 'default'
 }
 
+const resolveConfiguredNamespaces = () => {
+  try {
+    return parseNamespaces()
+  } catch {
+    return null
+  }
+}
+
 const runKubectl = (args: string[]) =>
   new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve) => {
     const child = spawn('kubectl', args, { stdio: ['ignore', 'pipe', 'pipe'] })
@@ -205,7 +214,7 @@ const checkCrds = async (): Promise<CrdCheckState> => {
 export const getOrchestrationControllerHealth = () => ({
   enabled: shouldStart(),
   started: controllerState.started,
-  namespaces: null,
+  namespaces: controllerState.namespaces ?? resolveConfiguredNamespaces(),
   crdsReady: controllerState.crdCheckState?.ok ?? null,
   missingCrds: controllerState.crdCheckState?.missing ?? [],
   lastCheckedAt: controllerState.crdCheckState?.checkedAt ?? null,
@@ -2121,6 +2130,7 @@ export const startOrchestrationController = async () => {
     if (lifecycleToken !== token) return
     const kube = createKubernetesClient()
     const namespaces = parseNamespaces()
+    controllerState.namespaces = namespaces
     await reconcileAll(kube, namespaces)
     if (lifecycleToken !== token) return
     for (const namespace of namespaces) {
@@ -2159,6 +2169,7 @@ export const stopOrchestrationController = () => {
   retrySchedules.clear()
   started = false
   controllerState.started = false
+  controllerState.namespaces = null
 }
 
 export const __test__ = {

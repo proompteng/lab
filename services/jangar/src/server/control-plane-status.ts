@@ -12,6 +12,12 @@ import {
   type ControlPlaneWatchReliabilitySummary,
 } from '~/server/control-plane-watch-reliability'
 import type { DatabaseMigrationConsistency, DependencyQuorumStatus } from '~/data/agents-control-plane'
+import {
+  createControlPlaneHeartbeatStore,
+  isHeartbeatFresh,
+  type ControlPlaneHeartbeatRow,
+  type ControlPlaneHeartbeatStoreGetInput,
+} from '~/server/control-plane-heartbeat-store'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { parseNamespaceScopeEnv } from '~/server/namespace-scope'
 import { createKubernetesClient, type KubernetesClient } from '~/server/primitives-kube'
@@ -50,6 +56,16 @@ type WorkflowsReliabilityStatusInput = {
   kube: KubernetesClient
 }
 
+type HeartbeatAuthoritySource = {
+  mode: 'heartbeat' | 'local' | 'unknown'
+  namespace: string
+  source_deployment: string
+  source_pod: string
+  observed_at: string | null
+  fresh: boolean
+  message: string
+}
+
 export type ControllerStatus = {
   name: string
   enabled: boolean
@@ -60,6 +76,7 @@ export type ControllerStatus = {
   last_checked_at: string
   status: 'healthy' | 'degraded' | 'disabled' | 'unknown'
   message: string
+  authority: HeartbeatAuthoritySource
 }
 
 export type RuntimeAdapterStatus = {
@@ -68,6 +85,7 @@ export type RuntimeAdapterStatus = {
   status: 'healthy' | 'configured' | 'degraded' | 'disabled' | 'unknown'
   message: string
   endpoint: string
+  authority: HeartbeatAuthoritySource
 }
 
 type DeploymentRolloutStatus = {
@@ -189,6 +207,7 @@ export type ControlPlaneStatusDeps = {
   getAgentsControllerHealth?: () => ControllerHealth
   getSupportingControllerHealth?: () => ControllerHealth
   getOrchestrationControllerHealth?: () => ControllerHealth
+  getHeartbeat?: (input: ControlPlaneHeartbeatStoreGetInput) => Promise<ControlPlaneHeartbeatRow | null>
   resolveTemporalAdapter?: () => Promise<RuntimeAdapterStatus>
   checkDatabase?: () => Promise<DatabaseStatus>
   getWatchReliabilitySummary?: () => ControlPlaneWatchReliabilitySummary
@@ -197,6 +216,83 @@ export type ControlPlaneStatusDeps = {
 }
 
 const normalizeMessage = (value: unknown) => (value instanceof Error ? value.message : String(value))
+
+type HeartbeatResolver = (input: ControlPlaneHeartbeatStoreGetInput) => Promise<ControlPlaneHeartbeatRow | null>
+
+let sharedHeartbeatStore: ReturnType<typeof createControlPlaneHeartbeatStore> | null = null
+let heartbeatStoreUnavailable = false
+
+const resolveHeartbeatStore = () => {
+  if (sharedHeartbeatStore) return sharedHeartbeatStore
+  if (heartbeatStoreUnavailable) return null
+
+  try {
+    sharedHeartbeatStore = createControlPlaneHeartbeatStore()
+    return sharedHeartbeatStore
+  } catch (error) {
+    heartbeatStoreUnavailable = true
+    console.warn('[jangar] control-plane heartbeat store unavailable:', normalizeMessage(error))
+    return null
+  }
+}
+
+const buildAuthorityFromHeartbeat = (input: {
+  component: string
+  namespace: string
+  row: ControlPlaneHeartbeatRow | null
+  now: Date
+  fallbackMode: HeartbeatAuthoritySource['mode']
+  fallbackMessage: string
+}): HeartbeatAuthoritySource => {
+  if (!input.row) {
+    return {
+      mode: input.fallbackMode,
+      namespace: input.namespace,
+      source_deployment: '',
+      source_pod: '',
+      observed_at: null,
+      fresh: false,
+      message: input.fallbackMessage,
+    }
+  }
+
+  const observedAt = input.row.observed_at ? new Date(input.row.observed_at).toISOString() : null
+  const fresh = isHeartbeatFresh(input.row, input.now)
+  const baseMessage = input.row.message?.trim() || ''
+
+  return {
+    mode: 'heartbeat',
+    namespace: input.row.namespace,
+    source_deployment: input.row.deployment_name,
+    source_pod: input.row.pod_name,
+    observed_at: observedAt,
+    fresh,
+    message: baseMessage.length > 0 ? baseMessage : `${input.component} heartbeat ${fresh ? 'is healthy' : 'stale'}`,
+  }
+}
+
+const defaultGetHeartbeat: HeartbeatResolver = async (input) => {
+  const store = resolveHeartbeatStore()
+  if (!store) return null
+  try {
+    return await store.getHeartbeat(input)
+  } catch (error) {
+    console.warn('[jangar] failed to read control-plane heartbeat:', normalizeMessage(error))
+    return null
+  }
+}
+
+const asDependencyReason = (name: string, suffix: string) => `${name.replace(/-/g, '_')}_${suffix}`
+
+const localAuthority = (namespace: string): HeartbeatAuthoritySource => ({
+  mode: 'local',
+  namespace,
+  source_deployment: '',
+  source_pod: '',
+  observed_at: new Date().toISOString(),
+  fresh: true,
+  message: 'using local controller state',
+})
 
 const buildAgentRunIngestionStatus = (
   namespace: string,
@@ -380,84 +476,115 @@ const checkDatabase = async (): Promise<DatabaseStatus> => {
   }
 }
 
-const buildControllerStatus = (name: string, health: ControllerHealth): ControllerStatus => {
-  const scopeNamespaces = Array.isArray(health.namespaces) ? health.namespaces : []
-  if (!health.enabled) {
+const buildControllerStatusFromHeartbeat = ({
+  name,
+  health,
+  heartbeat,
+  now,
+}: {
+  name: string
+  health: ControllerHealth
+  heartbeat: ControlPlaneHeartbeatRow | null
+  now: Date
+}): ControllerStatus => {
+  const authority = buildAuthorityFromHeartbeat({
+    component: name,
+    namespace: (Array.isArray(health.namespaces) ? health.namespaces : [])[0] ?? 'agents',
+    row: heartbeat,
+    now,
+    fallbackMode: 'unknown',
+    fallbackMessage: `No authoritative heartbeat for ${name}`,
+  })
+
+  if (!heartbeat || !authority.fresh) {
     return {
       name,
-      enabled: false,
-      started: health.started,
-      scope_namespaces: scopeNamespaces,
-      crds_ready: false,
-      missing_crds: health.missingCrds,
-      last_checked_at: health.lastCheckedAt ?? '',
-      status: 'disabled',
-      message: 'controller disabled',
-    }
-  }
-  if (!health.started) {
-    return {
-      name,
-      enabled: true,
+      enabled: health.enabled,
       started: false,
-      scope_namespaces: scopeNamespaces,
-      crds_ready: false,
-      missing_crds: health.missingCrds,
-      last_checked_at: health.lastCheckedAt ?? '',
-      status: 'degraded',
-      message: 'controller not started',
-    }
-  }
-  if (health.crdsReady === false) {
-    return {
-      name,
-      enabled: true,
-      started: true,
-      scope_namespaces: scopeNamespaces,
-      crds_ready: false,
-      missing_crds: health.missingCrds,
-      last_checked_at: health.lastCheckedAt ?? '',
-      status: 'degraded',
-      message: `missing CRDs: ${health.missingCrds.join(', ') || 'unknown'}`,
-    }
-  }
-  if (health.crdsReady === null) {
-    return {
-      name,
-      enabled: true,
-      started: true,
-      scope_namespaces: scopeNamespaces,
+      scope_namespaces: Array.isArray(health.namespaces) ? health.namespaces : [],
       crds_ready: false,
       missing_crds: health.missingCrds,
       last_checked_at: health.lastCheckedAt ?? '',
       status: 'unknown',
-      message: 'CRD status not yet checked',
+      message: authority.mode === 'heartbeat' ? 'heartbeat stale or missing' : authority.message,
+      authority: {
+        ...authority,
+        message: authority.mode === 'heartbeat' ? 'heartbeat stale or missing' : authority.message,
+      },
+    }
+  }
+
+  const status =
+    heartbeat.status === 'healthy' || heartbeat.status === 'degraded' || heartbeat.status === 'disabled'
+      ? heartbeat.status
+      : 'unknown'
+  const rowMessage = heartbeat.message?.trim() || ''
+
+  return {
+    name,
+    enabled: heartbeat.enabled,
+    started: heartbeat.status !== 'disabled',
+    scope_namespaces: Array.isArray(health.namespaces) ? health.namespaces : [],
+    crds_ready: status === 'healthy',
+    missing_crds: health.missingCrds,
+    last_checked_at: heartbeat.observed_at
+      ? new Date(heartbeat.observed_at).toISOString()
+      : (health.lastCheckedAt ?? ''),
+    status,
+    message: rowMessage.length > 0 ? rowMessage : status === 'healthy' ? '' : authority.message,
+    authority,
+  }
+}
+
+const buildRuntimeAdapterStatusFromSource = ({
+  name,
+  source,
+  healthyMessage,
+  defaultMessage,
+}: {
+  name: string
+  source: ControllerStatus
+  healthyMessage: string
+  defaultMessage: string
+}): RuntimeAdapterStatus => {
+  if (source.status === 'healthy') {
+    return {
+      name,
+      available: true,
+      status: 'configured',
+      message: healthyMessage,
+      endpoint: '',
+      authority: source.authority,
+    }
+  }
+  if (source.status === 'unknown') {
+    return {
+      name,
+      available: false,
+      status: 'unknown',
+      message: source.message || defaultMessage,
+      endpoint: '',
+      authority: source.authority,
+    }
+  }
+  if (source.status === 'disabled') {
+    return {
+      name,
+      available: false,
+      status: 'disabled',
+      message: source.message || defaultMessage,
+      endpoint: '',
+      authority: source.authority,
     }
   }
   return {
     name,
-    enabled: true,
-    started: true,
-    scope_namespaces: scopeNamespaces,
-    crds_ready: true,
-    missing_crds: health.missingCrds,
-    last_checked_at: health.lastCheckedAt ?? '',
-    status: 'healthy',
-    message: '',
+    available: false,
+    status: 'degraded',
+    message: source.message || defaultMessage,
+    endpoint: '',
+    authority: source.authority,
   }
-}
-
-const resolveAdapterFromController = (controllerStatus: string, controllerMessage: string, healthyMessage = '') => {
-  if (controllerStatus === 'healthy') {
-    return { available: true, status: 'healthy', message: healthyMessage }
-  }
-  if (controllerStatus === 'unknown') {
-    return { available: false, status: 'unknown', message: controllerMessage || 'controller status unknown' }
-  }
-  if (controllerStatus === 'disabled') {
-    return { available: false, status: 'disabled', message: controllerMessage || 'controller disabled' }
-  }
-  return { available: false, status: 'degraded', message: controllerMessage || 'controller unhealthy' }
 }
 
 const resolveTemporalAdapter = async (): Promise<RuntimeAdapterStatus> => {
@@ -475,6 +602,7 @@ const resolveTemporalAdapter = async (): Promise<RuntimeAdapterStatus> => {
       status: 'configured',
       message: 'temporal configuration resolved',
       endpoint: config.address ?? DEFAULT_TEMPORAL_ADDRESS,
+      authority: localAuthority('agents'),
     }
   } catch (error) {
     return {
@@ -483,6 +611,7 @@ const resolveTemporalAdapter = async (): Promise<RuntimeAdapterStatus> => {
       status: 'degraded',
       message: normalizeMessage(error),
       endpoint: DEFAULT_TEMPORAL_ADDRESS,
+      authority: localAuthority('agents'),
     }
   }
 }
@@ -1070,6 +1199,12 @@ const buildDependencyQuorum = (input: {
 
   for (const controller of input.controllers) {
     if (controller.status === 'healthy') continue
+
+    if (controller.status === 'unknown') {
+      blockReasons.push(asDependencyReason(controller.name, 'status_unknown'))
+      continue
+    }
+
     if (controller.name === 'agents-controller') {
       blockReasons.push('agents_controller_unavailable')
       continue
@@ -1078,7 +1213,11 @@ const buildDependencyQuorum = (input: {
   }
 
   const workflowAdapter = input.runtimeAdapters.find((adapter) => adapter.name === 'workflow')
-  if (!workflowAdapter || workflowAdapter.available === false || workflowAdapter.status === 'degraded') {
+  if (!workflowAdapter) {
+    blockReasons.push('workflow_runtime_unavailable')
+  } else if (workflowAdapter.status === 'unknown') {
+    blockReasons.push('workflow_runtime_status_unknown')
+  } else if (workflowAdapter.available === false || workflowAdapter.status === 'degraded') {
     blockReasons.push('workflow_runtime_unavailable')
   }
 
@@ -1161,41 +1300,68 @@ export const buildControlPlaneStatus = async (
   deps: ControlPlaneStatusDeps = {},
 ): Promise<ControlPlaneStatus> => {
   const now = (deps.now ?? (() => new Date()))()
+  const heartbeatResolver = deps.getHeartbeat ?? defaultGetHeartbeat
   const agentsHealth = (deps.getAgentsControllerHealth ?? getAgentsControllerHealth)()
   const supportingHealth = (deps.getSupportingControllerHealth ?? getSupportingControllerHealth)()
   const orchestrationHealth = (deps.getOrchestrationControllerHealth ?? getOrchestrationControllerHealth)()
 
-  const agentsController = buildControllerStatus('agents-controller', agentsHealth)
-  const supportingController = buildControllerStatus('supporting-controller', supportingHealth)
-  const orchestrationController = buildControllerStatus('orchestration-controller', orchestrationHealth)
+  const [agentsHeartbeat, supportingHeartbeat, orchestrationHeartbeat, workflowRuntimeHeartbeat] = await Promise.all([
+    heartbeatResolver({ namespace: options.namespace, component: 'agents-controller', workloadRole: 'controllers' }),
+    heartbeatResolver({
+      namespace: options.namespace,
+      component: 'supporting-controller',
+      workloadRole: 'controllers',
+    }),
+    heartbeatResolver({
+      namespace: options.namespace,
+      component: 'orchestration-controller',
+      workloadRole: 'controllers',
+    }),
+    heartbeatResolver({ namespace: options.namespace, component: 'workflow-runtime', workloadRole: 'controllers' }),
+  ])
+
+  const agentsController = buildControllerStatusFromHeartbeat({
+    name: 'agents-controller',
+    health: agentsHealth,
+    heartbeat: agentsHeartbeat,
+    now,
+  })
+  const supportingController = buildControllerStatusFromHeartbeat({
+    name: 'supporting-controller',
+    health: supportingHealth,
+    heartbeat: supportingHeartbeat,
+    now,
+  })
+  const orchestrationController = buildControllerStatusFromHeartbeat({
+    name: 'orchestration-controller',
+    health: orchestrationHealth,
+    heartbeat: orchestrationHeartbeat,
+    now,
+  })
   const controllers = [agentsController, supportingController, orchestrationController]
 
-  const workflowAdapter = resolveAdapterFromController(
-    agentsController.status,
-    agentsController.message,
-    'native workflow runtime via Kubernetes Jobs',
-  )
-  const jobAdapter = resolveAdapterFromController(
-    agentsController.status,
-    agentsController.message,
-    'job runtime via Kubernetes Jobs',
-  )
+  const workflowRuntimeController = buildControllerStatusFromHeartbeat({
+    name: 'workflow-runtime',
+    health: agentsHealth,
+    heartbeat: workflowRuntimeHeartbeat,
+    now,
+  })
+  const workflowAdapter = buildRuntimeAdapterStatusFromSource({
+    name: 'workflow',
+    source: workflowRuntimeController,
+    healthyMessage: 'native workflow runtime via Kubernetes Jobs',
+    defaultMessage: 'workflow runtime unavailable',
+  })
+  const jobAdapter = buildRuntimeAdapterStatusFromSource({
+    name: 'job',
+    source: workflowRuntimeController,
+    healthyMessage: 'job runtime via Kubernetes Jobs',
+    defaultMessage: 'job runtime unavailable',
+  })
 
   const runtimeAdapters: RuntimeAdapterStatus[] = [
-    {
-      name: 'workflow',
-      available: workflowAdapter.available,
-      status: workflowAdapter.status as RuntimeAdapterStatus['status'],
-      message: workflowAdapter.message,
-      endpoint: '',
-    },
-    {
-      name: 'job',
-      available: jobAdapter.available,
-      status: jobAdapter.status as RuntimeAdapterStatus['status'],
-      message: jobAdapter.message,
-      endpoint: '',
-    },
+    workflowAdapter,
+    jobAdapter,
     await (deps.resolveTemporalAdapter ?? resolveTemporalAdapter)(),
     {
       name: 'custom',
@@ -1203,6 +1369,7 @@ export const buildControlPlaneStatus = async (
       status: 'unknown',
       message: 'custom runtime configured per AgentRun',
       endpoint: '',
+      authority: localAuthority('agents'),
     },
   ]
 
@@ -1258,9 +1425,14 @@ export const buildControlPlaneStatus = async (
 
   const degradedComponents = [
     ...controllers
-      .filter((controller) => controller.status === 'degraded' || controller.status === 'disabled')
+      .filter(
+        (controller) =>
+          controller.status === 'degraded' || controller.status === 'disabled' || controller.status === 'unknown',
+      )
       .map((controller) => controller.name),
-    ...runtimeAdapters.filter((adapter) => adapter.status === 'degraded').map((adapter) => `runtime:${adapter.name}`),
+    ...runtimeAdapters
+      .filter((adapter) => adapter.name !== 'custom' && (adapter.status === 'degraded' || adapter.status === 'unknown'))
+      .map((adapter) => `runtime:${adapter.name}`),
     ...(database.status === 'healthy' ? [] : ['database']),
     ...(grpcStatus.enabled && grpcStatus.status !== 'healthy' ? ['grpc'] : []),
     ...(watchReliability.status === 'degraded' ? ['watch_reliability'] : []),

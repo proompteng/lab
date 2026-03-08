@@ -5,6 +5,10 @@ import {
   type DatabaseStatus as ControlPlaneDatabaseStatus,
 } from '~/server/control-plane-status'
 import type {
+  ControlPlaneHeartbeatRow,
+  ControlPlaneHeartbeatStoreGetInput,
+} from '~/server/control-plane-heartbeat-store'
+import type {
   ControlPlaneWatchReliability,
   DatabaseMigrationConsistency,
   WorkflowsReliabilityStatus,
@@ -61,6 +65,75 @@ const healthyController = {
     },
   ],
 }
+
+type HeartbeatComponent =
+  | 'agents-controller'
+  | 'supporting-controller'
+  | 'orchestration-controller'
+  | 'workflow-runtime'
+
+const buildHeartbeatRows = (
+  overrides: Partial<Record<HeartbeatComponent, Partial<ControlPlaneHeartbeatRow>>> = {},
+): ControlPlaneHeartbeatRow[] =>
+  (
+    [
+      'agents-controller',
+      'supporting-controller',
+      'orchestration-controller',
+      'workflow-runtime',
+    ] as const satisfies HeartbeatComponent[]
+  ).map((component) => {
+    const override = overrides[component] ?? {}
+    return {
+      namespace: 'agents',
+      component,
+      workload_role: 'controllers',
+      pod_name: 'agents-controllers-0',
+      deployment_name: 'agents-controllers',
+      enabled: true,
+      status: 'healthy',
+      message: '',
+      leadership_state: 'leader',
+      observed_at: '2026-01-20T00:00:00Z',
+      expires_at: '2026-01-21T00:00:00Z',
+      ...override,
+    }
+  })
+
+const createHeartbeatResolver =
+  (rows: ControlPlaneHeartbeatRow[] = buildHeartbeatRows()) =>
+  async (input: ControlPlaneHeartbeatStoreGetInput) =>
+    rows.find(
+      (row) =>
+        row.namespace === input.namespace &&
+        row.component === input.component &&
+        (input.workloadRole == null || row.workload_role === input.workloadRole),
+    ) ?? null
+
+const buildTemporalAdapter = (
+  overrides: Partial<{
+    available: boolean
+    status: 'healthy' | 'configured' | 'degraded' | 'disabled' | 'unknown'
+    message: string
+    endpoint: string
+  }> = {},
+) => ({
+  name: 'temporal' as const,
+  available: true,
+  status: 'configured' as const,
+  message: '',
+  endpoint: 'temporal:7233',
+  authority: {
+    mode: 'local' as const,
+    namespace: 'agents',
+    source_deployment: '',
+    source_pod: '',
+    observed_at: '2026-01-20T00:00:00Z',
+    fresh: true,
+    message: 'using local controller state',
+  },
+  ...overrides,
+})
 
 const buildWorkflowsReliabilityStatus = (
   overrides: Partial<WorkflowsReliabilityStatus> = {},
@@ -193,16 +266,11 @@ describe('control-plane status', () => {
       },
       {
         now: () => new Date('2026-01-20T00:00:00Z'),
+        getHeartbeat: createHeartbeatResolver(),
         getAgentsControllerHealth: () => healthyController,
         getSupportingControllerHealth: () => healthyController,
         getOrchestrationControllerHealth: () => healthyController,
-        resolveTemporalAdapter: async () => ({
-          name: 'temporal',
-          available: true,
-          status: 'configured',
-          message: '',
-          endpoint: 'temporal:7233',
-        }),
+        resolveTemporalAdapter: async () => buildTemporalAdapter(),
         checkDatabase: async () => ({
           ...buildDatabaseStatus(),
           latency_ms: 4,
@@ -312,16 +380,27 @@ describe('control-plane status', () => {
       },
       {
         now: () => new Date('2026-01-20T00:00:00Z'),
+        getHeartbeat: createHeartbeatResolver(
+          buildHeartbeatRows({
+            'agents-controller': {
+              status: 'degraded',
+              message: 'agents controller not started',
+            },
+            'workflow-runtime': {
+              status: 'degraded',
+              message: 'workflow runtime not started',
+            },
+          }),
+        ),
         getAgentsControllerHealth: () => degradedController,
         getSupportingControllerHealth: () => healthyController,
         getOrchestrationControllerHealth: () => healthyController,
-        resolveTemporalAdapter: async () => ({
-          name: 'temporal',
-          available: false,
-          status: 'degraded',
-          message: 'missing config',
-          endpoint: 'temporal:7233',
-        }),
+        resolveTemporalAdapter: async () =>
+          buildTemporalAdapter({
+            available: false,
+            status: 'degraded',
+            message: 'missing config',
+          }),
         checkDatabase: async () => ({
           ...buildDatabaseStatus({
             configured: false,
@@ -395,16 +474,14 @@ describe('control-plane status', () => {
       },
       {
         now: () => new Date('2026-01-20T00:20:00Z'),
+        getHeartbeat: createHeartbeatResolver(),
         getAgentsControllerHealth: () => healthyController,
         getSupportingControllerHealth: () => healthyController,
         getOrchestrationControllerHealth: () => healthyController,
-        resolveTemporalAdapter: async () => ({
-          name: 'temporal',
-          available: true,
-          status: 'configured',
-          message: 'temporal configuration resolved',
-          endpoint: 'temporal:7233',
-        }),
+        resolveTemporalAdapter: async () =>
+          buildTemporalAdapter({
+            message: 'temporal configuration resolved',
+          }),
         checkDatabase: async () => ({
           ...buildDatabaseStatus({
             latency_ms: 1,
@@ -460,16 +537,14 @@ describe('control-plane status', () => {
       },
       {
         now: () => new Date('2026-01-20T00:00:00Z'),
+        getHeartbeat: createHeartbeatResolver(),
         getAgentsControllerHealth: () => healthyController,
         getSupportingControllerHealth: () => healthyController,
         getOrchestrationControllerHealth: () => healthyController,
-        resolveTemporalAdapter: async () => ({
-          name: 'temporal',
-          available: true,
-          status: 'configured',
-          message: 'temporal configuration resolved',
-          endpoint: 'temporal:7233',
-        }),
+        resolveTemporalAdapter: async () =>
+          buildTemporalAdapter({
+            message: 'temporal configuration resolved',
+          }),
         checkDatabase: async () => ({
           ...buildDatabaseStatus({
             latency_ms: 1,
@@ -519,16 +594,14 @@ describe('control-plane status', () => {
         },
         {
           now: () => new Date('2026-01-20T00:00:00Z'),
+          getHeartbeat: createHeartbeatResolver(),
           getAgentsControllerHealth: () => healthyController,
           getSupportingControllerHealth: () => healthyController,
           getOrchestrationControllerHealth: () => healthyController,
-          resolveTemporalAdapter: async () => ({
-            name: 'temporal',
-            available: true,
-            status: 'configured',
-            message: 'temporal configuration resolved',
-            endpoint: 'temporal:7233',
-          }),
+          resolveTemporalAdapter: async () =>
+            buildTemporalAdapter({
+              message: 'temporal configuration resolved',
+            }),
           checkDatabase: async () => buildDatabaseStatus(),
         },
       ),
@@ -550,16 +623,14 @@ describe('control-plane status', () => {
       },
       {
         now: () => new Date('2026-01-20T00:00:00Z'),
+        getHeartbeat: createHeartbeatResolver(),
         getAgentsControllerHealth: () => healthyController,
         getSupportingControllerHealth: () => healthyController,
         getOrchestrationControllerHealth: () => healthyController,
-        resolveTemporalAdapter: async () => ({
-          name: 'temporal',
-          available: true,
-          status: 'configured',
-          message: 'temporal configuration resolved',
-          endpoint: 'temporal:7233',
-        }),
+        resolveTemporalAdapter: async () =>
+          buildTemporalAdapter({
+            message: 'temporal configuration resolved',
+          }),
         checkDatabase: async () =>
           buildDatabaseStatus(
             {
@@ -584,5 +655,100 @@ describe('control-plane status', () => {
     expect(status.database.migration_consistency.unapplied_count).toBe(1)
     expect(status.namespaces[0]?.degraded_components ?? []).toContain('database')
     expect(status.namespaces[0]?.status).toBe('degraded')
+  })
+
+  it('uses authoritative heartbeat rows when the serving pod has controllers disabled locally', async () => {
+    setRolloutDeploymentList([healthyRolloutDeployment])
+
+    const locallyDisabledController = {
+      enabled: false,
+      started: false,
+      namespaces: ['agents'],
+      crdsReady: null,
+      missingCrds: [],
+      lastCheckedAt: '2026-01-20T00:00:00Z',
+      agentRunIngestion: [],
+    }
+
+    const status = await buildControlPlaneStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:00:00Z'),
+        getHeartbeat: createHeartbeatResolver(),
+        getAgentsControllerHealth: () => locallyDisabledController,
+        getSupportingControllerHealth: () => locallyDisabledController,
+        getOrchestrationControllerHealth: () => locallyDisabledController,
+        resolveTemporalAdapter: async () => buildTemporalAdapter(),
+        checkDatabase: async () => buildDatabaseStatus(),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+      },
+    )
+
+    expect(status.controllers.every((controller) => controller.status === 'healthy')).toBe(true)
+    expect(status.controllers.every((controller) => controller.authority.mode === 'heartbeat')).toBe(true)
+    expect(status.controllers[0]?.authority.source_deployment).toBe('agents-controllers')
+    expect(status.runtime_adapters.find((adapter) => adapter.name === 'workflow')?.authority.mode).toBe('heartbeat')
+    expect(status.dependency_quorum).toEqual({
+      decision: 'allow',
+      reasons: [],
+      message: 'Control-plane admission dependencies are healthy.',
+    })
+  })
+
+  it('fails closed to unknown authority when a controller heartbeat is missing', async () => {
+    setRolloutDeploymentList([healthyRolloutDeployment])
+
+    const rows = buildHeartbeatRows().filter(
+      (row) => row.component !== 'agents-controller' && row.component !== 'workflow-runtime',
+    )
+
+    const status = await buildControlPlaneStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:00:00Z'),
+        getHeartbeat: createHeartbeatResolver(rows),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => buildTemporalAdapter(),
+        checkDatabase: async () => buildDatabaseStatus(),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+      },
+    )
+
+    expect(status.controllers.find((controller) => controller.name === 'agents-controller')).toMatchObject({
+      status: 'unknown',
+      authority: {
+        mode: 'unknown',
+      },
+    })
+    expect(status.runtime_adapters.find((adapter) => adapter.name === 'workflow')).toMatchObject({
+      status: 'unknown',
+      authority: {
+        mode: 'unknown',
+      },
+    })
+    expect(status.dependency_quorum.decision).toBe('block')
+    expect(status.dependency_quorum.reasons).toContain('agents_controller_status_unknown')
+    expect(status.dependency_quorum.reasons).toContain('workflow_runtime_status_unknown')
+    expect(status.dependency_quorum.reasons).not.toContain('agents_controller_unavailable')
   })
 })

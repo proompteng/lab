@@ -598,10 +598,18 @@ const resolveNamespaces = async () => {
   return resolved
 }
 
+const resolveConfiguredNamespaces = () => {
+  try {
+    return parseNamespaces()
+  } catch {
+    return null
+  }
+}
+
 export const getAgentsControllerHealth = (): AgentsControllerHealth => ({
   enabled: shouldStart(),
   started: controllerState.started,
-  namespaces: controllerState.namespaces,
+  namespaces: controllerState.namespaces ?? resolveConfiguredNamespaces(),
   crdsReady: controllerState.crdCheckState?.ok ?? null,
   missingCrds: controllerState.crdCheckState?.missing ?? [],
   lastCheckedAt: controllerState.crdCheckState?.checkedAt ?? null,

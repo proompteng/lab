@@ -69,6 +69,23 @@ const formatFailureReasons = (reasons: Array<{ reason: string; count: number }>)
   return reasons.map((entry) => `${entry.reason} (${entry.count})`).join(', ')
 }
 
+const formatAuthority = (authority: {
+  mode: string
+  source_deployment: string
+  source_pod: string
+  namespace: string
+  fresh: boolean
+  observed_at: string | null
+}) => {
+  const source =
+    authority.source_deployment || authority.source_pod
+      ? [authority.source_deployment, authority.source_pod].filter((value) => value.length > 0).join('/')
+      : authority.namespace || 'unknown'
+  const freshness = authority.fresh ? 'fresh' : 'stale'
+  const observedAt = authority.observed_at ? formatTimestamp(authority.observed_at) : '—'
+  return `Authority: ${authority.mode} · ${source} · ${freshness} · observed ${observedAt}`
+}
+
 export const ControlPlaneStatusPanel = ({
   status,
   error,
@@ -106,6 +123,10 @@ export const ControlPlaneStatusPanel = ({
                   CRDs ready: {controller.crds_ready ? 'yes' : 'no'} · Last checked{' '}
                   {formatTimestamp(controller.last_checked_at)}
                 </div>
+                <div className="mt-1 text-muted-foreground">{formatAuthority(controller.authority)}</div>
+                {controller.scope_namespaces.length > 0 ? (
+                  <div className="mt-1 text-muted-foreground">Scope: {controller.scope_namespaces.join(', ')}</div>
+                ) : null}
                 {controller.missing_crds.length > 0 ? (
                   <div className="mt-1 text-muted-foreground">Missing: {controller.missing_crds.join(', ')}</div>
                 ) : null}
@@ -129,6 +150,7 @@ export const ControlPlaneStatusPanel = ({
                 {adapter.endpoint ? (
                   <div className="mt-1 text-muted-foreground">Endpoint: {adapter.endpoint}</div>
                 ) : null}
+                <div className="mt-1 text-muted-foreground">{formatAuthority(adapter.authority)}</div>
               </li>
             ))}
           </ul>

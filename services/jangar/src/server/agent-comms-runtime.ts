@@ -1,5 +1,9 @@
 import { startAgentCommsSubscriber } from '~/server/agent-comms-subscriber'
 import { startAgentsController, stopAgentsController } from '~/server/agents-controller'
+import {
+  startControlPlaneHeartbeatPublisher,
+  stopControlPlaneHeartbeatPublisher,
+} from '~/server/control-plane-heartbeat-publisher'
 import { ensureLeaderElectionRuntime, isLeaderElectionRequired } from '~/server/leader-election'
 import { startOrchestrationController, stopOrchestrationController } from '~/server/orchestration-controller'
 import { startPrimitivesReconciler, stopPrimitivesReconciler } from '~/server/primitives-reconciler'
@@ -14,6 +18,7 @@ export const ensureAgentCommsRuntime = () => {
   })
 
   if (!isLeaderElectionRequired()) {
+    stopControlPlaneHeartbeatPublisher()
     void startAgentsController()
     void startOrchestrationController()
     void startSupportingPrimitivesController()
@@ -27,8 +32,10 @@ export const ensureAgentCommsRuntime = () => {
       void startOrchestrationController()
       void startSupportingPrimitivesController()
       startPrimitivesReconciler()
+      startControlPlaneHeartbeatPublisher()
     },
     onFollower: () => {
+      stopControlPlaneHeartbeatPublisher()
       stopAgentsController()
       stopOrchestrationController()
       stopSupportingPrimitivesController()
