@@ -341,7 +341,7 @@ const createSession = (args: {
   let nextAnonymousToolId = 0
   let hasEmittedAnyChunk = false
   let lastPlanMarkdown: string | null = null
-  let lastRateLimitsMarkdown: string | null = null
+  let hasRenderedRateLimits = false
   let sawAnyMessageDelta = false
 
   const attachMeta = (chunk: Record<string, unknown>) => {
@@ -477,8 +477,8 @@ const createSession = (args: {
     if (type === 'rate_limits') {
       closeCommandFence(frames)
       const markdown = toRateLimitMarkdown(record?.rateLimits)
-      if (!markdown || markdown === lastRateLimitsMarkdown) return frames
-      lastRateLimitsMarkdown = markdown
+      if (!markdown || hasRenderedRateLimits) return frames
+      hasRenderedRateLimits = true
       emitContentDelta(frames, `\n\n${markdown}\n\n`)
       return frames
     }
