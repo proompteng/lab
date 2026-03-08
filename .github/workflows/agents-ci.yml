@@ -205,20 +205,6 @@ jobs:
           echo "BUILT_JANGAR_IMAGE_REPOSITORY=${IMAGE_REPOSITORY}" >> "${GITHUB_ENV}"
           echo "BUILT_JANGAR_IMAGE_TAG=${IMAGE_TAG}" >> "${GITHUB_ENV}"
 
-      - name: Prebuild local Jangar output for control-plane image
-        if: steps.jangar_image_mode.outputs.NEEDS_LOCAL_JANGAR_IMAGE == 'true'
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
-          CI: 'true'
-          JANGAR_BUILD_MINIFY: '0'
-          JANGAR_BUILD_SOURCEMAP: '0'
-        run: |
-          set -euo pipefail
-          bun run --filter @proompteng/otel build
-          bun run --filter @proompteng/temporal-bun-sdk build
-          timeout 8m bun --cwd services/jangar --bun vite build --logLevel warn
-          bun --cwd services/jangar run copy:grpc-proto
-
       - name: Build and preload local Jangar control-plane image into kind
         if: steps.jangar_image_mode.outputs.NEEDS_LOCAL_JANGAR_IMAGE == 'true'
         run: |
@@ -329,9 +315,6 @@ jobs:
             return 1
           }
 
-          OUTPUT_ENTRY="${WORKSPACE}/services/jangar/.output/server/index.mjs"
-          OUTPUT_PROTO="${WORKSPACE}/services/jangar/.output/server/proto/proompteng/jangar/v1/agentctl.proto"
-
           run_step() {
             local label="$1"
             shift
@@ -384,14 +367,6 @@ jobs:
             shopt -u nullglob
           }
           copy_pruned_workspace_dist
-
-          if [ -f "${OUTPUT_ENTRY}" ] && [ -f "${OUTPUT_PROTO}" ]; then
-            echo "Using local services/jangar .output from workspace"
-            mkdir -p "${PRUNE_DIR}/full/services/jangar"
-            cp -R "${WORKSPACE}/services/jangar/.output" "${PRUNE_DIR}/full/services/jangar/.output"
-          else
-            echo "Prebuilt services/jangar .output was not found; Docker build will rebuild it in-container."
-          fi
 
           JANGAR_VERSION="$(git -C "${WORKSPACE}" rev-parse --short HEAD)"
           JANGAR_COMMIT="$(git -C "${WORKSPACE}" rev-parse HEAD)"
