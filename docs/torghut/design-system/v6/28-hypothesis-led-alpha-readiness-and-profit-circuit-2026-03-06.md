@@ -28,6 +28,22 @@ This creates a dangerous operating shape:
 
 This design extends the live hypothesis ledger architecture in `27-live-hypothesis-ledger-and-capital-allocation-contract-2026-03-06.md` with the runtime contract that decides whether a strategy lane is blocked, shadow-only, canary-live, or scaled-live.
 
+## Implementation update (2026-03-07)
+
+The runtime-truth slice proposed here is now materially implemented in source and persisted evidence:
+
+- hypothesis-governance rows now persist observed metric windows, capital-allocation stages, and promotion decisions;
+- `live_canary_observed` and `live_scale_observed` are derived from persisted runtime windows rather than prose-only
+  review;
+- the legal capital stages implemented in the proving lane are `shadow`, `0.10x canary`, `0.25x canary`, `0.50x live`,
+  and `1.00x live`;
+- dependency quorum, slippage budgets, continuity, and drift outcomes are now part of the recorded promotion path
+  instead of remaining operator inference.
+
+The proving set also stayed narrower than the illustrative `H-*` examples below. The end-to-end doc29 proof used
+`legacy_macd_rsi` and `intraday_tsmom_v1` as canonical spec-backed seed strategies. The `H-CONT-01`, `H-REV-01`, and
+`H-MICRO-01` examples remain forward-looking design templates for broader live hypothesis breadth.
+
 ## Problem Statement
 
 The current runtime optimizes for service availability and deterministic safety, but profitability requires a different contract: every live lane must prove that it has current data, valid features, recent evidence continuity, bounded slippage, and positive post-cost expectancy before it consumes meaningful capital.

@@ -86,7 +86,7 @@ class TestAutonomousLane(TestCase):
         Base.metadata.create_all(engine)
         return sessionmaker(bind=engine, expire_on_commit=False, future=True)
 
-    def test_gate_forecast_metrics_are_derived_from_signals(self) -> None:
+    def test_gate_forecast_metrics_fail_closed_for_non_authoritative_router_outputs(self) -> None:
         signals = [
             SignalEnvelope(
                 event_ts=datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
@@ -111,6 +111,56 @@ class TestAutonomousLane(TestCase):
         ]
 
         metrics = _resolve_gate_forecast_metrics(signals=signals)
+
+        self.assertEqual(metrics, {})
+
+    def test_gate_forecast_metrics_accept_authoritative_router_outputs(self) -> None:
+        signals = [
+            SignalEnvelope(
+                event_ts=datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+                symbol="AAPL",
+                timeframe="1Min",
+                payload={
+                    "macd": {"macd": "0.6", "signal": "0.2"},
+                    "rsi14": "42",
+                    "price": "100",
+                },
+            ),
+            SignalEnvelope(
+                event_ts=datetime(2026, 1, 1, 0, 2, tzinfo=timezone.utc),
+                symbol="AAPL",
+                timeframe="1Min",
+                payload={
+                    "macd": {"macd": "0.7", "signal": "0.1"},
+                    "rsi14": "48",
+                    "price": "101",
+                },
+            ),
+        ]
+
+        authoritative_contract = SimpleNamespace(
+            fallback=SimpleNamespace(applied=False),
+            inference_latency_ms=42,
+            calibration_score=Decimal("0.93"),
+            promotion_authority_eligible=True,
+            to_payload=lambda: {
+                "artifact_authority": {
+                    "provenance": "historical_market_replay",
+                    "maturity": "empirically_validated",
+                    "authoritative": True,
+                    "placeholder": False,
+                }
+            },
+        )
+        authoritative_router = SimpleNamespace(
+            route_and_forecast=lambda **_: SimpleNamespace(contract=authoritative_contract)
+        )
+
+        with patch(
+            "app.trading.autonomy.lane.build_default_forecast_router",
+            return_value=authoritative_router,
+        ):
+            metrics = _resolve_gate_forecast_metrics(signals=signals)
 
         self.assertIn("fallback_rate", metrics)
         self.assertIn("inference_latency_ms_p95", metrics)
@@ -2090,6 +2140,11 @@ class TestAutonomousLane(TestCase):
                 candidate_spec_payload={
                     'alpha_readiness': {'matched_hypothesis_ids': ['H-CONT-01']},
                     'dependency_quorum': {'decision': 'allow'},
+                    'runtime_observation': {
+                        'authoritative': True,
+                        'observed_stage': 'paper',
+                        'evidence_provenance': 'paper_runtime_observed',
+                    },
                 },
                 signals=[
                     SignalEnvelope(
@@ -2138,9 +2193,76 @@ class TestAutonomousLane(TestCase):
         self.assertEqual(metric_window.evidence_provenance, 'paper_runtime_observed')
         self.assertEqual(metric_window.evidence_maturity, 'empirically_validated')
         self.assertEqual(metric_window.capital_stage, 'shadow')
+        self.assertTrue(metric_window.payload_json['runtime_observation_qualification']['qualified_runtime_observation'])
         self.assertEqual(capital_allocation.stage, 'shadow')
         self.assertEqual(promotion_decision.promotion_target, 'paper')
         self.assertTrue(promotion_decision.allowed)
+
+    def test_persist_hypothesis_governance_rows_fail_closed_without_runtime_observation_contract(self) -> None:
+        session_factory = self._empty_session_factory()
+
+        class _PromotionRecommendationStub:
+            reasons = ['dependency_quorum_allow']
+
+            def to_payload(self) -> dict[str, object]:
+                return {
+                    'action': 'promote',
+                    'recommended_mode': 'live',
+                    'reasons': list(self.reasons),
+                }
+
+        with session_factory() as session:
+            _persist_hypothesis_governance_rows(
+                session=session,
+                run_id='run-2',
+                candidate_id='cand-2',
+                candidate_spec_payload={
+                    'alpha_readiness': {'matched_hypothesis_ids': ['H-CONT-01']},
+                    'dependency_quorum': {'decision': 'allow'},
+                },
+                signals=[
+                    SignalEnvelope(
+                        event_ts=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                        symbol='AAPL',
+                        timeframe='1Min',
+                        payload={},
+                    ),
+                    SignalEnvelope(
+                        event_ts=datetime(2026, 3, 6, 20, 0, tzinfo=timezone.utc),
+                        symbol='AAPL',
+                        timeframe='1Min',
+                        payload={},
+                    ),
+                ],
+                report=SimpleNamespace(
+                    metrics=SimpleNamespace(
+                        decision_count=120,
+                        trade_count=116,
+                    )
+                ),
+                promotion_target='live',
+                effective_promotion_allowed=True,
+                promotion_recommendation=_PromotionRecommendationStub(),
+                simulation_calibration_report_payload={
+                    'order_count': 116,
+                    'avg_realized_shortfall_bps': '-1.5',
+                },
+                shadow_live_deviation_report_payload={
+                    'order_count': 116,
+                    'avg_abs_slippage_bps': '4.2',
+                },
+                now=datetime(2026, 3, 6, 20, 1, tzinfo=timezone.utc),
+            )
+            session.commit()
+            metric_window = session.execute(select(StrategyHypothesisMetricWindow)).scalar_one()
+            capital_allocation = session.execute(select(StrategyCapitalAllocation)).scalar_one()
+
+        self.assertEqual(metric_window.observed_stage, 'live')
+        self.assertEqual(metric_window.evidence_provenance, 'historical_market_replay')
+        self.assertEqual(metric_window.evidence_maturity, 'calibrated')
+        self.assertEqual(metric_window.capital_stage, 'shadow')
+        self.assertFalse(metric_window.payload_json['runtime_observation_qualification']['qualified_runtime_observation'])
+        self.assertEqual(capital_allocation.stage, 'shadow')
 
     @patch(
         "app.trading.autonomy.lane.evaluate_promotion_prerequisites",

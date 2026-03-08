@@ -3,9 +3,10 @@
 ## Status
 
 - Date: `2026-03-07`
-- Maturity: `target-state architecture + cutover design`
+- Maturity: `target-state architecture + cutover design + proof update`
 - Scope: `services/torghut/**`, `services/jangar/**`, `argocd/applications/**`, simulation/evidence/control-plane topology
 - Primary objective: define the clean end-state architecture for a truthful, empirically validated, autonomous quant trading system where LLMs increase research and control quality without becoming a source of synthetic trading authority.
+- Current proof state: the doc29 gate chain is satisfied in recorded evidence, while live promotion may still remain operator-disabled
 
 ## Executive Summary
 
@@ -43,6 +44,24 @@ This document defines that end-state.
 It does **not** guarantee profit. No architecture can do that honestly.
 
 It defines the system most likely to discover, validate, deploy, and demote trading hypotheses truthfully.
+
+## Proof update (2026-03-07)
+
+The target-state architecture described here is no longer purely aspirational. The current proving lane now has a full
+recorded doc29 closeout:
+
+- `/trading/completion/doc29` reports `9/9` gates satisfied with `summary.all_satisfied=true`;
+- smoke proof run: `sim-2026-03-06-open-1h-r21`;
+- full-session proof run: `sim-2026-03-06-full-day-r1`;
+- proving window: `2026-03-06T14:30:00Z` to `2026-03-06T21:00:00Z`, the regular US session, not a 24-hour replay;
+- empirical promotion bundle, fill-price budget, spec-backed lineage, and runtime-window evidence are all persisted in
+  the main Torghut DB.
+
+One nuance matters for how this architecture should be interpreted: the full-session replay strongly proved coverage,
+execution quality, and evidence truthfulness, but it did not by itself prove durable profitability. Realized PnL for
+the session was negative while end-of-window net stayed positive because of open-position mark-to-market. That is why
+this architecture continues to insist on observed post-cost windows over time instead of treating a single replay as a
+profit guarantee.
 
 ## Problem Statement
 
@@ -749,6 +768,12 @@ Required:
 - no continuity or drift failure,
 - portfolio-aware allocation approval.
 
+Current proof note:
+
+- the proving lane now satisfies the full stage chain in persisted gate data;
+- the production cluster can still keep live promotion disabled until operators explicitly decide to trust those windows
+  for live capital.
+
 ## Profitability Semantics
 
 The architecture should describe profitability as an evidence-backed operating state, not as a promise.
@@ -764,6 +789,11 @@ The system is “working correctly” when it can:
 The system is “profitable” only when the observed live windows say it is.
 
 That is an output of the system, not an architectural assumption.
+
+The `sim-2026-03-06-full-day-r1` proof run is the right example. It passed replay coverage and execution-quality gates
+decisively, but realized PnL remained negative while the end-of-window net stayed positive because of unrealized
+mark-to-market. A truthful architecture treats that as infrastructure proof plus bounded evidence, not as a license to
+declare the strategy profitable.
 
 ## Service-Level Objectives
 

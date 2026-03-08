@@ -20,6 +20,7 @@ from ..models import SignalEnvelope
 
 JANUS_EVENT_CAR_IMPL_VERSION = "2.0.0"
 JANUS_HGRM_REWARD_IMPL_VERSION = "2.0.0"
+JANUS_SCAFFOLD_BLOCKED_REASON = "janus_empirical_authority_missing"
 
 _EVENT_TYPE_ALIASES: dict[str, str] = {
     "earnings_call": "earnings",
@@ -586,7 +587,8 @@ def build_janus_event_car_artifact_v1(
         manifest_hash=manifest,
         artifact_authority=_janus_scaffold_authority(
             notes="Janus event/CAR artifact is currently deterministic scaffold output."
-        ),
+        )
+        | {"blocking_reason": JANUS_SCAFFOLD_BLOCKED_REASON},
     )
 
 
@@ -786,7 +788,8 @@ def build_janus_hgrm_reward_artifact_v1(
         manifest_hash=manifest,
         artifact_authority=_janus_scaffold_authority(
             notes="Janus HGRM reward artifact is currently deterministic scaffold output."
-        ),
+        )
+        | {"blocking_reason": JANUS_SCAFFOLD_BLOCKED_REASON},
     )
 
 
@@ -807,9 +810,10 @@ def build_janus_q_evidence_summary_v1(
         reasons.append("janus_reward_count_missing")
     if reward_count > 0 and mapped_count < reward_count:
         reasons.append("janus_reward_event_mapping_incomplete")
+    reasons.append(JANUS_SCAFFOLD_BLOCKED_REASON)
     return {
         "schema_version": "janus-q-evidence-v1",
-        "evidence_complete": not reasons,
+        "evidence_complete": False,
         "reasons": reasons,
         "event_car": {
             "schema_version": event_car.schema_version,
@@ -831,7 +835,8 @@ def build_janus_q_evidence_summary_v1(
         },
         "artifact_authority": _janus_scaffold_authority(
             notes="Janus-Q evidence summary is currently assembled from deterministic scaffold artifacts."
-        ),
+        )
+        | {"blocking_reason": JANUS_SCAFFOLD_BLOCKED_REASON},
     }
 
 

@@ -342,11 +342,24 @@ def persist_completion_trace(
 
 
 def _latest_completion_rows(session: Session) -> dict[str, VNextCompletionGateResult]:
+    return _latest_completion_rows_filtered(session)
+
+
+def _latest_completion_rows_filtered(
+    session: Session,
+    *,
+    candidate_id: str | None = None,
+    dataset_snapshot_ref: str | None = None,
+) -> dict[str, VNextCompletionGateResult]:
     rows = session.execute(
         select(VNextCompletionGateResult).order_by(VNextCompletionGateResult.measured_at.desc())
     ).scalars()
     latest: dict[str, VNextCompletionGateResult] = {}
     for row in rows:
+        if candidate_id is not None and row.candidate_id != candidate_id:
+            continue
+        if dataset_snapshot_ref is not None and row.dataset_snapshot_ref != dataset_snapshot_ref:
+            continue
         if row.gate_id in latest:
             continue
         latest[row.gate_id] = row
@@ -462,20 +475,38 @@ def _evaluate_empirical_jobs_gate(
     status = TRACE_STATUS_SATISFIED if not missing else TRACE_STATUS_BLOCKED
     blocked_reason = None if not missing else f'empirical_jobs_missing_or_ineligible:{",".join(sorted(missing))}'
     dataset_snapshot_ref = None
+    candidate_id = None
     artifact_refs: list[str] = []
     db_row_refs: dict[str, Any] = {}
+    dataset_refs: set[str] = set()
+    candidate_ids: set[str] = set()
     for job_type, row in empirical_rows.items():
         if dataset_snapshot_ref is None:
             dataset_snapshot_ref = row.dataset_snapshot_ref
+        if candidate_id is None:
+            candidate_id = row.candidate_id
+        dataset_ref = _as_text(row.dataset_snapshot_ref)
+        if dataset_ref is not None:
+            dataset_refs.add(dataset_ref)
+        empirical_candidate = _as_text(row.candidate_id)
+        if empirical_candidate is not None:
+            candidate_ids.add(empirical_candidate)
         artifact_refs.extend(str(item) for item in cast(list[object], row.artifact_refs or []) if str(item).strip())
         db_row_refs[job_type] = {
             'row_id': str(row.id),
             'job_run_id': row.job_run_id,
         }
+    if status == TRACE_STATUS_SATISFIED and len(dataset_refs) != 1:
+        status = TRACE_STATUS_BLOCKED
+        blocked_reason = 'empirical_dataset_snapshot_ref_mismatch'
+    if status == TRACE_STATUS_SATISFIED and len(candidate_ids) != 1:
+        status = TRACE_STATUS_BLOCKED
+        blocked_reason = 'empirical_candidate_id_mismatch'
     return {
         'status': status,
         'blocked_reason': blocked_reason,
         'dataset_snapshot_ref': dataset_snapshot_ref,
+        'candidate_id': candidate_id,
         'artifact_refs': sorted(set(artifact_refs)),
         'db_row_refs': db_row_refs,
     }
@@ -494,6 +525,7 @@ def _evaluate_paper_gate(
             'artifact_refs': [],
             'db_row_refs': {},
             'dataset_snapshot_ref': empirical_gate.get('dataset_snapshot_ref'),
+            'candidate_id': empirical_gate.get('candidate_id'),
         }
     if full_day_row is None:
         return {
@@ -502,6 +534,27 @@ def _evaluate_paper_gate(
             'artifact_refs': [],
             'db_row_refs': {},
             'dataset_snapshot_ref': empirical_gate.get('dataset_snapshot_ref'),
+            'candidate_id': empirical_gate.get('candidate_id'),
+        }
+    empirical_candidate_id = _as_text(empirical_gate.get('candidate_id'))
+    empirical_dataset_snapshot_ref = _as_text(empirical_gate.get('dataset_snapshot_ref'))
+    if empirical_candidate_id is not None and full_day_row.candidate_id != empirical_candidate_id:
+        return {
+            'status': TRACE_STATUS_BLOCKED,
+            'blocked_reason': 'full_day_candidate_id_mismatch',
+            'artifact_refs': cast(list[str], empirical_gate.get('artifact_refs') or []),
+            'db_row_refs': {'simulation_full_day_coverage': str(full_day_row.id)},
+            'dataset_snapshot_ref': empirical_dataset_snapshot_ref,
+            'candidate_id': empirical_candidate_id,
+        }
+    if empirical_dataset_snapshot_ref is not None and full_day_row.dataset_snapshot_ref != empirical_dataset_snapshot_ref:
+        return {
+            'status': TRACE_STATUS_BLOCKED,
+            'blocked_reason': 'full_day_dataset_snapshot_ref_mismatch',
+            'artifact_refs': cast(list[str], empirical_gate.get('artifact_refs') or []),
+            'db_row_refs': {'simulation_full_day_coverage': str(full_day_row.id)},
+            'dataset_snapshot_ref': empirical_dataset_snapshot_ref,
+            'candidate_id': empirical_candidate_id,
         }
     full_day_details = _as_dict(full_day_row.details_json)
     gate_result = _as_dict(full_day_details.get('gate_result'))
@@ -514,6 +567,7 @@ def _evaluate_paper_gate(
             'artifact_refs': cast(list[str], empirical_gate.get('artifact_refs') or []),
             'db_row_refs': {'simulation_full_day_coverage': str(full_day_row.id)},
             'dataset_snapshot_ref': empirical_gate.get('dataset_snapshot_ref'),
+            'candidate_id': empirical_gate.get('candidate_id'),
         }
     benchmark_row = empirical_rows.get('benchmark_parity')
     if benchmark_row is None:
@@ -523,6 +577,7 @@ def _evaluate_paper_gate(
             'artifact_refs': cast(list[str], empirical_gate.get('artifact_refs') or []),
             'db_row_refs': {'simulation_full_day_coverage': str(full_day_row.id)},
             'dataset_snapshot_ref': empirical_gate.get('dataset_snapshot_ref'),
+            'candidate_id': empirical_gate.get('candidate_id'),
         }
     benchmark_payload = _as_dict(benchmark_row.payload_json)
     missing_families = _as_list(_as_dict(benchmark_payload.get('lineage')).get('missing_families'))
@@ -536,6 +591,7 @@ def _evaluate_paper_gate(
                 'benchmark_parity': str(benchmark_row.id),
             },
             'dataset_snapshot_ref': empirical_gate.get('dataset_snapshot_ref'),
+            'candidate_id': empirical_gate.get('candidate_id'),
         }
     fill_price_status = _as_text(acceptance.get('fill_price_error_budget_status')) or 'missing'
     if fill_price_status != 'within_budget':
@@ -553,6 +609,7 @@ def _evaluate_paper_gate(
                 'benchmark_parity': str(benchmark_row.id),
             },
             'dataset_snapshot_ref': empirical_gate.get('dataset_snapshot_ref'),
+            'candidate_id': empirical_gate.get('candidate_id'),
         }
     artifact_refs = cast(list[str], empirical_gate.get('artifact_refs') or [])
     fill_price_ref = _as_text(acceptance.get('fill_price_error_budget_artifact_ref'))
@@ -567,6 +624,7 @@ def _evaluate_paper_gate(
             'benchmark_parity': str(benchmark_row.id),
         },
         'dataset_snapshot_ref': empirical_gate.get('dataset_snapshot_ref'),
+        'candidate_id': empirical_gate.get('candidate_id'),
     }
 
 
@@ -582,10 +640,13 @@ def _evaluate_live_canary_gate(
             'artifact_refs': cast(list[str], paper_gate.get('artifact_refs') or []),
             'db_row_refs': {},
             'dataset_snapshot_ref': paper_gate.get('dataset_snapshot_ref'),
+            'candidate_id': paper_gate.get('candidate_id'),
         }
+    candidate_id = _as_text(paper_gate.get('candidate_id'))
     qualifying = [
         row
         for row in paper_rows
+        if candidate_id is None or row.candidate_id == candidate_id
         if (_as_text(row.evidence_provenance) == 'paper_runtime_observed')
         and (_as_text(row.evidence_maturity) == 'empirically_validated')
     ]
@@ -611,6 +672,7 @@ def _evaluate_live_canary_gate(
         'artifact_refs': cast(list[str], paper_gate.get('artifact_refs') or []),
         'db_row_refs': {'hypothesis_metric_windows': summary['db_row_refs']},
         'dataset_snapshot_ref': paper_gate.get('dataset_snapshot_ref'),
+        'candidate_id': paper_gate.get('candidate_id'),
     }
 
 
@@ -626,10 +688,13 @@ def _evaluate_live_scale_gate(
             'artifact_refs': cast(list[str], canary_gate.get('artifact_refs') or []),
             'db_row_refs': {},
             'dataset_snapshot_ref': canary_gate.get('dataset_snapshot_ref'),
+            'candidate_id': canary_gate.get('candidate_id'),
         }
+    candidate_id = _as_text(canary_gate.get('candidate_id'))
     qualifying = [
         row
         for row in live_rows
+        if candidate_id is None or row.candidate_id == candidate_id
         if (_as_text(row.evidence_provenance) == 'live_runtime_observed')
         and (_as_text(row.evidence_maturity) == 'empirically_validated')
     ]
@@ -656,6 +721,7 @@ def _evaluate_live_scale_gate(
         'artifact_refs': cast(list[str], canary_gate.get('artifact_refs') or []),
         'db_row_refs': {'hypothesis_metric_windows': summary['db_row_refs']},
         'dataset_snapshot_ref': canary_gate.get('dataset_snapshot_ref'),
+        'candidate_id': canary_gate.get('candidate_id'),
     }
 
 
@@ -702,6 +768,21 @@ def build_doc29_completion_status(
         stale_after_seconds=stale_after_seconds,
     )
     empirical_rows = _latest_empirical_rows(session)
+    derived_empirical = _evaluate_empirical_jobs_gate(
+        empirical_jobs_status=empirical_jobs_status,
+        empirical_rows=empirical_rows,
+    )
+    empirical_candidate_id = _as_text(derived_empirical.get('candidate_id'))
+    empirical_dataset_snapshot_ref = _as_text(derived_empirical.get('dataset_snapshot_ref'))
+    lineage_rows = (
+        _latest_completion_rows_filtered(
+            session,
+            candidate_id=empirical_candidate_id,
+            dataset_snapshot_ref=empirical_dataset_snapshot_ref,
+        )
+        if empirical_candidate_id is not None and empirical_dataset_snapshot_ref is not None
+        else latest_rows
+    )
     paper_windows = _latest_hypothesis_windows(
         session,
         observed_stage='paper',
@@ -727,16 +808,14 @@ def build_doc29_completion_status(
     for gate_definition in cast(list[dict[str, Any]], matrix['gates']):
         gate_id = str(gate_definition['gate_id'])
         if gate_id == DOC29_EMPIRICAL_JOBS_GATE:
-            derived = _evaluate_empirical_jobs_gate(
-                empirical_jobs_status=empirical_jobs_status,
-                empirical_rows=empirical_rows,
-            )
+            derived = derived_empirical
             gate_status_map[gate_id] = {
                 **gate_definition,
                 'status': str(derived['status']),
                 'blocked_reason': derived.get('blocked_reason'),
                 'latest_run': None,
                 'dataset_snapshot_ref': derived.get('dataset_snapshot_ref'),
+                'candidate_id': derived.get('candidate_id'),
                 'artifact_refs': cast(list[str], derived.get('artifact_refs') or []),
                 'db_row_refs': cast(dict[str, Any], derived.get('db_row_refs') or {}),
                 'persisted_result_id': None,
@@ -747,13 +826,9 @@ def build_doc29_completion_status(
             continue
 
         if gate_id == DOC29_PAPER_GATE:
-            derived_empirical = gate_status_map.get(DOC29_EMPIRICAL_JOBS_GATE) or _evaluate_empirical_jobs_gate(
-                empirical_jobs_status=empirical_jobs_status,
-                empirical_rows=empirical_rows,
-            )
             paper = _evaluate_paper_gate(
-                empirical_gate=derived_empirical,
-                full_day_row=latest_rows.get(DOC29_SIMULATION_FULL_DAY_GATE),
+                empirical_gate=gate_status_map.get(DOC29_EMPIRICAL_JOBS_GATE) or derived_empirical,
+                full_day_row=lineage_rows.get(DOC29_SIMULATION_FULL_DAY_GATE),
                 empirical_rows=empirical_rows,
             )
             freshness_state = 'fresh' if paper['status'] == TRACE_STATUS_SATISFIED else 'blocked'
@@ -761,8 +836,9 @@ def build_doc29_completion_status(
                 **gate_definition,
                 'status': str(paper['status']),
                 'blocked_reason': paper.get('blocked_reason'),
-                'latest_run': _as_text(getattr(latest_rows.get(DOC29_SIMULATION_FULL_DAY_GATE), 'run_id', None)),
+                'latest_run': _as_text(getattr(lineage_rows.get(DOC29_SIMULATION_FULL_DAY_GATE), 'run_id', None)),
                 'dataset_snapshot_ref': paper.get('dataset_snapshot_ref'),
+                'candidate_id': paper.get('candidate_id'),
                 'artifact_refs': cast(list[str], paper.get('artifact_refs') or []),
                 'db_row_refs': cast(dict[str, Any], paper.get('db_row_refs') or {}),
                 'persisted_result_id': None,
@@ -779,7 +855,7 @@ def build_doc29_completion_status(
                     empirical_jobs_status=empirical_jobs_status,
                     empirical_rows=empirical_rows,
                 ),
-                full_day_row=latest_rows.get(DOC29_SIMULATION_FULL_DAY_GATE),
+                full_day_row=lineage_rows.get(DOC29_SIMULATION_FULL_DAY_GATE),
                 empirical_rows=empirical_rows,
             )
             canary = _evaluate_live_canary_gate(
@@ -792,6 +868,7 @@ def build_doc29_completion_status(
                 'blocked_reason': canary.get('blocked_reason'),
                 'latest_run': None,
                 'dataset_snapshot_ref': canary.get('dataset_snapshot_ref'),
+                'candidate_id': canary.get('candidate_id'),
                 'artifact_refs': cast(list[str], canary.get('artifact_refs') or []),
                 'db_row_refs': cast(dict[str, Any], canary.get('db_row_refs') or {}),
                 'persisted_result_id': None,
@@ -810,7 +887,7 @@ def build_doc29_completion_status(
                         empirical_jobs_status=empirical_jobs_status,
                         empirical_rows=empirical_rows,
                     ),
-                    full_day_row=latest_rows.get(DOC29_SIMULATION_FULL_DAY_GATE),
+                    full_day_row=lineage_rows.get(DOC29_SIMULATION_FULL_DAY_GATE),
                     empirical_rows=empirical_rows,
                 ),
                 paper_rows=paper_windows,
@@ -825,6 +902,7 @@ def build_doc29_completion_status(
                 'blocked_reason': scale.get('blocked_reason'),
                 'latest_run': None,
                 'dataset_snapshot_ref': scale.get('dataset_snapshot_ref'),
+                'candidate_id': scale.get('candidate_id'),
                 'artifact_refs': cast(list[str], scale.get('artifact_refs') or []),
                 'db_row_refs': cast(dict[str, Any], scale.get('db_row_refs') or {}),
                 'persisted_result_id': None,

@@ -69,7 +69,7 @@ class TestJanusQScaffold(TestCase):
         self.assertEqual(hgrm.schema_version, "janus-hgrm-reward-v1")
         self.assertEqual(hgrm.summary["reward_count"], 2)
         self.assertEqual(hgrm.summary["event_mapped_count"], 2)
-        self.assertTrue(summary["evidence_complete"])
+        self.assertFalse(summary["evidence_complete"])
         self.assertEqual(summary["schema_version"], "janus-q-evidence-v1")
         self.assertIn("decision_snapshot_hash", hgrm.lineage)
         self.assertEqual(hgrm.summary["clipped_final_reward_count"], 0)
@@ -77,6 +77,7 @@ class TestJanusQScaffold(TestCase):
         self.assertFalse(summary["artifact_authority"]["authoritative"])
         self.assertIn("artifact_authority", summary["event_car"])
         self.assertIn("artifact_authority", summary["hgrm_reward"])
+        self.assertIn("janus_empirical_authority_missing", summary["reasons"])
 
     def test_hgrm_reward_maps_by_seq_for_same_symbol_and_timestamp(self) -> None:
         generated_at = datetime(2026, 2, 25, tzinfo=timezone.utc)

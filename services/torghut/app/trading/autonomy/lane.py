@@ -5441,6 +5441,84 @@ def _persist_strategy_spec_lineage_trace(
     persist_completion_trace(session=session, trace_payload=trace_payload)
 
 
+def _runtime_observation_contract_payload(
+    candidate_spec_payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    payload = candidate_spec_payload.get('runtime_observation')
+    if isinstance(payload, dict):
+        return cast(dict[str, Any], payload)
+    return {}
+
+
+def _resolve_hypothesis_window_evidence(
+    *,
+    promotion_target: str,
+    runtime_observation_payload: Mapping[str, Any],
+    effective_promotion_allowed: bool,
+    order_count: int,
+    min_sample_count_for_scale_up: int,
+) -> tuple[str, str, str, dict[str, Any]]:
+    observed_stage = 'paper' if promotion_target == 'paper' else 'live'
+    expected_provenance = (
+        'paper_runtime_observed'
+        if observed_stage == 'paper'
+        else 'live_runtime_observed'
+    )
+    runtime_observation_stage = _coerce_str(
+        runtime_observation_payload.get('observed_stage')
+    )
+    runtime_observation_provenance = _coerce_str(
+        runtime_observation_payload.get('evidence_provenance')
+    )
+    runtime_observation_authoritative = bool(
+        runtime_observation_payload.get('authoritative')
+    )
+    qualified_runtime_observation = (
+        runtime_observation_authoritative
+        and runtime_observation_stage == observed_stage
+        and runtime_observation_provenance == expected_provenance
+    )
+    if qualified_runtime_observation:
+        evidence_provenance = expected_provenance
+        evidence_maturity = (
+            'empirically_validated'
+            if order_count > 0 and effective_promotion_allowed
+            else 'uncalibrated'
+        )
+        if observed_stage == 'paper':
+            capital_stage = 'shadow'
+        elif effective_promotion_allowed and order_count >= min_sample_count_for_scale_up:
+            capital_stage = '0.50x live'
+        elif effective_promotion_allowed:
+            capital_stage = '0.10x canary'
+        else:
+            capital_stage = 'shadow'
+        qualification_reason = 'runtime_observation_contract_qualified'
+    else:
+        evidence_provenance = 'historical_market_replay'
+        evidence_maturity = (
+            'calibrated'
+            if order_count > 0 and effective_promotion_allowed
+            else 'uncalibrated'
+        )
+        capital_stage = 'shadow'
+        qualification_reason = 'runtime_observation_contract_missing_or_ineligible'
+    return (
+        evidence_provenance,
+        evidence_maturity,
+        capital_stage,
+        {
+            'requested_promotion_target': promotion_target,
+            'runtime_observation_present': bool(runtime_observation_payload),
+            'runtime_observation_authoritative': runtime_observation_authoritative,
+            'runtime_observation_stage': runtime_observation_stage,
+            'runtime_observation_provenance': runtime_observation_provenance,
+            'qualified_runtime_observation': qualified_runtime_observation,
+            'qualification_reason': qualification_reason,
+        },
+    )
+
+
 def _persist_hypothesis_governance_rows(
     *,
     session: Session,
@@ -5481,6 +5559,9 @@ def _persist_hypothesis_governance_rows(
     registry = load_hypothesis_registry()
     manifest_by_id = {item.hypothesis_id: item for item in registry.items}
     source_manifest_ref = str(registry.path)
+    runtime_observation_payload = _runtime_observation_contract_payload(
+        candidate_spec_payload
+    )
     shadow_authority = contract_from_artifact_payload(shadow_live_deviation_report_payload)
     simulation_authority = contract_from_artifact_payload(simulation_calibration_report_payload)
     order_count = max(
@@ -5536,21 +5617,18 @@ def _persist_hypothesis_governance_rows(
                     payload_json=manifest.model_dump(mode='json'),
                 )
             )
-        if observed_stage == 'paper':
-            evidence_provenance = 'paper_runtime_observed'
-            evidence_maturity = (
-                'empirically_validated' if order_count > 0 and effective_promotion_allowed else 'uncalibrated'
-            )
-            capital_stage = 'shadow'
-        else:
-            evidence_provenance = 'live_runtime_observed'
-            evidence_maturity = 'empirically_validated' if effective_promotion_allowed else 'uncalibrated'
-            if effective_promotion_allowed and order_count >= manifest.min_sample_count_for_scale_up:
-                capital_stage = '0.50x live'
-            elif effective_promotion_allowed:
-                capital_stage = '0.10x canary'
-            else:
-                capital_stage = 'shadow'
+        (
+            evidence_provenance,
+            evidence_maturity,
+            capital_stage,
+            qualification_payload,
+        ) = _resolve_hypothesis_window_evidence(
+            promotion_target=promotion_target,
+            runtime_observation_payload=runtime_observation_payload,
+            effective_promotion_allowed=effective_promotion_allowed,
+            order_count=order_count,
+            min_sample_count_for_scale_up=manifest.min_sample_count_for_scale_up,
+        )
         session.add(
             StrategyHypothesisMetricWindow(
                 run_id=run_id,
@@ -5578,6 +5656,8 @@ def _persist_hypothesis_governance_rows(
                 payload_json={
                     'alpha_readiness': alpha_readiness_payload,
                     'dependency_quorum': dependency_quorum_payload,
+                    'runtime_observation': dict(runtime_observation_payload),
+                    'runtime_observation_qualification': qualification_payload,
                     'shadow_live_deviation': dict(shadow_live_deviation_report_payload),
                     'simulation_calibration': dict(simulation_calibration_report_payload),
                     'shadow_live_authority': shadow_authority,
@@ -6309,6 +6389,16 @@ def _resolve_gate_forecast_metrics(
                 event_ts=signal.event_ts,
             )
         except Exception:
+            return {}
+
+        contract_payload = route_result.contract.to_payload()
+        authority = contract_from_artifact_payload(contract_payload)
+        if (
+            not authority
+            or not bool(authority.get("authoritative", False))
+            or bool(authority.get("placeholder", False))
+            or not bool(route_result.contract.promotion_authority_eligible)
+        ):
             return {}
 
         if route_result.contract.fallback.applied:

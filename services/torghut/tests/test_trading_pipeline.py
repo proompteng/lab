@@ -705,6 +705,116 @@ class TestTradingPipeline(TestCase):
                 "trading_feature_max_staleness_ms"
             ]
 
+    def test_pipeline_quality_gate_uses_allowed_symbol_subset(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "trading_feature_quality_enabled": config.settings.trading_feature_quality_enabled,
+            "trading_feature_max_staleness_ms": config.settings.trading_feature_max_staleness_ms,
+            "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.trading_feature_quality_enabled = True
+        config.settings.trading_feature_max_staleness_ms = 1_000
+        config.settings.trading_kill_switch_enabled = False
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="quality-gate subset regression",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            fresh_allowed_signal = SignalEnvelope(
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                ingest_ts=datetime(2026, 1, 1, 0, 0, 0, 500000, tzinfo=timezone.utc),
+                symbol="AAPL",
+                timeframe="1Min",
+                seq=1,
+                payload={
+                    "feature_schema_version": "3.0.0",
+                    "macd": {"macd": 1.2, "signal": 0.5},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+            )
+            stale_out_of_universe_signal = SignalEnvelope(
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                ingest_ts=datetime(2026, 1, 1, 0, 0, 5, tzinfo=timezone.utc),
+                symbol="MSFT",
+                timeframe="1Min",
+                seq=2,
+                payload={
+                    "feature_schema_version": "3.0.0",
+                    "macd": {"macd": 1.2, "signal": 0.5},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+            )
+
+            alpaca_client = FakeAlpacaClient()
+            execution_adapter = FakeAlpacaClient()
+            ingestor = FakeIngestor([fresh_allowed_signal, stale_out_of_universe_signal])
+            state = TradingState()
+            pipeline = TradingPipeline(
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
+                ingestor=ingestor,
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=execution_adapter,
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=state,
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+
+            pipeline.run_once()
+
+            self.assertEqual(ingestor.committed_batches, 1)
+            self.assertEqual(state.metrics.feature_quality_rejections_total, 0)
+            self.assertEqual(state.metrics.feature_batch_rows_total, 1)
+            self.assertLessEqual(state.metrics.feature_staleness_ms_p95, 1_000)
+            self.assertEqual(len(alpaca_client.submitted), 1)
+            self.assertEqual(alpaca_client.submitted[0]["symbol"], "AAPL")
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+            config.settings.trading_feature_quality_enabled = original[
+                "trading_feature_quality_enabled"
+            ]
+            config.settings.trading_feature_max_staleness_ms = original[
+                "trading_feature_max_staleness_ms"
+            ]
+            config.settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
+
     def test_stale_planned_decision_is_force_rejected(self) -> None:
         from app import config
 
@@ -786,6 +896,106 @@ class TestTradingPipeline(TestCase):
                 )
         finally:
             config.settings.trading_planned_decision_timeout_seconds = original_timeout
+
+    def test_simulation_clock_does_not_reject_fresh_planned_decision(self) -> None:
+        from app import config
+        from app.trading import time_source as time_source_module
+
+        original = {
+            "trading_planned_decision_timeout_seconds": config.settings.trading_planned_decision_timeout_seconds,
+            "trading_simulation_enabled": config.settings.trading_simulation_enabled,
+            "trading_simulation_clock_mode": config.settings.trading_simulation_clock_mode,
+            "trading_simulation_window_start": config.settings.trading_simulation_window_start,
+            "trading_account_label": config.settings.trading_account_label,
+        }
+        original_load_cursor = time_source_module.TradingTimeSource._load_clickhouse_cursor
+        config.settings.trading_planned_decision_timeout_seconds = 60
+        config.settings.trading_simulation_enabled = True
+        config.settings.trading_simulation_clock_mode = "cursor"
+        config.settings.trading_simulation_window_start = "2026-02-10T15:00:00+00:00"
+        config.settings.trading_account_label = "paper"
+        time_source_module.TradingTimeSource._load_clickhouse_cursor = staticmethod(
+            lambda **_: None
+        )
+        time_source_module._TIME_SOURCE._cache_by_account.clear()
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="simulation-fresh-planned",
+                    description="simulation planned decision freshness",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                )
+                session.add(strategy)
+                session.commit()
+                session.refresh(strategy)
+
+                decision = StrategyDecision(
+                    strategy_id=str(strategy.id),
+                    symbol="AAPL",
+                    event_ts=datetime(2026, 2, 10, 15, 0, tzinfo=timezone.utc),
+                    timeframe="1Min",
+                    action="buy",
+                    qty=Decimal("1"),
+                    params={"price": Decimal("100")},
+                )
+                executor = OrderExecutor()
+                decision_row = executor.ensure_decision(
+                    session, decision, strategy, "paper"
+                )
+                decision_row.created_at = datetime(2026, 2, 10, 15, 0, 30, tzinfo=timezone.utc)
+                session.add(decision_row)
+                session.commit()
+
+                pipeline = TradingPipeline(
+                    alpaca_client=FakeAlpacaClient(),
+                    order_firewall=OrderFirewall(FakeAlpacaClient()),
+                    ingestor=FakeIngestor([]),
+                    decision_engine=DecisionEngine(),
+                    risk_engine=RiskEngine(),
+                    executor=executor,
+                    execution_adapter=FakeAlpacaClient(),
+                    reconciler=Reconciler(),
+                    universe_resolver=UniverseResolver(),
+                    state=TradingState(),
+                    account_label="paper",
+                    session_factory=self.session_local,
+                )
+
+                pending = pipeline._ensure_pending_decision_row(
+                    session=session,
+                    decision=decision,
+                    strategy=strategy,
+                )
+
+                self.assertIsNotNone(pending)
+                refreshed = session.get(TradeDecision, decision_row.id)
+                assert refreshed is not None
+                self.assertEqual(refreshed.status, "planned")
+                self.assertEqual(
+                    pipeline.state.metrics.planned_decisions_timeout_rejected_total, 0
+                )
+                self.assertEqual(pipeline.state.metrics.planned_decisions_stale_total, 0)
+        finally:
+            config.settings.trading_planned_decision_timeout_seconds = original[
+                "trading_planned_decision_timeout_seconds"
+            ]
+            config.settings.trading_simulation_enabled = original[
+                "trading_simulation_enabled"
+            ]
+            config.settings.trading_simulation_clock_mode = original[
+                "trading_simulation_clock_mode"
+            ]
+            config.settings.trading_simulation_window_start = original[
+                "trading_simulation_window_start"
+            ]
+            config.settings.trading_account_label = original["trading_account_label"]
+            time_source_module.TradingTimeSource._load_clickhouse_cursor = (
+                original_load_cursor
+            )
+            time_source_module._TIME_SOURCE._cache_by_account.clear()
 
     def test_decision_engine_macd_rsi(self) -> None:
         engine = DecisionEngine()

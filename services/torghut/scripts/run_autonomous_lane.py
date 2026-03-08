@@ -114,6 +114,19 @@ def main() -> int:
         type=str,
         help="Required for live target when enabled by policy.",
     )
+    parser.add_argument(
+        "--persist-results",
+        dest="persist_results",
+        action="store_true",
+        help="Persist strategy-spec lineage and research ledger rows.",
+    )
+    parser.add_argument(
+        "--no-persist-results",
+        dest="persist_results",
+        action="store_false",
+        help="Skip persistence and emit artifacts only.",
+    )
+    parser.set_defaults(persist_results=True)
     args = parser.parse_args()
 
     result = run_autonomous_lane(
@@ -137,6 +150,7 @@ def main() -> int:
         strategy_configmap_path=args.strategy_configmap,
         code_version=_resolve_git_sha(),
         approval_token=args.approval_token,
+        persist_results=args.persist_results,
     )
 
     payload = {

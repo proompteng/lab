@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from unittest import TestCase
+from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -59,6 +60,33 @@ class FlakyLatestIngestor(ClickHouseSignalIngestor):
         if isinstance(response, Exception):
             raise response
         return response
+
+
+class SimulationWindowIngestor(ClickHouseSignalIngestor):
+    def __init__(self, *args, latest_signal_ts: datetime, rows: list[dict[str, object]] | None = None, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._latest_signal_ts = latest_signal_ts
+        self.rows = list(rows or [])
+        self.queries: list[str] = []
+
+    def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
+        self.queries.append(query)
+        if "SELECT max(" in query:
+            return [{"latest_signal_ts": self._latest_signal_ts.isoformat()}]
+        return list(self.rows)
+
+
+class SimulationWindowNoLatestIngestor(ClickHouseSignalIngestor):
+    def __init__(self, *args, rows: list[dict[str, object]] | None = None, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.rows = list(rows or [])
+        self.queries: list[str] = []
+
+    def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
+        self.queries.append(query)
+        if "SELECT max(" in query:
+            raise RuntimeError("clickhouse probe unavailable")
+        return list(self.rows)
 
 
 class TestSignalIngest(TestCase):
@@ -220,7 +248,7 @@ class TestSignalIngest(TestCase):
         self.assertFalse(ingestor.fast_forward_stale_cursor)
         self.assertEqual(ingestor.empty_batch_advance_seconds, 0)
 
-    def test_simulation_mode_initial_cursor_uses_archival_baseline(self) -> None:
+    def test_simulation_mode_initial_cursor_uses_simulated_window_start(self) -> None:
         engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
         Base.metadata.create_all(engine)
         session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
@@ -229,14 +257,206 @@ class TestSignalIngest(TestCase):
         try:
             settings.trading_simulation_enabled = True
             ingestor = ClickHouseSignalIngestor(schema='envelope', url='http://example')
-            with session_local() as session:
+            with session_local() as session, patch(
+                "app.trading.ingest.trading_now",
+                return_value=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+            ) as mocked_trading_now:
                 cursor_at, cursor_seq, cursor_symbol = ingestor._get_cursor(session)
         finally:
             settings.trading_simulation_enabled = original_enabled
 
-        self.assertEqual(cursor_at, datetime(1970, 1, 1, tzinfo=timezone.utc))
+        mocked_trading_now.assert_called_once_with(account_label=ingestor.account_label)
+        self.assertEqual(cursor_at, datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc))
         self.assertIsNone(cursor_seq)
         self.assertIsNone(cursor_symbol)
+
+    def test_simulation_mode_baseline_cursor_reuses_simulated_window_start(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+        original_enabled = settings.trading_simulation_enabled
+        try:
+            settings.trading_simulation_enabled = True
+            ingestor = ClickHouseSignalIngestor(schema='envelope', url='http://example')
+            with session_local() as session, patch(
+                "app.trading.ingest.trading_now",
+                return_value=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+            ) as mocked_trading_now:
+                session.add(
+                    TradeCursor(
+                        source="clickhouse",
+                        cursor_at=datetime(1970, 1, 1, tzinfo=timezone.utc),
+                        cursor_seq=None,
+                    )
+                )
+                session.commit()
+                cursor_at, cursor_seq, cursor_symbol = ingestor._get_cursor(session)
+        finally:
+            settings.trading_simulation_enabled = original_enabled
+
+        mocked_trading_now.assert_called_once_with(account_label=ingestor.account_label)
+        self.assertEqual(cursor_at, datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc))
+        self.assertIsNone(cursor_seq)
+        self.assertIsNone(cursor_symbol)
+
+    def test_simulation_mode_fetch_uses_simulated_now_for_cursor_tail_lag(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+        latest_signal = datetime(2026, 3, 6, 15, 30, 0, tzinfo=timezone.utc)
+
+        class CursorIngestor(ClickHouseSignalIngestor):
+            def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
+                if query.strip().startswith("SELECT max("):
+                    return [{"latest_signal_ts": latest_signal.isoformat()}]
+                return []
+
+        original_enabled = settings.trading_simulation_enabled
+        try:
+            settings.trading_simulation_enabled = True
+            ingestor = CursorIngestor(schema="envelope", url="http://example", fast_forward_stale_cursor=False)
+            with session_local() as session, patch(
+                "app.trading.ingest.trading_now",
+                return_value=latest_signal,
+            ) as mocked_trading_now:
+                session.add(TradeCursor(source="clickhouse", cursor_at=latest_signal, cursor_seq=None))
+                session.commit()
+
+                batch = ingestor.fetch_signals(session)
+        finally:
+            settings.trading_simulation_enabled = original_enabled
+
+        mocked_trading_now.assert_called_once_with(account_label=ingestor.account_label)
+        self.assertEqual(batch.signals, [])
+        self.assertEqual(batch.no_signal_reason, "cursor_tail_stable")
+        self.assertEqual(batch.cursor_at, latest_signal)
+        self.assertEqual(batch.query_end, latest_signal)
+        self.assertEqual(batch.signal_lag_seconds, 0.0)
+
+    def test_simulation_mode_fetch_uses_bounded_replay_query_without_order_by(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+        latest_signal = datetime(2026, 3, 6, 15, 30, 0, tzinfo=timezone.utc)
+
+        original_enabled = settings.trading_simulation_enabled
+        try:
+            settings.trading_simulation_enabled = True
+            ingestor = SimulationWindowIngestor(
+                schema="envelope",
+                url="http://example",
+                latest_signal_ts=latest_signal,
+                fast_forward_stale_cursor=False,
+            )
+            with session_local() as session, patch(
+                "app.trading.ingest.trading_now",
+                return_value=datetime(2026, 3, 6, 14, 30, 0, tzinfo=timezone.utc),
+            ):
+                batch = ingestor.fetch_signals(session)
+        finally:
+            settings.trading_simulation_enabled = original_enabled
+
+        self.assertEqual(batch.signals, [])
+        self.assertEqual(batch.no_signal_reason, "empty_batch_advanced")
+        self.assertEqual(batch.cursor_at, datetime(2026, 3, 6, 14, 30, 10, tzinfo=timezone.utc))
+        self.assertGreaterEqual(len(ingestor.queries), 2)
+        replay_query = ingestor.queries[-1]
+        self.assertIn("WHERE event_ts >= toDateTime64", replay_query)
+        self.assertIn("AND event_ts <= toDateTime64", replay_query)
+        self.assertNotIn("ORDER BY", replay_query)
+
+    def test_simulation_mode_fetch_filters_cursor_boundary_rows_before_advancing(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+        latest_signal = datetime(2026, 3, 6, 15, 30, 0, tzinfo=timezone.utc)
+        row = {
+            "event_ts": "2026-03-06T14:30:00Z",
+            "ingest_ts": "2026-03-06T14:30:01Z",
+            "symbol": "AAPL",
+            "payload": {"price": 100, "macd": {"macd": 1.0, "signal": 0.5}, "rsi14": 30},
+            "window_size": "PT1S",
+            "window_step": "PT1S",
+            "seq": 7,
+            "source": "ta",
+        }
+
+        original_enabled = settings.trading_simulation_enabled
+        try:
+            settings.trading_simulation_enabled = True
+            ingestor = SimulationWindowIngestor(
+                schema="envelope",
+                url="http://example",
+                latest_signal_ts=latest_signal,
+                rows=[row],
+                fast_forward_stale_cursor=False,
+            )
+            with session_local() as session, patch(
+                "app.trading.ingest.trading_now",
+                return_value=latest_signal,
+            ):
+                session.add(
+                    TradeCursor(
+                        source="clickhouse",
+                        account_label=ingestor.account_label,
+                        cursor_at=datetime(2026, 3, 6, 14, 30, 0, tzinfo=timezone.utc),
+                        cursor_seq=7,
+                        cursor_symbol="AAPL",
+                    )
+                )
+                session.commit()
+                batch = ingestor.fetch_signals(session)
+        finally:
+            settings.trading_simulation_enabled = original_enabled
+
+        self.assertEqual(batch.signals, [])
+        self.assertEqual(batch.no_signal_reason, "empty_batch_advanced")
+        self.assertEqual(batch.cursor_at, datetime(2026, 3, 6, 14, 30, 10, tzinfo=timezone.utc))
+
+    def test_simulation_mode_fetch_queries_bounded_window_when_latest_probe_fails(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+        row = {
+            "event_ts": "2026-03-06T14:30:01Z",
+            "ingest_ts": "2026-03-06T14:30:02Z",
+            "symbol": "AAPL",
+            "payload": {"price": 100, "macd": {"macd": 1.0, "signal": 0.5}, "rsi14": 30},
+            "window_size": "PT1S",
+            "window_step": "PT1S",
+            "seq": 8,
+            "source": "ta",
+        }
+
+        original_enabled = settings.trading_simulation_enabled
+        try:
+            settings.trading_simulation_enabled = True
+            ingestor = SimulationWindowNoLatestIngestor(
+                schema="envelope",
+                url="http://example",
+                rows=[row],
+                fast_forward_stale_cursor=False,
+            )
+            with session_local() as session, patch(
+                "app.trading.ingest.trading_now",
+                return_value=datetime(2026, 3, 6, 14, 30, 0, tzinfo=timezone.utc),
+            ):
+                batch = ingestor.fetch_signals(session)
+        finally:
+            settings.trading_simulation_enabled = original_enabled
+
+        self.assertEqual(batch.no_signal_reason, None)
+        self.assertEqual(len(batch.signals), 1)
+        self.assertEqual(batch.query_start, datetime(2026, 3, 6, 14, 30, 0, tzinfo=timezone.utc))
+        self.assertEqual(batch.query_end, datetime(2026, 3, 6, 14, 30, 10, tzinfo=timezone.utc))
+        replay_query = ingestor.queries[-1]
+        self.assertIn("WHERE event_ts >=", replay_query)
+        self.assertIn("AND event_ts <=", replay_query)
 
     def test_build_query_flat_schema(self) -> None:
         ingestor = ClickHouseSignalIngestor(schema="flat", table="torghut.ta_signals", fast_forward_stale_cursor=False)
@@ -343,6 +563,98 @@ class TestSignalIngest(TestCase):
         self.assertIn("WHERE event_ts >= toDateTime64", envelope_ingestor.last_query)
         self.assertIn("AND event_ts <= toDateTime64", envelope_ingestor.last_query)
         self.assertIn("ORDER BY event_ts ASC, seq ASC", envelope_ingestor.last_query)
+
+    def test_fetch_signals_between_dedupes_envelope_duplicates_by_earliest_ingest(self) -> None:
+        rows = [
+            {
+                "event_ts": "2026-03-06T14:50:00Z",
+                "ingest_ts": "2026-03-08T01:33:32.461000Z",
+                "symbol": "SIM-SPY",
+                "payload": {"rsi14": 30},
+                "seq": 100,
+                "source": "ta",
+                "window_size": "PT1S",
+            },
+            {
+                "event_ts": "2026-03-06T14:50:00Z",
+                "ingest_ts": "2026-03-06T14:51:00.316000Z",
+                "symbol": "SIM-SPY",
+                "payload": {"rsi14": 30},
+                "seq": 200,
+                "source": "ws",
+                "window_size": "PT1S",
+            },
+            {
+                "event_ts": "2026-03-06T14:50:01Z",
+                "ingest_ts": "2026-03-06T14:51:01.316000Z",
+                "symbol": "SIM-SPY",
+                "payload": {"rsi14": 31},
+                "seq": 101,
+                "source": "ta",
+                "window_size": "PT1S",
+            },
+        ]
+
+        class DuplicateEnvelopeIngestor(ClickHouseSignalIngestor):
+            def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
+                return rows
+
+        ingestor = DuplicateEnvelopeIngestor(schema="envelope", table="torghut.ta_signals", url="http://example")
+        signals = ingestor.fetch_signals_between(
+            start=datetime(2026, 3, 6, 14, 50, tzinfo=timezone.utc),
+            end=datetime(2026, 3, 6, 14, 51, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(len(signals), 2)
+        self.assertEqual(signals[0].event_ts, datetime(2026, 3, 6, 14, 50, tzinfo=timezone.utc))
+        self.assertEqual(signals[0].seq, 200)
+        self.assertEqual(signals[0].source, "ws")
+        self.assertEqual(
+            signals[0].ingest_ts,
+            datetime(2026, 3, 6, 14, 51, 0, 316000, tzinfo=timezone.utc),
+        )
+        self.assertEqual(signals[1].seq, 101)
+
+    def test_fetch_signals_between_filters_disallowed_sources(self) -> None:
+        rows = [
+            {
+                "event_ts": "2026-03-06T14:50:00Z",
+                "ingest_ts": "2026-03-08T01:33:32.461000Z",
+                "symbol": "AAPL",
+                "payload": {"rsi14": 30},
+                "seq": 100,
+                "source": "ta",
+                "window_size": "PT1S",
+            },
+            {
+                "event_ts": "2026-03-06T14:50:00Z",
+                "ingest_ts": "2026-03-06T14:51:00.316000Z",
+                "symbol": "AAPL",
+                "payload": {"rsi14": 30},
+                "seq": 200,
+                "source": "ws",
+                "window_size": "PT1S",
+            },
+        ]
+
+        class SourceFilteringIngestor(ClickHouseSignalIngestor):
+            def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
+                return rows
+
+        original_allowed_sources = settings.trading_signal_allowed_sources_raw
+        try:
+            settings.trading_signal_allowed_sources_raw = "ws"
+            ingestor = SourceFilteringIngestor(schema="envelope", table="torghut.ta_signals", url="http://example")
+            signals = ingestor.fetch_signals_between(
+                start=datetime(2026, 3, 6, 14, 50, tzinfo=timezone.utc),
+                end=datetime(2026, 3, 6, 14, 51, tzinfo=timezone.utc),
+            )
+        finally:
+            settings.trading_signal_allowed_sources_raw = original_allowed_sources
+
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].source, "ws")
+        self.assertEqual(signals[0].symbol, "AAPL")
 
     def test_fetch_signals_with_reason_reports_missing_cursor_reason(self) -> None:
         ingestor = CapturingIngestor(schema="envelope", table="torghut.ta_signals", url="http://example", batch_size=2)

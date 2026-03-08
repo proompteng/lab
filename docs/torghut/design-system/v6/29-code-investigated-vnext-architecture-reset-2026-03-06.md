@@ -3,9 +3,10 @@
 ## Status
 
 - Date: `2026-03-06`
-- Maturity: `architecture reassessment + implementation contract`
+- Maturity: `architecture reassessment + implementation contract + proof closeout`
 - Scope: `services/torghut/**`, `docs/torghut/design-system/v5/**`, `docs/torghut/design-system/v6/**`
 - Primary objective: preserve Torghut's strong deterministic execution and governance core while replacing synthetic alpha and evaluation surfaces with empirical, replayable, and promotion-safe ones.
+- Implementation closeout: `doc29` completion contract satisfied in recorded evidence on `2026-03-07`
 
 ## Executive Summary
 
@@ -42,7 +43,62 @@ The next architecture iteration should not add more runtime autonomy first. It s
 This is a design for expected after-cost profitability, replayability, and capital protection. It is not a guarantee of
 profit.
 
-## Assessment Basis and Verification Limits
+## Implementation update (2026-03-07)
+
+The architecture reset described below is now closed out for the doc29 completion contract.
+
+Landed repo work:
+
+- explicit recorded producers now exist for `promotion_truthfulness_firewall` and
+  `strategy_spec_v2_runtime_lineage`;
+- replay evidence now records a fill-price error-budget report and uses it to derive `paper_gate_satisfied`;
+- live `canary` and `scale` gates now derive from persisted `strategy_hypothesis_metric_windows`;
+- persistent hypothesis-governance tables now back runtime windows, capital allocations, and promotion decisions;
+- `/trading/completion/doc29` remains the single read surface and now derives all gates from recorded evidence.
+
+Proof closeout:
+
+- smoke run: `sim-2026-03-06-open-1h-r21`
+- full-session replay: `sim-2026-03-06-full-day-r1`
+- target window: `2026-03-06T14:30:00Z` to `2026-03-06T21:00:00Z`
+- target duration: `390` minutes for the regular US equities session, not a 24-hour replay
+- candidate: `intraday_tsmom_v1@prod`
+- final completion status against the main Torghut DB: `9/9` satisfied, `0` blocked, `0` stale, `summary.all_satisfied=true`
+
+Closeout scope clarification:
+
+Doc29 completion means the truthful promotion contract is now implemented end to end. It does not require every
+deterministic scaffold to be deleted from source immediately. Some scaffold producers still exist in-tree, but they are
+now explicitly non-authoritative for promotion and completion gating.
+
+## Runtime proof snapshot
+
+The decisive full-session proving run was `sim-2026-03-06-full-day-r1` using dataset
+`torghut-full-day-20260306` and candidate `intraday_tsmom_v1@prod`.
+
+| Field | Result |
+|---|---|
+| Coverage | `1.0` (`PASS`) over the full `390` minute regular session |
+| Trade decisions | `1145` |
+| Executions | `528` |
+| Execution TCA rows | `528` |
+| Execution order events | `520` |
+| Decision-to-execution rate | `46.1%` |
+| Median absolute slippage | `0.0872` bps |
+| P95 absolute slippage | `0.6614` bps |
+| Max absolute slippage | `1.0015` bps |
+| Fill-price budget | `within_budget` (`12` bps median budget, `25` bps p95 budget) |
+| Gross PnL | `66.16` |
+| Net estimated PnL | `66.16` |
+| Realized PnL | `-65.18` |
+| Unrealized PnL | `131.34` |
+| Open lots at end of run | `258` |
+
+The profitability interpretation matters. This run proves replay coverage, execution quality, and truthful evidence
+assembly. It does not by itself prove durable live profitability. End-of-window net stayed positive because of
+mark-to-market on open positions, while realized PnL for the session remained negative.
+
+## Assessment Basis and Verification History
 
 ### Source scope
 
@@ -87,25 +143,31 @@ Supporting design documents inspected:
   order events, research runs, research candidates, fold metrics, stress metrics, promotions, TCA metrics, and LEAN
   shadow records.
 
-### Verification limit
+### Verification timeline
 
-This reassessment is based on direct source inspection and syntax validation, not on a complete runtime integration
-test.
+At author time on `2026-03-06`, this reassessment was source-inspection-first. That original constraint is now
+historical.
 
-The following command passed:
+The doc29 closeout on `2026-03-07` added both local validation and recorded runtime proof:
 
 ```bash
-python -m py_compile $(find app scripts tests -name '*.py')
+uv run --frozen pyright --project pyrightconfig.json
+uv run --frozen pyright --project pyrightconfig.alpha.json
+uv run --frozen pyright --project pyrightconfig.scripts.json
+uv run --frozen pytest tests/test_completion_trace.py tests/test_start_historical_simulation.py \
+  tests/test_signal_ingest.py tests/test_trading_pipeline.py tests/test_import_hypothesis_runtime_windows.py \
+  tests/test_runtime_window_import.py tests/test_feature_parity.py tests/test_janus_q_scaffold.py \
+  tests/test_lean_runner.py tests/test_run_simulation_analysis.py tests/test_autonomous_lane.py \
+  tests/test_promotion_truthfulness.py -q
 ```
 
-Targeted pytest validation was blocked by missing local dependencies during review-time environment checks. The findings
-in this document should therefore be read as:
+In addition, recorded proof runs were persisted through `sim-2026-03-06-open-1h-r21`,
+`sim-2026-03-06-full-day-r1`, the empirical promotion bundle, and the runtime-window import path.
 
-- code-backed and stronger than a pure roadmap memo,
-- but still not equivalent to full runtime validation.
+This document should now be read as both:
 
-Where the document states that a capability is "implemented", that should be read as "implemented in source structure
-and contracts observed in the repository" unless otherwise called out by runtime evidence.
+- the original architecture reset rationale, and
+- a closeout record showing that the doc29 completion contract is satisfied by recorded evidence.
 
 ## Verified Current-State Assessment
 
@@ -132,6 +194,9 @@ and contracts observed in the repository" unless otherwise called out by runtime
 | Regime HMM | `services/torghut/app/trading/regime_hmm.py` | The schema and parsing surface exists, but that is not the same as a trained regime model. |
 | Strategy runtime | `services/torghut/app/trading/strategy_runtime.py` | Runtime strategy logic remains plugin-oriented and deterministic rather than spec-compiled. |
 | Alpha research | `services/torghut/app/trading/alpha/data_sources.py` and related modules | The current baseline is useful but too narrow and too light for production promotion authority. |
+
+The important operational change is that these scaffolded surfaces no longer count as passing promotion evidence on the
+doc29 path. They can remain in source temporarily without being allowed to silently satisfy paper or live gates.
 
 ## Central Risk
 

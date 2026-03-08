@@ -19,6 +19,7 @@ from ..models import TradeCursor
 from .clickhouse import normalize_symbol, to_datetime64
 from .models import SignalEnvelope
 from .simulation import resolve_simulation_context
+from .time_source import trading_now
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ FLAT_CURSOR_OVERLAP = timedelta(seconds=2)
 LATEST_SIGNAL_TS_CACHE_TTL = timedelta(seconds=30)
 LATEST_SIGNAL_TS_ERROR_LOG_COOLDOWN = timedelta(minutes=5)
 SIMULATION_CURSOR_BASELINE = datetime(1970, 1, 1, tzinfo=timezone.utc)
+SIMULATION_FETCH_WINDOW = timedelta(seconds=10)
 
 FLAT_SIGNAL_COLUMNS = [
     "ts",
@@ -129,7 +131,11 @@ class ClickHouseSignalIngestor:
                 no_signal_reason="clickhouse_url_missing",
             )
 
-        poll_started_at = datetime.now(timezone.utc)
+        poll_started_at = (
+            trading_now(account_label=self.account_label)
+            if self.simulation_mode
+            else datetime.now(timezone.utc)
+        )
         time_column = self._resolve_time_column()
         latest_signal_at = self._latest_signal_timestamp(time_column)
         cursor_at, cursor_seq, cursor_symbol, fast_forwarded = self._prepare_fetch_cursor(
@@ -137,6 +143,15 @@ class ClickHouseSignalIngestor:
             poll_started_at=poll_started_at,
             latest_signal_at=latest_signal_at,
         )
+        if self.simulation_mode:
+            return self._fetch_simulation_signals(
+                cursor_at=cursor_at,
+                cursor_seq=cursor_seq,
+                cursor_symbol=cursor_symbol,
+                latest_signal_at=latest_signal_at,
+                poll_started_at=poll_started_at,
+                fast_forwarded=fast_forwarded,
+            )
         query_window_start = cursor_at
         overlap_cutoff = self._overlap_cutoff(time_column, cursor_at)
         query = self._build_query(cursor_at, cursor_seq, cursor_symbol)
@@ -168,6 +183,106 @@ class ClickHouseSignalIngestor:
             query_start=query_window_start,
             query_end=query_window_end,
             no_signal_reason=None,
+        )
+
+    def _fetch_simulation_signals(
+        self,
+        *,
+        cursor_at: datetime,
+        cursor_seq: Optional[int],
+        cursor_symbol: Optional[str],
+        latest_signal_at: Optional[datetime],
+        poll_started_at: datetime,
+        fast_forwarded: bool,
+    ) -> "SignalBatch":
+        query_window_start = cursor_at
+        if latest_signal_at is None:
+            query_window_end = query_window_start + SIMULATION_FETCH_WINDOW
+        else:
+            effective_end = latest_signal_at or poll_started_at
+            query_window_end = min(
+                max(query_window_start, effective_end),
+                query_window_start + SIMULATION_FETCH_WINDOW,
+            )
+        if query_window_end <= query_window_start:
+            lag = (
+                max(0.0, (poll_started_at - latest_signal_at).total_seconds())
+                if latest_signal_at is not None
+                else None
+            )
+            return SignalBatch(
+                signals=[],
+                cursor_at=cursor_at,
+                cursor_seq=cursor_seq if fast_forwarded else None,
+                cursor_symbol=cursor_symbol if fast_forwarded else None,
+                query_start=query_window_start,
+                query_end=query_window_end,
+                signal_lag_seconds=lag,
+                no_signal_reason="cursor_tail_stable" if latest_signal_at is not None else "no_signals_in_window",
+            )
+
+        time_column = _safe_identifier(self._resolve_time_column(), kind='column')
+        query = self._build_replay_query(
+            start=query_window_start,
+            end=query_window_end,
+            normalized_symbol=None,
+            limit=None,
+            time_column=time_column,
+            ordered=False,
+        )
+        rows = self._query_clickhouse(query)
+        signals = self._signals_from_rows(rows)
+        signals = self._filter_cursor_boundary(
+            signals,
+            cursor_at=cursor_at,
+            cursor_seq=cursor_seq,
+            cursor_symbol=cursor_symbol,
+        )
+        signals = self._filter_signals(self._dedupe_signals(signals))
+        max_event_ts: Optional[datetime] = None
+        max_seq: Optional[int] = None
+        max_symbol: Optional[str] = None
+        for signal in signals:
+            max_event_ts, max_seq, max_symbol = _next_signal_cursor_state(
+                signal=signal,
+                max_event_ts=max_event_ts,
+                max_seq=max_seq,
+                max_symbol=max_symbol,
+            )
+
+        if signals:
+            return SignalBatch(
+                signals=signals,
+                cursor_at=max_event_ts,
+                cursor_seq=max_seq,
+                cursor_symbol=max_symbol,
+                query_start=query_window_start,
+                query_end=query_window_end,
+                no_signal_reason=None,
+            )
+
+        if latest_signal_at is not None and query_window_end >= latest_signal_at:
+            lag = max(0.0, (poll_started_at - latest_signal_at).total_seconds())
+            return SignalBatch(
+                signals=[],
+                cursor_at=query_window_end,
+                cursor_seq=None,
+                cursor_symbol=None,
+                query_start=query_window_start,
+                query_end=query_window_end,
+                signal_lag_seconds=lag,
+                no_signal_reason="cursor_tail_stable",
+            )
+
+        return SignalBatch(
+            signals=[],
+            cursor_at=query_window_end,
+            cursor_seq=None,
+            cursor_symbol=None,
+            query_start=query_window_start,
+            query_end=query_window_end,
+            signal_lag_seconds=None,
+            no_signal_reason="empty_batch_advanced",
         )
 
     def fetch_signals_with_reason(
@@ -273,10 +388,7 @@ class ClickHouseSignalIngestor:
         rows: list[dict[str, Any]],
         overlap_cutoff: Optional[datetime],
     ) -> tuple[list[SignalEnvelope], Optional[datetime], Optional[int], Optional[str]]:
-        signals: list[SignalEnvelope] = []
-        max_event_ts: Optional[datetime] = None
-        max_seq: Optional[int] = None
-        max_symbol: Optional[str] = None
+        parsed_signals: list[SignalEnvelope] = []
         for row in rows:
             signal = self.parse_row(row)
             if signal is None:
@@ -284,7 +396,12 @@ class ClickHouseSignalIngestor:
                 continue
             if overlap_cutoff is not None and signal.event_ts < overlap_cutoff:
                 continue
-            signals.append(signal)
+            parsed_signals.append(signal)
+        signals = self._filter_signals(self._dedupe_signals(parsed_signals))
+        max_event_ts: Optional[datetime] = None
+        max_seq: Optional[int] = None
+        max_symbol: Optional[str] = None
+        for signal in signals:
             max_event_ts, max_seq, max_symbol = _next_signal_cursor_state(
                 signal=signal,
                 max_event_ts=max_event_ts,
@@ -407,6 +524,7 @@ class ClickHouseSignalIngestor:
         normalized_symbol: Optional[str],
         limit: Optional[int],
         time_column: str,
+        ordered: bool = True,
     ) -> str:
         where_parts = [
             f"{time_column} >= {to_datetime64(start)}",
@@ -414,9 +532,6 @@ class ClickHouseSignalIngestor:
         ]
         if normalized_symbol:
             where_parts.append(f"symbol = {_quote_literal(normalized_symbol)}")
-        order_clause = f"{time_column} ASC"
-        if self._supports_seq_for_time_column(time_column):
-            order_clause = f"{time_column} ASC, symbol ASC, seq ASC"
 
         query_parts = [
             'SELECT',
@@ -425,9 +540,12 @@ class ClickHouseSignalIngestor:
             self.table,
             'WHERE',
             ' AND '.join(where_parts),
-            'ORDER BY',
-            order_clause,
         ]
+        if ordered:
+            order_clause = f"{time_column} ASC"
+            if self._supports_seq_for_time_column(time_column):
+                order_clause = f"{time_column} ASC, symbol ASC, seq ASC"
+            query_parts.extend(['ORDER BY', order_clause])
         if limit:
             query_parts.extend(['LIMIT', str(max(int(limit), 1))])
         query_parts.append('FORMAT JSONEachRow')
@@ -439,7 +557,7 @@ class ClickHouseSignalIngestor:
             signal = self.parse_row(row)
             if signal is not None:
                 signals.append(signal)
-        return signals
+        return self._filter_signals(self._dedupe_signals(signals))
 
     def _resolve_replay_no_signal_reason(
         self,
@@ -631,7 +749,33 @@ class ClickHouseSignalIngestor:
             if signal is None:
                 continue
             signals.append(signal)
-        return signals
+        return self._filter_signals(self._dedupe_signals(signals))
+
+    def _dedupe_signals(self, signals: list[SignalEnvelope]) -> list[SignalEnvelope]:
+        if self.schema == "flat" or len(signals) < 2:
+            return signals
+
+        deduped_by_key: dict[tuple[datetime, str, str | None], SignalEnvelope] = {}
+        for signal in signals:
+            key = _signal_identity(signal)
+            current = deduped_by_key.get(key)
+            if current is None or _prefer_earlier_ingest_signal(candidate=signal, current=current):
+                deduped_by_key[key] = signal
+        if len(deduped_by_key) == len(signals):
+            return signals
+        deduped = list(deduped_by_key.values())
+        deduped.sort(key=_signal_sort_key)
+        return deduped
+
+    def _filter_signals(self, signals: list[SignalEnvelope]) -> list[SignalEnvelope]:
+        allowed_sources = _normalized_signal_sources(settings.trading_signal_allowed_sources_raw)
+        if not allowed_sources or not signals:
+            return signals
+        return [
+            signal
+            for signal in signals
+            if (signal.source or "").strip().lower() in allowed_sources
+        ]
 
     def _query_clickhouse(self, query: str) -> list[dict[str, Any]]:
         params = {"query": query}
@@ -678,6 +822,34 @@ class ClickHouseSignalIngestor:
             except json.JSONDecodeError as exc:
                 logger.warning("Failed to decode ClickHouse row: %s", exc)
         return rows
+
+    def _filter_cursor_boundary(
+        self,
+        signals: list[SignalEnvelope],
+        *,
+        cursor_at: datetime,
+        cursor_seq: Optional[int],
+        cursor_symbol: Optional[str],
+    ) -> list[SignalEnvelope]:
+        filtered: list[SignalEnvelope] = []
+        for signal in signals:
+            if signal.event_ts < cursor_at:
+                continue
+            if signal.event_ts > cursor_at:
+                filtered.append(signal)
+                continue
+            candidate_seq = _coerce_seq(signal.seq)
+            if cursor_seq is not None and candidate_seq is not None:
+                if candidate_seq < cursor_seq:
+                    continue
+                if candidate_seq == cursor_seq and cursor_symbol is not None and signal.symbol <= cursor_symbol:
+                    continue
+                filtered.append(signal)
+                continue
+            if cursor_symbol is not None and signal.symbol <= cursor_symbol:
+                continue
+            filtered.append(signal)
+        return filtered
 
     def _select_expression(self, time_column: str) -> str:
         select_columns = self._select_columns_for_schema(time_column)
@@ -765,12 +937,15 @@ class ClickHouseSignalIngestor:
         )
         cursor_row = session.execute(stmt).scalar_one_or_none()
         if cursor_row:
-            return cursor_row.cursor_at, cursor_row.cursor_seq, cursor_row.cursor_symbol
+            cursor_at = cursor_row.cursor_at
+            if cursor_at.tzinfo is None:
+                cursor_at = cursor_at.replace(tzinfo=timezone.utc)
+            if self.simulation_mode and cursor_at <= SIMULATION_CURSOR_BASELINE:
+                return trading_now(account_label=self.account_label), None, None
+            return cursor_at, cursor_row.cursor_seq, cursor_row.cursor_symbol
 
         if self.simulation_mode:
-            # Historical simulation replays finalized windows where "now-lookback"
-            # would start ahead of the stream and suppress all decisions.
-            return SIMULATION_CURSOR_BASELINE, None, None
+            return trading_now(account_label=self.account_label), None, None
 
         lookback = timedelta(minutes=self.initial_lookback_minutes)
         return datetime.now(timezone.utc) - lookback, None, None
@@ -1079,6 +1254,34 @@ def _next_signal_cursor_state(
     return max_event_ts, max_seq, max_symbol
 
 
+def _signal_identity(signal: SignalEnvelope) -> tuple[datetime, str, str | None]:
+    return (
+        signal.event_ts.astimezone(timezone.utc),
+        signal.symbol,
+        signal.timeframe,
+    )
+
+
+def _signal_sort_key(signal: SignalEnvelope) -> tuple[datetime, str, str, int, str]:
+    return (
+        signal.event_ts.astimezone(timezone.utc),
+        signal.symbol,
+        signal.timeframe or "",
+        _coerce_seq(signal.seq) or -1,
+        signal.source or "",
+    )
+
+
+def _prefer_earlier_ingest_signal(*, candidate: SignalEnvelope, current: SignalEnvelope) -> bool:
+    current_ingest = current.ingest_ts.astimezone(timezone.utc) if current.ingest_ts is not None else None
+    candidate_ingest = candidate.ingest_ts.astimezone(timezone.utc) if candidate.ingest_ts is not None else None
+    if current_ingest is None:
+        return candidate_ingest is not None
+    if candidate_ingest is None:
+        return False
+    return candidate_ingest < current_ingest
+
+
 def _coerce_seq(value: Any) -> Optional[int]:
     if value is None:
         return None
@@ -1094,6 +1297,16 @@ def _coerce_seq(value: Any) -> Optional[int]:
         except ValueError:
             return None
     return None
+
+
+def _normalized_signal_sources(raw: str | None) -> set[str]:
+    if not raw:
+        return set()
+    return {
+        item.strip().lower()
+        for item in raw.split(",")
+        if item.strip()
+    }
 
 
 def _quote_literal(value: str) -> str:

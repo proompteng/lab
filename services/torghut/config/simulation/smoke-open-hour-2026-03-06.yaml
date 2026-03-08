@@ -1,5 +1,13 @@
 dataset_id: torghut-smoke-open-hour-20260306
 dataset_snapshot_ref: torghut-smoke-open-hour-20260306
+candidate_id: legacy_macd_rsi@prod
+baseline_candidate_id: legacy_macd_rsi@baseline
+strategy_spec_ref: strategy-specs/legacy_macd_rsi@1.0.0.json
+model_refs:
+  - rules/legacy_macd_rsi
+runtime_version_refs:
+  - services/torghut@simulation
+  - services/torghut-forecast@simulation
 
 window:
   trading_day: '2026-03-06'

@@ -128,6 +128,16 @@ def _safe_float(value: Any, *, default: float = 0.0) -> float:
     return default
 
 
+def _normalized_string_set(raw: str | None) -> set[str]:
+    if raw is None:
+        return set()
+    return {
+        token.strip().lower()
+        for token in raw.split(',')
+        if token.strip()
+    }
+
+
 def _resource_attr(resource: Any, key: str, *, default: Any = None) -> Any:
     if isinstance(resource, Mapping):
         return resource.get(key, default)
@@ -579,8 +589,9 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
     namespace = _as_text(_resource_attr(resources, 'namespace')) or 'torghut'
     torghut_service = _as_text(_resource_attr(resources, 'torghut_service'))
     ta_deployment = _as_text(_resource_attr(resources, 'ta_deployment'))
+    ta_configmap = _as_text(_resource_attr(resources, 'ta_configmap'))
     forecast_service = _as_text(_resource_attr(resources, 'torghut_forecast_service'))
-    if torghut_service is None or ta_deployment is None or forecast_service is None:
+    if torghut_service is None or ta_deployment is None or ta_configmap is None or forecast_service is None:
         raise RuntimeError('simulation resources are incomplete')
 
     service = _kubectl_json(namespace, ['get', 'kservice', torghut_service, '-o', 'json'])
@@ -600,6 +611,7 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
     expected_order_updates_topic = _as_text(
         _as_mapping(_resource_attr(resources, 'simulation_topic_by_role')).get('order_updates')
     )
+    expected_topics = _as_mapping(_resource_attr(resources, 'simulation_topic_by_role'))
     trading_config = {
         'trading_enabled': _env_value('TRADING_ENABLED') == 'true',
         'simulation_enabled': _env_value('TRADING_SIMULATION_ENABLED') == 'true',
@@ -612,8 +624,20 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
         'simulation_order_updates_topic': _env_value('TRADING_SIMULATION_ORDER_UPDATES_TOPIC')
         == expected_order_updates_topic,
         'simulation_run_id': _env_value('TRADING_SIMULATION_RUN_ID') == _as_text(_resource_attr(resources, 'run_id')),
+        'signal_allowed_sources': 'ta' in _normalized_string_set(_env_value('TRADING_SIGNAL_ALLOWED_SOURCES')),
     }
     trading_config_complete = all(trading_config.values())
+    ta_config = _kubectl_json(namespace, ['get', 'configmap', ta_configmap, '-o', 'json'])
+    ta_data = _as_mapping(ta_config.get('data'))
+    run_token = _as_text(_resource_attr(resources, 'run_token')) or ''
+    ta_runtime_config = {
+        'trades_topic': _as_text(ta_data.get('TA_TRADES_TOPIC')) == _as_text(expected_topics.get('trades')),
+        'quotes_topic': _as_text(ta_data.get('TA_QUOTES_TOPIC')) == _as_text(expected_topics.get('quotes')),
+        'bars_topic': _as_text(ta_data.get('TA_BARS1M_TOPIC')) == _as_text(expected_topics.get('bars')),
+        'signals_topic': _as_text(ta_data.get('TA_SIGNALS_TOPIC')) == _as_text(expected_topics.get('ta_signals')),
+        'clickhouse_database': bool(run_token) and run_token in (_as_text(ta_data.get('TA_CLICKHOUSE_URL')) or ''),
+    }
+    ta_runtime_config_complete = all(ta_runtime_config.values())
     revision_health: dict[str, Any] | None = None
     if latest_ready_revision:
         revision_health = _deployment_replica_health(namespace, f'{latest_ready_revision}-deployment')
@@ -628,6 +652,7 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
         and ta_health['lifecycle_state'] in {'RUNNING', 'running', 'DEPLOYED'}
         and forecast_health['ready_replicas'] > 0
         and trading_config_complete
+        and ta_runtime_config_complete
         else 'not_ready',
         'target_mode': _as_text(_resource_attr(resources, 'target_mode')),
         'window_start': window_start.astimezone(timezone.utc).isoformat(),
@@ -640,9 +665,10 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
             'trading_config': trading_config,
         },
         'ta_runtime': ta_health,
+        'ta_runtime_config': ta_runtime_config,
         'forecast_runtime': forecast_health,
         'environment_state': 'complete'
-        if forecast_health['ready_replicas'] > 0 and trading_config_complete
+        if forecast_health['ready_replicas'] > 0 and trading_config_complete and ta_runtime_config_complete
         else 'environment_incomplete',
     }
 

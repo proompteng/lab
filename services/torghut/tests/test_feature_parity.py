@@ -20,8 +20,10 @@ from app.trading.parity import (
     DEEPLOB_BDLOB_SCHEMA_VERSION,
     _benchmark_report_hash,
     _deeplob_bdlob_report_hash,
+    build_advisor_fallback_slo_report,
     build_benchmark_parity_report,
     build_deeplob_bdlob_report,
+    build_foundation_router_parity_report,
     run_feature_parity,
     write_feature_parity_report,
 )
@@ -109,7 +111,26 @@ class TestFeatureParity(TestCase):
                 run.get('schema_version'),
                 BENCHMARK_PARITY_RUN_SCHEMA_VERSION,
             )
+            self.assertEqual(
+                run.get('policy_violations', {}).get('deterministic_gate_compatible'),
+                False,
+            )
 
+        self.assertEqual(
+            report.get('overall_parity_status'),
+            'blocked_missing_empirical_authority',
+        )
+        for scorecard in report.get('scorecards', {}).values():
+            self.assertIsInstance(scorecard, dict)
+            assert isinstance(scorecard, dict)
+            self.assertEqual(
+                scorecard.get('status'),
+                'blocked_missing_empirical_authority',
+            )
+            self.assertEqual(
+                scorecard.get('deterministic_gate_compatible'),
+                False,
+            )
         self.assertEqual(report.get('artifact_hash'), _benchmark_report_hash(report))
 
     def test_deeplob_bdlob_report_includes_standardized_contract(self) -> None:
@@ -145,8 +166,40 @@ class TestFeatureParity(TestCase):
         )
         for field_name in DEEPLOB_BDLOB_REQUIRED_SUMMARY_FIELDS:
             self.assertIsInstance(report.get(field_name), dict)
-        self.assertEqual(report.get('overall_status'), 'pass')
+        self.assertEqual(report.get('overall_status'), 'blocked_missing_empirical_authority')
         self.assertEqual(
             report.get('artifact_hash'),
             _deeplob_bdlob_report_hash(report),
+        )
+
+    def test_deterministic_scaffold_reports_fail_closed_without_empirical_authority(self) -> None:
+        now = datetime(2026, 3, 3, tzinfo=timezone.utc)
+        foundation = build_foundation_router_parity_report(
+            candidate_id='cand-test',
+            router_policy_version='forecast_router_policy_v1',
+            now=now,
+        )
+        advisor = build_advisor_fallback_slo_report(
+            candidate_id='cand-test',
+            advisor_policy_version='v3-gates-1',
+            now=now,
+        )
+
+        self.assertEqual(foundation.get('overall_status'), 'blocked_missing_empirical_authority')
+        self.assertEqual(
+            foundation.get('artifact_authority', {}).get('authoritative'),
+            False,
+        )
+        self.assertEqual(
+            foundation.get('slice_metrics', {}).get('by_symbol', {}).get('AAPL', {}).get('status'),
+            'blocked_missing_empirical_authority',
+        )
+        self.assertEqual(advisor.get('overall_status'), 'blocked_missing_empirical_authority')
+        self.assertEqual(
+            advisor.get('fallback_reason_rates', {}).get('slo_pass'),
+            False,
+        )
+        self.assertEqual(
+            advisor.get('artifact_authority', {}).get('provenance'),
+            'synthetic_generated',
         )

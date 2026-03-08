@@ -27,9 +27,10 @@ from zoneinfo import ZoneInfo
 
 import psycopg
 from psycopg import sql
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 import yaml
-
-from app.db import SessionLocal
+from app.db import SessionLocal  # noqa: F401 - imported for unit-test patch targets
 from app.trading.completion import (
     DOC29_SIMULATION_FULL_DAY_GATE,
     DOC29_SIMULATION_SMOKE_GATE,
@@ -159,8 +160,11 @@ DEFAULT_ROLLOUTS_TEARDOWN_TEMPLATE = 'torghut-simulation-teardown-clean'
 DEFAULT_ROLLOUTS_ARTIFACT_TEMPLATE = 'torghut-simulation-artifact-bundle'
 DEFAULT_ROLLOUTS_VERIFY_TIMEOUT_SECONDS = 1800
 DEFAULT_ROLLOUTS_VERIFY_POLL_SECONDS = 5
+SIMULATION_RUNTIME_LOCK_NAME = 'torghut-historical-simulation-lock'
 SIMULATION_CLICKHOUSE_SCHEMA_SOURCE_DATABASE = 'torghut'
 SIMULATION_CLICKHOUSE_RUNTIME_TABLES = ('ta_microbars', 'ta_signals')
+SIMULATION_CLICKHOUSE_TABLE_VISIBILITY_ATTEMPTS = 10
+SIMULATION_CLICKHOUSE_TABLE_VISIBILITY_SLEEP_SECONDS = 0.2
 TRANSIENT_POSTGRES_ERROR_PATTERNS = (
     'connection refused',
     'connection reset by peer',
@@ -177,6 +181,13 @@ POSTGRES_VECTOR_EXTENSION_PERMISSION_ERROR_MARKERS = (
 )
 TRANSIENT_POSTGRES_RETRY_ATTEMPTS = 8
 TRANSIENT_POSTGRES_RETRY_SLEEP_SECONDS = 0.5
+SIMULATION_POSTGRES_RUNTIME_RESET_TABLES = (
+    'trade_cursor',
+    'trade_decisions',
+    'executions',
+    'execution_tca_metrics',
+    'execution_order_events',
+)
 KAFKA_API_VERSION = (4, 1, 1)
 KAFKA_HOST_SUFFIX_FALLBACKS = (
     '.kafka-kafka-brokers.kafka.svc.cluster.local',
@@ -437,6 +448,23 @@ def _as_text(value: Any) -> str | None:
     if not text:
         return None
     return text
+
+
+def _as_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [text for item in value if (text := _as_text(item))]
+
+
+def _simulation_evidence_lineage(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        'dataset_snapshot_ref': _as_text(manifest.get('dataset_snapshot_ref')),
+        'candidate_id': _as_text(manifest.get('candidate_id')),
+        'baseline_candidate_id': _as_text(manifest.get('baseline_candidate_id')),
+        'strategy_spec_ref': _as_text(manifest.get('strategy_spec_ref')),
+        'model_refs': _as_string_list(manifest.get('model_refs')),
+        'runtime_version_refs': _as_string_list(manifest.get('runtime_version_refs')),
+    }
 
 
 def _parse_rfc3339_timestamp(value: str | None, *, label: str) -> datetime:
@@ -1243,6 +1271,20 @@ def _kubectl_apply(namespace: str, payload: Mapping[str, Any]) -> None:
     )
 
 
+def _kubectl_delete(namespace: str, kind: str, name: str) -> None:
+    _run_command(
+        [
+            'kubectl',
+            '-n',
+            namespace,
+            'delete',
+            kind,
+            name,
+            '--ignore-not-found=true',
+        ]
+    )
+
+
 def _kubectl_delete_if_exists(namespace: str, kind: str, name: str) -> None:
     _run_command(
         [
@@ -1372,6 +1414,90 @@ def _clone_json_mapping(value: Mapping[str, Any] | None) -> dict[str, Any] | Non
     if value is None:
         return None
     return cast(dict[str, Any], json.loads(json.dumps(dict(value))))
+
+
+def _simulation_lock_payload(
+    *,
+    resources: SimulationResources,
+    state_path: Path,
+) -> dict[str, str]:
+    return {
+        'run_id': resources.run_id,
+        'run_token': resources.run_token,
+        'dataset_id': resources.dataset_id,
+        'state_path': str(state_path),
+        'acquired_at': datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _read_simulation_runtime_lock(namespace: str) -> dict[str, str] | None:
+    try:
+        payload = _kubectl_json(namespace, ['get', 'configmap', SIMULATION_RUNTIME_LOCK_NAME, '-o', 'json'])
+    except RuntimeError as exc:
+        if 'notfound' in str(exc).lower():
+            return None
+        raise
+    data = _as_mapping(payload.get('data'))
+    return {str(key): str(value) for key, value in data.items()}
+
+
+def _acquire_simulation_runtime_lock(
+    *,
+    resources: SimulationResources,
+    state_path: Path,
+) -> dict[str, str]:
+    payload = _simulation_lock_payload(resources=resources, state_path=state_path)
+    try:
+        _run_command(
+            [
+                'kubectl',
+                '-n',
+                resources.namespace,
+                'create',
+                'configmap',
+                SIMULATION_RUNTIME_LOCK_NAME,
+                *(f'--from-literal={key}={value}' for key, value in payload.items()),
+            ]
+        )
+        return {
+            'status': 'acquired',
+            **payload,
+        }
+    except RuntimeError as exc:
+        if 'already exists' not in str(exc).lower():
+            raise
+    existing = _read_simulation_runtime_lock(resources.namespace)
+    if existing is None:
+        raise RuntimeError('simulation_runtime_lock_missing_after_conflict')
+    if existing.get('run_id') == resources.run_id:
+        return {
+            'status': 'reused',
+            **existing,
+        }
+    raise RuntimeError(
+        'simulation_runtime_lock_held:'
+        f'{existing.get("run_id") or "unknown"}:'
+        f'{existing.get("dataset_id") or "unknown"}'
+    )
+
+
+def _release_simulation_runtime_lock(
+    *,
+    resources: SimulationResources,
+) -> dict[str, str]:
+    existing = _read_simulation_runtime_lock(resources.namespace)
+    if existing is None:
+        return {'status': 'missing'}
+    if existing.get('run_id') != resources.run_id:
+        return {
+            'status': 'not_owner',
+            **existing,
+        }
+    _kubectl_delete(resources.namespace, 'configmap', SIMULATION_RUNTIME_LOCK_NAME)
+    return {
+        'status': 'released',
+        **existing,
+    }
 
 
 def _read_argocd_automation_mode(
@@ -2038,6 +2164,54 @@ def _http_clickhouse_query(
         connection.close()
 
 
+def _clickhouse_query_configs(config: ClickHouseRuntimeConfig) -> list[ClickHouseRuntimeConfig]:
+    parsed = urlsplit(config.http_url)
+    host = parsed.hostname
+    if not host or '.svc' not in host:
+        return [config]
+
+    host_parts = host.split('.')
+    if len(host_parts) < 2:
+        return [config]
+
+    service_name = host_parts[0]
+    namespace = host_parts[1]
+    try:
+        payload = _kubectl_json(namespace, ['get', 'endpoints', service_name, '-o', 'json'])
+    except Exception:
+        return [config]
+
+    resolved_configs: list[ClickHouseRuntimeConfig] = []
+    seen_urls: set[str] = set()
+    subsets = payload.get('subsets')
+    if isinstance(subsets, Sequence):
+        for subset in subsets:
+            if not isinstance(subset, Mapping):
+                continue
+            addresses = subset.get('addresses')
+            if not isinstance(addresses, Sequence):
+                continue
+            for address in addresses:
+                if not isinstance(address, Mapping):
+                    continue
+                ip = _as_text(address.get('ip'))
+                if not ip:
+                    continue
+                netloc = f'{ip}:{parsed.port}' if parsed.port is not None else ip
+                endpoint_url = parsed._replace(netloc=netloc).geturl()
+                if endpoint_url in seen_urls:
+                    continue
+                seen_urls.add(endpoint_url)
+                resolved_configs.append(
+                    ClickHouseRuntimeConfig(
+                        http_url=endpoint_url,
+                        username=config.username,
+                        password=config.password,
+                    )
+                )
+    return resolved_configs or [config]
+
+
 def _ensure_clickhouse_database(
     *,
     config: ClickHouseRuntimeConfig,
@@ -2046,9 +2220,14 @@ def _ensure_clickhouse_database(
     if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', database):
         raise RuntimeError(f'invalid_clickhouse_database_name:{database}')
     create_query = f'CREATE DATABASE IF NOT EXISTS {database}'
-    status, body = _http_clickhouse_query(config=config, query=create_query)
-    if status < 200 or status >= 300:
-        raise RuntimeError(f'clickhouse_create_database_failed:{status}:{body[:200]}')
+    for endpoint_config in _clickhouse_query_configs(config):
+        status, body = _http_clickhouse_query(config=endpoint_config, query=create_query)
+        if status < 200 or status >= 300:
+            raise RuntimeError(f'clickhouse_create_database_failed:{status}:{body[:200]}')
+        _wait_for_clickhouse_database(
+            config=endpoint_config,
+            database=database,
+        )
 
 
 def _show_create_clickhouse_table(
@@ -2056,7 +2235,8 @@ def _show_create_clickhouse_table(
     config: ClickHouseRuntimeConfig,
     table: str,
 ) -> str:
-    status, body = _http_clickhouse_query(config=config, query=f'SHOW CREATE TABLE {table}')
+    query_config = _clickhouse_query_configs(config)[0]
+    status, body = _http_clickhouse_query(config=query_config, query=f'SHOW CREATE TABLE {table}')
     if status < 200 or status >= 300:
         raise RuntimeError(f'clickhouse_show_create_failed:{table}:{status}:{body[:200]}')
     ddl = body.strip()
@@ -2100,18 +2280,88 @@ def _ensure_clickhouse_runtime_tables(
     config: ClickHouseRuntimeConfig,
     database: str,
 ) -> None:
+    endpoint_configs = _clickhouse_query_configs(config)
     for table in SIMULATION_CLICKHOUSE_RUNTIME_TABLES:
         source_table = f'{SIMULATION_CLICKHOUSE_SCHEMA_SOURCE_DATABASE}.{table}'
-        source_ddl = _show_create_clickhouse_table(config=config, table=source_table)
+        source_ddl = _show_create_clickhouse_table(config=endpoint_configs[0], table=source_table)
         create_query = _rewrite_clickhouse_table_ddl_for_simulation(
             source_ddl=source_ddl,
             source_table=source_table,
             database=database,
             table=table,
         )
-        status, body = _http_clickhouse_query(config=config, query=create_query)
-        if status < 200 or status >= 300:
-            raise RuntimeError(f'clickhouse_create_table_failed:{database}.{table}:{status}:{body[:200]}')
+        for endpoint_config in endpoint_configs:
+            status, body = _http_clickhouse_query(config=endpoint_config, query=create_query)
+            if status < 200 or status >= 300:
+                raise RuntimeError(f'clickhouse_create_table_failed:{database}.{table}:{status}:{body[:200]}')
+            _wait_for_clickhouse_table(
+                config=endpoint_config,
+                database=database,
+                table=table,
+            )
+            reset_query = f'TRUNCATE TABLE {database}.{table}'
+            status, body = _http_clickhouse_query(config=endpoint_config, query=reset_query)
+            if status < 200 or status >= 300:
+                raise RuntimeError(f'clickhouse_truncate_table_failed:{database}.{table}:{status}:{body[:200]}')
+
+
+def _clickhouse_database_precreated(manifest: Mapping[str, Any]) -> bool:
+    clickhouse = _as_mapping(manifest.get('clickhouse'))
+    raw_value = clickhouse.get('database_precreated')
+    if raw_value is None:
+        raw_value = clickhouse.get('skip_database_create')
+    return str(raw_value or 'false').strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _postgres_database_precreated(manifest: Mapping[str, Any]) -> bool:
+    postgres = _as_mapping(manifest.get('postgres'))
+    raw_value = postgres.get('database_precreated')
+    if raw_value is None:
+        raw_value = postgres.get('skip_database_create')
+    return str(raw_value or 'false').strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _wait_for_clickhouse_table(
+    *,
+    config: ClickHouseRuntimeConfig,
+    database: str,
+    table: str,
+    attempts: int = SIMULATION_CLICKHOUSE_TABLE_VISIBILITY_ATTEMPTS,
+    sleep_seconds: float = SIMULATION_CLICKHOUSE_TABLE_VISIBILITY_SLEEP_SECONDS,
+) -> None:
+    if attempts <= 0:
+        raise RuntimeError('clickhouse_table_visibility_attempts_must_be_positive')
+    exists_query = f'EXISTS TABLE {database}.{table}'
+    last_body = ''
+    for attempt in range(1, attempts + 1):
+        status, body = _http_clickhouse_query(config=config, query=exists_query)
+        last_body = body[:200]
+        if 200 <= status < 300 and body.strip() == '1':
+            return
+        if attempt < attempts:
+            time.sleep(sleep_seconds)
+    raise RuntimeError(f'clickhouse_table_not_visible:{database}.{table}:{last_body}')
+
+
+def _wait_for_clickhouse_database(
+    *,
+    config: ClickHouseRuntimeConfig,
+    database: str,
+    attempts: int = SIMULATION_CLICKHOUSE_TABLE_VISIBILITY_ATTEMPTS,
+    sleep_seconds: float = SIMULATION_CLICKHOUSE_TABLE_VISIBILITY_SLEEP_SECONDS,
+) -> None:
+    if attempts <= 0:
+        raise RuntimeError('clickhouse_database_visibility_attempts_must_be_positive')
+    exists_query = f'EXISTS DATABASE {database}'
+    last_body = ''
+    for attempt in range(1, attempts + 1):
+        status, body = _http_clickhouse_query(config=config, query=exists_query)
+        last_body = body[:200]
+        if 200 <= status < 300 and body.strip() == '1':
+            return
+        if attempt < attempts:
+            time.sleep(sleep_seconds)
+    raise RuntimeError(f'clickhouse_database_not_visible:{database}:{last_body}')
 
 
 def _ensure_postgres_database(config: PostgresRuntimeConfig) -> None:
@@ -2219,6 +2469,7 @@ def _run_migrations(config: PostgresRuntimeConfig) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     env = dict(os.environ)
     env['DB_DSN'] = config.torghut_runtime_dsn
+    _remove_appledouble_sidecars(repo_root / 'migrations' / 'versions')
 
     def _run(command: str) -> None:
         _run_command(
@@ -2262,6 +2513,47 @@ def _run_migrations(config: PostgresRuntimeConfig) -> None:
     )
 
 
+def _remove_appledouble_sidecars(directory: Path) -> None:
+    if not directory.exists():
+        return
+    for candidate in directory.glob('._*.py'):
+        candidate.unlink(missing_ok=True)
+
+
+def _reset_postgres_runtime_state(config: PostgresRuntimeConfig) -> None:
+    def _reset() -> None:
+        with psycopg.connect(config.torghut_runtime_dsn, autocommit=True) as conn:
+            with conn.cursor() as cursor:
+                for table in SIMULATION_POSTGRES_RUNTIME_RESET_TABLES:
+                    cursor.execute('SELECT to_regclass(%s)', (table,))
+                    row = cursor.fetchone()
+                    if row is None or row[0] is None:
+                        continue
+                    cursor.execute(
+                        sql.SQL('TRUNCATE TABLE {} RESTART IDENTITY CASCADE').format(
+                            sql.Identifier(table),
+                        )
+                    )
+
+    _run_with_transient_postgres_retry(
+        label='reset_postgres_runtime_state',
+        operation=_reset,
+    )
+
+
+def _runtime_sessionmaker(config: PostgresRuntimeConfig) -> tuple[Any, Any]:
+    runtime_dsn = config.torghut_runtime_dsn
+    if runtime_dsn.startswith('postgresql://'):
+        runtime_dsn = 'postgresql+psycopg://' + runtime_dsn[len('postgresql://') :]
+    engine = create_engine(runtime_dsn, future=True)
+    factory = sessionmaker(
+        bind=engine,
+        expire_on_commit=False,
+        future=True,
+    )
+    return factory, engine
+
+
 def _capture_cluster_state(resources: SimulationResources) -> dict[str, Any]:
     ta_config = _kubectl_json(
         resources.namespace,
@@ -2299,17 +2591,19 @@ def _capture_cluster_state(resources: SimulationResources) -> dict[str, Any]:
     }
 
 
-def _replace_clickhouse_jdbc_database(raw_url: str, new_database: str) -> str:
-    match = re.match(r'^(jdbc:clickhouse://[^/]+/)([^?]+)(.*)$', raw_url.strip())
-    if match is None:
-        raise RuntimeError(f'invalid_clickhouse_jdbc_url:{raw_url}')
-    return f'{match.group(1)}{new_database}{match.group(3)}'
+def _clickhouse_jdbc_url_for_database(raw_url: str, new_database: str) -> str:
+    parsed = urlsplit(raw_url.strip())
+    if not parsed.hostname:
+        raise RuntimeError(f'invalid_clickhouse_http_url:{raw_url}')
+    netloc = parsed.netloc
+    suffix = f'?{parsed.query}' if parsed.query else ''
+    return f'jdbc:clickhouse://{netloc}/{new_database}{suffix}'
 
 
 def _configure_ta_for_simulation(
     *,
     resources: SimulationResources,
-    ta_data: Mapping[str, Any],
+    clickhouse_config: ClickHouseRuntimeConfig,
     clickhouse_database: str,
     auto_offset_reset: str,
 ) -> None:
@@ -2324,12 +2618,10 @@ def _configure_ta_for_simulation(
             continue
         updates[key] = topic
 
-    existing_jdbc = _as_text(ta_data.get('TA_CLICKHOUSE_URL'))
-    if existing_jdbc:
-        updates['TA_CLICKHOUSE_URL'] = _replace_clickhouse_jdbc_database(
-            existing_jdbc,
-            clickhouse_database,
-        )
+    updates['TA_CLICKHOUSE_URL'] = _clickhouse_jdbc_url_for_database(
+        clickhouse_config.http_url,
+        clickhouse_database,
+    )
 
     _kubectl_patch(
         resources.namespace,
@@ -2375,6 +2667,7 @@ def _configure_torghut_service_for_simulation(
     resources: SimulationResources,
     manifest: Mapping[str, Any],
     postgres_config: PostgresRuntimeConfig,
+    clickhouse_config: ClickHouseRuntimeConfig,
     kafka_config: KafkaRuntimeConfig,
     torghut_env_overrides: Mapping[str, Any] | None = None,
 ) -> None:
@@ -2393,8 +2686,12 @@ def _configure_torghut_service_for_simulation(
         'TRADING_ENABLED': 'true',
         'TRADING_MODE': 'paper',
         'TRADING_FEATURE_FLAGS_ENABLED': 'false',
+        'TA_CLICKHOUSE_URL': clickhouse_config.http_url,
+        'TA_CLICKHOUSE_USERNAME': clickhouse_config.username or '',
+        'TA_CLICKHOUSE_PASSWORD': clickhouse_config.password or '',
         'TRADING_SIGNAL_TABLE': resources.clickhouse_signal_table,
         'TRADING_PRICE_TABLE': resources.clickhouse_price_table,
+        'TRADING_SIGNAL_ALLOWED_SOURCES': 'ws,ta',
         'TRADING_ORDER_FEED_ENABLED': 'true',
         'TRADING_ORDER_FEED_BOOTSTRAP_SERVERS': kafka_config.runtime_bootstrap,
         'TRADING_ORDER_FEED_SECURITY_PROTOCOL': kafka_config.runtime_security,
@@ -3218,59 +3515,73 @@ def _apply(
 
     state_path, run_manifest_path, dump_path = _state_paths(resources)
     _ensure_directory(state_path)
-
-    if state_path.exists():
-        state = _load_json(state_path)
-    else:
-        state = _capture_cluster_state(resources)
-        _save_json(state_path, state)
-
-    ta_data = _as_mapping(state.get('ta_data'))
-    _verify_isolation_guards(
+    runtime_lock = _acquire_simulation_runtime_lock(
         resources=resources,
-        postgres_config=postgres_config,
-        ta_data=ta_data,
+        state_path=state_path,
     )
 
-    topics_report = _ensure_topics(
-        resources=resources,
-        config=kafka_config,
-        manifest=manifest,
-    )
-    _ensure_clickhouse_database(config=clickhouse_config, database=resources.clickhouse_db)
-    _ensure_clickhouse_runtime_tables(config=clickhouse_config, database=resources.clickhouse_db)
-    _ensure_postgres_database(postgres_config)
-    postgres_permissions_report = _ensure_postgres_runtime_permissions(postgres_config)
-    _run_migrations(postgres_config)
+    try:
+        if state_path.exists():
+            state = _load_json(state_path)
+        else:
+            state = _capture_cluster_state(resources)
+            _save_json(state_path, state)
 
-    dump_report = _dump_topics(
-        resources=resources,
-        kafka_config=kafka_config,
-        manifest=manifest,
-        dump_path=dump_path,
-        force=force_dump,
-    )
-    dump_coverage = _validate_dump_coverage(
-        manifest=manifest,
-        dump_report=dump_report,
-    )
-    replay_cfg = _as_mapping(manifest.get('replay'))
-    auto_offset_reset = (_as_text(replay_cfg.get('auto_offset_reset')) or 'earliest').lower()
-    _configure_ta_for_simulation(
-        resources=resources,
-        ta_data=ta_data,
-        clickhouse_database=resources.clickhouse_db,
-        auto_offset_reset=auto_offset_reset,
-    )
-    ta_restart_nonce = _restart_ta_deployment(resources, desired_state='running')
+        ta_data = _as_mapping(state.get('ta_data'))
+        _verify_isolation_guards(
+            resources=resources,
+            postgres_config=postgres_config,
+            ta_data=ta_data,
+        )
 
-    _configure_torghut_service_for_simulation(
-        resources=resources,
-        manifest=manifest,
-        postgres_config=postgres_config,
-        kafka_config=kafka_config,
-        torghut_env_overrides=torghut_env_overrides,
-    )
+        topics_report = _ensure_topics(
+            resources=resources,
+            config=kafka_config,
+            manifest=manifest,
+        )
+        clickhouse_database_precreated = _clickhouse_database_precreated(manifest)
+        if not clickhouse_database_precreated:
+            _ensure_clickhouse_database(config=clickhouse_config, database=resources.clickhouse_db)
+        _ensure_clickhouse_runtime_tables(config=clickhouse_config, database=resources.clickhouse_db)
+        postgres_database_precreated = _postgres_database_precreated(manifest)
+        if not postgres_database_precreated:
+            _ensure_postgres_database(postgres_config)
+        postgres_permissions_report = _ensure_postgres_runtime_permissions(postgres_config)
+        _run_migrations(postgres_config)
+        _reset_postgres_runtime_state(postgres_config)
+
+        dump_report = _dump_topics(
+            resources=resources,
+            kafka_config=kafka_config,
+            manifest=manifest,
+            dump_path=dump_path,
+            force=force_dump,
+        )
+        dump_coverage = _validate_dump_coverage(
+            manifest=manifest,
+            dump_report=dump_report,
+        )
+        replay_cfg = _as_mapping(manifest.get('replay'))
+        auto_offset_reset = (_as_text(replay_cfg.get('auto_offset_reset')) or 'earliest').lower()
+        _configure_ta_for_simulation(
+            resources=resources,
+            clickhouse_config=clickhouse_config,
+            clickhouse_database=resources.clickhouse_db,
+            auto_offset_reset=auto_offset_reset,
+        )
+        ta_restart_nonce = _restart_ta_deployment(resources, desired_state='running')
+
+        _configure_torghut_service_for_simulation(
+            resources=resources,
+            manifest=manifest,
+            postgres_config=postgres_config,
+            clickhouse_config=clickhouse_config,
+            kafka_config=kafka_config,
+            torghut_env_overrides=torghut_env_overrides,
+        )
+    except Exception:
+        _release_simulation_runtime_lock(resources=resources)
+        raise
 
     report = {
         'status': 'ok',
@@ -3290,12 +3601,16 @@ def _apply(
         'postgres': {
             'simulation_dsn': _redact_dsn_credentials(postgres_config.simulation_dsn),
             'simulation_db': postgres_config.simulation_db,
+            'database_precreated': postgres_database_precreated,
             'runtime_permissions': postgres_permissions_report,
         },
         'clickhouse': {
             'http_url': clickhouse_config.http_url,
             'database': resources.clickhouse_db,
+            'database_precreated': clickhouse_database_precreated,
         },
+        'simulation_lock': runtime_lock,
+        'evidence_lineage': _simulation_evidence_lineage(manifest),
         'torghut_env_overrides': torghut_env_overrides,
         'window_policy': window_policy,
     }
@@ -3311,6 +3626,7 @@ def _teardown(
     _ensure_supported_binary('kubectl')
     state_path, run_manifest_path, dump_path = _state_paths(resources)
     if not state_path.exists():
+        lock_report = _release_simulation_runtime_lock(resources=resources)
         if allow_missing_state:
             return {
                 'status': 'ok',
@@ -3318,8 +3634,40 @@ def _teardown(
                 'run_id': resources.run_id,
                 'teardown_at': datetime.now(timezone.utc).isoformat(),
                 'state_found': False,
+                'simulation_lock': lock_report,
             }
         raise SystemExit(f'state file not found: {state_path}')
+
+    runtime_lock = _read_simulation_runtime_lock(resources.namespace)
+    if runtime_lock is None:
+        return {
+            'status': 'degraded',
+            'mode': 'teardown',
+            'run_id': resources.run_id,
+            'teardown_at': datetime.now(timezone.utc).isoformat(),
+            'state_path': str(state_path),
+            'run_manifest_path': str(run_manifest_path),
+            'dump_path': str(dump_path),
+            'simulation_lock': {'status': 'missing'},
+            'skipped_restore': True,
+            'reason': 'simulation_runtime_lock_missing_for_teardown',
+        }
+    if runtime_lock.get('run_id') != resources.run_id:
+        return {
+            'status': 'degraded',
+            'mode': 'teardown',
+            'run_id': resources.run_id,
+            'teardown_at': datetime.now(timezone.utc).isoformat(),
+            'state_path': str(state_path),
+            'run_manifest_path': str(run_manifest_path),
+            'dump_path': str(dump_path),
+            'simulation_lock': {
+                'status': 'not_owner',
+                **runtime_lock,
+            },
+            'skipped_restore': True,
+            'reason': 'simulation_runtime_lock_not_owned_by_run',
+        }
 
     state = _load_json(state_path)
     _restore_ta_configuration(resources, state)
@@ -3327,6 +3675,7 @@ def _teardown(
 
     original_state = _as_text(state.get('ta_job_state')) or 'running'
     ta_restart_nonce = _restart_ta_deployment(resources, desired_state=original_state)
+    lock_report = _release_simulation_runtime_lock(resources=resources)
     report = {
         'status': 'ok',
         'mode': 'teardown',
@@ -3337,6 +3686,7 @@ def _teardown(
         'dump_path': str(dump_path),
         'ta_restart_nonce': ta_restart_nonce,
         'restored_ta_state': original_state,
+        'simulation_lock': lock_report,
     }
     _save_json(run_manifest_path.with_name('teardown-manifest.json'), report)
     return report
@@ -3805,6 +4155,23 @@ def _wait_for_analysis_run(
         time.sleep(5)
 
 
+def _wait_for_runtime_verify(
+    *,
+    resources: SimulationResources,
+    manifest: Mapping[str, Any],
+    timeout_seconds: int,
+    poll_seconds: int,
+) -> dict[str, Any]:
+    deadline = datetime.now(timezone.utc) + timedelta(seconds=timeout_seconds)
+    report = _runtime_verify(resources=resources, manifest=manifest)
+    while report.get('runtime_state') != 'ready':
+        if datetime.now(timezone.utc) >= deadline:
+            return report
+        time.sleep(poll_seconds)
+        report = _runtime_verify(resources=resources, manifest=manifest)
+    return report
+
+
 def _run_rollouts_analysis(
     *,
     resources: SimulationResources,
@@ -4027,13 +4394,14 @@ def _build_simulation_completion_trace(
     artifact_refs = _existing_artifact_refs(resources, analytics_payload)
 
     for gate_id in gate_ids_attempted:
+        requires_runtime_ready = gate_id == DOC29_SIMULATION_SMOKE_GATE
         satisfied = (
-            runtime_state == 'ready'
-            and activity_classification == 'success'
+            activity_classification == 'success'
             and trade_decisions >= 1
             and executions >= 1
             and execution_tca_metrics >= 1
             and execution_order_events >= 1
+            and (runtime_state == 'ready' or not requires_runtime_ready)
         )
         if gate_id == DOC29_SIMULATION_FULL_DAY_GATE:
             satisfied = satisfied and coverage_ratio >= strict_ratio and _safe_int(
@@ -4041,7 +4409,7 @@ def _build_simulation_completion_trace(
             ) >= US_EQUITIES_REGULAR_MINUTES
         blocked_reason = None
         if not satisfied:
-            if runtime_state != 'ready':
+            if requires_runtime_ready and runtime_state != 'ready':
                 blocked_reason = 'runtime_not_ready'
             elif activity_classification != 'success':
                 blocked_reason = f'activity_classification:{activity_classification}'
@@ -4236,7 +4604,14 @@ def _run_full_lifecycle(
                     template_name=rollouts_config.runtime_template,
                 )
                 rollouts_report['runtime_analysis_run'] = runtime_analysis_run
-            runtime_verify_report = _runtime_verify(resources=resources, manifest=manifest)
+                runtime_verify_report = _runtime_verify(resources=resources, manifest=manifest)
+            else:
+                runtime_verify_report = _wait_for_runtime_verify(
+                    resources=resources,
+                    manifest=manifest,
+                    timeout_seconds=rollouts_config.verify_timeout_seconds,
+                    poll_seconds=rollouts_config.verify_poll_seconds,
+                )
             runtime_verify_report['analysis_run'] = rollouts_report['runtime_analysis_run']
             _save_json(_artifact_path(resources, 'runtime-verify.json'), runtime_verify_report)
             _update_run_state(
@@ -4497,13 +4872,17 @@ def _run_full_lifecycle(
     )
     completion_trace_path = _artifact_path(resources, 'completion-trace.json')
     _save_json(completion_trace_path, completion_trace)
-    with SessionLocal() as session:
-        gate_row_ids = persist_completion_trace(
-            session=session,
-            trace_payload=completion_trace,
-            default_artifact_ref=str(completion_trace_path),
-        )
-        session.commit()
+    runtime_session_factory, runtime_engine = _runtime_sessionmaker(postgres_config)
+    try:
+        with runtime_session_factory() as session:
+            gate_row_ids = persist_completion_trace(
+                session=session,
+                trace_payload=completion_trace,
+                default_artifact_ref=str(completion_trace_path),
+            )
+            session.commit()
+    finally:
+        runtime_engine.dispose()
     updated_db_refs = _as_mapping(completion_trace.get('db_row_refs'))
     updated_db_refs['completion_gate_row_ids'] = gate_row_ids
     completion_trace['db_row_refs'] = updated_db_refs
