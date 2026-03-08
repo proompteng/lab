@@ -6,6 +6,7 @@ This runbook documents:
 
 - How we configure Rook-Ceph / Ceph-CSI for CephFS FUSE on Talos.
 - How to migrate an existing CephFS PVC to the FUSE storage class.
+- How to treat `rook-cephfs-fuse` as the compatibility RWX class when benchmarking.
 
 ## Why FUSE
 
@@ -25,12 +26,22 @@ Note: this is quoted as a string so Helm renders `CSI_FORCE_CEPHFS_KERNEL_CLIENT
 - File: `argocd/applications/rook-ceph/storageclasses.yaml`
 - Name: `rook-cephfs-fuse`
 - Key parameter: `parameters.mounter: fuse`
+- Conservative default mount option: `mountOptions: [noatime]`
+
+3. The live CephFS keeps a single active MDS and now sets explicit MDS resources:
+
+- File: `argocd/applications/rook-ceph/storageclasses.yaml`
+- Key path: `spec.metadataServer`
+- Default resources: requests `2 CPU / 8Gi`, limits `4 CPU / 16Gi`
 
 ## Using CephFS FUSE In Apps
 
 Set PVCs to use:
 
 - `storageClassName: rook-cephfs-fuse`
+
+Use this class only when the workload genuinely needs shared POSIX semantics and the node image does not provide a working kernel CephFS client.
+If a kernel-capable worker pool exists, benchmark `rook-cephfs` against `rook-cephfs-fuse` before standardizing on FUSE for a performance-sensitive workload.
 
 Example:
 
@@ -87,3 +98,8 @@ kubectl -n rook-ceph get pods
 ```
 
 2. Confirm a pod mounting the PVC starts successfully (no CephFS mount errors) and that the app becomes `Healthy` in Argo CD.
+
+## Performance Investigation
+
+The RWX-only performance workflow lives in `docs/runbooks/rook-ceph-rwx-performance.md`.
+Use that runbook before changing `activeCount`, changing hardware topology, or treating a FUSE result as representative of all CephFS RWX performance.
