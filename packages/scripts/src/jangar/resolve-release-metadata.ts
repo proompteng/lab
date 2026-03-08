@@ -55,9 +55,18 @@ export type ReleaseMetadata = {
   contractDigest: string
   image: string
   controlPlaneImage: string
+  contractControlPlaneDigest: string
   promote: boolean
   reason: string
 }
+
+const resolveControlPlaneContractFields = (
+  contract: ReturnType<typeof readReleaseContract>,
+  fallbackImage: string,
+): Pick<ReleaseMetadata, 'controlPlaneImage' | 'contractControlPlaneDigest'> => ({
+  controlPlaneImage: contract.controlPlaneImage?.trim() || fallbackImage,
+  contractControlPlaneDigest: contract.controlPlaneDigest?.trim() ?? '',
+})
 
 const resolvePath = (path: string) => resolve(repoRoot, path)
 
@@ -149,7 +158,7 @@ Defaults:
   control-plane-image: ${defaultControlPlaneImage}
 
 Output keys:
-  main_head, source_sha, tag, contract_digest, image, control_plane_image, promote, promotion_reason`)
+  main_head, source_sha, tag, contract_digest, image, control_plane_image, contract_control_plane_digest, promote, promotion_reason`)
       process.exit(0)
     }
 
@@ -206,6 +215,8 @@ const resolveReleaseMetadata = (options: ResolveReleaseMetadataOptions): Release
   let sourceSha = ''
   let tag = ''
   let contractDigest = ''
+  let controlPlaneImage = options.controlPlaneImage
+  let contractControlPlaneDigest = ''
   let promote = true
   let reason = 'eligible'
 
@@ -218,6 +229,10 @@ const resolveReleaseMetadata = (options: ResolveReleaseMetadataOptions): Release
     if (contract.image !== options.image) {
       throw new Error(`Release contract image mismatch: expected ${options.image}, got ${contract.image}`)
     }
+    ;({ controlPlaneImage, contractControlPlaneDigest } = resolveControlPlaneContractFields(
+      contract,
+      options.controlPlaneImage,
+    ))
 
     const workflowRunHeadSha = options.workflowRunHeadSha?.trim() ?? ''
     if (!workflowRunHeadSha) {
@@ -252,7 +267,8 @@ const resolveReleaseMetadata = (options: ResolveReleaseMetadataOptions): Release
     tag,
     contractDigest,
     image: options.image,
-    controlPlaneImage: options.controlPlaneImage,
+    controlPlaneImage,
+    contractControlPlaneDigest,
     promote,
     reason,
   }
@@ -265,6 +281,7 @@ const toGitHubOutputLines = (metadata: ReleaseMetadata): string[] => [
   `contract_digest=${metadata.contractDigest}`,
   `image=${metadata.image}`,
   `control_plane_image=${metadata.controlPlaneImage}`,
+  `contract_control_plane_digest=${metadata.contractControlPlaneDigest}`,
   `promote=${metadata.promote ? 'true' : 'false'}`,
   `promotion_reason=${metadata.reason}`,
 ]
@@ -321,6 +338,7 @@ export const __private = {
   listChangedFilesBetween,
   normalizeEventName,
   parseArgs,
+  resolveControlPlaneContractFields,
   resolveReleaseMetadata,
   toGitHubOutputLines,
 }

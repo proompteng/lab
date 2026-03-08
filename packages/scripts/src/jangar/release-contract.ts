@@ -17,6 +17,8 @@ export type JangarReleaseContract = {
   tag: string
   digest: string
   image: string
+  controlPlaneImage?: string
+  controlPlaneDigest?: string
   createdAt: string
 }
 
@@ -29,6 +31,8 @@ type CliOptions = {
   tag?: string
   digest?: string
   image?: string
+  controlPlaneImage?: string
+  controlPlaneDigest?: string
   field?: ContractField
 }
 
@@ -59,9 +63,11 @@ Commands:
     --tag <tag>
     --digest <sha256:...>
     --image <registry/repo>
+    --control-plane-image <registry/repo>
+    --control-plane-digest <sha256:...>
   get
     --path <path>
-    --field <sourceSha|tag|digest|image|createdAt>
+    --field <sourceSha|tag|digest|image|controlPlaneImage|controlPlaneDigest|createdAt>
   emit-github-output
     --path <path>`)
       process.exit(0)
@@ -101,8 +107,18 @@ Commands:
       case '--image':
         options.image = value
         break
+      case '--control-plane-image':
+        options.controlPlaneImage = value
+        break
+      case '--control-plane-digest':
+        options.controlPlaneDigest = value
+        break
       case '--field':
-        if (!['sourceSha', 'tag', 'digest', 'image', 'createdAt'].includes(value)) {
+        if (
+          !['sourceSha', 'tag', 'digest', 'image', 'controlPlaneImage', 'controlPlaneDigest', 'createdAt'].includes(
+            value,
+          )
+        ) {
           throw new Error(`Unknown field: ${value}`)
         }
         options.field = value as ContractField
@@ -128,6 +144,14 @@ const assertValidContract = (contract: JangarReleaseContract) => {
   if (!contract.image.trim()) {
     throw new Error('image cannot be empty')
   }
+  if (contract.controlPlaneImage !== undefined && !contract.controlPlaneImage.trim()) {
+    throw new Error('controlPlaneImage cannot be empty when provided')
+  }
+  if (contract.controlPlaneDigest !== undefined && contract.controlPlaneDigest.trim() !== '') {
+    if (!digestPattern.test(contract.controlPlaneDigest)) {
+      throw new Error(`Invalid controlPlaneDigest '${contract.controlPlaneDigest}'`)
+    }
+  }
   if (!contract.createdAt.trim()) {
     throw new Error('createdAt cannot be empty')
   }
@@ -142,6 +166,8 @@ export const writeReleaseContract = (path: string, contract: JangarReleaseContra
   const normalized: JangarReleaseContract = {
     ...contract,
     digest: normalizeDigest(contract.digest),
+    controlPlaneDigest:
+      contract.controlPlaneDigest === undefined ? undefined : normalizeDigest(contract.controlPlaneDigest),
   }
   assertValidContract(normalized)
   writeFileSync(resolveContractPath(path), `${JSON.stringify(normalized, null, 2)}\n`, 'utf8')
@@ -155,6 +181,9 @@ export const readReleaseContract = (path: string): JangarReleaseContract => {
     tag: parsed.tag ?? '',
     digest: normalizeDigest(parsed.digest ?? ''),
     image: parsed.image ?? '',
+    controlPlaneImage: typeof parsed.controlPlaneImage === 'string' ? parsed.controlPlaneImage : undefined,
+    controlPlaneDigest:
+      typeof parsed.controlPlaneDigest === 'string' ? normalizeDigest(parsed.controlPlaneDigest) : undefined,
     createdAt: parsed.createdAt ?? '',
   }
   assertValidContract(contract)
@@ -175,6 +204,8 @@ export const main = (cliOptions?: CliOptions) => {
     const tag = parsed.tag?.trim() ?? ''
     const digest = normalizeDigest(parsed.digest ?? '')
     const image = parsed.image?.trim() ?? ''
+    const controlPlaneImage = parsed.controlPlaneImage?.trim()
+    const controlPlaneDigest = parsed.controlPlaneDigest ? normalizeDigest(parsed.controlPlaneDigest) : undefined
     const createdAt = new Date().toISOString()
 
     const contract: JangarReleaseContract = {
@@ -182,6 +213,8 @@ export const main = (cliOptions?: CliOptions) => {
       tag,
       digest,
       image,
+      controlPlaneImage,
+      controlPlaneDigest,
       createdAt,
     }
     writeReleaseContract(path, contract)
@@ -202,6 +235,8 @@ export const main = (cliOptions?: CliOptions) => {
   console.log(`tag=${contract.tag}`)
   console.log(`digest=${contract.digest}`)
   console.log(`image=${contract.image}`)
+  console.log(`control_plane_image=${contract.controlPlaneImage ?? ''}`)
+  console.log(`control_plane_digest=${contract.controlPlaneDigest ?? ''}`)
   console.log(`created_at=${contract.createdAt}`)
 }
 

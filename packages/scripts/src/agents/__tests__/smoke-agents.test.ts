@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 
 import {
   buildHelmArgs,
+  buildPodHealthProbeArgs,
   buildKubectlApplyArgs,
   buildKubectlApplyCrdsArgs,
   buildKubectlWaitForCrdsArgs,
@@ -115,6 +116,22 @@ describe('CRD bootstrap kubectl args', () => {
       '--timeout=45s',
       '-f',
       resolve(process.cwd(), 'charts/agents/crds'),
+    ])
+  })
+})
+
+describe('buildPodHealthProbeArgs', () => {
+  it('execs into the pod and fetches the readiness endpoint with node or bun', () => {
+    expect(buildPodHealthProbeArgs('agents-ci', 'agents-ci-abc123')).toEqual([
+      'kubectl',
+      '-n',
+      'agents-ci',
+      'exec',
+      'agents-ci-abc123',
+      '--',
+      'sh',
+      '-lc',
+      expect.stringContaining('http://127.0.0.1:8080/health'),
     ])
   })
 })

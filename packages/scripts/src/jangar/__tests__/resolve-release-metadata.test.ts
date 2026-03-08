@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
+import { readReleaseContract } from '../release-contract'
 import { __private } from '../resolve-release-metadata'
 
 const f22a8cbc = 'f22a8cbc91f8462d5e375e7684a38b03af271dde'
@@ -28,6 +29,30 @@ const f22ToDddJangarBuildTriggerFiles = [
 ]
 
 describe('resolve-release-metadata', () => {
+  it('prefers control-plane metadata from the release contract when present', () => {
+    const resolved = __private.resolveControlPlaneContractFields(
+      readReleaseContract('packages/scripts/src/jangar/__fixtures__/release-contract-with-control-plane.json'),
+      'registry.ide-newton.ts.net/lab/jangar-control-plane',
+    )
+
+    expect(resolved).toEqual({
+      controlPlaneImage: 'registry.ide-newton.ts.net/lab/jangar-control-plane',
+      contractControlPlaneDigest: 'sha256:6e621beae7d0c07f1d3ae3618435b762f954e1b1410e46ea7dac56db8f5ced96',
+    })
+  })
+
+  it('falls back to the configured control-plane repository for older contracts', () => {
+    const resolved = __private.resolveControlPlaneContractFields(
+      readReleaseContract('packages/scripts/src/jangar/__fixtures__/release-contract-without-control-plane.json'),
+      'registry.ide-newton.ts.net/lab/jangar-control-plane',
+    )
+
+    expect(resolved).toEqual({
+      controlPlaneImage: 'registry.ide-newton.ts.net/lab/jangar-control-plane',
+      contractControlPlaneDigest: '',
+    })
+  })
+
   it('regression fixture: allows promotion when newer main files are docs-only', () => {
     const decision = __private.evaluateWorkflowRunStaleness({
       sourceSha: ddd07d2f,

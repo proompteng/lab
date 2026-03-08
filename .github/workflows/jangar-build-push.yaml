@@ -164,7 +164,9 @@ jobs:
             --source-sha "${GITHUB_SHA}" \
             --tag "${{ steps.meta.outputs.tag }}" \
             --digest "${{ steps.digest.outputs.digest }}" \
-            --image "registry.ide-newton.ts.net/lab/jangar"
+            --image "registry.ide-newton.ts.net/lab/jangar" \
+            --control-plane-image "registry.ide-newton.ts.net/lab/jangar-control-plane" \
+            --control-plane-digest "${{ steps.control_plane_digest.outputs.digest }}"
 
       - name: Upload release contract artifact
         uses: actions/upload-artifact@v4
