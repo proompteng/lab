@@ -228,9 +228,22 @@ jobs:
           JANGAR_BUILD_LOG_LEVEL: warn
         run: |
           set -euo pipefail
+          (
+            while :; do
+              echo "[progress] prebuilding services/jangar .output at $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+              sleep 120
+            done
+          ) &
+          HEARTBEAT_PID=$!
+          cleanup_heartbeat() {
+            kill "${HEARTBEAT_PID}" 2>/dev/null || true
+            wait "${HEARTBEAT_PID}" 2>/dev/null || true
+          }
+          trap cleanup_heartbeat EXIT
+
           bun run --filter @proompteng/otel build
           bun run --filter @proompteng/temporal-bun-sdk build
-          timeout 15m bun --cwd services/jangar --bun vite build --logLevel warn
+          timeout 25m bun --cwd services/jangar --bun vite build --logLevel warn
           bun --cwd services/jangar run copy:grpc-proto
 
       - name: Build and preload local Jangar control-plane image into kind
