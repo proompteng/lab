@@ -2,7 +2,7 @@
 
 import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 import process from 'node:process'
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
@@ -186,18 +186,6 @@ export const buildKubectlWaitForCrdsArgs = (timeout = '120s') => [
   '-f',
   agentsCrdsPath,
 ]
-
-export const buildNatsServiceManifest = (namespace: string) => `apiVersion: v1
-kind: Service
-metadata:
-  name: nats
-  namespace: ${namespace}
-spec:
-  ports:
-    - name: client
-      port: 4222
-      targetPort: 4222
-`
 
 const waitForKubectlApi = async (timeoutMs: number) => {
   const start = Date.now()
@@ -574,11 +562,6 @@ spec:
   log('Applying Agents chart CRDs...')
   await run('kubectl', buildKubectlApplyCrdsArgs())
   await run('kubectl', buildKubectlWaitForCrdsArgs())
-
-  const natsServiceFile = resolve(tmpdir(), `agents-smoke-nats-${namespace}.yaml`)
-  await Bun.write(natsServiceFile, buildNatsServiceManifest(namespace))
-  log('Applying smoke NATS service stub...')
-  await run('kubectl', buildKubectlApplyArgs({ namespace, file: natsServiceFile }))
 
   await run('helm', helmArgs)
   {

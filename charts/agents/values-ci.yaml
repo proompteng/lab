@@ -22,12 +22,6 @@ rbac:
         - get
         - list
         - watch
-    - apiGroups:
-        - ''
-      resources:
-        - services
-      verbs:
-        - get
 
 # The CI control-plane image should stay on the published registry.ide-newton release image and
 # continues to use `/health` for readiness to avoid rollout stalls during smoke tests.

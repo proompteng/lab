@@ -92,13 +92,67 @@ export const runKubectl = (args: string[]) =>
     command.on('close', (code) => resolve({ stdout, stderr, code }))
   })
 
+type NatsDependency = {
+  enabled: boolean
+  url?: string
+}
+
+type KubernetesServiceReference = {
+  name: string
+  namespace: string
+}
+
+export const resolveKubernetesServiceReferenceFromUrl = (
+  url: string | undefined,
+  fallbackNamespace: string,
+): KubernetesServiceReference | null => {
+  const raw = url?.trim()
+  if (!raw) return null
+
+  let hostname: string
+  try {
+    hostname = new URL(raw).hostname.trim().toLowerCase()
+  } catch {
+    return null
+  }
+
+  if (!hostname) return null
+
+  const parts = hostname.split('.').filter(Boolean)
+  if (parts.length === 1) {
+    return {
+      name: parts[0]!,
+      namespace: fallbackNamespace,
+    }
+  }
+
+  if (parts.length === 2) {
+    return {
+      name: parts[0]!,
+      namespace: parts[1]!,
+    }
+  }
+
+  if (parts[2] === 'svc') {
+    return {
+      name: parts[0]!,
+      namespace: parts[1]!,
+    }
+  }
+
+  return null
+}
+
 export const checkCrds = async (options: {
   resolveRequiredCrds: () => string[]
   resolveCrdCheckNamespace: () => string
   nowIso: () => string
+  resolveNatsDependency?: () => NatsDependency
+  runKubectlCommand?: typeof runKubectl
 }) => {
+  const kubectl = options.runKubectlCommand ?? runKubectl
   const requiredCrds = options.resolveRequiredCrds()
-  const crdResult = await runKubectl(['get', 'crd', '-o', 'jsonpath={range .items[*]}{.metadata.name}{"\\n"}{end}'])
+  const crdResult = await kubectl(['get', 'crd', '-o', 'jsonpath={range .items[*]}{.metadata.name}{"\\n"}{end}'])
   const missing: string[] = []
   const forbidden: string[] = []
   if (crdResult.code !== 0) {
@@ -127,12 +181,26 @@ export const checkCrds = async (options: {
   }
 
   const namespace = options.resolveCrdCheckNamespace()
-  const serviceResult = await runKubectl(['get', 'svc', '-n', namespace, 'nats', '-o', 'name'])
-  if (serviceResult.code !== 0) {
-    return {
-      ok: false,
-      missing: [...missing, `service:nats@${namespace}`],
-      checkedAt: options.nowIso(),
+  const natsDependency = options.resolveNatsDependency?.()
+  if (natsDependency?.enabled) {
+    const serviceReference = resolveKubernetesServiceReferenceFromUrl(natsDependency.url, namespace)
+    if (serviceReference) {
+      const serviceResult = await kubectl([
+        'get',
+        'svc',
+        '-n',
+        serviceReference.namespace,
+        serviceReference.name,
+        '-o',
+        'name',
+      ])
+      if (serviceResult.code !== 0) {
+        return {
+          ok: false,
+          missing: [...missing, `service:${serviceReference.name}@${serviceReference.namespace}`],
+          checkedAt: options.nowIso(),
+        }
+      }
     }
   }
 
