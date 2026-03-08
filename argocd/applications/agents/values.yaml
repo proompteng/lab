@@ -84,6 +84,9 @@ controller:
     perAgent: 10
   queue:
     perRepo: 200
+  # Agents namespace policy override to keep AgentRun history shorter in high-churn env.
+  # This intentionally overrides chart default with 7 days.
+  agentRunRetentionSeconds: 604800
   jobTtlSeconds: 86400
   jobTtlSecondsAfterFinished: 86400
   logRetentionSeconds: 604800
