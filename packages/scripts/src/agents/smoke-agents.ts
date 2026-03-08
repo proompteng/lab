@@ -364,6 +364,23 @@ const waitForJobs = async (namespace: string, name: string, expected: number, ti
     ])
     const count = result.exitCode === 0 ? result.stdout.split(/\s+/).filter(Boolean).length : 0
     if (count >= expected) return
+
+    const phaseResult = await execCapture([
+      'kubectl',
+      '-n',
+      namespace,
+      'get',
+      'agentrun',
+      name,
+      '-o',
+      'jsonpath={.status.phase}',
+    ])
+    const phase = phaseResult.exitCode === 0 ? phaseResult.stdout.trim() : ''
+    if (phase === 'Failed') {
+      await run('kubectl', ['-n', namespace, 'get', 'agentrun', name, '-o', 'yaml'])
+      fatal(`AgentRun ${name} failed before creating ${expected} job(s).`)
+    }
+
     await sleep(1000)
   }
 

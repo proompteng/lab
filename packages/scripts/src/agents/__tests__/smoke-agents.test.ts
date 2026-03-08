@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import {
@@ -115,6 +116,15 @@ describe('CRD bootstrap kubectl args', () => {
       '-f',
       resolve(process.cwd(), 'charts/agents/crds'),
     ])
+  })
+})
+
+describe('smoke fixtures', () => {
+  it('keeps the smoke agent fixture aligned with the system prompt policy', () => {
+    const fixture = readFileSync(resolve(process.cwd(), 'charts/agents/examples/agent-smoke.yaml'), 'utf8')
+
+    expect(fixture).toContain('defaults:')
+    expect(fixture).toContain('systemPrompt:')
   })
 })
 
