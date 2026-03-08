@@ -26,6 +26,11 @@ from ...models import (
     ResearchPromotion,
     ResearchRun,
     ResearchStressMetrics,
+    StrategyCapitalAllocation,
+    StrategyHypothesis,
+    StrategyHypothesisMetricWindow,
+    StrategyHypothesisVersion,
+    StrategyPromotionDecision,
     Strategy,
     VNextDatasetSnapshot,
     VNextExperimentRun,
@@ -36,6 +41,7 @@ from ...models import (
     VNextShadowLiveDeviation,
     VNextSimulationCalibration,
 )
+from ..completion import build_completion_trace, persist_completion_trace
 from ..evaluation import (
     FoldResult,
     ProfitabilityEvidenceThresholdsV4,
@@ -5003,6 +5009,21 @@ def _persist_run_outputs(
                     VNextPromotionDecision.candidate_id == candidate_id
                 )
             )
+            session.execute(
+                delete(StrategyHypothesisMetricWindow).where(
+                    StrategyHypothesisMetricWindow.candidate_id == candidate_id
+                )
+            )
+            session.execute(
+                delete(StrategyCapitalAllocation).where(
+                    StrategyCapitalAllocation.candidate_id == candidate_id
+                )
+            )
+            session.execute(
+                delete(StrategyPromotionDecision).where(
+                    StrategyPromotionDecision.candidate_id == candidate_id
+                )
+            )
             should_promote = (
                 effective_promotion_allowed
                 and promotion_recommendation.action == "promote"
@@ -5346,6 +5367,264 @@ def _persist_run_outputs(
             )
 
 
+def _persist_strategy_spec_lineage_trace(
+    *,
+    session: Session,
+    run_id: str,
+    candidate_id: str,
+    runtime_strategies: Sequence[StrategyRuntimeConfig],
+    candidate_spec_payload: Mapping[str, Any],
+    experiment_payload: Mapping[str, Any],
+) -> None:
+    gate_id = 'strategy_spec_v2_runtime_lineage'
+    artifacts_payload = (
+        cast(dict[str, Any], candidate_spec_payload.get('artifacts'))
+        if isinstance(candidate_spec_payload.get('artifacts'), dict)
+        else {}
+    )
+    walkforward_results_ref = _coerce_str(artifacts_payload.get('walkforward_results')) or None
+    evaluation_report_ref = _coerce_str(artifacts_payload.get('evaluation_report')) or None
+    gate_evaluation_ref = _coerce_str(artifacts_payload.get('gate_evaluation')) or None
+    strategy_items = [
+        {
+            'strategy_id': strategy.strategy_id,
+            'compiler_source': strategy.compiler_source,
+            'spec_compiled': bool(strategy.strategy_spec) and bool(strategy.compiled_targets),
+        }
+        for strategy in runtime_strategies
+    ]
+    spec_compiled_count = sum(1 for item in strategy_items if item['spec_compiled'])
+    satisfied = bool(strategy_items) and spec_compiled_count == len(strategy_items)
+    blocked_reason = None if satisfied else 'strategy_spec_v2_lineage_incomplete'
+    trace_payload = build_completion_trace(
+        doc_id='doc29',
+        gate_ids_attempted=[gate_id],
+        run_id=run_id,
+        dataset_snapshot_ref=walkforward_results_ref,
+        candidate_id=candidate_id,
+        workflow_name='torghut-autonomy-lane',
+        analysis_run_names=[],
+        artifact_refs=[
+            str(item)
+            for item in [
+                walkforward_results_ref,
+                evaluation_report_ref,
+                gate_evaluation_ref,
+            ]
+            if item is not None
+        ],
+        db_row_refs={},
+        status_snapshot={
+            'strategy_migration_state': {
+                'total_strategies': len(strategy_items),
+                'spec_compiled_count': spec_compiled_count,
+                'experiment_spec_present': bool(experiment_payload),
+                'strategies': strategy_items,
+            }
+        },
+        result_by_gate={
+            gate_id: {
+                'status': 'satisfied' if satisfied else 'blocked',
+                'blocked_reason': blocked_reason,
+                'artifact_ref': walkforward_results_ref,
+                'acceptance_snapshot': {
+                    'strategy_migration_state': {
+                        'total_strategies': len(strategy_items),
+                        'spec_compiled_count': spec_compiled_count,
+                        'experiment_spec_present': bool(experiment_payload),
+                    }
+                },
+            }
+        },
+        blocked_reasons={gate_id: blocked_reason} if blocked_reason else {},
+    )
+    persist_completion_trace(session=session, trace_payload=trace_payload)
+
+
+def _persist_hypothesis_governance_rows(
+    *,
+    session: Session,
+    run_id: str,
+    candidate_id: str,
+    candidate_spec_payload: Mapping[str, Any],
+    signals: Sequence[SignalEnvelope],
+    report: EvaluationReport,
+    promotion_target: str,
+    effective_promotion_allowed: bool,
+    promotion_recommendation: PromotionRecommendation,
+    simulation_calibration_report_payload: Mapping[str, Any],
+    shadow_live_deviation_report_payload: Mapping[str, Any],
+    now: datetime,
+) -> None:
+    alpha_readiness_payload = (
+        cast(dict[str, Any], candidate_spec_payload.get('alpha_readiness'))
+        if isinstance(candidate_spec_payload.get('alpha_readiness'), dict)
+        else {}
+    )
+    dependency_quorum_payload = (
+        cast(dict[str, Any], candidate_spec_payload.get('dependency_quorum'))
+        if isinstance(candidate_spec_payload.get('dependency_quorum'), dict)
+        else {}
+    )
+    matched_hypothesis_values = (
+        cast(list[Any], alpha_readiness_payload.get('matched_hypothesis_ids'))
+        if isinstance(alpha_readiness_payload.get('matched_hypothesis_ids'), list)
+        else []
+    )
+    matched_hypothesis_ids = [
+        str(item)
+        for item in matched_hypothesis_values
+        if str(item).strip()
+    ]
+    if not matched_hypothesis_ids:
+        return
+    registry = load_hypothesis_registry()
+    manifest_by_id = {item.hypothesis_id: item for item in registry.items}
+    source_manifest_ref = str(registry.path)
+    shadow_authority = contract_from_artifact_payload(shadow_live_deviation_report_payload)
+    simulation_authority = contract_from_artifact_payload(simulation_calibration_report_payload)
+    order_count = max(
+        _metric_counter_int(shadow_live_deviation_report_payload.get('order_count')),
+        _metric_counter_int(simulation_calibration_report_payload.get('order_count')),
+    )
+    decision_count = max(0, int(report.metrics.decision_count))
+    trade_count = max(0, int(report.metrics.trade_count))
+    decision_alignment_ratio = (
+        Decimal(trade_count) / Decimal(decision_count)
+        if decision_count > 0
+        else Decimal('0')
+    )
+    post_cost_expectancy_bps = -_decimal_or_zero(
+        simulation_calibration_report_payload.get('avg_realized_shortfall_bps')
+    )
+    observed_stage = 'paper' if promotion_target == 'paper' else 'live'
+    dependency_decision = _coerce_str(dependency_quorum_payload.get('decision'), 'unknown')
+    drift_ok = not any('drift' in str(reason) for reason in promotion_recommendation.reasons)
+    continuity_ok = dependency_decision == 'allow'
+    for hypothesis_id in matched_hypothesis_ids:
+        manifest = manifest_by_id.get(hypothesis_id)
+        if manifest is None:
+            continue
+        existing_hypothesis = session.execute(
+            select(StrategyHypothesis).where(StrategyHypothesis.hypothesis_id == hypothesis_id)
+        ).scalar_one_or_none()
+        if existing_hypothesis is None:
+            session.add(
+                StrategyHypothesis(
+                    hypothesis_id=hypothesis_id,
+                    lane_id=manifest.lane_id,
+                    strategy_family=manifest.strategy_family,
+                    source_manifest_ref=source_manifest_ref,
+                    active=True,
+                    payload_json=manifest.model_dump(mode='json'),
+                )
+            )
+        version_key = f'{manifest.schema_version}:{manifest.lane_id}'
+        existing_version = session.execute(
+            select(StrategyHypothesisVersion).where(
+                StrategyHypothesisVersion.hypothesis_id == hypothesis_id,
+                StrategyHypothesisVersion.version_key == version_key,
+            )
+        ).scalar_one_or_none()
+        if existing_version is None:
+            session.add(
+                StrategyHypothesisVersion(
+                    hypothesis_id=hypothesis_id,
+                    version_key=version_key,
+                    source_manifest_ref=source_manifest_ref,
+                    active=True,
+                    payload_json=manifest.model_dump(mode='json'),
+                )
+            )
+        if observed_stage == 'paper':
+            evidence_provenance = 'paper_runtime_observed'
+            evidence_maturity = (
+                'empirically_validated' if order_count > 0 and effective_promotion_allowed else 'uncalibrated'
+            )
+            capital_stage = 'shadow'
+        else:
+            evidence_provenance = 'live_runtime_observed'
+            evidence_maturity = 'empirically_validated' if effective_promotion_allowed else 'uncalibrated'
+            if effective_promotion_allowed and order_count >= manifest.min_sample_count_for_scale_up:
+                capital_stage = '0.50x live'
+            elif effective_promotion_allowed:
+                capital_stage = '0.10x canary'
+            else:
+                capital_stage = 'shadow'
+        session.add(
+            StrategyHypothesisMetricWindow(
+                run_id=run_id,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+                observed_stage=observed_stage,
+                window_started_at=signals[0].event_ts if signals else now,
+                window_ended_at=signals[-1].event_ts if signals else now,
+                market_session_count=1,
+                decision_count=decision_count,
+                trade_count=trade_count,
+                order_count=order_count,
+                evidence_provenance=evidence_provenance,
+                evidence_maturity=evidence_maturity,
+                decision_alignment_ratio=str(decision_alignment_ratio),
+                avg_abs_slippage_bps=str(
+                    shadow_live_deviation_report_payload.get('avg_abs_slippage_bps') or '0'
+                ),
+                slippage_budget_bps=str(manifest.max_allowed_slippage_bps),
+                post_cost_expectancy_bps=str(post_cost_expectancy_bps),
+                continuity_ok=continuity_ok,
+                drift_ok=drift_ok,
+                dependency_quorum_decision=dependency_decision,
+                capital_stage=capital_stage,
+                payload_json={
+                    'alpha_readiness': alpha_readiness_payload,
+                    'dependency_quorum': dependency_quorum_payload,
+                    'shadow_live_deviation': dict(shadow_live_deviation_report_payload),
+                    'simulation_calibration': dict(simulation_calibration_report_payload),
+                    'shadow_live_authority': shadow_authority,
+                    'simulation_authority': simulation_authority,
+                },
+            )
+        )
+        session.add(
+            StrategyCapitalAllocation(
+                run_id=run_id,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+                prior_stage='shadow',
+                stage=capital_stage,
+                capital_multiplier={
+                    'shadow': '0',
+                    '0.10x canary': '0.10',
+                    '0.25x canary': '0.25',
+                    '0.50x live': '0.50',
+                    '1.00x live': '1.00',
+                }.get(capital_stage, '0'),
+                rollback_target_stage='shadow',
+                payload_json={
+                    'effective_promotion_allowed': effective_promotion_allowed,
+                    'promotion_target': promotion_target,
+                    'promotion_recommendation': promotion_recommendation.to_payload(),
+                },
+            )
+        )
+        session.add(
+            StrategyPromotionDecision(
+                run_id=run_id,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+                promotion_target=promotion_target,
+                state=capital_stage,
+                allowed=effective_promotion_allowed,
+                reason_summary=','.join(sorted(set(promotion_recommendation.reasons)))[:255] or None,
+                payload_json={
+                    'promotion_recommendation': promotion_recommendation.to_payload(),
+                    'alpha_readiness': alpha_readiness_payload,
+                    'dependency_quorum': dependency_quorum_payload,
+                },
+            )
+        )
+
+
 def _persist_vnext_objects(
     *,
     session: Session,
@@ -5365,6 +5644,18 @@ def _persist_vnext_objects(
     simulation_calibration_report_payload: dict[str, Any],
     shadow_live_deviation_report_payload: dict[str, Any],
 ) -> None:
+    _persist_strategy_spec_lineage_trace(
+        session=session,
+        run_id=run_id,
+        candidate_id=candidate_id,
+        runtime_strategies=runtime_strategies,
+        candidate_spec_payload=candidate_spec_payload,
+        experiment_payload=(
+            cast(dict[str, Any], candidate_spec_payload.get("experiment_spec"))
+            if isinstance(candidate_spec_payload.get("experiment_spec"), dict)
+            else {}
+        ),
+    )
     experiment_payload = (
         cast(dict[str, Any], candidate_spec_payload.get("experiment_spec"))
         if isinstance(candidate_spec_payload.get("experiment_spec"), dict)
@@ -5529,6 +5820,20 @@ def _persist_vnext_objects(
                 "trade_count": report.metrics.trade_count,
             },
         )
+    )
+    _persist_hypothesis_governance_rows(
+        session=session,
+        run_id=run_id,
+        candidate_id=candidate_id,
+        candidate_spec_payload=candidate_spec_payload,
+        signals=signals,
+        report=report,
+        promotion_target=promotion_target,
+        effective_promotion_allowed=effective_promotion_allowed,
+        promotion_recommendation=promotion_recommendation,
+        simulation_calibration_report_payload=simulation_calibration_report_payload,
+        shadow_live_deviation_report_payload=shadow_live_deviation_report_payload,
+        now=now,
     )
 
 

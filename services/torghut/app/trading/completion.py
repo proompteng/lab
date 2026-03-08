@@ -12,7 +12,11 @@ import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import VNextCompletionGateResult, VNextEmpiricalJobRun
+from ..models import (
+    StrategyHypothesisMetricWindow,
+    VNextCompletionGateResult,
+    VNextEmpiricalJobRun,
+)
 from .empirical_jobs import EMPIRICAL_JOB_TYPES, build_empirical_jobs_status
 
 
@@ -50,6 +54,8 @@ DOC29_SIMULATION_FULL_DAY_GATE = 'simulation_full_day_coverage'
 DOC29_EMPIRICAL_MANIFEST_GATE = 'empirical_manifest_schema_valid'
 DOC29_EMPIRICAL_JOBS_GATE = 'empirical_jobs_persisted'
 DOC29_PAPER_GATE = 'paper_gate_satisfied'
+DOC29_LIVE_CANARY_GATE = 'live_canary_observed'
+DOC29_LIVE_SCALE_GATE = 'live_scale_observed'
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -85,6 +91,21 @@ def _safe_int(value: Any, *, default: int = 0) -> int:
         if stripped:
             try:
                 return int(stripped)
+            except ValueError:
+                return default
+    return default
+
+
+def _safe_float(value: Any, *, default: float = 0.0) -> float:
+    if isinstance(value, bool):
+        return float(int(value))
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped:
+            try:
+                return float(stripped)
             except ValueError:
                 return default
     return default
@@ -344,6 +365,85 @@ def _latest_empirical_rows(session: Session) -> dict[str, VNextEmpiricalJobRun]:
     return latest
 
 
+def _latest_hypothesis_windows(
+    session: Session,
+    *,
+    observed_stage: str,
+    max_age_seconds: int | None = None,
+) -> list[StrategyHypothesisMetricWindow]:
+    rows = session.execute(
+        select(StrategyHypothesisMetricWindow).where(
+            StrategyHypothesisMetricWindow.observed_stage == observed_stage
+        ).order_by(
+            StrategyHypothesisMetricWindow.window_ended_at.desc().nullslast(),
+            StrategyHypothesisMetricWindow.created_at.desc(),
+        )
+    ).scalars()
+    if max_age_seconds is None or max_age_seconds <= 0:
+        return [row for row in rows]
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=max_age_seconds)
+    filtered: list[StrategyHypothesisMetricWindow] = []
+    for row in rows:
+        measured_at = row.window_ended_at or row.created_at
+        if measured_at.tzinfo is None:
+            measured_at = measured_at.replace(tzinfo=timezone.utc)
+        if measured_at >= cutoff:
+            filtered.append(row)
+    return filtered
+
+
+def _window_gate_summary(
+    rows: Sequence[StrategyHypothesisMetricWindow],
+) -> dict[str, Any]:
+    total_sessions = sum(max(0, int(row.market_session_count or 0)) for row in rows)
+    total_windows = len(rows)
+    weighted_alignment = 0.0
+    weighted_slippage = 0.0
+    weighted_expectancy = 0.0
+    total_weight = 0.0
+    latest_rows = sorted(
+        rows,
+        key=lambda row: (
+            row.window_ended_at or row.created_at,
+            row.created_at,
+        ),
+        reverse=True,
+    )
+    latest_three = latest_rows[:3]
+    for row in rows:
+        weight = float(max(1, int(row.market_session_count or 0)))
+        total_weight += weight
+        weighted_alignment += _safe_float(row.decision_alignment_ratio) * weight
+        weighted_slippage += _safe_float(row.avg_abs_slippage_bps) * weight
+        weighted_expectancy += _safe_float(row.post_cost_expectancy_bps) * weight
+    alignment_ratio = (weighted_alignment / total_weight) if total_weight > 0 else 0.0
+    avg_slippage_bps = (weighted_slippage / total_weight) if total_weight > 0 else 0.0
+    avg_expectancy_bps = (weighted_expectancy / total_weight) if total_weight > 0 else 0.0
+    latest_three_within_budget = all(
+        _safe_float(row.avg_abs_slippage_bps) <= _safe_float(row.slippage_budget_bps)
+        for row in latest_three
+    ) if latest_three else False
+    continuity_ok = all(bool(row.continuity_ok) for row in rows)
+    drift_ok = all(bool(row.drift_ok) for row in rows)
+    dependency_allow = all(
+        (_as_text(row.dependency_quorum_decision) or 'unknown') == 'allow'
+        for row in rows
+    )
+    return {
+        'market_session_count': total_sessions,
+        'window_count': total_windows,
+        'decision_alignment_ratio': alignment_ratio,
+        'avg_abs_slippage_bps': avg_slippage_bps,
+        'avg_post_cost_expectancy_bps': avg_expectancy_bps,
+        'latest_three_within_budget': latest_three_within_budget,
+        'continuity_ok': continuity_ok,
+        'drift_ok': drift_ok,
+        'dependency_allow': dependency_allow,
+        'hypothesis_ids': sorted({row.hypothesis_id for row in rows}),
+        'db_row_refs': [str(row.id) for row in rows],
+    }
+
+
 def _evaluate_empirical_jobs_gate(
     *,
     empirical_jobs_status: Mapping[str, Any],
@@ -437,15 +537,125 @@ def _evaluate_paper_gate(
             },
             'dataset_snapshot_ref': empirical_gate.get('dataset_snapshot_ref'),
         }
+    fill_price_status = _as_text(acceptance.get('fill_price_error_budget_status')) or 'missing'
+    if fill_price_status != 'within_budget':
+        blocked_reason = {
+            'missing': 'fill_price_error_budget_not_recorded',
+            'pending_runtime_observation': 'fill_price_error_budget_pending_runtime_observation',
+            'out_of_budget': 'fill_price_error_budget_exceeded',
+        }.get(fill_price_status, f'fill_price_error_budget_{fill_price_status}')
+        return {
+            'status': TRACE_STATUS_BLOCKED,
+            'blocked_reason': blocked_reason,
+            'artifact_refs': cast(list[str], empirical_gate.get('artifact_refs') or []),
+            'db_row_refs': {
+                'simulation_full_day_coverage': str(full_day_row.id),
+                'benchmark_parity': str(benchmark_row.id),
+            },
+            'dataset_snapshot_ref': empirical_gate.get('dataset_snapshot_ref'),
+        }
+    artifact_refs = cast(list[str], empirical_gate.get('artifact_refs') or [])
+    fill_price_ref = _as_text(acceptance.get('fill_price_error_budget_artifact_ref'))
+    if fill_price_ref and fill_price_ref not in artifact_refs:
+        artifact_refs = [*artifact_refs, fill_price_ref]
     return {
-        'status': TRACE_STATUS_BLOCKED,
-        'blocked_reason': 'fill_price_error_budget_not_recorded',
-        'artifact_refs': cast(list[str], empirical_gate.get('artifact_refs') or []),
+        'status': TRACE_STATUS_SATISFIED,
+        'blocked_reason': None,
+        'artifact_refs': artifact_refs,
         'db_row_refs': {
             'simulation_full_day_coverage': str(full_day_row.id),
             'benchmark_parity': str(benchmark_row.id),
         },
         'dataset_snapshot_ref': empirical_gate.get('dataset_snapshot_ref'),
+    }
+
+
+def _evaluate_live_canary_gate(
+    *,
+    paper_gate: Mapping[str, Any],
+    paper_rows: Sequence[StrategyHypothesisMetricWindow],
+) -> dict[str, Any]:
+    if paper_gate.get('status') != TRACE_STATUS_SATISFIED:
+        return {
+            'status': TRACE_STATUS_BLOCKED,
+            'blocked_reason': 'paper_gate_not_satisfied',
+            'artifact_refs': cast(list[str], paper_gate.get('artifact_refs') or []),
+            'db_row_refs': {},
+            'dataset_snapshot_ref': paper_gate.get('dataset_snapshot_ref'),
+        }
+    qualifying = [
+        row
+        for row in paper_rows
+        if (_as_text(row.evidence_provenance) == 'paper_runtime_observed')
+        and (_as_text(row.evidence_maturity) == 'empirically_validated')
+    ]
+    summary = _window_gate_summary(qualifying)
+    if summary['market_session_count'] < 40:
+        blocked_reason = 'insufficient_paper_runtime_sessions'
+    elif summary['decision_alignment_ratio'] < 0.95:
+        blocked_reason = 'shadow_live_alignment_below_threshold'
+    elif not summary['dependency_allow']:
+        blocked_reason = 'dependency_quorum_not_allow'
+    elif not summary['continuity_ok']:
+        blocked_reason = 'continuity_gate_failed'
+    elif summary['avg_abs_slippage_bps'] > max(
+        (_safe_float(row.slippage_budget_bps) for row in qualifying),
+        default=0.0,
+    ):
+        blocked_reason = 'slippage_budget_exceeded'
+    else:
+        blocked_reason = None
+    return {
+        'status': TRACE_STATUS_SATISFIED if blocked_reason is None else TRACE_STATUS_BLOCKED,
+        'blocked_reason': blocked_reason,
+        'artifact_refs': cast(list[str], paper_gate.get('artifact_refs') or []),
+        'db_row_refs': {'hypothesis_metric_windows': summary['db_row_refs']},
+        'dataset_snapshot_ref': paper_gate.get('dataset_snapshot_ref'),
+    }
+
+
+def _evaluate_live_scale_gate(
+    *,
+    canary_gate: Mapping[str, Any],
+    live_rows: Sequence[StrategyHypothesisMetricWindow],
+) -> dict[str, Any]:
+    if canary_gate.get('status') != TRACE_STATUS_SATISFIED:
+        return {
+            'status': TRACE_STATUS_BLOCKED,
+            'blocked_reason': 'live_canary_not_satisfied',
+            'artifact_refs': cast(list[str], canary_gate.get('artifact_refs') or []),
+            'db_row_refs': {},
+            'dataset_snapshot_ref': canary_gate.get('dataset_snapshot_ref'),
+        }
+    qualifying = [
+        row
+        for row in live_rows
+        if (_as_text(row.evidence_provenance) == 'live_runtime_observed')
+        and (_as_text(row.evidence_maturity) == 'empirically_validated')
+    ]
+    summary = _window_gate_summary(qualifying)
+    if summary['market_session_count'] < 120:
+        blocked_reason = 'insufficient_live_runtime_sessions'
+    elif summary['window_count'] < 10:
+        blocked_reason = 'insufficient_live_runtime_windows'
+    elif summary['avg_post_cost_expectancy_bps'] <= 0:
+        blocked_reason = 'post_cost_expectancy_non_positive'
+    elif not summary['latest_three_within_budget']:
+        blocked_reason = 'slippage_budget_not_stable'
+    elif not summary['continuity_ok']:
+        blocked_reason = 'continuity_gate_failed'
+    elif not summary['drift_ok']:
+        blocked_reason = 'drift_gate_failed'
+    elif not summary['dependency_allow']:
+        blocked_reason = 'dependency_quorum_not_allow'
+    else:
+        blocked_reason = None
+    return {
+        'status': TRACE_STATUS_SATISFIED if blocked_reason is None else TRACE_STATUS_BLOCKED,
+        'blocked_reason': blocked_reason,
+        'artifact_refs': cast(list[str], canary_gate.get('artifact_refs') or []),
+        'db_row_refs': {'hypothesis_metric_windows': summary['db_row_refs']},
+        'dataset_snapshot_ref': canary_gate.get('dataset_snapshot_ref'),
     }
 
 
@@ -483,12 +693,35 @@ def build_doc29_completion_status(
     current_image_digest: str | None,
 ) -> dict[str, Any]:
     matrix = load_doc29_completion_matrix()
+    gate_definition_by_id = {
+        str(gate['gate_id']): gate for gate in cast(list[dict[str, Any]], matrix['gates'])
+    }
     latest_rows = _latest_completion_rows(session)
     empirical_jobs_status = build_empirical_jobs_status(
         session=session,
         stale_after_seconds=stale_after_seconds,
     )
     empirical_rows = _latest_empirical_rows(session)
+    paper_windows = _latest_hypothesis_windows(
+        session,
+        observed_stage='paper',
+        max_age_seconds=_safe_int(
+            _as_dict(
+                _as_dict(gate_definition_by_id.get(DOC29_LIVE_CANARY_GATE)).get('evidence_freshness_rule')
+            ).get('max_age_seconds'),
+            default=0,
+        ),
+    )
+    live_windows = _latest_hypothesis_windows(
+        session,
+        observed_stage='live',
+        max_age_seconds=_safe_int(
+            _as_dict(
+                _as_dict(gate_definition_by_id.get(DOC29_LIVE_SCALE_GATE)).get('evidence_freshness_rule')
+            ).get('max_age_seconds'),
+            default=0,
+        ),
+    )
     gate_status_map: dict[str, dict[str, Any]] = {}
 
     for gate_definition in cast(list[dict[str, Any]], matrix['gates']):
@@ -536,6 +769,68 @@ def build_doc29_completion_status(
                 'measured_at': None,
                 'freshness_state': freshness_state,
                 'source': 'derived_from_full_day_and_empirical_jobs',
+            }
+            continue
+
+        if gate_id == DOC29_LIVE_CANARY_GATE:
+            derived_paper = gate_status_map.get(DOC29_PAPER_GATE) or _evaluate_paper_gate(
+                empirical_gate=gate_status_map.get(DOC29_EMPIRICAL_JOBS_GATE)
+                or _evaluate_empirical_jobs_gate(
+                    empirical_jobs_status=empirical_jobs_status,
+                    empirical_rows=empirical_rows,
+                ),
+                full_day_row=latest_rows.get(DOC29_SIMULATION_FULL_DAY_GATE),
+                empirical_rows=empirical_rows,
+            )
+            canary = _evaluate_live_canary_gate(
+                paper_gate=derived_paper,
+                paper_rows=paper_windows,
+            )
+            gate_status_map[gate_id] = {
+                **gate_definition,
+                'status': str(canary['status']),
+                'blocked_reason': canary.get('blocked_reason'),
+                'latest_run': None,
+                'dataset_snapshot_ref': canary.get('dataset_snapshot_ref'),
+                'artifact_refs': cast(list[str], canary.get('artifact_refs') or []),
+                'db_row_refs': cast(dict[str, Any], canary.get('db_row_refs') or {}),
+                'persisted_result_id': None,
+                'measured_at': None,
+                'freshness_state': 'fresh' if canary['status'] == TRACE_STATUS_SATISFIED else 'blocked',
+                'source': 'derived_from_hypothesis_metric_windows',
+            }
+            continue
+
+        if gate_id == DOC29_LIVE_SCALE_GATE:
+            derived_canary = gate_status_map.get(DOC29_LIVE_CANARY_GATE) or _evaluate_live_canary_gate(
+                paper_gate=gate_status_map.get(DOC29_PAPER_GATE)
+                or _evaluate_paper_gate(
+                    empirical_gate=gate_status_map.get(DOC29_EMPIRICAL_JOBS_GATE)
+                    or _evaluate_empirical_jobs_gate(
+                        empirical_jobs_status=empirical_jobs_status,
+                        empirical_rows=empirical_rows,
+                    ),
+                    full_day_row=latest_rows.get(DOC29_SIMULATION_FULL_DAY_GATE),
+                    empirical_rows=empirical_rows,
+                ),
+                paper_rows=paper_windows,
+            )
+            scale = _evaluate_live_scale_gate(
+                canary_gate=derived_canary,
+                live_rows=live_windows,
+            )
+            gate_status_map[gate_id] = {
+                **gate_definition,
+                'status': str(scale['status']),
+                'blocked_reason': scale.get('blocked_reason'),
+                'latest_run': None,
+                'dataset_snapshot_ref': scale.get('dataset_snapshot_ref'),
+                'artifact_refs': cast(list[str], scale.get('artifact_refs') or []),
+                'db_row_refs': cast(dict[str, Any], scale.get('db_row_refs') or {}),
+                'persisted_result_id': None,
+                'measured_at': None,
+                'freshness_state': 'fresh' if scale['status'] == TRACE_STATUS_SATISFIED else 'blocked',
+                'source': 'derived_from_hypothesis_metric_windows',
             }
             continue
 
@@ -601,6 +896,8 @@ __all__ = [
     'DOC29_COMPLETION_MATRIX_RUNTIME_PATH',
     'DOC29_EMPIRICAL_JOBS_GATE',
     'DOC29_EMPIRICAL_MANIFEST_GATE',
+    'DOC29_LIVE_CANARY_GATE',
+    'DOC29_LIVE_SCALE_GATE',
     'DOC29_PAPER_GATE',
     'DOC29_SIMULATION_FULL_DAY_GATE',
     'DOC29_SIMULATION_SMOKE_GATE',

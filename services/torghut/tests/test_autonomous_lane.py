@@ -7,6 +7,7 @@ import tempfile
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 from unittest import TestCase
 from sqlalchemy import create_engine, select
@@ -16,6 +17,7 @@ from typing import Any
 from app.trading.autonomy.lane import (
     _AUTONOMY_PHASE_ORDER,
     _build_phase_manifest,
+    _persist_hypothesis_governance_rows,
     _STRESS_METRICS_CASES,
     _resolve_paper_patch_path,
     _resolve_gate_forecast_metrics,
@@ -54,6 +56,12 @@ from app.models import (
     ResearchPromotion,
     ResearchRun,
     ResearchStressMetrics,
+    StrategyCapitalAllocation,
+    StrategyHypothesis,
+    StrategyHypothesisMetricWindow,
+    StrategyHypothesisVersion,
+    StrategyPromotionDecision,
+    VNextCompletionGateResult,
     VNextDatasetSnapshot,
     VNextExperimentRun,
     VNextExperimentSpec,
@@ -1908,7 +1916,12 @@ class TestAutonomousLane(TestCase):
                         VNextPromotionDecision.candidate_id == result.candidate_id
                     )
                 ).scalar_one()
-
+                spec_lineage_gate = session.execute(
+                    select(VNextCompletionGateResult).where(
+                        VNextCompletionGateResult.run_id == result.run_id,
+                        VNextCompletionGateResult.gate_id == "strategy_spec_v2_runtime_lineage",
+                    )
+                ).scalar_one()
             self.assertEqual(run_row.status, "passed")
             self.assertIsNotNone(run_row.dataset_from)
             self.assertIsNotNone(run_row.dataset_to)
@@ -1937,6 +1950,7 @@ class TestAutonomousLane(TestCase):
             self.assertEqual(shadow_live_deviation.run_id, result.run_id)
             self.assertEqual(promotion_decision.run_id, result.run_id)
             self.assertEqual(promotion_decision.promotion_target, "paper")
+            self.assertEqual(spec_lineage_gate.status, "satisfied")
             self.assertIn(candidate.lifecycle_role, {"champion", "challenger"})
             self.assertIsInstance(candidate.metadata_bundle, dict)
             self.assertIsInstance(candidate.recommendation_bundle, dict)
@@ -2054,6 +2068,79 @@ class TestAutonomousLane(TestCase):
                 promotion_row.evidence_bundle["replay_artifact_hashes"],
                 candidate.metadata_bundle["replay_artifact_hashes"],
             )
+
+    def test_persist_hypothesis_governance_rows_writes_strategy_ledger(self) -> None:
+        session_factory = self._empty_session_factory()
+
+        class _PromotionRecommendationStub:
+            reasons = ['dependency_quorum_allow']
+
+            def to_payload(self) -> dict[str, object]:
+                return {
+                    'action': 'promote',
+                    'recommended_mode': 'paper',
+                    'reasons': list(self.reasons),
+                }
+
+        with session_factory() as session:
+            _persist_hypothesis_governance_rows(
+                session=session,
+                run_id='run-1',
+                candidate_id='cand-1',
+                candidate_spec_payload={
+                    'alpha_readiness': {'matched_hypothesis_ids': ['H-CONT-01']},
+                    'dependency_quorum': {'decision': 'allow'},
+                },
+                signals=[
+                    SignalEnvelope(
+                        event_ts=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                        symbol='AAPL',
+                        timeframe='1Min',
+                        payload={},
+                    ),
+                    SignalEnvelope(
+                        event_ts=datetime(2026, 3, 6, 20, 0, tzinfo=timezone.utc),
+                        symbol='AAPL',
+                        timeframe='1Min',
+                        payload={},
+                    ),
+                ],
+                report=SimpleNamespace(
+                    metrics=SimpleNamespace(
+                        decision_count=120,
+                        trade_count=116,
+                    )
+                ),
+                promotion_target='paper',
+                effective_promotion_allowed=True,
+                promotion_recommendation=_PromotionRecommendationStub(),
+                simulation_calibration_report_payload={
+                    'order_count': 116,
+                    'avg_realized_shortfall_bps': '-1.5',
+                },
+                shadow_live_deviation_report_payload={
+                    'order_count': 116,
+                    'avg_abs_slippage_bps': '4.2',
+                },
+                now=datetime(2026, 3, 6, 20, 1, tzinfo=timezone.utc),
+            )
+            session.commit()
+
+            hypothesis = session.execute(select(StrategyHypothesis)).scalar_one()
+            hypothesis_version = session.execute(select(StrategyHypothesisVersion)).scalar_one()
+            metric_window = session.execute(select(StrategyHypothesisMetricWindow)).scalar_one()
+            capital_allocation = session.execute(select(StrategyCapitalAllocation)).scalar_one()
+            promotion_decision = session.execute(select(StrategyPromotionDecision)).scalar_one()
+
+        self.assertEqual(hypothesis.hypothesis_id, 'H-CONT-01')
+        self.assertEqual(hypothesis_version.hypothesis_id, 'H-CONT-01')
+        self.assertEqual(metric_window.observed_stage, 'paper')
+        self.assertEqual(metric_window.evidence_provenance, 'paper_runtime_observed')
+        self.assertEqual(metric_window.evidence_maturity, 'empirically_validated')
+        self.assertEqual(metric_window.capital_stage, 'shadow')
+        self.assertEqual(capital_allocation.stage, 'shadow')
+        self.assertEqual(promotion_decision.promotion_target, 'paper')
+        self.assertTrue(promotion_decision.allowed)
 
     @patch(
         "app.trading.autonomy.lane.evaluate_promotion_prerequisites",

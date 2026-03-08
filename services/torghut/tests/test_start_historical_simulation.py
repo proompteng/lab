@@ -18,6 +18,7 @@ from scripts.start_historical_simulation import (
     RolloutsAnalysisConfig,
     _analysis_run_name,
     _build_clickhouse_runtime_config,
+    _build_fill_price_error_budget_payload,
     _build_argocd_automation_config,
     _build_kafka_runtime_config,
     _build_plan_report,
@@ -1700,6 +1701,10 @@ class TestStartHistoricalSimulation(TestCase):
                     },
                 },
                 analytics_report={},
+                fill_price_error_budget_report={
+                    'status': 'within_budget',
+                    'schema_version': 'fill-price-error-budget-report-v1',
+                },
                 rollouts_report={},
                 errors=[],
             )
@@ -1707,6 +1712,40 @@ class TestStartHistoricalSimulation(TestCase):
         smoke = trace['result_by_gate']['simulation_smoke_execution_funnel']
         self.assertEqual(smoke['status'], 'satisfied')
         self.assertEqual(trace['dataset_snapshot_ref'], 'torghut-smoke-open-hour-20260306')
+        self.assertEqual(
+            smoke['acceptance_snapshot']['fill_price_error_budget_status'],
+            'within_budget',
+        )
+
+    def test_fill_price_error_budget_payload_rejects_missing_percentiles(self) -> None:
+        resources = _build_resources(
+            'sim-2026-03-06-open-hour',
+            {
+                'dataset_id': 'torghut-smoke-open-hour-20260306',
+            },
+        )
+        with TemporaryDirectory() as tmpdir:
+            resources = replace(resources, output_root=Path(tmpdir))
+            payload, artifact_path = _build_fill_price_error_budget_payload(
+                resources=resources,
+                analytics_report={
+                    'funnel': {'execution_tca_metrics': 5},
+                    'execution_quality': {
+                        'slippage_bps': {
+                            'avg_abs': '1.0',
+                            'p50_abs': None,
+                            'p95_abs': None,
+                            'max_abs': None,
+                        }
+                    },
+                },
+                manifest={},
+            )
+
+        assert payload is not None
+        self.assertEqual(payload['status'], 'pending_runtime_observation')
+        self.assertFalse(payload['metric_observation_complete'])
+        self.assertIsNotNone(artifact_path)
 
     def test_validate_window_policy_us_equities_regular_profile(self) -> None:
         policy = _validate_window_policy(
