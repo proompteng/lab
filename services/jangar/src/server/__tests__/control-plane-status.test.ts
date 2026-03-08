@@ -673,7 +673,7 @@ describe('control-plane status', () => {
   })
 
   it('uses authoritative heartbeat rows when the serving pod has controllers disabled locally', async () => {
-    setRolloutDeploymentList([healthyRolloutDeployment])
+    setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
 
     const locallyDisabledController = {
       enabled: false,
