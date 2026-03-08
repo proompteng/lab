@@ -194,60 +194,19 @@ jobs:
           kubectl_version: v1.29.4
           wait: 180s
 
-      - name: Resolve Jangar image source
-        id: jangar_image_source
+      - name: Select published Jangar image
+        if: steps.jangar_image_mode.outputs.NEEDS_LOCAL_JANGAR_IMAGE != 'true'
         run: |
           set -euo pipefail
           IMAGE_REPOSITORY="${AGENTS_PUBLIC_IMAGE_REPOSITORY:-registry.ide-newton.ts.net/lab/jangar-control-plane}"
           IMAGE_TAG="${AGENTS_PUBLIC_IMAGE_TAG:-latest}"
-          IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
-          MODE="${{ steps.jangar_image_mode.outputs.JANGAR_IMAGE_MODE }}"
 
-          if [ "${MODE}" = "reuse-published-image" ]; then
-            if timeout 30s docker pull "${IMAGE}" >/dev/null 2>&1; then
-              echo "Using published Jangar image ${IMAGE}"
-              echo "USE_PUBLISHED_JANGAR_IMAGE=true" >> "${GITHUB_OUTPUT}"
-              echo "BUILT_JANGAR_IMAGE_REPOSITORY=${IMAGE_REPOSITORY}" >> "${GITHUB_ENV}"
-              echo "BUILT_JANGAR_IMAGE_TAG=${IMAGE_TAG}" >> "${GITHUB_ENV}"
-            else
-              echo "::warning::Published Jangar image ${IMAGE} is not reachable from this runner; falling back to local build."
-              echo "USE_PUBLISHED_JANGAR_IMAGE=false" >> "${GITHUB_OUTPUT}"
-            fi
-          else
-            echo "Selected local Jangar image mode from classifier."
-            echo "USE_PUBLISHED_JANGAR_IMAGE=false" >> "${GITHUB_OUTPUT}"
-          fi
-
-      - name: Prebuild local Jangar output for control-plane image
-        if: steps.jangar_image_source.outputs.USE_PUBLISHED_JANGAR_IMAGE != 'true'
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
-          CI: 'true'
-          JANGAR_BUILD_MINIFY: '0'
-          JANGAR_BUILD_SOURCEMAP: '0'
-          JANGAR_BUILD_LOG_LEVEL: warn
-        run: |
-          set -euo pipefail
-          (
-            while :; do
-              echo "[progress] prebuilding services/jangar .output at $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-              sleep 120
-            done
-          ) &
-          HEARTBEAT_PID=$!
-          cleanup_heartbeat() {
-            kill "${HEARTBEAT_PID}" 2>/dev/null || true
-            wait "${HEARTBEAT_PID}" 2>/dev/null || true
-          }
-          trap cleanup_heartbeat EXIT
-
-          bun run --filter @proompteng/otel build
-          bun run --filter @proompteng/temporal-bun-sdk build
-          timeout 25m bun --cwd services/jangar --bun vite build --logLevel warn
-          bun --cwd services/jangar run copy:grpc-proto
+          echo "Using published Jangar image ${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+          echo "BUILT_JANGAR_IMAGE_REPOSITORY=${IMAGE_REPOSITORY}" >> "${GITHUB_ENV}"
+          echo "BUILT_JANGAR_IMAGE_TAG=${IMAGE_TAG}" >> "${GITHUB_ENV}"
 
       - name: Build and preload local Jangar control-plane image into kind
-        if: steps.jangar_image_source.outputs.USE_PUBLISHED_JANGAR_IMAGE != 'true'
+        if: steps.jangar_image_mode.outputs.NEEDS_LOCAL_JANGAR_IMAGE == 'true'
         run: |
           set -euxo pipefail
 
@@ -409,16 +368,6 @@ jobs:
           }
           copy_pruned_workspace_dist
 
-          OUTPUT_ENTRY="${WORKSPACE}/services/jangar/.output/server/index.mjs"
-          OUTPUT_PROTO="${WORKSPACE}/services/jangar/.output/server/proto/proompteng/jangar/v1/agentctl.proto"
-          if [ -f "${OUTPUT_ENTRY}" ] && [ -f "${OUTPUT_PROTO}" ]; then
-            echo "Using prebuilt services/jangar .output from workspace"
-            mkdir -p "${PRUNE_DIR}/full/services/jangar"
-            cp -R "${WORKSPACE}/services/jangar/.output" "${PRUNE_DIR}/full/services/jangar/.output"
-          else
-            echo "Prebuilt services/jangar .output was not found; Docker build will rebuild it in-container."
-          fi
-
           JANGAR_VERSION="$(git -C "${WORKSPACE}" rev-parse --short HEAD)"
           JANGAR_COMMIT="$(git -C "${WORKSPACE}" rev-parse HEAD)"
           IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
@@ -435,11 +384,6 @@ jobs:
             -t "${IMAGE}" \
             --build-arg "JANGAR_VERSION=${JANGAR_VERSION}" \
             --build-arg "JANGAR_COMMIT=${JANGAR_COMMIT}" \
-            --build-arg "JANGAR_BUILD_NODE_OPTIONS=--max-old-space-size=4096" \
-            --build-arg "JANGAR_BUILD_MINIFY=0" \
-            --build-arg "JANGAR_BUILD_SOURCEMAP=0" \
-            --build-arg "JANGAR_BUILD_CI=true" \
-            --build-arg "JANGAR_BUILD_LOG_LEVEL=warn" \
             --build-arg "BUN_BASE_IMAGE=docker.io/oven/bun" \
             --progress=plain \
             "${PRUNE_DIR}"; then
