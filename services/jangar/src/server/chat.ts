@@ -389,7 +389,7 @@ type ThreadContext = {
 const toSseResponse = (
   client: CodexAppServerClient,
   prompt: string,
-  retryPrompt: string,
+  resolveRetryPrompt: () => { prompt: string | null; error: RequestError | null },
   model: string,
   includeUsage: boolean,
   includePlan: boolean,
@@ -589,7 +589,7 @@ const toSseResponse = (
           threadContext.turnNumber = null
         }
 
-        const runTurnAttempt = async (resumeThreadId: string | null, canRetry: boolean) => {
+        const runTurnAttempt = async (turnPrompt: string, resumeThreadId: string | null, canRetry: boolean) => {
           turnFinished = false
 
           if (aborted || controllerClosed) {
@@ -600,7 +600,7 @@ const toSseResponse = (
             stream: codexStream,
             turnId,
             threadId,
-          } = await client.runTurnStream(resumeThreadId ? prompt : retryPrompt, {
+          } = await client.runTurnStream(turnPrompt, {
             model,
             cwd: codexCwd,
             threadId: resumeThreadId ?? undefined,
@@ -683,9 +683,14 @@ const toSseResponse = (
         }
 
         let resumeThreadId = threadContext?.threadId ?? null
+        let freshThreadPrompt = prompt
         for (let attempt = 0; attempt < 2; attempt++) {
           try {
-            await runTurnAttempt(resumeThreadId, attempt === 0 && resumeThreadId != null)
+            await runTurnAttempt(
+              resumeThreadId ? prompt : freshThreadPrompt,
+              resumeThreadId,
+              attempt === 0 && resumeThreadId != null,
+            )
             break
           } catch (error) {
             const upstreamError = error instanceof MissingUpstreamThreadError ? error.upstream : error
@@ -700,6 +705,11 @@ const toSseResponse = (
                 threadId: resumeThreadId,
                 upstream: safeJsonStringify(upstreamError),
               })
+              const retryPrompt = resolveRetryPrompt()
+              if (retryPrompt.error) {
+                throw retryPrompt.error
+              }
+              freshThreadPrompt = retryPrompt.prompt ?? prompt
               await clearStaleThread()
               resumeThreadId = null
               continue
@@ -783,6 +793,13 @@ const parseRequestEffect = (request: Request) =>
     catch: (error) =>
       error instanceof RequestError ? error : new RequestError(500, 'internal_error', 'Unknown error'),
   })
+
+const buildInputTooLargeError = (maxInputChars: number) =>
+  new RequestError(
+    400,
+    'input_too_large',
+    `Chat input exceeds the maximum supported length of ${maxInputChars} characters. Start a new chat or shorten the latest message.`,
+  )
 
 export const handleChatCompletionEffect = (request: Request) =>
   pipe(
@@ -1129,16 +1146,42 @@ export const handleChatCompletionEffect = (request: Request) =>
 
         const maxInputChars = resolveCodexMaxInputChars()
         const promptFit = fitPromptMessages(promptMessages, maxInputChars)
-        const retryPromptFit = fitPromptMessages(parsed.messages, maxInputChars)
+        const inputTooLargeError = buildInputTooLargeError(maxInputChars)
+        let retryPromptResolution: { prompt: string | null; error: RequestError | null } | null = null
+        const resolveRetryPrompt = () => {
+          if (retryPromptResolution) return retryPromptResolution
 
-        if (!promptFit.fits || !retryPromptFit.fits) {
-          return yield* Effect.fail(
-            new RequestError(
-              400,
-              'input_too_large',
-              `Chat input exceeds the maximum supported length of ${maxInputChars} characters. Start a new chat or shorten the latest message.`,
-            ),
-          )
+          const retryPromptFit = fitPromptMessages(parsed.messages, maxInputChars)
+          if (!retryPromptFit.fits) {
+            retryPromptResolution = { prompt: null, error: inputTooLargeError }
+            return retryPromptResolution
+          }
+
+          if (retryPromptFit.trimmed) {
+            console.info('[chat] trimmed retry prompt history to fit upstream input limit', {
+              chatId: threadContext?.chatId,
+              clientKind: chatClientKind,
+              originalMessages: parsed.messages.length,
+              keptMessages: retryPromptFit.messages.length,
+              originalChars: retryPromptFit.totalChars,
+              keptChars: retryPromptFit.keptChars,
+              maxChars: maxInputChars,
+            })
+          }
+
+          retryPromptResolution = { prompt: retryPromptFit.prompt, error: null }
+          return retryPromptResolution
+        }
+
+        if (!promptFit.fits) {
+          return yield* Effect.fail(inputTooLargeError)
+        }
+
+        if (!threadContext?.threadId) {
+          const retryPrompt = resolveRetryPrompt()
+          if (retryPrompt.error) {
+            return yield* Effect.fail(retryPrompt.error)
+          }
         }
 
         if (promptFit.trimmed) {
@@ -1153,20 +1196,7 @@ export const handleChatCompletionEffect = (request: Request) =>
           })
         }
 
-        if (retryPromptFit.trimmed) {
-          console.info('[chat] trimmed retry prompt history to fit upstream input limit', {
-            chatId: threadContext?.chatId,
-            clientKind: chatClientKind,
-            originalMessages: parsed.messages.length,
-            keptMessages: retryPromptFit.messages.length,
-            originalChars: retryPromptFit.totalChars,
-            keptChars: retryPromptFit.keptChars,
-            maxChars: maxInputChars,
-          })
-        }
-
         const prompt = promptFit.prompt
-        const retryPrompt = retryPromptFit.prompt
         const client = yield* getCodexClient()
         let clientReleased = false
         const releaseClient = () => {
@@ -1179,7 +1209,7 @@ export const handleChatCompletionEffect = (request: Request) =>
           return toSseResponse(
             client,
             prompt,
-            retryPrompt,
+            resolveRetryPrompt,
             model,
             includeUsage,
             includePlan,

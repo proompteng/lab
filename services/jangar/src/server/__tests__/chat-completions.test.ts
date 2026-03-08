@@ -921,6 +921,80 @@ describe('chat completions handler', () => {
     expect(transcriptState.setTranscript).toHaveBeenCalled()
   })
 
+  it('does not reject append-only OpenWebUI turns just because the full transcript exceeds the retry budget', async () => {
+    process.env.JANGAR_STATEFUL_CHAT_MODE = '1'
+    process.env.JANGAR_CODEX_MAX_INPUT_CHARS = '80'
+
+    const initialMessages = [
+      { role: 'user', content: 'first context that makes the rebuilt transcript too large' },
+      { role: 'assistant', content: 'second context that also keeps the full transcript oversized' },
+    ]
+    const requestMessages = [...initialMessages, { role: 'user', content: 'follow up' }]
+
+    const threadState: ThreadStateService = {
+      getThreadId: vi.fn(() => Effect.succeed('thread-1')),
+      setThreadId: vi.fn(() => Effect.succeed(undefined)),
+      nextTurn: vi.fn(() => Effect.succeed(1)),
+      clearChat: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const worktreeState: WorktreeStateService = {
+      getWorktreeName: vi.fn(() => Effect.succeed('austin')),
+      setWorktreeName: vi.fn(() => Effect.succeed(undefined)),
+      clearWorktree: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const transcriptState: TranscriptStateService = {
+      getTranscript: vi.fn(() => Effect.succeed(buildTranscriptSignature(initialMessages))),
+      setTranscript: vi.fn(() => Effect.succeed(undefined)),
+      clearTranscript: vi.fn(() => Effect.succeed(undefined)),
+    }
+
+    const mockClient = {
+      runTurnStream: vi.fn(async (_prompt: string) => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'message', delta: 'ok' }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 1 } }
+        })(),
+      })),
+      interruptTurn: vi.fn(async () => {}),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const response = await Effect.runPromise(
+      pipe(
+        handleChatCompletionEffect(
+          new Request('http://localhost', {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'x-openwebui-chat-id': 'chat-1',
+            },
+            body: JSON.stringify({
+              model: 'gpt-5.4',
+              messages: requestMessages,
+              stream: true,
+            }),
+          }),
+        ),
+        Effect.provideService(ChatToolEventRenderer, chatToolEventRendererLive),
+        Effect.provideService(ChatCompletionEncoder, chatCompletionEncoderLive),
+        Effect.provideService(ThreadState, threadState),
+        Effect.provideService(WorktreeState, worktreeState),
+        Effect.provideService(TranscriptState, transcriptState),
+      ),
+    )
+
+    expect(response.status).toBe(200)
+    const text = await response.text()
+    expect(text).toContain('ok')
+    expect(mockClient.runTurnStream).toHaveBeenCalledTimes(1)
+    expect(mockClient.runTurnStream.mock.calls[0]?.[0]).toBe('user: follow up')
+  })
+
   it('defaults OpenWebUI transcript handling to additive mode', async () => {
     const threadState: ThreadStateService = {
       getThreadId: vi.fn(() => Effect.succeed('thread-1')),
