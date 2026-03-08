@@ -1,20 +1,7 @@
 services:
-  redis:
-    image: redis:7-alpine
-    container_name: jangar-redis
-    command:
-      - redis-server
-      - --save
-      - ''
-      - --appendonly
-      - 'no'
-    ports:
-      - '6379:6379'
-    restart: unless-stopped
-
   postgres:
     image: postgres:16-alpine
-    container_name: jangar-postgres
+    container_name: ${OPENWEBUI_POSTGRES_CONTAINER_NAME:-jangar-postgres}
     environment:
       POSTGRES_USER: openwebui
       POSTGRES_PASSWORD: ${OPENWEBUI_DB_PASSWORD:-openwebui}
@@ -29,8 +16,8 @@ services:
     restart: unless-stopped
 
   openwebui:
-    image: ghcr.io/open-webui/open-webui:v0.8.5
-    container_name: jangar-openwebui
+    image: ${OPENWEBUI_IMAGE:-ghcr.io/open-webui/open-webui:v0.8.5}
+    container_name: ${OPENWEBUI_CONTAINER_NAME:-jangar-openwebui}
     ports:
       - '${OPENWEBUI_PORT:-8080}:8080'
     environment:
@@ -38,7 +25,7 @@ services:
       - DATABASE_TYPE=postgresql
       - OPENAI_API_BASE_URL=${JANGAR_OPENAI_BASE_URL:-http://host.docker.internal:3000/openai/v1}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-changeme}
-      - DEFAULT_MODELS=meta-orchestrator
+      - DEFAULT_MODELS=${OPENWEBUI_DEFAULT_MODEL:-gpt-5.4}
       - ENABLE_OPENAI_API=true
       - BYPASS_MODEL_ACCESS_CONTROL=true
       - ENABLE_SIGNUP=false
@@ -47,16 +34,12 @@ services:
       - ENABLE_LOGIN_FORM=false
       - GLOBAL_LOG_LEVEL=DEBUG
       - UVICORN_LOG_LEVEL=debug
-      - WEBSOCKET_MANAGER=redis
-      - WEBSOCKET_REDIS_URL=redis://redis:6379/0
-      - REDIS_URL=redis://redis:6379/0
     volumes:
       - openwebui-data:/app/backend/data
     extra_hosts:
       - 'host.docker.internal:host-gateway'
     depends_on:
       - postgres
-      - redis
     restart: unless-stopped
     healthcheck:
       test: ['CMD', 'curl', '-f', 'http://localhost:8080']

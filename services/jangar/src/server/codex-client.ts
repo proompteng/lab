@@ -11,8 +11,15 @@ const resolveMcpUrl = () => {
   return `http://127.0.0.1:${port}/mcp`
 }
 
+const resolveCodexBinary = () => {
+  const envPath = process.env.JANGAR_CODEX_BINARY?.trim()
+  return envPath && envPath.length > 0 ? envPath : 'codex'
+}
+
 const defaultFactory: Factory = (options) =>
   new CodexAppServerClient({
+    binaryPath: resolveCodexBinary(),
+    cliConfigOverrides: ['mcp_servers={}', 'notify=[]'],
     defaultModel: options?.defaultModel,
     threadConfig: {
       'features.rmcp_client': true,
@@ -25,30 +32,40 @@ const defaultFactory: Factory = (options) =>
     },
   })
 
-let activeClient: CodexAppServerClient | null = null
 let factory: Factory = defaultFactory
+const activeClients = new Set<CodexAppServerClient>()
+
+const stopClient = (client: CodexAppServerClient) => {
+  if (!activeClients.has(client)) return
+  activeClients.delete(client)
+  client.stop()
+}
+
+const stopAllClients = () => {
+  const clients = Array.from(activeClients)
+  activeClients.clear()
+  for (const client of clients) {
+    client.stop()
+  }
+}
 
 export const getCodexClient = (options?: { defaultModel?: string }) =>
   Effect.sync(() => {
-    if (activeClient) {
-      return activeClient
-    }
-    activeClient = factory(options)
-    return activeClient
+    const client = factory(options)
+    activeClients.add(client)
+    return client
   })
 
+export const releaseCodexClient = (client: CodexAppServerClient) => {
+  stopClient(client)
+}
+
 export const setCodexClientFactory = (next: Factory) => {
-  if (activeClient) {
-    activeClient.stop()
-    activeClient = null
-  }
+  stopAllClients()
   factory = next
 }
 
 export const resetCodexClient = () => {
-  if (activeClient) {
-    activeClient.stop()
-    activeClient = null
-  }
+  stopAllClients()
   factory = defaultFactory
 }

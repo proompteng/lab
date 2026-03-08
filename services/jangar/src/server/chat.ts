@@ -22,8 +22,8 @@ import {
 } from './chat-completion-encoder'
 import { safeJsonStringify, stripTerminalControl } from './chat-text'
 import { ChatToolEventRenderer, chatToolEventRendererLive, type ToolRenderer } from './chat-tool-event-renderer'
-import { buildPrompt, compareTranscript, type TranscriptEntry } from './chat-transcript'
-import { getCodexClient, resetCodexClient, setCodexClientFactory } from './codex-client'
+import { buildPrompt, buildTranscriptSignature, compareTranscript, type TranscriptEntry } from './chat-transcript'
+import { getCodexClient, releaseCodexClient, resetCodexClient, setCodexClientFactory } from './codex-client'
 import { loadConfig } from './config'
 import { recordSseConnection, recordSseError } from './metrics'
 import { ThreadState, ThreadStateLive, type ThreadStateService, ThreadStateUnavailableError } from './thread-state'
@@ -378,6 +378,7 @@ type ThreadContext = {
 const toSseResponse = (
   client: CodexAppServerClient,
   prompt: string,
+  retryPrompt: string,
   model: string,
   includeUsage: boolean,
   includePlan: boolean,
@@ -385,7 +386,15 @@ const toSseResponse = (
   completionEncoder: ChatCompletionEncoderService,
   threadContext: ThreadContext | null,
   codexCwd: string,
-  signal?: AbortSignal,
+  onTurnSettled?: (result: {
+    aborted: boolean
+    turnFinished: boolean
+    hadError: boolean
+    assistantContent: string
+    threadId: string | null
+  }) => Promise<void>,
+  emitAssistantRolePreamble = false,
+  onStreamFinished?: () => void,
 ) => {
   const textEncoder = new TextEncoder()
   const created = Math.floor(Date.now() / 1000)
@@ -393,6 +402,7 @@ const toSseResponse = (
   const heartbeatIntervalMs = 5_000
   const enableHeartbeat = process.env.NODE_ENV !== 'test'
   let connectionClosed = false
+  let handleClientDisconnect: (() => void) | null = null
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -487,7 +497,7 @@ const toSseResponse = (
 
       const startHeartbeat = () => {
         if (!enableHeartbeat) return
-        heartbeatTimer = setInterval(() => {
+        const emitHeartbeat = () => {
           if (controllerClosed || aborted) return
           try {
             controller.enqueue(textEncoder.encode(': keepalive\n\n'))
@@ -497,23 +507,45 @@ const toSseResponse = (
             interruptCodex()
             safeClose()
           }
-        }, heartbeatIntervalMs)
+        }
+
+        // OpenWebUI can cancel upstream requests if no SSE bytes arrive promptly while Jangar is still
+        // initializing the Codex turn. Emit an immediate keepalive before the regular heartbeat cadence.
+        emitHeartbeat()
+        heartbeatTimer = setInterval(emitHeartbeat, heartbeatIntervalMs)
       }
 
       try {
-        const handleAbort = () => {
+        handleClientDisconnect = () => {
+          if (aborted) return
           aborted = true
-          enqueueFrames(session.onClientAbort())
+          controllerClosed = true
+          if (heartbeatTimer) {
+            clearInterval(heartbeatTimer)
+            heartbeatTimer = null
+          }
           interruptCodex()
+          if (!connectionClosed) {
+            recordSseConnection('chat', 'closed')
+            connectionClosed = true
+          }
         }
 
-        if (signal) {
-          if (signal.aborted) {
-            handleAbort()
-            return
-          }
-          signal.addEventListener('abort', handleAbort, { once: true })
-          abortControllers.push(() => signal.removeEventListener('abort', handleAbort))
+        if (emitAssistantRolePreamble) {
+          enqueueChunk({
+            id,
+            object: 'chat.completion.chunk',
+            created,
+            model,
+            choices: [
+              {
+                index: 0,
+                delta: {
+                  role: 'assistant',
+                },
+              },
+            ],
+          })
         }
 
         abortControllers.push(() => {
@@ -546,7 +578,7 @@ const toSseResponse = (
             stream: codexStream,
             turnId,
             threadId,
-          } = await client.runTurnStream(prompt, {
+          } = await client.runTurnStream(resumeThreadId ? prompt : retryPrompt, {
             model,
             cwd: codexCwd,
             threadId: resumeThreadId ?? undefined,
@@ -664,7 +696,26 @@ const toSseResponse = (
           }),
         )
       } finally {
+        handleClientDisconnect = null
         for (const removeAbort of abortControllers) removeAbort()
+        if (onTurnSettled) {
+          try {
+            const state = session.getState()
+            await onTurnSettled({
+              aborted,
+              turnFinished,
+              hadError: state.hadError,
+              assistantContent: state.assistantContent,
+              threadId: activeThreadId,
+            })
+          } catch (error) {
+            console.warn('[chat] failed to finalize transcript state', {
+              chatId: threadContext?.chatId,
+              threadId: activeThreadId ?? threadContext?.threadId ?? null,
+              error: String(error),
+            })
+          }
+        }
         enqueueFrames(session.finalize({ aborted, turnFinished }))
 
         if (!controllerClosed) {
@@ -675,13 +726,21 @@ const toSseResponse = (
           }
           safeClose()
         }
+        if (onStreamFinished) {
+          try {
+            onStreamFinished()
+          } catch (error) {
+            console.warn('[chat] failed to release codex client', {
+              chatId: threadContext?.chatId,
+              threadId: activeThreadId ?? threadContext?.threadId ?? null,
+              error: String(error),
+            })
+          }
+        }
       }
     },
     cancel() {
-      if (!connectionClosed) {
-        recordSseConnection('chat', 'closed')
-        connectionClosed = true
-      }
+      handleClientDisconnect?.()
     },
   })
 
@@ -721,12 +780,11 @@ export const handleChatCompletionEffect = (request: Request) =>
         })
         const tradeExecutionRequest = chatClientKind === 'trade-execution'
         const statefulTranscriptEnabled =
-          process.env.JANGAR_STATEFUL_CHAT_MODE === '1' && chatClientKind === 'openwebui'
-        const shouldTrackConversationState = chatClientKind === 'openwebui' || chatClientKind === 'discord'
+          chatClientKind === 'openwebui' && process.env.JANGAR_STATEFUL_CHAT_MODE !== '0'
+        const shouldTrackConversationState = statefulTranscriptEnabled || chatClientKind === 'discord'
 
-        const { config, client, toolRenderer, encoder } = yield* Effect.all({
+        const { config, toolRenderer, encoder } = yield* Effect.all({
           config: loadConfig,
-          client: getCodexClient(),
           toolRenderer: ChatToolEventRenderer,
           encoder: ChatCompletionEncoder,
         })
@@ -755,7 +813,7 @@ export const handleChatCompletionEffect = (request: Request) =>
               const worktreeState = yield* WorktreeState
               const transcriptService = statefulTranscriptEnabled ? yield* TranscriptState : null
 
-              const threadId = yield* pipe(
+              let threadId = yield* pipe(
                 threadState.getThreadId(chatId),
                 Effect.mapError((error) => new ChatStateStoreError('thread', error)),
               )
@@ -799,12 +857,32 @@ export const handleChatCompletionEffect = (request: Request) =>
                 )
               }
 
-              const transcriptSignature = transcriptService
+              let transcriptSignature = transcriptService
                 ? yield* pipe(
                     transcriptService.getTranscript(chatId),
                     Effect.mapError((error) => new ChatStateStoreError('transcript', error)),
                   )
                 : null
+
+              if (transcriptService && threadId && !transcriptSignature) {
+                console.info('[chat] stored thread missing transcript signature; resetting thread', {
+                  chatId,
+                  threadId,
+                })
+                yield* pipe(
+                  threadState.clearChat(chatId),
+                  Effect.mapError((error) => new ChatStateStoreError('thread', error)),
+                )
+                threadId = null
+              }
+
+              if (transcriptService && !threadId && transcriptSignature) {
+                yield* pipe(
+                  transcriptService.clearTranscript(chatId),
+                  Effect.mapError((error) => new ChatStateStoreError('transcript', error)),
+                )
+                transcriptSignature = null
+              }
 
               return {
                 threadContext: {
@@ -889,7 +967,7 @@ export const handleChatCompletionEffect = (request: Request) =>
             })
           }
         }
-        if (chatId && (tradeExecutionRequest || chatClientKind === 'internal')) {
+        if (chatId && !shouldTrackConversationState) {
           console.info('[chat] skipping thread state for stateless client request', {
             chatId,
             clientKind: chatClientKind,
@@ -910,9 +988,12 @@ export const handleChatCompletionEffect = (request: Request) =>
         }
 
         let promptMessages = parsed.messages
-        let nextTranscriptSignature: TranscriptEntry[] | null = null
+        let nextTranscriptSignature: TranscriptEntry[] | null =
+          threadContext && transcriptState && statefulTranscriptEnabled
+            ? buildTranscriptSignature(parsed.messages)
+            : null
 
-        if (threadContext && transcriptState && statefulTranscriptEnabled) {
+        if (threadContext && threadContext.threadId && transcriptState && statefulTranscriptEnabled) {
           const comparison = compareTranscript(storedTranscript, parsed.messages)
           promptMessages = comparison.deltaMessages.length > 0 ? comparison.deltaMessages : parsed.messages
           nextTranscriptSignature = comparison.signature
@@ -936,37 +1017,124 @@ export const handleChatCompletionEffect = (request: Request) =>
                 return Effect.succeed(undefined)
               }),
             )
+            yield* pipe(
+              transcriptState.clearTranscript(threadContext.chatId),
+              Effect.catchAll((error) => {
+                console.warn('[chat] failed to clear transcript after transcript mismatch', {
+                  chatId: threadContext.chatId,
+                  error: String(error),
+                })
+                return Effect.succeed(undefined)
+              }),
+            )
             threadContext.threadId = null
             threadContext.turnNumber = null
+            promptMessages = parsed.messages
           }
         }
 
-        if (threadContext && transcriptState && statefulTranscriptEnabled && nextTranscriptSignature) {
-          yield* pipe(
-            transcriptState.setTranscript(threadContext.chatId, nextTranscriptSignature),
-            Effect.catchAll((error) => {
-              console.warn('[chat] failed to persist chat transcript signature', {
-                chatId: threadContext.chatId,
-                error: String(error),
-              })
-              return Effect.succeed(undefined)
-            }),
-          )
-        }
+        const finalizeTranscriptState =
+          threadContext && transcriptState && statefulTranscriptEnabled && nextTranscriptSignature
+            ? async (result: {
+                aborted: boolean
+                turnFinished: boolean
+                hadError: boolean
+                assistantContent: string
+                threadId: string | null
+              }) => {
+                const clearConversationState = async (reason: string) => {
+                  await pipe(
+                    Effect.all([
+                      pipe(
+                        threadContext.threadState.clearChat(threadContext.chatId),
+                        Effect.catchAll((error) => {
+                          console.warn('[chat] failed to clear thread after transcript finalization issue', {
+                            chatId: threadContext.chatId,
+                            threadId: result.threadId,
+                            reason,
+                            error: String(error),
+                          })
+                          return Effect.succeed(undefined)
+                        }),
+                      ),
+                      pipe(
+                        transcriptState.clearTranscript(threadContext.chatId),
+                        Effect.catchAll((error) => {
+                          console.warn('[chat] failed to clear transcript after transcript finalization issue', {
+                            chatId: threadContext.chatId,
+                            threadId: result.threadId,
+                            reason,
+                            error: String(error),
+                          })
+                          return Effect.succeed(undefined)
+                        }),
+                      ),
+                    ]),
+                    Effect.runPromise,
+                  )
+                  threadContext.threadId = null
+                  threadContext.turnNumber = null
+                }
+
+                if (result.aborted || !result.turnFinished || result.hadError) {
+                  await clearConversationState('turn_not_settled')
+                  return
+                }
+
+                const assistantContent = normalizeAssistantTranscriptContent(result.assistantContent)
+                const completedSignature =
+                  assistantContent.length > 0
+                    ? buildTranscriptSignature([...parsed.messages, { role: 'assistant', content: assistantContent }])
+                    : nextTranscriptSignature
+
+                await pipe(
+                  transcriptState.setTranscript(threadContext.chatId, completedSignature),
+                  Effect.catchAll((error) => {
+                    console.warn('[chat] failed to persist completed chat transcript signature', {
+                      chatId: threadContext.chatId,
+                      threadId: result.threadId,
+                      error: String(error),
+                    })
+                    return Effect.tryPromise({
+                      try: () => clearConversationState('transcript_write_failed'),
+                      catch: () => undefined,
+                    })
+                  }),
+                  Effect.runPromise,
+                )
+              }
+            : undefined
 
         const prompt = buildPrompt(promptMessages)
-        return toSseResponse(
-          client,
-          prompt,
-          model,
-          includeUsage,
-          includePlan,
-          toolRenderer.create(),
-          encoder,
-          threadContext,
-          codexCwd,
-          request.signal,
-        )
+        const retryPrompt = buildPrompt(parsed.messages)
+        const client = yield* getCodexClient()
+        let clientReleased = false
+        const releaseClient = () => {
+          if (clientReleased) return
+          clientReleased = true
+          releaseCodexClient(client)
+        }
+
+        try {
+          return toSseResponse(
+            client,
+            prompt,
+            retryPrompt,
+            model,
+            includeUsage,
+            includePlan,
+            toolRenderer.create(),
+            encoder,
+            threadContext,
+            codexCwd,
+            finalizeTranscriptState,
+            chatClientKind === 'openwebui',
+            releaseClient,
+          )
+        } catch (error) {
+          releaseClient()
+          throw error
+        }
       }),
     ),
     Effect.catchAll((error) => {
@@ -1132,3 +1300,5 @@ const parseSseFrames = (body: string): unknown[] => {
   }
   return frames
 }
+
+const normalizeAssistantTranscriptContent = (content: string) => content.replace(/^\n+/, '')

@@ -33,9 +33,10 @@ const writeLine = (child: FakeChildProcess, payload: unknown) => {
 }
 
 type JsonRpcRequest = { id: number; method: string; params?: unknown } & Record<string, unknown>
+type JsonRpcMessage = { id?: number; method?: string; params?: unknown; result?: unknown } & Record<string, unknown>
 
-const nextRequest = (child: FakeChildProcess) =>
-  new Promise<JsonRpcRequest>((resolve) => {
+const nextMessage = (child: FakeChildProcess) =>
+  new Promise<JsonRpcMessage>((resolve) => {
     let buffer = ''
     const onData = (chunk: Buffer) => {
       buffer += chunk.toString()
@@ -44,10 +45,12 @@ const nextRequest = (child: FakeChildProcess) =>
       const line = lines.find((candidate) => candidate.trim().length > 0)
       if (!line) return
       child.stdin.off('data', onData)
-      resolve(JSON.parse(line) as JsonRpcRequest)
+      resolve(JSON.parse(line) as JsonRpcMessage)
     }
     child.stdin.on('data', onData)
   })
+
+const nextRequest = async (child: FakeChildProcess) => (await nextMessage(child)) as JsonRpcRequest
 
 const respondToInitialize = async (child: FakeChildProcess) => {
   const initReq = await nextRequest(child)
@@ -112,6 +115,74 @@ describe('CodexAppServerClient v2 notifications', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('omits the CLI approval flag for structured rejection policies', async () => {
+    const { child, client } = setupClient({
+      approval: { reject: { sandbox_approval: true, rules: false, mcp_elicitations: false } },
+    })
+
+    const [binaryPath, args] = vi.mocked(spawn).mock.calls[0] ?? []
+    expect(binaryPath).toBe('codex')
+    expect(args).toEqual(['--sandbox', 'danger-full-access', '--model', 'gpt-5.4', 'app-server'])
+
+    await respondToInitialize(child)
+    await client.ensureReady()
+    client.stop()
+  })
+
+  it('applies CLI config overrides before launching the app server', async () => {
+    const { child, client } = setupClient({
+      cliConfigOverrides: ['mcp_servers={}', 'notify=[]'],
+    })
+
+    const [binaryPath, args] = vi.mocked(spawn).mock.calls[0] ?? []
+    expect(binaryPath).toBe('codex')
+    expect(args).toEqual([
+      '--sandbox',
+      'danger-full-access',
+      '-c',
+      'mcp_servers={}',
+      '-c',
+      'notify=[]',
+      '--ask-for-approval',
+      'never',
+      '--model',
+      'gpt-5.4',
+      'app-server',
+    ])
+
+    await respondToInitialize(child)
+    await client.ensureReady()
+    client.stop()
+  })
+
+  it('declines MCP elicitation requests with a protocol-valid response', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const responsePromise = nextMessage(child)
+    writeLine(child, {
+      id: 42,
+      method: 'mcpServer/elicitation/request',
+      params: {
+        threadId: 'thread-1',
+        turnId: null,
+        serverName: 'memories',
+        mode: 'url',
+        message: 'Open the auth page',
+        url: 'https://example.com/auth',
+        elicitationId: 'elic-1',
+      },
+    })
+
+    await expect(responsePromise).resolves.toEqual({
+      id: 42,
+      result: { action: 'decline', content: null },
+    })
+
+    client.stop()
   })
 
   it('emits usage deltas from thread/tokenUsage/updated', async () => {
@@ -376,6 +447,87 @@ describe('CodexAppServerClient v2 notifications', () => {
         arguments: { query: 'hello' },
         result: { content: [{ type: 'text', text: 'ok' }], structuredContent: { ok: true } },
         error: null,
+      },
+    })
+
+    writeLine(child, {
+      method: 'turn/completed',
+      params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed', items: [], error: null } },
+    })
+    await drainStream(stream as unknown as AsyncGenerator<unknown, unknown, void>)
+  })
+
+  it('emits dynamic tool and image generation lifecycle events', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello')
+    await respondToThreadStart(child, 'thread-1')
+    await respondToTurnStart(child, 'turn-1')
+    const { stream } = await runPromise
+
+    writeLine(child, {
+      method: 'item/started',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        item: {
+          type: 'dynamicToolCall',
+          id: 'dyn-1',
+          tool: 'browser.click',
+          arguments: { ref: 'button-1' },
+          status: 'inProgress',
+          contentItems: null,
+          success: null,
+          durationMs: null,
+        },
+      },
+    })
+
+    const started = await stream.next()
+    expect(started.value).toEqual({
+      type: 'tool',
+      toolKind: 'dynamicTool',
+      id: 'dyn-1',
+      status: 'started',
+      title: 'browser.click',
+      data: {
+        status: 'inProgress',
+        arguments: { ref: 'button-1' },
+        contentItems: null,
+        success: null,
+        durationMs: null,
+      },
+    })
+
+    writeLine(child, {
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        item: {
+          type: 'imageGeneration',
+          id: 'img-1',
+          status: 'completed',
+          revisedPrompt: 'astronaut cat',
+          result: 'https://example.com/cat.png',
+        },
+      },
+    })
+
+    const completed = await stream.next()
+    expect(completed.value).toEqual({
+      type: 'tool',
+      toolKind: 'imageGeneration',
+      id: 'img-1',
+      status: 'completed',
+      title: 'image generation',
+      detail: 'astronaut cat',
+      data: {
+        status: 'completed',
+        revisedPrompt: 'astronaut cat',
+        result: 'https://example.com/cat.png',
       },
     })
 

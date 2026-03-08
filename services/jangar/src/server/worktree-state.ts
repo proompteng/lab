@@ -1,6 +1,7 @@
 import { Context, Effect, Layer, pipe } from 'effect'
 
-import { createRedisWorktreeStore, type WorktreeStore } from './worktree-store'
+import { shouldUseInMemoryChatStateStore } from './chat-state-store-mode'
+import { createInMemoryWorktreeStore, createRedisWorktreeStore, type WorktreeStore } from './worktree-store'
 
 export class WorktreeStateUnavailableError extends Error {
   readonly _tag = 'WorktreeStateUnavailableError'
@@ -36,7 +37,9 @@ export const WorktreeStateLive = Layer.scoped(
     const getStoreEffect = () =>
       Effect.try({
         try: () => {
-          if (!store) store = createRedisWorktreeStore()
+          if (!store) {
+            store = shouldUseInMemoryChatStateStore() ? createInMemoryWorktreeStore() : createRedisWorktreeStore()
+          }
           return store
         },
         catch: (error) =>

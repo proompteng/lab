@@ -14,6 +14,8 @@
     "test": "bunx vitest run --config vitest.config.ts",
     "test:market-context-integration": "bunx vitest run --config vitest.config.ts src/server/__tests__/torghut-market-context.test.ts src/routes/api/torghut/market-context/-index.test.ts src/routes/api/torghut/market-context/-health.test.ts",
     "test:e2e": "playwright test --config playwright.config.ts",
+    "test:e2e:openwebui": "./scripts/openwebui-e2e.sh",
+    "test:e2e:openwebui:existing": "OPENWEBUI_E2E_USE_EXISTING_STACK=1 OPENWEBUI_BASE_URL=${OPENWEBUI_BASE_URL:-http://127.0.0.1:8080} ./scripts/openwebui-e2e.sh",
     "test:ui": "bunx playwright test",
     "test:ui:update": "bunx playwright test --update-snapshots",
     "tsc": "bunx tsc --noEmit -p tsconfig.app.json",

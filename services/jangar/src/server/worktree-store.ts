@@ -1,5 +1,6 @@
-import { RedisClient } from 'bun'
 import { Effect, pipe } from 'effect'
+
+import { createBunRedisClient, type BunRedisClient } from './bun-redis-client'
 
 export const WORKTREE_TTL_SECONDS = 60 * 60 * 24 * 7
 const DEFAULT_PREFIX = 'openwebui:worktree'
@@ -26,10 +27,18 @@ export const createRedisWorktreeStore = (options: WorktreeStoreOptions = {}): Wo
   }
 
   const prefix = (options.prefix ?? process.env.JANGAR_WORKTREE_KEY_PREFIX ?? DEFAULT_PREFIX).replace(/:+$/, '')
-  const redis = new RedisClient(url)
+  let redisPromise: Promise<BunRedisClient> | null = null
+
+  const getRedis = async () => {
+    if (!redisPromise) {
+      redisPromise = createBunRedisClient(url)
+    }
+    return redisPromise
+  }
 
   const connectEffect = Effect.tryPromise({
     try: async () => {
+      const redis = await getRedis()
       if (!redis.connected) {
         await redis.connect()
       }
@@ -38,7 +47,7 @@ export const createRedisWorktreeStore = (options: WorktreeStoreOptions = {}): Wo
     catch: (error) => redisError('connect to redis', error),
   })
 
-  const withClient = <A>(fn: (client: typeof redis) => Promise<A>) =>
+  const withClient = <A>(fn: (client: BunRedisClient) => Promise<A>) =>
     pipe(
       connectEffect,
       Effect.flatMap((client) =>
@@ -51,7 +60,7 @@ export const createRedisWorktreeStore = (options: WorktreeStoreOptions = {}): Wo
 
   const key = (chatId: string) => `${prefix}:${chatId}`
 
-  const ensureExpiry = (client: typeof redis, redisKey: string) =>
+  const ensureExpiry = (client: BunRedisClient, redisKey: string) =>
     Effect.tryPromise({
       try: async () => {
         await client.expire(redisKey, WORKTREE_TTL_SECONDS)
@@ -83,7 +92,8 @@ export const createRedisWorktreeStore = (options: WorktreeStoreOptions = {}): Wo
   const shutdown: WorktreeStore['shutdown'] = () =>
     Effect.tryPromise({
       try: async () => {
-        if (redis.connected) {
+        const redis = redisPromise ? await redisPromise : null
+        if (redis?.connected) {
           redis.close()
         }
       },
@@ -95,5 +105,22 @@ export const createRedisWorktreeStore = (options: WorktreeStoreOptions = {}): Wo
     setWorktreeName,
     clearWorktree,
     shutdown,
+  }
+}
+
+export const createInMemoryWorktreeStore = (): WorktreeStore => {
+  const worktrees = new Map<string, string>()
+
+  return {
+    getWorktreeName: (chatId) => Effect.succeed(worktrees.get(chatId) ?? null),
+    setWorktreeName: (chatId, worktreeName) =>
+      Effect.sync(() => {
+        worktrees.set(chatId, worktreeName)
+      }),
+    clearWorktree: (chatId) =>
+      Effect.sync(() => {
+        worktrees.delete(chatId)
+      }),
+    shutdown: () => Effect.void,
   }
 }

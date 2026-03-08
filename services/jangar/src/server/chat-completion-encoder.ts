@@ -297,7 +297,7 @@ type InternalErrorPayload = {
 
 export type ChatCompletionStreamSession = {
   setThreadMeta: (meta: ThreadMeta) => void
-  getState: () => { hasEmittedAnyChunk: boolean; hadError: boolean }
+  getState: () => { hasEmittedAnyChunk: boolean; hadError: boolean; assistantContent: string }
   onDelta: (delta: unknown) => Record<string, unknown>[]
   onInternalError: (error: InternalErrorPayload) => Record<string, unknown>[]
   onClientAbort: () => Record<string, unknown>[]
@@ -343,6 +343,7 @@ const createSession = (args: {
   let lastPlanMarkdown: string | null = null
   let lastRateLimitsMarkdown: string | null = null
   let sawAnyMessageDelta = false
+  let assistantContent = ''
 
   const attachMeta = (chunk: Record<string, unknown>) => {
     const threadId = meta.threadId
@@ -374,6 +375,8 @@ const createSession = (args: {
   const emitContentDelta = (frames: Record<string, unknown>[], content: string) => {
     const sanitizedContent = stripTerminalControl(content)
     if (sanitizedContent.length === 0) return
+
+    assistantContent += sanitizedContent
 
     const deltaPayload: Record<string, unknown> = { content: sanitizedContent }
     ensureRole(deltaPayload)
@@ -628,7 +631,7 @@ const createSession = (args: {
     setThreadMeta: (next) => {
       meta = { ...meta, ...next }
     },
-    getState: () => ({ hasEmittedAnyChunk, hadError }),
+    getState: () => ({ hasEmittedAnyChunk, hadError, assistantContent }),
     onDelta,
     onInternalError,
     onClientAbort,

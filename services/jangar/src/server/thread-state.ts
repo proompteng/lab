@@ -1,6 +1,7 @@
 import { Context, Effect, Layer, pipe } from 'effect'
 
-import { type ChatThreadStore, createRedisChatThreadStore } from './chat-thread-store'
+import { shouldUseInMemoryChatStateStore } from './chat-state-store-mode'
+import { createInMemoryChatThreadStore, type ChatThreadStore, createRedisChatThreadStore } from './chat-thread-store'
 
 export class ThreadStateUnavailableError extends Error {
   readonly _tag = 'ThreadStateUnavailableError'
@@ -37,7 +38,9 @@ export const ThreadStateLive = Layer.scoped(
     const getStoreEffect = () =>
       Effect.try({
         try: () => {
-          if (!store) store = createRedisChatThreadStore()
+          if (!store) {
+            store = shouldUseInMemoryChatStateStore() ? createInMemoryChatThreadStore() : createRedisChatThreadStore()
+          }
           return store
         },
         catch: (error) =>

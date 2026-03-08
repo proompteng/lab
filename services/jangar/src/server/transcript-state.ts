@@ -1,6 +1,11 @@
 import { Context, Effect, Layer, pipe } from 'effect'
 import type { TranscriptEntry } from './chat-transcript'
-import { type ChatTranscriptStore, createRedisChatTranscriptStore } from './chat-transcript-store'
+import { shouldUseInMemoryChatStateStore } from './chat-state-store-mode'
+import {
+  createInMemoryChatTranscriptStore,
+  type ChatTranscriptStore,
+  createRedisChatTranscriptStore,
+} from './chat-transcript-store'
 
 export class TranscriptStateUnavailableError extends Error {
   readonly _tag = 'TranscriptStateUnavailableError'
@@ -36,7 +41,11 @@ export const TranscriptStateLive = Layer.scoped(
     const getStoreEffect = () =>
       Effect.try({
         try: () => {
-          if (!store) store = createRedisChatTranscriptStore()
+          if (!store) {
+            store = shouldUseInMemoryChatStateStore()
+              ? createInMemoryChatTranscriptStore()
+              : createRedisChatTranscriptStore()
+          }
           return store
         },
         catch: (error) =>

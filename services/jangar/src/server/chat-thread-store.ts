@@ -1,5 +1,6 @@
-import { RedisClient } from 'bun'
 import { Effect, pipe } from 'effect'
+
+import { createBunRedisClient, type BunRedisClient } from './bun-redis-client'
 
 export const THREAD_TTL_SECONDS = 60 * 60 * 24 * 7
 const DEFAULT_PREFIX = 'openwebui:chat'
@@ -28,10 +29,18 @@ export const createRedisChatThreadStore = (options: ChatThreadStoreOptions = {})
   }
 
   const prefix = (options.prefix ?? process.env.JANGAR_CHAT_KEY_PREFIX ?? DEFAULT_PREFIX).replace(/:+$/, '')
-  const redis = new RedisClient(url)
+  let redisPromise: Promise<BunRedisClient> | null = null
+
+  const getRedis = async () => {
+    if (!redisPromise) {
+      redisPromise = createBunRedisClient(url)
+    }
+    return redisPromise
+  }
 
   const connectEffect = Effect.tryPromise({
     try: async () => {
+      const redis = await getRedis()
       if (!redis.connected) {
         await redis.connect()
       }
@@ -40,7 +49,7 @@ export const createRedisChatThreadStore = (options: ChatThreadStoreOptions = {})
     catch: (error) => redisError('connect to redis', error),
   })
 
-  const withClient = <A>(fn: (client: typeof redis) => Promise<A>) =>
+  const withClient = <A>(fn: (client: BunRedisClient) => Promise<A>) =>
     pipe(
       connectEffect,
       Effect.flatMap((client) =>
@@ -53,7 +62,7 @@ export const createRedisChatThreadStore = (options: ChatThreadStoreOptions = {})
 
   const key = (chatId: string) => `${prefix}:${chatId}`
 
-  const ensureExpiry = (client: typeof redis, redisKey: string) =>
+  const ensureExpiry = (client: BunRedisClient, redisKey: string) =>
     Effect.tryPromise({
       try: async () => {
         await client.expire(redisKey, THREAD_TTL_SECONDS)
@@ -116,7 +125,8 @@ export const createRedisChatThreadStore = (options: ChatThreadStoreOptions = {})
   const shutdown: ChatThreadStore['shutdown'] = () =>
     Effect.tryPromise({
       try: async () => {
-        if (redis.connected) {
+        const redis = redisPromise ? await redisPromise : null
+        if (redis?.connected) {
           redis.close()
         }
       },
@@ -130,5 +140,40 @@ export const createRedisChatThreadStore = (options: ChatThreadStoreOptions = {})
     clearThread,
     clearAll,
     shutdown,
+  }
+}
+
+export const createInMemoryChatThreadStore = (): ChatThreadStore => {
+  const records = new Map<string, { threadId: string | null; turn: number }>()
+
+  return {
+    getThread: (chatId) => Effect.succeed(records.get(chatId)?.threadId ?? null),
+    setThread: (chatId, threadId) =>
+      Effect.sync(() => {
+        const current = records.get(chatId)
+        records.set(chatId, {
+          threadId,
+          turn: current?.turn ?? 0,
+        })
+      }),
+    nextTurn: (chatId) =>
+      Effect.sync(() => {
+        const current = records.get(chatId)
+        const nextTurnNumber = (current?.turn ?? 0) + 1
+        records.set(chatId, {
+          threadId: current?.threadId ?? null,
+          turn: nextTurnNumber,
+        })
+        return nextTurnNumber
+      }),
+    clearThread: (chatId) =>
+      Effect.sync(() => {
+        records.delete(chatId)
+      }),
+    clearAll: () =>
+      Effect.sync(() => {
+        records.clear()
+      }),
+    shutdown: () => Effect.void,
   }
 }

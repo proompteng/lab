@@ -1,6 +1,6 @@
-import { RedisClient } from 'bun'
 import { Effect, pipe } from 'effect'
 
+import { createBunRedisClient, type BunRedisClient } from './bun-redis-client'
 import { parseTranscriptSignature, type TranscriptEntry } from './chat-transcript'
 
 export const TRANSCRIPT_TTL_SECONDS = 60 * 60 * 24 * 7
@@ -28,10 +28,18 @@ export const createRedisChatTranscriptStore = (options: ChatTranscriptStoreOptio
   }
 
   const prefix = (options.prefix ?? process.env.JANGAR_TRANSCRIPT_KEY_PREFIX ?? DEFAULT_PREFIX).replace(/:+$/, '')
-  const redis = new RedisClient(url)
+  let redisPromise: Promise<BunRedisClient> | null = null
+
+  const getRedis = async () => {
+    if (!redisPromise) {
+      redisPromise = createBunRedisClient(url)
+    }
+    return redisPromise
+  }
 
   const connectEffect = Effect.tryPromise({
     try: async () => {
+      const redis = await getRedis()
       if (!redis.connected) {
         await redis.connect()
       }
@@ -40,7 +48,7 @@ export const createRedisChatTranscriptStore = (options: ChatTranscriptStoreOptio
     catch: (error) => redisError('connect to redis', error),
   })
 
-  const withClient = <A>(fn: (client: typeof redis) => Promise<A>) =>
+  const withClient = <A>(fn: (client: BunRedisClient) => Promise<A>) =>
     pipe(
       connectEffect,
       Effect.flatMap((client) =>
@@ -53,7 +61,7 @@ export const createRedisChatTranscriptStore = (options: ChatTranscriptStoreOptio
 
   const key = (chatId: string) => `${prefix}:${chatId}`
 
-  const ensureExpiry = (client: typeof redis, redisKey: string) =>
+  const ensureExpiry = (client: BunRedisClient, redisKey: string) =>
     Effect.tryPromise({
       try: async () => {
         await client.expire(redisKey, TRANSCRIPT_TTL_SECONDS)
@@ -91,7 +99,8 @@ export const createRedisChatTranscriptStore = (options: ChatTranscriptStoreOptio
   const shutdown: ChatTranscriptStore['shutdown'] = () =>
     Effect.tryPromise({
       try: async () => {
-        if (redis.connected) {
+        const redis = redisPromise ? await redisPromise : null
+        if (redis?.connected) {
           redis.close()
         }
       },
@@ -103,5 +112,25 @@ export const createRedisChatTranscriptStore = (options: ChatTranscriptStoreOptio
     setTranscript,
     clearTranscript,
     shutdown,
+  }
+}
+
+export const createInMemoryChatTranscriptStore = (): ChatTranscriptStore => {
+  const transcripts = new Map<string, TranscriptEntry[]>()
+
+  return {
+    getTranscript: (chatId) => Effect.succeed(transcripts.get(chatId) ?? null),
+    setTranscript: (chatId, signature) =>
+      Effect.sync(() => {
+        transcripts.set(
+          chatId,
+          signature.map((entry) => ({ ...entry })),
+        )
+      }),
+    clearTranscript: (chatId) =>
+      Effect.sync(() => {
+        transcripts.delete(chatId)
+      }),
+    shutdown: () => Effect.void,
   }
 }

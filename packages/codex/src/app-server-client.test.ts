@@ -39,7 +39,11 @@ describe('toSandboxPolicy', () => {
   })
 
   it('builds read-only policy settings', () => {
-    expect(toSandboxPolicy('read-only')).toEqual({ type: 'readOnly', access: { type: 'fullAccess' } })
+    expect(toSandboxPolicy('read-only')).toEqual({
+      type: 'readOnly',
+      access: { type: 'fullAccess' },
+      networkAccess: true,
+    })
   })
 
   it('builds danger-full-access policy settings', () => {
