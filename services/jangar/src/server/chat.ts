@@ -394,6 +394,7 @@ const toSseResponse = (
     threadId: string | null
   }) => Promise<void>,
   emitAssistantRolePreamble = false,
+  requestSignal?: AbortSignal,
   onStreamFinished?: () => void,
 ) => {
   const textEncoder = new TextEncoder()
@@ -519,15 +520,25 @@ const toSseResponse = (
         handleClientDisconnect = () => {
           if (aborted) return
           aborted = true
-          controllerClosed = true
           if (heartbeatTimer) {
             clearInterval(heartbeatTimer)
             heartbeatTimer = null
           }
           interruptCodex()
-          if (!connectionClosed) {
-            recordSseConnection('chat', 'closed')
-            connectionClosed = true
+          safeClose()
+        }
+
+        if (requestSignal) {
+          const handleRequestAbort = () => {
+            handleClientDisconnect?.()
+          }
+          if (requestSignal.aborted) {
+            handleRequestAbort()
+          } else {
+            requestSignal.addEventListener('abort', handleRequestAbort, { once: true })
+            abortControllers.push(() => {
+              requestSignal.removeEventListener('abort', handleRequestAbort)
+            })
           }
         }
 
@@ -781,7 +792,7 @@ export const handleChatCompletionEffect = (request: Request) =>
         const tradeExecutionRequest = chatClientKind === 'trade-execution'
         const statefulTranscriptEnabled =
           chatClientKind === 'openwebui' && process.env.JANGAR_STATEFUL_CHAT_MODE !== '0'
-        const shouldTrackConversationState = statefulTranscriptEnabled || chatClientKind === 'discord'
+        const shouldTrackConversationState = chatClientKind === 'openwebui' || chatClientKind === 'discord'
 
         const { config, toolRenderer, encoder } = yield* Effect.all({
           config: loadConfig,
@@ -1129,6 +1140,7 @@ export const handleChatCompletionEffect = (request: Request) =>
             codexCwd,
             finalizeTranscriptState,
             chatClientKind === 'openwebui',
+            request.signal,
             releaseClient,
           )
         } catch (error) {

@@ -546,6 +546,59 @@ describe('chat completions handler', () => {
     })
   })
 
+  it('interrupts proxied non-stream turns when the request signal aborts', async () => {
+    let releaseStream: (() => void) | null = null
+    const mockClient = {
+      runTurnStream: vi.fn(async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          await new Promise<void>((resolve) => {
+            releaseStream = resolve
+          })
+        })(),
+      })),
+      interruptTurn: vi.fn(async () => {
+        releaseStream?.()
+      }),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const abortController = new AbortController()
+    const responsePromise = chatCompletionsHandler(
+      new Request('http://localhost', {
+        method: 'POST',
+        body: JSON.stringify({
+          model: 'gpt-5.4',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: false,
+        }),
+        signal: abortController.signal,
+      }),
+    )
+
+    await vi.waitFor(() => {
+      expect(mockClient.runTurnStream).toHaveBeenCalledTimes(1)
+    })
+
+    abortController.abort('client disconnect')
+
+    const response = await Promise.race([
+      responsePromise,
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('timed out waiting for aborted non-stream response')), 250)
+      }),
+    ])
+
+    expect(response.status).toBe(200)
+    await vi.waitFor(() => {
+      expect(mockClient.interruptTurn).toHaveBeenCalledWith('turn-1', 'thread-1')
+    })
+  })
+
   it('retries on stale thread ids by clearing redis mapping', async () => {
     const threadState: ThreadStateService = {
       getThreadId: vi.fn(() => Effect.succeed('stale-thread')),
@@ -919,6 +972,80 @@ describe('chat completions handler', () => {
 
     const prompt = mockClient.runTurnStream.mock.calls[0]?.[0]
     expect(prompt).toBe('user: follow up')
+  })
+
+  it('keeps OpenWebUI thread and worktree state when additive transcript mode is disabled', async () => {
+    process.env.JANGAR_STATEFUL_CHAT_MODE = '0'
+
+    const threadState: ThreadStateService = {
+      getThreadId: vi.fn(() => Effect.succeed('thread-1')),
+      setThreadId: vi.fn(() => Effect.succeed(undefined)),
+      nextTurn: vi.fn(() => Effect.succeed(1)),
+      clearChat: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const worktreeState: WorktreeStateService = {
+      getWorktreeName: vi.fn(() => Effect.succeed('austin')),
+      setWorktreeName: vi.fn(() => Effect.succeed(undefined)),
+      clearWorktree: vi.fn(() => Effect.succeed(undefined)),
+    }
+    const transcriptState: TranscriptStateService = {
+      getTranscript: vi.fn(() => Effect.succeed(null)),
+      setTranscript: vi.fn(() => Effect.succeed(undefined)),
+      clearTranscript: vi.fn(() => Effect.succeed(undefined)),
+    }
+
+    const mockClient = {
+      runTurnStream: vi.fn(async (_prompt: string, _opts?: { threadId?: string; cwd?: string }) => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'message', delta: 'ok' }
+          yield { type: 'usage', usage: { input_tokens: 1, output_tokens: 1 } }
+        })(),
+      })),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-openwebui-chat-id': 'chat-1',
+      },
+      body: JSON.stringify({
+        model: 'gpt-5.4',
+        messages: [
+          { role: 'user', content: 'hello' },
+          { role: 'assistant', content: 'hi!' },
+          { role: 'user', content: 'follow up' },
+        ],
+        stream: true,
+      }),
+    })
+
+    const response = await Effect.runPromise(
+      pipe(
+        handleChatCompletionEffect(request),
+        Effect.provideService(ChatToolEventRenderer, chatToolEventRendererLive),
+        Effect.provideService(ChatCompletionEncoder, chatCompletionEncoderLive),
+        Effect.provideService(ThreadState, threadState),
+        Effect.provideService(WorktreeState, worktreeState),
+        Effect.provideService(TranscriptState, transcriptState),
+      ),
+    )
+    await response.text()
+
+    expect(threadState.getThreadId).toHaveBeenCalledWith('chat-1')
+    expect(worktreeState.getWorktreeName).toHaveBeenCalledWith('chat-1')
+    expect(threadState.clearChat).not.toHaveBeenCalled()
+    expect(transcriptState.getTranscript).not.toHaveBeenCalled()
+    expect(transcriptState.setTranscript).not.toHaveBeenCalled()
+    const opts = mockClient.runTurnStream.mock.calls[0]?.[1] as { threadId?: string; cwd?: string } | undefined
+    expect(opts?.threadId).toBe('thread-1')
+    expect(opts?.cwd).toContain('/.worktrees/austin')
   })
 
   it('persists assistant output so the next OpenWebUI turn stays additive', async () => {
