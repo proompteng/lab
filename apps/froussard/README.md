@@ -44,7 +44,7 @@ bun run build
 bun run start
 ```
 
-> Bun ≥ 1.1 must be available on your PATH—the build step uses `tsdown` to emit ESM bundles and the runtime executes them via `bun dist/index.mjs`.
+> Bun 1.3.10 must be available on your PATH. The build step uses `tsdown` to emit ESM bundles and the runtime executes them via `bun dist/index.mjs`.
 
 The local runtime exposes:
 

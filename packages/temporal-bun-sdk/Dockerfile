@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.6
 
-FROM oven/bun:1.1.20 AS install
+FROM oven/bun:1.3.10 AS install
 WORKDIR /app
 
 # Install system dependencies required for Zig and Temporal core libraries
@@ -39,7 +39,7 @@ RUN bun run libs:download
 RUN bun run build
 RUN bun run build:native:zig:bundle
 
-FROM oven/bun:1.1.20 AS runner
+FROM oven/bun:1.3.10 AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 

@@ -5,7 +5,7 @@ Internal Knative service that powers `http://go/<slug>` redirects with a small a
 ## Prerequisites
 
 - `.env.local` in `services/golink` (copy `.env.example`) with `GOLINK_DATABASE_URL` set. Defaults point to the local compose Postgres on port 15433.
-- Bun 1.3.9 and Node 24.11.1 (workspace defaults).
+- Bun 1.3.10 and Node 24.11.1 (workspace defaults).
 
 ## Scripts
 
@@ -13,7 +13,7 @@ All commands run from the repo root unless noted.
 
 ```bash
 # install workspace deps
-a bun install
+bun install
 
 # local dev (watch)
 bun run --filter @proompteng/golink dev

@@ -1,91 +1,102 @@
-# Tooling Setup (October 20 2025)
+# Tooling Setup (March 8 2026)
 
-This guide consolidates the CLI and runtime tooling we keep standardised across the lab workspaces. Examples below assume macOS with Homebrew; when a Linux alternative is materially different we call it out. Use these instructions alongside the Coder bootstrap script so local environments and cloud workspaces stay aligned.
+This guide covers the contributor tooling that should match the current repo state.
 
 ## Node.js and Bun
 
-- **Node.js** – Target the Active LTS line (24.x) which receives security fixes through April 30 2028 (see the [Node.js release schedule](https://nodejs.org/en/about/previous-releases)).  
-  Workspaces ship with `nvm` preinstalled. To match production:
-  ```bash
-  nvm install 24.11.1
-  nvm alias default 24.11.1
-  ```
-- **Bun** – Default package manager/runtime (1.3.x). Install from the official script documented on bun.sh:
-  ```bash
-  curl -fsSL https://bun.sh/install | bash
-  ```
-  (See [Bun installation docs](https://bun.sh/docs/installation) for platform notes.)
+- Node.js: `24.11.1`
+- Bun: `1.3.10`
 
-## OpenTofu / Terraform
+Examples with `nvm`:
 
-- The IaC directories under `tofu/` rely on OpenTofu; follow the [official installation guide](https://opentofu.org/docs/intro/install/). Install via Homebrew:
-  ```bash
-  brew install opentofu
-  ```
-- We still keep `terraform` available for legacy modules:
-  ```bash
-  brew install terraform
-  ```
-- CLI wrappers such as `bun run tf:plan` invoke OpenTofu; when contributing Terraform modules, test with both CLIs if you expect upstream consumers.
+```bash
+nvm install 24.11.1
+nvm alias default 24.11.1
+```
 
-## Kubernetes Tooling
+Install Bun from the official installer:
 
-- Install `kubectl` following the upstream guidance from [kubernetes.io](https://kubernetes.io/docs/tasks/tools/):
-  ```bash
-  brew install kubectl
-  ```
-  (Reference: [Kubernetes install guide](https://kubernetes.io/docs/tasks/tools/).)
-- Optional helpers:
-  - `./kubernetes/install.sh` seeds the base manifests for local clusters.
-  - Place shared kubeconfigs under `~/.kube` (for example `~/.kube/altra.yaml`) and export `KUBECONFIG` when switching contexts.
+```bash
+curl -fsSL https://bun.sh/install | bash
+```
+
+## OpenTofu and Terraform
+
+The infrastructure under `tofu/` uses OpenTofu. Keep Terraform available for legacy modules and upstream parity checks.
+
+```bash
+brew install opentofu
+brew install terraform
+```
+
+## Kubernetes and Helm
+
+Install the standard CLI tools:
+
+```bash
+brew install kubectl
+brew install helm
+```
+
+This repo still requires Helm 3 for some Kustomize workflows. Use `mise` when you need that pinned major:
+
+```bash
+mise exec helm@3 -- helm version
+```
 
 ## Ansible
-
-Used for host bootstrap and configuration stored under `ansible/`. Install from Homebrew (or follow the [Ansible installation guide](https://docs.ansible.com/ansible/latest/installation_guide/installation_distros.html) for other OSes):
 
 ```bash
 brew install ansible
 ```
 
-## PostgreSQL Client Utilities
+## PostgreSQL client utilities
 
-- macOS:
-  ```bash
-  brew install postgresql
-  ```
-- Ubuntu:
-  ```bash
-  sudo apt update && sudo apt install postgresql-client
-  ```
-  Check the main repository README for connection parameters and authentication requirements when targeting CloudNativePG clusters.
+macOS:
 
-## Python Tooling
+```bash
+brew install postgresql
+```
 
-We standardise on Python 3.12 for automation scripts.
+Ubuntu:
 
-- pyenv installs via Homebrew per the [upstream instructions](https://github.com/pyenv/pyenv#installation):
-  ```bash
-  brew install pyenv
-  pyenv install 3.12.5
-  ```
-- Install pipx to manage isolated CLI tools ([pipx docs](https://pipx.pypa.io/stable/installation/)):
-  ```bash
-  brew install pipx
-  pipx ensurepath
-  ```
-- Install Poetry (used by several helper scripts) via pipx ([Poetry install guide](https://python-poetry.org/docs/#installing-with-pipx)):
-  ```bash
-  pipx install poetry
-  ```
+```bash
+sudo apt update
+sudo apt install postgresql-client
+```
+
+## Python tooling
+
+We use Python across multiple repo areas:
+
+- `apps/alchimie`: `3.9-3.12`
+- `services/torghut`: `3.11-3.12`
+- general automation: `3.12` is a good default
+
+Recommended local setup:
+
+```bash
+brew install pyenv
+brew install uv
+brew install pipx
+pipx ensurepath
+```
+
+Example Python install with `pyenv`:
+
+```bash
+pyenv install 3.12.5
+pyenv global 3.12.5
+```
 
 ## GitHub CLI
-
-Automation scripts under `scripts/` depend on `gh` for release management and PR operations. Install from Homebrew or the [official GitHub CLI installer](https://cli.github.com/manual/installation):
 
 ```bash
 brew install gh
 ```
 
----
+## Notes
 
-Refer back to the repository README for service-specific workflows, deployment commands, and infra runbooks once these core tools are available.
+- Prefer the nearest workspace README for service-specific setup and commands.
+- Root workflow and repo conventions live in `AGENTS.md`.
+- For deploy/build/reseal flows, prefer the typed scripts under `packages/scripts/src/**`.

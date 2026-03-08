@@ -1,152 +1,175 @@
-# Experimentation Lab
+# lab
 
-A multi-language monorepo for experimenting with conversational tooling, data pipelines, and deployment workflows. The repo combines Next.js frontends, Convex-backed APIs, Go microservices, and Kubernetes/Terraform automation for end-to-end prototyping.
+Multi-language monorepo for the Proompteng product surfaces, agent platform, shared SDKs, and GitOps/infrastructure
+automation.
 
-[![Open in Coder](https://coder.proompteng.ai/open-in-coder.svg)](https://coder.proompteng.ai/templates/k8s-arm64/workspace?param.repository_url=https%3A%2F%2Fgithub.com%2Fproompteng%2Flab&param.repository_directory=%7E%2Fgithub.com)
+The repository centers on:
 
----
+- product surfaces and adjacent runtimes in `apps/`
+- agent and control-plane services in `services/`
+- shared TypeScript packages and deploy tooling in `packages/`
+- Kubernetes, Argo CD, Helm, OpenTofu, and Ansible assets for running the stack
+
+## What Lives Here
+
+### Apps
+
+- `apps/` mixes browser apps, desktop apps, runtime services, and a few templates/config-only directories
+- `apps/landing`: Next.js marketing site backed by the shared Convex project in `packages/backend`
+- `apps/app`: TanStack Start control-plane UI
+- `apps/cms`: Payload CMS for landing content
+- `apps/docs`: Fumadocs-based documentation app
+- `apps/froussard`: Bun webhook bridge service in `apps/`
+- `apps/reestr`, `apps/reviseur`, `apps/kabina`, `apps/nata`, `apps/kitty-krew`, `apps/alchimie`, `apps/discourse`:
+  additional product and experiment surfaces
+
+### Shared packages
+
+- `packages/backend`: Convex backend, codegen, and seed flows used by frontend apps
+- `packages/scripts`: typed Bun deploy/build/reseal automation used across services
+- `packages/temporal-bun-sdk`: Temporal SDK and examples for Bun-based workers
+- `packages/codex`: Codex client/runtime package
+- `packages/design`, `packages/atelier`, `packages/cloutt`, `packages/cx-tools`, `packages/discord`,
+  `packages/otel`, `packages/schematic`: shared libraries and tooling
+
+### Services
+
+- `services/jangar`: OpenAI-compatible streaming chat/completions service and agent control-plane runtime
+- `services/torghut`: FastAPI autonomous trading service with research and rollout workflows
+- `services/memories`: memory storage/retrieval service used by agent workflows
+- `services/golink`, `services/oirat`, `services/bumba`, `services/khoshut`, `services/facteur`, `services/graf`,
+  `services/prt`, `services/bonjour`, `services/tigresse`, `services/saigak`, `services/dernier`, `services/dorvud`,
+  `services/miel`, `services/eclair`, `services/galette`, `services/vecteur`, `services/workers`: supporting product,
+  integration, runtime, and infrastructure services implemented across TS, Go, Python, Kotlin, and Ruby
+
+### Platform and infra
+
+- `charts/agents`: Helm chart and CRDs for the agents platform
+- `argocd/`: GitOps manifests and ApplicationSets
+- `kubernetes/`: cluster bootstrap and operational manifests/scripts
+- `tofu/`: OpenTofu stacks
+- `ansible/`: provisioning and operational playbooks
+- `devices/`: machine-specific infrastructure notes and manifests
+- `proto/`, `schemas/`: shared contracts and schema assets
+- `docs/`: design docs, runbooks, incidents, and architecture references
+- `skills/`: reusable agent skills
 
 ## Quick Start
 
-1. **Prerequisites**
-   - Node.js 24.11.x and Bun 1.3.9
-   - Go 1.24+
-   - Docker / Kubernetes tooling if you plan to run services or apply manifests locally
-2. **Install workspace dependencies**
-   ```bash
-   bun install
-   ```
-3. **Launch the landing web app**
-   ```bash
-   bun run dev:landing
-   ```
-4. **Start the Convex backend locally** (in another terminal)
-   ```bash
-   bun run dev:convex
-   ```
-5. **Run Go services** (example)
-   ```bash
-   go run ./services/prt
-   ```
+### Prerequisites
 
-> Prefer a hosted development experience? Click the **Open in Coder** button above to provision a workspace with Node 24, Bun, and the repository pre-installed.
+- Node `24.11.1`
+- Bun `1.3.10`
+- Go `1.24+` for Go services
+- Ruby `3.4.7` + Bundler `2.7+` for `services/dernier`
+- Python:
+  - `3.9-3.12` for `apps/alchimie`
+  - `3.11-3.12` for `services/torghut`
 
----
+Install workspace dependencies:
+
+```bash
+bun install
+```
+
+Common entry points from the repo root:
+
+```bash
+# Landing site + shared Convex backend
+bun run dev:setup:convex
+bun run seed:models
+bun run dev:landing
+
+# Control-plane UI
+bun run dev:app
+
+# Payload CMS
+bun run dev:cms
+
+# Docs app
+bun run dev:docs
+
+# Convex backend only
+bun run dev:convex
+```
+
+Service-specific local workflows live in the nearest README. Two important examples:
+
+- `services/jangar/README.md`: local Jangar development, Tilt port-forwards, worker split, and gRPC notes
+- `services/torghut/README.md`: `uv`-based Python setup, migration checks, whitepaper workflow, and rollout automation
+
+## Common Commands
+
+### Frontend and TypeScript workspaces
+
+```bash
+bun run format
+bun run format:check
+bun run lint:oxlint
+bun run lint:oxlint:type
+```
+
+Target a single workspace:
+
+```bash
+bun run --filter <workspace> <script>
+```
+
+Examples:
+
+```bash
+bun run --filter landing build
+bun run --filter app test
+bun run --filter @proompteng/backend codegen
+```
+
+### Go services
+
+```bash
+go test ./services/...
+go build ./services/...
+```
+
+### Infrastructure
+
+```bash
+bun run tf:plan
+bun run tf:apply
+bun run lint:argocd
+bun run ansible
+```
+
+Service deploy/build/reseal workflows use the typed scripts under `packages/scripts/src/**`.
 
 ## Repository Layout
 
-| Path                                  | Description                                                                                     |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `apps/`                               | Frontends and UX surfaces (e.g. `landing`, `app`, `docs`) with co-located fixtures and tests.   |
-| `packages/backend`                    | Convex backend project (`convex dev`, codegen, model seeding).                                  |
-| `packages/atelier`, `packages/cloutt` | Shared TypeScript utilities and infrastructure tooling.                                         |
-| `services/`                           | Go microservices (`miel`, `prt`, `eclair`) with adjacent tests and Dockerfiles.                 |
-| `ansible/`                            | Playbooks and inventory for provisioning supporting hosts.                                      |
-| `tofu/`                               | OpenTofu (Terraform) configurations for Harvester, Cloudflare, Rancher, and Tailscale.          |
-| `kubernetes/`                         | Cluster bootstrap/maintenance tooling (install scripts, Coder template); no workload manifests. |
-| `argocd/`                             | Argo CD application specs and ApplicationSets for GitOps deployment.                            |
-| `scripts/`                            | Helper scripts for builds, secrets management, and Tailscale automation.                        |
-| `AGENTS.md`, `CLAUDE.md`              | Notes and prompts for AI agent integrations.                                                    |
+| Path | Purpose |
+| --- | --- |
+| `apps/` | Mixed product surfaces: web apps, desktop apps, some runtime services, and app-adjacent templates/config |
+| `packages/` | Shared TS libraries, Convex backend, SDKs, and deploy tooling |
+| `services/` | Backend services across TS, Go, Python, Ruby, and Kotlin |
+| `charts/agents/` | Agents Helm chart, CRDs, examples, and values |
+| `argocd/` | Desired GitOps state for applications and platform components |
+| `kubernetes/` | Cluster bootstrap, utilities, and supporting manifests |
+| `tofu/` | OpenTofu stacks for infrastructure provisioning |
+| `ansible/` | Playbooks and inventory |
+| `docs/` | Current-state docs, design docs, runbooks, and incident writeups |
+| `devices/` | Hardware/node-specific operational material |
+| `proto/` | Protobuf definitions |
+| `schemas/` | SQL and schema assets |
+| `scripts/` | Repository-level helpers |
+| `skills/` | Agent skill definitions |
 
----
+## Recommended Starting Points
 
-## Development Workflows
+- Agents platform docs: `docs/agents/README.md`
+- Jangar service docs: `services/jangar/README.md`
+- Torghut docs index: `docs/torghut/README.md`
+- Deploy/build script catalog: `packages/scripts/README.md`
+- Root tooling and workflows: `AGENTS.md`
 
-### Frontend
+## Notes
 
-- Lint & format: `bun run lint:landing`, `bun run format`
-- Build & smoke test: `bun run build:landing` then `bun run start:landing`
-- Shared Oxfmt config lives at `.oxfmtrc.json`
-
-### Convex Backend
-
-- Generate types: `bun run --filter @proompteng/backend codegen`
-- Start local dev: `bun run dev:convex`
-- Seed models: `bun run seed:models`
-
-### Go Services
-
-- Test all services: `go test ./services/...`
-- Build binaries: `go build ./services/...`
-- Unit test a single service: `go test ./services/prt -run TestHandleRoot`
-
-### Tooling & Quality
-
-- Husky + Oxfmt formatting on commit (`lint-staged` configuration in `package.json`).
-- Oxlint runs alongside Oxfmt: `bun run lint:oxlint` for repo-wide JS/TS checks and `bun run lint:oxlint:type` to run type-aware checks across TS workspaces.
-- Type-aware Oxlint uses tsgolint (typescript-go), which may skip unsupported tsconfig options (such as `baseUrl`)—use lint-only tsconfigs per workspace if needed.
-- TailwindCSS v4 & Radix UI used extensively in frontend components.
-
----
-
-## Database Setup
-
-Some experiments expect a Postgres instance (see original Home Cloud notes). To recreate the environment locally:
-
-1. Install the CLI:
-   ```bash
-   brew install postgresql
-   ```
-2. (Linux) install server packages:
-   ```bash
-   sudo apt update && sudo apt install postgresql
-   ```
-3. Enable remote access (optional lab setup):
-   - Add to `pg_hba.conf`:
-     ```
-     host    all    all    192.168.1.0/24    trust
-     ```
-   - Ensure `postgresql.conf` includes `listen_addresses = '*'`.
-4. Create a user & database:
-   ```bash
-   create role altra with login;
-   create database altra with owner altra;
-   ```
-5. Grant privileges as needed:
-   ```sql
-   grant create on database altra to altra;
-   ```
-
-These instructions remain intentionally permissive for an isolated lab network—tighten auth and networking before production use.
-
----
-
-## Infrastructure & Operations
-
-| Task                  | Command / Notes                                                                                 |
-| --------------------- | ----------------------------------------------------------------------------------------------- |
-| Plan infrastructure   | `bun run tf:plan` (OpenTofu under `tofu/harvester`)                                             |
-| Apply infrastructure  | `bun run tf:apply` (only after reviewing the plan)                                              |
-| Destroy Harvester VM  | `bun run tf:destroy`                                                                            |
-| Apply Kubernetes base | `bun run harvester:apply` or `./kubernetes/install.sh`                                          |
-| Bootstrap Argo CD     | `bun run k:bootstrap` (server-side apply; avoids metadata annotation size limit issues on CRDs) |
-| Run Ansible playbooks | `bun run ansible`                                                                               |
-| Manage Coder template | `kubernetes/coder` contains Terraform + template YAML used by the button above.                 |
-
-Supporting configuration:
-
-- `skaffold.yaml` for iterative container builds.
-- `scripts/generate-*` helpers to create sealed secrets and Tailscale auth keys.
-- `tmp/` contains sample certs, Milvus configs, and operator bundles used during experimentation.
-
----
-
-## Coder Workspace
-
-- Template name: **k8s-arm64** (see `kubernetes/coder/template.yaml`).
-- Bootstrap script provisions code-server, Node 24, Bun, Convex CLI, kubectl/argocd, and installs repo dependencies.
-- Use `coder templates push` / `coder update` to maintain the template when infrastructure changes are made.
-
----
-
-## Additional Resources
-
-- `docs/tooling.md` – Install guides for Node, Terraform/OpenTofu, kubectl, Ansible, PostgreSQL, Python tooling, and the GitHub CLI
-- `docs/kafka-topics.md` – Kafka topic naming (dot notation) and Strimzi resource guidance
-- `docs/codex-workflow.md` – How to exercise the Codex planning + implementation workflow after deployment
-- `argocd/README.md` – GitOps deployment notes
-- `kubernetes/README.md` – Cluster setup instructions
-- `services/*/README.md` – Service-specific docs (`miel`, `prt`)
-- `tofu/README.md` – Terraform/OpenTofu usage
-
-Feel free to add new experiments under `apps/` or `services/`—keep scope tight, follow the Oxfmt/Tailwind conventions, and document deployment steps alongside automation scripts.
+- Use `mise` when a workflow requires a pinned tool major such as `helm@3`.
+- Generated artifacts and lockfiles are maintained through their owning generators and package managers.
+- For infra changes, default to GitOps under `argocd/` and let Argo CD apply the desired state.

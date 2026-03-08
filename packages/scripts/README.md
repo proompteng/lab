@@ -4,7 +4,7 @@ Utility Bun/TypeScript scripts that automate common platform workflows. Use `bun
 
 ## Prerequisites
 
-- Bun ≥ 1.2 (matches repo toolchain)
+- Bun 1.3.10 (matches repo toolchain)
 - Required CLIs noted per script available on `PATH`
 - Authenticated GitHub CLI (`gh auth status`) for GitHub integrations
 - Kubernetes/Argo credentials when triggering infrastructure workflows

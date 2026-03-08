@@ -1,17 +1,13 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import crypto from 'node:crypto'
-import { Effect, Exit } from 'effect'
+import { Effect } from 'effect'
 
 import { createTemporalClient, type TemporalClient } from '../../src/client'
 import { loadTemporalConfig } from '../../src/config'
 import { type TemporalInterceptor } from '../../src/interceptors/types'
 import { WorkerRuntime } from '../../src/worker/runtime'
-import {
-  findTemporalCliUnavailableError,
-  TemporalCliUnavailableError,
-  createIntegrationHarness,
-  type IntegrationHarness,
-} from './harness'
+import { TemporalCliUnavailableError } from './harness'
+import { acquireIntegrationTestEnv, releaseIntegrationTestEnv, type IntegrationTestEnv } from './test-env'
 import { integrationActivities, integrationWorkflows } from './workflows'
 
 const shouldRunIntegration = process.env.TEMPORAL_INTEGRATION_TESTS === '1'
@@ -21,15 +17,15 @@ const hookTimeoutMs = 60_000
 const CLI_CONFIG = {
   address: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
   namespace: process.env.TEMPORAL_NAMESPACE ?? 'default',
-  taskQueue: process.env.TEMPORAL_TASK_QUEUE ?? 'temporal-bun-integration',
 }
 
 describeIntegration('interceptor framework wiring', () => {
-  let harness: IntegrationHarness | null = null
+  let integrationEnv: IntegrationTestEnv | null = null
   let runtime: WorkerRuntime | null = null
   let runtimePromise: Promise<void> | null = null
   let client: TemporalClient | null = null
   let cliUnavailable = false
+  const interceptorTaskQueue = `${process.env.TEMPORAL_TASK_QUEUE ?? 'temporal-bun-integration'}-interceptor-${crypto.randomUUID()}`
 
   const clientEvents: string[] = []
   const workerEvents: string[] = []
@@ -59,33 +55,18 @@ describeIntegration('interceptor framework wiring', () => {
   }
 
   beforeAll(async () => {
-    const harnessExit = await Effect.runPromiseExit(createIntegrationHarness(CLI_CONFIG))
-    if (Exit.isFailure(harnessExit)) {
-      const unavailable = findTemporalCliUnavailableError(harnessExit.cause)
-      if (unavailable) {
-        cliUnavailable = true
-        console.warn(`[temporal-bun-sdk] skipping interceptor integration: ${unavailable.message}`)
-        return
-      }
-      throw harnessExit.cause
-    }
-    harness = harnessExit.value
-    const setupExit = await Effect.runPromiseExit(harness.setup)
-    if (Exit.isFailure(setupExit)) {
-      const unavailable = findTemporalCliUnavailableError(setupExit.cause)
-      if (unavailable) {
-        cliUnavailable = true
-        console.warn(`[temporal-bun-sdk] skipping interceptor integration: ${unavailable.message}`)
-        return
-      }
-      throw setupExit.cause
+    integrationEnv = await acquireIntegrationTestEnv()
+    if (integrationEnv.isCliUnavailable()) {
+      cliUnavailable = true
+      console.warn('[temporal-bun-sdk] skipping interceptor integration: Temporal CLI unavailable')
+      return
     }
 
     const baseConfig = await loadTemporalConfig({
       defaults: {
         address: CLI_CONFIG.address,
         namespace: CLI_CONFIG.namespace,
-        taskQueue: CLI_CONFIG.taskQueue,
+        taskQueue: interceptorTaskQueue,
       },
     })
 
@@ -93,7 +74,7 @@ describeIntegration('interceptor framework wiring', () => {
       config: baseConfig,
       workflows: integrationWorkflows,
       activities: integrationActivities,
-      taskQueue: CLI_CONFIG.taskQueue,
+      taskQueue: interceptorTaskQueue,
       namespace: CLI_CONFIG.namespace,
       interceptors: [captureWorkerInterceptor],
       workflowGuards: 'warn',
@@ -102,6 +83,7 @@ describeIntegration('interceptor framework wiring', () => {
 
     const clientHandles = await createTemporalClient({
       config: baseConfig,
+      taskQueue: interceptorTaskQueue,
       clientInterceptors: [captureClientInterceptor],
     })
     client = clientHandles.client
@@ -117,8 +99,8 @@ describeIntegration('interceptor framework wiring', () => {
     if (runtimePromise) {
       await runtimePromise
     }
-    if (harness) {
-      await Effect.runPromise(harness.teardown)
+    if (integrationEnv) {
+      await releaseIntegrationTestEnv()
     }
   }, { timeout: hookTimeoutMs })
 
@@ -127,13 +109,11 @@ describeIntegration('interceptor framework wiring', () => {
       console.warn(`[temporal-bun-sdk] interceptor scenario skipped (${name})`)
       return undefined
     }
-    if (!harness || !client) {
-      throw new Error('Integration harness not initialised')
+    if (!integrationEnv || !client) {
+      throw new Error('Integration environment not initialised')
     }
     try {
-      return await Effect.runPromise(
-        harness.runScenario(name, () => Effect.tryPromise(fn)),
-      )
+      return await integrationEnv.runOrSkip(name, fn)
     } catch (error) {
       if (error instanceof TemporalCliUnavailableError) {
         cliUnavailable = true
@@ -152,14 +132,14 @@ describeIntegration('interceptor framework wiring', () => {
       await client!.startWorkflow({
         workflowType: 'integrationActivityWorkflow',
         workflowId: `int-activity-${crypto.randomUUID()}`,
-        taskQueue: CLI_CONFIG.taskQueue,
+        taskQueue: interceptorTaskQueue,
         args: [{ value: 'ok' }],
       })
 
       const signalWorkflowHandle = await client!.startWorkflow({
         workflowType: 'integrationSignalQueryWorkflow',
         workflowId: `int-signal-${crypto.randomUUID()}`,
-        taskQueue: CLI_CONFIG.taskQueue,
+        taskQueue: interceptorTaskQueue,
       })
 
       await client!.signalWorkflow(signalWorkflowHandle.handle, 'unblock', 'go')
@@ -168,7 +148,7 @@ describeIntegration('interceptor framework wiring', () => {
       const updateWorkflowHandle = await client!.startWorkflow({
         workflowType: 'integrationUpdateWorkflow',
         workflowId: `int-update-${crypto.randomUUID()}`,
-        taskQueue: CLI_CONFIG.taskQueue,
+        taskQueue: interceptorTaskQueue,
         args: [{ initialMessage: 'boot' }],
       })
 
