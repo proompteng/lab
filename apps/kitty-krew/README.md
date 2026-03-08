@@ -13,7 +13,7 @@ The application uses a multi-stage build process to create an optimized containe
 
 Key features:
 
-- Based on official `oven/bun:latest` image
+- Based on official `oven/bun:1.3.10` image
 - Layer optimization for faster builds and smaller images
 - Health checks for Kubernetes readiness/liveness probes
 - Proper environment variable configuration

@@ -14,7 +14,7 @@ A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over
 
 ## Prerequisites
 
-- **Bun ≥ 1.1.20** – required for the runtime and CLI.
+- **Bun ≥ 1.3.10** – required for the runtime and CLI.
 - **Temporal CLI ≥ 1.4** – optional, but useful for spinning up a local dev server.
 
 ## Quickstart

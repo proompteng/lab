@@ -12,7 +12,7 @@
 
 ## Prereqs
 
-- Node 24.11.1 + Bun 1.3.9 (root `package.json`).
+- Node 24.11.1 + Bun 1.3.10 (root `package.json`).
 - Go 1.24+ for `services/`.
 - Ruby 3.4.7 + Bundler 2.7+ for `services/dernier`.
 - Python 3.9–3.12 for `apps/alchimie`; 3.11–3.12 for `services/torghut`.
