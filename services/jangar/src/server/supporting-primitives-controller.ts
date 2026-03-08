@@ -42,6 +42,7 @@ type CrdCheckState = {
 type ControllerHealthState = {
   started: boolean
   crdCheckState: CrdCheckState | null
+  namespaces: string[] | null
 }
 
 const globalState = globalThis as typeof globalThis & {
@@ -50,7 +51,7 @@ const globalState = globalThis as typeof globalThis & {
 
 const controllerState = (() => {
   if (globalState.__jangarSupportingControllerState) return globalState.__jangarSupportingControllerState
-  const initial = { started: false, crdCheckState: null }
+  const initial = { started: false, crdCheckState: null, namespaces: null }
   globalState.__jangarSupportingControllerState = initial
   return initial
 })()
@@ -162,6 +163,14 @@ const resolveNamespaces = async () => {
   return resolved
 }
 
+const resolveConfiguredNamespaces = () => {
+  try {
+    return parseNamespaces()
+  } catch {
+    return null
+  }
+}
+
 const checkCrds = async (): Promise<CrdCheckState> => {
   const namespace = resolveCrdCheckNamespace()
   const missing: string[] = []
@@ -219,7 +228,7 @@ const checkCrds = async (): Promise<CrdCheckState> => {
 export const getSupportingControllerHealth = () => ({
   enabled: shouldStart(),
   started: controllerState.started,
-  namespaces: null,
+  namespaces: controllerState.namespaces ?? resolveConfiguredNamespaces(),
   crdsReady: controllerState.crdCheckState?.ok ?? null,
   missingCrds: controllerState.crdCheckState?.missing ?? [],
   lastCheckedAt: controllerState.crdCheckState?.checkedAt ?? null,
@@ -3129,6 +3138,7 @@ export const startSupportingPrimitivesController = async () => {
     const kube = createKubernetesClient()
     const namespaces = await resolveNamespaces()
     if (lifecycleToken !== token) return
+    controllerState.namespaces = namespaces
     void reconcileAll(kube, namespaces)
 
     for (const namespace of namespaces) {
@@ -3284,6 +3294,7 @@ export const stopSupportingPrimitivesController = () => {
   scheduleRunnerStatusReconcileThrottleByKey.clear()
   started = false
   controllerState.started = false
+  controllerState.namespaces = null
 }
 
 export const __test__ = {

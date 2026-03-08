@@ -700,6 +700,24 @@ type TorghutMarketContextEvidence = {
   updated_at: Generated<Timestamp>
 }
 
+type AgentsControlPlaneComponentHeartbeats = {
+  id: Generated<string>
+  cluster: string
+  namespace: string
+  component: string
+  workload_role: string
+  pod_name: string
+  deployment_name: string
+  enabled: boolean
+  status: string
+  message: string
+  leadership_state: string
+  observed_at: Generated<Timestamp>
+  expires_at: Generated<Timestamp>
+  source_namespace: string
+  updated_at: Generated<Timestamp>
+}
+
 export type Database = {
   'atlas.repositories': AtlasRepositories
   'atlas.file_keys': AtlasFileKeys
@@ -735,6 +753,7 @@ export type Database = {
   orchestration_runs: JangarOrchestrationRuns
   audit_events: JangarAuditEvents
   'agents_control_plane.resources_current': AgentsControlPlaneResourcesCurrent
+  'agents_control_plane.component_heartbeats': AgentsControlPlaneComponentHeartbeats
   'torghut_control_plane.quant_metrics_latest': TorghutQuantMetricsLatest
   'torghut_control_plane.quant_metrics_series': TorghutQuantMetricsSeries
   'torghut_control_plane.quant_alerts': TorghutQuantAlerts

@@ -101,11 +101,13 @@ export type ControllerStatus = {
   name: string
   enabled: boolean
   started: boolean
+  scope_namespaces: string[]
   crds_ready: boolean
   missing_crds: string[]
   last_checked_at: string
   status: 'healthy' | 'degraded' | 'disabled' | 'unknown'
   message: string
+  authority: HeartbeatAuthoritySource
 }
 
 export type RuntimeAdapterStatus = {
@@ -114,6 +116,17 @@ export type RuntimeAdapterStatus = {
   status: 'healthy' | 'configured' | 'degraded' | 'disabled' | 'unknown'
   message: string
   endpoint: string
+  authority: HeartbeatAuthoritySource
+}
+
+export type HeartbeatAuthoritySource = {
+  mode: 'heartbeat' | 'local' | 'unknown'
+  namespace: string
+  source_deployment: string
+  source_pod: string
+  observed_at: string | null
+  fresh: boolean
+  message: string
 }
 
 export type WorkflowFailureReason = {

@@ -5,6 +5,16 @@ import { describe, expect, it } from 'vitest'
 import type { ControlPlaneStatus } from '@/data/agents-control-plane'
 import { ControlPlaneStatusPanel } from '@/components/agents-control-plane-status'
 
+const localAuthority = {
+  mode: 'local' as const,
+  namespace: 'agents',
+  source_deployment: 'agents-web',
+  source_pod: 'agents-web-0',
+  observed_at: '2026-01-20T00:00:00Z',
+  fresh: true,
+  message: 'using local controller state',
+}
+
 const baseStatus: ControlPlaneStatus = {
   service: 'jangar',
   generated_at: '2026-01-20T00:00:00Z',
@@ -25,14 +35,25 @@ const baseStatus: ControlPlaneStatus = {
       name: 'agents-controller',
       enabled: true,
       started: true,
+      scope_namespaces: ['agents'],
       crds_ready: true,
       missing_crds: [],
       last_checked_at: '2026-01-20T00:00:00Z',
       status: 'healthy',
       message: '',
+      authority: localAuthority,
     },
   ],
-  runtime_adapters: [],
+  runtime_adapters: [
+    {
+      name: 'workflow',
+      available: true,
+      status: 'configured',
+      message: 'native workflow runtime via Kubernetes Jobs',
+      endpoint: '',
+      authority: localAuthority,
+    },
+  ],
   workflows: {
     window_minutes: 15,
     active_job_runs: 1,
@@ -148,6 +169,8 @@ describe('ControlPlaneStatusPanel', () => {
     expect(normalizedHtml).toContain('Eligible models: chronos, moment')
     expect(normalizedHtml).toContain('Eligible jobs: benchmark_parity, foundation_router_parity')
     expect(normalizedHtml).toContain('Modes: research_backtest, shadow_replay')
+    expect(normalizedHtml).toContain('Authority: local')
+    expect(normalizedHtml).toContain('Scope: agents')
     expect(normalizedHtml).not.toContain('Top failure reasons: [object Object], [object Object]')
   })
 })

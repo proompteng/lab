@@ -22,6 +22,7 @@ import * as torghutMarketContextAgentsMigration from '~/server/migrations/202602
 import * as torghutMarketContextRunLifecycleMigration from '~/server/migrations/20260228_torghut_market_context_run_lifecycle'
 import * as jangarGithubWriteActionsAuditContextMigration from '~/server/migrations/20260303_jangar_github_write_actions_audit_context'
 import * as jangarGithubWorktreeRefreshStateMigration from '~/server/migrations/20260304_jangar_github_worktree_refresh_state'
+import * as agentsControlPlaneComponentHeartbeatsMigration from '~/server/migrations/20260308_agents_control_plane_component_heartbeats'
 
 type MigrationMap = Record<string, Migration>
 
@@ -57,6 +58,7 @@ const migrations: MigrationMap = {
   '20260228_torghut_market_context_run_lifecycle': torghutMarketContextRunLifecycleMigration,
   '20260303_jangar_github_write_actions_audit_context': jangarGithubWriteActionsAuditContextMigration,
   '20260304_jangar_github_worktree_refresh_state': jangarGithubWorktreeRefreshStateMigration,
+  '20260308_agents_control_plane_component_heartbeats': agentsControlPlaneComponentHeartbeatsMigration,
 }
 
 export const getRegisteredMigrationNames = () => Object.keys(migrations).sort()
