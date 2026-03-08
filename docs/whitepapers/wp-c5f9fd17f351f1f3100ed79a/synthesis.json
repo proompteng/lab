@@ -1,0 +1,230 @@
+{
+  "run_id": "wp-c5f9fd17f351f1f3100ed79a",
+  "paper": {
+    "title": "The Impact of Option Demand Shocks on Underlying Stock Prices",
+    "author": "David Lawlor",
+    "document_type": "Master Thesis Finance",
+    "date": "2025-12-22",
+    "pdf_url": "https://arno.uvt.nl/show.cgi?fid=192119&utm_source=chatgpt.com"
+  },
+  "synthesis_version": "v1",
+  "generated_by": "codex",
+  "model_name": "gpt-5-codex",
+  "prompt_version": "whitepaper-analysis-v1",
+  "full_paper_reviewed": true,
+  "review_scope": {
+    "pages_reviewed": 60,
+    "included_sections": [
+      "front_matter",
+      "main_text",
+      "references"
+    ]
+  },
+  "executive_summary": "This thesis studies whether option demand shocks move underlying stock prices by comparing Net Buy Pressure (NBP) and Net Open Interest (Net OI) for 20 option-active U.S. equities from January 2020 through December 2022. The claimed thesis result is that NBP is the relevant short-horizon driver, especially when VIX is high, while Net OI is mostly uninformative. The implementation conclusion for this repository is negative: the paper is not internally consistent enough for deterministic adoption, and the repo lacks the option-native data plane required to reproduce or operationalize the method.",
+  "problem_statement": "The paper aims to determine whether demand shocks in equity options spill over into underlying stock returns, and whether that effect is explained by mechanical dealer hedging rather than only by private information. It further asks whether the effect is stronger in high-volatility regimes and whether NBP is a better demand proxy than Net OI.",
+  "methodology_summary": "The thesis builds a daily stock panel for 20 U.S. equities using CRSP stock returns, OptionMetrics options data, and VIX data. It defines NBP as buyer-initiated minus seller-initiated option volume and Net OI as the daily change in total option open interest. The main empirical design is a next-day panel regression with lagged return controls, lagged absolute return, a high-volatility indicator, and interactions between the option-demand variables and the volatility regime. Reported robustness checks include pooled OLS, firm fixed effects, regime splits, longer return horizons, and firm-by-firm regressions.",
+  "key_findings": [
+    {
+      "id": "KF-1",
+      "finding": "The thesis claims NBP is the relevant short-horizon option-demand metric and Net OI is largely uninformative for next-day returns.",
+      "evidence": [
+        "Sec. 1.4, pp. 7-9",
+        "Sec. 6.2, pp. 38-40",
+        "Sec. 7.1, pp. 50-52"
+      ],
+      "details": "The document consistently describes NBP as the immediate order-flow metric and Net OI as a weaker, position-based proxy."
+    },
+    {
+      "id": "KF-2",
+      "finding": "The displayed baseline regression table does not show statistically significant NBP effects even though the conclusion claims significance.",
+      "evidence": [
+        "Table 2, pp. 38-40",
+        "Sec. 7.1, pp. 50-51"
+      ],
+      "details": "Table 2 reports positive NBP coefficients with standard errors of similar magnitude and no significance stars, while the conclusion states NBP emerged as a significant positive predictor."
+    },
+    {
+      "id": "KF-3",
+      "finding": "The volatility-regime definition is internally inconsistent, weakening confidence in the reported high-VIX amplification claim.",
+      "evidence": [
+        "Sec. 3.5, pp. 23-24",
+        "Sec. 5.2, p. 32",
+        "Table 3, pp. 41-42"
+      ],
+      "details": "The thesis alternates between a fixed rule of VIX > 20 and a top-quartile definition, while the reported sample split in Table 3 matches neither formulation cleanly without further explanation."
+    },
+    {
+      "id": "KF-4",
+      "finding": "The repo has reusable equity-research and simulation infrastructure, but it does not have the option-native data stack required to implement this paper.",
+      "evidence": [
+        "services/torghut/app/trading/backtest.py",
+        "services/torghut/app/trading/evaluation.py",
+        "services/torghut/scripts/start_historical_simulation.py",
+        "services/torghut/app/trading/market_context.py",
+        "services/torghut/README.md",
+        "Negative repo search for WRDS/OptionMetrics/CRSP and option-chain vocabulary"
+      ],
+      "details": "Torghut can host research orchestration and evaluation, but the paper's core substrate, option-order-flow and open-interest data joined to equities, is absent."
+    },
+    {
+      "id": "KF-5",
+      "finding": "The paper is not reproducible as written because sample counts, variable scaling, and firm-level robustness summaries are inconsistent across sections.",
+      "evidence": [
+        "Sec. 3.3, p. 20",
+        "Table 1, pp. 25-26",
+        "Table 2, p. 38",
+        "Table 4, pp. 43-45"
+      ],
+      "details": "The thesis reports incompatible observation counts, unclear NBP scaling, and a firm-level summary table that conflicts with the surrounding narrative."
+    }
+  ],
+  "novelty_claims": [
+    {
+      "claim": "NBP is a better short-run proxy for option-demand spillovers than Net OI.",
+      "assessment": "plausible_but_weakly_supported",
+      "notes": "The comparison is intuitively reasonable and consistent with the cited literature, but the thesis does not present a reproducible enough empirical package to treat it as a reliable implementation insight."
+    },
+    {
+      "claim": "Option-demand spillovers are stronger in high-volatility regimes because dealers hedge more aggressively.",
+      "assessment": "directionally_plausible_but_inconclusive",
+      "notes": "The mechanism is well motivated, but the regime definition itself is inconsistent and the reported high-VIX regressions are not precisely estimated."
+    },
+    {
+      "claim": "The thesis contributes a contemporary 2020-2022 retail-driven market perspective on option-stock spillovers.",
+      "assessment": "moderately_novel_context",
+      "notes": "The sample period is contemporary and relevant, but the empirical method is an incremental panel-regression study rather than a novel algorithm or deployable system."
+    }
+  ],
+  "risk_assessment": [
+    {
+      "risk": "empirical_rigor",
+      "severity": "high",
+      "detail": "The conclusion claims statistical significance that is not shown in the displayed baseline regression table."
+    },
+    {
+      "risk": "internal_consistency",
+      "severity": "high",
+      "detail": "Volatility-regime definitions, observation counts, and variable scaling are inconsistent across sections and tables."
+    },
+    {
+      "risk": "reproducibility_gap",
+      "severity": "high",
+      "detail": "The thesis provides no code, no deterministic feature-construction scripts, no data snapshot identifiers, and no exact cleaning logic for licensed datasets."
+    },
+    {
+      "risk": "external_data_dependency",
+      "severity": "high",
+      "detail": "The method depends on WRDS/CRSP/OptionMetrics-class datasets that are not present in this repository and may require institutional licensing."
+    },
+    {
+      "risk": "repo_fit",
+      "severity": "high",
+      "detail": "Current Torghut infrastructure is equity/crypto and bar/signal oriented, not option-contract oriented."
+    },
+    {
+      "risk": "signal_magnitude",
+      "severity": "medium_high",
+      "detail": "Even the paper's own discussion frames the economic effect as small and short-lived, which weakens the case for productionization."
+    }
+  ],
+  "assumptions": [
+    "The extracted PDF text faithfully reflects the final thesis and its tables.",
+    "Absence of WRDS/OptionMetrics/CRSP and option-chain vocabulary in repo search means the required options-data substrate is not currently implemented here.",
+    "The whitepaper task concerns deterministic implementation viability in this repository, not a generic finance-literature summary."
+  ],
+  "repo_fit_assessment": {
+    "reusable_components": [
+      "services/torghut/app/trading/backtest.py",
+      "services/torghut/app/trading/evaluation.py",
+      "services/torghut/app/trading/simulation.py",
+      "services/torghut/app/trading/market_context.py",
+      "services/torghut/scripts/run_walkforward.py",
+      "services/torghut/scripts/start_historical_simulation.py"
+    ],
+    "missing_components": [
+      "WRDS/CRSP/OptionMetrics ingestion",
+      "option-contract master/schema",
+      "option order-flow and open-interest feature contracts",
+      "deterministic joins between options, equities, and VIX regimes",
+      "licensed dataset snapshot/version controls for replication"
+    ],
+    "fit_summary": "Torghut can host a research shell around the problem, but it cannot implement the paper's method without a new options data plane and a separate replication effort."
+  },
+  "internal_consistency_issues": [
+    "Table 2 does not show statistically significant NBP coefficients, yet Sec. 7.1 states NBP is a significant positive predictor.",
+    "Sec. 3.5 defines HighVol as VIX > 20 and says about 70% of days are high-volatility, while Sec. 5.2 describes a top-quartile threshold.",
+    "The thesis reports at least three incompatible sample sizes: 14,553, 14,529, and 14,520 observations.",
+    "NBP units shift between raw contract counts and scaled decimal values without a stable definition.",
+    "Table 4's summary statistics do not align cleanly with the claim that most firm-level coefficients are positive."
+  ],
+  "unresolved_questions": [
+    "What exact transformation converts raw NBP contract counts into the scaled values used in Table 1 and Table 2?",
+    "Which rows are dropped between the 14,553-observation panel description and the 14,529/14,520 counts in later tables?",
+    "What exact rule defines the high-volatility regime in the regressions: VIX > 20, top quartile, or another threshold?",
+    "Would the claimed NBP effect survive a deterministic reproduction with standard clustered errors and explicit outlier handling?"
+  ],
+  "citations": [
+    {
+      "source": "paper",
+      "section": "Sec. 1.1-1.4",
+      "pages": "4-9",
+      "claim": "Research question, motivation, and headline thesis claims."
+    },
+    {
+      "source": "paper",
+      "section": "Sec. 3.2-3.5",
+      "pages": "19-24",
+      "claim": "Data sources, NBP and Net OI definitions, and VIX-based regime construction."
+    },
+    {
+      "source": "paper",
+      "section": "Sec. 5.2-5.3",
+      "pages": "31-35",
+      "claim": "Regression specification and panel methodology."
+    },
+    {
+      "source": "paper",
+      "section": "Table 2",
+      "pages": "38-40",
+      "claim": "Displayed baseline regression results for NBP."
+    },
+    {
+      "source": "paper",
+      "section": "Table 3",
+      "pages": "41-42",
+      "claim": "High-VIX versus low-VIX regression splits."
+    },
+    {
+      "source": "paper",
+      "section": "Table 4 and Sec. 6.4",
+      "pages": "43-45",
+      "claim": "Firm-level robustness summary and accompanying narrative."
+    },
+    {
+      "source": "paper",
+      "section": "Sec. 7.1-7.4",
+      "pages": "50-56",
+      "claim": "Conclusions, literature contribution, practical implications, and explicit limitations."
+    },
+    {
+      "source": "repo",
+      "section": "services/torghut/README.md",
+      "pages": null,
+      "claim": "Torghut provides equity trading, simulation, and whitepaper workflow infrastructure."
+    },
+    {
+      "source": "repo",
+      "section": "services/torghut/app/trading/backtest.py; services/torghut/app/trading/evaluation.py; services/torghut/scripts/start_historical_simulation.py",
+      "pages": null,
+      "claim": "Existing research and evaluation shell is reusable."
+    },
+    {
+      "source": "repo",
+      "section": "Repo-wide search over services/torghut, services/jangar, services/miel, packages, docs",
+      "pages": null,
+      "claim": "No existing WRDS/OptionMetrics/CRSP integration or option-chain/open-interest vocabulary was found."
+    }
+  ],
+  "implementation_plan_md": "## Blocked Implementation Plan\n1. Do not implement the thesis signal directly in Torghut yet.\n2. First unblock data access: obtain explicit rights to CRSP and OptionMetrics-class data, or choose a replacement options dataset with equivalent fields.\n3. Add an option-native data model: contract master, buyer/seller-initiated option flow, daily open-interest aggregates, and deterministic joins to equity returns and VIX.\n4. Reproduce the paper's tables with checked-in code, frozen data snapshots, and explicit sample filters.\n5. Only if the replicated signal remains statistically and economically meaningful should it be promoted into a Torghut research lane for walk-forward validation.\n6. Keep any follow-on work research-only until the signal survives replication, regime segmentation, and realistic cost modeling.",
+  "confidence": 0.87
+}
