@@ -510,6 +510,35 @@ describe('agents controller startup', () => {
       infoSpy.mockRestore()
     }
   })
+
+  it('catches rejected fire-and-forget AgentRun resyncs and logs the failure', async () => {
+    stopAgentsController()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const kube = buildKube({
+      list: vi.fn(async (resource: string) => {
+        if (resource === RESOURCE_MAP.AgentRun) {
+          throw new Error('simulated list failure')
+        }
+        return { items: [] }
+      }),
+    })
+
+    try {
+      __test.triggerAgentRunResync(
+        kube as never,
+        'agents',
+        { namespaces: new Map() } as never,
+        defaultConcurrency,
+        'manual',
+      )
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      const messages = warnSpy.mock.calls.map((call) => String(call[0]))
+      expect(messages.some((message) => message.includes('agentrun_resync_failed'))).toBe(true)
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
 })
 
 describe('AgentRun artifacts limits', () => {
