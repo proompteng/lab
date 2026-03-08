@@ -4,7 +4,7 @@ This playbook captures how we expose the Codex CLI as an MCP server on `docker-h
 
 ## Prerequisites
 
-- `codex` CLI installed globally (`sudo npm install -g @openai/codex`).
+- `codex` CLI installed globally (`bun install -g @openai/codex`).
 - `mcpo` installed via `pipx` (`pipx install mcpo`).
 - Tailscale agent running on the host.
 - The repository cloned to `/home/kalmyk/github.com/lab`.
@@ -33,7 +33,7 @@ After=network.target
 User=kalmyk
 Group=kalmyk
 WorkingDirectory=/home/kalmyk/github.com/lab
-Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/kalmyk/.local/bin:/home/kalmyk/.local/npm-global/bin
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/kalmyk/.local/bin:/home/kalmyk/.bun/bin
 ExecStart=/home/kalmyk/.local/bin/mcpo --host 0.0.0.0 --port 8200 --name codex --api-key CODEx_MCP_KEY -- codex mcp-server
 Restart=on-failure
 RestartSec=5

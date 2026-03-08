@@ -13,7 +13,7 @@ All commands run from the repo root unless noted.
 
 ```bash
 # install workspace deps
-a bun install
+bun install
 
 # local dev (watch)
 bun run --filter @proompteng/golink dev

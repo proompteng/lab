@@ -1,47 +1,43 @@
 # alchimie
 
-This is a [Dagster](https://dagster.io/) project scaffolded with [`dagster project scaffold`](https://docs.dagster.io/guides/build/projects/creating-a-new-project).
+Dagster code location for data assets and jobs under `apps/alchimie`.
 
-## Getting started
+The active code location is `alchimie.definitions`, with source modules under `alchimie/` and tests under
+`alchimie_tests/`.
 
-First, install your Dagster code location as a Python package. By using the --editable flag, pip will install your Python package in ["editable mode"](https://pip.pypa.io/en/latest/topics/local-project-installs/#editable-installs) so that as you develop, local code changes will automatically apply.
+## Requirements
+
+- Python `3.9` through `3.12`
+- Dagster `1.11.11`
+
+## Local development
 
 ```bash
-pip install -e ".[dev]"
-```
-
-Then, start the Dagster UI web server:
-
-```bash
+cd apps/alchimie
+uv venv .venv
+source .venv/bin/activate
+uv pip install -e ".[dev]"
 dagster dev
 ```
 
-Open http://localhost:3000 with your browser to see the project.
+Dagster defaults to `http://localhost:3000`.
 
-You can start writing assets in `alchimie/assets.py`. The assets are automatically loaded into the Dagster code location as you define them.
-
-## Development
-
-### Adding new Python dependencies
-
-You can specify new Python dependencies in `setup.py`.
-
-### Unit testing
-
-Tests are in the `alchimie_tests` directory and you can run tests using `pytest`:
+## Tests
 
 ```bash
+cd apps/alchimie
 pytest alchimie_tests
 ```
 
-### Schedules and sensors
+## Project layout
 
-If you want to enable Dagster [Schedules](https://docs.dagster.io/guides/automate/schedules/) or [Sensors](https://docs.dagster.io/guides/automate/sensors/) for your jobs, the [Dagster Daemon](https://docs.dagster.io/guides/deploy/execution/dagster-daemon) process must be running. This is done automatically when you run `dagster dev`.
+- `alchimie/assets.py`: Dagster assets
+- `alchimie/jobs.py`: job definitions
+- `alchimie/definitions.py`: Dagster code location entrypoint
+- `docker-compose.yml`: local container workflow
+- `Dockerfile`: container image build for the code location
 
-Once your Dagster Daemon is running, you can start turning on schedules and sensors for your jobs.
+## Notes
 
-## Deploy on Dagster+
-
-The easiest way to deploy your Dagster project is to use Dagster+.
-
-Check out the [Dagster+ documentation](https://docs.dagster.io/dagster-plus/) to learn more.
+- Python dependencies are declared in both `pyproject.toml` and `setup.py` for the current packaging flow.
+- The package metadata still carries a placeholder project description; update that when the domain scope is clearer.
