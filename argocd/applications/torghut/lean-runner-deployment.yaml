@@ -23,7 +23,7 @@ spec:
       containers:
         - name: lean-runner
           # Keep in lockstep with `argocd/applications/torghut/knative-service.yaml`.
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:a8fba3baee3a2acf474afaa24aa6b593c8a6991e4e5942aec1742044073ed8bc
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:ad682c9838899e5408f0dbbb60c2f9f88e177c79c3378df1bea33b24e98e15ea
           imagePullPolicy: IfNotPresent
           command:
             - uvicorn
