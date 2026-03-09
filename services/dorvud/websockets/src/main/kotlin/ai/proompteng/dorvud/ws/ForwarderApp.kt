@@ -5,6 +5,7 @@ import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.platform.Metrics
 import ai.proompteng.dorvud.platform.SeqTracker
 import ai.proompteng.dorvud.platform.buildProducer
+import com.fasterxml.jackson.databind.ObjectMapper
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
@@ -15,6 +16,7 @@ import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
+import io.ktor.client.request.url
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readBytes
@@ -39,6 +41,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -51,9 +54,11 @@ import kotlinx.serialization.json.put
 import mu.KotlinLogging
 import org.apache.kafka.clients.producer.KafkaProducer
 import org.apache.kafka.clients.producer.ProducerRecord
+import org.msgpack.jackson.dataformat.MessagePackFactory
 import java.nio.charset.StandardCharsets
 import java.time.Duration
 import java.time.Instant
+import java.time.ZoneId
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -61,12 +66,14 @@ import java.util.zip.CRC32
 import kotlin.system.exitProcess
 
 private val logger = KotlinLogging.logger {}
+private val marketSessionZoneId: ZoneId = ZoneId.of("America/New_York")
 
 internal fun alpacaMarketDataStreamUrl(config: ForwarderConfig): String =
   when (config.alpacaMarketType) {
     AlpacaMarketType.EQUITY -> "${config.alpacaStreamUrl.trimEnd('/')}/v2/${config.alpacaFeed}"
     AlpacaMarketType.CRYPTO ->
       "${config.alpacaStreamUrl.trimEnd('/')}/v1beta3/crypto/${config.alpacaCryptoLocation}"
+    AlpacaMarketType.OPTIONS -> "${config.alpacaStreamUrl.trimEnd('/')}/v1beta1/${config.alpacaFeed}"
   }
 
 internal fun alpacaBarsBackfillUrl(config: ForwarderConfig): String =
@@ -74,9 +81,10 @@ internal fun alpacaBarsBackfillUrl(config: ForwarderConfig): String =
     AlpacaMarketType.EQUITY -> "${config.alpacaBaseUrl.trimEnd('/')}/v2/stocks/bars"
     AlpacaMarketType.CRYPTO ->
       "${config.alpacaBaseUrl.trimEnd('/')}/v1beta3/crypto/${config.alpacaCryptoLocation}/bars"
+    AlpacaMarketType.OPTIONS -> error("options bars backfill is not supported on the websocket lane")
   }
 
-internal fun alpacaBarsBackfillNeedsFeed(config: ForwarderConfig): Boolean = config.alpacaMarketType == AlpacaMarketType.EQUITY
+internal fun alpacaBarsBackfillNeedsFeed(config: ForwarderConfig): Boolean = config.alpacaMarketType != AlpacaMarketType.CRYPTO
 
 internal fun alpacaMarketDataChannels(config: ForwarderConfig): List<String> = config.alpacaMarketDataChannels
 
@@ -101,7 +109,10 @@ class ForwarderApp(
       ignoreUnknownKeys = true
     },
 ) {
+  private val jsonObjectMapper = ObjectMapper()
+  private val msgPackMapper = ObjectMapper(MessagePackFactory())
   private val scope = CoroutineScope(Dispatchers.Default)
+  private val optionsWsLastSuccessTs = AtomicReference<Instant?>(null)
   private val ready = AtomicBoolean(false)
   private val wsReady = AtomicBoolean(false)
   private val tradeUpdatesReady = AtomicBoolean(false)
@@ -329,22 +340,15 @@ class ForwarderApp(
     onReady: () -> Unit,
   ) {
     val url = alpacaMarketDataStreamUrl(config)
-    httpClient.webSocket(urlString = url) {
+    httpClient.webSocket({
+      url(url)
+      if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
+        header("Content-Type", "application/msgpack")
+      }
+    }) {
       suspend fun decodeNextMessages(): List<AlpacaMessage> {
         val frame = incoming.receive()
-        val text =
-          when (frame) {
-            is Frame.Text -> frame.readText()
-            is Frame.Binary -> frame.readBytes().decodeToString()
-            else -> return emptyList()
-          }
-        val elements =
-          try {
-            json.parseToJsonElement(text)
-          } catch (e: SerializationException) {
-            logger.warn(e) { "failed to parse alpaca frame as JSON; dropping" }
-            return emptyList()
-          }
+        val elements = decodeMarketDataFrame(frame) ?: return emptyList()
         val messages: List<JsonElement> =
           if (elements is JsonArray) elements.toList() else listOf(elements)
         return messages.mapNotNull { el ->
@@ -400,6 +404,14 @@ class ForwarderApp(
                   val errorClass = ReadinessClassifier.classifyAlpacaError(msg.code, msg.msg)
                   metrics.recordWsConnectError(errorClass)
                   recordAlpacaError(errorClass)
+                  publishOptionsWsStatus(
+                    producer = producer,
+                    seq = seq,
+                    subscribedCount = 0,
+                    statusValue = optionsStatusForCode(msg.code),
+                    errorCode = msg.code?.toString(),
+                    errorDetail = msg.msg,
+                  )
                   logger.error { "alpaca auth error code=${msg.code} msg=${msg.msg} error_class=${errorClass.id}" }
                   throw RuntimeException("alpaca auth error code=${msg.code} msg=${msg.msg} error_class=${errorClass.id}")
                 }
@@ -489,6 +501,14 @@ class ForwarderApp(
                 logger.info { "unsubscribing ${toRemove.size} symbols" }
                 applyUnsubscribe(toRemove)
               }
+              if (config.alpacaMarketType == AlpacaMarketType.OPTIONS && (toAdd.isNotEmpty() || toRemove.isNotEmpty())) {
+                publishOptionsWsStatus(
+                  producer = producer,
+                  seq = seq,
+                  subscribedCount = desired.size,
+                  statusValue = "ok",
+                )
+              }
               maybeBackfillBars(producer, seq, desired)
             }
           }
@@ -508,6 +528,15 @@ class ForwarderApp(
               is AlpacaSubscription -> {
                 subscribedOk = true
                 updateWsReady()
+                publishOptionsWsStatus(
+                  producer = producer,
+                  seq = seq,
+                  subscribedCount =
+                    subscribedLock.withLock {
+                      subscribedSymbols.size
+                    },
+                  statusValue = "ok",
+                )
                 return@forEach
               }
               is AlpacaError -> {
@@ -517,6 +546,17 @@ class ForwarderApp(
                 val errorClass = ReadinessClassifier.classifyAlpacaError(msg.code, msg.msg)
                 metrics.recordWsConnectError(errorClass)
                 recordAlpacaError(errorClass)
+                publishOptionsWsStatus(
+                  producer = producer,
+                  seq = seq,
+                  subscribedCount =
+                    subscribedLock.withLock {
+                      subscribedSymbols.size
+                    },
+                  statusValue = optionsStatusForCode(msg.code),
+                  errorCode = msg.code?.toString(),
+                  errorDetail = msg.msg,
+                )
                 logger.error { "alpaca error code=${msg.code} msg=${msg.msg} error_class=${errorClass.id}" }
                 throw RuntimeException("alpaca error code=${msg.code} msg=${msg.msg}")
               }
@@ -526,6 +566,16 @@ class ForwarderApp(
         }
       } finally {
         poller?.cancel()
+        if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
+          publishOptionsWsStatus(
+            producer = producer,
+            seq = seq,
+            subscribedCount = 0,
+            statusValue = "degraded",
+            errorCode = "session_closed",
+            errorDetail = "alpaca market-data websocket session closed",
+          )
+        }
       }
     }
   }
@@ -622,14 +672,17 @@ class ForwarderApp(
     }
   }
 
-  @Serializable
-  private data class JangarSymbolsResponse(
-    val symbols: List<String>,
-  )
-
   private suspend fun fetchDesiredSymbols(url: String): List<String> {
-    val response: JangarSymbolsResponse = httpClient.get(url).body()
-    return response.symbols
+    val payload: String = httpClient.get(url).body()
+    val element = json.parseToJsonElement(payload)
+    return when (element) {
+      is JsonObject ->
+        extractSymbols(element["symbols"])
+          .ifEmpty { extractSymbols(element["contracts"]) }
+          .ifEmpty { extractSymbols(element["hot_symbols"]) }
+      is JsonArray -> extractSymbols(element)
+      else -> emptyList()
+    }
   }
 
   private fun normalizeSymbols(symbols: List<String>): List<String> =
@@ -735,6 +788,7 @@ class ForwarderApp(
     symbols: List<String>,
   ) {
     if (!config.enableBarsBackfill) return
+    val barsTopic = config.topics.bars1m ?: return
     if (symbols.isEmpty()) return
     if (!backfillDone.compareAndSet(false, true)) return
 
@@ -751,7 +805,7 @@ class ForwarderApp(
           Envelope(
             ingestTs = Instant.now(),
             eventTs = Instant.parse(bar.timestamp),
-            feed = "alpaca",
+            feed = config.alpacaFeed,
             channel = "bars",
             symbol = bar.symbol,
             seq = seq.next(bar.symbol),
@@ -760,7 +814,7 @@ class ForwarderApp(
             source = "rest",
           )
         recordLag(env)
-        sendKafka(producer, config.topics.bars1m, env)
+        sendKafka(producer, barsTopic, env)
       }
     } catch (e: Exception) {
       backfillDone.set(false)
@@ -833,7 +887,7 @@ class ForwarderApp(
       buildList {
         add(config.topics.trades)
         add(config.topics.quotes)
-        add(config.topics.bars1m)
+        config.topics.bars1m?.let { add(it) }
         add(config.topics.status)
         if (tradeUpdatesEnabled) {
           config.topics.tradeUpdates?.let { add(it) }
@@ -879,13 +933,25 @@ class ForwarderApp(
         return
       }
       is AlpacaTrade -> {
-        if (tradesDedup.isDuplicate(msg.id.toString())) {
+        val dedupKey =
+          if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
+            "${msg.symbol}:${msg.timestamp}:${msg.price}:${msg.size}:${msg.id}"
+          } else {
+            msg.id.toString()
+          }
+        if (tradesDedup.isDuplicate(dedupKey)) {
           metrics.recordDedup("trades")
           return
         }
       }
       is AlpacaQuote -> {
-        if (quotesDedup.isDuplicate("${msg.timestamp}-${msg.symbol}")) {
+        val dedupKey =
+          if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
+            "${msg.symbol}:${msg.timestamp}:${msg.bidPrice}:${msg.bidSize}:${msg.askPrice}:${msg.askSize}"
+          } else {
+            "${msg.timestamp}-${msg.symbol}"
+          }
+        if (quotesDedup.isDuplicate(dedupKey)) {
           metrics.recordDedup("quotes")
           return
         }
@@ -909,15 +975,15 @@ class ForwarderApp(
       else -> {}
     }
 
-    val env = AlpacaMapper.toEnvelope(msg) { symbol -> seq.next(symbol) } ?: return
+    val env = AlpacaMapper.toEnvelope(msg, config.alpacaMarketType, config.alpacaFeed) { symbol -> seq.next(symbol) } ?: return
     recordLag(env)
 
     val topic =
       when (env.channel) {
-        "trades" -> config.topics.trades
-        "quotes" -> config.topics.quotes
+        "trade", "trades" -> config.topics.trades
+        "quote", "quotes" -> config.topics.quotes
         "bars", "updatedBars" -> config.topics.bars1m
-        "status" -> config.topics.status
+        "status" -> if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) null else config.topics.status
         else -> null
       } ?: return
 
@@ -1092,7 +1158,114 @@ class ForwarderApp(
 
   private suspend fun DefaultClientWebSocketSession.sendSerialized(payload: JsonObject) {
     val text = json.encodeToString(payload)
-    send(Frame.Text(text))
+    if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
+      val jsonTree = jsonObjectMapper.readTree(text)
+      send(Frame.Binary(true, msgPackMapper.writeValueAsBytes(jsonTree)))
+    } else {
+      send(Frame.Text(text))
+    }
+  }
+
+  private fun decodeMarketDataFrame(frame: Frame): JsonElement? {
+    val text =
+      try {
+        when (frame) {
+          is Frame.Text -> frame.readText()
+          is Frame.Binary ->
+            if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
+              msgPackMapper.readTree(frame.readBytes()).toString()
+            } else {
+              frame.readBytes().decodeToString()
+            }
+          else -> return null
+        }
+      } catch (e: Exception) {
+        logger.warn(e) { "failed to decode alpaca frame; dropping" }
+        return null
+      }
+
+    return try {
+      json.parseToJsonElement(text)
+    } catch (e: SerializationException) {
+      logger.warn(e) { "failed to parse alpaca frame as JSON; dropping" }
+      null
+    }
+  }
+
+  private fun extractSymbols(element: JsonElement?): List<String> =
+    when (element) {
+      is JsonArray ->
+        element.mapNotNull { entry ->
+          when (entry) {
+            is JsonPrimitive -> entry.contentOrNull
+            is JsonObject ->
+              entry["contract_symbol"]?.jsonPrimitive?.contentOrNull
+                ?: entry["symbol"]?.jsonPrimitive?.contentOrNull
+            else -> null
+          }
+        }
+      else -> emptyList()
+    }
+
+  private fun optionsStatusForCode(code: Int?): String =
+    when (code) {
+      405, 406, 410, 412, 413 -> "blocked"
+      else -> "degraded"
+    }
+
+  private fun publishOptionsWsStatus(
+    producer: KafkaProducer<String, String>,
+    seq: SeqTracker,
+    subscribedCount: Int,
+    statusValue: String,
+    errorCode: String? = null,
+    errorDetail: String? = null,
+  ) {
+    if (config.alpacaMarketType != AlpacaMarketType.OPTIONS) return
+    val now = Instant.now()
+    if (statusValue == "ok") {
+      optionsWsLastSuccessTs.set(now)
+    }
+    val payload: JsonElement =
+      buildJsonObject {
+        put("component", "ws")
+        put("status", statusValue)
+        put("session_state", currentSessionState(now))
+        put("watermark_lag_ms", JsonNull)
+        put("active_contracts", subscribedCount)
+        put("hot_contracts", subscribedCount)
+        put("rest_backlog", JsonNull)
+        put("error_code", errorCode?.let(::JsonPrimitive) ?: JsonNull)
+        put("error_detail", errorDetail?.let(::JsonPrimitive) ?: JsonNull)
+        put("last_success_ts", optionsWsLastSuccessTs.get()?.toString()?.let(::JsonPrimitive) ?: JsonNull)
+        put("heartbeat", true)
+        put("schema_version", 1)
+      }
+    val env =
+      Envelope(
+        ingestTs = now,
+        eventTs = now,
+        feed = config.alpacaFeed,
+        channel = "status",
+        symbol = "ws",
+        seq = seq.next("ws"),
+        payload = payload,
+        isFinal = true,
+        source = "ws",
+      )
+    sendKafka(producer, config.topics.status, env)
+  }
+
+  private fun currentSessionState(now: Instant): String {
+    val marketNow = now.atZone(marketSessionZoneId)
+    if (marketNow.dayOfWeek.value >= 6) return "weekend"
+    val minuteOfDay = (marketNow.hour * 60) + marketNow.minute
+    return when {
+      minuteOfDay in (4 * 60) until (9 * 60 + 30) -> "pre"
+      minuteOfDay in (9 * 60 + 30) until (16 * 60) -> "regular"
+      minuteOfDay in (16 * 60) until (20 * 60) -> "post"
+      else -> "closed"
+    }
   }
 }
 

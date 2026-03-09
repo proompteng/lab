@@ -10,7 +10,7 @@ import java.util.Properties
 data class TopicConfig(
   val trades: String,
   val quotes: String,
-  val bars1m: String,
+  val bars1m: String?,
   val status: String,
   val tradeUpdates: String?,
   val tradeUpdatesV2: String?,
@@ -19,12 +19,14 @@ data class TopicConfig(
 enum class AlpacaMarketType {
   EQUITY,
   CRYPTO,
+  OPTIONS,
 }
 
 internal fun defaultAlpacaMarketDataChannels(marketType: AlpacaMarketType): List<String> =
   when (marketType) {
     AlpacaMarketType.EQUITY -> listOf("trades", "quotes", "bars", "updatedBars")
     AlpacaMarketType.CRYPTO -> listOf("trades", "quotes", "bars")
+    AlpacaMarketType.OPTIONS -> listOf("trades", "quotes")
   }
 
 data class ForwarderConfig(
@@ -80,7 +82,8 @@ data class ForwarderConfig(
         when (mergedEnv["ALPACA_MARKET_TYPE"]?.trim()?.lowercase() ?: "equity") {
           "equity" -> AlpacaMarketType.EQUITY
           "crypto" -> AlpacaMarketType.CRYPTO
-          else -> error("ALPACA_MARKET_TYPE must be one of: equity, crypto")
+          "options" -> AlpacaMarketType.OPTIONS
+          else -> error("ALPACA_MARKET_TYPE must be one of: equity, crypto, options")
         }
       val alpacaCryptoLocation = mergedEnv["ALPACA_CRYPTO_LOCATION"]?.trim()?.lowercase() ?: "us"
       if (
@@ -93,6 +96,7 @@ data class ForwarderConfig(
         when (alpacaMarketType) {
           AlpacaMarketType.EQUITY -> listOf("trades", "quotes", "bars", "updatedBars")
           AlpacaMarketType.CRYPTO -> listOf("trades", "quotes", "bars")
+          AlpacaMarketType.OPTIONS -> listOf("trades", "quotes")
         }
       val allowedByLower = allowedChannels.associateBy { it.lowercase() }
       val channelOverride =
@@ -123,11 +127,20 @@ data class ForwarderConfig(
         TopicConfig(
           trades = mergedEnv["TOPIC_TRADES"] ?: "torghut.trades.v1",
           quotes = mergedEnv["TOPIC_QUOTES"] ?: "torghut.quotes.v1",
-          bars1m = mergedEnv["TOPIC_BARS_1M"] ?: "torghut.bars.1m.v1",
+          bars1m =
+            mergedEnv["TOPIC_BARS_1M"]?.trim()?.takeIf { it.isNotEmpty() }
+              ?: if (alpacaMarketType == AlpacaMarketType.OPTIONS) null else "torghut.bars.1m.v1",
           status = mergedEnv["TOPIC_STATUS"] ?: "torghut.status.v1",
           tradeUpdates = mergedEnv["TOPIC_TRADE_UPDATES"],
           tradeUpdatesV2 = mergedEnv["TOPIC_TRADE_UPDATES_V2"],
         )
+      val enableBarsBackfill = mergedEnv["ENABLE_BARS_BACKFILL"]?.toBooleanStrictOrNull() ?: false
+      if (alpacaMarketType == AlpacaMarketType.OPTIONS && enableBarsBackfill) {
+        error("ENABLE_BARS_BACKFILL is not supported when ALPACA_MARKET_TYPE=options")
+      }
+      if (enableBarsBackfill && topics.bars1m == null) {
+        error("TOPIC_BARS_1M must be set when ENABLE_BARS_BACKFILL=true")
+      }
 
       val kafka =
         KafkaProducerSettings(
@@ -170,7 +183,7 @@ data class ForwarderConfig(
         alpacaSecretKey = mergedEnv.getValue("ALPACA_SECRET_KEY"),
         alpacaMarketType = alpacaMarketType,
         alpacaCryptoLocation = alpacaCryptoLocation,
-        alpacaFeed = mergedEnv["ALPACA_FEED"] ?: "iex",
+        alpacaFeed = mergedEnv["ALPACA_FEED"] ?: if (alpacaMarketType == AlpacaMarketType.OPTIONS) "opra" else "iex",
         alpacaStreamUrl = mergedEnv["ALPACA_STREAM_URL"] ?: "wss://stream.data.alpaca.markets",
         alpacaBaseUrl = mergedEnv["ALPACA_BASE_URL"] ?: "https://data.alpaca.markets",
         alpacaTradeStreamUrl = mergedEnv["ALPACA_TRADE_STREAM_URL"]?.trim()?.takeIf { it.isNotEmpty() },
@@ -183,7 +196,7 @@ data class ForwarderConfig(
         shardIndex = shardIndex,
         enableTradeUpdates = mergedEnv["ENABLE_TRADE_UPDATES"]?.toBooleanStrictOrNull() ?: false,
         torghutAccountLabel = mergedEnv["TORGHUT_ACCOUNT_LABEL"]?.trim()?.takeIf { it.isNotEmpty() },
-        enableBarsBackfill = mergedEnv["ENABLE_BARS_BACKFILL"]?.toBooleanStrictOrNull() ?: false,
+        enableBarsBackfill = enableBarsBackfill,
         reconnectBaseMs = mergedEnv["RECONNECT_BASE_MS"]?.toLongOrNull() ?: 500,
         reconnectMaxMs = mergedEnv["RECONNECT_MAX_MS"]?.toLongOrNull() ?: 30_000,
         dedupTtlSeconds = mergedEnv["DEDUP_TTL_SEC"]?.toLongOrNull() ?: 5,

@@ -1,0 +1,235 @@
+name: torghut-ws-release
+
+on:
+  workflow_run:
+    workflows:
+      - torghut-ws-build-push
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Commit SHA to promote (defaults to current main HEAD)
+        required: false
+        type: string
+      image_tag:
+        description: Image tag to promote (defaults to source short SHA)
+        required: false
+        type: string
+      image_digest:
+        description: Image digest override (sha256:...)
+        required: false
+        type: string
+
+concurrency:
+  group: torghut-ws-release-${{ github.event.workflow_run.head_sha || inputs.commit_sha || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  promote:
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+      }}
+    runs-on: arc-arm64
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Download release contract artifact from triggering build
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: torghut-ws-release-contract
+          path: .artifacts/torghut-ws
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          COMMIT_SHA_INPUT: ${{ inputs.commit_sha }}
+          IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
+        run: |
+          set -euo pipefail
+
+          MAIN_HEAD="$(git rev-parse origin/main)"
+          IMAGE='registry.ide-newton.ts.net/lab/torghut-ws'
+          SOURCE_SHA=''
+          TAG=''
+          CONTRACT_DIGEST=''
+          PROMOTE='true'
+
+          if [ "${EVENT_NAME}" = 'workflow_run' ]; then
+            CONTRACT_PATH='.artifacts/torghut-ws/torghut-ws-release-contract.json'
+            if [ ! -f "${CONTRACT_PATH}" ]; then
+              echo "Release contract artifact is missing at ${CONTRACT_PATH}"
+              exit 1
+            fi
+
+            SOURCE_SHA="$(bun run packages/scripts/src/torghut/release-contract.ts get --path "${CONTRACT_PATH}" --field sourceSha)"
+            TAG="$(bun run packages/scripts/src/torghut/release-contract.ts get --path "${CONTRACT_PATH}" --field tag)"
+            CONTRACT_DIGEST="$(bun run packages/scripts/src/torghut/release-contract.ts get --path "${CONTRACT_PATH}" --field digest)"
+            CONTRACT_IMAGE="$(bun run packages/scripts/src/torghut/release-contract.ts get --path "${CONTRACT_PATH}" --field image)"
+
+            if [ "${CONTRACT_IMAGE}" != "${IMAGE}" ]; then
+              echo "Release contract image mismatch: expected ${IMAGE}, got ${CONTRACT_IMAGE}"
+              exit 1
+            fi
+
+            if [ "${SOURCE_SHA}" != "${WORKFLOW_RUN_HEAD_SHA}" ]; then
+              echo "Release contract source SHA ${SOURCE_SHA} does not match workflow_run head ${WORKFLOW_RUN_HEAD_SHA}"
+              exit 1
+            fi
+
+            if [ "${SOURCE_SHA}" != "${MAIN_HEAD}" ]; then
+              echo "Skipping stale workflow_run promotion for ${SOURCE_SHA}; latest main is ${MAIN_HEAD}"
+              PROMOTE='false'
+            fi
+          else
+            if [ -n "${COMMIT_SHA_INPUT}" ]; then
+              SOURCE_SHA="$(git rev-parse "${COMMIT_SHA_INPUT}^{commit}")"
+            else
+              SOURCE_SHA="${MAIN_HEAD}"
+            fi
+
+            if [ -n "${IMAGE_TAG_INPUT}" ]; then
+              TAG="${IMAGE_TAG_INPUT}"
+            else
+              TAG="$(git rev-parse --short=8 "${SOURCE_SHA}")"
+            fi
+          fi
+
+          if [ "${PROMOTE}" = 'true' ] && ! git cat-file -e "${SOURCE_SHA}^{commit}" >/dev/null 2>&1; then
+            echo "Source SHA ${SOURCE_SHA} is not present in local git history"
+            exit 1
+          fi
+
+          {
+            echo "source_sha=${SOURCE_SHA}"
+            echo "tag=${TAG}"
+            echo "contract_digest=${CONTRACT_DIGEST}"
+            echo "image=${IMAGE}"
+            echo "promote=${PROMOTE}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout source revision
+        if: steps.meta.outputs.promote == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --force "${{ steps.meta.outputs.source_sha }}"
+
+      - name: Resolve image digest
+        if: steps.meta.outputs.promote == 'true'
+        id: digest
+        shell: bash
+        env:
+          IMAGE_NAME: ${{ steps.meta.outputs.image }}
+          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+          CONTRACT_DIGEST: ${{ steps.meta.outputs.contract_digest }}
+          DIGEST_INPUT: ${{ inputs.image_digest }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${DIGEST_INPUT}" ]; then
+            DIGEST="${DIGEST_INPUT}"
+          elif [ -n "${CONTRACT_DIGEST}" ]; then
+            DIGEST="${CONTRACT_DIGEST}"
+          else
+            DIGEST="$(
+              bun --eval "
+                import { inspectImageDigest } from './packages/scripts/src/shared/docker.ts'
+                const image = process.env.IMAGE_NAME + ':' + process.env.IMAGE_TAG
+                const repoDigest = inspectImageDigest(image)
+                const digest = repoDigest.includes('@') ? repoDigest.split('@')[1] : repoDigest
+                console.log(digest)
+              "
+            )"
+          fi
+
+          DIGEST="${DIGEST#*@}"
+          if ! printf '%s' "${DIGEST}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
+            echo "Resolved digest '${DIGEST}' is invalid"
+            exit 1
+          fi
+
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Update torghut-ws options manifest
+        if: steps.meta.outputs.promote == 'true'
+        shell: bash
+        env:
+          TORGHUT_WS_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+          TORGHUT_WS_IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
+          TORGHUT_WS_COMMIT: ${{ steps.meta.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          bun run packages/scripts/src/torghut/update-ws-manifest.ts \
+            --tag "${TORGHUT_WS_IMAGE_TAG}" \
+            --digest "${TORGHUT_WS_IMAGE_DIGEST}" \
+            --commit "${TORGHUT_WS_COMMIT}" \
+            --version "main-${TORGHUT_WS_IMAGE_TAG}"
+
+      - name: Check for manifest changes
+        if: steps.meta.outputs.promote == 'true'
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- argocd/applications/torghut-options/ws/deployment.yaml; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create deploy pull request
+        if: >-
+          ${{
+            steps.meta.outputs.promote == 'true' &&
+            steps.changes.outputs.changed == 'true'
+          }}
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
+          branch: codex/torghut-ws-options-release-${{ steps.meta.outputs.tag }}
+          base: main
+          title: 'chore(torghut-options): promote ws image ${{ steps.meta.outputs.tag }}'
+          commit-message: 'chore(torghut-options): promote ws image ${{ steps.meta.outputs.tag }}'
+          delete-branch: true
+          add-paths: |
+            argocd/applications/torghut-options/ws/deployment.yaml
+          body: |
+            ## Summary
+            Promote the Torghut options websocket image into GitOps manifests.
+
+            - Source commit: `${{ steps.meta.outputs.source_sha }}`
+            - Image tag: `${{ steps.meta.outputs.tag }}`
+            - Image digest: `${{ steps.digest.outputs.digest }}`
+
+      - name: No manifest changes detected
+        if: steps.meta.outputs.promote == 'true' && steps.changes.outputs.changed != 'true'
+        run: echo 'No torghut-options ws manifest changes detected.'
+
+      - name: Promotion skipped (stale workflow_run)
+        if: steps.meta.outputs.promote != 'true'
+        run: echo 'Skipping stale workflow_run promotion because source SHA is not current main.'

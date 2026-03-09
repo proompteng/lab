@@ -13,7 +13,7 @@ class AlpacaMapperTest {
     val msg =
       """{"T":"t","S":"AAPL","i":123,"p":190.5,"s":10,"t":"2025-12-05T00:00:00Z"}"""
     val decoded = AlpacaMapper.decode(msg)
-    val env = AlpacaMapper.toEnvelope(decoded) { 1 }
+    val env = AlpacaMapper.toEnvelope(decoded, AlpacaMarketType.EQUITY, "iex") { 1 }
     assertNotNull(env)
     assertEquals("AAPL", env.symbol)
     assertEquals("trades", env.channel)
@@ -33,7 +33,7 @@ class AlpacaMapperTest {
     assertTrue(decoded is AlpacaTrade)
     assertEquals(0.001439, decoded.size)
 
-    val env = AlpacaMapper.toEnvelope(decoded) { 1 }
+    val env = AlpacaMapper.toEnvelope(decoded, AlpacaMarketType.CRYPTO, "us") { 1 }
     assertNotNull(env)
     assertEquals("trades", env.channel)
     assertEquals("BTC/USD", env.symbol)
@@ -68,7 +68,7 @@ class AlpacaMapperTest {
     assertEquals(1.2699, decoded.bidSize)
     assertEquals(1.28642, decoded.askSize)
 
-    val env = AlpacaMapper.toEnvelope(decoded) { 1 }
+    val env = AlpacaMapper.toEnvelope(decoded, AlpacaMarketType.CRYPTO, "us") { 1 }
     assertNotNull(env)
     assertEquals("quotes", env.channel)
     assertEquals("BTC/USD", env.symbol)
@@ -82,9 +82,25 @@ class AlpacaMapperTest {
     assertTrue(decoded is AlpacaBar)
     assertEquals(0.03584, decoded.volume)
 
-    val env = AlpacaMapper.toEnvelope(decoded) { 1 }
+    val env = AlpacaMapper.toEnvelope(decoded, AlpacaMarketType.CRYPTO, "us") { 1 }
     assertNotNull(env)
     assertEquals("bars", env.channel)
     assertEquals("BTC/USD", env.symbol)
+  }
+
+  @Test
+  fun `maps options quote to normalized payload`() {
+    val msg =
+      """{"T":"q","S":"AAPL260320C00100000","bp":2.1,"bs":10,"ap":2.2,"as":8,"bx":"A","ax":"B","c":["R"],"t":"2026-03-08T18:00:01Z"}"""
+    val decoded = AlpacaMapper.decode(msg)
+    val env = AlpacaMapper.toEnvelope(decoded, AlpacaMarketType.OPTIONS, "opra") { 1 }
+    assertNotNull(env)
+    assertEquals("quote", env.channel)
+    assertEquals("opra", env.feed)
+    assertEquals("AAPL260320C00100000", env.symbol)
+    val payload = env.payload.jsonObject
+    assertEquals("AAPL", payload["underlying_symbol"]?.toString()?.trim('"'))
+    assertEquals("2.1", payload["bid_price"]?.toString())
+    assertEquals("2.2", payload["ask_price"]?.toString())
   }
 }

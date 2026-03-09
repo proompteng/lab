@@ -1,0 +1,118 @@
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata:
+  name: torghut-options-ta
+  namespace: torghut
+  labels:
+    app: torghut-options-ta
+spec:
+  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:c8597da2a5331836476e576d91b4d3b753dbf76be618a8124fcfea2e692936e9
+  imagePullPolicy: IfNotPresent
+  restartNonce: 1
+  flinkVersion: v2_0
+  serviceAccount: torghut-runtime
+  flinkConfiguration:
+    state.checkpoints.dir: s3a://flink-checkpoints/torghut/options-technical-analysis/checkpoints
+    state.savepoints.dir: s3a://flink-checkpoints/torghut/options-technical-analysis/savepoints
+    execution.checkpointing.mode: EXACTLY_ONCE
+    execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
+    taskmanager.numberOfTaskSlots: "2"
+    restart-strategy.type: fixed-delay
+    restart-strategy.fixed-delay.attempts: "5"
+    restart-strategy.fixed-delay.delay: 5 s
+    execution.checkpointing.unaligned: "true"
+    execution.checkpointing.tolerable-failed-checkpoints: "3"
+    metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+    metrics.reporter.prom.port: "9249"
+    fs.s3a.endpoint: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
+    fs.s3a.connection.ssl.enabled: "false"
+    fs.s3a.path.style.access: "true"
+  podTemplate:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      labels:
+        app: torghut-options-ta
+    spec:
+      serviceAccountName: torghut-runtime
+      containers:
+        - name: flink-main-container
+          envFrom:
+            - configMapRef:
+                name: torghut-options-ta-config
+          env:
+            - name: TA_KAFKA_DELIVERY_GUARANTEE
+              value: EXACTLY_ONCE
+            - name: TA_KAFKA_USERNAME
+              value: torghut-options
+            - name: TA_KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-options
+                  key: password
+            - name: TA_CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-options-clickhouse-auth
+                  key: torghut_password
+            - name: TA_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flink-checkpoints
+                  key: AWS_ACCESS_KEY_ID
+            - name: TA_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flink-checkpoints
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: flink-checkpoints
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flink-checkpoints
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: AWS_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flink-checkpoints
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flink-checkpoints
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: TORGHUT_TA_VERSION
+              value: cacd5a12
+            - name: TORGHUT_TA_COMMIT
+              value: cacd5a12375e5ba63dfa03644b823c15ade1482e
+          ports:
+            - containerPort: 9249
+              name: metrics
+  jobManager:
+    resource:
+      cpu: 0.5
+      memory: 2048m
+    podTemplate:
+      metadata:
+        labels:
+          app: torghut-options-ta
+    replicas: 1
+  taskManager:
+    resource:
+      cpu: 1
+      memory: 3072m
+    podTemplate:
+      metadata:
+        labels:
+          app: torghut-options-ta
+    replicas: 2
+  job:
+    entryClass: ai.proompteng.dorvud.ta.flink.OptionsTechnicalAnalysisJobKt
+    jarURI: local:///opt/flink/usrlib/app.jar
+    parallelism: 4
+    upgradeMode: last-state
+    state: running

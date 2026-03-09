@@ -184,13 +184,17 @@ jobs:
           set -euo pipefail
           CHANGED_FILES="$(git diff-tree --no-commit-id --name-only -r "${{ steps.meta.outputs.source_sha }}")"
           if printf '%s\n' "${CHANGED_FILES}" | grep -Eq '^services/torghut/migrations/'; then
-            echo "requires_approval=true" >> "$GITHUB_OUTPUT"
-            echo "label=do-not-automerge" >> "$GITHUB_OUTPUT"
-            echo "draft=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "requires_approval=true"
+              echo "label=do-not-automerge"
+              echo "draft=true"
+            } >> "$GITHUB_OUTPUT"
           else
-            echo "requires_approval=false" >> "$GITHUB_OUTPUT"
-            echo "label=" >> "$GITHUB_OUTPUT"
-            echo "draft=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "requires_approval=false"
+              echo "label="
+              echo "draft=false"
+            } >> "$GITHUB_OUTPUT"
           fi
 
       - name: Update Torghut manifests
@@ -227,6 +231,8 @@ jobs:
             argocd/applications/torghut/analysis-template-teardown-clean.yaml \
             argocd/applications/torghut/analysis-template-artifact-bundle.yaml \
             argocd/applications/torghut/empirical-jobs-backfill-job.yaml \
+            argocd/applications/torghut-options/catalog/deployment.yaml \
+            argocd/applications/torghut-options/enricher/deployment.yaml \
             argocd/applications/torghut-forecast/deployment.yaml \
             argocd/applications/torghut-forecast/sim/deployment.yaml; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -263,6 +269,8 @@ jobs:
             argocd/applications/torghut/analysis-template-teardown-clean.yaml
             argocd/applications/torghut/analysis-template-artifact-bundle.yaml
             argocd/applications/torghut/empirical-jobs-backfill-job.yaml
+            argocd/applications/torghut-options/catalog/deployment.yaml
+            argocd/applications/torghut-options/enricher/deployment.yaml
             argocd/applications/torghut-forecast/deployment.yaml
             argocd/applications/torghut-forecast/sim/deployment.yaml
           body: |
@@ -302,6 +310,8 @@ jobs:
             argocd/applications/torghut/analysis-template-teardown-clean.yaml
             argocd/applications/torghut/analysis-template-artifact-bundle.yaml
             argocd/applications/torghut/empirical-jobs-backfill-job.yaml
+            argocd/applications/torghut-options/catalog/deployment.yaml
+            argocd/applications/torghut-options/enricher/deployment.yaml
             argocd/applications/torghut-forecast/deployment.yaml
             argocd/applications/torghut-forecast/sim/deployment.yaml
           body: |

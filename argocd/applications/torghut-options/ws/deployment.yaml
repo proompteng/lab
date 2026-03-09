@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: torghut-ws-options
+  namespace: torghut
+  labels:
+    app: torghut-ws-options
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: torghut-ws-options
+  template:
+    metadata:
+      labels:
+        app: torghut-ws-options
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "2026-03-09T03:45:00Z"
+    spec:
+      serviceAccountName: torghut-runtime
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: torghut-ws-options
+          image: registry.ide-newton.ts.net/lab/torghut-ws@sha256:db62663f3dae59c54ab99a78f63f35d830b3e5e6051d05477fa91f461f95f66a
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: torghut-ws-options-config
+          env:
+            - name: ALPACA_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-options-alpaca
+                  key: APCA_API_KEY_ID
+            - name: ALPACA_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-options-alpaca
+                  key: APCA_API_SECRET_KEY
+            - name: KAFKA_SASL_USER
+              value: torghut-options
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-options
+                  key: password
+            - name: TORGHUT_WS_VERSION
+              value: main-2b9824ae
+            - name: TORGHUT_WS_COMMIT
+              value: 2b9824ae0abd2fae9480e3b73ab8c73b4d5392d5
+            - name: JAVA_TOOL_OPTIONS
+              value: -XX:+UseContainerSupport -XX:InitialRAMPercentage=40.0 -XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 9090
+              name: metrics
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 300m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

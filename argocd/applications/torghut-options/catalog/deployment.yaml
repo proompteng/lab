@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: torghut-options-catalog
+  namespace: torghut
+  labels:
+    app: torghut-options-catalog
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: torghut-options-catalog
+  template:
+    metadata:
+      labels:
+        app: torghut-options-catalog
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "2026-03-09T03:45:00Z"
+    spec:
+      serviceAccountName: torghut-runtime
+      containers:
+        - name: torghut-options-catalog
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:1d6a378e5ba14e7566549670a5d188b755d37fc1fa41811260f32b715f4c2f1a
+          imagePullPolicy: IfNotPresent
+          command:
+            - uvicorn
+            - app.options_lane.catalog_service:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8080"
+          envFrom:
+            - configMapRef:
+                name: torghut-options-catalog-config
+          env:
+            - name: APP_ENV
+              value: prod
+            - name: KAFKA_SASL_USER
+              value: torghut-options
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-options
+                  key: password
+            - name: DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-options-db-app
+                  key: uri
+            - name: ALPACA_OPTIONS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-options-alpaca
+                  key: APCA_API_KEY_ID
+            - name: ALPACA_OPTIONS_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-options-alpaca
+                  key: APCA_API_SECRET_KEY
+            - name: APCA_API_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-options-alpaca
+                  key: APCA_API_BASE_URL
+            - name: TORGHUT_OPTIONS_VERSION
+              value: v0.563.0-42-g263d9842
+            - name: TORGHUT_OPTIONS_COMMIT
+              value: 263d9842d59f11d4580dbd80420b5c46599c6610
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
