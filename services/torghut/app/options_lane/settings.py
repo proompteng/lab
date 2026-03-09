@@ -87,7 +87,7 @@ class OptionsLaneSettings(BaseSettings):
         validation_alias=AliasChoices("OPTIONS_CONTRACT_DISCOVERY_OFFSESSION_INTERVAL_SEC"),
     )
     options_contract_discovery_page_limit: int = Field(
-        100,
+        10000,
         validation_alias=AliasChoices("OPTIONS_CONTRACT_DISCOVERY_PAGE_LIMIT"),
     )
     options_contract_expiration_horizon_days: int = Field(
