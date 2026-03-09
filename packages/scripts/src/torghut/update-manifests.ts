@@ -501,8 +501,7 @@ export const main = (cliOptions?: CliOptions) => {
     forecastManifestPath: parsed.forecastManifestPath ?? process.env.TORGHUT_FORECAST_MANIFEST_PATH,
     forecastSimulationManifestPath:
       parsed.forecastSimulationManifestPath ?? process.env.TORGHUT_FORECAST_SIMULATION_MANIFEST_PATH,
-    optionsCatalogManifestPath:
-      parsed.optionsCatalogManifestPath ?? process.env.TORGHUT_OPTIONS_CATALOG_MANIFEST_PATH,
+    optionsCatalogManifestPath: parsed.optionsCatalogManifestPath ?? process.env.TORGHUT_OPTIONS_CATALOG_MANIFEST_PATH,
     optionsEnricherManifestPath:
       parsed.optionsEnricherManifestPath ?? process.env.TORGHUT_OPTIONS_ENRICHER_MANIFEST_PATH,
   })

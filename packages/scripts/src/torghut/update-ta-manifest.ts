@@ -51,12 +51,7 @@ export const updateTaManifest = (
   const source = readFileSync(manifestPath, 'utf8')
   const imageRef = `${imageName}@${digest}`
 
-  let updated = replaceSingle(
-    source,
-    /^(\s*image:\s*)([^\n]+)/m,
-    `$1${imageRef}`,
-    'torghut-options-ta image reference',
-  )
+  let updated = replaceSingle(source, /^(\s*image:\s*)([^\n]+)/m, `$1${imageRef}`, 'torghut-options-ta image reference')
   updated = replaceSingle(
     updated,
     /(- name:\s*TORGHUT_TA_VERSION\s*\n\s*value:\s*)([^\n]+)/,
