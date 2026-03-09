@@ -53,6 +53,7 @@ class TestOptionsLaneSettings(TestCase):
     def test_settings_accept_blank_csv_lists(self) -> None:
         settings = OptionsLaneSettings()
 
+        self.assertEqual(settings.sqlalchemy_dsn, "postgresql+psycopg://torghut:torghut@localhost:5432/torghut")
         self.assertEqual(settings.options_market_holidays, [])
         self.assertEqual(settings.options_underlying_priority_symbols, [])
 
