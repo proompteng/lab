@@ -9,6 +9,10 @@
 - Primary objective: define the highest-priority next build slice after the March 7 proving lane closeout
 - Current live state: simulation/runtime is healthy, but autonomous readiness and empirical promotion are still not
   authoritative enough for robust capital governance
+- Source-state update (`2026-03-09`): the repo now contains heartbeat-backed dependency quorum behavior, empirical
+  manifest validation, workflow-result RBAC, persisted empirical job rows, persisted `vnext_promotion_decisions`, and
+  operator status endpoints; the remaining stale recommendation is to keep funding already-landed control-plane slices
+  instead of finishing authoritative empirical evidence generation and recurring prove-and-promote automation.
 
 ## Executive Summary
 
@@ -34,6 +38,26 @@ The correct recommendation is:
 - make empirical promotion deterministic,
 - make the promotion ledger repeatedly exercised and operator-readable,
 - only then resume broader autonomy or strategy/model expansion.
+
+## Implementation update (2026-03-09)
+
+The March 8 live-cluster findings remain useful as a snapshot, but the source tree has moved ahead of this recommendation.
+
+The following slices are now materially implemented in code:
+
+- heartbeat-backed Jangar control-plane authority and fail-closed `unknown` handling for missing authoritative rows;
+- empirical manifest normalization/validation before promotion processing;
+- `workflowtaskresults` RBAC for the Torghut runtime service account;
+- persisted `vnext_empirical_job_runs` freshness rows and `/trading/empirical-jobs` status surfacing;
+- persisted `VNextPromotionDecision` rows and `/trading/completion/doc29` gate surfacing.
+
+The remaining highest-priority gap is therefore narrower and more specific than this doc originally states:
+
+1. replace deterministic scaffold evidence for benchmark parity, foundation-router parity, and Janus-Q with replay- or
+   live-window-derived empirical artifacts that can actually carry promotion authority;
+2. add recurring prove-and-promote automation so those artifacts are generated and exercised across repeated sessions
+   instead of one-off manual submissions;
+3. keep broader autonomy, new alpha branches, and model-family expansion behind those empirical-authority gates.
 
 ## Assessment Basis
 
@@ -132,44 +156,40 @@ trusted as a mature operating loop.
 
 ## Chosen Recommendation
 
-The next recommendation iteration is:
+The updated recommendation iteration is:
 
-1. make alpha-readiness authoritative,
-2. make empirical promotion deterministic,
+1. make empirical promotion authoritative,
+2. make prove-and-promote execution recurring,
 3. make promotion authority repeated and inspectable,
 4. keep broader autonomy/model expansion behind those gates.
 
-This is the shortest credible path from "simulation/proof works" to "autonomous promotion can be trusted".
+This is the shortest credible path from "simulation/proof works" to "autonomous promotion can be trusted" without
+re-funding already-landed control-plane work.
 
 ## What Needs To Be Built
 
-### Slice 1. Authoritative dependency quorum
+### Slice 1. Authoritative empirical promotion evidence
 
-Implement the agents/Jangar-side design in
-`docs/agents/designs/jangar-authoritative-controller-heartbeat-and-dependency-quorum-2026-03-08.md`.
-
-Desired outcome:
-
-- any status-serving pod can return the same truthful controller/runtime state;
-- Torghut dependency quorum is based on authoritative controller heartbeats, not local env toggles on a web-serving
-  deployment;
-- if authority is missing or stale, status degrades to `unknown`, not a false `disabled`.
-
-Torghut rollout change once that slice lands:
-
-- point `TRADING_JANGAR_CONTROL_PLANE_STATUS_URL` at the service intended to represent the `agents` dependency, while
-  relying on the new heartbeat-backed status contract rather than local in-process controller state.
-
-### Slice 2. Deterministic empirical promotion workflow
-
-Empirical promotion needs to fail earlier and more clearly.
+Empirical promotion still needs to become authoritative, not merely durable.
 
 Required changes:
 
-- validate promotion manifests before workflow submission;
-- remove the current class of "workflow launches, then dies on malformed manifest" failures;
-- resolve workflow result plumbing so repeated empirical jobs do not fail on result-patching/RBAC path issues;
+- replace deterministic scaffold outputs for benchmark parity, foundation-router parity, and Janus-Q with artifacts
+  derived from replayed or observed windows;
+- keep manifest validation and persistence fail-closed, but promote only from empirical lineage with non-placeholder
+  authority contracts;
 - treat partially written or non-authoritative empirical artifacts as ineligible, never ambiguous.
+
+### Slice 2. Recurring prove-and-promote automation
+
+The control plane is present, but the operating loop is still too manual.
+
+Required changes:
+
+- add a recurring trading-day planner/orchestrator that runs historical simulation, empirical promotion, and
+  readiness verification as one repeatable flow;
+- remove the current dependence on ad hoc Argo submissions for repeated proving sessions;
+- materialize a day-run registry so repeated exercises are inspectable without reconstructing workflow history by hand.
 
 ### Slice 3. Promotion ledger maturity
 
@@ -187,10 +207,10 @@ Required changes:
 
 Do not re-enable broader autonomous promotion, additional swarms, or new alpha branches until:
 
-- dependency quorum reads from an authoritative source;
 - empirical-promotion success is routine rather than occasional;
 - the vNext decision tables show repeated successful writes over multiple sessions;
 - operators can explain any deny/block outcome from status plus DB rows, without log archaeology.
+- promotion-authority artifacts are empirical rather than deterministic scaffold output.
 
 ## Alternatives Considered
 
@@ -230,8 +250,8 @@ This recommendation iteration is complete only when all of the following are tru
 
 If only one implementation wave can be funded next, it should be:
 
-1. authoritative dependency quorum,
-2. empirical promotion reliability,
+1. authoritative empirical promotion evidence generation,
+2. recurring prove-and-promote automation,
 3. durable promotion ledger surfacing.
 
 That is the highest-leverage path from a working simulation lane to a robust autonomous trading system.

@@ -1,5 +1,12 @@
 # Torghut Design Document Implementation Status Matrix (2026-02-21 strict snapshot + 2026-02-26 addendum)
 
+## Historical note (2026-03-09)
+
+This matrix is a dated strict-audit snapshot, not the current source-of-truth status board for the design corpus.
+
+Use `current-source-of-truth-and-priority-guide-2026-03-09.md` for current reading order, and use newer v6 document
+headers plus current source code for present implementation truth.
+
 ## Scope
 
 - audited every markdown design document under `docs/torghut/design-system/**`.

@@ -6,11 +6,28 @@
 - Date: `2026-03-03`
 - Maturity: `production-quality design pack`
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM reasoning, contamination-safe evaluation, and production rollout controls
-- Implementation status: `Completed` (program closure passed against all v6/13 definition-of-done criteria on `2026-03-03`)
-- Implementation status (strict): `Implemented=16`, `Partial=0`, `Planned=0` of 16
-- Evidence: `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
+- Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on `2026-03-09`)
+- Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
+- Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
+- Evidence (current next-work priority): `32-authoritative-alpha-readiness-and-empirical-promotion-closeout-2026-03-08.md`
 - Evidence sync: `14-legacy-gap-disposition-map-2026-03-03.md` (signed v4/v5 disposition completeness)
 - Rollout status: v6 pack controls are represented by merged runtime/control-plane closure phases in `main` (`#3921` through `#3960`).
+
+## Current reading order
+
+For current corpus navigation across active contract docs versus historical closeout records, use:
+
+- `docs/torghut/design-system/current-source-of-truth-and-priority-guide-2026-03-09.md`
+
+## Historical closeout note (2026-03-09)
+
+The March 3 completion record remains useful as a dated closure milestone, but it should not be read as "nothing important remains."
+
+Current source-state priority is narrower:
+
+- control-plane closure is materially landed;
+- authoritative empirical evidence generation is not;
+- recurring prove-and-promote automation remains the active next operating gap.
 
 ## Recent Updates
 
@@ -25,8 +42,9 @@
 - `31-proven-autonomous-quant-llm-torghut-trading-system-2026-03-07.md` now anchors the target-state design in the
   actual proof results and the full-session replay profitability nuance.
 - `32-authoritative-alpha-readiness-and-empirical-promotion-closeout-2026-03-08.md` now records the next
-  recommendation iteration: keep simulation gains, but prioritize authoritative dependency truth, deterministic
-  empirical promotion, and a repeatedly exercised promotion ledger before resuming broader autonomy expansion.
+  recommendation iteration, updated on `2026-03-09` to reflect source reality: heartbeat-backed dependency quorum,
+  manifest validation, persistence, and status surfacing are already in-tree, so the remaining priority is
+  authoritative empirical evidence generation plus recurring prove-and-promote automation.
 - `33-alpaca-options-market-data-and-technical-analysis-lane-2026-03-08.md` now records the production design for a
   separate Alpaca options ingest and TA lane, grounded in the current equity-only Torghut runtime and cluster state.
 - `34-alpaca-options-lane-implementation-contract-set-2026-03-08.md` now turns that architecture into explicit event,

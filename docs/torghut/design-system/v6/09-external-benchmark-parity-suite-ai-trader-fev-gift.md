@@ -9,10 +9,27 @@
 - Implementation status: `Partial`
 - Evidence:
   - `services/torghut/app/trading/parity.py`
+  - `services/torghut/app/trading/empirical_jobs.py`
   - `services/torghut/app/trading/autonomy/policy_checks.py`
   - `services/torghut/tests/test_feature_parity.py`
   - `services/torghut/tests/test_policy_checks.py`
-- Rollout gap: Wave 4 benchmark parity closure is implemented (`2026-03-03`) across contract standardization, family coverage/calibration drift bounds, and fail-closed scorecard completeness checks; remaining program closure is Wave 5-6.
+  - `services/torghut/tests/test_empirical_jobs.py`
+- Rollout gap: Wave 4 benchmark parity contract closure is implemented (`2026-03-03`), but several benchmark-family artifacts are still deterministic scaffold outputs with `blocked_missing_empirical_authority`; remaining closure is replacing those placeholders with authoritative empirical evidence and exercising them recurrently.
+
+## Implementation update (2026-03-09)
+
+This document was stale where it sounded like the remaining work was generic Wave 5-6 program completion rather than a concrete authority problem.
+
+The current repository already has:
+
+- benchmark parity report contracts and fail-closed policy checks;
+- empirical benchmark report builders/persistence surfaces;
+- standardized scorecard shapes for candidate-vs-baseline evaluation.
+
+The remaining gap is narrower and more important:
+
+- `services/torghut/app/trading/parity.py` still emits deterministic scaffold authority for several parity families;
+- those reports remain useful as contract scaffolding, but they are not yet promotion-authoritative empirical evidence.
 
 ## Objective
 

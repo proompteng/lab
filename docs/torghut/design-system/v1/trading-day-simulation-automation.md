@@ -6,13 +6,30 @@
 - Date: `2026-02-28`
 - Scope: automation strategy and runbook for recurring trading-day replay simulations
 - Source of truth (runtime): `start_historical_simulation.py` and live cluster config
-- Implementation status: `Planned`
-- Implementation evidence: `services/torghut/scripts/start_historical_simulation.py`, `services/torghut/scripts/analyze_historical_simulation.py`, `docs/torghut/rollouts/historical-simulation-playbook.md`
-- Implementation gaps: no dedicated `automate_trading_day_simulation.py` orchestrator, no production CronJob/Temporal workflow for batch-day simulation windows, and no persisted day-run registry schema.
+- Implementation status: `Partial`
+- Implementation evidence: `services/torghut/scripts/start_historical_simulation.py`, `services/torghut/scripts/analyze_historical_simulation.py`, `argocd/applications/torghut/historical-simulation-workflowtemplate.yaml`, `argocd/applications/torghut/README.md`, `docs/torghut/rollouts/historical-simulation-playbook.md`
+- Implementation gaps: no dedicated `automate_trading_day_simulation.py` batch-day planner/orchestrator, no production CronJob/Temporal workflow for recurring session windows, and no persisted day-run registry schema.
 - Rollout and verification:
   - ship and version `services/torghut/scripts/automate_trading_day_simulation.py`,
   - run at least one dry-run day from a staging manifest repository,
   - enforce pre/post contamination query checks and archive day artifacts under `artifacts/torghut/simulations/<run_token>/`.
+
+## Implementation update (2026-03-09)
+
+This document was stale when it described the entire automation surface as planned-only.
+
+The current repository already includes:
+
+- `start_historical_simulation.py` support for end-to-end `run` execution with report/teardown handling;
+- a GitOps-managed `torghut-historical-simulation` Argo `WorkflowTemplate`;
+- an operator playbook and README flow for running the dedicated simulation surfaces without manual cluster patching;
+- analysis/report generation paths for full-session replay output.
+
+The remaining gap is narrower:
+
+- recurring day planning and batch scheduling are still missing;
+- empirical prove-and-promote runs still depend on manual or ad hoc workflow submission rather than a daily control loop;
+- the repo still lacks a first-class day-run registry that records repeated session exercises as an operating loop.
 
 ## Purpose
 

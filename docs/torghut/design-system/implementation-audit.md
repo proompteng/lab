@@ -2,10 +2,16 @@
 
 - Scope: `docs/torghut/design-system/**` (all markdown design documents)
 - Source of record: `implementation-status-matrix-2026-02-21.md`
+- Audit posture (`2026-03-09`): this file is a historical audit snapshot, not the authoritative status surface for the
+  post-`2026-03-03` v6 closeout or the post-`2026-03-09` simulation/promotion documentation refresh. For current
+  status, prefer `docs/torghut/design-system/v6/index.md`,
+  `docs/torghut/design-system/v6/32-authoritative-alpha-readiness-and-empirical-promotion-closeout-2026-03-08.md`,
+  and `docs/torghut/design-system/v1/trading-day-simulation-automation.md`.
 
 ## Iteration audit trail
 
-- Last synchronized checkpoint: `implementation-audit.md` (`2026-03-01`).
+- Last synchronized checkpoint: historical full-audit snapshot on `2026-03-01`; targeted stale-doc refresh on
+  `2026-03-09`.
 - Prior iterations retained for continuity: removed from this branch.
 - Scope coverage in the last iteration: all status-bearing docs under `docs/torghut/design-system/**` plus index/audit evidence checks.
 

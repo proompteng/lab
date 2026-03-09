@@ -1,5 +1,12 @@
 # 17. Trading Readiness and Rollout Stability Through Dependency-aware `/readyz` (2026-03-04)
 
+## Usage note (2026-03-09)
+
+This document is a dated rollout-stability change record for dependency-aware readiness.
+
+The `/readyz` slice is already implemented in source; this doc should now be read as rationale and rollout history, not
+as an open implementation gap.
+
 ## Context
 
 - Rollout events observed repeated readiness/liveness instability on `torghut` pods:

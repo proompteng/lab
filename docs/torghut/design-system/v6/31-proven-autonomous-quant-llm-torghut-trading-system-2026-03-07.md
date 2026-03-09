@@ -8,6 +8,16 @@
 - Primary objective: define the clean end-state architecture for a truthful, empirically validated, autonomous quant trading system where LLMs increase research and control quality without becoming a source of synthetic trading authority.
 - Current proof state: the doc29 gate chain is satisfied in recorded evidence, while live promotion may still remain operator-disabled
 
+## Usage note (2026-03-09)
+
+This document is the target-state architecture plus the March 7 proof interpretation.
+
+Use it for end-state system shape and invariants. Do not read it as proof that empirical-authority work is complete.
+The current remaining next-work priority is still captured by:
+
+- `docs/torghut/design-system/current-source-of-truth-and-priority-guide-2026-03-09.md`
+- `docs/torghut/design-system/v6/32-authoritative-alpha-readiness-and-empirical-promotion-closeout-2026-03-08.md`
+
 ## Executive Summary
 
 Torghut already has the bones of a serious trading control system:

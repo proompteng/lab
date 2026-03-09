@@ -8,6 +8,22 @@
 - Primary objective: convert the March 6 architecture designs into a single current-state disposition that says what to keep, what to implement next, and what must stay blocked until live evidence becomes truthful.
 - Follow-up state: core runtime-truth slice landed in source on `2026-03-07`; live promotion can still remain operator-disabled
 
+## Usage note (2026-03-09)
+
+This is the March 6 live-state baseline plus the March 7 implementation update.
+
+Use it for:
+
+- the observed live baseline that motivated the proving-lane work,
+- the maintain/improve/innovate disposition logic,
+- rollout-gate rationale.
+
+Do not use it as the only current readiness truth without also checking:
+
+- `docs/torghut/design-system/v6/06-production-rollout-operations-and-governance.md`
+- `docs/torghut/design-system/v6/08-profitability-research-validation-execution-governance-system.md`
+- `docs/torghut/design-system/v6/32-authoritative-alpha-readiness-and-empirical-promotion-closeout-2026-03-08.md`
+
 ## Executive Summary
 
 The current live `torghut` system is operationally healthy but still not empirically ready to consume meaningful capital.
