@@ -26,6 +26,18 @@ spec:
       transaction.state.log.min.isr: 2
       default.replication.factor: 3
       min.insync.replicas: 2
+      controller.quorum.election.timeout.ms: 60000
+      controller.quorum.fetch.timeout.ms: 180000
+    livenessProbe:
+      initialDelaySeconds: 180
+      timeoutSeconds: 10
+      periodSeconds: 15
+      failureThreshold: 40
+    readinessProbe:
+      initialDelaySeconds: 60
+      timeoutSeconds: 10
+      periodSeconds: 15
+      failureThreshold: 60
   entityOperator:
     topicOperator: {}
     userOperator: {}
@@ -42,6 +54,10 @@ spec:
   roles:
     - controller
     - broker
+  resources:
+    requests:
+      cpu: '2000m'
+      memory: 4Gi
   storage:
     type: persistent-claim
     size: 30Gi
