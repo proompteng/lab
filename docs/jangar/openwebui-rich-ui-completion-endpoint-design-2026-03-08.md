@@ -138,7 +138,8 @@ export type JangarEventV1 = {
   - `assistant:error`
   - `tool:${toolKind}:${toolId}`
 - `seq` is local to one assistant turn and starts at `1`.
-- `revision` increments only when reducer state changes for the logical entity.
+- `revision` increments on every accepted reducer-state mutation for the logical entity.
+- `append_text` events are not exempt: every new text chunk for the same `logicalId` must advance `revision`, even when the payload shape is unchanged.
 - `seq` and `revision` are independent; both must be validated.
 
 ### Compatibility and drop rules
@@ -151,6 +152,7 @@ export type JangarEventV1 = {
 - drop events when:
   - `seq <= lastSeq`
   - `revision <= lastRevisionByLogicalId[logicalId]`
+- A reused `revision` for a later append/update is a producer bug because the reducer treats same-or-lower revisions as stale and drops them.
 
 ## Source mapping and lane contracts
 
