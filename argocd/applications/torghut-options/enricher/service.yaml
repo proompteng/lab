@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: torghut-options-enricher
+  namespace: torghut
+  labels:
+    app: torghut-options-enricher
+spec:
+  selector:
+    app: torghut-options-enricher
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

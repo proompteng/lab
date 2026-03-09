@@ -8,6 +8,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -18,7 +19,7 @@ class ForwarderEndpointsTest {
       alpacaSecretKey = "secret",
       alpacaMarketType = marketType,
       alpacaCryptoLocation = "us",
-      alpacaFeed = "iex",
+      alpacaFeed = if (marketType == AlpacaMarketType.OPTIONS) "opra" else "iex",
       alpacaStreamUrl = "wss://stream.data.alpaca.markets/",
       alpacaBaseUrl = "https://data.alpaca.markets/",
       alpacaTradeStreamUrl = null,
@@ -50,10 +51,10 @@ class ForwarderEndpointsTest {
         ),
       topics =
         TopicConfig(
-          trades = "torghut.trades.v1",
-          quotes = "torghut.quotes.v1",
-          bars1m = "torghut.bars.1m.v1",
-          status = "torghut.status.v1",
+          trades = if (marketType == AlpacaMarketType.OPTIONS) "torghut.options.trades.v1" else "torghut.trades.v1",
+          quotes = if (marketType == AlpacaMarketType.OPTIONS) "torghut.options.quotes.v1" else "torghut.quotes.v1",
+          bars1m = if (marketType == AlpacaMarketType.OPTIONS) null else "torghut.bars.1m.v1",
+          status = if (marketType == AlpacaMarketType.OPTIONS) "torghut.options.status.v1" else "torghut.status.v1",
           tradeUpdates = null,
           tradeUpdatesV2 = null,
         ),
@@ -82,6 +83,16 @@ class ForwarderEndpointsTest {
     val cfg = baseConfig(AlpacaMarketType.CRYPTO).copy(alpacaCryptoLocation = "eu-1")
     assertEquals("wss://stream.data.alpaca.markets/v1beta3/crypto/eu-1", alpacaMarketDataStreamUrl(cfg))
     assertEquals("https://data.alpaca.markets/v1beta3/crypto/eu-1/bars", alpacaBarsBackfillUrl(cfg))
+  }
+
+  @Test
+  fun `options endpoints use opra websocket path and disable bars backfill`() {
+    val cfg = baseConfig(AlpacaMarketType.OPTIONS)
+    assertEquals("wss://stream.data.alpaca.markets/v1beta1/opra", alpacaMarketDataStreamUrl(cfg))
+    assertEquals(listOf("trades", "quotes"), alpacaMarketDataChannels(cfg))
+    assertFailsWith<IllegalStateException> {
+      alpacaBarsBackfillUrl(cfg)
+    }
   }
 
   @Test

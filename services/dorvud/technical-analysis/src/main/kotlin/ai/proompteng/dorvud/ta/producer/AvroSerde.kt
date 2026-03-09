@@ -65,20 +65,7 @@ class AvroSerde(
     record.put("seq", env.seq)
     record.put("is_final", env.isFinal)
     record.put("source", env.source)
-    env.window?.let { window ->
-      val windowSchema =
-        barsSchema
-          .getField("window")
-          .schema()
-          .types
-          .first { it.type == Schema.Type.RECORD }
-      val winRecord = GenericData.Record(windowSchema)
-      winRecord.put("size", window.size)
-      winRecord.put("step", window.step)
-      winRecord.put("start", window.start)
-      winRecord.put("end", window.end)
-      record.put("window", winRecord)
-    }
+    putWindow(record, barsSchema, env.window)
     record.put("o", env.payload.o)
     record.put("h", env.payload.h)
     record.put("l", env.payload.l)
@@ -98,20 +85,7 @@ class AvroSerde(
     record.put("seq", env.seq)
     record.put("is_final", env.isFinal)
     record.put("source", env.source)
-    env.window?.let { window ->
-      val windowSchema =
-        signalsSchema
-          .getField("window")
-          .schema()
-          .types
-          .first { it.type == Schema.Type.RECORD }
-      val winRecord = GenericData.Record(windowSchema)
-      winRecord.put("size", window.size)
-      winRecord.put("step", window.step)
-      winRecord.put("start", window.start)
-      winRecord.put("end", window.end)
-      record.put("window", winRecord)
-    }
+    putWindow(record, signalsSchema, env.window)
 
     env.payload.macd?.let {
       val schema =
@@ -263,20 +237,7 @@ class AvroSerde(
     record.put("seq", env.seq)
     record.put("is_final", env.isFinal)
     record.put("source", env.source)
-    env.window?.let { window ->
-      val windowSchema =
-        statusSchema
-          .getField("window")
-          .schema()
-          .types
-          .first { it.type == Schema.Type.RECORD }
-      val winRecord = GenericData.Record(windowSchema)
-      winRecord.put("size", window.size)
-      winRecord.put("step", window.step)
-      winRecord.put("start", window.start)
-      winRecord.put("end", window.end)
-      record.put("window", winRecord)
-    }
+    putWindow(record, statusSchema, env.window)
 
     record.put("watermark_lag_ms", env.payload.watermarkLagMs)
     record.put("last_event_ts", env.payload.lastEventTs)
@@ -284,6 +245,28 @@ class AvroSerde(
     record.put("heartbeat", env.payload.heartbeat)
     record.put("version", env.version)
     return record
+  }
+
+  private fun putWindow(
+    record: GenericData.Record,
+    schema: Schema,
+    window: ai.proompteng.dorvud.platform.Window?,
+  ) {
+    if (window == null) {
+      return
+    }
+    val windowSchema =
+      schema
+        .getField("window")
+        .schema()
+        .types
+        .first { it.type == Schema.Type.RECORD }
+    val winRecord = GenericData.Record(windowSchema)
+    winRecord.put("size", window.size)
+    winRecord.put("step", window.step)
+    winRecord.put("start", window.start)
+    winRecord.put("end", window.end)
+    record.put("window", winRecord)
   }
 
   private fun encode(

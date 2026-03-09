@@ -25,6 +25,8 @@ const defaultAnalysisArtifactManifestPath = 'argocd/applications/torghut/analysi
 const defaultEmpiricalBackfillManifestPath = 'argocd/applications/torghut/empirical-jobs-backfill-job.yaml'
 const defaultForecastManifestPath = 'argocd/applications/torghut-forecast/deployment.yaml'
 const defaultForecastSimulationManifestPath = 'argocd/applications/torghut-forecast/sim/deployment.yaml'
+const defaultOptionsCatalogManifestPath = 'argocd/applications/torghut-options/catalog/deployment.yaml'
+const defaultOptionsEnricherManifestPath = 'argocd/applications/torghut-options/enricher/deployment.yaml'
 
 const digestPattern = /^sha256:[0-9a-f]{64}$/i
 
@@ -47,6 +49,8 @@ type UpdateManifestsOptions = {
   empiricalBackfillManifestPath?: string
   forecastManifestPath?: string
   forecastSimulationManifestPath?: string
+  optionsCatalogManifestPath?: string
+  optionsEnricherManifestPath?: string
 }
 
 type CliOptions = {
@@ -70,6 +74,8 @@ type CliOptions = {
   empiricalBackfillManifestPath?: string
   forecastManifestPath?: string
   forecastSimulationManifestPath?: string
+  optionsCatalogManifestPath?: string
+  optionsEnricherManifestPath?: string
 }
 
 const resolvePath = (path: string) => resolve(repoRoot, path)
@@ -88,6 +94,8 @@ const replaceSingle = (source: string, pattern: RegExp, replacement: string, lab
   }
   return source.replace(pattern, replacement)
 }
+
+const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 const upsertKnativeRolloutTimestamp = (source: string, rolloutTimestamp: string): string => {
   const annotationPattern = /(client\.knative\.dev\/updateTimestamp:\s*)(?:"[^"]*"|'[^']*'|[^\n]+)/
@@ -185,6 +193,48 @@ const updateImageOnlyManifest = (options: UpdateManifestsOptions, manifestPathVa
   }
 }
 
+const updateVersionedDeploymentManifest = (
+  options: UpdateManifestsOptions,
+  manifestPathValue: string,
+  containerName: string,
+  versionEnvName: string,
+  commitEnvName: string,
+  label: string,
+) => {
+  const manifestPath = resolvePath(manifestPathValue)
+  const source = readFileSync(manifestPath, 'utf8')
+  const imageRef = `${options.imageName}@${options.digest}`
+
+  let updated = replaceSingle(
+    source,
+    new RegExp(`(- name:\\s*${escapeRegex(containerName)}[\\s\\S]*?\\n\\s*image:\\s*)([^\\n]+)`),
+    `$1${imageRef}`,
+    label,
+  )
+  updated = replaceSingle(
+    updated,
+    new RegExp(`(- name:\\s*${escapeRegex(versionEnvName)}\\s*\\n\\s*value:\\s*)([^\\n]+)`),
+    `$1${options.version}`,
+    versionEnvName,
+  )
+  updated = replaceSingle(
+    updated,
+    new RegExp(`(- name:\\s*${escapeRegex(commitEnvName)}\\s*\\n\\s*value:\\s*)([^\\n]+)`),
+    `$1${options.commit}`,
+    commitEnvName,
+  )
+
+  if (updated !== source) {
+    writeFileSync(manifestPath, updated, 'utf8')
+  }
+
+  return {
+    manifestPath,
+    imageRef,
+    changed: updated !== source,
+  }
+}
+
 const updateTorghutManifests = (options: UpdateManifestsOptions) => {
   const service = updateTorghutManifest(options)
   const simulationService = updateTorghutManifest({
@@ -242,6 +292,22 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     options.forecastSimulationManifestPath ?? defaultForecastSimulationManifestPath,
     'torghut-forecast-sim image reference',
   )
+  const optionsCatalog = updateVersionedDeploymentManifest(
+    options,
+    options.optionsCatalogManifestPath ?? defaultOptionsCatalogManifestPath,
+    'torghut-options-catalog',
+    'TORGHUT_OPTIONS_VERSION',
+    'TORGHUT_OPTIONS_COMMIT',
+    'torghut-options-catalog image reference',
+  )
+  const optionsEnricher = updateVersionedDeploymentManifest(
+    options,
+    options.optionsEnricherManifestPath ?? defaultOptionsEnricherManifestPath,
+    'torghut-options-enricher',
+    'TORGHUT_OPTIONS_VERSION',
+    'TORGHUT_OPTIONS_COMMIT',
+    'torghut-options-enricher image reference',
+  )
   const changedPaths = [
     service,
     simulationService,
@@ -256,6 +322,8 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     empiricalBackfill,
     forecast,
     forecastSimulation,
+    optionsCatalog,
+    optionsEnricher,
   ]
     .filter((entry) => entry.changed)
     .map((entry) => entry.manifestPath)
@@ -294,7 +362,9 @@ Options:
   --analysis-artifact-manifest-path <path>
   --empirical-backfill-manifest-path <path>
   --forecast-manifest-path <path>
-  --forecast-simulation-manifest-path <path>`)
+  --forecast-simulation-manifest-path <path>
+  --options-catalog-manifest-path <path>
+  --options-enricher-manifest-path <path>`)
       process.exit(0)
     }
 
@@ -372,6 +442,12 @@ Options:
       case '--forecast-simulation-manifest-path':
         options.forecastSimulationManifestPath = value
         break
+      case '--options-catalog-manifest-path':
+        options.optionsCatalogManifestPath = value
+        break
+      case '--options-enricher-manifest-path':
+        options.optionsEnricherManifestPath = value
+        break
       default:
         throw new Error(`Unknown option: ${flag}`)
     }
@@ -425,6 +501,10 @@ export const main = (cliOptions?: CliOptions) => {
     forecastManifestPath: parsed.forecastManifestPath ?? process.env.TORGHUT_FORECAST_MANIFEST_PATH,
     forecastSimulationManifestPath:
       parsed.forecastSimulationManifestPath ?? process.env.TORGHUT_FORECAST_SIMULATION_MANIFEST_PATH,
+    optionsCatalogManifestPath:
+      parsed.optionsCatalogManifestPath ?? process.env.TORGHUT_OPTIONS_CATALOG_MANIFEST_PATH,
+    optionsEnricherManifestPath:
+      parsed.optionsEnricherManifestPath ?? process.env.TORGHUT_OPTIONS_ENRICHER_MANIFEST_PATH,
   })
 
   if (result.changed) {
@@ -449,5 +529,6 @@ export const __private = {
   updateTorghutManifest,
   updateTorghutMigrationManifest,
   updateImageOnlyManifest,
+  updateVersionedDeploymentManifest,
   updateTorghutManifests,
 }

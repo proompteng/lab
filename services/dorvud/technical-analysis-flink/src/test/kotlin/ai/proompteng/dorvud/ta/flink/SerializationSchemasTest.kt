@@ -2,10 +2,12 @@ package ai.proompteng.dorvud.ta.flink
 
 import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.ta.producer.AvroSerde
+import ai.proompteng.dorvud.ta.producer.OptionsAvroSerde
 import ai.proompteng.dorvud.ta.stream.DirectionProbabilities
 import ai.proompteng.dorvud.ta.stream.MicroBarPayload
 import ai.proompteng.dorvud.ta.stream.MicrostructureSignalArtifact
 import ai.proompteng.dorvud.ta.stream.MicrostructureSignalV1
+import ai.proompteng.dorvud.ta.stream.OptionsContractBarPayload
 import ai.proompteng.dorvud.ta.stream.TaSignalsPayload
 import ai.proompteng.dorvud.ta.stream.TradePayload
 import kotlinx.serialization.json.Json
@@ -21,6 +23,7 @@ import kotlin.test.assertTrue
 
 class SerializationSchemasTest {
   private val serde = AvroSerde()
+  private val optionsSerde = OptionsAvroSerde()
 
   @Test
   fun `microbar serialization schema is java-serializable`() {
@@ -60,6 +63,11 @@ class SerializationSchemasTest {
   @Test
   fun `avro serde is java-serializable`() {
     assertSerializable(serde)
+  }
+
+  @Test
+  fun `options avro serde is java-serializable`() {
+    assertSerializable(optionsSerde)
   }
 
   @Test
@@ -112,6 +120,61 @@ class SerializationSchemasTest {
         ?.trim()
     assertNotNull(schema)
     assertTrue(schema.contains("microstructure_signal_v1 Nullable(String)"))
+  }
+
+  @Test
+  fun `options clickhouse schema contains contract feature tables`() {
+    val schema =
+      javaClass
+        .classLoader
+        ?.getResourceAsStream("ta-schema.sql")
+        ?.bufferedReader()
+        ?.readText()
+        ?.trim()
+    assertNotNull(schema)
+    assertTrue(schema.contains("options_contract_bars_1s"))
+    assertTrue(schema.contains("options_contract_features"))
+    assertTrue(schema.contains("options_surface_features"))
+  }
+
+  @Test
+  fun `options contract bar serialization schema is java-serializable`() {
+    val schema = OptionsContractBarSerializationSchema("topic", optionsSerde)
+    assertSerializable(schema)
+  }
+
+  @Test
+  fun `options contract bar avro encoder produces bytes`() {
+    val bytes =
+      optionsSerde.encodeContractBar(
+        Envelope(
+          ingestTs = Instant.EPOCH,
+          eventTs = Instant.EPOCH,
+          feed = "opra",
+          channel = "contract-bars",
+          symbol = "AAPL260320C00100000",
+          seq = 1,
+          payload =
+            OptionsContractBarPayload(
+              underlyingSymbol = "AAPL",
+              expirationDate = "2026-03-20",
+              strikePrice = 100.0,
+              optionType = "call",
+              dte = 12,
+              o = 2.0,
+              h = 2.1,
+              l = 1.9,
+              c = 2.05,
+              v = 10.0,
+              count = 3,
+            ),
+          isFinal = true,
+          source = "flink",
+          version = 1,
+        ),
+        "torghut.options.ta.contract-bars.1s.v1",
+      )
+    assertTrue(bytes.isNotEmpty())
   }
 
   @Test

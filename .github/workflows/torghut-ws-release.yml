@@ -1,9 +1,9 @@
-name: torghut-release
+name: torghut-ws-release
 
 on:
   workflow_run:
     workflows:
-      - torghut-build-push
+      - torghut-ws-build-push
     types:
       - completed
   workflow_dispatch:
@@ -22,7 +22,7 @@ on:
         type: string
 
 concurrency:
-  group: torghut-release-${{ github.event.workflow_run.head_sha || inputs.commit_sha || github.ref }}
+  group: torghut-ws-release-${{ github.event.workflow_run.head_sha || inputs.commit_sha || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -56,8 +56,8 @@ jobs:
         if: github.event_name == 'workflow_run'
         uses: actions/download-artifact@v4
         with:
-          name: torghut-release-contract
-          path: .artifacts/torghut
+          name: torghut-ws-release-contract
+          path: .artifacts/torghut-ws
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -73,14 +73,14 @@ jobs:
           set -euo pipefail
 
           MAIN_HEAD="$(git rev-parse origin/main)"
-          IMAGE='registry.ide-newton.ts.net/lab/torghut'
+          IMAGE='registry.ide-newton.ts.net/lab/torghut-ws'
           SOURCE_SHA=''
           TAG=''
           CONTRACT_DIGEST=''
           PROMOTE='true'
 
           if [ "${EVENT_NAME}" = 'workflow_run' ]; then
-            CONTRACT_PATH='.artifacts/torghut/torghut-release-contract.json'
+            CONTRACT_PATH='.artifacts/torghut-ws/torghut-ws-release-contract.json'
             if [ ! -f "${CONTRACT_PATH}" ]; then
               echo "Release contract artifact is missing at ${CONTRACT_PATH}"
               exit 1
@@ -125,7 +125,6 @@ jobs:
           fi
 
           {
-            echo "main_head=${MAIN_HEAD}"
             echo "source_sha=${SOURCE_SHA}"
             echo "tag=${TAG}"
             echo "contract_digest=${CONTRACT_DIGEST}"
@@ -176,42 +175,20 @@ jobs:
 
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
-      - name: Evaluate migration safety gate
-        if: steps.meta.outputs.promote == 'true'
-        id: migration
-        shell: bash
-        run: |
-          set -euo pipefail
-          CHANGED_FILES="$(git diff-tree --no-commit-id --name-only -r "${{ steps.meta.outputs.source_sha }}")"
-          if printf '%s\n' "${CHANGED_FILES}" | grep -Eq '^services/torghut/migrations/'; then
-            {
-              echo "requires_approval=true"
-              echo "label=do-not-automerge"
-              echo "draft=true"
-            } >> "$GITHUB_OUTPUT"
-          else
-            {
-              echo "requires_approval=false"
-              echo "label="
-              echo "draft=false"
-            } >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Update Torghut manifests
+      - name: Update torghut-ws options manifest
         if: steps.meta.outputs.promote == 'true'
         shell: bash
         env:
-          TORGHUT_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
-          TORGHUT_IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
-          TORGHUT_COMMIT: ${{ steps.meta.outputs.source_sha }}
+          TORGHUT_WS_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+          TORGHUT_WS_IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
+          TORGHUT_WS_COMMIT: ${{ steps.meta.outputs.source_sha }}
         run: |
           set -euo pipefail
-          TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          bun run packages/scripts/src/torghut/update-manifests.ts \
-            --tag "${TORGHUT_IMAGE_TAG}" \
-            --digest "${TORGHUT_IMAGE_DIGEST}" \
-            --commit "${TORGHUT_COMMIT}" \
-            --rollout-timestamp "${TIMESTAMP}"
+          bun run packages/scripts/src/torghut/update-ws-manifest.ts \
+            --tag "${TORGHUT_WS_IMAGE_TAG}" \
+            --digest "${TORGHUT_WS_IMAGE_DIGEST}" \
+            --commit "${TORGHUT_WS_COMMIT}" \
+            --version "main-${TORGHUT_WS_IMAGE_TAG}"
 
       - name: Check for manifest changes
         if: steps.meta.outputs.promote == 'true'
@@ -219,104 +196,31 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- \
-            argocd/applications/torghut/knative-service.yaml \
-            argocd/applications/torghut/knative-service-sim.yaml \
-            argocd/applications/torghut/db-migrations-job.yaml \
-            argocd/applications/torghut/lean-runner-deployment.yaml \
-            argocd/applications/torghut/historical-simulation-workflowtemplate.yaml \
-            argocd/applications/torghut/empirical-promotion-workflowtemplate.yaml \
-            argocd/applications/torghut/analysis-template-runtime-ready.yaml \
-            argocd/applications/torghut/analysis-template-activity.yaml \
-            argocd/applications/torghut/analysis-template-teardown-clean.yaml \
-            argocd/applications/torghut/analysis-template-artifact-bundle.yaml \
-            argocd/applications/torghut/empirical-jobs-backfill-job.yaml \
-            argocd/applications/torghut-options/catalog/deployment.yaml \
-            argocd/applications/torghut-options/enricher/deployment.yaml \
-            argocd/applications/torghut-forecast/deployment.yaml \
-            argocd/applications/torghut-forecast/sim/deployment.yaml; then
+          if git diff --quiet -- argocd/applications/torghut-options/ws/deployment.yaml; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Create deploy pull request (manual approval required)
+      - name: Create deploy pull request
         if: >-
           ${{
             steps.meta.outputs.promote == 'true' &&
-            steps.changes.outputs.changed == 'true' &&
-            steps.migration.outputs.requires_approval == 'true'
+            steps.changes.outputs.changed == 'true'
           }}
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
-          branch: codex/torghut-release-${{ steps.meta.outputs.tag }}
+          branch: codex/torghut-ws-options-release-${{ steps.meta.outputs.tag }}
           base: main
-          title: 'chore(torghut): promote image ${{ steps.meta.outputs.tag }}'
-          commit-message: 'chore(torghut): promote image ${{ steps.meta.outputs.tag }}'
-          delete-branch: true
-          labels: do-not-automerge
-          draft: true
-          add-paths: |
-            argocd/applications/torghut/knative-service.yaml
-            argocd/applications/torghut/knative-service-sim.yaml
-            argocd/applications/torghut/db-migrations-job.yaml
-            argocd/applications/torghut/lean-runner-deployment.yaml
-            argocd/applications/torghut/historical-simulation-workflowtemplate.yaml
-            argocd/applications/torghut/empirical-promotion-workflowtemplate.yaml
-            argocd/applications/torghut/analysis-template-runtime-ready.yaml
-            argocd/applications/torghut/analysis-template-activity.yaml
-            argocd/applications/torghut/analysis-template-teardown-clean.yaml
-            argocd/applications/torghut/analysis-template-artifact-bundle.yaml
-            argocd/applications/torghut/empirical-jobs-backfill-job.yaml
-            argocd/applications/torghut-options/catalog/deployment.yaml
-            argocd/applications/torghut-options/enricher/deployment.yaml
-            argocd/applications/torghut-forecast/deployment.yaml
-            argocd/applications/torghut-forecast/sim/deployment.yaml
-          body: |
-            ## Summary
-            Promote Torghut image into GitOps manifests.
-
-            - Source commit: `${{ steps.meta.outputs.source_sha }}`
-            - Image tag: `${{ steps.meta.outputs.tag }}`
-            - Image digest: `${{ steps.digest.outputs.digest }}`
-            - Migration change detected under `services/torghut/migrations/**`
-            - Added `do-not-automerge`; manual DB migration approval required before merge
-
-      - name: Create deploy pull request (auto-merge eligible)
-        if: >-
-          ${{
-            steps.meta.outputs.promote == 'true' &&
-            steps.changes.outputs.changed == 'true' &&
-            steps.migration.outputs.requires_approval != 'true'
-          }}
-        uses: peter-evans/create-pull-request@v7
-        with:
-          token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
-          branch: codex/torghut-release-${{ steps.meta.outputs.tag }}
-          base: main
-          title: 'chore(torghut): promote image ${{ steps.meta.outputs.tag }}'
-          commit-message: 'chore(torghut): promote image ${{ steps.meta.outputs.tag }}'
+          title: 'chore(torghut-options): promote ws image ${{ steps.meta.outputs.tag }}'
+          commit-message: 'chore(torghut-options): promote ws image ${{ steps.meta.outputs.tag }}'
           delete-branch: true
           add-paths: |
-            argocd/applications/torghut/knative-service.yaml
-            argocd/applications/torghut/knative-service-sim.yaml
-            argocd/applications/torghut/db-migrations-job.yaml
-            argocd/applications/torghut/lean-runner-deployment.yaml
-            argocd/applications/torghut/historical-simulation-workflowtemplate.yaml
-            argocd/applications/torghut/empirical-promotion-workflowtemplate.yaml
-            argocd/applications/torghut/analysis-template-runtime-ready.yaml
-            argocd/applications/torghut/analysis-template-activity.yaml
-            argocd/applications/torghut/analysis-template-teardown-clean.yaml
-            argocd/applications/torghut/analysis-template-artifact-bundle.yaml
-            argocd/applications/torghut/empirical-jobs-backfill-job.yaml
-            argocd/applications/torghut-options/catalog/deployment.yaml
-            argocd/applications/torghut-options/enricher/deployment.yaml
-            argocd/applications/torghut-forecast/deployment.yaml
-            argocd/applications/torghut-forecast/sim/deployment.yaml
+            argocd/applications/torghut-options/ws/deployment.yaml
           body: |
             ## Summary
-            Promote Torghut image into GitOps manifests.
+            Promote the Torghut options websocket image into GitOps manifests.
 
             - Source commit: `${{ steps.meta.outputs.source_sha }}`
             - Image tag: `${{ steps.meta.outputs.tag }}`
@@ -324,7 +228,7 @@ jobs:
 
       - name: No manifest changes detected
         if: steps.meta.outputs.promote == 'true' && steps.changes.outputs.changed != 'true'
-        run: echo 'No Torghut manifest changes detected.'
+        run: echo 'No torghut-options ws manifest changes detected.'
 
       - name: Promotion skipped (stale workflow_run)
         if: steps.meta.outputs.promote != 'true'
