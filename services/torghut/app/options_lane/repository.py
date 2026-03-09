@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
+import heapq
 import json
 from typing import Any, Iterator, cast
 
@@ -153,17 +154,18 @@ class OptionsRepository:
                 {"bucket_name": bucket_name, "last_429_ts": now},
             )
 
-    def sync_contract_catalog(
+    def sync_contract_catalog_page(
         self,
         contracts: list[dict[str, Any]],
         *,
         observed_at: datetime,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Upsert the active contract set and return changed rows plus inactive transitions."""
+    ) -> list[dict[str, Any]]:
+        """Upsert one page of active contracts and return changed rows."""
 
+        if not contracts:
+            return []
         seen_symbols = {row["contract_symbol"] for row in contracts if row.get("contract_symbol")}
         published_rows: list[dict[str, Any]] = []
-        transition_rows: list[dict[str, Any]] = []
 
         with self.session() as session, session.begin():
             existing_rows = {
@@ -281,6 +283,72 @@ class OptionsRepository:
                 if changed:
                     published_rows.append(payload)
 
+        return published_rows
+
+    def mark_contracts_missing_from_cycle(
+        self,
+        *,
+        observed_at: datetime,
+    ) -> list[dict[str, Any]]:
+        transition_rows: list[dict[str, Any]] = []
+
+        with self.session() as session, session.begin():
+            stale_rows = list(
+                session.execute(
+                    text(
+                        """
+                        SELECT *
+                        FROM torghut_options_contract_catalog
+                        WHERE status = 'active'
+                          AND last_seen_ts < :observed_at
+                        """
+                    ),
+                    {"observed_at": observed_at},
+                ).mappings()
+            )
+
+            for row in stale_rows:
+                expiration_date = cast(date, row["expiration_date"])
+                next_status = "expired" if expiration_date < observed_at.date() else "inactive"
+                session.execute(
+                    text(
+                        """
+                        UPDATE torghut_options_contract_catalog
+                        SET status = :status,
+                            last_seen_ts = :last_seen_ts
+                        WHERE contract_symbol = :contract_symbol
+                        """
+                    ),
+                    {
+                        "contract_symbol": row["contract_symbol"],
+                        "status": next_status,
+                        "last_seen_ts": observed_at,
+                    },
+                )
+                transition = dict(row)
+                transition["status"] = next_status
+                transition["last_seen_ts"] = observed_at
+                transition["catalog_status_reason"] = "not_seen_in_active_discovery_run"
+                transition_rows.append(transition)
+
+        return transition_rows
+
+    def sync_contract_catalog(
+        self,
+        contracts: list[dict[str, Any]],
+        *,
+        observed_at: datetime,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Upsert the active contract set and return changed rows plus inactive transitions."""
+
+        published_rows = self.sync_contract_catalog_page(contracts, observed_at=observed_at)
+        seen_symbols = {row["contract_symbol"] for row in contracts if row.get("contract_symbol")}
+        transition_rows: list[dict[str, Any]] = []
+
+        if not seen_symbols:
+            return published_rows, self.mark_contracts_missing_from_cycle(observed_at=observed_at)
+
+        with self.session() as session, session.begin():
             stale_rows = session.execute(
                 text(
                     """
@@ -324,7 +392,14 @@ class OptionsRepository:
             rows = session.execute(
                 text(
                     """
-                    SELECT catalog.*, subs.ranking_inputs
+                    SELECT catalog.contract_symbol,
+                           catalog.status,
+                           catalog.underlying_symbol,
+                           catalog.expiration_date,
+                           catalog.strike_price,
+                           catalog.close_price,
+                           catalog.open_interest,
+                           COALESCE(subs.ranking_inputs, '{}'::JSONB) AS ranking_inputs
                     FROM torghut_options_contract_catalog AS catalog
                     LEFT JOIN torghut_options_subscription_state AS subs
                       ON subs.contract_symbol = catalog.contract_symbol
@@ -334,6 +409,31 @@ class OptionsRepository:
                 )
             ).mappings()
             return [dict(row) for row in rows]
+
+    def iter_active_contracts_for_ranking(self, *, batch_size: int = 5000) -> Iterator[dict[str, Any]]:
+        with self.session() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT catalog.contract_symbol,
+                           catalog.status,
+                           catalog.underlying_symbol,
+                           catalog.expiration_date,
+                           catalog.strike_price,
+                           catalog.close_price,
+                           catalog.open_interest,
+                           COALESCE(subs.ranking_inputs, '{}'::JSONB) AS ranking_inputs
+                    FROM torghut_options_contract_catalog AS catalog
+                    LEFT JOIN torghut_options_subscription_state AS subs
+                      ON subs.contract_symbol = catalog.contract_symbol
+                    WHERE catalog.status = 'active'
+                    ORDER BY catalog.contract_symbol
+                    """
+                )
+            ).mappings()
+            while batch := rows.fetchmany(batch_size):
+                for row in batch:
+                    yield dict(row)
 
     def write_subscription_state(
         self,
@@ -565,6 +665,21 @@ class OptionsRepository:
                 ).scalar_one()
             )
 
+    def max_active_open_interest(self) -> int:
+        with self.session() as session:
+            return int(
+                session.execute(
+                    text(
+                        """
+                        SELECT COALESCE(MAX(open_interest), 0)
+                        FROM torghut_options_contract_catalog
+                        WHERE status = 'active'
+                        """
+                    )
+                ).scalar_one()
+                or 0
+            )
+
     def fetch_contract_metadata(self, symbols: list[str]) -> dict[str, dict[str, Any]]:
         if not symbols:
             return {}
@@ -596,94 +711,23 @@ def ranked_contract_rows(
     active_contracts = [row for row in contracts if row.get("status") == "active"]
     if not active_contracts:
         return []
-
-    def _dte_score(expiration_date: date) -> float:
-        dte = max((expiration_date - observed_at.date()).days, 0)
-        if dte <= 7:
-            return 1.0
-        if dte <= 30:
-            return 0.8
-        if dte <= 90:
-            return 0.5
-        return 0.2
-
-    def _moneyness_score(metadata: dict[str, Any]) -> float:
-        strike_price = float(metadata.get("strike_price") or 0.0)
-        close_price = float(metadata.get("close_price") or strike_price or 1.0)
-        if strike_price <= 0 or close_price <= 0:
-            return 0.5
-        distance = abs(strike_price - close_price) / close_price
-        return max(0.0, 1.0 - min(distance, 1.0))
-
-    def _priority_score(underlying_symbol: str) -> float:
-        return 1.0 if underlying_symbol in underlying_priority else 0.5
-
-    def _score_or_default(values: dict[str, object], key: str, default: float) -> float:
-        raw_value = values.get(key, default)
-        try:
-            return float(cast(int | float | str, raw_value))
-        except (TypeError, ValueError, ArithmeticError):
-            return default
-
-    max_open_interest = max(int(row.get("open_interest") or 0) for row in active_contracts) or 1
-    ranked: list[dict[str, Any]] = []
-    for row in active_contracts:
-        open_interest = int(row.get("open_interest") or 0)
-        ranking_inputs = row.get("ranking_inputs")
-        parsed_ranking_inputs: dict[str, object]
-        if isinstance(ranking_inputs, str):
-            try:
-                loaded_ranking_inputs = json.loads(ranking_inputs)
-            except json.JSONDecodeError:
-                parsed_ranking_inputs = {}
-            else:
-                parsed_ranking_inputs = cast(dict[str, object], loaded_ranking_inputs) if isinstance(loaded_ranking_inputs, dict) else {}
-        elif isinstance(ranking_inputs, dict):
-            parsed_ranking_inputs = cast(dict[str, object], ranking_inputs)
-        else:
-            parsed_ranking_inputs = {}
-
-        liquidity_score = min(open_interest / max_open_interest, 1.0)
-        quote_recency_score = _score_or_default(parsed_ranking_inputs, "quote_recency_score", 0.5)
-        trade_recency_score = _score_or_default(parsed_ranking_inputs, "trade_recency_score", 0.5)
-        underlying_activity_score = _score_or_default(
-            parsed_ranking_inputs,
-            "underlying_activity_score",
-            _priority_score(str(row["underlying_symbol"])),
+    max_open_interest = max(int(contract.get("open_interest") or 0) for contract in active_contracts) or 1
+    ranked = [
+        _build_ranked_contract_row(
+            row,
+            observed_at=observed_at,
+            max_open_interest=max_open_interest,
+            provider_cap_bootstrap=provider_cap_bootstrap,
+            underlying_priority=underlying_priority,
         )
-        dte_score = _dte_score(cast(date, row["expiration_date"]))
-        moneyness_score = _score_or_default(parsed_ranking_inputs, "moneyness_score", _moneyness_score(row))
-
-        ranking_score = (
-            0.30 * liquidity_score
-            + 0.20 * quote_recency_score
-            + 0.15 * trade_recency_score
-            + 0.15 * underlying_activity_score
-            + 0.10 * dte_score
-            + 0.10 * moneyness_score
-        )
-
-        ranked.append(
-            {
-                "contract_symbol": row["contract_symbol"],
-                "ranking_score": ranking_score,
-                "ranking_inputs": {
-                    "liquidity_score": round(liquidity_score, 6),
-                    "quote_recency_score": round(quote_recency_score, 6),
-                    "trade_recency_score": round(trade_recency_score, 6),
-                    "underlying_activity_score": round(underlying_activity_score, 6),
-                    "dte_score": round(dte_score, 6),
-                    "moneyness_score": round(moneyness_score, 6),
-                },
-                "desired_channels": ["trades", "quotes"],
-                "provider_cap_generation": 0,
-            }
-        )
-
-    ranked.sort(key=lambda row: (float(row["ranking_score"]), str(row["contract_symbol"])), reverse=True)
-    hot_count = min(hot_cap, max(int(provider_cap_bootstrap * 0.8), 0))
-    warm_count = min(warm_cap, hot_count * 5 if hot_count > 0 else warm_cap)
-
+        for row in active_contracts
+    ]
+    ranked.sort(key=lambda row: (-float(row["ranking_score"]), str(row["contract_symbol"])))
+    hot_count, warm_count = _tier_limits(
+        hot_cap=hot_cap,
+        warm_cap=warm_cap,
+        provider_cap_bootstrap=provider_cap_bootstrap,
+    )
     for index, row in enumerate(ranked):
         if index < hot_count:
             row["tier"] = "hot"
@@ -692,3 +736,159 @@ def ranked_contract_rows(
         else:
             row["tier"] = "cold"
     return ranked
+
+
+def top_ranked_contract_rows(
+    contracts: Iterator[dict[str, Any]],
+    *,
+    observed_at: datetime,
+    hot_cap: int,
+    warm_cap: int,
+    max_open_interest: int,
+    provider_cap_bootstrap: int,
+    underlying_priority: set[str],
+) -> list[dict[str, Any]]:
+    """Rank only the hot and warm candidates while streaming the active universe."""
+
+    hot_count, warm_count = _tier_limits(
+        hot_cap=hot_cap,
+        warm_cap=warm_cap,
+        provider_cap_bootstrap=provider_cap_bootstrap,
+    )
+    candidate_limit = hot_count + warm_count
+    if candidate_limit <= 0:
+        return []
+
+    heap: list[tuple[float, tuple[int, ...], dict[str, Any]]] = []
+    for row in contracts:
+        if row.get("status") != "active":
+            continue
+        ranked_row = _build_ranked_contract_row(
+            row,
+            observed_at=observed_at,
+            max_open_interest=max_open_interest,
+            provider_cap_bootstrap=provider_cap_bootstrap,
+            underlying_priority=underlying_priority,
+        )
+        heap_item = (
+            float(ranked_row["ranking_score"]),
+            _contract_symbol_heap_key(str(ranked_row["contract_symbol"])),
+            ranked_row,
+        )
+        if len(heap) < candidate_limit:
+            heapq.heappush(heap, heap_item)
+            continue
+        if heap_item[:2] > heap[0][:2]:
+            heapq.heapreplace(heap, heap_item)
+
+    ranked = [item[2] for item in heap]
+    ranked.sort(key=lambda row: (-float(row["ranking_score"]), str(row["contract_symbol"])))
+    for index, row in enumerate(ranked):
+        row["tier"] = "hot" if index < hot_count else "warm"
+    return ranked
+
+
+def _tier_limits(*, hot_cap: int, warm_cap: int, provider_cap_bootstrap: int) -> tuple[int, int]:
+    hot_count = min(hot_cap, max(int(provider_cap_bootstrap * 0.8), 0))
+    warm_count = min(warm_cap, hot_count * 5 if hot_count > 0 else warm_cap)
+    return hot_count, warm_count
+
+
+def _contract_symbol_heap_key(contract_symbol: str) -> tuple[int, ...]:
+    return tuple(-ord(ch) for ch in contract_symbol)
+
+
+def _dte_score(*, observed_at: datetime, expiration_date: date) -> float:
+    dte = max((expiration_date - observed_at.date()).days, 0)
+    if dte <= 7:
+        return 1.0
+    if dte <= 30:
+        return 0.8
+    if dte <= 90:
+        return 0.5
+    return 0.2
+
+
+def _moneyness_score(metadata: dict[str, Any]) -> float:
+    strike_price = float(metadata.get("strike_price") or 0.0)
+    close_price = float(metadata.get("close_price") or strike_price or 1.0)
+    if strike_price <= 0 or close_price <= 0:
+        return 0.5
+    distance = abs(strike_price - close_price) / close_price
+    return max(0.0, 1.0 - min(distance, 1.0))
+
+
+def _priority_score(*, underlying_symbol: str, underlying_priority: set[str]) -> float:
+    return 1.0 if underlying_symbol in underlying_priority else 0.5
+
+
+def _score_or_default(values: dict[str, object], key: str, default: float) -> float:
+    raw_value = values.get(key, default)
+    try:
+        return float(cast(int | float | str, raw_value))
+    except (TypeError, ValueError, ArithmeticError):
+        return default
+
+
+def _parsed_ranking_inputs(row: dict[str, Any]) -> dict[str, object]:
+    ranking_inputs = row.get("ranking_inputs")
+    if isinstance(ranking_inputs, str):
+        try:
+            loaded_ranking_inputs = json.loads(ranking_inputs)
+        except json.JSONDecodeError:
+            return {}
+        return cast(dict[str, object], loaded_ranking_inputs) if isinstance(loaded_ranking_inputs, dict) else {}
+    if isinstance(ranking_inputs, dict):
+        return cast(dict[str, object], ranking_inputs)
+    return {}
+
+
+def _build_ranked_contract_row(
+    row: dict[str, Any],
+    *,
+    observed_at: datetime,
+    max_open_interest: int,
+    provider_cap_bootstrap: int,
+    underlying_priority: set[str],
+) -> dict[str, Any]:
+    open_interest = int(row.get("open_interest") or 0)
+    parsed_ranking_inputs = _parsed_ranking_inputs(row)
+    liquidity_score = min(open_interest / max(max_open_interest, 1), 1.0)
+    quote_recency_score = _score_or_default(parsed_ranking_inputs, "quote_recency_score", 0.5)
+    trade_recency_score = _score_or_default(parsed_ranking_inputs, "trade_recency_score", 0.5)
+    underlying_activity_score = _score_or_default(
+        parsed_ranking_inputs,
+        "underlying_activity_score",
+        _priority_score(
+            underlying_symbol=str(row["underlying_symbol"]),
+            underlying_priority=underlying_priority,
+        ),
+    )
+    dte_score = _dte_score(
+        observed_at=observed_at,
+        expiration_date=cast(date, row["expiration_date"]),
+    )
+    moneyness_score = _score_or_default(parsed_ranking_inputs, "moneyness_score", _moneyness_score(row))
+    ranking_score = (
+        0.30 * liquidity_score
+        + 0.20 * quote_recency_score
+        + 0.15 * trade_recency_score
+        + 0.15 * underlying_activity_score
+        + 0.10 * dte_score
+        + 0.10 * moneyness_score
+    )
+
+    return {
+        "contract_symbol": row["contract_symbol"],
+        "ranking_score": ranking_score,
+        "ranking_inputs": {
+            "liquidity_score": round(liquidity_score, 6),
+            "quote_recency_score": round(quote_recency_score, 6),
+            "trade_recency_score": round(trade_recency_score, 6),
+            "underlying_activity_score": round(underlying_activity_score, 6),
+            "dte_score": round(dte_score, 6),
+            "moneyness_score": round(moneyness_score, 6),
+        },
+        "desired_channels": ["trades", "quotes"],
+        "provider_cap_generation": provider_cap_bootstrap,
+    }
