@@ -27,6 +27,13 @@ def _as_json_list(value: object) -> list[object]:
     return []
 
 
+def _normalize_contracts_base_url(base_url: str) -> str:
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/v2"):
+        return normalized[: -len("/v2")]
+    return normalized
+
+
 def _normalize_iso_datetime(value: object) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -94,7 +101,7 @@ class AlpacaOptionsClient:
     ) -> None:
         self._key_id = key_id
         self._secret_key = secret_key
-        self._contracts_base_url = contracts_base_url.rstrip("/")
+        self._contracts_base_url = _normalize_contracts_base_url(contracts_base_url)
         self._data_base_url = data_base_url.rstrip("/")
         self._feed = feed
 

@@ -92,6 +92,33 @@ class TestOptionsLaneNormalization(TestCase):
         self.assertIn("feed=indicative", requests[1])
         self.assertIn("AA260313C00030000", snapshots)
 
+    def test_alpaca_client_normalizes_contracts_base_url_with_v2_suffix(self) -> None:
+        requests: list[str] = []
+
+        def fake_urlopen(request: object, timeout: int = 30) -> _FakeResponse:
+            full_url = getattr(request, "full_url")
+            requests.append(str(full_url))
+            return _FakeResponse({"option_contracts": [{"symbol": "AA260313C00030000"}]})
+
+        client = AlpacaOptionsClient(
+            key_id="key-id",
+            secret_key="secret-key",
+            contracts_base_url="https://paper-api.alpaca.markets/v2",
+            data_base_url="https://data.alpaca.markets",
+            feed="indicative",
+        )
+
+        with patch("app.options_lane.alpaca.urlopen", side_effect=fake_urlopen):
+            contracts, _ = client.list_contracts(
+                status="active",
+                limit=1,
+                expiration_date_gte=date(2026, 3, 8),
+                expiration_date_lte=date(2026, 3, 15),
+            )
+
+        self.assertEqual(contracts[0]["symbol"], "AA260313C00030000")
+        self.assertEqual(requests[0], "https://paper-api.alpaca.markets/v2/options/contracts?status=active&limit=1&expiration_date_gte=2026-03-08&expiration_date_lte=2026-03-15")
+
     def test_normalize_contract_record_maps_required_fields(self) -> None:
         observed_at = datetime(2026, 3, 8, 18, 0, tzinfo=timezone.utc)
         payload = normalize_contract_record(
