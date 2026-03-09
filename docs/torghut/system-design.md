@@ -95,10 +95,10 @@ flowchart LR
 
 ### Flink Checkpointing
 
-Flink checkpoints provide exactly-once semantics when configured with durable storage and connectors that support transactional semantics. Production guidance:
+Flink checkpoints preserve operator state consistently when configured with durable storage. End-to-end exactly-once still depends on transactional connectors and is not the current Torghut TA production profile. Production guidance:
 
 - Enable checkpointing and store checkpoints in durable storage (S3/MinIO). (Flink docs)
-- Use exactly-once checkpoints for TA pipelines. (Flink docs)
+- Use durable checkpoints for TA pipelines, and prefer at-least-once derived Kafka sinks when duplicate-tolerant consumers/storage already exist. (Flink docs)
 - Savepoints are the primary tool for upgrades and migrations. (Flink docs)
 
 ### Kafka Retention and Compaction

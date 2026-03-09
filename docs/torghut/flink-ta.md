@@ -38,7 +38,7 @@ Use Avro or JSON with Karapace; backward-compatible evolution.
   - Trades -> hopping 1s/1s to micro-bars (O/H/L/C/V, vwap).
   - Bars (1s + upstream 1m) -> EMA12/26 -> MACD; RSI14; Bollinger20/2; VWAP (session & rolling window); realized vol (30-60s); join with quotes for spread/imbalance.
   - Dedup optional: drop duplicates by trade id and (event_ts, symbol) for quotes/bars before aggregation.
-- Sinks: `KafkaSink` to TA topics with `delivery.guarantee=exactly-once`, idempotent/transactional; partitioner fixed (key=symbol).
+- Sinks: `KafkaSink` to TA topics with `delivery.guarantee=at-least-once` in the current production profile; transactional exactly-once remains opt-in; partitioner fixed (key=symbol).
 
 ### Window/indicator details
 
@@ -84,11 +84,11 @@ S3A properties (example):
 
 - Upgrade flow: trigger savepoint (or last-state), update image tag, redeploy; verify running and checkpointing.
 - Rollback: redeploy previous image with last-state or restore from savepoint.
-- On exactly-once sinks, prefer `--drain` or allow checkpoint to finish before shutdown to avoid in-flight txn aborts.
+- On transactional sink profiles, prefer `--drain` or allow checkpoint to finish before shutdown to avoid in-flight txn aborts.
 
 ### Sink settings (KafkaSink)
 
-- `deliveryGuarantee = EXACTLY_ONCE`
+- `deliveryGuarantee = AT_LEAST_ONCE` (current production profile)
 - `transaction.timeout.ms` > checkpoint timeout + failover (e.g., 120s)
 - `linger.ms` 20-50; `compression.type` lz4; `enable.idempotence` true
 - `acks=all`; `max.in.flight.requests.per.connection=5` (ok with idempotence)
@@ -124,7 +124,7 @@ Alert suggestions (Mimir/Alertmanager):
 
 - Replay FAKEPACA or recorded NVDA slice into Kafka; verify micro-bars and TA signals content and ordering.
 - Lag test: p99(now - event_ts) ≤500 ms.
-- Failure test: kill JM/TM, confirm restore from last checkpoint, no duplicate outputs (read_committed consumer).
+- Failure test: kill JM/TM, confirm restore from last checkpoint, and verify downstream dedup correctness on `(symbol,event_ts,seq)`.
 - Schema test: evolve additive field and confirm backward compatibility.
 - Load test: sustained message rate near expected peak; observe checkpoint duration, backpressure.
 
@@ -136,7 +136,7 @@ Alert suggestions (Mimir/Alertmanager):
 
 ## Consumer guidance (downstream)
 
-- Use `isolation.level=read_committed` when TA sink runs in exactly-once mode; can switch to read_uncommitted if at-least-once profile is enabled.
+- Use `isolation.level=read_uncommitted` or default consumer semantics for the at-least-once profile; use `read_committed` only if the transactional profile is explicitly enabled again.
 - Expect envelope fields (`event_ts`, `ingest_ts`, `seq`, `is_final`, `window`); be tolerant to additive fields.
 
 ## Mermaid (processing graph)

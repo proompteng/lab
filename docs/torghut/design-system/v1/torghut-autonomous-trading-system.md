@@ -158,7 +158,7 @@ As deployed config is in:
 
 Delivery semantics:
 
-- Kafka is configured with `TA_KAFKA_DELIVERY_GUARANTEE=EXACTLY_ONCE`.
+- Kafka is configured with `TA_KAFKA_DELIVERY_GUARANTEE=AT_LEAST_ONCE` in the current production profile.
 - ClickHouse writes are at-least-once; design assumes duplicates are tolerable.
 
 Known production failure: ClickHouse disk pressure causing JDBC failures and TA job failure.

@@ -55,5 +55,5 @@ kcat -b $KAFKA_BOOTSTRAP -t torghut.ta.signals.v1 \
 ## Acceptance checks
 
 - p99(now - event_ts) ≤ 500 ms (target)
-- No duplicate seq per symbol after restart (read_committed consumer)
+- Duplicate derived-topic records remain dedupable by `(symbol,event_ts,seq)` after restart
 - Checkpoint age < 2 × interval and sink txn failures = 0 during load

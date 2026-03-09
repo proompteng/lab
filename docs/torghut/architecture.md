@@ -42,7 +42,7 @@ flowchart LR
   - `ta`: shared indicator utilities and schemas for downstream consumers (distinct from the Flink TA job; Flink still produces derived topics).
   - Single replica per Alpaca account to satisfy the single-connection constraint.
 - Kafka: Strimzi-managed, SASL/TLS; topics lz4, RF=3, partitions=1 per symbol.
-- Flink: 1.20.x via Operator 1.13.x; KafkaSource/Sink with exactly-once; checkpoints every 10 s to MinIO/S3.
+- Flink: 1.20.x via Operator 1.13.x; KafkaSource with at-least-once derived-topic sinks in the current profile; checkpoints every 10 s to MinIO/S3.
 - torghut main service: does **not** consume TA topics; TA is used via ClickHouse-backed APIs and external consumers.
 
 ### Version matrix

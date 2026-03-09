@@ -58,8 +58,8 @@ Karapace usage: https://docs.aiven.io/docs/products/karapace/concepts/schema-reg
 
 ## Low-latency profile toggle
 
-- Default profile: exactly-once sinks, transactions on, checkpoints 10 s.
-- Low-latency profile: at-least-once sinks (disable transactions), buffer-timeout 5 ms, watermark interval 50 ms; downstream consumers must dedup.
+- Default profile: at-least-once sinks, checkpoints 10 s, downstream dedup on derived TA topics.
+- Transactional profile: exactly-once Kafka sinks, transactions on, and `read_committed` consumers when restore risk is acceptable.
 
 ## Alpaca WS constraints
 
