@@ -3,7 +3,22 @@ import { describe, expect, it } from 'vitest'
 import { chatCompletionEncoderLive } from '~/server/chat-completion-encoder'
 import type { ToolRenderer } from '~/server/chat-tool-event-renderer'
 
-const createSession = (options: { includeUsage?: boolean; toolRenderer?: ToolRenderer } = {}) => {
+const createSession = (
+  options: {
+    includeUsage?: boolean
+    toolRenderer?: ToolRenderer
+    jangarRender?: {
+      enabled: boolean
+      mode: 'rich-ui-v1'
+      createRenderRef?: (args: { renderId: string; kind: string; messageBindingHash: string; expiresAt: string }) => {
+        id: string
+        kind: string
+        href: string
+        expiresAt: string
+      } | null
+    }
+  } = {},
+) => {
   const toolRenderer: ToolRenderer =
     options.toolRenderer ??
     ({
@@ -16,6 +31,7 @@ const createSession = (options: { includeUsage?: boolean; toolRenderer?: ToolRen
     model: 'gpt-5.4',
     includeUsage: options.includeUsage ?? false,
     toolRenderer,
+    jangarRender: options.jangarRender,
     meta: { threadId: 'thread-1', turnNumber: 1, chatId: 'chat-1' },
   })
 }
@@ -88,6 +104,24 @@ const getCompletionTokens = (frame: Record<string, unknown>) => {
   if (!usage) return undefined
   const value = usage.completion_tokens
   return typeof value === 'number' ? value : undefined
+}
+
+const getJangarEvent = (frame: Record<string, unknown>) => {
+  const delta = getDeltaRecord(frame)
+  return delta && asRecord(delta.jangar_event)
+}
+
+const getJangarEvents = (frames: Record<string, unknown>[]) =>
+  frames.map(getJangarEvent).filter((value): value is Record<string, unknown> => value != null)
+
+const getMessageEvents = (frames: Record<string, unknown>[]) =>
+  frames
+    .map((frame) => getJangarEvent(frame))
+    .filter((event): event is Record<string, unknown> => event != null && event.lane === 'message')
+
+const getMessageEvent = (frames: Record<string, unknown>[]) => {
+  const events = getMessageEvents(frames)
+  return events[0] ?? null
 }
 
 describe('chat completion encoder', () => {
@@ -308,5 +342,118 @@ describe('chat completion encoder', () => {
 
     const usageChunk = finalFrames.find(isUsageChunk)
     expect(usageChunk ? getCompletionTokens(usageChunk) : undefined).toBe(1)
+  })
+
+  it('includes jangar_event only when rich rendering is enabled', () => {
+    const disabled = createSession({ jangarRender: { enabled: false, mode: 'rich-ui-v1' } })
+    const disabledFrames = disabled.onDelta({ type: 'message', delta: 'hi' })
+    expect(getJangarEvents(disabledFrames)).toHaveLength(0)
+
+    const enabled = createSession({ jangarRender: { enabled: true, mode: 'rich-ui-v1' } })
+    const enabledFrames = enabled.onDelta({ type: 'message', delta: 'hi' })
+    expect(getJangarEvents(enabledFrames).length).toBe(1)
+  })
+
+  it('stages render blobs for oversized rich events when detail rendering is configured', () => {
+    const session = createSession({
+      jangarRender: {
+        enabled: true,
+        mode: 'rich-ui-v1',
+        createRenderRef: ({ renderId, kind, expiresAt }) => ({
+          id: renderId,
+          kind,
+          href: `https://jangar.test/api/openwebui/rich-ui/render/${renderId}`,
+          expiresAt,
+        }),
+      },
+    })
+
+    const frames = session.onDelta({ type: 'message', delta: 'x'.repeat(9_000) })
+    const event = getMessageEvent(frames)
+    const renderRef = asRecord(event?.renderRef)
+    const blobs = session.takePendingRenderBlobs()
+
+    expect(renderRef?.kind).toBe('message')
+    expect(typeof renderRef?.href).toBe('string')
+    expect(blobs).toHaveLength(1)
+    expect(blobs[0]?.payload.text).toBe(`\n${'x'.repeat(9_000)}`)
+  })
+
+  it('keeps oversized rich events inline-only when no detail renderer is configured', () => {
+    const session = createSession({
+      jangarRender: { enabled: true, mode: 'rich-ui-v1' },
+    })
+
+    const frames = session.onDelta({ type: 'message', delta: 'x'.repeat(9_000) })
+    const event = getMessageEvent(frames)
+
+    expect(asRecord(event?.renderRef)).toBeNull()
+    expect(session.takePendingRenderBlobs()).toHaveLength(0)
+  })
+
+  it('emits deterministic jangar event metadata for message text', () => {
+    const session = createSession({
+      jangarRender: { enabled: true, mode: 'rich-ui-v1' },
+    })
+    const frames = session.onDelta({ type: 'message', delta: 'hi' })
+    const event = getMessageEvent(frames)
+    expect(event).toBeTruthy()
+
+    expect(event?.version).toBe('v1')
+    expect(event?.seq).toBe(1)
+    expect(event?.logicalId).toBe('message:assistant')
+    expect(event?.revision).toBe(1)
+    expect(event?.lane).toBe('message')
+    expect(event?.op).toBe('append_text')
+    expect(event?.payload).toEqual({ text: '\nhi' })
+    expect(event?.preview).toEqual({ title: 'assistant', badge: 'message' })
+  })
+
+  it('keeps seq monotonic and revision monotonic per logicalId', () => {
+    const session = createSession({
+      jangarRender: { enabled: true, mode: 'rich-ui-v1' },
+    })
+    const first = session.onDelta({ type: 'message', delta: 'hi' })
+    const second = session.onDelta({ type: 'message', delta: ' there' })
+
+    const events = getMessageEvents([...first, ...second])
+    expect(events).toHaveLength(2)
+    expect(events[0]?.seq).toBe(1)
+    expect(events[0]?.revision).toBe(1)
+    expect(events[1]?.seq).toBe(2)
+    expect(events[1]?.revision).toBe(2)
+  })
+
+  it('emits tool events with deterministic logicalId and tool lane', () => {
+    const session = createSession({
+      jangarRender: { enabled: true, mode: 'rich-ui-v1' },
+      toolRenderer: {
+        onToolEvent: () => [],
+      },
+    })
+
+    const frames = session.onDelta({
+      type: 'tool',
+      toolKind: 'command',
+      id: 'cmd-1',
+      status: 'started',
+      title: 'run cmd',
+      delta: 'echo hi',
+    })
+
+    const events = getJangarEvents(frames).filter((event) => event.lane === 'tool')
+    expect(events).toHaveLength(2)
+    expect(events[0]?.logicalId).toBe('tool:command-cmd-1')
+    expect(events[0]?.op).toBe('merge')
+    expect(events[1]?.op).toBe('append_text')
+  })
+
+  it('does not include tool_calls in message deltas', () => {
+    const session = createSession({
+      jangarRender: { enabled: true, mode: 'rich-ui-v1' },
+    })
+    const frames = session.onDelta({ type: 'message', delta: 'hi' })
+    const delta = getDeltaRecord(frames[0] ?? {})
+    expect(delta?.tool_calls).toBeUndefined()
   })
 })
