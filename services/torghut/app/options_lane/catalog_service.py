@@ -14,7 +14,7 @@ from fastapi import FastAPI, HTTPException
 from .alpaca import AlpacaApiError, AlpacaOptionsClient, normalize_contract_record
 from .kafka import OptionsKafkaProducer, SequenceGenerator, build_envelope
 from .options_status import build_status_payload
-from .repository import OptionsRepository, ranked_contract_rows
+from .repository import OptionsRepository, top_ranked_contract_rows
 from .session import session_state, utc_now
 from .settings import get_options_lane_settings
 
@@ -155,7 +155,9 @@ def _run_discovery_cycle() -> None:
     expiration_start = observed_at.date()
     expiration_end = expiration_start + timedelta(days=settings.options_contract_expiration_horizon_days)
     page_token: str | None = None
-    normalized_contracts: list[dict[str, Any]] = []
+    page_count = 0
+    contract_count = 0
+    changed_count = 0
 
     while True:
         while not _repository.acquire_rate_bucket("contracts", 0.25, 2):
@@ -168,32 +170,56 @@ def _run_discovery_cycle() -> None:
             expiration_date_lte=expiration_end,
             page_token=page_token,
         )
-        normalized_contracts.extend(
+        page_count += 1
+        normalized_contracts = [
             normalize_contract_record(contract, observed_at=observed_at)
             for contract in contracts
             if str(contract.get("symbol") or "").strip()
+        ]
+        contract_count += len(normalized_contracts)
+        changed_rows = _repository.sync_contract_catalog_page(
+            normalized_contracts,
+            observed_at=observed_at,
         )
+        changed_count += len(changed_rows)
+        for row in changed_rows:
+            _publish_contract_row(row, observed_at=observed_at)
+        if page_count == 1 or page_count % 10 == 0 or not page_token:
+            logger.info(
+                "options catalog discovery progress pages=%s contracts=%s changed=%s has_next=%s",
+                page_count,
+                contract_count,
+                changed_count,
+                bool(page_token),
+            )
         if not page_token:
             break
 
-    changed_rows, transition_rows = _repository.sync_contract_catalog(
-        normalized_contracts,
+    transition_rows = _repository.mark_contracts_missing_from_cycle(
         observed_at=observed_at,
     )
-    for row in changed_rows:
-        _publish_contract_row(row, observed_at=observed_at)
     for row in transition_rows:
         _publish_contract_row(row, observed_at=observed_at)
 
-    ranked_rows = ranked_contract_rows(
-        _repository.list_active_contracts(),
+    ranked_rows = top_ranked_contract_rows(
+        _repository.iter_active_contracts_for_ranking(),
         observed_at=observed_at,
         hot_cap=settings.options_subscription_hot_cap,
         warm_cap=settings.options_subscription_warm_cap,
+        max_open_interest=_repository.max_active_open_interest(),
         provider_cap_bootstrap=settings.options_provider_cap_bootstrap,
         underlying_priority=settings.underlying_priority_set,
     )
     _repository.write_subscription_state(ranked_rows=ranked_rows, observed_at=observed_at)
+    logger.info(
+        "options catalog discovery cycle completed pages=%s contracts=%s changed=%s transitions=%s hot=%s warm=%s",
+        page_count,
+        contract_count,
+        changed_count,
+        len(transition_rows),
+        sum(1 for row in ranked_rows if row["tier"] == "hot"),
+        sum(1 for row in ranked_rows if row["tier"] == "warm"),
+    )
     _publish_status(status_value="ok", observed_at=observed_at)
     _producer.flush()
     _state.set_success(observed_at.isoformat())
