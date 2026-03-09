@@ -186,10 +186,32 @@ class SerializationSchemasTest {
     assertTrue(original !== copy)
   }
 
+  @Test
+  fun `options input supports kryo copy`() {
+    val original = OptionsInput()
+    assertKryoCopy(OptionsInput::class.java, original)
+  }
+
+  @Test
+  fun `options bar accumulator supports kryo copy`() {
+    val original = OptionsBarAccumulator(windowStartMs = 0L, windowEndMs = 1000L, underlyingSymbol = "AAPL")
+    assertKryoCopy(OptionsBarAccumulator::class.java, original)
+  }
+
   private fun assertSerializable(target: Any) {
     val baos = ByteArrayOutputStream()
     ObjectOutputStream(baos).use { it.writeObject(target) }
     assertTrue(baos.size() > 0)
+  }
+
+  private fun <T : Any> assertKryoCopy(
+    type: Class<T>,
+    original: T,
+  ) {
+    val serializer = KryoSerializer(type, SerializerConfigImpl())
+    val copy = serializer.copy(original)
+    assertEquals(original, copy)
+    assertTrue(original !== copy)
   }
 
   // Build a minimal envelope for potential schema usage if needed later
