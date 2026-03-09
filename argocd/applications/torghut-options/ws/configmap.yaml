@@ -5,7 +5,7 @@ metadata:
   namespace: torghut
 data:
   ALPACA_MARKET_TYPE: "options"
-  ALPACA_FEED: "opra"
+  ALPACA_FEED: "indicative"
   ALPACA_STREAM_URL: "wss://stream.data.alpaca.markets"
   ALPACA_BASE_URL: "https://data.alpaca.markets"
   ALPACA_MARKET_DATA_CHANNELS: "trades,quotes"

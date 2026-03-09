@@ -61,7 +61,6 @@ import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.sqrt
 
-private const val OPTIONS_TA_FEED = "opra"
 private const val OPTIONS_TA_STATUS_SYMBOL = "options-ta"
 
 fun main() {
@@ -142,14 +141,14 @@ fun main() {
   val surfaceFeatures =
     contractFeatures
       .keyBy { it.payload.underlyingSymbol }
-      .process(OptionsSurfaceFeatureProcessFunction())
+      .process(OptionsSurfaceFeatureProcessFunction(config.feed))
       .name("options-ta-surface-features")
       .uid("options-ta-surface-features")
 
   val status =
     inputs
       .keyBy { OPTIONS_TA_STATUS_SYMBOL }
-      .process(OptionsStatusHeartbeatProcessFunction(config.checkpointIntervalMs, config.watermarkLagTargetMs))
+      .process(OptionsStatusHeartbeatProcessFunction(config.feed, config.checkpointIntervalMs, config.watermarkLagTargetMs))
       .name("options-ta-status")
       .uid("options-ta-status")
 
@@ -1040,7 +1039,7 @@ private class OptionsContractAnalyticsProcessFunction(
           Envelope(
             ingestTs = Instant.now(),
             eventTs = eventTs,
-            feed = OPTIONS_TA_FEED,
+            feed = config.feed,
             channel = "contract-bars",
             symbol = symbol,
             seq = seq,
@@ -1054,7 +1053,7 @@ private class OptionsContractAnalyticsProcessFunction(
           Envelope(
             ingestTs = Instant.now(),
             eventTs = eventTs,
-            feed = OPTIONS_TA_FEED,
+            feed = config.feed,
             channel = "contract-features",
             symbol = symbol,
             seq = seq,
@@ -1077,8 +1076,9 @@ private class OptionsContractAnalyticsProcessFunction(
   }
 }
 
-private class OptionsSurfaceFeatureProcessFunction :
-  KeyedProcessFunction<String, Envelope<OptionsContractFeaturePayload>, Envelope<OptionsSurfaceFeaturePayload>>() {
+private class OptionsSurfaceFeatureProcessFunction(
+  private val feed: String,
+) : KeyedProcessFunction<String, Envelope<OptionsContractFeaturePayload>, Envelope<OptionsSurfaceFeaturePayload>>() {
   private lateinit var featureState: MapState<String, OptionsFeatureSnapshot>
   private lateinit var seqState: ValueState<Long>
 
@@ -1132,7 +1132,7 @@ private class OptionsSurfaceFeatureProcessFunction :
       Envelope(
         ingestTs = Instant.now(),
         eventTs = value.eventTs,
-        feed = OPTIONS_TA_FEED,
+        feed = feed,
         channel = "surface-features",
         symbol = ctx.currentKey,
         seq = seq,
@@ -1147,6 +1147,7 @@ private class OptionsSurfaceFeatureProcessFunction :
 }
 
 private class OptionsStatusHeartbeatProcessFunction(
+  private val feed: String,
   private val intervalMs: Long,
   private val watermarkLagTargetMs: Long,
 ) : KeyedProcessFunction<String, OptionsInput, Envelope<OptionsTaStatusPayload>>() {
@@ -1200,7 +1201,7 @@ private class OptionsStatusHeartbeatProcessFunction(
       Envelope(
         ingestTs = now,
         eventTs = now,
-        feed = OPTIONS_TA_FEED,
+        feed = feed,
         channel = "status",
         symbol = ctx.currentKey,
         seq = seq,

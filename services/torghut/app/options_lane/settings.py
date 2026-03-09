@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Any, cast
+from typing import Annotated, Any, cast
 
 from pydantic import AliasChoices, Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 def _split_csv(value: str | None) -> list[str]:
@@ -65,9 +65,13 @@ class OptionsLaneSettings(BaseSettings):
         "opra",
         validation_alias=AliasChoices("ALPACA_OPTIONS_FEED", "ALPACA_FEED"),
     )
-    alpaca_base_url: str = Field(
+    alpaca_contracts_base_url: str = Field(
+        "https://paper-api.alpaca.markets",
+        validation_alias=AliasChoices("ALPACA_OPTIONS_CONTRACTS_BASE_URL", "APCA_API_BASE_URL"),
+    )
+    alpaca_data_base_url: str = Field(
         "https://data.alpaca.markets",
-        validation_alias=AliasChoices("ALPACA_OPTIONS_BASE_URL", "APCA_API_BASE_URL"),
+        validation_alias=AliasChoices("ALPACA_OPTIONS_DATA_BASE_URL", "ALPACA_OPTIONS_BASE_URL"),
     )
     alpaca_stream_url: str = Field(
         "wss://stream.data.alpaca.markets",
@@ -140,11 +144,11 @@ class OptionsLaneSettings(BaseSettings):
         30,
         validation_alias=AliasChoices("OPTIONS_SLO_HOT_SNAPSHOT_FRESHNESS_SEC"),
     )
-    options_market_holidays: list[str] = Field(
+    options_market_holidays: Annotated[list[str], NoDecode] = Field(
         default_factory=list,
         validation_alias=AliasChoices("OPTIONS_MARKET_HOLIDAYS"),
     )
-    options_underlying_priority_symbols: list[str] = Field(
+    options_underlying_priority_symbols: Annotated[list[str], NoDecode] = Field(
         default_factory=list,
         validation_alias=AliasChoices("OPTIONS_UNDERLYING_PRIORITY_SYMBOLS"),
     )

@@ -72,7 +72,8 @@ _producer = OptionsKafkaProducer(
 _client = AlpacaOptionsClient(
     key_id=settings.alpaca_key_id,
     secret_key=settings.alpaca_secret_key,
-    base_url=settings.alpaca_base_url,
+    contracts_base_url=settings.alpaca_contracts_base_url,
+    data_base_url=settings.alpaca_data_base_url,
     feed=settings.alpaca_feed,
 )
 

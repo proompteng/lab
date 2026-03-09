@@ -5,6 +5,7 @@ metadata:
   namespace: torghut
 data:
   OPTIONS_TA_PARALLELISM: "4"
+  OPTIONS_TA_FEED: "indicative"
   OPTIONS_TA_CHECKPOINT_INTERVAL_MS: "60000"
   OPTIONS_TA_MAX_OUT_OF_ORDER_MS: "2000"
   TOPIC_OPTIONS_SNAPSHOTS: "torghut.options.snapshots.v1"

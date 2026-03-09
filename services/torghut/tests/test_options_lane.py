@@ -1,12 +1,31 @@
 from __future__ import annotations
 
+import json
+import os
 from datetime import date, datetime, timezone
 from unittest import TestCase
+from unittest.mock import patch
 
-from app.options_lane.alpaca import normalize_contract_record, normalize_snapshot_record
+from app.options_lane.alpaca import AlpacaOptionsClient, normalize_contract_record, normalize_snapshot_record
 from app.options_lane.options_status import build_status_payload
 from app.options_lane.repository import ranked_contract_rows
+from app.options_lane.settings import OptionsLaneSettings
 from app.options_lane.session import session_state
+
+
+class _FakeResponse:
+    def __init__(self, payload: object, *, status: int = 200) -> None:
+        self.status = status
+        self._payload = json.dumps(payload).encode("utf-8")
+
+    def read(self) -> bytes:
+        return self._payload
+
+    def __enter__(self) -> _FakeResponse:
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+        return False
 
 
 class TestOptionsLaneSession(TestCase):
@@ -19,7 +38,59 @@ class TestOptionsLaneSession(TestCase):
         self.assertEqual(session_state(now), "weekend")
 
 
+class TestOptionsLaneSettings(TestCase):
+    @patch.dict(
+        os.environ,
+        {
+            "DB_DSN": "postgresql://torghut:torghut@localhost:5432/torghut",
+            "ALPACA_OPTIONS_KEY_ID": "key-id",
+            "ALPACA_OPTIONS_SECRET_KEY": "secret-key",
+            "OPTIONS_MARKET_HOLIDAYS": "",
+            "OPTIONS_UNDERLYING_PRIORITY_SYMBOLS": "",
+        },
+        clear=True,
+    )
+    def test_settings_accept_blank_csv_lists(self) -> None:
+        settings = OptionsLaneSettings()
+
+        self.assertEqual(settings.options_market_holidays, [])
+        self.assertEqual(settings.options_underlying_priority_symbols, [])
+
+
 class TestOptionsLaneNormalization(TestCase):
+    def test_alpaca_client_splits_contracts_and_market_data_hosts(self) -> None:
+        requests: list[str] = []
+
+        def fake_urlopen(request: object, timeout: int = 30) -> _FakeResponse:
+            full_url = getattr(request, "full_url")
+            requests.append(str(full_url))
+            if "/v2/options/contracts" in str(full_url):
+                return _FakeResponse({"option_contracts": [{"symbol": "AA260313C00030000"}]})
+            return _FakeResponse({"snapshots": {"AA260313C00030000": {}}})
+
+        client = AlpacaOptionsClient(
+            key_id="key-id",
+            secret_key="secret-key",
+            contracts_base_url="https://paper-api.alpaca.markets",
+            data_base_url="https://data.alpaca.markets",
+            feed="indicative",
+        )
+
+        with patch("app.options_lane.alpaca.urlopen", side_effect=fake_urlopen):
+            contracts, _ = client.list_contracts(
+                status="active",
+                limit=1,
+                expiration_date_gte=date(2026, 3, 8),
+                expiration_date_lte=date(2026, 3, 15),
+            )
+            snapshots = client.get_snapshots(["AA260313C00030000"])
+
+        self.assertEqual(contracts[0]["symbol"], "AA260313C00030000")
+        self.assertIn("https://paper-api.alpaca.markets/v2/options/contracts", requests[0])
+        self.assertIn("https://data.alpaca.markets/v1beta1/options/snapshots", requests[1])
+        self.assertIn("feed=indicative", requests[1])
+        self.assertIn("AA260313C00030000", snapshots)
+
     def test_normalize_contract_record_maps_required_fields(self) -> None:
         observed_at = datetime(2026, 3, 8, 18, 0, tzinfo=timezone.utc)
         payload = normalize_contract_record(

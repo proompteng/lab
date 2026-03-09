@@ -83,10 +83,19 @@ class AlpacaApiError(RuntimeError):
 class AlpacaOptionsClient:
     """HTTP client for Alpaca options discovery and enrichment endpoints."""
 
-    def __init__(self, *, key_id: str, secret_key: str, base_url: str, feed: str) -> None:
+    def __init__(
+        self,
+        *,
+        key_id: str,
+        secret_key: str,
+        contracts_base_url: str,
+        data_base_url: str,
+        feed: str,
+    ) -> None:
         self._key_id = key_id
         self._secret_key = secret_key
-        self._base_url = base_url.rstrip("/")
+        self._contracts_base_url = contracts_base_url.rstrip("/")
+        self._data_base_url = data_base_url.rstrip("/")
         self._feed = feed
 
     def list_contracts(
@@ -99,6 +108,7 @@ class AlpacaOptionsClient:
         page_token: str | None = None,
     ) -> tuple[list[JsonObject], str | None]:
         payload = self._request_json(
+            self._contracts_base_url,
             "/v2/options/contracts",
             {
                 "status": status,
@@ -122,6 +132,7 @@ class AlpacaOptionsClient:
         if not symbols:
             return {}
         payload = self._request_json(
+            self._data_base_url,
             "/v1beta1/options/snapshots",
             {"symbols": ",".join(symbols), "feed": self._feed},
         )
@@ -148,6 +159,7 @@ class AlpacaOptionsClient:
         if not symbols:
             return {}
         payload = self._request_json(
+            self._data_base_url,
             "/v1beta1/options/bars",
             {
                 "symbols": ",".join(symbols),
@@ -173,13 +185,13 @@ class AlpacaOptionsClient:
                 normalized[str(symbol).strip().upper()] = normalized_rows
         return normalized
 
-    def _request_json(self, path: str, params: dict[str, object]) -> JsonObject:
+    def _request_json(self, base_url: str, path: str, params: dict[str, object]) -> JsonObject:
         encoded_params = urlencode(
             [(key, value) for key, value in params.items() if value is not None],
             doseq=True,
         )
         request = Request(
-            f"{self._base_url}{path}?{encoded_params}" if encoded_params else f"{self._base_url}{path}",
+            f"{base_url}{path}?{encoded_params}" if encoded_params else f"{base_url}{path}",
             headers={
                 "accept": "application/json",
                 "APCA-API-KEY-ID": self._key_id,
