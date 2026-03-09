@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 import heapq
+from itertools import chain
 import json
 from typing import Any, Iterator, cast
 
@@ -181,6 +183,7 @@ class OptionsRepository:
                     {"symbols": list(seen_symbols) or [""]},
                 ).mappings()
             }
+            upsert_rows: list[dict[str, Any]] = []
 
             for contract in contracts:
                 contract_symbol = cast(str, contract["contract_symbol"])
@@ -210,78 +213,81 @@ class OptionsRepository:
                         "provider_updated_ts",
                     )
                 )
-
-                session.execute(
-                    text(
-                        """
-                        INSERT INTO torghut_options_contract_catalog (
-                          contract_symbol,
-                          contract_id,
-                          root_symbol,
-                          underlying_symbol,
-                          expiration_date,
-                          strike_price,
-                          option_type,
-                          style,
-                          contract_size,
-                          status,
-                          tradable,
-                          open_interest,
-                          open_interest_date,
-                          close_price,
-                          close_price_date,
-                          provider_updated_ts,
-                          first_seen_ts,
-                          last_seen_ts,
-                          metadata
-                        ) VALUES (
-                          :contract_symbol,
-                          :contract_id,
-                          :root_symbol,
-                          :underlying_symbol,
-                          :expiration_date,
-                          :strike_price,
-                          :option_type,
-                          :style,
-                          :contract_size,
-                          :status,
-                          :tradable,
-                          :open_interest,
-                          :open_interest_date,
-                          :close_price,
-                          :close_price_date,
-                          :provider_updated_ts,
-                          :first_seen_ts,
-                          :last_seen_ts,
-                          CAST(:metadata AS JSONB)
-                        )
-                        ON CONFLICT (contract_symbol) DO UPDATE
-                        SET contract_id = EXCLUDED.contract_id,
-                            root_symbol = EXCLUDED.root_symbol,
-                            underlying_symbol = EXCLUDED.underlying_symbol,
-                            expiration_date = EXCLUDED.expiration_date,
-                            strike_price = EXCLUDED.strike_price,
-                            option_type = EXCLUDED.option_type,
-                            style = EXCLUDED.style,
-                            contract_size = EXCLUDED.contract_size,
-                            status = EXCLUDED.status,
-                            tradable = EXCLUDED.tradable,
-                            open_interest = EXCLUDED.open_interest,
-                            open_interest_date = EXCLUDED.open_interest_date,
-                            close_price = EXCLUDED.close_price,
-                            close_price_date = EXCLUDED.close_price_date,
-                            provider_updated_ts = EXCLUDED.provider_updated_ts,
-                            last_seen_ts = EXCLUDED.last_seen_ts,
-                            metadata = EXCLUDED.metadata
-                        """
-                    ),
+                upsert_rows.append(
                     {
                         **payload,
                         "metadata": _coerce_json(payload["metadata"]),
-                    },
+                    }
                 )
                 if changed:
                     published_rows.append(payload)
+
+            session.execute(
+                text(
+                    """
+                    INSERT INTO torghut_options_contract_catalog (
+                      contract_symbol,
+                      contract_id,
+                      root_symbol,
+                      underlying_symbol,
+                      expiration_date,
+                      strike_price,
+                      option_type,
+                      style,
+                      contract_size,
+                      status,
+                      tradable,
+                      open_interest,
+                      open_interest_date,
+                      close_price,
+                      close_price_date,
+                      provider_updated_ts,
+                      first_seen_ts,
+                      last_seen_ts,
+                      metadata
+                    ) VALUES (
+                      :contract_symbol,
+                      :contract_id,
+                      :root_symbol,
+                      :underlying_symbol,
+                      :expiration_date,
+                      :strike_price,
+                      :option_type,
+                      :style,
+                      :contract_size,
+                      :status,
+                      :tradable,
+                      :open_interest,
+                      :open_interest_date,
+                      :close_price,
+                      :close_price_date,
+                      :provider_updated_ts,
+                      :first_seen_ts,
+                      :last_seen_ts,
+                      CAST(:metadata AS JSONB)
+                    )
+                    ON CONFLICT (contract_symbol) DO UPDATE
+                    SET contract_id = EXCLUDED.contract_id,
+                        root_symbol = EXCLUDED.root_symbol,
+                        underlying_symbol = EXCLUDED.underlying_symbol,
+                        expiration_date = EXCLUDED.expiration_date,
+                        strike_price = EXCLUDED.strike_price,
+                        option_type = EXCLUDED.option_type,
+                        style = EXCLUDED.style,
+                        contract_size = EXCLUDED.contract_size,
+                        status = EXCLUDED.status,
+                        tradable = EXCLUDED.tradable,
+                        open_interest = EXCLUDED.open_interest,
+                        open_interest_date = EXCLUDED.open_interest_date,
+                        close_price = EXCLUDED.close_price,
+                        close_price_date = EXCLUDED.close_price_date,
+                        provider_updated_ts = EXCLUDED.provider_updated_ts,
+                        last_seen_ts = EXCLUDED.last_seen_ts,
+                        metadata = EXCLUDED.metadata
+                    """
+                ),
+                upsert_rows,
+            )
 
         return published_rows
 
@@ -788,6 +794,30 @@ def top_ranked_contract_rows(
     return ranked
 
 
+def merge_top_ranked_contract_rows(
+    ranked_rows: Iterable[dict[str, Any]],
+    contracts: Iterable[dict[str, Any]],
+    *,
+    observed_at: datetime,
+    hot_cap: int,
+    warm_cap: int,
+    max_open_interest: int,
+    provider_cap_bootstrap: int,
+    underlying_priority: set[str],
+) -> list[dict[str, Any]]:
+    """Merge new contract rows into the current hot/warm candidate set."""
+
+    return top_ranked_contract_rows(
+        iter(chain(ranked_rows, contracts)),
+        observed_at=observed_at,
+        hot_cap=hot_cap,
+        warm_cap=warm_cap,
+        max_open_interest=max_open_interest,
+        provider_cap_bootstrap=provider_cap_bootstrap,
+        underlying_priority=underlying_priority,
+    )
+
+
 def _tier_limits(*, hot_cap: int, warm_cap: int, provider_cap_bootstrap: int) -> tuple[int, int]:
     hot_count = min(hot_cap, max(int(provider_cap_bootstrap * 0.8), 0))
     warm_count = min(warm_cap, hot_count * 5 if hot_count > 0 else warm_cap)
@@ -880,6 +910,12 @@ def _build_ranked_contract_row(
 
     return {
         "contract_symbol": row["contract_symbol"],
+        "status": row.get("status", "active"),
+        "underlying_symbol": row["underlying_symbol"],
+        "expiration_date": row["expiration_date"],
+        "strike_price": row.get("strike_price"),
+        "close_price": row.get("close_price"),
+        "open_interest": open_interest,
         "ranking_score": ranking_score,
         "ranking_inputs": {
             "liquidity_score": round(liquidity_score, 6),

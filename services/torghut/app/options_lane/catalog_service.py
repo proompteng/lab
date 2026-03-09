@@ -7,18 +7,18 @@ from contextlib import asynccontextmanager
 import logging
 import threading
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from fastapi import FastAPI, HTTPException
 
 from .alpaca import AlpacaApiError, AlpacaOptionsClient, normalize_contract_record
 from .kafka import OptionsKafkaProducer, SequenceGenerator, build_envelope
 from .options_status import build_status_payload
-from .repository import OptionsRepository, top_ranked_contract_rows
+from .repository import OptionsRepository, merge_top_ranked_contract_rows, top_ranked_contract_rows
 from .session import session_state, utc_now
 from .settings import get_options_lane_settings
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 settings = get_options_lane_settings()
 
@@ -40,6 +40,10 @@ class _CatalogState:
             self.last_error_detail = None
             self.ready = True
 
+    def set_ready(self) -> None:
+        with self._lock:
+            self.ready = True
+
     def set_error(self, code: str, detail: str) -> None:
         with self._lock:
             self.last_error_code = code
@@ -58,7 +62,7 @@ class _CatalogState:
 _state = _CatalogState()
 _seq = SequenceGenerator()
 _repository = OptionsRepository(settings.sqlalchemy_dsn)
-_repository.ensure_rate_bucket_defaults({"contracts": (0.25, 2), "snapshots_hot": (1.0, 10), "snapshots_cold": (0.25, 5), "bars_backfill": (0.25, 2)})
+_repository.ensure_rate_bucket_defaults({"contracts": (1.0, 4), "snapshots_hot": (1.0, 10), "snapshots_cold": (0.25, 5), "bars_backfill": (0.25, 2)})
 _producer = OptionsKafkaProducer(
     bootstrap_servers=settings.kafka_bootstrap,
     security_protocol=settings.kafka_security_protocol,
@@ -158,9 +162,11 @@ def _run_discovery_cycle() -> None:
     page_count = 0
     contract_count = 0
     changed_count = 0
+    max_open_interest = 0
+    provisional_ranked_rows: list[dict[str, Any]] = []
 
     while True:
-        while not _repository.acquire_rate_bucket("contracts", 0.25, 2):
+        while not _repository.acquire_rate_bucket("contracts", 1.0, 4):
             if _state.stop_event.wait(1.0):
                 return
         contracts, page_token = _client.list_contracts(
@@ -177,6 +183,10 @@ def _run_discovery_cycle() -> None:
             if str(contract.get("symbol") or "").strip()
         ]
         contract_count += len(normalized_contracts)
+        max_open_interest = max(
+            max_open_interest,
+            max((cast(int, contract.get("open_interest") or 0) for contract in normalized_contracts), default=0),
+        )
         changed_rows = _repository.sync_contract_catalog_page(
             normalized_contracts,
             observed_at=observed_at,
@@ -184,6 +194,27 @@ def _run_discovery_cycle() -> None:
         changed_count += len(changed_rows)
         for row in changed_rows:
             _publish_contract_row(row, observed_at=observed_at)
+        provisional_ranked_rows = merge_top_ranked_contract_rows(
+            provisional_ranked_rows,
+            normalized_contracts,
+            observed_at=observed_at,
+            hot_cap=settings.options_subscription_hot_cap,
+            warm_cap=settings.options_subscription_warm_cap,
+            max_open_interest=max(max_open_interest, 1),
+            provider_cap_bootstrap=settings.options_provider_cap_bootstrap,
+            underlying_priority=settings.underlying_priority_set,
+        )
+        if provisional_ranked_rows:
+            _repository.write_subscription_state(ranked_rows=provisional_ranked_rows, observed_at=observed_at)
+            if not _state.snapshot()["ready"] and any(row["tier"] == "hot" for row in provisional_ranked_rows):
+                _state.set_ready()
+                logger.info(
+                    "options catalog provisional hot-set ready pages=%s contracts=%s hot=%s warm=%s",
+                    page_count,
+                    contract_count,
+                    sum(1 for row in provisional_ranked_rows if row["tier"] == "hot"),
+                    sum(1 for row in provisional_ranked_rows if row["tier"] == "warm"),
+                )
         if page_count == 1 or page_count % 10 == 0 or not page_token:
             logger.info(
                 "options catalog discovery progress pages=%s contracts=%s changed=%s has_next=%s",

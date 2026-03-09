@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from app.options_lane.alpaca import AlpacaOptionsClient, normalize_contract_record, normalize_snapshot_record
 from app.options_lane.options_status import build_status_payload
-from app.options_lane.repository import ranked_contract_rows, top_ranked_contract_rows
+from app.options_lane.repository import merge_top_ranked_contract_rows, ranked_contract_rows, top_ranked_contract_rows
 from app.options_lane.settings import OptionsLaneSettings
 from app.options_lane.session import session_state
 
@@ -267,6 +267,55 @@ class TestOptionsLaneRanking(TestCase):
                     },
                 ]
             ),
+            observed_at=observed_at,
+            hot_cap=1,
+            warm_cap=1,
+            max_open_interest=100,
+            provider_cap_bootstrap=2,
+            underlying_priority={"AAPL"},
+        )
+
+        self.assertEqual([row["contract_symbol"] for row in ranked], ["AAPL260320C00100000", "AAPL260320P00100000"])
+        self.assertEqual([row["tier"] for row in ranked], ["hot", "warm"])
+
+    def test_merge_top_ranked_contract_rows_promotes_better_later_page_candidates(self) -> None:
+        observed_at = datetime(2026, 3, 8, 18, 0, tzinfo=timezone.utc)
+        first_page_ranked = top_ranked_contract_rows(
+            iter(
+                [
+                    {
+                        "contract_symbol": "AAPL260320P00100000",
+                        "status": "active",
+                        "underlying_symbol": "AAPL",
+                        "expiration_date": date(2026, 3, 20),
+                        "strike_price": 100.0,
+                        "close_price": 100.0,
+                        "open_interest": 80,
+                        "ranking_inputs": {},
+                    }
+                ]
+            ),
+            observed_at=observed_at,
+            hot_cap=1,
+            warm_cap=1,
+            max_open_interest=80,
+            provider_cap_bootstrap=2,
+            underlying_priority={"AAPL"},
+        )
+        ranked = merge_top_ranked_contract_rows(
+            first_page_ranked,
+            [
+                {
+                    "contract_symbol": "AAPL260320C00100000",
+                    "status": "active",
+                    "underlying_symbol": "AAPL",
+                    "expiration_date": date(2026, 3, 20),
+                    "strike_price": 100.0,
+                    "close_price": 100.0,
+                    "open_interest": 100,
+                    "ranking_inputs": {},
+                }
+            ],
             observed_at=observed_at,
             hot_cap=1,
             warm_cap=1,
