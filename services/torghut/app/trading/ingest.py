@@ -593,24 +593,25 @@ class ClickHouseSignalIngestor:
         ):
             return self._latest_signal_ts_cache
 
-        safe_time_column = _safe_identifier(time_column, kind='column')
-        query = ' '.join(
-            [
-                'SELECT',
-                f'max({safe_time_column}) AS latest_signal_ts',
-                'FROM',
-                self.table,
-                'FORMAT JSONEachRow',
-            ]
-        )
-        try:
-            rows = self._query_clickhouse(query)
-        except Exception:
+        rows: list[dict[str, Any]] = []
+        last_error: Exception | None = None
+        for query in self._latest_signal_timestamp_queries(time_column):
+            try:
+                rows = self._query_clickhouse(query)
+                break
+            except Exception as exc:
+                last_error = exc
+                rows = []
+                continue
+        else:
             if (
                 self._latest_signal_ts_last_error_at is None
                 or now - self._latest_signal_ts_last_error_at >= LATEST_SIGNAL_TS_ERROR_LOG_COOLDOWN
             ):
-                logger.warning("Failed to query latest signal timestamp from ClickHouse; using cached value.")
+                logger.warning(
+                    "Failed to query latest signal timestamp from ClickHouse; using cached value. error=%s",
+                    last_error,
+                )
                 self._latest_signal_ts_last_error_at = now
             self._latest_signal_ts_checked_at = now
             return self._latest_signal_ts_cache
@@ -623,6 +624,42 @@ class ClickHouseSignalIngestor:
         raw = rows[0].get("latest_signal_ts")
         self._latest_signal_ts_cache = _parse_ts(raw) if raw is not None else None
         return self._latest_signal_ts_cache
+
+    def _latest_signal_timestamp_queries(self, time_column: str) -> list[str]:
+        queries: list[str] = []
+        if time_column == "event_ts":
+            database, table = _split_table(self.table)
+            queries.append(
+                ' '.join(
+                    [
+                        'SELECT',
+                        'nullIf(toUnixTimestamp(max(max_time)), 0) AS latest_signal_ts',
+                        'FROM',
+                        'system.parts',
+                        'WHERE',
+                        'active',
+                        'AND',
+                        f"database = {_quote_literal(database)}",
+                        'AND',
+                        f"table = {_quote_literal(table)}",
+                        'FORMAT JSONEachRow',
+                    ]
+                )
+            )
+
+        safe_time_column = _safe_identifier(time_column, kind='column')
+        queries.append(
+            ' '.join(
+                [
+                    'SELECT',
+                    f'max({safe_time_column}) AS latest_signal_ts',
+                    'FROM',
+                    self.table,
+                    'FORMAT JSONEachRow',
+                ]
+            )
+        )
+        return queries
 
     def commit_cursor(self, session: Session, batch: "SignalBatch") -> None:
         if batch.cursor_at is None:

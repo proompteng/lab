@@ -1,8 +1,13 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { __private } from '../torghut-quant-metrics'
 
 describe('torghut quant metrics helpers', () => {
+  afterEach(() => {
+    __private.resetLatestTaSignalFreshnessCache()
+    vi.restoreAllMocks()
+  })
+
   it('computes gross/net exposure and concentration from alpaca positions', () => {
     const positions = [
       { symbol: 'AAPL', market_value: '1000' },
@@ -104,5 +109,34 @@ describe('torghut quant metrics helpers', () => {
     expect(route.routeCoverageRatio).toBeCloseTo(0.75, 6)
     expect(route.routeUnknownRatio).toBeCloseTo(0.25, 6)
     expect(route.routeFallbackRatio).toBeCloseTo(0.25, 6)
+  })
+
+  it('prefers low-memory ta freshness metadata when available', async () => {
+    const queryJson = vi.fn().mockResolvedValue([{ as_of_ms: 1772834348000 }])
+
+    const freshness = await __private.queryLatestTaSignalFreshness({ queryJson })
+
+    expect(freshness).toEqual({
+      asOf: '2026-03-06T21:59:08.000Z',
+      source: 'ta_signals.system.parts.max_time',
+    })
+    expect(queryJson).toHaveBeenCalledTimes(1)
+    expect(queryJson.mock.calls[0]?.[0]).toContain('FROM system.parts')
+  })
+
+  it('falls back to the precise ta_signals aggregate when metadata lookup fails', async () => {
+    const queryJson = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('memory limit exceeded'))
+      .mockResolvedValueOnce([{ as_of: '2026-03-06T21:59:08.000Z' }])
+
+    const freshness = await __private.queryLatestTaSignalFreshness({ queryJson })
+
+    expect(freshness).toEqual({
+      asOf: '2026-03-06T21:59:08.000Z',
+      source: 'ta_signals.event_ts',
+    })
+    expect(queryJson).toHaveBeenCalledTimes(2)
+    expect(queryJson.mock.calls[1]?.[0]).toContain('SELECT max(event_ts) as as_of')
   })
 })
