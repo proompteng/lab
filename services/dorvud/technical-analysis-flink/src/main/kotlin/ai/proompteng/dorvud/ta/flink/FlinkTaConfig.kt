@@ -116,7 +116,7 @@ data class FlinkTaConfig(
         s3Secure = envBool("TA_S3_SECURE", false),
         s3AccessKey = env("TA_S3_ACCESS_KEY"),
         s3SecretKey = env("TA_S3_SECRET_KEY"),
-        deliveryGuarantee = envDeliveryGuarantee("TA_KAFKA_DELIVERY_GUARANTEE", DeliveryGuarantee.EXACTLY_ONCE),
+        deliveryGuarantee = envDeliveryGuarantee("TA_KAFKA_DELIVERY_GUARANTEE", DeliveryGuarantee.AT_LEAST_ONCE),
         transactionTimeoutMs = envLong("TA_KAFKA_TRANSACTION_TIMEOUT_MS", 120_000),
         clickhouseUrl = clickhouseUrl,
         clickhouseUsername = env("TA_CLICKHOUSE_USERNAME", "torghut"),

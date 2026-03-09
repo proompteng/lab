@@ -59,7 +59,7 @@ flowchart LR
 | `TA_AUTO_OFFSET_RESET`        | Replay behavior      | `earliest`                                                      |
 | `TA_CHECKPOINT_DIR`           | Checkpoints          | `s3a://flink-checkpoints/torghut/technical-analysis`            |
 | `TA_SAVEPOINT_DIR`            | Savepoints           | `s3a://flink-checkpoints/torghut/technical-analysis/savepoints` |
-| `TA_KAFKA_DELIVERY_GUARANTEE` | Kafka sink semantics | `EXACTLY_ONCE`                                                  |
+| `TA_KAFKA_DELIVERY_GUARANTEE` | Kafka sink semantics | `AT_LEAST_ONCE`                                                 |
 | `TA_MAX_OUT_OF_ORDER_MS`      | Watermark tolerance  | `2000`                                                          |
 | `TA_CLICKHOUSE_URL`           | JDBC URL             | `jdbc:clickhouse://...:8123/torghut`                            |
 | `TA_CLICKHOUSE_BATCH_SIZE`    | Sink batching        | `500`                                                           |
@@ -72,6 +72,7 @@ flowchart LR
 - `execution.checkpointing.mode=EXACTLY_ONCE`
 - `execution.checkpointing.externalized-checkpoint-retention=RETAIN_ON_CANCELLATION`
 - `job.upgradeMode=last-state` (checkpoint-aware upgrades/restarts by default)
+- `TA_KAFKA_DELIVERY_GUARANTEE=AT_LEAST_ONCE` for derived TA topic availability
 
 ### Canonical replay/backfill workflow
 
@@ -84,16 +85,17 @@ non-destructive modes) is documented canonically in:
 
 The job supports Kafka delivery guarantees (see `FlinkTaConfig.kt`):
 
-- `TA_KAFKA_DELIVERY_GUARANTEE=EXACTLY_ONCE` (recommended)
-- `TA_KAFKA_TRANSACTION_TIMEOUT_MS` must exceed checkpoint interval and broker settings.
+- `TA_KAFKA_DELIVERY_GUARANTEE=AT_LEAST_ONCE` (current production default)
+- `TA_KAFKA_DELIVERY_GUARANTEE=EXACTLY_ONCE` remains available as an opt-in profile when transactional restore risk is acceptable.
+- `TA_KAFKA_TRANSACTION_TIMEOUT_MS` must exceed checkpoint interval and broker settings when the transactional profile is enabled.
 
 As deployed (2026-02-23):
 
-- `argocd/applications/torghut/ta/flinkdeployment.yaml` sets `TA_KAFKA_DELIVERY_GUARANTEE=EXACTLY_ONCE`.
+- `argocd/applications/torghut/ta/flinkdeployment.yaml` sets `TA_KAFKA_DELIVERY_GUARANTEE=AT_LEAST_ONCE`.
 - Required validation for replay/recovery posture:
-  - broker transaction settings and timeouts remain compatible,
-  - consumers that require committed visibility use `isolation.level=read_committed`,
-  - replay behavior and idempotency/dedup in ClickHouse remain intact (ClickHouse sink remains at-least-once).
+  - replay behavior and idempotency/dedup in ClickHouse remain intact (ClickHouse sink remains at-least-once),
+  - downstream consumers tolerate duplicate derived-topic records by `(symbol,event_ts,seq)`,
+  - if the transactional profile is re-enabled, broker transaction settings and consumer isolation levels are reviewed explicitly.
 
 **Important:** ClickHouse JDBC sink is not transactional in the same way Kafka is; it must be treated as at-least-once.
 Storage keys/ORDER BY must allow dedup or “last write wins” semantics.

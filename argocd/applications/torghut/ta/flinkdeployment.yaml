@@ -113,7 +113,7 @@ spec:
                 name: torghut-ta-config
           env:
             - name: TA_KAFKA_DELIVERY_GUARANTEE
-              value: EXACTLY_ONCE
+              value: AT_LEAST_ONCE
             - name: TA_KAFKA_USERNAME
               value: torghut-ws
             - name: TA_KAFKA_PASSWORD

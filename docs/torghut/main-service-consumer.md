@@ -16,7 +16,7 @@ How the main torghut service should consume TA outputs and switch sources safely
 ## Client config
 
 - `enable.idempotence=true` (producer, if writing responses) - not required for consumer.
-- `isolation.level=read_committed` when TA sink uses transactions (default profile).
+- `isolation.level=read_committed` only if the TA sink is explicitly switched back to a transactional profile.
 - `auto.offset.reset=latest` for steady state; `earliest` for backfill/replay tools.
 - SASL/TLS from Strimzi KafkaUser secret; truststore mounted; set `ssl.endpoint.identification.algorithm=HTTPS`.
 
