@@ -4,6 +4,7 @@ import org.apache.flink.connector.base.DeliveryGuarantee
 import java.io.Serializable
 
 data class OptionsTaConfig(
+  val feed: String,
   val bootstrapServers: String,
   val tradesTopic: String,
   val quotesTopic: String,
@@ -99,6 +100,7 @@ data class OptionsTaConfig(
       val clickhouseUrl = envEither("OPTIONS_TA_CLICKHOUSE_URL", "TA_CLICKHOUSE_URL")
 
       return OptionsTaConfig(
+        feed = envEither("OPTIONS_TA_FEED", "ALPACA_FEED", "opra")!!,
         bootstrapServers = envEither("OPTIONS_TA_KAFKA_BOOTSTRAP", "TA_KAFKA_BOOTSTRAP", "kafka-kafka-bootstrap.kafka:9092")!!,
         tradesTopic = envEither("TOPIC_OPTIONS_TRADES", default = "torghut.options.trades.v1")!!,
         quotesTopic = envEither("TOPIC_OPTIONS_QUOTES", default = "torghut.options.quotes.v1")!!,

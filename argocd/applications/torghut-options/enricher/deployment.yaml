@@ -55,6 +55,11 @@ spec:
                 secretKeyRef:
                   name: torghut-options-alpaca
                   key: APCA_API_SECRET_KEY
+            - name: APCA_API_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-options-alpaca
+                  key: APCA_API_BASE_URL
             - name: TORGHUT_OPTIONS_VERSION
               value: v0.563.0-35-g2b9824ae
             - name: TORGHUT_OPTIONS_COMMIT
