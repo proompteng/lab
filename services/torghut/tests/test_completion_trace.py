@@ -22,6 +22,28 @@ from app.trading.completion import (
 )
 
 
+def _truthful_empirical_payload(
+    *,
+    job_run_id: str,
+    dataset_snapshot_ref: str = 'snapshot-1',
+) -> dict[str, object]:
+    return {
+        'promotion_authority_eligible': True,
+        'artifact_authority': {
+            'provenance': 'historical_market_replay',
+            'maturity': 'empirically_validated',
+            'authoritative': True,
+            'placeholder': False,
+        },
+        'lineage': {
+            'dataset_snapshot_ref': dataset_snapshot_ref,
+            'job_run_id': job_run_id,
+            'runtime_version_refs': ['services/torghut@sha256:abc'],
+            'model_refs': ['models/candidate@sha256:def'],
+        },
+    }
+
+
 class TestCompletionTrace(TestCase):
     def setUp(self) -> None:
         engine = create_engine(
@@ -94,10 +116,6 @@ class TestCompletionTrace(TestCase):
         self.assertEqual(gate['latest_run'], 'sim-2026-03-06-full-day')
 
     def test_doc29_completion_status_derives_empirical_jobs_gate(self) -> None:
-        benchmark_payload = {
-            'artifact_authority': {'authoritative': True},
-            'lineage': {'missing_families': []},
-        }
         with self.session_local() as session:
             for job_type in (
                 'benchmark_parity',
@@ -117,7 +135,9 @@ class TestCompletionTrace(TestCase):
                         promotion_authority_eligible=True,
                         dataset_snapshot_ref='snapshot-1',
                         artifact_refs=[f's3://artifacts/{job_type}.json'],
-                        payload_json=benchmark_payload,
+                        payload_json=_truthful_empirical_payload(
+                            job_run_id=f'job-{job_type}',
+                        ),
                     )
                 )
             session.commit()
@@ -174,10 +194,6 @@ class TestCompletionTrace(TestCase):
                 'janus_event_car',
                 'janus_hgrm_reward',
             ):
-                payload = {
-                    'artifact_authority': {'authoritative': True},
-                    'lineage': {'missing_families': []},
-                }
                 session.add(
                     VNextEmpiricalJobRun(
                         run_id='run-1',
@@ -190,7 +206,9 @@ class TestCompletionTrace(TestCase):
                         promotion_authority_eligible=True,
                         dataset_snapshot_ref='snapshot-1',
                         artifact_refs=[f's3://artifacts/{job_type}.json'],
-                        payload_json=payload,
+                        payload_json=_truthful_empirical_payload(
+                            job_run_id=f'job-{job_type}',
+                        ),
                     )
                 )
             session.commit()
@@ -263,10 +281,9 @@ class TestCompletionTrace(TestCase):
                         promotion_authority_eligible=True,
                         dataset_snapshot_ref='snapshot-1',
                         artifact_refs=[f's3://artifacts/{job_type}.json'],
-                        payload_json={
-                            'artifact_authority': {'authoritative': True},
-                            'lineage': {'missing_families': []},
-                        },
+                        payload_json=_truthful_empirical_payload(
+                            job_run_id=f'job-{job_type}',
+                        ),
                     )
                 )
             session.commit()
@@ -342,10 +359,9 @@ class TestCompletionTrace(TestCase):
                         promotion_authority_eligible=True,
                         dataset_snapshot_ref='snapshot-1',
                         artifact_refs=[f's3://artifacts/{job_type}.json'],
-                        payload_json={
-                            'artifact_authority': {'authoritative': True},
-                            'lineage': {'missing_families': []},
-                        },
+                        payload_json=_truthful_empirical_payload(
+                            job_run_id=f'job-{job_type}',
+                        ),
                     )
                 )
 
@@ -501,10 +517,9 @@ class TestCompletionTrace(TestCase):
                         promotion_authority_eligible=True,
                         dataset_snapshot_ref='snapshot-1',
                         artifact_refs=[f's3://artifacts/{job_type}.json'],
-                        payload_json={
-                            'artifact_authority': {'authoritative': True},
-                            'lineage': {'missing_families': []},
-                        },
+                        payload_json=_truthful_empirical_payload(
+                            job_run_id=f'job-{job_type}',
+                        ),
                     )
                 )
             session.commit()
@@ -570,10 +585,9 @@ class TestCompletionTrace(TestCase):
                         promotion_authority_eligible=True,
                         dataset_snapshot_ref='snapshot-1',
                         artifact_refs=[f's3://artifacts/{job_type}.json'],
-                        payload_json={
-                            'artifact_authority': {'authoritative': True},
-                            'lineage': {'missing_families': []},
-                        },
+                        payload_json=_truthful_empirical_payload(
+                            job_run_id=f'job-{job_type}',
+                        ),
                     )
                 )
 
@@ -675,10 +689,9 @@ class TestCompletionTrace(TestCase):
                         promotion_authority_eligible=True,
                         dataset_snapshot_ref='snapshot-1',
                         artifact_refs=[f's3://artifacts/{job_type}.json'],
-                        payload_json={
-                            'artifact_authority': {'authoritative': True},
-                            'lineage': {'missing_families': []},
-                        },
+                        payload_json=_truthful_empirical_payload(
+                            job_run_id=f'job-{job_type}',
+                        ),
                     )
                 )
             session.add(
