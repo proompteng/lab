@@ -204,7 +204,10 @@ class SerializationSchemasTest {
     assertTrue(baos.size() > 0)
   }
 
-  private fun <T : Any> assertKryoCopy(type: Class<T>, original: T) {
+  private fun <T : Any> assertKryoCopy(
+    type: Class<T>,
+    original: T,
+  ) {
     val serializer = KryoSerializer(type, SerializerConfigImpl())
     val copy = serializer.copy(original)
     assertEquals(original, copy)
