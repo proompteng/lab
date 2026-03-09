@@ -2,491 +2,262 @@
 
 ## Decision
 
-Jangar’s `POST /openai/v1/chat/completions` streaming path should emit a dedicated OpenWebUI side-band event in
-`choices[0].delta.jangar_event` so OpenWebUI can render rich, non-executable cards for Codex activity. Jangar keeps all execution authority; the browser never owns tool execution.
+Jangar’s `POST /openai/v1/chat/completions` streaming response should support a dedicated OpenWebUI-only side-band `jangar_event` contract carried on `choices[0].delta.jangar_event` so OpenWebUI can render richer Codex activity cards and tool cards.
 
-Execution behavior for non-OpenWebUI clients remains unchanged and plain OpenAI-compatible streaming text is still the default.
+Execution authority remains 100% in Jangar/Jangar’s backend. No browser-owned execution and no migration to OpenAI `tool_calls`.
 
-## References
+Plain OpenAI-compatible completion behavior remains the default and must stay unchanged for non-OpenWebUI clients.
 
-- OpenWebUI Rich UI docs: `https://docs.openwebui.com/features/extensibility/plugin/development/rich-ui`
-- Jangar route: `services/jangar/src/routes/openai/v1/chat/completions.ts`
-- Jangar request/stream/state flow: `services/jangar/src/server/chat.ts`
-- Streaming encoder: `services/jangar/src/server/chat-completion-encoder.ts`
-- Legacy tool renderer: `services/jangar/src/server/chat-tool-event-renderer.ts`
-- Tool event decoder: `services/jangar/src/server/chat-tool-event.ts`
-- OpenWebUI deployment notes: `docs/jangar/openwebui.md`
-- OpenWebUI chat e2e: `services/jangar/tests/openwebui-chat.e2e.ts`
-- Canonical Codex stream contract: `packages/codex/src/app-server-client.ts`
-- Codex stream tests: `packages/codex/src/app-server-client.events.test.ts`
-- Jangar completion tests: `services/jangar/src/server/__tests__/chat-completions.test.ts`
-- Jangar encoder tests: `services/jangar/src/server/__tests__/chat-completion-encoder.test.ts`
-- OpenWebUI persistence stores: `services/jangar/src/server/chat-thread-store.ts`, `services/jangar/src/server/chat-transcript-store.ts`, `services/jangar/src/server/worktree-store.ts`
+## Production objective for this design
 
-## Scope and current implementation baseline
+- Make `jangar_event` deterministic, versioned, and replay-safe.
+- Define strict lane semantics for message, reasoning, plan, rate-limit, tool, usage, and error activity.
+- Define compact persistence contracts for stream rebuild determinism and spillover rendering.
+- Enable OpenWebUI incremental parsing/reduction and offline reload determinism without replaying raw SSE.
+- Preserve compatibility for streaming and non-stream callers today.
 
-### Confirmed hard constraints from current code
+## Current implementation baseline (verified)
 
-- OpenWebUI clients send `x-openwebui-chat-id`; `resolveChatClientKind` maps this to `openwebui`.
-- Streaming path is produced only by `handleChatCompletionEffect` via `toSseResponse`; it sets `text/event-stream` and emits keepalive frames.
-- Non-stream requests are proxied through the same streaming handler by:
-  - `runChatCompletionWithModeSupport` cloning request
-  - forcing `stream: true`
-  - forcing `stream_options.include_usage: true`
-  - converting SSE frames in `convertSseToChatCompletionResponse`
-- Current encoder emits only OpenAI-standard fields in `delta` (`content`, `reasoning_content`), `choices[].usage`, and `error`.
-- No `tool_calls` are emitted today.
-- `ChatCompletionStreamSession` currently treats:
-  - `plan` via markdown conversion (`**Plan**` and todo list)
-  - `rate_limits` as one-time markdown block
-  - `error` by terminalizing and dropping subsequent non-usage stream deltas.
-- Existing non-stream conversion is content-only:
-  - `parseSseFrames` parses only `data:` lines
-  - only `delta.content`, `message.content`, and usage counters are preserved.
+- Streaming request shape in `services/jangar/src/server/chat.ts` only requires `stream: true` in parsed body; non-stream requests are proxied by injecting `stream: true` and `stream_options.include_usage: true`.
+- OpenWebUI identity resolution is based on
+  - `x-openwebui-chat-id` (fallback client kind `openwebui`) and
+  - `x-jangar-client-kind` when set.
+- The exact precedence in `resolveChatClientKind` is explicit:
+  - `trade-execution` and `discord` are routed via explicit values.
+  - `x-jangar-client-kind: openwebui` maps to `openwebui`.
+  - If an unknown non-empty `x-jangar-client-kind` is present, client kind becomes `unknown` even if `x-openwebui-chat-id` is present.
+  - If no client-kind header is set and `x-openwebui-chat-id` is present, client kind becomes `openwebui`.
+- `ChatCompletionEncoder` currently emits only standard OpenAI chunk fields and legacy markdown for plan/rate-limits.
+- Tool and reasoning sanitizer behavior is already implemented in
+  - `services/jangar/src/server/chat-completion-encoder.ts`
+  - `services/jangar/src/server/chat-tool-event-renderer.ts`
+- `convertSseToChatCompletionResponse` already collapses SSE into JSON by reading `data:` frames and preserving only `choices[].delta.message.content` and usage.
 
-### Gaps this design closes
+## Scope constraints
 
-- Define a versioned, deterministic payload contract for OpenWebUI (`jangar_event`) that is independent from current renderer behavior.
-- Define lane-by-lane reducer operations and persistence semantics.
-- Specify spillover (`renderRef`) lifecycle and deterministic replay storage.
-- Define OpenWebUI parsing/reduction patch points and non-stream fallback expectations.
+- This design stays server-execution-authoritative.
+- No browser-owned tool execution, no tool sandbox handoff, and no OpenAI `tool_calls` surface.
+- No schema changes in `~/.openai` external interfaces are assumed.
+- This design is for production readiness of the OpenWebUI rich UI stream and metadata contracts; no OpenWebUI runtime code in this repository is assumed.
 
-## Explicit constraints
+## Transport gates and non-stream fallback
 
-- Jangar remains the only execution authority.
-- OpenWebUI never triggers/executes tools from the emitted contract.
-- No `window.args` dependency.
-- No tool registration from Jangar into OpenWebUI.
-- `stream: false` responses remain plain completion JSON.
+### Baseline today
 
-## Transport and feature gates
+1. Jangar must receive a stream request.
+2. `chat.ts` currently treats any openwebui-class client (`openwebui`/`discord`) as eligible for stateful chat behavior.
 
-Rich mode is active only when all conditions below are true:
+### Target rich rendering activation (Phase 1)
 
-- Streaming request.
-- Client is OpenWebUI:
-  - `x-openwebui-chat-id` present, and/or
-  - `x-jangar-client-kind === 'openwebui'`
-- `JANGAR_OPENWEBUI_RICH_RENDER_ENABLED === 'true'`
-- Header `x-jangar-openwebui-render-mode === 'rich-ui-v1'`
-- Optional allowlist guard (if configured): `JANGAR_OPENWEBUI_RICH_ALLOWED_CHAT_IDS` contains chat id
+Rich UI emission for a request is active only if:
 
-If any check fails, Jangar behaves exactly as today.
+- request is stream.
+- client is OpenWebUI by current baseline classification (`resolveChatClientKind === 'openwebui'` and not overridden to `unknown` by a non-empty explicit client-kind header).
+- `JANGAR_OPENWEBUI_RICH_RENDER_ENABLED === 'true'`.
+- optional header gate `x-jangar-openwebui-render-mode === 'rich-ui-v1'` is enabled.
+- optional chat allowlist `JANGAR_OPENWEBUI_RICH_ALLOWED_CHAT_IDS` contains the value of `x-openwebui-chat-id`.
 
-### Non-stream fallback behavior
+If any condition fails, behavior remains legacy-only:
 
-- Jangar’s proxy path (`runChatCompletionWithModeSupport`) always emits a synthetic `stream: true` request and then converts SSE to JSON.
-- In conversion, non-open fields inside chunks, including `thread_id`, `turn_number`, unknown delta keys, and `jangar_event`, are ignored.
-- Therefore non-stream clients are guaranteed text-first responses with optional `usage` and no rich metadata.
+- no `jangar_event` emission.
+- stream content continues to be OpenAI standard only (`content`, `reasoning_content`, legacy markdown).
+- non-openwebui clients are unaffected.
 
-### Stream mode behavior when rich rendering is active
+### Non-stream fallback
 
-- Existing OpenAI fields are preserved verbatim for compatibility.
-- `jangar_event` is additive and appears on any delta chunk.
-- Unknown/invalid `jangar_event` must be ignored by downstream clients.
+`runChatCompletionWithModeSupport` always proxy-converts to a streaming internal request. The final conversion in `convertSseToChatCompletionResponse` ignores any `jangar_event` payloads and unknown frame keys.
 
-## `jangar_event` contract (v1)
+The non-stream path preserves:
 
-`jangar_event` is a side-band object emitted in `choices[0].delta.jangar_event`.
+- response object schema.
+- `message.content`.
+- optional usage.
 
-### Envelope schema
+The non-stream path ignores:
+
+- `thread_id` and `turn_number`.
+- inline reason content except where surfaced in text.
+- any custom metadata fields.
+
+## `jangar_event` contract
+
+### Envelope schema and versioning
 
 ```ts
-type JangarRenderLane = 'message' | 'reasoning' | 'plan' | 'rate_limits' | 'tool' | 'usage' | 'error'
+export type JangarRenderLane = 'message' | 'reasoning' | 'plan' | 'rate_limits' | 'tool' | 'usage' | 'error'
 
-type JangarRenderOp = 'append_text' | 'merge' | 'replace' | 'complete'
+export type JangarRenderOp = 'append_text' | 'merge' | 'replace' | 'complete'
 
-type JangarRenderVersion = 'v1'
+export type JangarRenderVersion = 'v1'
 
-type JangarEventSource = {
-  method: string // upstream notification/method correlation
+export type JangarRenderEventSource = {
+  method: string // upstream notification/method used by Codex
   toolKind?: 'command' | 'file' | 'mcp' | 'webSearch' | 'dynamicTool' | 'imageGeneration'
-  sourceEventId?: string // upstream event id, if available
+  sourceEventId?: string
 }
 
-type JangarPreview = {
+export type JangarPreview = {
   title?: string
   subtitle?: string
   badge?: string
   status?: 'pending' | 'in_progress' | 'completed' | 'failed'
 }
 
-type JangarRenderRef = {
+export type JangarRenderRef = {
   id: string
-  kind: JangarRenderLane | 'command' | 'file' | 'mcp' | 'webSearch' | 'dynamicTool' | 'imageGeneration'
+  kind: 'command' | 'file' | 'mcp' | 'webSearch' | 'dynamicTool' | 'imageGeneration'
   digest: string
   sizeBytes: number
-  expiresAt: string // RFC 3339 UTC
+  expiresAt: string
 }
 
-type JangarEventV1 = {
+export type JangarEventV1 = {
   version: JangarRenderVersion
   mode: 'rich-ui-v1'
-  seq: number // monotonically increments per assistant turn
-  logicalId: string // deterministic by lane/entity
+  seq: number // monotonic stream position within assistant turn
+  logicalId: string // deterministic by lane+entity
   lane: JangarRenderLane
   op: JangarRenderOp
-  revision: number // per logicalId, monotonically changes on state mutation
-  ts: string // RFC 3339 UTC
-  source: JangarEventSource
+  revision: number // per logicalId monotonic mutation counter
+  ts: string // RFC3339 UTC
+  source: JangarRenderEventSource
   payload: Record<string, unknown>
   preview?: JangarPreview
   renderRef?: JangarRenderRef
 }
 ```
 
-### Deterministic IDs and sequencing
+### Deterministic IDs and ordering
 
 - `logicalId` formats:
   - `assistant:message`
   - `assistant:reasoning`
-  - `assistant:plan:current`
+  - `assistant:plan`
   - `assistant:rate-limits`
   - `assistant:usage`
   - `assistant:error`
-  - `tool:<toolKind>:<toolId>`
-- `seq` is incremented for every emitted `jangar_event` (no gaps required, start at `1`).
-- `revision` is bumped only when reducer state changes for that logical entity.
+  - `tool:${toolKind}:${toolId}`
+- `seq` is local to one assistant turn and starts at `1`.
+- `revision` increments only when reducer state changes for the logical entity.
+- `seq` and `revision` are independent; both must be validated.
 
-### Compatibility and dedupe
+### Compatibility and drop rules
 
-- OpenWebUI must accept only `version: 'v1'`; unknown versions are ignored and logged.
-- Unknown `lane` values are ignored.
-- Unknown `op` values in `v1` are treated as:
-  - `merge` when payload is object,
-  - ignore when payload is primitive.
-- Dedup/drop rule:
-  - ignore `seq <= lastSeq`
-  - ignore if `revision <= lastRevisionByLogicalId[logicalId]`
-  - allow repeated `complete` only if revision increases
-- Replay determinism rule: reduction is driven by persisted state only (see below), not re-parsing raw SSE history.
+- only `version: 'v1'` is accepted.
+- Unknown `lane` is dropped.
+- Unknown `op` handling is
+  - treat as `merge` for object-like payloads.
+  - ignore if payload is scalar.
+- drop events when:
+  - `seq <= lastSeq`
+  - `revision <= lastRevisionByLogicalId[logicalId]`
 
-## Lane mapping and reducer semantics (v1)
+## Source mapping and lane contracts
 
-For each lane, Jangar emits deterministic reducer deltas and OpenWebUI reducer consumes by `seq` order.
+Source mapping references actual Codex stream outputs in `packages/codex/src/app-server-client.ts` and current Jangar adapters.
 
-### Shared source contract
+### lane `message`
 
-Canonical source stream is `StreamDelta` from `packages/codex/src/app-server-client.ts`.
+- source: `StreamDelta.type === 'message'`
+- source notifications: `item/agentMessage/delta`
+- logicalId: `assistant:message`
+- op: `append_text`
+- payload: `{ text: string }`
+- reducer: append `text`, output compact text for display.
 
-### Lane: `message`
+### lane `reasoning`
 
-- Source: `StreamDelta.type === 'message'`
-- Upstream context: regular `item/agentMessage/delta`
-- `logicalId`: `assistant:message`
-- `op`: `append_text`
-- `payload`: `{ text: string }`
+- source: `StreamDelta.type === 'reasoning'`
+- source notifications: `item/reasoning/summaryTextDelta`, `item/reasoning/textDelta`
+- logicalId: `assistant:reasoning`
+- op: `append_text`
+- payload: `{ text: string; source?: 'summaryTextDelta' | 'textDelta' }`
+- reducer: append text.
 
-Reducer:
+### lane `plan`
 
-- Append `text` to entity `payload.text`.
-- Keep reducer output as the canonical stream message text.
-- OpenWebUI should ignore duplicates based on `revision`.
+- source: `StreamDelta.type === 'plan'`
+- source notification: `turn/plan/updated`
+- logicalId: `assistant:plan`
+- op: `replace`
+- payload: `{ explanation: string | null; plan: Array<{ step: string; status: 'pending' | 'in_progress' | 'completed' }> }`
+- reducer: replace entire plan snapshot and recompute aggregate status.
 
-### Lane: `reasoning`
+### lane `rate_limits`
 
-- Source: `StreamDelta.type === 'reasoning'`
-- Upstream context: `item/reasoning/summaryTextDelta`, `item/reasoning/textDelta`
-- `logicalId`: `assistant:reasoning`
-- `op`: `append_text`
-- `payload`: `{ text: string; source?: 'summaryTextDelta' | 'textDelta' }`
+- source: `StreamDelta.type === 'rate_limits'`
+- source notification: `account/rateLimits/updated`
+- logicalId: `assistant:rate-limits`
+- op: `replace`
+- payload: `RateLimitSnapshot` compact shape
+  - `planType?: string`
+  - `primary?: { usedPercent?: number; windowDurationMins?: number; resetsAt?: number }`
+  - `secondary?: { usedPercent?: number; windowDurationMins?: number; resetsAt?: number }`
+  - `credits?: { hasCredits?: boolean; unlimited?: boolean; balance?: string }`
+- reducer: update only when snapshot diff is meaningful and publish latest value.
 
-Reducer:
+### lane `tool`
 
-- Append text to `payload.text`.
-- If `source === 'summaryTextDelta'`, mark summary completion candidate in preview (`preview.subtitle`).
-- On terminal usage/finalization set status `completed`.
+- source: `StreamDelta.type === 'tool'`
+- source event `toolKind` mapping:
+  - `command` from `commandExecution`
+    - started/completed: `item/started`, `item/completed`
+    - output: `item/commandExecution/outputDelta`
+    - terminal input: `item/commandExecution/terminalInteraction`
+    - op strategy: `merge` / `append_text` / `complete`
+    - logicalId: `tool:command:<toolId>`
+  - `file` from `fileChange`
+    - started/completed: `item/started`, `item/completed`
+    - output: `item/fileChange/outputDelta`
+    - diff updates: `turn/diff/updated`
+    - op strategy: `replace` / `append_text` / `merge`
+    - logicalId: `tool:file:<toolId>`
+  - `mcp` from `mcpToolCall`
+    - started/completed: `item/started`, `item/completed`
+    - progress: `item/mcpToolCall/progress`
+    - op strategy: `merge` / `replace`
+    - logicalId: `tool:mcp:<toolId>`
+  - `webSearch` from `webSearch`
+    - started/completed: `item/started`, `item/completed`
+    - logicalId: `tool:webSearch:<toolId>`
+    - op: `replace`
+  - `dynamicTool` from `dynamicToolCall`
+    - started/completed: `item/started`, `item/completed`
+    - logicalId: `tool:dynamicTool:<toolId>`
+    - op: `replace`
+  - `imageGeneration` from `imageGeneration`
+    - started/completed: `item/completed` in current stream shape
+    - logicalId: `tool:imageGeneration:<toolId>`
+    - op: `replace`
 
-### Lane: `plan`
+For all tool lanes:
 
-- Source: `StreamDelta.type === 'plan'`
-- Upstream context: `turn/plan/updated`
-- `logicalId`: `assistant:plan:current`
-- `op`: `replace`
-- `payload`: `{ explanation: string | null; plan: Array<{ step: string; status: 'pending' | 'in_progress' | 'completed' }> }`
+- payloads remain compact and UI-safe.
+- large fields should be shifted into `renderRef` only after spill.
+- command output sanitizer from existing stream behavior (`stripReasoningDetails`) is applied before reducer state update.
 
-Reducer:
+### lane `usage`
 
-- Replace full plan snapshot.
-- Compute aggregate `status` as `completed | in_progress | pending`.
-- Preserve compact list only; no large nested objects.
+- source: `StreamDelta.type === 'usage'`
+- source notifications: `thread/tokenUsage/updated`
+- logicalId: `assistant:usage`
+- op: `replace`
+- payload: `{ input_tokens?: number; output_tokens?: number; total_tokens?: number; cached_tokens?: number; reasoning_tokens?: number }`
+- reducer: keep latest compact normalized totals.
 
-### Lane: `rate_limits`
+### lane `error`
 
-- Source: `StreamDelta.type === 'rate_limits'`
-- Upstream context: `account/rateLimits/updated`
-- `logicalId`: `assistant:rate-limits`
-- `op`: `replace`
-- `payload`:
+- source: `StreamDelta.type === 'error'` plus internal errors from `onInternalError`
+- logicalId: `assistant:error`
+- op: `replace`
+- payload: `{ message: string; code: string; type: string; source: 'upstream' | 'jangar' | 'client'; detail?: string }`
+- reducer: terminal error row; visible but should not crash stream.
 
-  ```ts
-  {
-    planType?: string
-    primary?: { usedPercent?: number; windowDurationMins?: number; resetsAt?: number }
-    secondary?: { usedPercent?: number; windowDurationMins?: number; resetsAt?: number }
-    credits?: { hasCredits?: boolean; unlimited?: boolean; balance?: string }
-  }
-  ```
+## Replay state model
 
-Reducer:
-
-- Replace snapshot when any value changes.
-- Keep only latest `resetsAt` and compact summary per window.
-
-### Lane: `tool` for command
-
-- Source: `StreamDelta.type === 'tool'` and `toolKind === 'command'`
-- Upstream context:
-  - `item/started` (`type === 'commandExecution'`)
-  - `item/commandExecution/outputDelta`
-  - `item/commandExecution/terminalInteraction`
-  - `item/completed` (`type === 'commandExecution'`)
-- `logicalId`: `tool:command:<toolId>`
-- `op` sequence:
-  - `merge` for metadata/status
-  - `append_text` for output/input previews
-  - `complete` on completion
-- `payload`:
-
-  ```ts
-  {
-    status: 'started' | 'delta' | 'completed'
-    command?: string
-    title?: string
-    outputPreview?: string
-    outputLines?: number
-    inputPreview?: string
-    exitCode?: number
-    durationMs?: number
-    errorCode?: string
-    errorMessage?: string
-  }
-  ```
-
-Reducer:
-
-- Preserve existing sanitizer behavior (strip `<details type="reasoning">...` from command output).
-- Collapse duplicate command deltas by `revision`.
-- If output grows over budget, create `renderRef`.
-
-### Lane: `tool` for file
-
-- Source: `StreamDelta.type === 'tool'` and `toolKind === 'file'`
-- Upstream context:
-  - `item/started` (`type === 'fileChange'`)
-  - `item/fileChange/outputDelta`
-  - `item/completed` (`type === 'fileChange'`)
-  - synthetic `turn/diff/updated` snapshot
-- `logicalId`: `tool:file:<toolId>`
-- `op` sequence:
-  - `replace` for started/completed snapshots
-  - `append_text` for delta previews
-  - `merge` for metadata updates
-- `payload`: `{ status?: string; title?: string; changedPaths?: string[]; diffLines?: number; diffPreviewLines?: string[] }`
-
-Reducer:
-
-- Create compact entity on started.
-- On diff updates, append sanitized preview and count lines.
-- On completion, mark terminal status and final summary.
-
-### Lane: `tool` for mcp
-
-- Source: `StreamDelta.type === 'tool'` and `toolKind === 'mcp'`
-- Upstream context:
-  - `item/started` (`type === 'mcpToolCall'`)
-  - `item/mcpToolCall/progress`
-  - `item/completed` (`type === 'mcpToolCall'`)
-- `logicalId`: `tool:mcp:<toolId>`
-- `op` sequence:
-  - `merge` for started/progress
-  - `replace` for completion snapshot
-  - optional `complete` for terminal metadata
-- `payload`: `{ toolName?: string; serverName?: string; status: string; arguments?: unknown; resultSummary?: string; errorSummary?: string; progressMessage?: string }`
-
-Reducer:
-
-- Keep latest argument/result summary compactly.
-- Send large result/error payloads to `renderRef`.
-
-### Lane: `tool` for webSearch
-
-- Source: `StreamDelta.type === 'tool'` and `toolKind === 'webSearch'`
-- Upstream context: `item/started`, `item/completed`
-- `logicalId`: `tool:webSearch:<toolId>`
-- `op`: `replace`
-- `payload`: `{ status: string; query?: string; resultCount?: number; topHitTitle?: string; urlCount?: number }`
-
-Reducer:
-
-- Replace full card summary each event.
-- Do not include large search result payload inline.
-
-### Lane: `tool` for dynamicTool
-
-- Source: `StreamDelta.type === 'tool'` and `toolKind === 'dynamicTool'`
-- Upstream context: `item/started`/`item/completed` (`type === 'dynamicToolCall'`)
-- `logicalId`: `tool:dynamicTool:<toolId>`
-- `op`: `replace`
-- `payload`: `{ status: string; toolName?: string; success?: boolean; arguments?: unknown; contentItems?: unknown[]; durationMs?: number }`
-
-Reducer:
-
-- Replace snapshot on each meaningful event.
-- Use compact item counts and status summary in preview.
-
-### Lane: `tool` for imageGeneration
-
-- Source: `StreamDelta.type === 'tool'` and `toolKind === 'imageGeneration'`
-- Upstream context: `item/completed` (`type === 'imageGeneration'`)
-- `logicalId`: `tool:imageGeneration:<toolId>`
-- `op`: `replace`
-- `payload`: `{ status: string; revisedPrompt?: string; resultUrl?: string; width?: number; height?: number; model?: string }`
-
-Reducer:
-
-- Replace snapshot and render compact card summary.
-- Thumbnail uses `resultUrl` when available.
-
-### Lane: `usage`
-
-- Source: `StreamDelta.type === 'usage'`, final `session.finalize` usage chunk
-- Upstream context: `thread/tokenUsage/updated`
-- `logicalId`: `assistant:usage`
-- `op`: `replace`
-- `payload`: `{ input_tokens: number; output_tokens: number; total_tokens: number; cached_tokens?: number; reasoning_tokens?: number }`
-
-Reducer:
-
-- Keep latest normalized usage counts only.
-- Store as compact totals.
-
-### Lane: `error`
-
-- Source: `StreamDelta.type === 'error'` and internal errors from encoder finalizer/abort
-- `logicalId`: `assistant:error`
-- `op`: `replace`
-- `payload`: `{ message: string; code: string; type: string; source: 'upstream' | 'jangar' | 'client'; detail?: string }`
-
-Reducer:
-
-- Replace terminal error entry.
-- Surface error card and mark stream terminal state.
-
-## Deterministic replayable persistence format
-
-OpenWebUI must persist a compact serialized state per assistant message and rehydrate UI from this state, never from raw event streams.
-
-### Persisted state schema
+### In-memory UI state model (OpenWebUI)
 
 ```ts
-type JangarRenderEntity = {
-  id: string
-  lane: JangarRenderLane
-  kind?: JangarRenderLane | 'command' | 'file' | 'mcp' | 'webSearch' | 'dynamicTool' | 'imageGeneration'
-  logicalId: string
-  revision: number
-  seq: number
-  status: 'pending' | 'in_progress' | 'completed' | 'failed'
-  payload: Record<string, unknown>
-  preview: Record<string, unknown>
-  renderRef?: JangarRenderRef
-  createdAt: string
-  updatedAt: string
-}
-
-type JangarRenderState = {
-  version: 'v1'
-  mode: 'rich-ui-v1'
-  turnId: string
-  chatId?: string
-  threadId?: string
-  laneOrder: string[] // deterministic render order
-  lastSeq: number
-  lastRevisionByLogicalId: Record<string, number>
-  entities: Record<string, JangarRenderEntity>
-  entityOrder: string[] // stable ordering of entities by lifecycle rules
-  stateHash: string // deterministic hash for rebuild verification
-  updatedAt: string
-}
-```
-
-### Reducer persist rules
-
-- State updates occur on every accepted `jangar_event`.
-- `laneOrder` baseline for non-tool lanes is fixed: `message`, `reasoning`, `plan`, `rate_limits`, `usage`, `error`.
-- Tool entities preserve first-seen ordering; terminal completion appends to end in `seq` order.
-- On turn finalization, state is stored as persisted metadata only for the assistant message that carries the final usage/finish event.
-- On load/reload:
-  - load stored `JangarRenderState`
-  - verify `version === 'v1'` and `stateHash`
-  - if malformed/old version, discard and rebuild from available inline history; this is not a hard failure.
-
-### Hash and integrity
-
-- `stateHash` is computed over stable-json serialization of:
-  - `version`, `mode`, `lastSeq`, `entityOrder`, and each entity (`payload`, `preview`, `status`, `renderRef.id`, `revision`).
-- Any mismatch on reload triggers a replay mismatch metric and fallback to rebuild.
-
-## Spillover and `renderRef` lifecycle
-
-### Limits
-
-- `INLINE_PREVIEW_MAX_BYTES_PER_ENTITY = 8192`
-- `INLINE_PREVIEW_MAX_TOTAL_BYTES = 131072`
-- `COMMAND_OUTPUT_TEXT_MAX_BYTES = 16384`
-- `FILE_DIFF_MAX_LINES = 160`
-- `MCP_RESULT_MAX_BYTES = 12288`
-- `SPILLOVER_THRESHOLD_PCT = 85`
-
-### Spill algorithm
-
-1. Apply update to entity payload/preview.
-2. If entity exceeds inline max, truncate to boundary-safe boundaries and create/update `renderRef`.
-3. If total inline bytes exceed total budget, mark low-priority event classes as truncated and keep only summary preview.
-4. Preserve event acceptance and revision bumps even when spillover occurs.
-5. Emit `preview.subtitle = '+ truncated'` in UI when spillover occurred.
-
-### `renderRef` lifecycle
-
-- `renderRef` is created when truncation is required.
-- id is stable across logical revisions: `sha256(`${logicalId}:${revision}:${version}`).slice(0, 24)`.
-- Stored payloads are full canonical JSON for that logical entity under a Jangar-side blob key.
-- Jangar stores signed URL metadata in response/event with short-lived validity.
-- Jangar blob TTL: `7 days`.
-- Signed render URL TTL: `15 minutes`.
-- If blob has expired or cannot be fetched:
-  - render `detail unavailable`
-  - keep inline state and continue rendering.
-
-## OpenWebUI patch surface and reduction model
-
-### Required patch surface in OpenWebUI fork
-
-- Stream parser path:
-  - read `choices[0].delta.jangar_event`
-  - ignore malformed events and continue normal rendering
-- Reducer module:
-  - sort/consume events by `(seq, lane, logicalId)` in arrival-safe order
-  - apply dedupe rules (`seq`, `revision`)
-- State persistence:
-  - store compact `JangarRenderState` in message metadata on assistant message completion
-  - version under `v1`
-  - include `stateHash`
-- Renderer:
-  - native card components for tool lanes
-  - rail entries for reasoning/rate/plan
-  - usage/error status chips
-- RenderRef integration:
-  - request signed URL when card opens
-  - sandboxed display of blob content
-  - fallback on failure without breaking stream
-
-### State-reduction model details
-
-OpenWebUI keeps one in-memory state object per assistant message:
-
-```
 type OpenWebUIJangarReducerState = {
   version: 'v1'
   mode: 'rich-ui-v1'
@@ -497,121 +268,251 @@ type OpenWebUIJangarReducerState = {
 }
 ```
 
-Apply operations:
+### Persisted compact replay state schema
 
-- unknown versions/layers are ignored
-- out-of-order duplicates by seq/revision are dropped and counted
-- accepted events run deterministic reducer transitions
-- outputs remain pure data; do not mutate unrelated entities
+```ts
+type JangarRenderEntity = {
+  id: string
+  lane: JangarRenderLane
+  kind: JangarRenderLane | 'command' | 'file' | 'mcp' | 'webSearch' | 'dynamicTool' | 'imageGeneration'
+  logicalId: string
+  revision: number
+  seq: number
+  status: 'pending' | 'in_progress' | 'completed' | 'failed'
+  payload: Record<string, unknown>
+  preview: Record<string, unknown>
+  renderRef?: {
+    id: string
+    kind: string
+    digest: string
+    sizeBytes: number
+    expiresAt: string
+  }
+  createdAt: string
+  updatedAt: string
+}
 
-## Non-stream and compatibility model
+type JangarRenderState = {
+  version: 'v1'
+  mode: 'rich-ui-v1'
+  turnId: string
+  chatId?: string
+  threadId?: string
+  laneOrder: string[]
+  lastSeq: number
+  lastRevisionByLogicalId: Record<string, number>
+  entities: Record<string, JangarRenderEntity>
+  entityOrder: string[]
+  stateHash: string
+  updatedAt: string
+}
+```
 
-- `stream:false` and all non-OpenWebUI requests continue as plain completion with legacy fields.
-- Unknown `jangar_event` in compatible clients must be ignored.
-- If rich-header is supplied but gates are not met, no `jangar_event` is emitted.
-- Existing tests for plain path (`chat-completion-encoder.test.ts`, `chat-completions.test.ts`) should remain green.
+### Replay and persistence invariants
 
-## Feature-gates and rollout controls
+- Persist snapshot only for assistant message completion.
+- Deterministic state assembly order:
+  - sort non-tool lanes as `message`, `reasoning`, `plan`, `rate_limits`, `usage`, `error`.
+  - maintain first-seen order for tool entities.
+  - append terminal-complete items in `seq` order.
+- `stateHash` is a deterministic digest of stable JSON over:
+  - `version`, `mode`, `laneOrder`, `lastSeq`, `entityOrder`, and each entity (`payload`, `preview`, `status`, `renderRef.id`, `revision`).
+- Reload logic:
+  - verify `version === 'v1'` and parseable hash.
+  - if malformed/old/mismatch, discard and rebuild from persisted inline lane history only.
 
-- `JANGAR_OPENWEBUI_RICH_RENDER_ENABLED` (boolean, default `false`) gates emission.
-- `JANGAR_OPENWEBUI_RICH_RENDER_MODE_HEADER` (optional static allowlist of allowed header values).
-- `JANGAR_OPENWEBUI_RENDER_INLINE_MAX_BYTES` / `JANGAR_OPENWEBUI_RENDER_TOTAL_MAX_BYTES` for emergency tuning.
-- `JANGAR_OPENWEBUI_RICH_RENDER_MODE_HEADER` should be used in shared gateway/proxy if needed for phased enablement.
+## Spillover and `renderRef` lifecycle
 
-## Security and safety
+Budget constants:
 
-- No executable tool payload is delivered to OpenWebUI.
-- All rich cards are text-first and must escape potentially unsafe values.
-- Signed render URLs required; Jangar signs `{renderId, turnId, logicalId, exp}` with current secret.
-- Signed URL scope is restricted to:
+- `INLINE_PREVIEW_MAX_BYTES_PER_ENTITY = 8192`
+- `INLINE_PREVIEW_MAX_TOTAL_BYTES = 131072`
+- `COMMAND_OUTPUT_TEXT_MAX_BYTES = 16384`
+- `FILE_DIFF_MAX_LINES = 160`
+- `MCP_RESULT_MAX_BYTES = 12288`
+- `SPILLOVER_THRESHOLD_PCT = 85`
+
+Behavior:
+
+1. apply incoming event delta to the target entity state.
+2. if entity exceeds per-entity cap, create or update `renderRef` and truncate preview.
+3. if total inline payload exceeds total cap, mark lower-priority entities for compact summaries.
+4. always keep reducer state acceptance and revision bump for truncated events.
+5. set preview `subtitle = '+ truncated'` when spillover has occurred.
+
+RenderRef semantics:
+
+- `id` is stable per logical state and revision with `sha256(`${logicalId}:${revision}:${version}`).slice(0, 24)`.
+- Jangar stores spillover payload by signed URL key.
+- Jangar config defaults:
+  - blob TTL = 7 days
+  - signed fetch TTL = 15 minutes
+- On missing/expired render data:
+  - show `detail unavailable` and continue with inline state.
+  - keep stream/replay flow usable.
+
+## OpenWebUI patch surface and state-reduction model
+
+### Parser + reducer responsibilities
+
+- parse `choices[0].delta.jangar_event` from each incoming stream chunk.
+- validate shape minimally with fast-path fallback:
+  - unknown/invalid events are dropped and counted.
+  - unknown version/lane/op are ignored.
+- dedupe by `(logicalId, seq, revision)`.
+- maintain one reducer state per assistant message.
+- apply deterministic operations to `JangarRenderLane` entities.
+
+### Persistence responsibilities
+
+- persist compact `JangarRenderState` in message metadata (or equivalent attachment point in OpenWebUI message history).
+- persist only compact payload, never full raw SSE.
+- persist `stateHash` beside payload.
+
+### Renderer responsibilities
+
+- add dedicated rich cards for tool entities.
+- keep reasoning/plan/rate/usage/error compact rail items.
+- render inline text and lazy-load `renderRef` data.
+- fail safe: if rendering fails, keep legacy content visible.
+
+## Non-stream and compatibility behavior
+
+- for stream `false`, API response path remains JSON completion.
+- for stream-converted (`runChatCompletionWithModeSupport`) path, non-stream assembly continues to ignore all `jangar_event` fields.
+- unknown `jangar_event` is never fatal.
+- legacy clients receiving `jangar_event` should continue to function as before:
+  - no `tool_calls` emission.
+  - plain assistant content and optional usage remain canonical.
+
+## Feature gates
+
+- `JANGAR_OPENWEBUI_RICH_RENDER_ENABLED` (boolean, default `false`) is master feature gate.
+- `JANGAR_OPENWEBUI_RENDER_MODE_HEADER` optional regex/allowlist for accepted `x-jangar-openwebui-render-mode` values.
+- `JANGAR_OPENWEBUI_RICH_ALLOWED_CHAT_IDS` optional comma-separated allowlist.
+- `JANGAR_OPENWEBUI_RENDER_INLINE_MAX_BYTES`, `JANGAR_OPENWEBUI_RENDER_TOTAL_MAX_BYTES` runtime tuning overrides.
+
+## Security model
+
+- no executable payload sent to OpenWebUI.
+- all rendered content must be escaped/sanitized.
+- signed render URL scope must bind at least:
   - `renderRef.id`
-  - request turn/chat context
-  - digest/expiry binding
-- CSP and sandboxing for rich detail content.
-- Never cache render payloads in browser beyond UI component lifecycle.
+  - `turnId`
+  - `logicalId`
+  - request window expiry
+- short TTL by default and no long-lived browser caching of render content.
 
-## Phase plan, ownership, and dependency order
+## Implementation plan (phased, with ownership and dependency order)
 
-### Phase 1 (services/jangar): contract + stream emission
+### Phase 1a — server contract and stream events in Jangar
 
-- Add shared schema/type definitions for `jangarEvent` in `services/jangar/src/server`.
-- Add render-mode detection and global feature flag checks in `chat.ts`.
-- Extend encoder `onDelta` and lifecycle (`finalize`) to emit v1 events while preserving existing `content`/`reasoning_content` behavior.
-- Ensure `include_plan` behavior still suppresses plan deltas.
-- Add unit tests for:
-  - gate miss/no event
-  - valid `jangar_event` emission sequence
-  - no regressions in existing markdown fallback
+Owners:
 
-### Phase 2 (services/jangar): spillover + blob + signature
+- `services/jangar/src/server/chat-completion-encoder.ts`
+- `services/jangar/src/server/chat.ts`
 
-- Add deterministic `JangarRenderState` reducer in Jangar for local tests and optional state snapshot.
-- Add spillover and signed blob endpoint:
-  - `openwebui:render:*` keyspace
-  - digest + expiry metadata + verification
-- Add renderRef lifecycle tests:
-  - truncation thresholds
-  - TTL enforcement
-  - missing/expired blob fallback
+Tasks:
 
-### Phase 3 (OpenWebUI fork): parser + reducer + renderer
+- implement v1 schema and deterministic `jangar_event` emission.
+- add render-mode detection and env/headers gates.
+- add reducer-facing metadata (`seq`, `revision`, `logicalId`, `lane`, `op`, `source`).
+- keep existing OpenAI behavior untouched by default.
 
-- Add `jangar_event` parser and reducer state in stream path.
-- Persist compact `JangarRenderState` to message metadata.
-- Add native card and rail renderers.
-- Add renderRef lazy loading and fallback on errors.
+Dependencies:
 
-### Phase 4 (cross-stack hardening)
+- must be complete before persistence + OpenWebUI reducer work.
 
-- Add browser e2e coverage for lane coverage and reload determinism.
-- Add metrics and dashboards.
-- Add backward-compatibility tests for non-openwebui/legacy clients.
+### Phase 1b — spillover and persistence primitives
+
+Owners:
+
+- `services/jangar/src/server/chat-completion-encoder.ts`
+- optional new helper under `services/jangar/src/server`.
+
+Tasks:
+
+- deterministic compact snapshot/stateHash helper.
+- spillover calculations and preview truncation rules.
+- signed render reference metadata generation.
+
+Dependencies:
+
+- requires Phase 1a schema contracts.
+
+### Phase 2 — OpenWebUI fork integration
+
+Owners:
+
+- external OpenWebUI stream parser/reducer/render components.
+
+Tasks:
+
+- add `jangar_event` parse and reducer state.
+- persist compact `JangarRenderState` on assistant message completion.
+- render cards + rails and lazy `renderRef` fetch.
+
+Dependencies:
+
+- final payload contract from Phase 1 must be final.
+
+### Phase 3 — validation hardening and rollout
+
+Owners:
+
+- `services/jangar` tests and `docs/jangar/...`.
+
+Tasks:
+
+- add end-to-end stream contract tests.
+- add determinism and backward-compatibility assertions.
+- add operational dashboard instrumentation.
 
 Dependency order:
 
-- Phase 1 before phase 2.
-- OpenWebUI phase 3 blocked until `version: v1` and envelope schema is stable.
-- Phase 4 requires phases 1–3 and stable release gates.
+- Phase 1a before 1b.
+- Phase 2 requires locked v1 payload contract.
+- Phase 3 requires all prior phase completion.
 
 ## Validation plan
 
 ### Unit tests
 
-- Add encoder-level tests in `services/jangar/src/server/__tests__/chat-completion-encoder.test.ts` for:
-  - v1 event emission per lane
-  - seq/revision monotonicity
-  - dedupe behavior
-  - include_plan=false suppression
-- Extend `services/jangar/src/server/__tests__/chat-completions.test.ts`:
-  - openwebui-mode detection
-  - feature-gate off path
-  - malformed stream metadata fallback
-- Add contract schema tests for render state in dedicated shared test file (e.g., `services/jangar/src/server/__tests__/jangar-render-contract.test.ts`).
+- add/extend `services/jangar/src/server/__tests__/chat-completion-encoder.test.ts` for:
+  - sequence/revision emission.
+  - malformed tool event handling.
+  - plan/rate-limit suppression semantics.
+- add/extend stream contract tests under `services/jangar/src/server/__tests__/chat-completions.test.ts` for:
+  - openwebui mode detection with header/header precedence.
+  - feature-gate on/off behavior.
+  - non-stream compatibility when streaming conversion is used.
 
-### Integration and conversion checks
+### Integration checks
 
-- `convertSseToChatCompletionResponse` keeps JSON content-only behavior in non-stream mode.
-- Non-stream test paths continue to return `message.content`, optional `usage`, and no `jangar_event`.
-- Redis-side tests for blob persistence and `renderRef` expiry.
+- unit-level integration for reducer/state helper and `stateHash` verification.
+- non-stream conversion test proving `choices[].delta.jangar_event` never appears in JSON output.
+- stale-thread replay and transcript append behavior unaffected by feature flags.
 
-### Browser / e2e
+### Replay and reload determinism
 
-- Extend `services/jangar/tests/openwebui-chat.e2e.ts` for:
-  - rich-mode on/off matrix
-  - `command`, `file`, `mcp`, and `web search` tool event visibility in cards
-  - detail-pane open + missing URL fallback behavior
-- Add replay determinism scenario:
-  - capture stream sequence
-  - assert persisted hash is stable across two renders
-  - assert byte-for-byte normalised UI output match on reload
+- capture stream event sequence for one turn with tool and plan updates.
+- build persisted state from sequence and verify rebuild output determinism across two replay passes.
+- verify malformed/missing persisted state falls back to inline-only render without stream breakage.
+
+### Browser-level e2e matrix (`services/jangar/tests/openwebui-chat.e2e.ts`)
+
+- verify non-rich and rich mode toggle path.
+- validate stream frame parsing doesn’t break existing OpenWebUI chat flow.
+- render card presence for command/file/mcp/webSearch lanes when rich mode is enabled.
+- verify renderRef missing/expired fallback path.
 
 ### Backward-compatibility checks
 
-- Plain OpenAI stream clients ignore new field and render unchanged output.
-- Invalid `jangar_event` should not break assistant content or usage emission.
-- header-only requests from OpenWebUI clients with legacy path stay plain.
+- non-openwebui clients should not break with stream false and stream true.
+- confirm `tool_calls` remains empty/absent for existing test coverage.
+- malformed/unknown `jangar_event` is ignored.
 
-### Observability and failure modes
+### Observability + failure mode checks
 
 Required metrics:
 
@@ -624,52 +525,43 @@ Required metrics:
 - `jangar_openwebui_render_fetch_fail_total`
 - `jangar_openwebui_replay_mismatch_total`
 
-Alert thresholds:
+Alerting baseline:
 
-- > 5% dropped events in successful turns.
-- render blob size growth with rising fetch failures.
-- repeated fallback-to-text rate after rich mode is enabled.
+- > 5% dropped events over 5-minute window.
+- repeated render fetch failures while stream usage remains healthy.
+- replay mismatch rate increasing in staged rollout.
 
 ## Rollout, rollback, and risk
 
 ### Rollout
 
-1. Merge implementation with Jangar-rich mode disabled by default.
-2. Enable in staging + staged OpenWebUI parser.
-3. Canary production clients by header allowlist/chat id allowlist.
-4. Expand to broader traffic if replay determinism and metrics pass.
-5. Promote to default in a second flagged rollout.
+1. land design-complete implementation with rich mode disabled by default.
+2. enable on canary OpenWebUI chat IDs.
+3. monitor metrics + e2e for regression.
+4. expand to more IDs when pass criteria are met.
 
 ### Rollback
 
-Immediate rollback if:
+- disable `JANGAR_OPENWEBUI_RICH_RENDER_ENABLED`.
+- gate parser to legacy-only rendering.
+- invalidate persisted state snapshots if schema mismatch is observed.
 
-- parse failures > 1% of active OpenWebUI streams.
-- non-openwebui behavior regression.
-- sustained detail-fetch 5xx loops.
+### Key risks and mitigations
 
-Rollback steps:
-
-- set `JANGAR_OPENWEBUI_RICH_RENDER_ENABLED=false`
-- force renderer permissive fallback mode in OpenWebUI
-- optionally clear stale render blobs by TTL and ignore persisted compact state if needed.
-
-### Risks and mitigations
-
-- Contract drift between emitter and reducer:
-  - strict schema checks and shared test vectors
-- Aggressive truncation dropping useful context:
-  - conservative default budgets, adjustable env tuning
-- Signature leakage:
-  - short-lived signatures and per-request binding
-- Detail rendering XSS:
-  - strict escaping, no inline script, sandbox and CSP
+- contract drift:
+  - mitigate with shared fixtures and matrix tests between Jangar and OpenWebUI.
+- spillover data loss:
+  - tune budgets and keep concise previews visible.
+- parser/runtime overhead:
+  - optimize reducer and reject invalid events quickly.
+- signed URL abuse:
+  - short TTL and scoped signature keys.
 
 ## Exit criteria
 
-- `jangar_event` v1 is fully specified, versioned, and tested.
-- Deterministic reducer + persisted compact state semantics are defined and validated for replay.
-- Spillover and `renderRef` boundaries are explicit, bounded, and enforced.
-- Render endpoint security model is explicit with expiry and signed access.
-- Backward compatibility for standard OpenAI clients is preserved.
-- Rollout and rollback mechanics are explicit enough for production release.
+- `jangar_event` v1 contract is complete, deterministic, and validated.
+- reducer semantics are specified by lane and operation.
+- compact persistence and replay are defined with deterministic hash checks.
+- spillover/renderRef lifecycle and TTL behavior are actionable.
+- validation plan includes unit, integration, replay determinism, and fallback checks.
+- rollout/rollback criteria are concrete for production.
