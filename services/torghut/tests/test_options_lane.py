@@ -54,6 +54,7 @@ class TestOptionsLaneSettings(TestCase):
         settings = OptionsLaneSettings()
 
         self.assertEqual(settings.sqlalchemy_dsn, "postgresql+psycopg://torghut:torghut@localhost:5432/torghut")
+        self.assertEqual(settings.options_contract_discovery_page_limit, 10000)
         self.assertEqual(settings.options_market_holidays, [])
         self.assertEqual(settings.options_underlying_priority_symbols, [])
 

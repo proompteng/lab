@@ -35,7 +35,7 @@ data:
   KAFKA_ACKS: "all"
   HEALTH_PORT: "8080"
   METRICS_PORT: "9090"
-  HEALTH_NOT_READY_KILL_AFTER_MS: "120000"
+  HEALTH_NOT_READY_KILL_AFTER_MS: "300000"
   TOPIC_TRADES: "torghut.options.trades.v1"
   TOPIC_QUOTES: "torghut.options.quotes.v1"
   TOPIC_BARS_1M: ""
