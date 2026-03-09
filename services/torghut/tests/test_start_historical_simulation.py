@@ -95,6 +95,76 @@ class TestStartHistoricalSimulation(TestCase):
             'torghut.sim.trades.v1.sim_2026_02_27_01',
         )
 
+    def test_build_resources_derives_options_lane_isolation_names(self) -> None:
+        resources = _build_resources(
+            'options-sim-2026-03-06-open',
+            {
+                'schema_version': 'torghut.options-simulation-manifest.v1',
+                'lane': 'options',
+                'dataset_id': 'torghut-options-smoke-open-30m-20260306',
+                'feed': 'indicative',
+                'underlyings': ['AAPL', 'MSFT'],
+                'contract_policy': {
+                    'dte_min': 5,
+                    'dte_max': 45,
+                    'option_types': ['call', 'put'],
+                },
+                'catalog_snapshot_ref': 'artifacts/options/catalog-snapshot.json',
+                'raw_source_policy': {
+                    'prefer_kafka': True,
+                },
+                'cost_model': {
+                    'contract_multiplier': 100,
+                },
+                'proof_gates': {
+                    'minimum_contracts': 10,
+                },
+            },
+        )
+        self.assertEqual(resources.lane, 'options')
+        self.assertEqual(resources.ta_group_id, 'torghut-options-ta-sim-options_sim_2026_03_06_open')
+        self.assertEqual(
+            resources.order_feed_group_id,
+            'torghut-options-order-feed-sim-options_sim_2026_03_06_open',
+        )
+        self.assertEqual(
+            resources.simulation_topic_by_role['contracts'],
+            'torghut.sim.options.contracts.v1.options_sim_2026_03_06_open',
+        )
+        self.assertEqual(
+            resources.replay_topic_by_source_topic['torghut.options.contracts.v1'],
+            'torghut.sim.options.contracts.v1.options_sim_2026_03_06_open',
+        )
+        self.assertEqual(
+            resources.clickhouse_signal_table,
+            'torghut_sim_options_sim_2026_03_06_open.sim_options_contract_features',
+        )
+        self.assertEqual(
+            resources.clickhouse_price_table,
+            'torghut_sim_options_sim_2026_03_06_open.sim_options_contract_bars_1s',
+        )
+        self.assertEqual(
+            resources.clickhouse_table_by_role['surface'],
+            'torghut_sim_options_sim_2026_03_06_open.sim_options_surface_features',
+        )
+        self.assertTrue(str(resources.output_root).endswith('artifacts/torghut/simulations/options'))
+
+    def test_build_resources_rejects_options_manifest_missing_required_fields(self) -> None:
+        with self.assertRaisesRegex(
+            RuntimeError,
+            'options_simulation_manifest_missing_fields:contract_policy,catalog_snapshot_ref,raw_source_policy,cost_model,proof_gates',
+        ):
+            _build_resources(
+                'options-sim-1',
+                {
+                    'schema_version': 'torghut.options-simulation-manifest.v1',
+                    'lane': 'options',
+                    'dataset_id': 'dataset-a',
+                    'feed': 'indicative',
+                    'underlyings': ['AAPL'],
+                },
+            )
+
     def test_build_postgres_runtime_config_uses_template(self) -> None:
         config = _build_postgres_runtime_config(
             {
@@ -1814,6 +1884,38 @@ class TestStartHistoricalSimulation(TestCase):
                 ta_data={'TA_GROUP_ID': 'torghut-ta-main'},
             )
 
+    def test_verify_isolation_guards_accepts_options_auxiliary_tables(self) -> None:
+        resources = _build_resources(
+            'options-sim-1',
+            {
+                'schema_version': 'torghut.options-simulation-manifest.v1',
+                'lane': 'options',
+                'dataset_id': 'dataset-a',
+                'feed': 'indicative',
+                'underlyings': ['AAPL'],
+                'contract_policy': {'dte_min': 5, 'dte_max': 45},
+                'catalog_snapshot_ref': 'artifacts/options/catalog.json',
+                'raw_source_policy': {'prefer_kafka': True},
+                'cost_model': {'contract_multiplier': 100},
+                'proof_gates': {'minimum_contracts': 5},
+            },
+        )
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_options_sim_1',
+            simulation_db='torghut_sim_options_sim_1',
+            migrations_command='uv run --frozen alembic upgrade heads',
+        )
+
+        report = _verify_isolation_guards(
+            resources=resources,
+            postgres_config=postgres_config,
+            ta_data={'OPTIONS_TA_GROUP_ID': 'torghut-options-ta-main'},
+        )
+
+        self.assertEqual(report['lane'], 'options')
+        self.assertTrue(report['auxiliary_tables_isolated'])
+
     def test_replay_dump_ignores_stale_marker_when_dump_changes(self) -> None:
         resources = _build_resources(
             'sim-1',
@@ -2871,6 +2973,7 @@ class TestStartHistoricalSimulation(TestCase):
                 'TA_TRADES_TOPIC': 'torghut.sim.trades.v1.sim_2026_03_06_open_hour',
                 'TA_QUOTES_TOPIC': 'torghut.sim.quotes.v1.sim_2026_03_06_open_hour',
                 'TA_BARS1M_TOPIC': 'torghut.sim.bars.1m.v1.sim_2026_03_06_open_hour',
+                'TA_MICROBARS_TOPIC': 'torghut.sim.ta.bars.1s.v1.sim_2026_03_06_open_hour',
                 'TA_SIGNALS_TOPIC': 'torghut.sim.ta.signals.v1.sim_2026_03_06_open_hour',
                 'TA_CLICKHOUSE_URL': 'jdbc:clickhouse://clickhouse/torghut_sim_2026_03_06_open_hour',
             }
@@ -2913,6 +3016,128 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(report['runtime_state'], 'ready')
         self.assertEqual(report['environment_state'], 'complete')
         self.assertEqual(report['torghut_service']['name'], 'torghut-sim')
+        self.assertTrue(all(report['ta_runtime_config'].values()))
+
+    def test_runtime_verify_accepts_options_lane_topics_and_tables(self) -> None:
+        manifest = {
+            'schema_version': 'torghut.options-simulation-manifest.v1',
+            'lane': 'options',
+            'feed': 'indicative',
+            'underlyings': ['AAPL'],
+            'contract_policy': {'dte_min': 5, 'dte_max': 45},
+            'catalog_snapshot_ref': 'artifacts/options/catalog.json',
+            'raw_source_policy': {'prefer_kafka': True},
+            'cost_model': {'contract_multiplier': 100},
+            'proof_gates': {'minimum_contracts': 5},
+            'window': {
+                'start': '2026-03-06T14:30:00Z',
+                'end': '2026-03-06T15:00:00Z',
+            },
+        }
+        resources = _build_resources(
+            'options-sim-2026-03-06-open',
+            {
+                **manifest,
+                'dataset_id': 'dataset-a',
+                'runtime': {
+                    'target_mode': 'dedicated_service',
+                    'namespace': 'torghut',
+                    'ta_configmap': 'torghut-options-ta-sim-config',
+                    'ta_deployment': 'torghut-options-ta-sim',
+                    'torghut_service': 'torghut-sim',
+                    'torghut_forecast_service': 'torghut-forecast-sim',
+                },
+            },
+        )
+        kservice_payload = {
+            'spec': {
+                'template': {
+                    'spec': {
+                        'containers': [
+                            {
+                                'name': 'user-container',
+                                'env': [
+                                    {'name': 'TRADING_ENABLED', 'value': 'true'},
+                                    {'name': 'TRADING_SIMULATION_ENABLED', 'value': 'true'},
+                                    {'name': 'TRADING_SIGNAL_TABLE', 'value': resources.clickhouse_signal_table},
+                                    {'name': 'TRADING_PRICE_TABLE', 'value': resources.clickhouse_price_table},
+                                    {'name': 'TRADING_ORDER_FEED_ENABLED', 'value': 'true'},
+                                    {
+                                        'name': 'TRADING_ORDER_FEED_TOPIC',
+                                        'value': resources.simulation_topic_by_role['order_updates'],
+                                    },
+                                    {
+                                        'name': 'TRADING_SIMULATION_ORDER_UPDATES_TOPIC',
+                                        'value': resources.simulation_topic_by_role['order_updates'],
+                                    },
+                                    {'name': 'TRADING_SIMULATION_RUN_ID', 'value': resources.run_id},
+                                    {'name': 'TRADING_SIGNAL_ALLOWED_SOURCES', 'value': 'ws,ta'},
+                                ],
+                            }
+                        ]
+                    }
+                }
+            },
+            'status': {
+                'latestReadyRevisionName': 'torghut-sim-00001',
+                'conditions': [
+                    {
+                        'type': 'Ready',
+                        'status': 'True',
+                    }
+                ],
+            },
+        }
+        ta_configmap_payload = {
+            'data': {
+                'TOPIC_OPTIONS_CONTRACTS': resources.simulation_topic_by_role['contracts'],
+                'TOPIC_OPTIONS_TRADES': resources.simulation_topic_by_role['trades'],
+                'TOPIC_OPTIONS_QUOTES': resources.simulation_topic_by_role['quotes'],
+                'TOPIC_OPTIONS_SNAPSHOTS': resources.simulation_topic_by_role['snapshots'],
+                'TOPIC_OPTIONS_STATUS': resources.simulation_topic_by_role['status'],
+                'TOPIC_OPTIONS_TA_CONTRACT_BARS': resources.simulation_topic_by_role['ta_contract_bars'],
+                'TOPIC_OPTIONS_TA_CONTRACT_FEATURES': resources.simulation_topic_by_role['ta_contract_features'],
+                'TOPIC_OPTIONS_TA_SURFACE_FEATURES': resources.simulation_topic_by_role['ta_surface_features'],
+                'TOPIC_OPTIONS_TA_STATUS': resources.simulation_topic_by_role['ta_status'],
+                'OPTIONS_TA_CLICKHOUSE_URL': 'jdbc:clickhouse://clickhouse/torghut_sim_options_sim_2026_03_06_open',
+            }
+        }
+
+        with (
+            patch(
+                'scripts.historical_simulation_verification._kubectl_json',
+                side_effect=[kservice_payload, ta_configmap_payload],
+            ),
+            patch(
+                'scripts.historical_simulation_verification._deployment_replica_health',
+                side_effect=[
+                    {
+                        'name': 'torghut-sim-00001-deployment',
+                        'ready_replicas': 1,
+                        'available_replicas': 1,
+                        'replicas': 1,
+                    },
+                    {
+                        'name': 'torghut-forecast-sim',
+                        'ready_replicas': 1,
+                        'available_replicas': 1,
+                        'replicas': 1,
+                    },
+                ],
+            ),
+            patch(
+                'scripts.historical_simulation_verification._flink_runtime_health',
+                return_value={
+                    'name': 'torghut-options-ta-sim',
+                    'desired_state': 'running',
+                    'lifecycle_state': 'RUNNING',
+                    'job_manager_status': 'DEPLOYED',
+                },
+            ),
+        ):
+            report = _runtime_verify(resources=resources, manifest=manifest)
+
+        self.assertEqual(report['runtime_state'], 'ready')
         self.assertTrue(all(report['ta_runtime_config'].values()))
 
     def test_runtime_verify_rejects_trading_disabled_sim_revision(self) -> None:
@@ -2974,6 +3199,7 @@ class TestStartHistoricalSimulation(TestCase):
                 'TA_TRADES_TOPIC': 'torghut.sim.trades.v1.sim_2026_03_06_open_hour',
                 'TA_QUOTES_TOPIC': 'torghut.sim.quotes.v1.sim_2026_03_06_open_hour',
                 'TA_BARS1M_TOPIC': 'torghut.sim.bars.1m.v1.sim_2026_03_06_open_hour',
+                'TA_MICROBARS_TOPIC': 'torghut.sim.ta.bars.1s.v1.sim_2026_03_06_open_hour',
                 'TA_SIGNALS_TOPIC': 'torghut.sim.ta.signals.v1.sim_2026_03_06_open_hour',
                 'TA_CLICKHOUSE_URL': 'jdbc:clickhouse://clickhouse/torghut_sim_2026_03_06_open_hour',
             }
@@ -3076,6 +3302,7 @@ class TestStartHistoricalSimulation(TestCase):
                 'TA_TRADES_TOPIC': 'torghut.sim.trades.v1.sim_2026_03_06_open_hour_r18',
                 'TA_QUOTES_TOPIC': 'torghut.sim.quotes.v1.sim_2026_03_06_open_hour_r18',
                 'TA_BARS1M_TOPIC': 'torghut.sim.bars.1m.v1.sim_2026_03_06_open_hour_r18',
+                'TA_MICROBARS_TOPIC': 'torghut.sim.ta.bars.1s.v1.sim_2026_03_06_open_hour_r18',
                 'TA_SIGNALS_TOPIC': 'torghut.sim.ta.signals.v1.sim_2026_03_06_open_hour_r18',
                 'TA_CLICKHOUSE_URL': 'jdbc:clickhouse://clickhouse/torghut_sim_2026_03_06_open_hour_r18',
             }
@@ -3178,6 +3405,7 @@ class TestStartHistoricalSimulation(TestCase):
                 'TA_TRADES_TOPIC': 'torghut.sim.trades.v1.sim_2026_03_06_open_hour',
                 'TA_QUOTES_TOPIC': 'torghut.sim.quotes.v1.sim_2026_03_06_open_hour',
                 'TA_BARS1M_TOPIC': 'torghut.sim.bars.1m.v1.sim_2026_03_06_open_hour',
+                'TA_MICROBARS_TOPIC': 'torghut.sim.ta.bars.1s.v1.sim_2026_03_06_open_hour',
                 'TA_SIGNALS_TOPIC': 'torghut.sim.ta.signals.v1.sim_2026_03_06_open_hour',
                 'TA_CLICKHOUSE_URL': 'jdbc:clickhouse://clickhouse/torghut_sim_2026_03_06_open_hour',
             }

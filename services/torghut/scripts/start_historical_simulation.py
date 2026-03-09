@@ -41,6 +41,12 @@ from app.trading.completion import (
 )
 from app.trading.evaluation import build_fill_price_error_budget_report_v1
 from scripts import historical_simulation_verification as simulation_verification
+from scripts.simulation_lane_contracts import (
+    EQUITY_SIMULATION_LANE,
+    simulation_clickhouse_table_names,
+    simulation_lane_contract,
+    simulation_lane_contract_for_manifest,
+)
 
 APPLY_CONFIRMATION_PHRASE = 'START_HISTORICAL_SIMULATION'
 DEFAULT_NAMESPACE = 'torghut'
@@ -53,35 +59,9 @@ DEFAULT_SIM_TORGHUT_SERVICE = 'torghut-sim'
 DEFAULT_SIM_FORECAST_SERVICE = 'torghut-forecast-sim'
 DEFAULT_OUTPUT_ROOT = Path('artifacts/torghut/simulations')
 
-PRODUCTION_TOPIC_BY_ROLE = {
-    'trades': 'torghut.trades.v1',
-    'quotes': 'torghut.quotes.v1',
-    'bars': 'torghut.bars.1m.v1',
-    'status': 'torghut.status.v1',
-    'ta_microbars': 'torghut.ta.bars.1s.v1',
-    'ta_signals': 'torghut.ta.signals.v1',
-    'ta_status': 'torghut.ta.status.v1',
-    'order_updates': 'torghut.trade-updates.v1',
-}
-
-SIMULATION_TOPIC_BY_ROLE = {
-    'trades': 'torghut.sim.trades.v1',
-    'quotes': 'torghut.sim.quotes.v1',
-    'bars': 'torghut.sim.bars.1m.v1',
-    'status': 'torghut.sim.status.v1',
-    'ta_microbars': 'torghut.sim.ta.bars.1s.v1',
-    'ta_signals': 'torghut.sim.ta.signals.v1',
-    'ta_status': 'torghut.sim.ta.status.v1',
-    'order_updates': 'torghut.sim.trade-updates.v1',
-}
-
-TA_TOPIC_KEY_BY_ROLE = {
-    'trades': 'TA_TRADES_TOPIC',
-    'quotes': 'TA_QUOTES_TOPIC',
-    'bars': 'TA_BARS1M_TOPIC',
-    'ta_microbars': 'TA_MICROBARS_TOPIC',
-    'ta_signals': 'TA_SIGNALS_TOPIC',
-}
+PRODUCTION_TOPIC_BY_ROLE = dict(EQUITY_SIMULATION_LANE.source_topic_by_role)
+SIMULATION_TOPIC_BY_ROLE = dict(EQUITY_SIMULATION_LANE.simulation_topic_by_role)
+TA_TOPIC_KEY_BY_ROLE = dict(EQUITY_SIMULATION_LANE.ta_topic_key_by_role)
 
 TORGHUT_ENV_KEYS = [
     'DB_DSN',
@@ -162,7 +142,6 @@ DEFAULT_ROLLOUTS_VERIFY_TIMEOUT_SECONDS = 1800
 DEFAULT_ROLLOUTS_VERIFY_POLL_SECONDS = 5
 SIMULATION_RUNTIME_LOCK_NAME = 'torghut-historical-simulation-lock'
 SIMULATION_CLICKHOUSE_SCHEMA_SOURCE_DATABASE = 'torghut'
-SIMULATION_CLICKHOUSE_RUNTIME_TABLES = ('ta_microbars', 'ta_signals')
 SIMULATION_CLICKHOUSE_TABLE_VISIBILITY_ATTEMPTS = 10
 SIMULATION_CLICKHOUSE_TABLE_VISIBILITY_SLEEP_SECONDS = 0.2
 TRANSIENT_POSTGRES_ERROR_PATTERNS = (
@@ -335,6 +314,7 @@ class SimulationResources:
     run_id: str
     run_token: str
     dataset_id: str
+    lane: str
     target_mode: str
     namespace: str
     ta_configmap: str
@@ -348,6 +328,7 @@ class SimulationResources:
     ta_group_id: str
     order_feed_group_id: str
     clickhouse_db: str
+    clickhouse_table_by_role: dict[str, str]
     clickhouse_signal_table: str
     clickhouse_price_table: str
 
@@ -1031,7 +1012,36 @@ def _merge_topics(
     return merged
 
 
+def _ta_topic_key_by_role(*, lane: str, manifest: Mapping[str, Any]) -> dict[str, str]:
+    lane_contract = simulation_lane_contract(lane)
+    ta_config = _as_mapping(manifest.get('ta_config'))
+    overrides = _as_mapping(ta_config.get('topic_key_by_role'))
+    return _merge_topics(lane_contract.ta_topic_key_by_role, overrides)
+
+
+def _ta_clickhouse_url_key(*, lane: str, manifest: Mapping[str, Any]) -> str:
+    lane_contract = simulation_lane_contract(lane)
+    ta_config = _as_mapping(manifest.get('ta_config'))
+    return _as_text(ta_config.get('clickhouse_url_key')) or lane_contract.ta_clickhouse_url_key
+
+
+def _ta_group_id_key(*, lane: str, manifest: Mapping[str, Any]) -> str:
+    lane_contract = simulation_lane_contract(lane)
+    ta_config = _as_mapping(manifest.get('ta_config'))
+    return _as_text(ta_config.get('group_id_key')) or lane_contract.ta_group_id_key
+
+
+def _ta_auto_offset_reset_key(*, lane: str, manifest: Mapping[str, Any]) -> str:
+    lane_contract = simulation_lane_contract(lane)
+    ta_config = _as_mapping(manifest.get('ta_config'))
+    return (
+        _as_text(ta_config.get('auto_offset_reset_key'))
+        or lane_contract.ta_auto_offset_reset_key
+    )
+
+
 def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationResources:
+    lane_contract = simulation_lane_contract_for_manifest(manifest)
     run_token = _normalize_run_token(run_id)
     dataset_id = _as_text(manifest.get('dataset_id'))
     if not dataset_id:
@@ -1042,15 +1052,20 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
     if target_mode not in {'dedicated_service', 'in_place'}:
         raise RuntimeError('runtime.target_mode must be one of: dedicated_service,in_place')
     output_root_raw = _as_text(runtime.get('output_root'))
-    output_root = Path(output_root_raw) if output_root_raw else DEFAULT_OUTPUT_ROOT
+    if output_root_raw:
+        output_root = Path(output_root_raw)
+    elif lane_contract.lane != 'equity':
+        output_root = DEFAULT_OUTPUT_ROOT / lane_contract.lane
+    else:
+        output_root = DEFAULT_OUTPUT_ROOT
 
     source_topics = _merge_topics(
-        PRODUCTION_TOPIC_BY_ROLE,
+        lane_contract.source_topic_by_role,
         _as_mapping(manifest.get('source_topics')),
     )
     simulation_topic_overrides = _as_mapping(manifest.get('simulation_topics'))
     simulation_topics = _merge_topics(
-        SIMULATION_TOPIC_BY_ROLE,
+        lane_contract.simulation_topic_by_role,
         simulation_topic_overrides,
     )
     for role, topic in list(simulation_topics.items()):
@@ -1059,10 +1074,8 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
         simulation_topics[role] = f'{topic}.{run_token}'
 
     replay_topic_by_source_topic = {
-        source_topics['trades']: simulation_topics['trades'],
-        source_topics['quotes']: simulation_topics['quotes'],
-        source_topics['bars']: simulation_topics['bars'],
-        source_topics['status']: simulation_topics['status'],
+        source_topics[role]: simulation_topics[role]
+        for role in lane_contract.replay_roles
     }
 
     clickhouse_cfg = _as_mapping(manifest.get('clickhouse'))
@@ -1070,8 +1083,12 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
         _as_text(clickhouse_cfg.get('simulation_database'))
         or f'torghut_sim_{run_token}'
     )
-    clickhouse_signal_table = f'{clickhouse_db}.ta_signals'
-    clickhouse_price_table = f'{clickhouse_db}.ta_microbars'
+    clickhouse_table_by_role = simulation_clickhouse_table_names(
+        lane=lane_contract.lane,
+        database=clickhouse_db,
+    )
+    clickhouse_signal_table = clickhouse_table_by_role[lane_contract.signal_table_role]
+    clickhouse_price_table = clickhouse_table_by_role[lane_contract.price_table_role]
 
     default_ta_configmap = DEFAULT_SIM_TA_CONFIGMAP if target_mode == 'dedicated_service' else DEFAULT_TA_CONFIGMAP
     default_ta_deployment = DEFAULT_SIM_TA_DEPLOYMENT if target_mode == 'dedicated_service' else DEFAULT_TA_DEPLOYMENT
@@ -1081,11 +1098,18 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
     default_forecast_service = (
         DEFAULT_SIM_FORECAST_SERVICE if target_mode == 'dedicated_service' else 'torghut-forecast'
     )
+    ta_group_prefix = 'torghut-options-ta-sim' if lane_contract.lane == 'options' else 'torghut-ta-sim'
+    order_feed_group_prefix = (
+        'torghut-options-order-feed-sim'
+        if lane_contract.lane == 'options'
+        else 'torghut-order-feed-sim'
+    )
 
     return SimulationResources(
         run_id=run_id,
         run_token=run_token,
         dataset_id=dataset_id,
+        lane=lane_contract.lane,
         target_mode=target_mode,
         namespace=_as_text(runtime.get('namespace')) or DEFAULT_NAMESPACE,
         ta_configmap=_as_text(runtime.get('ta_configmap')) or default_ta_configmap,
@@ -1098,9 +1122,10 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
         source_topic_by_role=source_topics,
         simulation_topic_by_role=simulation_topics,
         replay_topic_by_source_topic=replay_topic_by_source_topic,
-        ta_group_id=f'torghut-ta-sim-{run_token}',
-        order_feed_group_id=f'torghut-order-feed-sim-{run_token}',
+        ta_group_id=f'{ta_group_prefix}-{run_token}',
+        order_feed_group_id=f'{order_feed_group_prefix}-{run_token}',
         clickhouse_db=clickhouse_db,
+        clickhouse_table_by_role=clickhouse_table_by_role,
         clickhouse_signal_table=clickhouse_signal_table,
         clickhouse_price_table=clickhouse_price_table,
     )
@@ -2084,6 +2109,7 @@ def _build_plan_report(
         'status': 'ok',
         'run_id': resources.run_id,
         'dataset_id': resources.dataset_id,
+        'lane': resources.lane,
         'resources': {
             'namespace': resources.namespace,
             'ta_configmap': resources.ta_configmap,
@@ -2095,6 +2121,7 @@ def _build_plan_report(
             'ta_group_id': resources.ta_group_id,
             'order_feed_group_id': resources.order_feed_group_id,
             'clickhouse_database': resources.clickhouse_db,
+            'clickhouse_tables': resources.clickhouse_table_by_role,
             'clickhouse_signal_table': resources.clickhouse_signal_table,
             'clickhouse_price_table': resources.clickhouse_price_table,
             'postgres_database': postgres_config.simulation_db,
@@ -2279,10 +2306,13 @@ def _ensure_clickhouse_runtime_tables(
     *,
     config: ClickHouseRuntimeConfig,
     database: str,
+    lane: str = 'equity',
 ) -> None:
+    lane_contract = simulation_lane_contract(lane)
     endpoint_configs = _clickhouse_query_configs(config)
-    for table in SIMULATION_CLICKHOUSE_RUNTIME_TABLES:
-        source_table = f'{SIMULATION_CLICKHOUSE_SCHEMA_SOURCE_DATABASE}.{table}'
+    for role, table in lane_contract.clickhouse_simulation_table_by_role.items():
+        source_basename = lane_contract.clickhouse_source_table_by_role[role]
+        source_table = f'{SIMULATION_CLICKHOUSE_SCHEMA_SOURCE_DATABASE}.{source_basename}'
         source_ddl = _show_create_clickhouse_table(config=endpoint_configs[0], table=source_table)
         create_query = _rewrite_clickhouse_table_ddl_for_simulation(
             source_ddl=source_ddl,
@@ -2606,19 +2636,20 @@ def _configure_ta_for_simulation(
     clickhouse_config: ClickHouseRuntimeConfig,
     clickhouse_database: str,
     auto_offset_reset: str,
+    manifest: Mapping[str, Any],
 ) -> None:
     updates: dict[str, str] = {
-        'TA_GROUP_ID': resources.ta_group_id,
-        'TA_AUTO_OFFSET_RESET': auto_offset_reset,
+        _ta_group_id_key(lane=resources.lane, manifest=manifest): resources.ta_group_id,
+        _ta_auto_offset_reset_key(lane=resources.lane, manifest=manifest): auto_offset_reset,
     }
 
-    for role, key in TA_TOPIC_KEY_BY_ROLE.items():
+    for role, key in _ta_topic_key_by_role(lane=resources.lane, manifest=manifest).items():
         topic = resources.simulation_topic_by_role.get(role)
         if not topic:
             continue
         updates[key] = topic
 
-    updates['TA_CLICKHOUSE_URL'] = _clickhouse_jdbc_url_for_database(
+    updates[_ta_clickhouse_url_key(lane=resources.lane, manifest=manifest)] = _clickhouse_jdbc_url_for_database(
         clickhouse_config.http_url,
         clickhouse_database,
     )
@@ -3542,7 +3573,11 @@ def _apply(
         clickhouse_database_precreated = _clickhouse_database_precreated(manifest)
         if not clickhouse_database_precreated:
             _ensure_clickhouse_database(config=clickhouse_config, database=resources.clickhouse_db)
-        _ensure_clickhouse_runtime_tables(config=clickhouse_config, database=resources.clickhouse_db)
+        _ensure_clickhouse_runtime_tables(
+            config=clickhouse_config,
+            database=resources.clickhouse_db,
+            lane=resources.lane,
+        )
         postgres_database_precreated = _postgres_database_precreated(manifest)
         if not postgres_database_precreated:
             _ensure_postgres_database(postgres_config)
@@ -3568,6 +3603,7 @@ def _apply(
             clickhouse_config=clickhouse_config,
             clickhouse_database=resources.clickhouse_db,
             auto_offset_reset=auto_offset_reset,
+            manifest=manifest,
         )
         ta_restart_nonce = _restart_ta_deployment(resources, desired_state='running')
 

@@ -13,17 +13,12 @@ from urllib.parse import quote_plus, urlsplit
 from zoneinfo import ZoneInfo
 
 import psycopg
+from scripts.simulation_lane_contracts import (
+    EQUITY_SIMULATION_LANE,
+    simulation_lane_contract,
+)
 
-PRODUCTION_TOPIC_BY_ROLE = {
-    'trades': 'torghut.trades.v1',
-    'quotes': 'torghut.quotes.v1',
-    'bars': 'torghut.bars.1m.v1',
-    'status': 'torghut.status.v1',
-    'ta_microbars': 'torghut.ta.bars.1s.v1',
-    'ta_signals': 'torghut.ta.signals.v1',
-    'ta_status': 'torghut.ta.status.v1',
-    'order_updates': 'torghut.trade-updates.v1',
-}
+PRODUCTION_TOPIC_BY_ROLE = dict(EQUITY_SIMULATION_LANE.source_topic_by_role)
 
 TORGHUT_ENV_KEYS = [
     'DB_DSN',
@@ -151,6 +146,11 @@ def _resource_asdict(resource: Any) -> dict[str, Any]:
         payload = asdict(resource)
         return {str(key): value for key, value in cast(dict[str, Any], payload).items()}
     return dict(vars(resource))
+
+
+def _resource_lane_contract(resource: Any):
+    lane = _as_text(_resource_attr(resource, 'lane')) or 'equity'
+    return simulation_lane_contract(lane)
 
 
 def _parse_rfc3339_timestamp(value: str | None, *, label: str) -> datetime:
@@ -586,6 +586,7 @@ def _classify_activity_snapshot(
 
 def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str, Any]:
     window_start, window_end = _resolve_window_bounds(manifest)
+    lane_contract = _resource_lane_contract(resources)
     namespace = _as_text(_resource_attr(resources, 'namespace')) or 'torghut'
     torghut_service = _as_text(_resource_attr(resources, 'torghut_service'))
     ta_deployment = _as_text(_resource_attr(resources, 'ta_deployment'))
@@ -631,12 +632,13 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
     ta_data = _as_mapping(ta_config.get('data'))
     run_token = _as_text(_resource_attr(resources, 'run_token')) or ''
     ta_runtime_config = {
-        'trades_topic': _as_text(ta_data.get('TA_TRADES_TOPIC')) == _as_text(expected_topics.get('trades')),
-        'quotes_topic': _as_text(ta_data.get('TA_QUOTES_TOPIC')) == _as_text(expected_topics.get('quotes')),
-        'bars_topic': _as_text(ta_data.get('TA_BARS1M_TOPIC')) == _as_text(expected_topics.get('bars')),
-        'signals_topic': _as_text(ta_data.get('TA_SIGNALS_TOPIC')) == _as_text(expected_topics.get('ta_signals')),
-        'clickhouse_database': bool(run_token) and run_token in (_as_text(ta_data.get('TA_CLICKHOUSE_URL')) or ''),
+        f'{role}_topic': _as_text(ta_data.get(key)) == _as_text(expected_topics.get(role))
+        for role, key in lane_contract.ta_topic_key_by_role.items()
+        if role in expected_topics
     }
+    ta_runtime_config['clickhouse_database'] = bool(run_token) and run_token in (
+        _as_text(ta_data.get(lane_contract.ta_clickhouse_url_key)) or ''
+    )
     ta_runtime_config_complete = all(ta_runtime_config.values())
     revision_health: dict[str, Any] | None = None
     if latest_ready_revision:
@@ -776,8 +778,13 @@ def _verify_isolation_guards(
     postgres_config: Any,
     ta_data: Mapping[str, Any],
 ) -> dict[str, Any]:
+    lane_contract = _resource_lane_contract(resources)
     source_topic_by_role = cast(dict[str, str], _resource_attr(resources, 'source_topic_by_role'))
     simulation_topic_by_role = cast(dict[str, str], _resource_attr(resources, 'simulation_topic_by_role'))
+    clickhouse_table_by_role = cast(
+        dict[str, str],
+        _resource_attr(resources, 'clickhouse_table_by_role', default={}),
+    )
     clickhouse_signal_table = _as_text(_resource_attr(resources, 'clickhouse_signal_table'))
     clickhouse_price_table = _as_text(_resource_attr(resources, 'clickhouse_price_table'))
     ta_group_id = _as_text(_resource_attr(resources, 'ta_group_id'))
@@ -785,16 +792,25 @@ def _verify_isolation_guards(
     simulation_dsn = _as_text(_resource_attr(postgres_config, 'simulation_dsn'))
     simulation_topics_disjoint = all(
         simulation_topic_by_role.get(role) != source_topic_by_role.get(role)
-        for role in ('trades', 'quotes', 'bars', 'status')
+        for role in lane_contract.replay_roles
     )
-    signal_table_isolated = bool(clickhouse_signal_table and '.ta_signals' in clickhouse_signal_table)
-    price_table_isolated = bool(clickhouse_price_table and '.ta_microbars' in clickhouse_price_table)
+    signal_basename = lane_contract.clickhouse_simulation_table_by_role[lane_contract.signal_table_role]
+    price_basename = lane_contract.clickhouse_simulation_table_by_role[lane_contract.price_table_role]
+    signal_table_isolated = bool(clickhouse_signal_table and clickhouse_signal_table.endswith(f'.{signal_basename}'))
+    price_table_isolated = bool(clickhouse_price_table and clickhouse_price_table.endswith(f'.{price_basename}'))
+    auxiliary_tables_isolated = all(
+        table.endswith(f'.{lane_contract.clickhouse_simulation_table_by_role[role]}')
+        for role, table in clickhouse_table_by_role.items()
+        if role not in {lane_contract.signal_table_role, lane_contract.price_table_role}
+    )
     postgres_database_isolated = bool(simulation_db and simulation_db != 'torghut')
     report = {
+        'lane': lane_contract.lane,
         'simulation_topics_isolated_from_sources': simulation_topics_disjoint,
-        'ta_group_isolated': ta_group_id != _as_text(ta_data.get('TA_GROUP_ID')),
+        'ta_group_isolated': ta_group_id != _as_text(ta_data.get(lane_contract.ta_group_id_key)),
         'signal_table_isolated': signal_table_isolated,
         'price_table_isolated': price_table_isolated,
+        'auxiliary_tables_isolated': auxiliary_tables_isolated,
         'postgres_database_isolated': postgres_database_isolated,
         'simulation_dsn': simulation_dsn,
     }
@@ -810,6 +826,7 @@ def _teardown_clean(
     postgres_config: Any,
 ) -> dict[str, Any]:
     resource_payload = _resource_asdict(resources)
+    lane_contract = _resource_lane_contract(resources)
     namespace = _as_text(resource_payload.get('namespace')) or 'torghut'
     torghut_service = _as_text(resource_payload.get('torghut_service'))
     ta_configmap = _as_text(resource_payload.get('ta_configmap'))
@@ -843,8 +860,8 @@ def _teardown_clean(
         'signal_table': _as_text(_as_mapping(env_by_name.get('TRADING_SIGNAL_TABLE')).get('value')) == clickhouse_signal_table,
         'price_table': _as_text(_as_mapping(env_by_name.get('TRADING_PRICE_TABLE')).get('value')) == clickhouse_price_table,
         'order_feed_group_id': _as_text(_as_mapping(env_by_name.get('TRADING_ORDER_FEED_GROUP_ID')).get('value')) == order_feed_group_id,
-        'ta_group_id': _as_text(ta_data.get('TA_GROUP_ID')) == ta_group_id,
-        'ta_clickhouse_database': bool(run_token) and run_token in (_as_text(ta_data.get('TA_CLICKHOUSE_URL')) or ''),
+        'ta_group_id': _as_text(ta_data.get(lane_contract.ta_group_id_key)) == ta_group_id,
+        'ta_clickhouse_database': bool(run_token) and run_token in (_as_text(ta_data.get(lane_contract.ta_clickhouse_url_key)) or ''),
     }
     restored = not any(simulation_markers_present.values())
     return {

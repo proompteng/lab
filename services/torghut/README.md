@@ -264,6 +264,16 @@ Set `torghut_env_overrides.TRADING_FEATURE_MAX_STALENESS_MS` only when you want 
 When `window.profile=us_equities_regular`, the script enforces full U.S. regular session bounds
 (`09:30-16:00 America/New_York`, `390` minutes minimum) and fails if coverage is too short.
 
+The manifest can now select `lane: options` with
+`schema_version: torghut.options-simulation-manifest.v1`. That lane uses isolated
+`torghut.sim.options.*` replay topics plus
+`sim_options_contract_bars_1s` / `sim_options_contract_features` /
+`sim_options_surface_features` in the simulation ClickHouse database. Example proof-run
+manifests live at:
+
+- `config/simulation/options-smoke-open-30m-2026-03-06.yaml`
+- `config/simulation/options-full-day-2026-03-06.yaml`
+
 If `argocd.manage_automation=true` in the dataset manifest, `--mode run` automatically sets Torghut
 ApplicationSet automation to `manual` during the simulation and restores the prior mode at the end.
 
@@ -280,7 +290,8 @@ uv run python scripts/start_historical_simulation.py \
   --dataset-manifest config/simulation/example-dataset.yaml
 ```
 
-Artifacts are written under `artifacts/torghut/simulations/<run_token>/`:
+Artifacts are written under `artifacts/torghut/simulations/<run_token>/` for equity runs
+and `artifacts/torghut/simulations/options/<run_token>/` for options runs by default:
 
 - `state.json` (pre-simulation cluster config snapshot)
 - `source-dump.ndjson` (bounded source-topic dump)
