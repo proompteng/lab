@@ -26,6 +26,8 @@ import { buildTranscriptSignature, compareTranscript, fitPromptMessages, type Tr
 import { getCodexClient, releaseCodexClient, resetCodexClient, setCodexClientFactory } from './codex-client'
 import { loadConfig } from './config'
 import { recordSseConnection, recordSseError } from './metrics'
+import { createSignedOpenWebUIRenderHref, resolveOpenWebUIRenderSigningSecret } from './openwebui-render-signing'
+import { getOpenWebUiRenderStore } from './openwebui-render-store'
 import { ThreadState, ThreadStateLive, type ThreadStateService, ThreadStateUnavailableError } from './thread-state'
 import {
   TranscriptState,
@@ -184,11 +186,28 @@ const parseBooleanEnv = (value: string | undefined) => {
   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on'
 }
 
+const normalizeExternalBaseUrl = (value: string | undefined) => {
+  const trimmed = value?.trim()
+  return trimmed ? trimmed.replace(/\/+$/g, '') : null
+}
+
+type OpenWebUIRenderRuntime = {
+  baseUrl: string
+  secret: string
+}
+
 const isOpenWebUIRichRenderEnabled = (chatClientKind: ChatClientKind, request: Request) => {
   if (chatClientKind !== 'openwebui') return false
   if (!parseBooleanEnv(process.env.JANGAR_OPENWEBUI_RICH_RENDER_ENABLED)) return false
   const requestedMode = request.headers.get('x-jangar-openwebui-render-mode')?.trim().toLowerCase()
   return requestedMode === 'rich-ui-v1'
+}
+
+const resolveOpenWebUIRenderRuntime = (): OpenWebUIRenderRuntime | null => {
+  const baseUrl = normalizeExternalBaseUrl(process.env.JANGAR_OPENWEBUI_EXTERNAL_BASE_URL)
+  const secret = resolveOpenWebUIRenderSigningSecret()
+  if (!baseUrl || !secret) return null
+  return { baseUrl, secret }
 }
 
 const includesMissingUpstreamThreadMessage = (message: string) => {
@@ -411,6 +430,7 @@ const toSseResponse = (
   threadContext: ThreadContext | null,
   codexCwd: string,
   enableOpenWebUIRichRender: boolean,
+  openWebUIRenderRuntime: OpenWebUIRenderRuntime | null,
   onTurnSettled?: (result: {
     aborted: boolean
     turnFinished: boolean
@@ -440,6 +460,56 @@ const toSseResponse = (
       let pendingInterrupt = false
       let didInterrupt = false
       let turnFinished = false
+      let persistRenderBlobs: (() => Promise<void>) | null = null
+
+      let createRenderRef:
+        | ((args: {
+            renderId: string
+            kind: string
+            messageBindingHash: string
+            expiresAt: string
+          }) => { id: string; kind: string; href: string; expiresAt: string } | null)
+        | undefined
+
+      if (enableOpenWebUIRichRender && openWebUIRenderRuntime) {
+        try {
+          const renderStore = getOpenWebUiRenderStore()
+          createRenderRef = ({ renderId, kind, messageBindingHash, expiresAt }) => ({
+            id: renderId,
+            kind,
+            href: createSignedOpenWebUIRenderHref({
+              baseUrl: openWebUIRenderRuntime.baseUrl,
+              renderId,
+              kind,
+              expiresAt,
+              messageBindingHash,
+              secret: openWebUIRenderRuntime.secret,
+            }),
+            expiresAt,
+          })
+          persistRenderBlobs = async () => {
+            const blobs = session.takePendingRenderBlobs()
+            for (const blob of blobs) {
+              try {
+                await renderStore.setRenderBlob(blob)
+              } catch (error) {
+                console.warn('[chat] failed to persist openwebui render blob', {
+                  chatId: threadContext?.chatId,
+                  threadId: activeThreadId ?? threadContext?.threadId ?? null,
+                  renderId: blob.renderId,
+                  logicalId: blob.logicalId,
+                  error: String(error),
+                })
+              }
+            }
+          }
+        } catch (error) {
+          console.warn('[chat] openwebui render store unavailable; falling back to inline-only rich mode', {
+            chatId: threadContext?.chatId,
+            error: String(error),
+          })
+        }
+      }
 
       const session = completionEncoder.create({
         id,
@@ -455,6 +525,7 @@ const toSseResponse = (
         jangarRender: {
           enabled: enableOpenWebUIRichRender,
           mode: 'rich-ui-v1',
+          createRenderRef,
         },
       })
 
@@ -688,6 +759,9 @@ const toSseResponse = (
               }
 
               enqueueFrames(session.onDelta(delta))
+              if (persistRenderBlobs) {
+                await persistRenderBlobs()
+              }
             }
 
             if (!aborted) {
@@ -745,6 +819,9 @@ const toSseResponse = (
             code: 'codex_error',
           }),
         )
+        if (persistRenderBlobs) {
+          await persistRenderBlobs()
+        }
       } finally {
         handleClientDisconnect = null
         for (const removeAbort of abortControllers) removeAbort()
@@ -767,6 +844,9 @@ const toSseResponse = (
           }
         }
         enqueueFrames(session.finalize({ aborted, turnFinished }))
+        if (persistRenderBlobs) {
+          await persistRenderBlobs()
+        }
 
         if (!controllerClosed) {
           try {
@@ -845,6 +925,7 @@ export const handleChatCompletionEffect = (request: Request) =>
           toolRenderer: ChatToolEventRenderer,
           encoder: ChatCompletionEncoder,
         })
+        const openWebUIRenderRuntime = resolveOpenWebUIRenderRuntime()
 
         let threadContext: ThreadContext | null = null
         let codexCwd = resolveCodexCwd()
@@ -1236,6 +1317,7 @@ export const handleChatCompletionEffect = (request: Request) =>
             threadContext,
             codexCwd,
             isOpenWebUIRichRenderEnabled(chatClientKind, request),
+            openWebUIRenderRuntime,
             finalizeTranscriptState,
             chatClientKind === 'openwebui',
             request.signal,

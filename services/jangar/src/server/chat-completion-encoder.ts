@@ -3,6 +3,8 @@ import * as Either from 'effect/Either'
 import { safeJsonStringify, stripTerminalControl } from './chat-text'
 import { decodeToolEvent, type ToolEvent } from './chat-tool-event'
 import type { ToolRenderer } from './chat-tool-event-renderer'
+import { OPENWEBUI_RENDER_URL_TTL_SECONDS, createMessageBindingHash } from './openwebui-render-signing'
+import { type OpenWebUiRenderBlob, createOpenWebUiRenderBlob } from './openwebui-render-store'
 
 const TOOL_EVENT_DECODE_FAILED_TAG = '[jangar][tool-event][decode-failed]'
 
@@ -28,6 +30,7 @@ type JangarRenderEvent = {
   renderRef?: {
     id: string
     kind: string
+    href: string
     expiresAt: string
   }
 }
@@ -35,6 +38,13 @@ type JangarRenderEvent = {
 type JangarRenderConfig = {
   enabled: boolean
   mode: 'rich-ui-v1'
+  renderUrlTtlSeconds?: number
+  createRenderRef?: (args: {
+    renderId: string
+    kind: string
+    messageBindingHash: string
+    expiresAt: string
+  }) => JangarRenderEvent['renderRef'] | null
 }
 
 type JangarEventState = {
@@ -610,6 +620,7 @@ type InternalErrorPayload = {
 export type ChatCompletionStreamSession = {
   setThreadMeta: (meta: ThreadMeta) => void
   getState: () => { hasEmittedAnyChunk: boolean; hadError: boolean; assistantContent: string }
+  takePendingRenderBlobs: () => OpenWebUiRenderBlob[]
   onDelta: (delta: unknown) => Record<string, unknown>[]
   onInternalError: (error: InternalErrorPayload) => Record<string, unknown>[]
   onClientAbort: () => Record<string, unknown>[]
@@ -644,6 +655,9 @@ const createSession = (args: {
 }): ChatCompletionStreamSession => {
   const { id, created, model, includeUsage, toolRenderer, jangarRender } = args
   const renderEnabled = jangarRender?.enabled === true && jangarRender.mode === 'rich-ui-v1'
+  const renderUrlTtlSeconds = jangarRender?.renderUrlTtlSeconds ?? OPENWEBUI_RENDER_URL_TTL_SECONDS
+  const messageBindingHash = createMessageBindingHash(id)
+  const pendingRenderBlobs: OpenWebUiRenderBlob[] = []
 
   let meta: ThreadMeta = { ...args.meta }
   let messageRoleEmitted = false
@@ -706,6 +720,61 @@ const createSession = (args: {
     pushChunk(frames, chunk)
   }
 
+  const stageRenderBlob = (
+    logicalId: string,
+    lane: JangarRenderLane,
+    kind: string,
+    payload: Record<string, unknown>,
+    preview?: JangarRenderMeta,
+  ): JangarRenderEvent['renderRef'] | undefined => {
+    if (!renderEnabled || typeof jangarRender?.createRenderRef !== 'function') return undefined
+
+    const expiresAt = new Date(Date.now() + renderUrlTtlSeconds * 1000).toISOString()
+    const blob = createOpenWebUiRenderBlob({
+      kind,
+      logicalId,
+      lane,
+      payload,
+      preview,
+      messageBindingHash,
+      expiresAt,
+    })
+
+    pendingRenderBlobs.push(blob)
+    return (
+      jangarRender.createRenderRef({
+        renderId: blob.renderId,
+        kind,
+        messageBindingHash,
+        expiresAt,
+      }) ?? undefined
+    )
+  }
+
+  const maybeStageStructuredPayload = (
+    logicalId: string,
+    lane: JangarRenderLane,
+    kind: string,
+    payload: Record<string, unknown>,
+    preview?: JangarRenderMeta,
+  ) => {
+    if (safeJsonStringify(payload).length <= RENDER_EVENT_PREVIEW_LIMIT) return undefined
+    return stageRenderBlob(logicalId, lane, kind, payload, preview)
+  }
+
+  const maybeStageTextPayload = (
+    logicalId: string,
+    lane: JangarRenderLane,
+    kind: string,
+    payloadKey: 'text' | 'markdown',
+    text: string,
+    preview?: JangarRenderMeta,
+    payloadExtras: Record<string, unknown> = {},
+  ) => {
+    if (text.length <= RENDER_EVENT_PREVIEW_LIMIT) return undefined
+    return stageRenderBlob(logicalId, lane, kind, { ...payloadExtras, [payloadKey]: text }, preview)
+  }
+
   const emitJangarEvent = (
     frames: Record<string, unknown>[],
     logicalId: string,
@@ -746,65 +815,78 @@ const createSession = (args: {
   const eventPayloadText = (value: string) => clampTextForPreview(value) ?? value
 
   const emitMessageEvent = (frames: Record<string, unknown>[], text: string) => {
+    const preview = { title: 'assistant', badge: 'message' } satisfies JangarRenderMeta
+    const renderRef = maybeStageTextPayload('message:assistant', 'message', 'message', 'text', text, preview)
     emitJangarEvent(
       frames,
       'message:assistant',
       'message',
       'append_text',
       { text: eventPayloadText(text) },
-      { title: 'assistant', badge: 'message' },
+      preview,
+      renderRef,
     )
   }
 
   const emitReasoningEvent = (frames: Record<string, unknown>[], text: string) => {
+    const preview = { title: 'reasoning', badge: 'summary' } satisfies JangarRenderMeta
+    const renderRef = maybeStageTextPayload('reasoning:summary', 'reasoning', 'reasoning', 'text', text, preview)
     emitJangarEvent(
       frames,
       'reasoning:summary',
       'reasoning',
       'append_text',
       { text: eventPayloadText(text) },
-      { title: 'reasoning', badge: 'summary' },
+      preview,
+      renderRef,
     )
   }
 
   const emitPlanEvent = (frames: Record<string, unknown>[], markdown: string) => {
+    const preview = { title: 'plan', badge: 'plan' } satisfies JangarRenderMeta
+    const renderRef = maybeStageTextPayload('plan:current', 'plan', 'plan', 'markdown', markdown, preview)
     emitJangarEvent(
       frames,
       'plan:current',
       'plan',
       'replace',
       { markdown: eventPayloadText(markdown) },
-      { title: 'plan', badge: 'plan' },
-      undefined,
+      preview,
+      renderRef,
     )
   }
 
   const emitRateLimitsEvent = (frames: Record<string, unknown>[], markdown: string) => {
+    const preview = { title: 'rate limits', badge: 'quota' } satisfies JangarRenderMeta
+    const renderRef = maybeStageTextPayload(
+      'rate_limits:current',
+      'rate_limits',
+      'rate_limits',
+      'markdown',
+      markdown,
+      preview,
+    )
     emitJangarEvent(
       frames,
       'rate_limits:current',
       'rate_limits',
       'replace',
       { markdown: eventPayloadText(markdown) },
-      { title: 'rate limits', badge: 'quota' },
-      undefined,
+      preview,
+      renderRef,
     )
   }
 
   const emitUsageEvent = (frames: Record<string, unknown>[], usage: Record<string, unknown>) => {
-    emitJangarEvent(frames, 'usage:final', 'usage', 'replace', { usage }, { title: 'usage', badge: 'usage' }, undefined)
+    const preview = { title: 'usage', badge: 'usage' } satisfies JangarRenderMeta
+    const renderRef = maybeStageStructuredPayload('usage:final', 'usage', 'usage', { usage }, preview)
+    emitJangarEvent(frames, 'usage:final', 'usage', 'replace', { usage }, preview, renderRef)
   }
 
   const emitErrorEvent = (frames: Record<string, unknown>[], error: Record<string, unknown>) => {
-    emitJangarEvent(
-      frames,
-      'error:current',
-      'error',
-      'replace',
-      { error },
-      { title: 'error', badge: 'error' },
-      undefined,
-    )
+    const preview = { title: 'error', badge: 'error' } satisfies JangarRenderMeta
+    const renderRef = maybeStageStructuredPayload('error:current', 'error', 'error', { error }, preview)
+    emitJangarEvent(frames, 'error:current', 'error', 'replace', { error }, preview, renderRef)
   }
 
   const emitToolEvents = (frames: Record<string, unknown>[], toolEvent: ToolEvent) => {
@@ -820,6 +902,12 @@ const createSession = (args: {
     const op: JangarRenderOp = shouldReplace ? 'replace' : 'merge'
     const logicalId = toolState.logicalId
     const toolTitle = toJangarMeta(toolEvent.title) ?? toJangarMeta(toolState.title) ?? summary.kind
+    const preview = {
+      title: toolTitle,
+      subtitle: status ?? undefined,
+      badge: summary.kind,
+    } satisfies JangarRenderMeta
+    const summaryRenderRef = maybeStageStructuredPayload(logicalId, 'tool', summary.kind, { ...summary }, preview)
 
     emitJangarEvent(
       frames,
@@ -829,15 +917,26 @@ const createSession = (args: {
       {
         ...summary,
       },
-      {
-        title: toolTitle,
-        subtitle: status ?? undefined,
-        badge: summary.kind,
-      },
+      preview,
+      summaryRenderRef,
     )
 
     const toolOutput = stripToolText(toolEvent.delta, toolState.reasoningState)
     if (toolOutput) {
+      const outputPreview = {
+        title: toolTitle,
+        badge: summary.kind,
+        subtitle: status ?? undefined,
+      } satisfies JangarRenderMeta
+      const outputRenderRef = maybeStageTextPayload(
+        logicalId,
+        'tool',
+        summary.kind,
+        'text',
+        toolOutput,
+        outputPreview,
+        { kind: summary.kind, status: status ?? undefined },
+      )
       emitJangarEvent(
         frames,
         logicalId,
@@ -851,6 +950,7 @@ const createSession = (args: {
           badge: summary.kind,
           subtitle: status ?? undefined,
         },
+        outputRenderRef,
       )
     }
 
@@ -1154,6 +1254,9 @@ const createSession = (args: {
     return frames
   }
 
+  const takePendingRenderBlobs: ChatCompletionStreamSession['takePendingRenderBlobs'] = () =>
+    pendingRenderBlobs.splice(0, pendingRenderBlobs.length)
+
   const finalize: ChatCompletionStreamSession['finalize'] = ({ aborted }) => {
     const frames: Record<string, unknown>[] = []
 
@@ -1196,6 +1299,7 @@ const createSession = (args: {
       meta = { ...meta, ...next }
     },
     getState: () => ({ hasEmittedAnyChunk, hadError, assistantContent }),
+    takePendingRenderBlobs,
     onDelta,
     onInternalError,
     onClientAbort,

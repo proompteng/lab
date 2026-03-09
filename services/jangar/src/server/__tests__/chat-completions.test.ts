@@ -11,6 +11,7 @@ import { handleChatCompletionEffect, resetCodexClient, setCodexClientFactory } f
 import { ChatCompletionEncoder, chatCompletionEncoderLive } from '~/server/chat-completion-encoder'
 import { ChatToolEventRenderer, chatToolEventRendererLive } from '~/server/chat-tool-event-renderer'
 import { buildTranscriptSignature, type TranscriptEntry } from '~/server/chat-transcript'
+import { resetOpenWebUiRenderStoreForTests } from '~/server/openwebui-render-store'
 import { ThreadState, type ThreadStateService } from '~/server/thread-state'
 import { TranscriptState, type TranscriptStateService } from '~/server/transcript-state'
 import { WorktreeState, type WorktreeStateService } from '~/server/worktree-state'
@@ -51,6 +52,10 @@ describe('chat completions handler', () => {
       | 'JANGAR_DEFAULT_MODEL'
       | 'CODEX_CWD'
       | 'JANGAR_STATEFUL_CHAT_MODE'
+      | 'JANGAR_CHAT_STATE_BACKEND'
+      | 'JANGAR_OPENWEBUI_EXTERNAL_BASE_URL'
+      | 'JANGAR_OPENWEBUI_RENDER_SIGNING_SECRET'
+      | 'JANGAR_OPENWEBUI_RICH_RENDER_ENABLED'
       | 'JANGAR_CODEX_MAX_INPUT_CHARS',
       string | undefined
     >
@@ -63,10 +68,18 @@ describe('chat completions handler', () => {
     previousEnv.CODEX_CWD = process.env.CODEX_CWD
     previousEnv.JANGAR_STATEFUL_CHAT_MODE = process.env.JANGAR_STATEFUL_CHAT_MODE
     previousEnv.JANGAR_CODEX_MAX_INPUT_CHARS = process.env.JANGAR_CODEX_MAX_INPUT_CHARS
+    previousEnv.JANGAR_CHAT_STATE_BACKEND = process.env.JANGAR_CHAT_STATE_BACKEND
+    previousEnv.JANGAR_OPENWEBUI_EXTERNAL_BASE_URL = process.env.JANGAR_OPENWEBUI_EXTERNAL_BASE_URL
+    previousEnv.JANGAR_OPENWEBUI_RENDER_SIGNING_SECRET = process.env.JANGAR_OPENWEBUI_RENDER_SIGNING_SECRET
+    previousEnv.JANGAR_OPENWEBUI_RICH_RENDER_ENABLED = process.env.JANGAR_OPENWEBUI_RICH_RENDER_ENABLED
     delete process.env.JANGAR_MODELS
     delete process.env.JANGAR_DEFAULT_MODEL
     delete process.env.JANGAR_STATEFUL_CHAT_MODE
     delete process.env.JANGAR_CODEX_MAX_INPUT_CHARS
+    delete process.env.JANGAR_CHAT_STATE_BACKEND
+    delete process.env.JANGAR_OPENWEBUI_EXTERNAL_BASE_URL
+    delete process.env.JANGAR_OPENWEBUI_RENDER_SIGNING_SECRET
+    delete process.env.JANGAR_OPENWEBUI_RICH_RENDER_ENABLED
 
     worktreeRoot = await mkdtemp(join(tmpdir(), 'jangar-worktree-'))
     process.env.CODEX_CWD = worktreeRoot
@@ -89,6 +102,7 @@ describe('chat completions handler', () => {
   afterEach(async () => {
     vi.clearAllMocks()
     resetCodexClient()
+    await resetOpenWebUiRenderStoreForTests()
 
     if (worktreeRoot) {
       await rm(worktreeRoot, { recursive: true, force: true })
@@ -123,6 +137,30 @@ describe('chat completions handler', () => {
       delete process.env.JANGAR_CODEX_MAX_INPUT_CHARS
     } else {
       process.env.JANGAR_CODEX_MAX_INPUT_CHARS = previousEnv.JANGAR_CODEX_MAX_INPUT_CHARS
+    }
+
+    if (previousEnv.JANGAR_CHAT_STATE_BACKEND === undefined) {
+      delete process.env.JANGAR_CHAT_STATE_BACKEND
+    } else {
+      process.env.JANGAR_CHAT_STATE_BACKEND = previousEnv.JANGAR_CHAT_STATE_BACKEND
+    }
+
+    if (previousEnv.JANGAR_OPENWEBUI_EXTERNAL_BASE_URL === undefined) {
+      delete process.env.JANGAR_OPENWEBUI_EXTERNAL_BASE_URL
+    } else {
+      process.env.JANGAR_OPENWEBUI_EXTERNAL_BASE_URL = previousEnv.JANGAR_OPENWEBUI_EXTERNAL_BASE_URL
+    }
+
+    if (previousEnv.JANGAR_OPENWEBUI_RENDER_SIGNING_SECRET === undefined) {
+      delete process.env.JANGAR_OPENWEBUI_RENDER_SIGNING_SECRET
+    } else {
+      process.env.JANGAR_OPENWEBUI_RENDER_SIGNING_SECRET = previousEnv.JANGAR_OPENWEBUI_RENDER_SIGNING_SECRET
+    }
+
+    if (previousEnv.JANGAR_OPENWEBUI_RICH_RENDER_ENABLED === undefined) {
+      delete process.env.JANGAR_OPENWEBUI_RICH_RENDER_ENABLED
+    } else {
+      process.env.JANGAR_OPENWEBUI_RICH_RENDER_ENABLED = previousEnv.JANGAR_OPENWEBUI_RICH_RENDER_ENABLED
     }
   })
 
@@ -194,6 +232,59 @@ describe('chat completions handler', () => {
     )
     const enabledText = await enabledResponse.text()
     expect(hasJangarEvent(enabledText)).toBe(true)
+  })
+
+  it('emits signed renderRef links for oversized rich events when external render config is present', async () => {
+    process.env.JANGAR_OPENWEBUI_RICH_RENDER_ENABLED = 'true'
+    process.env.JANGAR_OPENWEBUI_EXTERNAL_BASE_URL = 'https://jangar.test'
+    process.env.JANGAR_OPENWEBUI_RENDER_SIGNING_SECRET = 'test-secret'
+    process.env.JANGAR_CHAT_STATE_BACKEND = 'memory'
+
+    const mockClient = {
+      runTurnStream: vi.fn(async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'message', delta: 'x'.repeat(9_000) }
+        })(),
+      })),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const response = await chatCompletionsHandler(
+      new Request('http://localhost', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-jangar-client-kind': 'openwebui',
+          'x-jangar-openwebui-render-mode': 'rich-ui-v1',
+        },
+        body: JSON.stringify({
+          model: 'gpt-5.4',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
+      }),
+    )
+
+    const frames = parseFrames(await response.text())
+    const eventFrame = frames.find((frame) => {
+      const choices = asRecord(frame)?.choices
+      if (!Array.isArray(choices)) return false
+      return choices.some((choice) => asRecord(asRecord(choice)?.delta)?.jangar_event != null)
+    })
+    const eventChoices = asRecord(eventFrame)?.choices
+    const firstChoice = Array.isArray(eventChoices) ? eventChoices[0] : null
+    const event = asRecord(asRecord(asRecord(firstChoice)?.delta)?.jangar_event)
+    const renderRef = asRecord(asRecord(event)?.renderRef)
+
+    expect(renderRef?.kind).toBe('message')
+    expect(typeof renderRef?.href).toBe('string')
+    expect(String(renderRef?.href)).toContain('https://jangar.test/api/openwebui/rich-ui/render/')
+    expect(String(renderRef?.href)).toContain('sig=')
+    expect(String(renderRef?.href)).toContain('e=')
   })
 
   it('creates and releases a dedicated codex client for each streamed request', async () => {

@@ -160,6 +160,7 @@ import { Route as ApiTorghutMarketContextRunsRequestIdRouteImport } from './rout
 import { Route as ApiTorghutMarketContextProvidersNewsRouteImport } from './routes/api/torghut/market-context/providers/news'
 import { Route as ApiTorghutMarketContextProvidersFundamentalsRouteImport } from './routes/api/torghut/market-context/providers/fundamentals'
 import { Route as ApiTorghutDecisionEngineRunsIdRouteImport } from './routes/api/torghut/decision-engine/runs/$id'
+import { Route as ApiOpenwebuiRichUiRenderRenderIdRouteImport } from './routes/api/openwebui/rich-ui/render/$renderId'
 import { Route as ApiAgentsImplementationSourcesWebhooksProviderRouteImport } from './routes/api/agents/implementation-sources/webhooks/$provider'
 import { Route as ApiTorghutTradingControlPlaneQuantStreamRouteImport } from './routes/api/torghut/trading/control-plane/quant/stream'
 import { Route as ApiTorghutTradingControlPlaneQuantSnapshotRouteImport } from './routes/api/torghut/trading/control-plane/quant/snapshot'
@@ -999,6 +1000,12 @@ const ApiTorghutDecisionEngineRunsIdRoute =
     path: '/$id',
     getParentRoute: () => ApiTorghutDecisionEngineRunsRoute,
   } as any)
+const ApiOpenwebuiRichUiRenderRenderIdRoute =
+  ApiOpenwebuiRichUiRenderRenderIdRouteImport.update({
+    id: '/api/openwebui/rich-ui/render/$renderId',
+    path: '/api/openwebui/rich-ui/render/$renderId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiAgentsImplementationSourcesWebhooksProviderRoute =
   ApiAgentsImplementationSourcesWebhooksProviderRouteImport.update({
     id: '/api/agents/implementation-sources/webhooks/$provider',
@@ -1252,6 +1259,7 @@ export interface FileRoutesByFullPath {
   '/api/whitepapers/$runId/': typeof ApiWhitepapersRunIdIndexRoute
   '/control-plane/torghut/quant/': typeof ControlPlaneTorghutQuantIndexRoute
   '/api/agents/implementation-sources/webhooks/$provider': typeof ApiAgentsImplementationSourcesWebhooksProviderRoute
+  '/api/openwebui/rich-ui/render/$renderId': typeof ApiOpenwebuiRichUiRenderRenderIdRoute
   '/api/torghut/decision-engine/runs/$id': typeof ApiTorghutDecisionEngineRunsIdRoute
   '/api/torghut/market-context/providers/fundamentals': typeof ApiTorghutMarketContextProvidersFundamentalsRoute
   '/api/torghut/market-context/providers/news': typeof ApiTorghutMarketContextProvidersNewsRoute
@@ -1421,6 +1429,7 @@ export interface FileRoutesByTo {
   '/api/whitepapers/$runId': typeof ApiWhitepapersRunIdIndexRoute
   '/control-plane/torghut/quant': typeof ControlPlaneTorghutQuantIndexRoute
   '/api/agents/implementation-sources/webhooks/$provider': typeof ApiAgentsImplementationSourcesWebhooksProviderRoute
+  '/api/openwebui/rich-ui/render/$renderId': typeof ApiOpenwebuiRichUiRenderRenderIdRoute
   '/api/torghut/decision-engine/runs/$id': typeof ApiTorghutDecisionEngineRunsIdRoute
   '/api/torghut/market-context/providers/fundamentals': typeof ApiTorghutMarketContextProvidersFundamentalsRoute
   '/api/torghut/market-context/providers/news': typeof ApiTorghutMarketContextProvidersNewsRoute
@@ -1593,6 +1602,7 @@ export interface FileRoutesById {
   '/api/whitepapers/$runId/': typeof ApiWhitepapersRunIdIndexRoute
   '/control-plane/torghut/quant/': typeof ControlPlaneTorghutQuantIndexRoute
   '/api/agents/implementation-sources/webhooks/$provider': typeof ApiAgentsImplementationSourcesWebhooksProviderRoute
+  '/api/openwebui/rich-ui/render/$renderId': typeof ApiOpenwebuiRichUiRenderRenderIdRoute
   '/api/torghut/decision-engine/runs/$id': typeof ApiTorghutDecisionEngineRunsIdRoute
   '/api/torghut/market-context/providers/fundamentals': typeof ApiTorghutMarketContextProvidersFundamentalsRoute
   '/api/torghut/market-context/providers/news': typeof ApiTorghutMarketContextProvidersNewsRoute
@@ -1766,6 +1776,7 @@ export interface FileRouteTypes {
     | '/api/whitepapers/$runId/'
     | '/control-plane/torghut/quant/'
     | '/api/agents/implementation-sources/webhooks/$provider'
+    | '/api/openwebui/rich-ui/render/$renderId'
     | '/api/torghut/decision-engine/runs/$id'
     | '/api/torghut/market-context/providers/fundamentals'
     | '/api/torghut/market-context/providers/news'
@@ -1935,6 +1946,7 @@ export interface FileRouteTypes {
     | '/api/whitepapers/$runId'
     | '/control-plane/torghut/quant'
     | '/api/agents/implementation-sources/webhooks/$provider'
+    | '/api/openwebui/rich-ui/render/$renderId'
     | '/api/torghut/decision-engine/runs/$id'
     | '/api/torghut/market-context/providers/fundamentals'
     | '/api/torghut/market-context/providers/news'
@@ -2106,6 +2118,7 @@ export interface FileRouteTypes {
     | '/api/whitepapers/$runId/'
     | '/control-plane/torghut/quant/'
     | '/api/agents/implementation-sources/webhooks/$provider'
+    | '/api/openwebui/rich-ui/render/$renderId'
     | '/api/torghut/decision-engine/runs/$id'
     | '/api/torghut/market-context/providers/fundamentals'
     | '/api/torghut/market-context/providers/news'
@@ -2257,6 +2270,7 @@ export interface RootRouteChildren {
   ApiWhitepapersRunIdIndexRoute: typeof ApiWhitepapersRunIdIndexRoute
   ControlPlaneTorghutQuantIndexRoute: typeof ControlPlaneTorghutQuantIndexRoute
   ApiAgentsImplementationSourcesWebhooksProviderRoute: typeof ApiAgentsImplementationSourcesWebhooksProviderRoute
+  ApiOpenwebuiRichUiRenderRenderIdRoute: typeof ApiOpenwebuiRichUiRenderRenderIdRoute
   ApiTorghutMarketContextProvidersFundamentalsRoute: typeof ApiTorghutMarketContextProvidersFundamentalsRoute
   ApiTorghutMarketContextProvidersNewsRoute: typeof ApiTorghutMarketContextProvidersNewsRoute
   ApiTorghutMarketContextRunsRequestIdRoute: typeof ApiTorghutMarketContextRunsRequestIdRoute
@@ -3331,6 +3345,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTorghutDecisionEngineRunsIdRouteImport
       parentRoute: typeof ApiTorghutDecisionEngineRunsRoute
     }
+    '/api/openwebui/rich-ui/render/$renderId': {
+      id: '/api/openwebui/rich-ui/render/$renderId'
+      path: '/api/openwebui/rich-ui/render/$renderId'
+      fullPath: '/api/openwebui/rich-ui/render/$renderId'
+      preLoaderRoute: typeof ApiOpenwebuiRichUiRenderRenderIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/agents/implementation-sources/webhooks/$provider': {
       id: '/api/agents/implementation-sources/webhooks/$provider'
       path: '/api/agents/implementation-sources/webhooks/$provider'
@@ -3835,6 +3856,7 @@ const rootRouteChildren: RootRouteChildren = {
   ControlPlaneTorghutQuantIndexRoute: ControlPlaneTorghutQuantIndexRoute,
   ApiAgentsImplementationSourcesWebhooksProviderRoute:
     ApiAgentsImplementationSourcesWebhooksProviderRoute,
+  ApiOpenwebuiRichUiRenderRenderIdRoute: ApiOpenwebuiRichUiRenderRenderIdRoute,
   ApiTorghutMarketContextProvidersFundamentalsRoute:
     ApiTorghutMarketContextProvidersFundamentalsRoute,
   ApiTorghutMarketContextProvidersNewsRoute:

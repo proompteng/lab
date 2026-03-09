@@ -10,6 +10,12 @@ const createSession = (
     jangarRender?: {
       enabled: boolean
       mode: 'rich-ui-v1'
+      createRenderRef?: (args: { renderId: string; kind: string; messageBindingHash: string; expiresAt: string }) => {
+        id: string
+        kind: string
+        href: string
+        expiresAt: string
+      } | null
     }
   } = {},
 ) => {
@@ -346,6 +352,43 @@ describe('chat completion encoder', () => {
     const enabled = createSession({ jangarRender: { enabled: true, mode: 'rich-ui-v1' } })
     const enabledFrames = enabled.onDelta({ type: 'message', delta: 'hi' })
     expect(getJangarEvents(enabledFrames).length).toBe(1)
+  })
+
+  it('stages render blobs for oversized rich events when detail rendering is configured', () => {
+    const session = createSession({
+      jangarRender: {
+        enabled: true,
+        mode: 'rich-ui-v1',
+        createRenderRef: ({ renderId, kind, expiresAt }) => ({
+          id: renderId,
+          kind,
+          href: `https://jangar.test/api/openwebui/rich-ui/render/${renderId}`,
+          expiresAt,
+        }),
+      },
+    })
+
+    const frames = session.onDelta({ type: 'message', delta: 'x'.repeat(9_000) })
+    const event = getMessageEvent(frames)
+    const renderRef = asRecord(event?.renderRef)
+    const blobs = session.takePendingRenderBlobs()
+
+    expect(renderRef?.kind).toBe('message')
+    expect(typeof renderRef?.href).toBe('string')
+    expect(blobs).toHaveLength(1)
+    expect(blobs[0]?.payload.text).toBe(`\n${'x'.repeat(9_000)}`)
+  })
+
+  it('keeps oversized rich events inline-only when no detail renderer is configured', () => {
+    const session = createSession({
+      jangarRender: { enabled: true, mode: 'rich-ui-v1' },
+    })
+
+    const frames = session.onDelta({ type: 'message', delta: 'x'.repeat(9_000) })
+    const event = getMessageEvent(frames)
+
+    expect(asRecord(event?.renderRef)).toBeNull()
+    expect(session.takePendingRenderBlobs()).toHaveLength(0)
   })
 
   it('emits deterministic jangar event metadata for message text', () => {
