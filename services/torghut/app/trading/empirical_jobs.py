@@ -35,6 +35,79 @@ EMPIRICAL_JOB_TYPES: tuple[str, ...] = (
     "janus_event_car",
     "janus_hgrm_reward",
 )
+AUTHORITATIVE_EMPIRICAL_PROVENANCE: frozenset[str] = frozenset(
+    {
+        ArtifactProvenance.HISTORICAL_MARKET_REPLAY.value,
+        ArtifactProvenance.PAPER_RUNTIME_OBSERVED.value,
+        ArtifactProvenance.LIVE_RUNTIME_OBSERVED.value,
+    }
+)
+
+
+def _as_dict(value: object) -> dict[str, Any]:
+    return dict(cast(Mapping[str, Any], value)) if isinstance(value, Mapping) else {}
+
+
+def _as_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _as_string_list(value: object) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [text for item in cast(list[object] | tuple[object, ...], value) if (text := _as_text(item))]
+
+
+def _lineage_is_complete(
+    *,
+    job_run_id: str,
+    dataset_snapshot_ref: str,
+    runtime_version_refs: Sequence[str],
+    model_refs: Sequence[str],
+) -> bool:
+    return (
+        bool(_as_text(job_run_id))
+        and bool(_as_text(dataset_snapshot_ref))
+        and bool(_as_string_list(runtime_version_refs))
+        and bool(_as_string_list(model_refs))
+    )
+
+
+def empirical_artifact_truthfulness_reasons(payload: Mapping[str, object]) -> list[str]:
+    reasons: list[str] = []
+    authority = _as_dict(payload.get("artifact_authority"))
+    if not authority:
+        reasons.append("artifact_authority_missing")
+    else:
+        if _as_text(authority.get("provenance")) not in AUTHORITATIVE_EMPIRICAL_PROVENANCE:
+            reasons.append("artifact_authority_provenance_invalid")
+        if _as_text(authority.get("maturity")) != EvidenceMaturity.EMPIRICALLY_VALIDATED.value:
+            reasons.append("artifact_authority_maturity_invalid")
+        if not bool(authority.get("authoritative", False)):
+            reasons.append("artifact_authority_not_authoritative")
+        if bool(authority.get("placeholder", False)):
+            reasons.append("artifact_authority_placeholder")
+
+    if not bool(payload.get("promotion_authority_eligible", False)):
+        reasons.append("promotion_authority_ineligible")
+
+    lineage = _as_dict(payload.get("lineage"))
+    if not _as_text(lineage.get("dataset_snapshot_ref")):
+        reasons.append("lineage_dataset_snapshot_ref_missing")
+    if not _as_text(lineage.get("job_run_id")):
+        reasons.append("lineage_job_run_id_missing")
+    if not _as_string_list(lineage.get("runtime_version_refs")):
+        reasons.append("lineage_runtime_version_refs_missing")
+    if not _as_string_list(lineage.get("model_refs")):
+        reasons.append("lineage_model_refs_missing")
+    return reasons
+
+
+def artifact_is_truthful(payload: Mapping[str, object]) -> bool:
+    return not empirical_artifact_truthfulness_reasons(payload)
 
 
 def _payload_hash(payload: Mapping[str, object]) -> str:
@@ -118,7 +191,13 @@ def build_empirical_benchmark_parity_report(
         str(item.get("status") or "").strip() == "pass"
         for item in normalized_scorecards.values()
     ) and not any(name not in normalized_scorecards for name in BENCHMARK_PARITY_REQUIRED_SCORECARDS)
-    promotion_authority_eligible = scorecards_pass and not missing_families and bool(dataset_snapshot_ref.strip())
+    lineage_ready = _lineage_is_complete(
+        job_run_id=job_run_id,
+        dataset_snapshot_ref=dataset_snapshot_ref,
+        runtime_version_refs=runtime_version_refs,
+        model_refs=model_refs,
+    )
+    promotion_authority_eligible = scorecards_pass and not missing_families and lineage_ready
     report: dict[str, object] = {
         "schema_version": BENCHMARK_PARITY_SCHEMA_VERSION,
         "candidate_id": candidate_id,
@@ -159,6 +238,8 @@ def build_empirical_benchmark_parity_report(
             notes=(
                 "Missing required benchmark families."
                 if missing_families
+                else "Empirical benchmark parity is missing runtime or model lineage refs."
+                if not lineage_ready
                 else "Empirical benchmark parity assembled from observed benchmark runs."
             ),
         ),
@@ -188,11 +269,13 @@ def build_empirical_foundation_router_parity_report(
     required_adapters = set(FOUNDATION_ROUTER_PARITY_REQUIRED_ADAPTERS)
     normalized_adapters = [str(item).strip() for item in adapters if str(item).strip()]
     missing_adapters = sorted(item for item in required_adapters if item not in normalized_adapters)
-    promotion_authority_eligible = (
-        overall_status == "pass"
-        and not missing_adapters
-        and bool(dataset_snapshot_ref.strip())
+    lineage_ready = _lineage_is_complete(
+        job_run_id=job_run_id,
+        dataset_snapshot_ref=dataset_snapshot_ref,
+        runtime_version_refs=runtime_version_refs,
+        model_refs=model_refs,
     )
+    promotion_authority_eligible = overall_status == "pass" and not missing_adapters and lineage_ready
     report: dict[str, object] = {
         "schema_version": FOUNDATION_ROUTER_PARITY_SCHEMA_VERSION,
         "candidate_id": candidate_id,
@@ -228,6 +311,8 @@ def build_empirical_foundation_router_parity_report(
             notes=(
                 "Missing required router adapters."
                 if missing_adapters
+                else "Empirical foundation router parity is missing runtime or model lineage refs."
+                if not lineage_ready
                 else "Empirical foundation router parity assembled from replayed adapter outputs."
             ),
         ),
@@ -244,18 +329,34 @@ def promote_janus_payload_to_empirical(
     runtime_version_refs: Sequence[str] = (),
     model_refs: Sequence[str] = (),
     promotion_authority_eligible: bool,
+    require_summary_field: bool = True,
 ) -> dict[str, object]:
     upgraded = dict(payload)
+    lineage_ready = _lineage_is_complete(
+        job_run_id=job_run_id,
+        dataset_snapshot_ref=dataset_snapshot_ref,
+        runtime_version_refs=runtime_version_refs,
+        model_refs=model_refs,
+    )
+    resolved_promotion_authority_eligible = (
+        promotion_authority_eligible
+        and (not require_summary_field or bool(_as_dict(payload.get("summary"))))
+        and lineage_ready
+    )
     upgraded["lineage"] = _lineage_payload(
         job_run_id=job_run_id,
         dataset_snapshot_ref=dataset_snapshot_ref,
         runtime_version_refs=runtime_version_refs,
         model_refs=model_refs,
     )
-    upgraded["promotion_authority_eligible"] = promotion_authority_eligible
+    upgraded["promotion_authority_eligible"] = resolved_promotion_authority_eligible
     upgraded["artifact_authority"] = _empirical_contract(
-        promotion_authority_eligible=promotion_authority_eligible,
-        notes="Janus artifact assembled from replayed signal and decision windows.",
+        promotion_authority_eligible=resolved_promotion_authority_eligible,
+        notes=(
+            "Janus artifact is missing required truthfulness inputs or runtime/model lineage refs."
+            if not resolved_promotion_authority_eligible
+            else "Janus artifact assembled from replayed signal and decision windows."
+        ),
     )
     return upgraded
 
@@ -332,6 +433,8 @@ def build_empirical_jobs_status(
                 "authority": "blocked",
                 "promotion_authority_eligible": False,
                 "stale": True,
+                "truthful": False,
+                "blocked_reasons": ["job_missing"],
             }
             fresh_and_eligible = False
             continue
@@ -341,20 +444,51 @@ def build_empirical_jobs_status(
             if created_at_raw.tzinfo is not None
             else created_at_raw.replace(tzinfo=timezone.utc)
         )
+        payload = _as_dict(row.payload_json)
+        truthful_reasons = empirical_artifact_truthfulness_reasons(payload)
+        truthful = not truthful_reasons
         stale = created_at < cutoff or row.status not in {"completed", "success"}
+        blocked_reasons = sorted(
+            {
+                *truthful_reasons,
+                *(["job_stale"] if created_at < cutoff else []),
+                *(["job_status_incomplete"] if row.status not in {"completed", "success"} else []),
+                *(["row_authority_not_empirical"] if row.authority != "empirical" else []),
+                *(
+                    ["row_promotion_authority_ineligible"]
+                    if not row.promotion_authority_eligible
+                    else []
+                ),
+                *(
+                    ["row_dataset_snapshot_ref_missing"]
+                    if not _as_text(row.dataset_snapshot_ref)
+                    else []
+                ),
+            }
+        )
         jobs[job_type] = {
             "status": row.status,
-            "authority": row.authority,
-            "promotion_authority_eligible": bool(row.promotion_authority_eligible),
+            "authority": row.authority if truthful and row.authority == "empirical" else "blocked",
+            "persisted_authority": row.authority,
+            "promotion_authority_eligible": bool(row.promotion_authority_eligible) and truthful,
+            "persisted_promotion_authority_eligible": bool(row.promotion_authority_eligible),
             "dataset_snapshot_ref": row.dataset_snapshot_ref,
             "job_run_id": row.job_run_id,
             "created_at": created_at.isoformat(),
             "artifact_refs": list(cast(list[object], row.artifact_refs or [])),
             "stale": stale,
+            "truthful": truthful,
+            "blocked_reasons": blocked_reasons,
         }
-        if stale or not row.promotion_authority_eligible or row.authority != "empirical":
+        if (
+            stale
+            or not truthful
+            or not row.promotion_authority_eligible
+            or row.authority != "empirical"
+        ):
             fresh_and_eligible = False
     return {
+        "ready": fresh_and_eligible,
         "status": "healthy" if fresh_and_eligible else "degraded",
         "authority": "empirical" if fresh_and_eligible else "blocked",
         "stale_after_seconds": stale_after_seconds,
@@ -364,9 +498,11 @@ def build_empirical_jobs_status(
 
 __all__ = [
     "EMPIRICAL_JOB_TYPES",
+    "artifact_is_truthful",
     "build_empirical_benchmark_parity_report",
     "build_empirical_foundation_router_parity_report",
     "build_empirical_jobs_status",
+    "empirical_artifact_truthfulness_reasons",
     "promote_janus_payload_to_empirical",
     "upsert_empirical_job_run",
 ]

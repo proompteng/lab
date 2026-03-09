@@ -41,6 +41,28 @@ from app.models import (
 )
 
 
+def _truthful_empirical_payload(
+    *,
+    job_run_id: str,
+    dataset_snapshot_ref: str,
+) -> dict[str, object]:
+    return {
+        "promotion_authority_eligible": True,
+        "artifact_authority": {
+            "provenance": "historical_market_replay",
+            "maturity": "empirically_validated",
+            "authoritative": True,
+            "placeholder": False,
+        },
+        "lineage": {
+            "dataset_snapshot_ref": dataset_snapshot_ref,
+            "job_run_id": job_run_id,
+            "runtime_version_refs": ["services/torghut@sha256:abc"],
+            "model_refs": ["models/candidate@sha256:def"],
+        },
+    }
+
+
 class TestTradingApi(TestCase):
     def setUp(self) -> None:
         _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
@@ -1900,7 +1922,10 @@ class TestTradingApi(TestCase):
                     promotion_authority_eligible=True,
                     dataset_snapshot_ref="s3://datasets/run-empirical-1.json",
                     artifact_refs=["s3://artifacts/benchmark.json"],
-                    payload_json={"artifact_authority": {"authoritative": True}},
+                    payload_json=_truthful_empirical_payload(
+                        job_run_id="job-benchmark-1",
+                        dataset_snapshot_ref="s3://datasets/run-empirical-1.json",
+                    ),
                 )
             )
             session.commit()

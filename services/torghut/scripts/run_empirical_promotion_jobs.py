@@ -22,6 +22,7 @@ from app.trading.completion import (
     persist_completion_trace,
 )
 from app.trading.empirical_jobs import (
+    artifact_is_truthful,
     build_empirical_benchmark_parity_report,
     build_empirical_foundation_router_parity_report,
     promote_janus_payload_to_empirical,
@@ -72,19 +73,6 @@ def _as_text(value: Any) -> str | None:
     if not text:
         return None
     return text
-
-
-def _artifact_is_truthful(payload: Mapping[str, Any]) -> bool:
-    authority = _as_dict(payload.get("artifact_authority"))
-    if not authority:
-        return False
-    return (
-        not bool(authority.get("placeholder", False))
-        and bool(authority.get("authoritative", False))
-        and str(authority.get("provenance") or "").strip()
-        not in {"synthetic_generated", "structural_placeholder"}
-        and bool(payload.get("promotion_authority_eligible", False))
-    )
 
 
 def _job_run_id(run_id: str, job_type: str, explicit: str | None = None) -> str:
@@ -173,12 +161,25 @@ def _build_janus_summary(
     reward_summary = _as_dict(hgrm_reward_payload.get("summary"))
     event_count = int(event_summary.get("event_count") or len(_as_list(event_car_payload.get("events"))) or 0)
     reward_count = int(reward_summary.get("reward_count") or len(_as_list(hgrm_reward_payload.get("rewards"))) or 0)
-    mapped_count = int(reward_summary.get("event_mapped_count") or reward_count or 0)
-    evidence_complete = event_count > 0 and reward_count > 0 and mapped_count >= reward_count
+    mapped_count = int(reward_summary.get("event_mapped_count") or 0)
+    event_truthful = artifact_is_truthful(event_car_payload)
+    reward_truthful = artifact_is_truthful(hgrm_reward_payload)
+    reasons: list[str] = []
+    if event_count <= 0:
+        reasons.append("janus_event_count_missing")
+    if reward_count <= 0:
+        reasons.append("janus_reward_count_missing")
+    if reward_count > 0 and mapped_count < reward_count:
+        reasons.append("janus_reward_event_mapping_incomplete")
+    if not event_truthful:
+        reasons.append("janus_event_car_not_truthful")
+    if not reward_truthful:
+        reasons.append("janus_hgrm_reward_not_truthful")
+    evidence_complete = not reasons
     summary: dict[str, object] = {
         "schema_version": "janus-q-evidence-v1",
         "status": "pass" if evidence_complete else "degrade",
-        "reasons": [] if evidence_complete else ["janus_empirical_inputs_incomplete"],
+        "reasons": reasons,
         "promotion_authority_eligible": evidence_complete,
         "event_car": {
             "schema_version": str(event_car_payload.get("schema_version") or "").strip() or "janus-event-car-v1",
@@ -191,6 +192,7 @@ def _build_janus_summary(
             "schema_version": str(hgrm_reward_payload.get("schema_version") or "").strip()
             or "janus-hgrm-reward-v1",
             "reward_count": reward_count,
+            "event_mapped_count": mapped_count,
             "direction_gate_pass_ratio": reward_summary.get("direction_gate_pass_ratio", "0"),
             "manifest_hash": hgrm_reward_payload.get("manifest_hash"),
             "artifact_ref": hgrm_reward_artifact_ref,
@@ -204,6 +206,7 @@ def _build_janus_summary(
         runtime_version_refs=runtime_version_refs,
         model_refs=model_refs,
         promotion_authority_eligible=evidence_complete,
+        require_summary_field=False,
     )
 
 
@@ -367,15 +370,26 @@ def main() -> int:
 
         janus_manifest = _as_dict(manifest.get("janus_q"))
         if janus_manifest:
-            janus_job_run_id = _job_run_id(
+            janus_base_job_run_id = _as_text(janus_manifest.get("job_run_id"))
+            event_job_run_id = _job_run_id(
                 run_id,
                 "janus_event_car",
-                str(janus_manifest.get("job_run_id") or ""),
+                f"{janus_base_job_run_id}:janus_event_car" if janus_base_job_run_id else None,
+            )
+            reward_job_run_id = _job_run_id(
+                run_id,
+                "janus_hgrm_reward",
+                f"{janus_base_job_run_id}:janus_hgrm_reward" if janus_base_job_run_id else None,
+            )
+            summary_job_run_id = _job_run_id(
+                run_id,
+                "janus_q",
+                f"{janus_base_job_run_id}:janus_q" if janus_base_job_run_id else None,
             )
             event_payload = promote_janus_payload_to_empirical(
                 payload=_as_dict(janus_manifest.get("event_car")),
                 dataset_snapshot_ref=dataset_snapshot_ref,
-                job_run_id=janus_job_run_id,
+                job_run_id=event_job_run_id,
                 runtime_version_refs=runtime_version_refs,
                 model_refs=model_refs,
                 promotion_authority_eligible=bool(
@@ -385,7 +399,7 @@ def main() -> int:
             reward_payload = promote_janus_payload_to_empirical(
                 payload=_as_dict(janus_manifest.get("hgrm_reward")),
                 dataset_snapshot_ref=dataset_snapshot_ref,
-                job_run_id=janus_job_run_id,
+                job_run_id=reward_job_run_id,
                 runtime_version_refs=runtime_version_refs,
                 model_refs=model_refs,
                 promotion_authority_eligible=bool(
@@ -414,7 +428,7 @@ def main() -> int:
                 event_car_artifact_ref=event_ref,
                 hgrm_reward_artifact_ref=reward_ref,
                 dataset_snapshot_ref=dataset_snapshot_ref,
-                job_run_id=janus_job_run_id,
+                job_run_id=summary_job_run_id,
                 runtime_version_refs=runtime_version_refs,
                 model_refs=model_refs,
             )
@@ -436,7 +450,7 @@ def main() -> int:
                     candidate_id=candidate_id,
                     job_name=job_name,
                     job_type=job_type,
-                    job_run_id=f"{janus_job_run_id}:{job_type}",
+                    job_run_id=event_job_run_id if job_type == "janus_event_car" else reward_job_run_id,
                     status="completed"
                     if bool(payload.get("promotion_authority_eligible"))
                     else "degraded",
@@ -455,15 +469,15 @@ def main() -> int:
             artifacts_summary["janus_hgrm_reward"] = reward_ref
             artifacts_summary["janus_q"] = summary_ref
             jobs_summary["janus_event_car"] = {
-                "job_run_id": f"{janus_job_run_id}:janus_event_car",
+                "job_run_id": event_job_run_id,
                 "eligible": bool(event_payload.get("promotion_authority_eligible")),
             }
             jobs_summary["janus_hgrm_reward"] = {
-                "job_run_id": f"{janus_job_run_id}:janus_hgrm_reward",
+                "job_run_id": reward_job_run_id,
                 "eligible": bool(reward_payload.get("promotion_authority_eligible")),
             }
             jobs_summary["janus_q"] = {
-                "job_run_id": janus_job_run_id,
+                "job_run_id": summary_job_run_id,
                 "eligible": bool(summary_payload.get("promotion_authority_eligible")),
             }
 
@@ -486,7 +500,7 @@ def main() -> int:
             )
         )
         truthfulness_satisfied = all(
-            _artifact_is_truthful(payload)
+            artifact_is_truthful(payload)
             for payload in (
                 benchmark_payload if benchmark_manifest else {},
                 foundation_payload if foundation_manifest else {},
@@ -536,19 +550,19 @@ def main() -> int:
                     "blocked_reason": blocked_reasons.get(DOC29_TRUTHFULNESS_GATE),
                     "artifact_ref": str(output_dir / "empirical-job-summary.json"),
                     "acceptance_snapshot": {
-                        "benchmark_parity_truthful": _artifact_is_truthful(benchmark_payload)
+                        "benchmark_parity_truthful": artifact_is_truthful(benchmark_payload)
                         if benchmark_manifest
                         else False,
-                        "foundation_router_truthful": _artifact_is_truthful(foundation_payload)
+                        "foundation_router_truthful": artifact_is_truthful(foundation_payload)
                         if foundation_manifest
                         else False,
-                        "janus_event_car_truthful": _artifact_is_truthful(event_payload)
+                        "janus_event_car_truthful": artifact_is_truthful(event_payload)
                         if janus_manifest
                         else False,
-                        "janus_hgrm_reward_truthful": _artifact_is_truthful(reward_payload)
+                        "janus_hgrm_reward_truthful": artifact_is_truthful(reward_payload)
                         if janus_manifest
                         else False,
-                        "janus_summary_truthful": _artifact_is_truthful(summary_payload)
+                        "janus_summary_truthful": artifact_is_truthful(summary_payload)
                         if janus_manifest
                         else False,
                     },
