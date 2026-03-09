@@ -188,6 +188,19 @@ class OptionsLaneSettings(BaseSettings):
             return [item.upper() for item in _split_csv(value)]
         return []
 
+    @field_validator("sqlalchemy_dsn", mode="before")
+    @classmethod
+    def _normalize_sqlalchemy_dsn(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        if value.startswith("postgresql+psycopg://"):
+            return value
+        if value.startswith("postgres://"):
+            return value.replace("postgres://", "postgresql+psycopg://", 1)
+        if value.startswith("postgresql://"):
+            return value.replace("postgresql://", "postgresql+psycopg://", 1)
+        return value
+
     @property
     def holiday_set(self) -> set[str]:
         return {item for item in self.options_market_holidays if item}
