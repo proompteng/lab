@@ -1,10 +1,51 @@
 import { Context } from 'effect'
 import * as Either from 'effect/Either'
 import { safeJsonStringify, stripTerminalControl } from './chat-text'
-import { decodeToolEvent } from './chat-tool-event'
+import { decodeToolEvent, type ToolEvent } from './chat-tool-event'
 import type { ToolRenderer } from './chat-tool-event-renderer'
 
 const TOOL_EVENT_DECODE_FAILED_TAG = '[jangar][tool-event][decode-failed]'
+
+const RENDER_EVENT_VERSION = 'v1' as const
+const RENDER_EVENT_PREVIEW_LIMIT = 8_192
+
+type JangarRenderLane = 'message' | 'reasoning' | 'plan' | 'rate_limits' | 'tool' | 'usage' | 'error'
+type JangarRenderOp = 'append_text' | 'merge' | 'replace' | 'complete'
+
+type JangarRenderEvent = {
+  version: typeof RENDER_EVENT_VERSION
+  seq: number
+  logicalId: string
+  revision: number
+  lane: JangarRenderLane
+  op: JangarRenderOp
+  payload: Record<string, unknown>
+  preview?: {
+    title?: string
+    subtitle?: string
+    badge?: string
+  }
+  renderRef?: {
+    id: string
+    kind: string
+    expiresAt: string
+  }
+}
+
+type JangarRenderConfig = {
+  enabled: boolean
+  mode: 'rich-ui-v1'
+}
+
+type JangarEventState = {
+  revision: number
+}
+
+type JangarRenderMeta = {
+  title?: string
+  subtitle?: string
+  badge?: string
+}
 
 type ThreadMeta = {
   threadId?: string | null
@@ -216,6 +257,26 @@ const normalizeUsage = (raw: unknown) => {
   return normalized
 }
 
+const truncatePreview = (value: string, max = RENDER_EVENT_PREVIEW_LIMIT) =>
+  value.length <= max ? value : `${value.slice(0, max)}…`
+
+const clampTextForPreview = (value: unknown): string | undefined => {
+  if (typeof value !== 'string' || value.length === 0) return undefined
+  return truncatePreview(value)
+}
+
+const toJangarMeta = (state: string | undefined): string | undefined => {
+  if (!state) return undefined
+  const trimmed = state.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+const toRecord = (value: unknown): Record<string, unknown> | undefined =>
+  value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined
+
+const toString = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.length > 0 ? value : undefined
+
 const normalizeDeltaText = (delta: unknown): string => {
   if (typeof delta === 'string') return delta
 
@@ -240,6 +301,82 @@ const normalizeDeltaText = (delta: unknown): string => {
   }
 
   return delta == null ? '' : String(delta)
+}
+
+type ToolRenderState = {
+  kind: string
+  logicalId: string
+  title?: string
+  status?: string
+  reasoningState: ReasoningDetailsState
+}
+
+const toToolLogicalId = (kind: string, toolId: string) => `tool:${kind}-${toolId}`
+
+const summarizePlan = (record: unknown): string | null => {
+  if (!record || typeof record !== 'object') return null
+  const value = record as Record<string, unknown>
+  return toPlanMarkdown(value)
+}
+
+const summarizeRateLimits = (record: unknown): string | null => {
+  if (!record || typeof record !== 'object') return null
+  const value = record as Record<string, unknown>
+  return toRateLimitMarkdown(value.rateLimits)
+}
+
+const summarizeFileChanges = (event: ToolEvent) => {
+  const rawChanges = Array.isArray(event.changes) ? event.changes : []
+  const changedPaths: string[] = []
+  const compactDiffs: string[] = []
+
+  for (const change of rawChanges) {
+    if (!change || typeof change !== 'object') continue
+    const path = toJangarMeta((change as Record<string, unknown>).path as string | undefined) ?? 'unknown-file'
+    const diff = toString((change as Record<string, unknown>).diff) ?? ''
+    changedPaths.push(path)
+
+    const lines = diff.split(/\r?\n/).filter(Boolean)
+    if (!lines.length) continue
+    compactDiffs.push(...lines.slice(0, 3))
+  }
+
+  return {
+    changedPaths: changedPaths.slice(0, 16),
+    compactDiff: compactDiffs.length > 0 ? truncatePreview(compactDiffs.join('\n')) : undefined,
+    changedFileCount: changedPaths.length,
+  }
+}
+
+const parseToolMcpSummary = (event: ToolEvent) => {
+  const detail = toString(event.detail)
+  const result =
+    event.data && typeof event.data === 'object' && toRecord(event.data.result) ? event.data.result : undefined
+  const args =
+    event.data && typeof event.data === 'object' && 'arguments' in event.data ? event.data.arguments : undefined
+  const error = event.data && typeof event.data === 'object' && 'error' in event.data ? event.data.error : undefined
+
+  return {
+    title: toJangarMeta(event.title),
+    status: toJangarMeta(event.status),
+    detail: detail ?? undefined,
+    argumentsPreview: clampTextForPreview(args != null ? safeJsonStringify(args) : undefined),
+    resultPreview: clampTextForPreview(result != null ? safeJsonStringify(result) : undefined),
+    errorPreview: clampTextForPreview(error != null ? safeJsonStringify(error) : undefined),
+  }
+}
+
+const parseToolImageGenerationSummary = (event: ToolEvent) => {
+  const data = event.data
+  if (!data) return { title: toJangarMeta(event.title), status: toJangarMeta(event.status) }
+  const prompt = toString(data.prompt) ?? toString(data.userPrompt)
+  const url = toString(data.imageUrl) ?? toString(data.url) ?? toString(data.result)
+  return {
+    title: toJangarMeta(event.title),
+    status: toJangarMeta(event.status),
+    prompt: clampTextForPreview(prompt),
+    imageUrl: url,
+  }
 }
 
 const sanitizeReasoningText = (text: string) => text.replace(/\*{4,}/g, '\n')
@@ -325,6 +462,100 @@ const stripReasoningDetailsMarkup = (input: string, state: ReasoningDetailsState
   return output
 }
 
+const isToolTerminalStatus = (status?: string) =>
+  status === 'completed' || status === 'failed' || status === 'error' || status === 'timeout' || status === 'cancelled'
+
+const stripToolText = (value: string | undefined, state: ReasoningDetailsState) => {
+  if (!value) return undefined
+  const filtered = stripReasoningDetailsMarkup(value, state)
+  const normalized = stripTerminalControl(filtered)
+  return normalized.length > 0 ? normalized : undefined
+}
+
+const toolPreviewText = (value: unknown) => clampTextForPreview(typeof value === 'string' ? value : undefined)
+
+const summarizeToolCommand = (event: ToolEvent, reasoningState: ReasoningDetailsState) => {
+  const data = toRecord(event.data)
+  const outputPreview = toolPreviewText(stripToolText(event.delta, reasoningState))
+
+  const exitCode = data?.exitCode ?? data?.exit_code
+  const duration = data?.duration ?? data?.durationMs ?? data?.duration_ms
+
+  return {
+    kind: 'command',
+    title: toJangarMeta(event.title),
+    status: toJangarMeta(event.status),
+    detail: toJangarMeta(event.detail),
+    exitCode,
+    duration,
+    outputPreview,
+  }
+}
+
+const summarizeToolFile = (event: ToolEvent) => {
+  const data = toRecord(event.data)
+  const changed = summarizeFileChanges(event)
+  return {
+    kind: 'file',
+    title: toJangarMeta(event.title),
+    status: toJangarMeta(event.status),
+    detail: toJangarMeta(event.detail),
+    changed,
+    changedFileCount: data?.changedFileCount,
+    patchSummary: data?.patchSummary ?? undefined,
+  }
+}
+
+const parseToolWebSearchSummary = (event: ToolEvent) => ({
+  kind: 'webSearch',
+  title: toJangarMeta(event.title),
+  status: toJangarMeta(event.status),
+  detail: toJangarMeta(event.detail),
+  query: toString(toRecord(event.data)?.query) ?? toJangarMeta(event.detail),
+})
+
+const parseToolDynamicSummary = (event: ToolEvent) => ({
+  kind: 'dynamicTool',
+  title: toJangarMeta(event.title),
+  status: toJangarMeta(event.status),
+  detail: toString(event.detail),
+  tool: toJangarMeta(toRecord(event.data)?.tool as string | undefined),
+  arguments: toRecord(event.data)?.arguments,
+  result: toRecord(event.data)?.result,
+  success: (toRecord(event.data)?.success as boolean | undefined) ?? undefined,
+})
+
+const parseToolSummary = (event: ToolEvent, reasoningState: ReasoningDetailsState) => {
+  const kind = event.toolKind
+  switch (kind) {
+    case 'command': {
+      return summarizeToolCommand(event, reasoningState)
+    }
+    case 'file': {
+      return summarizeToolFile(event)
+    }
+    case 'mcp': {
+      return { kind, ...parseToolMcpSummary(event) }
+    }
+    case 'webSearch': {
+      return parseToolWebSearchSummary(event)
+    }
+    case 'dynamicTool': {
+      return parseToolDynamicSummary(event)
+    }
+    case 'imageGeneration': {
+      return { kind, ...parseToolImageGenerationSummary(event) }
+    }
+    default:
+      return {
+        kind,
+        title: toJangarMeta(event.title),
+        status: toJangarMeta(event.status),
+        detail: toJangarMeta(event.detail),
+      }
+  }
+}
+
 export const normalizeStreamError = (error: unknown) => {
   const normalized: Record<string, unknown> = { type: 'upstream', code: 'upstream_error' }
 
@@ -392,6 +623,7 @@ export type ChatCompletionEncoderService = {
     model: string
     includeUsage: boolean
     toolRenderer: ToolRenderer
+    jangarRender?: JangarRenderConfig
     meta?: ThreadMeta
   }) => ChatCompletionStreamSession
 }
@@ -407,9 +639,11 @@ const createSession = (args: {
   model: string
   includeUsage: boolean
   toolRenderer: ToolRenderer
+  jangarRender?: JangarRenderConfig
   meta?: ThreadMeta
 }): ChatCompletionStreamSession => {
-  const { id, created, model, includeUsage, toolRenderer } = args
+  const { id, created, model, includeUsage, toolRenderer, jangarRender } = args
+  const renderEnabled = jangarRender?.enabled === true && jangarRender.mode === 'rich-ui-v1'
 
   let meta: ThreadMeta = { ...args.meta }
   let messageRoleEmitted = false
@@ -426,7 +660,218 @@ const createSession = (args: {
   let hasRenderedRateLimits = false
   let sawAnyMessageDelta = false
   let assistantContent = ''
+  const toolStates = new Map<string, ToolRenderState>()
+  const jangarEventState = new Map<string, JangarEventState>()
+  let nextJangarSeq = 1
   const reasoningDetailsState = createReasoningDetailsState()
+
+  const getToolState = (toolEvent: ToolEvent): ToolRenderState => {
+    const logicalId = toToolLogicalId(toolEvent.toolKind, toolEvent.id)
+    const existing = toolStates.get(logicalId)
+    if (existing) {
+      if (!existing.title && toolEvent.title) existing.title = toolEvent.title
+      if (toolEvent.status) existing.status = toolEvent.status
+      return existing
+    }
+
+    const nextState: ToolRenderState = {
+      kind: toolEvent.toolKind,
+      logicalId,
+      title: toolEvent.title,
+      status: toolEvent.status,
+      reasoningState: createReasoningDetailsState(),
+    }
+    toolStates.set(logicalId, nextState)
+    return nextState
+  }
+
+  const emitChoiceChunk = (
+    frames: Record<string, unknown>[],
+    delta: Record<string, unknown>,
+    finishReason: string | null = null,
+  ) => {
+    const chunk = {
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model,
+      choices: [
+        {
+          delta,
+          index: 0,
+          finish_reason: finishReason,
+        },
+      ],
+    }
+    pushChunk(frames, chunk)
+  }
+
+  const emitJangarEvent = (
+    frames: Record<string, unknown>[],
+    logicalId: string,
+    lane: JangarRenderLane,
+    op: JangarRenderOp,
+    payload: Record<string, unknown>,
+    preview?: JangarRenderMeta,
+    renderRef?: JangarRenderEvent['renderRef'],
+  ) => {
+    if (!renderEnabled) return
+
+    const last = jangarEventState.get(logicalId)
+    const revision = (last?.revision ?? 0) + 1
+    const event: JangarRenderEvent = {
+      version: RENDER_EVENT_VERSION,
+      seq: nextJangarSeq,
+      logicalId,
+      revision,
+      lane,
+      op,
+      payload: { ...payload },
+    }
+    nextJangarSeq += 1
+
+    if (preview) {
+      event.preview = preview
+    }
+    if (renderRef) {
+      event.renderRef = renderRef
+    }
+
+    jangarEventState.set(logicalId, {
+      revision,
+    })
+    emitChoiceChunk(frames, { jangar_event: event })
+  }
+
+  const eventPayloadText = (value: string) => clampTextForPreview(value) ?? value
+
+  const emitMessageEvent = (frames: Record<string, unknown>[], text: string) => {
+    emitJangarEvent(
+      frames,
+      'message:assistant',
+      'message',
+      'append_text',
+      { text: eventPayloadText(text) },
+      { title: 'assistant', badge: 'message' },
+    )
+  }
+
+  const emitReasoningEvent = (frames: Record<string, unknown>[], text: string) => {
+    emitJangarEvent(
+      frames,
+      'reasoning:summary',
+      'reasoning',
+      'append_text',
+      { text: eventPayloadText(text) },
+      { title: 'reasoning', badge: 'summary' },
+    )
+  }
+
+  const emitPlanEvent = (frames: Record<string, unknown>[], markdown: string) => {
+    emitJangarEvent(
+      frames,
+      'plan:current',
+      'plan',
+      'replace',
+      { markdown: eventPayloadText(markdown) },
+      { title: 'plan', badge: 'plan' },
+      undefined,
+    )
+  }
+
+  const emitRateLimitsEvent = (frames: Record<string, unknown>[], markdown: string) => {
+    emitJangarEvent(
+      frames,
+      'rate_limits:current',
+      'rate_limits',
+      'replace',
+      { markdown: eventPayloadText(markdown) },
+      { title: 'rate limits', badge: 'quota' },
+      undefined,
+    )
+  }
+
+  const emitUsageEvent = (frames: Record<string, unknown>[], usage: Record<string, unknown>) => {
+    emitJangarEvent(frames, 'usage:final', 'usage', 'replace', { usage }, { title: 'usage', badge: 'usage' }, undefined)
+  }
+
+  const emitErrorEvent = (frames: Record<string, unknown>[], error: Record<string, unknown>) => {
+    emitJangarEvent(
+      frames,
+      'error:current',
+      'error',
+      'replace',
+      { error },
+      { title: 'error', badge: 'error' },
+      undefined,
+    )
+  }
+
+  const emitToolEvents = (frames: Record<string, unknown>[], toolEvent: ToolEvent) => {
+    const toolState = getToolState(toolEvent)
+    const status = toJangarMeta(toolEvent.status)
+    const summary = parseToolSummary(toolEvent, toolState.reasoningState)
+    const shouldReplace =
+      summary.kind === 'webSearch' ||
+      summary.kind === 'dynamicTool' ||
+      summary.kind === 'imageGeneration' ||
+      summary.kind === 'mcp' ||
+      summary.kind === 'file'
+    const op: JangarRenderOp = shouldReplace ? 'replace' : 'merge'
+    const logicalId = toolState.logicalId
+    const toolTitle = toJangarMeta(toolEvent.title) ?? toJangarMeta(toolState.title) ?? summary.kind
+
+    emitJangarEvent(
+      frames,
+      logicalId,
+      'tool',
+      op,
+      {
+        ...summary,
+      },
+      {
+        title: toolTitle,
+        subtitle: status ?? undefined,
+        badge: summary.kind,
+      },
+    )
+
+    const toolOutput = stripToolText(toolEvent.delta, toolState.reasoningState)
+    if (toolOutput) {
+      emitJangarEvent(
+        frames,
+        logicalId,
+        'tool',
+        'append_text',
+        {
+          text: eventPayloadText(toolOutput),
+        },
+        {
+          title: toolTitle,
+          badge: summary.kind,
+          subtitle: status ?? undefined,
+        },
+      )
+    }
+
+    if (isToolTerminalStatus(status)) {
+      emitJangarEvent(
+        frames,
+        logicalId,
+        'tool',
+        'complete',
+        {
+          kind: summary.kind,
+          status,
+        },
+        {
+          title: toolTitle,
+          subtitle: status,
+          badge: summary.kind,
+        },
+      )
+    }
+  }
 
   const attachMeta = (chunk: Record<string, unknown>) => {
     const threadId = meta.threadId
@@ -536,6 +981,12 @@ const createSession = (args: {
     }
 
     pushChunk(frames, chunk)
+
+    const emittedText = stripTerminalControl(sanitized)
+    if (emittedText.length > 0) {
+      emitReasoningEvent(frames, emittedText)
+    }
+
     reasoningBuffer = carry
   }
 
@@ -552,6 +1003,7 @@ const createSession = (args: {
       closeCommandFence(frames)
       if (includeUsage) {
         lastUsage = normalizeUsage(record?.usage)
+        emitUsageEvent(frames, lastUsage)
       }
       return frames
     }
@@ -562,6 +1014,7 @@ const createSession = (args: {
       if (!markdown || markdown === lastPlanMarkdown) return frames
       lastPlanMarkdown = markdown
       emitContentDelta(frames, `\n\n${markdown}\n\n\n`)
+      emitPlanEvent(frames, markdown)
       return frames
     }
 
@@ -571,6 +1024,7 @@ const createSession = (args: {
       if (!markdown || hasRenderedRateLimits) return frames
       hasRenderedRateLimits = true
       emitContentDelta(frames, `\n\n${markdown}\n\n`)
+      emitRateLimitsEvent(frames, markdown)
       return frames
     }
 
@@ -583,7 +1037,9 @@ const createSession = (args: {
       hadError = true
       sawUpstreamError = true
       closeCommandFence(frames)
-      pushChunk(frames, { error: normalizeStreamError(record?.error) })
+      const normalized = normalizeStreamError(record?.error)
+      pushChunk(frames, { error: normalized })
+      emitErrorEvent(frames, normalized)
       return frames
     }
 
@@ -591,9 +1047,12 @@ const createSession = (args: {
       closeCommandFence(frames)
       const text = normalizeDeltaText(record?.delta)
       if (!sawAnyMessageDelta && text.length > 0 && !text.startsWith('\n')) {
-        emitContentDelta(frames, `\n${text}`)
+        const prefixed = `\n${text}`
+        emitContentDelta(frames, prefixed)
+        emitMessageEvent(frames, prefixed)
       } else {
         emitContentDelta(frames, text)
+        emitMessageEvent(frames, text)
       }
       if (text.length > 0) {
         sawAnyMessageDelta = true
@@ -643,6 +1102,8 @@ const createSession = (args: {
       }
 
       const actions = toolRenderer.onToolEvent(toolEvent)
+      emitToolEvents(frames, toolEvent)
+
       for (const action of actions) {
         if (action.type === 'openCommandFence') {
           openCommandFence(frames)
@@ -668,19 +1129,28 @@ const createSession = (args: {
     hadError = true
     const frames: Record<string, unknown>[] = []
     closeCommandFence(frames)
-    pushChunk(frames, { error })
+    const normalized = {
+      message: error.message,
+      type: error.type,
+      code: error.code,
+      ...(error.detail != null ? { detail: error.detail } : {}),
+    }
+    pushChunk(frames, { error: normalized })
+    emitErrorEvent(frames, normalized)
     return frames
   }
 
   const onClientAbort: ChatCompletionStreamSession['onClientAbort'] = () => {
     const frames: Record<string, unknown>[] = []
-    pushChunk(frames, {
-      error: {
-        message: 'request was aborted by the client',
-        type: 'request_cancelled',
-        code: 'client_abort',
-      },
-    })
+    const normalized = {
+      message: 'request was aborted by the client',
+      type: 'request_cancelled',
+      code: 'client_abort',
+    }
+    hadError = true
+    closeCommandFence(frames)
+    pushChunk(frames, { error: normalized })
+    emitErrorEvent(frames, normalized)
     return frames
   }
 
@@ -691,6 +1161,7 @@ const createSession = (args: {
     closeCommandFence(frames)
 
     if (includeUsage && lastUsage) {
+      emitUsageEvent(frames, lastUsage)
       pushChunk(frames, {
         id,
         object: 'chat.completion.chunk',

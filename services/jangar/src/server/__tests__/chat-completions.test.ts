@@ -15,6 +15,35 @@ import { ThreadState, type ThreadStateService } from '~/server/thread-state'
 import { TranscriptState, type TranscriptStateService } from '~/server/transcript-state'
 import { WorktreeState, type WorktreeStateService } from '~/server/worktree-state'
 
+const asRecord = (value: unknown) =>
+  value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
+
+const parseFrames = (body: string) =>
+  body
+    .split('\n\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.replace(/^data: /, ''))
+    .filter((line) => line !== '[DONE]')
+    .map((line) => {
+      try {
+        return JSON.parse(line)
+      } catch {
+        return null
+      }
+    })
+    .filter((frame): frame is Record<string, unknown> => frame != null)
+
+const hasJangarEvent = (body: string) =>
+  parseFrames(body).some((frame) => {
+    const choices = asRecord(frame)?.choices
+    if (!Array.isArray(choices)) return false
+    return choices.some((choice) => {
+      const delta = asRecord(choice)?.delta
+      return asRecord(delta)?.jangar_event != null
+    })
+  })
+
 describe('chat completions handler', () => {
   const previousEnv: Partial<
     Record<
@@ -114,6 +143,57 @@ describe('chat completions handler', () => {
     const text = await response.text()
     expect(text).toContain('hi there')
     expect(response.headers.get('content-type')).toContain('text/event-stream')
+  })
+
+  it('emits jangar_event only for OpenWebUI rich mode stream requests', async () => {
+    process.env.JANGAR_OPENWEBUI_RICH_RENDER_ENABLED = 'true'
+    const mockClient = {
+      runTurnStream: vi.fn(async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'message', delta: 'hi there' }
+        })(),
+      })),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const disabledResponse = await chatCompletionsHandler(
+      new Request('http://localhost', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-jangar-client-kind': 'openwebui',
+        },
+        body: JSON.stringify({
+          model: 'gpt-5.4',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
+      }),
+    )
+    const disabledText = await disabledResponse.text()
+    expect(hasJangarEvent(disabledText)).toBe(false)
+
+    const enabledResponse = await chatCompletionsHandler(
+      new Request('http://localhost', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-jangar-client-kind': 'openwebui',
+          'x-jangar-openwebui-render-mode': 'rich-ui-v1',
+        },
+        body: JSON.stringify({
+          model: 'gpt-5.4',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
+      }),
+    )
+    const enabledText = await enabledResponse.text()
+    expect(hasJangarEvent(enabledText)).toBe(true)
   })
 
   it('creates and releases a dedicated codex client for each streamed request', async () => {
@@ -220,6 +300,52 @@ describe('chat completions handler', () => {
     }
     expect(payload.object).toBe('chat.completion')
     expect(payload.choices?.[0]?.message?.content).toContain('hi there')
+  })
+
+  it('ignores jangar_event during non-stream conversion', async () => {
+    process.env.JANGAR_OPENWEBUI_RICH_RENDER_ENABLED = 'true'
+    process.env.JANGAR_STATEFUL_CHAT_MODE = '0'
+
+    const mockClient = {
+      runTurnStream: vi.fn(async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'message', delta: 'hi there' }
+        })(),
+      })),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const request = new Request('http://localhost', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-jangar-client-kind': 'openwebui',
+        'x-jangar-openwebui-render-mode': 'rich-ui-v1',
+      },
+      body: JSON.stringify({
+        model: 'gpt-5.4',
+        messages: [{ role: 'user', content: 'hi' }],
+        stream: false,
+      }),
+    })
+
+    const response = await chatCompletionsHandler(request)
+    const payload = (await response.json()) as {
+      object?: string
+      choices?: Array<{ message?: { content?: string } }>
+    }
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toContain('application/json')
+    expect(payload.object).toBe('chat.completion')
+    expect(payload.choices?.[0]?.message?.content).toContain('hi there')
+    expect((payload as Record<string, unknown>).choices).toBeDefined()
+    const serialized = JSON.stringify(payload)
+    expect(serialized.includes('jangar_event')).toBe(false)
   })
 
   it('returns a non-stream completion payload when stream is omitted', async () => {

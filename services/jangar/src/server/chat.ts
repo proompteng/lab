@@ -178,6 +178,19 @@ class MissingUpstreamThreadError extends Error {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
+const parseBooleanEnv = (value: string | undefined) => {
+  if (!value) return false
+  const normalized = value.trim().toLowerCase()
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on'
+}
+
+const isOpenWebUIRichRenderEnabled = (chatClientKind: ChatClientKind, request: Request) => {
+  if (chatClientKind !== 'openwebui') return false
+  if (!parseBooleanEnv(process.env.JANGAR_OPENWEBUI_RICH_RENDER_ENABLED)) return false
+  const requestedMode = request.headers.get('x-jangar-openwebui-render-mode')?.trim().toLowerCase()
+  return requestedMode === 'rich-ui-v1'
+}
+
 const includesMissingUpstreamThreadMessage = (message: string) => {
   const normalized = message.toLowerCase()
   return MISSING_UPSTREAM_THREAD_MESSAGE_FRAGMENTS.some((fragment) => normalized.includes(fragment))
@@ -397,6 +410,7 @@ const toSseResponse = (
   completionEncoder: ChatCompletionEncoderService,
   threadContext: ThreadContext | null,
   codexCwd: string,
+  enableOpenWebUIRichRender: boolean,
   onTurnSettled?: (result: {
     aborted: boolean
     turnFinished: boolean
@@ -437,6 +451,10 @@ const toSseResponse = (
           chatId: threadContext?.chatId ?? null,
           threadId: threadContext?.threadId ?? null,
           turnNumber: threadContext?.turnNumber ?? null,
+        },
+        jangarRender: {
+          enabled: enableOpenWebUIRichRender,
+          mode: 'rich-ui-v1',
         },
       })
 
@@ -1217,6 +1235,7 @@ export const handleChatCompletionEffect = (request: Request) =>
             encoder,
             threadContext,
             codexCwd,
+            isOpenWebUIRichRenderEnabled(chatClientKind, request),
             finalizeTranscriptState,
             chatClientKind === 'openwebui',
             request.signal,
