@@ -3,12 +3,11 @@ package ai.proompteng.dorvud.ws
 import ai.proompteng.dorvud.platform.KafkaAuth
 import ai.proompteng.dorvud.platform.KafkaProducerSettings
 import ai.proompteng.dorvud.platform.KafkaTls
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -101,7 +100,7 @@ class ForwarderEndpointsTest {
     val parsed =
       decodeAlpacaBarsResponse(
         payload,
-        Json {
+        kotlinx.serialization.json.Json {
           ignoreUnknownKeys = true
         },
       )
