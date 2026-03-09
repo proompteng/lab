@@ -204,15 +204,15 @@ def _extract_run_scope_decisions(
 def _build_last_price_map(
     *,
     clickhouse_config: ClickHouseRuntimeConfig | None,
-    clickhouse_db: str,
+    price_table: str,
     tca_rows: list[dict[str, Any]],
     execution_rows: list[dict[str, Any]],
 ) -> dict[str, Decimal]:
     prices: dict[str, Decimal] = {}
-    if clickhouse_config is not None and clickhouse_config.http_url:
+    if clickhouse_config is not None and clickhouse_config.http_url and price_table:
         query = (
             f'SELECT symbol, toString(argMax(close, event_ts)) '
-            f'FROM {clickhouse_db}.ta_microbars '
+            f'FROM {price_table} '
             f'GROUP BY symbol FORMAT TabSeparated'
         )
         try:
@@ -436,6 +436,7 @@ def _render_markdown(report: Mapping[str, Any]) -> str:
             '',
             f"- Schema: `{_as_text(report.get('schema_version'))}`",
             f"- Run ID: `{_as_text(_as_mapping(report.get('run_metadata')).get('run_id'))}`",
+            f"- Lane: `{_as_text(_as_mapping(report.get('run_metadata')).get('lane')) or 'equity'}`",
             f"- Verdict: `{verdict or 'unknown'}`",
             '',
             '## Coverage',
@@ -771,7 +772,7 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
 
     last_prices = _build_last_price_map(
         clickhouse_config=clickhouse_config,
-        clickhouse_db=resources.clickhouse_db,
+        price_table=resources.clickhouse_price_table,
         tca_rows=tca_rows,
         execution_rows=executions,
     )
@@ -1049,10 +1050,13 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
         'run_id': args.run_id,
         'run_token': run_token,
         'dataset_id': resources.dataset_id,
+        'lane': resources.lane,
         'generated_at': datetime.now(timezone.utc).isoformat(),
         'manifest_path': str(manifest_path),
         'simulation_db': postgres_config.simulation_db,
         'clickhouse_db': resources.clickhouse_db,
+        'clickhouse_price_table': resources.clickhouse_price_table,
+        'clickhouse_signal_table': resources.clickhouse_signal_table,
     }
 
     report = {

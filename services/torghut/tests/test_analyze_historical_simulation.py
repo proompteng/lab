@@ -2,14 +2,46 @@ from __future__ import annotations
 
 from decimal import Decimal
 from unittest import TestCase
+from unittest.mock import patch
 
 from scripts.analyze_historical_simulation import (
+    _build_last_price_map,
     _extract_run_scope_decisions,
     _fifo_trade_pnl,
 )
+from scripts.start_historical_simulation import ClickHouseRuntimeConfig
 
 
 class TestAnalyzeHistoricalSimulation(TestCase):
+    def test_build_last_price_map_uses_lane_specific_price_table(self) -> None:
+        captured_queries: list[str] = []
+
+        def _fake_clickhouse_query(*, config, query):  # type: ignore[no-untyped-def]
+            _ = config
+            captured_queries.append(query)
+            return 200, 'AAPL250321C00200000\t1.55\n'
+
+        with patch(
+            'scripts.analyze_historical_simulation._http_clickhouse_query',
+            side_effect=_fake_clickhouse_query,
+        ):
+            prices = _build_last_price_map(
+                clickhouse_config=ClickHouseRuntimeConfig(
+                    http_url='http://clickhouse:8123',
+                    username=None,
+                    password=None,
+                ),
+                price_table='torghut_sim_options.sim_options_contract_bars_1s',
+                tca_rows=[],
+                execution_rows=[],
+            )
+
+        self.assertEqual(prices['AAPL250321C00200000'], Decimal('1.55'))
+        self.assertIn(
+            'FROM torghut_sim_options.sim_options_contract_bars_1s',
+            captured_queries[0],
+        )
+
     def test_extract_run_scope_decisions_prefers_matching_simulation_context(self) -> None:
         decisions = [
             {
