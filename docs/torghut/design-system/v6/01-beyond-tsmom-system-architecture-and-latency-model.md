@@ -13,7 +13,21 @@
   - `services/torghut/app/trading/scheduler.py`
   - `services/torghut/app/trading/portfolio.py`
   - `services/torghut/app/trading/regime.py`
-- Rollout gap: missing first-class HMM control-plane and promotion lane that enforces this architecture as the dominant live path.
+  - `services/torghut/app/trading/autonomy/lane.py`
+  - `services/torghut/app/trading/autonomy/phase_manifest_contract.py`
+- Rollout gap: the promotion lane and rollout-manifest machinery already exist, but first-class HMM posterior inference remains partial, so this architecture is not yet enforced by an authoritative posterior-driven control plane as the dominant live path.
+
+## Implementation update (2026-03-09)
+
+This document was stale where it implied the promotion lane itself was still missing.
+
+Current source already has autonomous lane artifact emission, stage lineage, promotion-decision persistence, and canonical rollout manifests for the beyond-TSMOM stack.
+
+The remaining architecture gap is narrower:
+
+- HMM posterior inference is still partial;
+- live routing is still not driven by an authoritative posterior service;
+- empirical promotion authority is still stronger in control-plane contract shape than in true model-evidence quality.
 
 ## Objective
 

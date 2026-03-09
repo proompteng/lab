@@ -30,6 +30,14 @@ The v1 documents are written to stay consistent with:
 - AI is **advisory** and is never allowed to bypass deterministic risk policies.
 - All “go-live” paths require explicit enablement flags and auditable change control.
 
+## Current navigation and source-of-truth guide
+
+If you are trying to decide which docs are current contract truth versus historical milestone records, start with:
+
+- `docs/torghut/design-system/current-source-of-truth-and-priority-guide-2026-03-09.md`
+
+That guide is the canonical reading order for the current corpus.
+
 ## Recommended entrypoint (single merged doc)
 
 - `docs/torghut/design-system/v1/torghut-autonomous-trading-system.md`
@@ -40,7 +48,10 @@ The v1 documents are written to stay consistent with:
 - `docs/torghut/design-system/implementation-status-matrix-2026-02-21.md`
 - `docs/torghut/design-system/implementation-audit.md`
 
-## Corpus implementation status (2026-03-01 evidence sync)
+## Corpus implementation status (historical 2026-03-01 snapshot)
+
+These counts are a dated snapshot, not a current live status board. They remain useful as a corpus-history checkpoint,
+but newer v6 docs and the current source-of-truth guide supersede them for present decisions.
 
 - root: total=2 (Implemented=0, Partial=0, Planned=2)
 - v1: total=60 (Implemented=11, Partial=44, Planned=5)
@@ -68,7 +79,9 @@ The v1 documents are written to stay consistent with:
   - Entry point: `docs/torghut/design-system/v5/index.md`
 
 - `v6/` - beyond-TSMOM intraday autonomy pack translating fresh multi-agent, regime-routing, contamination-safe
-  evaluation, benchmark parity, and profitability operating-system research into production implementation docs (2026-03-01).
+  evaluation, benchmark parity, and profitability operating-system research into production implementation docs.
+  This pack now contains both active contract docs and dated closeout/proof records; use the current source-of-truth
+  guide before treating a `Completed` or `Closeout` note as current truth.
   - Entry point: `docs/torghut/design-system/v6/index.md`
 
 - `v1/` - first cohesive design-system pass aligned to production reality as of **2026-02-08**.

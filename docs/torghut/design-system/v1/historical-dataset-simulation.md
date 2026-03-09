@@ -6,9 +6,26 @@
 - Last updated: **2026-02-27**
 - Source of truth (config): `argocd/applications/torghut/**`
 - Implementation status: `Partial`
-- Implementation evidence: `services/torghut/scripts/start_historical_simulation.py`, `services/torghut/scripts/analyze_historical_simulation.py`, `services/torghut/tests/test_start_historical_simulation.py`, `services/torghut/tests/test_analyze_historical_simulation.py`, `services/torghut/app/config.py`
-- Implementation gaps: no first-class cluster-wide trading-day scheduler and no dedicated zero-touch evidence publication control loop for production operators yet.
+- Implementation evidence: `services/torghut/scripts/start_historical_simulation.py`, `services/torghut/scripts/analyze_historical_simulation.py`, `argocd/applications/torghut/historical-simulation-workflowtemplate.yaml`, `docs/torghut/rollouts/historical-simulation-playbook.md`, `services/torghut/tests/test_start_historical_simulation.py`, `services/torghut/tests/test_analyze_historical_simulation.py`, `services/torghut/tests/test_completion_trace.py`, `services/torghut/app/config.py`
+- Implementation gaps: no first-class recurring trading-day planner/day-run registry and no dedicated zero-touch recurring evidence publication control loop for production operators yet.
 - Rollout and verification: keep this doc implementation-ready by wiring one-click/cron automation against pre-generated manifests and validating isolation deltas in `run_manifest.json`.
+
+## Implementation update (2026-03-09)
+
+This document was stale where it still read like the historical simulation surface was mostly prospective.
+
+The current repository already has:
+
+- the canonical `start_historical_simulation.py` starter for plan/apply/run/verify/teardown flows;
+- a GitOps-managed `torghut-historical-simulation` Argo `WorkflowTemplate`;
+- operator playbook/README execution flows for running the simulation surface without ad hoc manual patching;
+- completion-trace persistence/reporting for simulation runs.
+
+The remaining gap is recurring orchestration rather than single-run capability:
+
+- no cluster-wide trading-day scheduler;
+- no durable day-run registry for repeated session exercises;
+- no zero-touch prove-and-publish control loop for production operators.
 
 ## Purpose
 
@@ -152,9 +169,9 @@ Required `simulation_context` payload (persist in decision JSON + execution audi
 
 ## Single-script starter requirements
 
-A single CLI script is required as the canonical start entrypoint.
+The canonical start entrypoint is the existing CLI script.
 
-Proposed command:
+Canonical command:
 
 ```bash
 uv run python services/torghut/scripts/start_historical_simulation.py --run-id <run_id> --dataset-manifest <path>

@@ -8,9 +8,18 @@
 - Scope: offline strategy and factor discovery pipeline that continuously improves live expert stack without unsafe online mutation
 - Implementation status: `Implemented`
 - Evidence:
-  - `docs/torghut/design-system/v6/04-alpha-discovery-and-autonomous-improvement-pipeline.md` (design-level contract)
+  - `services/torghut/app/trading/alpha/lane.py`
+  - `services/torghut/app/trading/autonomy/lane.py`
+  - `services/torghut/tests/test_alpha_lane.py`
+  - `services/torghut/tests/test_autonomous_lane.py`
 - Rollout gap: deterministic lane execution for candidate generation, evaluation, and promotion recommendation is implemented in
   `services/torghut/app/trading/alpha` and `services/torghut/app/trading/autonomy`; direct cluster mutation remains out-of-band.
+
+## Implementation update (2026-03-09)
+
+This doc previously cited only itself as implementation evidence.
+
+The implemented source of truth is the alpha/autonomy lane code that writes stage manifests, lineage hashes, stage trace ids, and profitability-linked recommendation bundles. The remaining deliberate non-goal is unchanged: discovery lanes recommend and persist evidence, but they do not mutate the live cluster directly.
 
 ## Objective
 

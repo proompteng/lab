@@ -9,6 +9,14 @@
 - Status: `Planned` (index/meta/snapshot)
 - Implementation status (strict): `Implemented=11`, `Partial=44`, `Planned=5` of 60
 
+## Historical note (2026-03-09)
+
+The counts above are a dated v1 corpus snapshot, not a current live implementation dashboard.
+
+For current reading order across the full Torghut design corpus, use:
+
+- `docs/torghut/design-system/current-source-of-truth-and-priority-guide-2026-03-09.md`
+
 ## Purpose
 
 This index centralizes the first production-facing design-system corpus (`v1`) for the Torghut stack.

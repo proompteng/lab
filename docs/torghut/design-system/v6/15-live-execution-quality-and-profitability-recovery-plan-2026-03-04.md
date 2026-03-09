@@ -8,6 +8,16 @@
 - Owners: `torghut`, `jangar`, `observability`
 - Primary objective: restore clean execution and reach sustained profitable sessions with controlled risk.
 
+## Usage note (2026-03-09)
+
+This document is a dated March 4 recovery plan tied to the rejection profile observed on March 3.
+
+Use it as historical diagnosis and recovery rationale, not as the sole current trading-priority document. For current
+promotion/evidence priority, use:
+
+- `docs/torghut/design-system/current-source-of-truth-and-priority-guide-2026-03-09.md`
+- `docs/torghut/design-system/v6/32-authoritative-alpha-readiness-and-empirical-promotion-closeout-2026-03-08.md`
+
 ## Executive Summary
 
 On **2026-03-03 (America/New_York)**, Torghut was runtime-healthy but trading-outcome unhealthy:

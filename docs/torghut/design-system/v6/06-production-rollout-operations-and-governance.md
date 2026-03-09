@@ -12,10 +12,26 @@ The authoritative implementation is in:
 
 - `services/torghut/app/trading/autonomy/phase_manifest_contract.py`
 - Scope: phased rollout plan for Beyond-TSMOM architecture with explicit SLO, rollback, and governance controls
-- Implementation status: `In Progress`
+- Implementation status: `Implemented`
 - Evidence:
-  - `docs/torghut/design-system/v6/06-production-rollout-operations-and-governance.md` (rollout plan)
+  - `services/torghut/app/trading/autonomy/phase_manifest_contract.py`
+  - `services/torghut/app/trading/autonomy/lane.py`
+  - `services/torghut/app/trading/scheduler/governance.py`
+  - `services/torghut/tests/test_autonomous_lane.py`
+  - `services/torghut/tests/test_trading_scheduler_autonomy.py`
 - Rollout status: canonical phase manifest, canary gates, and rollback proof artifacts are integrated into the autonomous lane + scheduler governance pipeline.
+
+## Implementation update (2026-03-09)
+
+This document was stale where it still presented the rollout contract as merely in progress.
+
+The canonical phase manifest, runtime-governance append path, rollback-proof normalization, and scheduler-side updates are already implemented and covered by tests.
+
+The remaining live-program risk is upstream of this contract:
+
+- HMM posterior maturity is still partial;
+- empirical promotion evidence is still not authoritative enough across all families;
+- those gaps should not be confused with missing rollout-manifest machinery.
 
 ## Objective
 

@@ -8,6 +8,12 @@
 - Scope: close all currently documented `Partial`/`Planned` gaps across the active Torghut autonomous quant stack and supporting v4/v5 dependencies.
 - Implementation status: `Completed` (Wave 0-6 + legacy disposition closure completed `2026-03-03`)
 
+## Historical note (2026-03-09)
+
+This document remains the dated March 3 closure record for the Wave 0-6 program.
+
+It is not the authoritative current next-work list. Later source-state docs, especially `29` through `32`, supersede it for current prioritization because control-plane contract closure landed faster than authoritative empirical evidence generation.
+
 ## Objective
 
 Deliver one production-grade autonomous quant operating system that is:

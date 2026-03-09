@@ -11,10 +11,29 @@
   - `services/torghut/app/trading/autonomy/gates.py`
   - `services/torghut/app/trading/autonomy/policy_checks.py`
   - `services/torghut/app/trading/evaluation.py`
+  - `services/torghut/app/trading/empirical_jobs.py`
+  - `services/torghut/app/main.py`
   - `services/torghut/tests/test_profitability_evidence_v4.py`
   - `services/torghut/tests/test_trading_pipeline.py`
   - `services/torghut/tests/test_governance_policy_dry_run.py`
-- Rollout gap: repo does not yet enforce a complete contamination-safe promotion artifact registry across all strategy and LLM families.
+  - `services/torghut/tests/test_empirical_jobs.py`
+  - `services/torghut/tests/test_trading_api.py`
+- Rollout gap: fail-closed contamination and profitability-stage enforcement are already in-tree, but the repo still lacks authoritative empirical evidence across all benchmark, router, and Janus families; several parity artifacts remain deterministic scaffold outputs rather than promotion-authoritative evidence.
+
+## Implementation update (2026-03-09)
+
+This document was stale where it described the evaluation registry problem as if the control-plane enforcement surface did not exist yet.
+
+The current repository already contains:
+
+- profitability-stage manifest generation and hard-fail validation paths in the autonomous lane and policy checks;
+- empirical job persistence/status surfacing for benchmark-style evidence production;
+- operator-readable status endpoints for empirical jobs and doc29 completion gates.
+
+The remaining gap is not basic registry existence. It is evidence authority:
+
+- benchmark parity, foundation-router parity, and Janus-Q still include deterministic scaffold authority paths;
+- those artifacts therefore cannot yet serve as fully authoritative contamination-safe promotion evidence across all families.
 
 ## Objective
 

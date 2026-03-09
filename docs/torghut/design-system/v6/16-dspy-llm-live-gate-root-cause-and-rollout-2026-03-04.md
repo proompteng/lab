@@ -1,5 +1,12 @@
 # 16. DSPy LLM Live-Gate Root Cause and Rollout Plan (2026-03-04)
 
+## Usage note (2026-03-09)
+
+This is a dated incident/root-cause and rollout document for the March 3-4 DSPy live-gate failure mode.
+
+Read it as historical implementation rationale. Do not treat it as the current overall Torghut next-work priority or
+the current autonomy/evidence source of truth.
+
 ## Incident Summary
 
 Date observed: 2026-03-03 (UTC)
