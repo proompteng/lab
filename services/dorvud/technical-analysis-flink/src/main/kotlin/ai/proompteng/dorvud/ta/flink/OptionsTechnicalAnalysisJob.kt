@@ -683,7 +683,7 @@ private fun optionsSurfaceFeatureStatementBuilder(): JdbcStatementBuilder<Envelo
     statement.setString(23, payload.featureQualityStatus)
   }
 
-private data class OptionsInput(
+data class OptionsInput(
   val trade: Envelope<OptionsTradePayload>? = null,
   val quote: Envelope<OptionsQuotePayload>? = null,
   val snapshot: Envelope<OptionsSnapshotPayload>? = null,
@@ -695,19 +695,19 @@ private data class OptionsInput(
     get() = trade?.eventTs ?: quote?.eventTs ?: snapshot?.eventTs ?: Instant.EPOCH
 }
 
-private data class OptionsAnalyticsEmission(
+data class OptionsAnalyticsEmission(
   val bar: Envelope<OptionsContractBarPayload>? = null,
   val feature: Envelope<OptionsContractFeaturePayload>? = null,
 ) : Serializable
 
-private data class OptionsOccContract(
+data class OptionsOccContract(
   val underlyingSymbol: String,
   val expirationDate: LocalDate,
   val strikePrice: Double,
   val optionType: String,
 ) : Serializable
 
-private data class OptionsBarAccumulator(
+data class OptionsBarAccumulator(
   val windowStartMs: Long,
   val windowEndMs: Long,
   var underlyingSymbol: String,
@@ -741,7 +741,7 @@ private data class OptionsBarAccumulator(
   }
 }
 
-private data class OptionsQuoteState(
+data class OptionsQuoteState(
   val eventMs: Long,
   val bidPrice: Double,
   val bidSize: Double,
@@ -757,7 +757,7 @@ private data class OptionsQuoteState(
     }
 }
 
-private data class OptionsSnapshotState(
+data class OptionsSnapshotState(
   val eventMs: Long,
   val impliedVolatility: Double?,
   val delta: Double?,
@@ -770,7 +770,7 @@ private data class OptionsSnapshotState(
   val underlyingSymbol: String,
 ) : Serializable
 
-private data class OptionsBarHistoryEntry(
+data class OptionsBarHistoryEntry(
   val eventMs: Long,
   val close: Double,
   val count: Long,
@@ -781,7 +781,7 @@ private data class OptionsBarHistoryEntry(
   val delta: Double?,
 ) : Serializable
 
-private data class OptionsFeatureSnapshot(
+data class OptionsFeatureSnapshot(
   val contractSymbol: String,
   val eventMs: Long,
   val payload: OptionsContractFeaturePayload,
