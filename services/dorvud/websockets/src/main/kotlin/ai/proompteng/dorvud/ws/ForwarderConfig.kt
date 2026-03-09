@@ -127,7 +127,9 @@ data class ForwarderConfig(
         TopicConfig(
           trades = mergedEnv["TOPIC_TRADES"] ?: "torghut.trades.v1",
           quotes = mergedEnv["TOPIC_QUOTES"] ?: "torghut.quotes.v1",
-          bars1m = mergedEnv["TOPIC_BARS_1M"]?.trim()?.takeIf { it.isNotEmpty() } ?: if (alpacaMarketType == AlpacaMarketType.OPTIONS) null else "torghut.bars.1m.v1",
+          bars1m =
+            mergedEnv["TOPIC_BARS_1M"]?.trim()?.takeIf { it.isNotEmpty() }
+              ?: if (alpacaMarketType == AlpacaMarketType.OPTIONS) null else "torghut.bars.1m.v1",
           status = mergedEnv["TOPIC_STATUS"] ?: "torghut.status.v1",
           tradeUpdates = mergedEnv["TOPIC_TRADE_UPDATES"],
           tradeUpdatesV2 = mergedEnv["TOPIC_TRADE_UPDATES_V2"],

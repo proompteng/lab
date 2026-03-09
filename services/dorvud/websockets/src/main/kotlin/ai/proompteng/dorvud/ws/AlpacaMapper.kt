@@ -6,10 +6,10 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import java.time.Instant
 
 /** Maps raw Alpaca JSON message into our envelope + channel name. */
@@ -127,8 +127,7 @@ object AlpacaMapper {
       json.encodeToJsonElement(AlpacaQuote.serializer(), message)
     }
 
-  internal fun occUnderlyingSymbol(symbol: String): String =
-    occSymbolRegex.matchEntire(symbol)?.groupValues?.get(1) ?: symbol
+  internal fun occUnderlyingSymbol(symbol: String): String = occSymbolRegex.matchEntire(symbol)?.groupValues?.get(1) ?: symbol
 
   private fun envelope(
     symbol: String,

@@ -54,6 +54,7 @@ import kotlinx.serialization.json.put
 import mu.KotlinLogging
 import org.apache.kafka.clients.producer.KafkaProducer
 import org.apache.kafka.clients.producer.ProducerRecord
+import org.msgpack.jackson.dataformat.MessagePackFactory
 import java.nio.charset.StandardCharsets
 import java.time.Duration
 import java.time.Instant
@@ -63,7 +64,6 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.CRC32
 import kotlin.system.exitProcess
-import org.msgpack.jackson.dataformat.MessagePackFactory
 
 private val logger = KotlinLogging.logger {}
 private val marketSessionZoneId: ZoneId = ZoneId.of("America/New_York")

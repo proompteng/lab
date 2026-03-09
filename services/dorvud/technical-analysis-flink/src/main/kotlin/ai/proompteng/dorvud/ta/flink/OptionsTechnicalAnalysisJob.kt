@@ -388,8 +388,8 @@ private fun ensureOptionsClickhouseSchema(config: OptionsTaConfig) {
   }
 }
 
-private fun optionsClickhouseAdminUrl(url: String): String {
-  return try {
+private fun optionsClickhouseAdminUrl(url: String): String =
+  try {
     val uri = URI(url.removePrefix("jdbc:"))
     val scheme = uri.scheme
     val host = uri.host
@@ -410,7 +410,6 @@ private fun optionsClickhouseAdminUrl(url: String): String {
   } catch (_: Exception) {
     url
   }
-}
 
 private fun optionsClickhouseConnectionOptions(config: OptionsTaConfig): JdbcConnectionOptions {
   val url =
@@ -481,9 +480,7 @@ private fun optionsClickhouseContractBarSink(config: OptionsTaConfig): JdbcSink<
     .buildAtLeastOnce(optionsClickhouseConnectionOptions(config))
 }
 
-private fun optionsClickhouseContractFeatureSink(
-  config: OptionsTaConfig,
-): JdbcSink<Envelope<OptionsContractFeaturePayload>> {
+private fun optionsClickhouseContractFeatureSink(config: OptionsTaConfig): JdbcSink<Envelope<OptionsContractFeaturePayload>> {
   val sql =
     """
     INSERT INTO options_contract_features (
@@ -538,9 +535,7 @@ private fun optionsClickhouseContractFeatureSink(
     .buildAtLeastOnce(optionsClickhouseConnectionOptions(config))
 }
 
-private fun optionsClickhouseSurfaceFeatureSink(
-  config: OptionsTaConfig,
-): JdbcSink<Envelope<OptionsSurfaceFeaturePayload>> {
+private fun optionsClickhouseSurfaceFeatureSink(config: OptionsTaConfig): JdbcSink<Envelope<OptionsSurfaceFeaturePayload>> {
   val sql =
     """
     INSERT INTO options_surface_features (
@@ -939,7 +934,11 @@ private class OptionsContractAnalyticsProcessFunction(
             ?.midPrice()
             ?.takeIf { it > 0.0 }
             ?.let { mid ->
-              val spread = (currentQuote.askPrice - currentQuote.bidPrice).takeIf { currentQuote.bidPrice > 0.0 && currentQuote.askPrice > 0.0 }
+              val spread =
+                (currentQuote.askPrice - currentQuote.bidPrice).takeIf {
+                  currentQuote.bidPrice > 0.0 &&
+                    currentQuote.askPrice > 0.0
+                }
               spread?.div(mid)?.times(10_000.0)
             },
         bidSizeClose = currentQuote?.bidSize,
@@ -947,16 +946,19 @@ private class OptionsContractAnalyticsProcessFunction(
       )
 
     val historyWithCurrent =
-      (existingBars + OptionsBarHistoryEntry(
-        eventMs = timestamp,
-        close = barPayload.c,
-        count = barPayload.count,
-        notional = barPayload.c * barPayload.v,
-        midClose = barPayload.midClose,
-        markClose = barPayload.markClose,
-        impliedVolatility = currentSnapshot?.impliedVolatility,
-        delta = currentSnapshot?.delta,
-      )).sortedBy { it.eventMs }
+      (
+        existingBars +
+          OptionsBarHistoryEntry(
+            eventMs = timestamp,
+            close = barPayload.c,
+            count = barPayload.count,
+            notional = barPayload.c * barPayload.v,
+            midClose = barPayload.midClose,
+            markClose = barPayload.markClose,
+            impliedVolatility = currentSnapshot?.impliedVolatility,
+            delta = currentSnapshot?.delta,
+          )
+      ).sortedBy { it.eventMs }
     val within60s = historyWithCurrent.filter { it.eventMs >= timestamp - 60_000 }
     val firstWithin60s = within60s.firstOrNull()
 
@@ -1187,9 +1189,9 @@ private class OptionsStatusHeartbeatProcessFunction(
     val lagMs =
       if (watermark == Long.MIN_VALUE) {
         null
-    } else {
-      (now.toEpochMilli() - watermark).coerceAtLeast(0)
-    }
+      } else {
+        (now.toEpochMilli() - watermark).coerceAtLeast(0)
+      }
     val lastEventMs = lastEventMsState.value()
     val seq = (seqState.value() ?: 0L) + 1L
     seqState.update(seq)
