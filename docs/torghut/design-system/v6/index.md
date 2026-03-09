@@ -9,7 +9,7 @@
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on `2026-03-09`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority): `32-authoritative-alpha-readiness-and-empirical-promotion-closeout-2026-03-08.md`
+- Evidence (current next-work priority): `38-authoritative-empirical-promotion-evidence-contract-2026-03-09.md`
 - Evidence sync: `14-legacy-gap-disposition-map-2026-03-03.md` (signed v4/v5 disposition completeness)
 - Rollout status: v6 pack controls are represented by merged runtime/control-plane closure phases in `main` (`#3921` through `#3960`).
 
@@ -45,6 +45,9 @@ Current source-state priority is narrower:
   recommendation iteration, updated on `2026-03-09` to reflect source reality: heartbeat-backed dependency quorum,
   manifest validation, persistence, and status surfacing are already in-tree, so the remaining priority is
   authoritative empirical evidence generation plus recurring prove-and-promote automation.
+- `38-authoritative-empirical-promotion-evidence-contract-2026-03-09.md` now turns that priority into a standalone
+  implementation contract that reuses the existing empirical manifest/persistence/status surfaces and makes scaffold
+  parity/Janus outputs non-authoritative by design.
 - `33-alpaca-options-market-data-and-technical-analysis-lane-2026-03-08.md` now records the production design for a
   separate Alpaca options ingest and TA lane, grounded in the current equity-only Torghut runtime and cluster state.
 - `34-alpaca-options-lane-implementation-contract-set-2026-03-08.md` now turns that architecture into explicit event,
@@ -114,6 +117,7 @@ This pack is positioned as the next architecture layer above:
 35. `35-alpaca-options-production-hardening-and-opra-promotion-2026-03-08.md`
 36. `36-options-simulation-replay-and-profitability-proof-lane-2026-03-08.md`
 37. `37-options-trading-runtime-execution-and-risk-integration-2026-03-08.md`
+38. `38-authoritative-empirical-promotion-evidence-contract-2026-03-09.md`
 
 ## Recommended Build Order
 
@@ -149,11 +153,12 @@ This pack is positioned as the next architecture layer above:
 30. `30-live-state-disposition-and-implementation-rollout-gates-2026-03-06.md`
 31. `31-proven-autonomous-quant-llm-torghut-trading-system-2026-03-07.md`
 32. `32-authoritative-alpha-readiness-and-empirical-promotion-closeout-2026-03-08.md`
-33. `33-alpaca-options-market-data-and-technical-analysis-lane-2026-03-08.md`
-34. `34-alpaca-options-lane-implementation-contract-set-2026-03-08.md`
-35. `35-alpaca-options-production-hardening-and-opra-promotion-2026-03-08.md`
-36. `36-options-simulation-replay-and-profitability-proof-lane-2026-03-08.md`
-37. `37-options-trading-runtime-execution-and-risk-integration-2026-03-08.md`
+33. `38-authoritative-empirical-promotion-evidence-contract-2026-03-09.md`
+34. `33-alpaca-options-market-data-and-technical-analysis-lane-2026-03-08.md`
+35. `34-alpaca-options-lane-implementation-contract-set-2026-03-08.md`
+36. `35-alpaca-options-production-hardening-and-opra-promotion-2026-03-08.md`
+37. `36-options-simulation-replay-and-profitability-proof-lane-2026-03-08.md`
+38. `37-options-trading-runtime-execution-and-risk-integration-2026-03-08.md`
 
 ## Why This Sequence
 
@@ -175,6 +180,9 @@ This pack is positioned as the next architecture layer above:
 - The proven autonomous quant system architecture comes last because it consolidates the earlier v6 work into the clean
   end-state topology: deterministic runtime authority, first-class mirrored simulation, generated empirical evidence,
   and time-gated live promotion.
+- The authoritative empirical promotion evidence contract follows the closeout rationale because it translates the
+  March 8 recommendation into an implementation-ready boundary around existing empirical manifest, persistence, and
+  operator surfaces.
 - The Alpaca options implementation contract set follows the architecture doc because options ingest is only safe to
   build once the concrete topic, storage, rate-limit, and identity contracts are fixed.
 - Options hardening and `opra` promotion follow the implementation contract set because the lane now exists in
