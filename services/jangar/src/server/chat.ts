@@ -758,9 +758,12 @@ const toSseResponse = (
                 continue
               }
 
-              enqueueFrames(session.onDelta(delta))
               if (persistRenderBlobs) {
+                const frames = session.onDelta(delta)
                 await persistRenderBlobs()
+                enqueueFrames(frames)
+              } else {
+                enqueueFrames(session.onDelta(delta))
               }
             }
 
@@ -812,15 +815,22 @@ const toSseResponse = (
       } catch (error) {
         const normalized = normalizeStreamError(error)
         recordSseError('chat', 'internal')
-        enqueueFrames(
-          session.onInternalError({
+        if (persistRenderBlobs) {
+          const frames = session.onInternalError({
             message: typeof normalized.message === 'string' ? normalized.message : safeJsonStringify(normalized),
             type: 'internal',
             code: 'codex_error',
-          }),
-        )
-        if (persistRenderBlobs) {
+          })
           await persistRenderBlobs()
+          enqueueFrames(frames)
+        } else {
+          enqueueFrames(
+            session.onInternalError({
+              message: typeof normalized.message === 'string' ? normalized.message : safeJsonStringify(normalized),
+              type: 'internal',
+              code: 'codex_error',
+            }),
+          )
         }
       } finally {
         handleClientDisconnect = null
@@ -843,9 +853,12 @@ const toSseResponse = (
             })
           }
         }
-        enqueueFrames(session.finalize({ aborted, turnFinished }))
         if (persistRenderBlobs) {
+          const frames = session.finalize({ aborted, turnFinished })
           await persistRenderBlobs()
+          enqueueFrames(frames)
+        } else {
+          enqueueFrames(session.finalize({ aborted, turnFinished }))
         }
 
         if (!controllerClosed) {

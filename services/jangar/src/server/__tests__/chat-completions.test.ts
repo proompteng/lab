@@ -11,7 +11,11 @@ import { handleChatCompletionEffect, resetCodexClient, setCodexClientFactory } f
 import { ChatCompletionEncoder, chatCompletionEncoderLive } from '~/server/chat-completion-encoder'
 import { ChatToolEventRenderer, chatToolEventRendererLive } from '~/server/chat-tool-event-renderer'
 import { buildTranscriptSignature, type TranscriptEntry } from '~/server/chat-transcript'
-import { resetOpenWebUiRenderStoreForTests } from '~/server/openwebui-render-store'
+import {
+  resetOpenWebUiRenderStoreForTests,
+  setOpenWebUiRenderStoreForTests,
+  type OpenWebUiRenderStore,
+} from '~/server/openwebui-render-store'
 import { ThreadState, type ThreadStateService } from '~/server/thread-state'
 import { TranscriptState, type TranscriptStateService } from '~/server/transcript-state'
 import { WorktreeState, type WorktreeStateService } from '~/server/worktree-state'
@@ -248,6 +252,7 @@ describe('chat completions handler', () => {
           yield { type: 'message', delta: 'x'.repeat(9_000) }
         })(),
       })),
+      interruptTurn: vi.fn(async () => {}),
       stop: vi.fn(),
       ensureReady: vi.fn(),
     }
@@ -285,6 +290,93 @@ describe('chat completions handler', () => {
     expect(String(renderRef?.href)).toContain('https://jangar.test/api/openwebui/rich-ui/render/')
     expect(String(renderRef?.href)).toContain('sig=')
     expect(String(renderRef?.href)).toContain('e=')
+  })
+
+  it('waits for render blob persistence before streaming frames with renderRef', async () => {
+    process.env.JANGAR_OPENWEBUI_RICH_RENDER_ENABLED = 'true'
+    process.env.JANGAR_OPENWEBUI_EXTERNAL_BASE_URL = 'https://jangar.test'
+    process.env.JANGAR_OPENWEBUI_RENDER_SIGNING_SECRET = 'test-secret'
+
+    let releasePersist: (() => void) | null = null
+    const delayedStore: OpenWebUiRenderStore = {
+      getRenderBlob: vi.fn(async () => null),
+      setRenderBlob: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            releasePersist = resolve
+          }),
+      ),
+      clearRenderBlob: vi.fn(async () => {}),
+      clearAll: vi.fn(async () => {}),
+      shutdown: vi.fn(async () => {}),
+    }
+    setOpenWebUiRenderStoreForTests(delayedStore)
+
+    const mockClient = {
+      runTurnStream: vi.fn(async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'message', delta: 'x'.repeat(9_000) }
+        })(),
+      })),
+      interruptTurn: vi.fn(async () => {}),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const response = await chatCompletionsHandler(
+      new Request('http://localhost', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-jangar-client-kind': 'openwebui',
+          'x-jangar-openwebui-render-mode': 'rich-ui-v1',
+        },
+        body: JSON.stringify({
+          model: 'gpt-5.4',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
+      }),
+    )
+
+    const reader = response.body?.getReader()
+    expect(reader).toBeTruthy()
+
+    const firstReadPromise = reader!.read()
+
+    let streamedText = ''
+    const earlyRead = await Promise.race([
+      firstReadPromise.then((result) => ({ type: 'read' as const, result })),
+      new Promise<{ type: 'timeout' }>((resolve) => setTimeout(() => resolve({ type: 'timeout' }), 25)),
+    ])
+
+    if (earlyRead.type === 'read') {
+      streamedText += new TextDecoder().decode(earlyRead.result.value)
+      expect(streamedText).not.toContain('jangar_event')
+      expect(streamedText).not.toContain('renderRef')
+    }
+
+    expect(delayedStore.setRenderBlob).toHaveBeenCalledTimes(1)
+
+    const finishPersist = releasePersist as (() => void) | null
+    if (!finishPersist) {
+      throw new Error('expected render blob persistence to be pending')
+    }
+    finishPersist()
+
+    while (!streamedText.includes('renderRef')) {
+      const chunk = earlyRead.type === 'read' && streamedText.length === 0 ? earlyRead.result : await reader!.read()
+      streamedText += new TextDecoder().decode(chunk.value)
+      if (chunk.done) break
+    }
+
+    expect(streamedText).toContain('jangar_event')
+    expect(streamedText).toContain('renderRef')
+
+    await reader?.cancel()
   })
 
   it('creates and releases a dedicated codex client for each streamed request', async () => {

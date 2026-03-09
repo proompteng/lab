@@ -175,6 +175,10 @@ export const getOpenWebUiRenderStore = () => {
 
 export const resolveOpenWebUIRenderStore = getOpenWebUiRenderStore
 
+export const setOpenWebUiRenderStoreForTests = (store: OpenWebUiRenderStore | null) => {
+  defaultRenderStore = store
+}
+
 export const resetOpenWebUiRenderStoreForTests = async () => {
   if (!defaultRenderStore) return
   try {
