@@ -31,6 +31,13 @@
   separate Alpaca options ingest and TA lane, grounded in the current equity-only Torghut runtime and cluster state.
 - `34-alpaca-options-lane-implementation-contract-set-2026-03-08.md` now turns that architecture into explicit event,
   storage, identity, and SLO contracts for implementation.
+- `35-alpaca-options-production-hardening-and-opra-promotion-2026-03-08.md` now records the remaining production
+  hardening work for the deployed options lane: market-open validation, `opra` shadow promotion, ClickHouse schema
+  bootstrap, and options-specific guardrails.
+- `36-options-simulation-replay-and-profitability-proof-lane-2026-03-08.md` now defines the lane-aware simulation,
+  replay, and profitability-proof system required before any options strategy can request live capital.
+- `37-options-trading-runtime-execution-and-risk-integration-2026-03-08.md` now defines the eventual trading-runtime
+  integration contract for options signals, pricing, risk, lifecycle handling, and broker execution boundaries.
 
 ## Purpose
 
@@ -86,6 +93,9 @@ This pack is positioned as the next architecture layer above:
 32. `32-authoritative-alpha-readiness-and-empirical-promotion-closeout-2026-03-08.md`
 33. `33-alpaca-options-market-data-and-technical-analysis-lane-2026-03-08.md`
 34. `34-alpaca-options-lane-implementation-contract-set-2026-03-08.md`
+35. `35-alpaca-options-production-hardening-and-opra-promotion-2026-03-08.md`
+36. `36-options-simulation-replay-and-profitability-proof-lane-2026-03-08.md`
+37. `37-options-trading-runtime-execution-and-risk-integration-2026-03-08.md`
 
 ## Recommended Build Order
 
@@ -123,6 +133,9 @@ This pack is positioned as the next architecture layer above:
 32. `32-authoritative-alpha-readiness-and-empirical-promotion-closeout-2026-03-08.md`
 33. `33-alpaca-options-market-data-and-technical-analysis-lane-2026-03-08.md`
 34. `34-alpaca-options-lane-implementation-contract-set-2026-03-08.md`
+35. `35-alpaca-options-production-hardening-and-opra-promotion-2026-03-08.md`
+36. `36-options-simulation-replay-and-profitability-proof-lane-2026-03-08.md`
+37. `37-options-trading-runtime-execution-and-risk-integration-2026-03-08.md`
 
 ## Why This Sequence
 
@@ -146,3 +159,9 @@ This pack is positioned as the next architecture layer above:
   and time-gated live promotion.
 - The Alpaca options implementation contract set follows the architecture doc because options ingest is only safe to
   build once the concrete topic, storage, rate-limit, and identity contracts are fixed.
+- Options hardening and `opra` promotion follow the implementation contract set because the lane now exists in
+  production and must prove real-session behavior before strategy work is resumed.
+- The options replay and profitability-proof lane follows hardening because simulation truth depends on a trustworthy
+  live data contract and a session-proven production feed.
+- The options trading-runtime integration comes last because it is only safe once both the market-data lane and the
+  replay/proof lane are authoritative.
