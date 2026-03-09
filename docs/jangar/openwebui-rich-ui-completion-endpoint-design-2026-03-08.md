@@ -31,9 +31,9 @@ Current hard constraints:
 - OpenWebUI chat already uses the OpenAI-compatible streaming API and forwards `x-openwebui-chat-id`.
 - Jangar resolves OpenWebUI clients and keeps thread turn metadata in redis-backed stores.
 - `chat.ts` emits SSE keepalive and supports stale thread retry with full transcript replay.
-- Current Jangar stream processing emits only OpenAI-standard fields (`content`, `reasoning_content`, `usage`, `error`).
+- Current stream processing emits only OpenAI-standard fields (`content`, `reasoning_content`, `usage`, `error`).
+- `chat.ts` currently converts non-stream requests through internal SSE replay (`buildStreamingProxyRequest` + `convertSseToChatCompletionResponse`) and strips non-standard fields.
 - Current encoder never emits `delta.tool_calls` and tests already assert that behavior.
-- Non-stream requests are converted to SSE internally and rebuilt as a JSON completion response in `convertSseToChatCompletionResponse`, so custom SSE fields are dropped by design.
 - Stream input contract is `StreamDelta` in `packages/codex/src/app-server-client.ts`, not raw app-server events.
 - `StreamDelta.tool` already covers `command`, `file`, `mcp`, `webSearch`, `dynamicTool`, and `imageGeneration`.
 - Redis state TTLs for OpenWebUI are `7 days` for thread, transcript, and worktree.
@@ -65,7 +65,7 @@ Known mismatch to correct in this design:
 Rich renderer only activates when all of these are true:
 
 - Request is streaming (`stream === true`).
-- Client is OpenWebUI (`x-openwebui-chat-id` present and `x-jangar-client-kind` resolves to `openwebui`).
+- Client is OpenWebUI (`x-openwebui-chat-id` present and/or `x-jangar-client-kind === 'openwebui'`).
 - Environment flag `JANGAR_OPENWEBUI_RICH_RENDER_ENABLED === 'true'`.
 - Header `x-jangar-openwebui-render-mode: rich-ui-v1` is present.
 - Request version is supported (`rich-ui-v1` only in this phase).
@@ -81,18 +81,12 @@ Non-streaming behavior:
 ## `jangar_event` contract, schema, and versioning
 
 `jangar_event` is appended to regular OpenAI chunks as an additional key, never replacing standard fields.
+`choices[0].delta.jangar_event` is the primary interoperability path and is optional on every chunk.
 
 ### Event envelope (v1)
 
 ```ts
-export type JangarRenderLane =
-  | 'message'
-  | 'reasoning'
-  | 'plan'
-  | 'rate_limits'
-  | 'tool'
-  | 'usage'
-  | 'error'
+export type JangarRenderLane = 'message' | 'reasoning' | 'plan' | 'rate_limits' | 'tool' | 'usage' | 'error'
 
 export type JangarRenderOp = 'append_text' | 'merge' | 'replace' | 'complete'
 
@@ -143,7 +137,7 @@ export type JangarEventV1 = {
 
 Revision rules:
 
-- `seq` increments for every emitted SSE chunk, including no-op/heartbeat chunks.
+- `seq` increments for every emitted `jangar_event`, independent of the number of OpenAI fields in the same chunk.
 - `logicalId` carries a reducer-local timeline.
 - `revision` increments per logical entity whenever payload shape changes, not for duplicate no-change updates.
 
@@ -163,7 +157,7 @@ Deduplication rules:
 
 The encoder owns sequence progression per assistant turn.
 
-- `seq` starts at `1` for each assistant turn and increments on every emitted stream chunk.
+- `seq` starts at `1` for each assistant turn and increments on every emitted `jangar_event`.
 - `seq` does not reset for retries in the same HTTP response.
 - `revision` may be reset to `1` at new turn start.
 
@@ -173,7 +167,10 @@ Mapping below uses the canonical `StreamDelta` events from `packages/codex/src/a
 
 ### `message`
 
-Source events: `item/agentMessage/delta`.
+Source event path:
+
+- canonical `StreamDelta`: `message`
+- upstream notification: `item/agentMessage/delta`
 
 Structured output:
 
@@ -191,7 +188,10 @@ Reducer behavior:
 
 ### `reasoning`
 
-Source events: `item/reasoning/summaryTextDelta`, `item/reasoning/textDelta`.
+Source event path:
+
+- canonical `StreamDelta`: `reasoning`
+- upstream notifications: `item/reasoning/summaryTextDelta`, `item/reasoning/textDelta`
 
 Structured output:
 
@@ -209,7 +209,10 @@ Reducer behavior:
 
 ### `plan`
 
-Source event: `turn/plan/updated`.
+Source event path:
+
+- canonical `StreamDelta`: `plan`
+- upstream notification: `turn/plan/updated`
 
 Structured output:
 
@@ -225,7 +228,10 @@ Reducer behavior:
 
 ### `rate_limits`
 
-Source event: `account/rateLimits/updated`.
+Source event path:
+
+- canonical `StreamDelta`: `rate_limits`
+- upstream notification: `account/rateLimits/updated`
 
 Structured output:
 
@@ -241,7 +247,14 @@ Reducer behavior:
 
 ### `tool:command`
 
-Source events: `item/started`, `item/commandExecution/outputDelta`, `item/commandExecution/terminalInteraction`, `item/completed`.
+Source event path:
+
+- canonical `StreamDelta`: `tool` where `toolKind === 'command'`
+- upstream notifications:
+  - `item/started` (`type === 'commandExecution'`)
+  - `item/commandExecution/outputDelta`
+  - `item/commandExecution/terminalInteraction`
+  - `item/completed` (`type === 'commandExecution'`)
 
 Structured output:
 
@@ -265,7 +278,14 @@ Reducer behavior:
 
 ### `tool:file`
 
-Source events: `item/started`, `item/fileChange/outputDelta`, `item/completed`, `turn/diff/updated`.
+Source event path:
+
+- canonical `StreamDelta`: `tool` where `toolKind === 'file'`
+- upstream notifications:
+  - `item/started` (`type === 'fileChange'`)
+  - `item/fileChange/outputDelta`
+  - `item/completed` (`type === 'fileChange'`)
+  - `turn/diff/updated` (treated as synthetic `turnId:diff` file tool)
 
 Structured output:
 
@@ -283,7 +303,13 @@ Reducer behavior:
 
 ### `tool:mcp`
 
-Source events: `item/started`, `item/mcpToolCall/progress`, `item/completed`.
+Source event path:
+
+- canonical `StreamDelta`: `tool` where `toolKind === 'mcp'`
+- upstream notifications:
+  - `item/started` (`type === 'mcpToolCall'`)
+  - `item/mcpToolCall/progress`
+  - `item/completed` (`type === 'mcpToolCall'`)
 
 Structured output:
 
@@ -299,7 +325,12 @@ Reducer behavior:
 
 ### `tool:webSearch`
 
-Source events: `item/started`, `item/completed`.
+Source event path:
+
+- canonical `StreamDelta`: `tool` where `toolKind === 'webSearch'`
+- upstream notifications:
+  - `item/started` (`type === 'webSearch'`)
+  - `item/completed` (`type === 'webSearch'`)
 
 Structured output:
 
@@ -315,7 +346,12 @@ Reducer behavior:
 
 ### `tool:dynamicTool`
 
-Source events: `item/started`, `item/completed`.
+Source event path:
+
+- canonical `StreamDelta`: `tool` where `toolKind === 'dynamicTool'`
+- upstream notifications:
+  - `item/started` (`type === 'dynamicToolCall'`)
+  - `item/completed` (`type === 'dynamicToolCall'`)
 
 Structured output:
 
@@ -331,7 +367,11 @@ Reducer behavior:
 
 ### `tool:imageGeneration`
 
-Source event: `item/completed`.
+Source event path:
+
+- canonical `StreamDelta`: `tool` where `toolKind === 'imageGeneration'`
+- upstream notification:
+  - `item/completed` (`type === 'imageGeneration'`)
 
 Structured output:
 
@@ -347,7 +387,11 @@ Reducer behavior:
 
 ### `usage`
 
-Source event: `thread/tokenUsage/updated` and final usage frame.
+Source event path:
+
+- canonical `StreamDelta`: `usage`
+- upstream notification: `thread/tokenUsage/updated`
+- finalizer path: final usage chunk emitted in `chat-completion-encoder.finalize`
 
 Structured output:
 
@@ -363,7 +407,11 @@ Reducer behavior:
 
 ### `error`
 
-Source events: upstream error notification, Jangar internal normalization, and abort path.
+Source event path:
+
+- canonical `StreamDelta`: `error`
+- upstream notification: `error`
+- Jangar internal finalizer/abort normalization paths (`chat-completion-encoder.onInternalError`, `onClientAbort`)
 
 Structured output:
 
@@ -419,7 +467,10 @@ Reducer persist rules:
 
 - every accepted event mutates in-memory state and updates `lastSeq`.
 - mutation of existing logical entity increments stored revision.
-- entity list order is deterministic: stable insertion order, with completed tools sorted by completion timestamp.
+- entity list order is deterministic:
+  - non-tool lanes use fixed rank order: `message`, `reasoning`, `plan`, `rate_limits`, `usage`, `error`;
+  - active tools retain first-seen order;
+  - completed tools are appended by `seq` when terminal state is first observed.
 - persist full `JangarRenderState` to message metadata at the same cadence as message updates and after stream completion.
 
 Replay determinism:
@@ -457,6 +508,7 @@ Spill algorithm:
 - TTL and cleanup:
   - blob store TTL is `7 days`.
   - signed URL TTL is `15 minutes`.
+  - rendered payload includes hard expiry metadata (`expiresAt`) checked at request time.
   - rendering UI must gracefully degrade if blob has expired.
   - expiry does not invalidate primary compact state.
 
@@ -485,7 +537,7 @@ Required patch surface:
 
 - streaming ingest hook reads `choices[0].delta.jangar_event` without blocking parser.
 - typed reducer module that consumes event envelopes in-order by `seq`.
-- deterministic `JangarRenderState` serialization into message metadata.
+- deterministic `JangarRenderState` serialization into message metadata (`thread_id`/`turn_number`-keyed context where available).
 - render pass that maps persisted entities to native cards.
 - optional detail-card launcher that requests signed render URLs and displays a sandboxed fallback on failure.
 
@@ -539,6 +591,7 @@ Hard compatibility requirements:
 - `JANGAR_OPENWEBUI_RICH_RENDER_MODE_HEADER` (optional) can enforce allowed header values in API gateway layers.
 - `JANGAR_OPENWEBUI_RENDER_INLINE_MAX_BYTES` and `JANGAR_OPENWEBUI_RENDER_TOTAL_MAX_BYTES` can be added for runtime tuning.
 - when disabled, server emits only standard OpenAI fields.
+- keep default off in first release (`false`) and require an explicit release toggle before production enablement.
 
 ## Security
 
@@ -638,7 +691,7 @@ Dependency order:
   - `jangar_openwebui_detail_fetch_failures_total`
   - `jangar_openwebui_render_reducer_replay_mismatch_total`
 - alert conditions:
-  - >5% of streams producing dropped events in successful turns.
+  - > 5% of streams producing dropped events in successful turns.
   - spike in render blob size + refetch failures.
   - reduced usage of fallback text while rich render flag on.
 
