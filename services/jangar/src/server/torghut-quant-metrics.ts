@@ -1,5 +1,5 @@
 import type { Pool } from 'pg'
-import { resolveClickHouseClient } from './clickhouse'
+import { resolveClickHouseClient, type ClickHouseClient } from './clickhouse'
 import type { QuantMetric, QuantMetricQuality, QuantMetricStatus, QuantWindow } from './torghut-quant-contract'
 import { computeWindowBoundsUtc } from './torghut-quant-windows'
 import {
@@ -10,6 +10,19 @@ import {
 import { computeRealizedPnlAverageCostLongOnly } from './torghut-trading-pnl'
 
 export const TORGHUT_QUANT_FORMULA_VERSION = 'v1.0.0'
+
+const LATEST_TA_SIGNAL_CACHE_TTL_MS = 30_000
+const LATEST_TA_SIGNAL_ERROR_LOG_COOLDOWN_MS = 5 * 60_000
+
+type LatestTaSignalFreshness = {
+  asOf: string
+  source: 'ta_signals.system.parts.max_time' | 'ta_signals.event_ts'
+}
+
+let latestTaSignalFreshnessCache: LatestTaSignalFreshness | null = null
+let latestTaSignalFreshnessCheckedAtMs = 0
+let latestTaSignalFreshnessLastErrorAtMs = 0
+let latestTaSignalFreshnessInFlight: Promise<LatestTaSignalFreshness | null> | null = null
 
 type PositionSnapshotWithPositions = {
   asOf: string
@@ -34,6 +47,16 @@ const safeArray = (value: unknown): unknown[] => (Array.isArray(value) ? value :
 const asRecord = (value: unknown): Record<string, unknown> | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   return value as Record<string, unknown>
+}
+
+const describeError = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+const toIsoFromEpochMs = (value: unknown) => {
+  const epochMs = toNumber(value)
+  if (epochMs === null || epochMs <= 0) return null
+  const asOf = new Date(epochMs)
+  if (Number.isNaN(asOf.getTime())) return null
+  return asOf.toISOString()
 }
 
 const secondsBetween = (nowMs: number, asOfIso: string) => {
@@ -99,20 +122,96 @@ export const listTorghutStrategyAccounts = async (params: {
     .filter(Boolean)
 }
 
-const getLatestTaSignalAsOf = async () => {
+const queryLatestTaSignalFreshness = async (client: ClickHouseClient): Promise<LatestTaSignalFreshness | null> => {
+  try {
+    const metadataRows = await client.queryJson<{ as_of_ms: number | string | null }>(
+      `
+        SELECT nullIf(toUnixTimestamp(max(max_time)) * 1000, 0) AS as_of_ms
+        FROM system.parts
+        WHERE active
+          AND database = currentDatabase()
+          AND table = 'ta_signals'
+      `,
+    )
+
+    const metadataAsOf = toIsoFromEpochMs(metadataRows[0]?.as_of_ms)
+    if (metadataAsOf) {
+      return {
+        asOf: metadataAsOf,
+        source: 'ta_signals.system.parts.max_time',
+      }
+    }
+    return null
+  } catch (metadataError) {
+    try {
+      const rows = await client.queryJson<{ as_of: string | null }>(
+        `
+          SELECT max(event_ts) as as_of
+          FROM ta_signals
+        `,
+      )
+
+      const asOf = rows[0]?.as_of
+      if (!asOf) return null
+      return {
+        asOf: new Date(asOf).toISOString(),
+        source: 'ta_signals.event_ts',
+      }
+    } catch (preciseError) {
+      throw new Error(
+        `Latest ta_signals freshness query failed (metadata=${describeError(metadataError)}; precise=${describeError(preciseError)})`,
+      )
+    }
+  }
+}
+
+const resetLatestTaSignalFreshnessCache = () => {
+  latestTaSignalFreshnessCache = null
+  latestTaSignalFreshnessCheckedAtMs = 0
+  latestTaSignalFreshnessLastErrorAtMs = 0
+  latestTaSignalFreshnessInFlight = null
+}
+
+const getLatestTaSignalFreshness = async () => {
+  const nowMs = Date.now()
+  if (
+    latestTaSignalFreshnessCheckedAtMs > 0 &&
+    nowMs - latestTaSignalFreshnessCheckedAtMs < LATEST_TA_SIGNAL_CACHE_TTL_MS
+  ) {
+    return latestTaSignalFreshnessCache
+  }
+  if (latestTaSignalFreshnessInFlight) return latestTaSignalFreshnessInFlight
+
   const clickhouse = resolveClickHouseClient()
-  if (!clickhouse.ok) return null
+  if (!clickhouse.ok) {
+    latestTaSignalFreshnessCheckedAtMs = nowMs
+    return latestTaSignalFreshnessCache
+  }
 
-  const rows = await clickhouse.client.queryJson<{ as_of: string | null }>(
-    `
-      SELECT max(event_ts) as as_of
-      FROM ta_signals
-    `,
-  )
+  latestTaSignalFreshnessInFlight = (async () => {
+    try {
+      const freshness = await queryLatestTaSignalFreshness(clickhouse.client)
+      latestTaSignalFreshnessCache = freshness
+      latestTaSignalFreshnessLastErrorAtMs = 0
+      return freshness
+    } catch (error) {
+      if (
+        latestTaSignalFreshnessLastErrorAtMs === 0 ||
+        nowMs - latestTaSignalFreshnessLastErrorAtMs >= LATEST_TA_SIGNAL_ERROR_LOG_COOLDOWN_MS
+      ) {
+        console.warn('[torghut-quant] failed to query latest ta_signals freshness', {
+          error: describeError(error),
+        })
+        latestTaSignalFreshnessLastErrorAtMs = nowMs
+      }
+      return latestTaSignalFreshnessCache
+    } finally {
+      latestTaSignalFreshnessCheckedAtMs = Date.now()
+      latestTaSignalFreshnessInFlight = null
+    }
+  })()
 
-  const asOf = rows[0]?.as_of
-  if (!asOf) return null
-  return new Date(asOf).toISOString()
+  return latestTaSignalFreshnessInFlight
 }
 
 const getLatestContextFreshness = async (params: {
@@ -404,6 +503,8 @@ export const __private = {
   computeExposure,
   computeMaxDrawdown,
   computeRouteProvenance,
+  queryLatestTaSignalFreshness,
+  resetLatestTaSignalFreshnessCache,
 }
 
 export const computeTorghutQuantMetrics = async (params: {
@@ -464,8 +565,8 @@ export const computeTorghutQuantMetrics = async (params: {
   const latestSnapshot = account
     ? await getTorghutLatestPositionSnapshot({ pool: params.pool, account, beforeUtc: bounds.endUtc })
     : null
-  const [latestTaSignalAsOf, latestContext] = await Promise.all([
-    getLatestTaSignalAsOf(),
+  const [latestTaSignalFreshness, latestContext] = await Promise.all([
+    getLatestTaSignalFreshness(),
     getLatestContextFreshness({
       pool: params.pool,
       strategyId: params.strategy.id,
@@ -473,6 +574,7 @@ export const computeTorghutQuantMetrics = async (params: {
       beforeUtc: bounds.endUtc,
     }),
   ])
+  const latestTaSignalAsOf = latestTaSignalFreshness?.asOf ?? null
 
   const taFreshnessSeconds = latestTaSignalAsOf ? secondsBetween(nowMs, latestTaSignalAsOf) : null
   const contextFreshnessSeconds =
@@ -775,7 +877,9 @@ export const computeTorghutQuantMetrics = async (params: {
       unit: 'seconds',
       valueNumeric: taFreshnessSeconds,
       asOf: latestTaSignalAsOf ?? now.toISOString(),
-      meta: latestTaSignalAsOf ? { source: 'ta_signals.event_ts' } : { source: 'ta_signals.event_ts_unavailable' },
+      meta: latestTaSignalFreshness
+        ? { source: latestTaSignalFreshness.source }
+        : { source: 'ta_signals.event_ts_unavailable' },
       nowMs,
       maxStalenessSeconds: params.maxStalenessSeconds,
     }),

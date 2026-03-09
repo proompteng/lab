@@ -41,7 +41,7 @@ class StaticLatestIngestor(ClickHouseSignalIngestor):
         self._latest_signal_ts = latest_signal_ts
 
     def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
-        if "SELECT max(" in query:
+        if "latest_signal_ts" in query:
             return [{"latest_signal_ts": self._latest_signal_ts.isoformat()}] if self._latest_signal_ts is not None else []
         return []
 
@@ -52,7 +52,7 @@ class FlakyLatestIngestor(ClickHouseSignalIngestor):
         self.responses = list(responses)
 
     def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
-        if "SELECT max(" not in query:
+        if "latest_signal_ts" not in query:
             return []
         if not self.responses:
             return []
@@ -71,7 +71,7 @@ class SimulationWindowIngestor(ClickHouseSignalIngestor):
 
     def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
         self.queries.append(query)
-        if "SELECT max(" in query:
+        if "latest_signal_ts" in query:
             return [{"latest_signal_ts": self._latest_signal_ts.isoformat()}]
         return list(self.rows)
 
@@ -84,9 +84,24 @@ class SimulationWindowNoLatestIngestor(ClickHouseSignalIngestor):
 
     def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
         self.queries.append(query)
-        if "SELECT max(" in query:
+        if "latest_signal_ts" in query:
             raise RuntimeError("clickhouse probe unavailable")
         return list(self.rows)
+
+
+class MetadataLatestIngestor(ClickHouseSignalIngestor):
+    def __init__(self, *args, latest_signal_ts: datetime, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.latest_signal_ts = latest_signal_ts
+        self.queries: list[str] = []
+
+    def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
+        self.queries.append(query)
+        if "FROM system.parts" in query:
+            return [{"latest_signal_ts": int(self.latest_signal_ts.timestamp())}]
+        if "SELECT max(" in query:
+            raise AssertionError("expected system.parts freshness query to avoid a full-table aggregate")
+        return []
 
 
 class TestSignalIngest(TestCase):
@@ -309,7 +324,7 @@ class TestSignalIngest(TestCase):
 
         class CursorIngestor(ClickHouseSignalIngestor):
             def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
-                if query.strip().startswith("SELECT max("):
+                if "latest_signal_ts" in query:
                     return [{"latest_signal_ts": latest_signal.isoformat()}]
                 return []
 
@@ -700,6 +715,21 @@ class TestSignalIngest(TestCase):
         self.assertEqual(first, latest)
         self.assertEqual(second, latest)
 
+    def test_latest_signal_timestamp_prefers_system_parts_metadata_for_event_ts(self) -> None:
+        latest = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        ingestor = MetadataLatestIngestor(
+            schema="envelope",
+            table="torghut.ta_signals",
+            url="http://example",
+            latest_signal_ts=latest,
+        )
+
+        resolved = ingestor._latest_signal_timestamp("event_ts")
+
+        self.assertEqual(resolved, latest)
+        self.assertGreaterEqual(len(ingestor.queries), 1)
+        self.assertIn("FROM system.parts", ingestor.queries[0])
+
     def test_latest_signal_timestamp_uses_cached_value_on_refresh_failure(self) -> None:
         latest = datetime(2026, 1, 1, tzinfo=timezone.utc)
         ingestor = FlakyLatestIngestor(
@@ -708,6 +738,7 @@ class TestSignalIngest(TestCase):
             url="http://example",
             responses=[
                 [{"latest_signal_ts": latest.isoformat()}],
+                RuntimeError("system.parts unavailable"),
                 RuntimeError("clickhouse unavailable"),
             ],
         )
@@ -898,7 +929,7 @@ class TestSignalIngest(TestCase):
                 super().__init__(*args, **kwargs)
 
             def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
-                if query.startswith("SELECT max("):
+                if "latest_signal_ts" in query:
                     return [{"latest_signal_ts": latest_signal.isoformat()}]
                 return []
 
@@ -925,7 +956,7 @@ class TestSignalIngest(TestCase):
 
         class CursorIngestor(ClickHouseSignalIngestor):
             def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
-                if query.strip().startswith("SELECT max("):
+                if "latest_signal_ts" in query:
                     return [{"latest_signal_ts": latest_signal.isoformat()}]
                 return []
 
