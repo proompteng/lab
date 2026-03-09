@@ -36,7 +36,9 @@ resources:
   - kafka-codex-username-secret.yaml
   - karapace.yaml
   - torghut-ws-kafkauser.yaml
+  - torghut-options-kafkauser.yaml
   - torghut-topics.yaml
+  - torghut-options-topics.yaml
   - kafka-exporter-deployment.yaml
   - kafka-exporter-service.yaml
   - alloy-configmap.yaml

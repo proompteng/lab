@@ -251,6 +251,14 @@ spec:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: auto
                 enabled: "true"
+              - name: torghut-options
+                path: argocd/applications/torghut-options
+                namespace: torghut
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "7"
+                automation: manual
+                enabled: "true"
               - name: posthog
                 path: argocd/applications/posthog
                 namespace: posthog

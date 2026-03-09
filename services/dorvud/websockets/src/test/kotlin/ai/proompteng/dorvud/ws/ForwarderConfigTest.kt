@@ -100,6 +100,27 @@ class ForwarderConfigTest {
   }
 
   @Test
+  fun `supports options market type with opra defaults`() {
+    val cfg =
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "JANGAR_SYMBOLS_URL" to "http://torghut-options-catalog.torghut.svc.cluster.local:8080/v1/options/hot-set",
+          "ALPACA_MARKET_TYPE" to "options",
+          "TOPIC_TRADES" to "torghut.options.trades.v1",
+          "TOPIC_QUOTES" to "torghut.options.quotes.v1",
+          "TOPIC_STATUS" to "torghut.options.status.v1",
+        ),
+      )
+
+    assertEquals(AlpacaMarketType.OPTIONS, cfg.alpacaMarketType)
+    assertEquals("opra", cfg.alpacaFeed)
+    assertEquals(listOf("trades", "quotes"), cfg.alpacaMarketDataChannels)
+    assertEquals(null, cfg.topics.bars1m)
+  }
+
+  @Test
   fun `rejects unknown crypto location`() {
     assertFailsWith<IllegalStateException> {
       ForwarderConfig.fromEnv(
@@ -176,6 +197,21 @@ class ForwarderConfigTest {
           "ALPACA_SECRET_KEY" to "secret",
           "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols",
           "ALPACA_MARKET_DATA_CHANNELS" to "trades,dailyBars",
+        ),
+      )
+    }
+  }
+
+  @Test
+  fun `rejects bars backfill in options mode`() {
+    assertFailsWith<IllegalStateException> {
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "JANGAR_SYMBOLS_URL" to "http://torghut-options-catalog.torghut.svc.cluster.local:8080/v1/options/hot-set",
+          "ALPACA_MARKET_TYPE" to "options",
+          "ENABLE_BARS_BACKFILL" to "true",
         ),
       )
     }

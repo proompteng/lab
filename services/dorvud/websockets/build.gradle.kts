@@ -4,6 +4,7 @@ plugins {
 }
 
 dependencies {
+  val jacksonVersion = "2.18.3"
   val ktorVersion = "2.3.12"
   val coroutinesVersion = "1.9.0"
   val kotlinLoggingVersion = "3.0.5"
@@ -21,6 +22,8 @@ dependencies {
   implementation("io.github.cdimascio:dotenv-kotlin:6.5.1")
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:$coroutinesVersion")
   implementation("io.github.microutils:kotlin-logging-jvm:$kotlinLoggingVersion")
+  implementation("com.fasterxml.jackson.core:jackson-databind:$jacksonVersion")
+  implementation("org.msgpack:jackson-dataformat-msgpack:0.9.8")
 
   testImplementation("io.mockk:mockk:1.13.12")
   testImplementation("io.ktor:ktor-client-mock:$ktorVersion")

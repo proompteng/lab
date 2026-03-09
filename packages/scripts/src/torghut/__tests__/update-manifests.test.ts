@@ -21,6 +21,8 @@ const createFixture = () => {
   const empiricalBackfillManifestPath = join(dir, 'empirical-jobs-backfill-job.yaml')
   const forecastManifestPath = join(dir, 'forecast-deployment.yaml')
   const forecastSimulationManifestPath = join(dir, 'forecast-sim-deployment.yaml')
+  const optionsCatalogManifestPath = join(dir, 'options-catalog-deployment.yaml')
+  const optionsEnricherManifestPath = join(dir, 'options-enricher-deployment.yaml')
   writeFileSync(
     serviceManifestPath,
     `apiVersion: serving.knative.dev/v1
@@ -109,6 +111,26 @@ spec:
       'utf8',
     )
   }
+  for (const path of [optionsCatalogManifestPath, optionsEnricherManifestPath]) {
+    writeFileSync(
+      path,
+      `apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: torghut-options-${path === optionsCatalogManifestPath ? 'catalog' : 'enricher'}
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:1111111111111111111111111111111111111111111111111111111111111111
+          env:
+            - name: TORGHUT_OPTIONS_VERSION
+              value: old-version
+            - name: TORGHUT_OPTIONS_COMMIT
+              value: old-commit
+`,
+      'utf8',
+    )
+  }
   return {
     dir,
     serviceManifestPath,
@@ -124,6 +146,8 @@ spec:
     empiricalBackfillManifestPath,
     forecastManifestPath,
     forecastSimulationManifestPath,
+    optionsCatalogManifestPath,
+    optionsEnricherManifestPath,
   }
 }
 
@@ -149,6 +173,8 @@ describe('update-manifests', () => {
       empiricalBackfillManifestPath: relative(repoRoot, fixture.empiricalBackfillManifestPath),
       forecastManifestPath: relative(repoRoot, fixture.forecastManifestPath),
       forecastSimulationManifestPath: relative(repoRoot, fixture.forecastSimulationManifestPath),
+      optionsCatalogManifestPath: relative(repoRoot, fixture.optionsCatalogManifestPath),
+      optionsEnricherManifestPath: relative(repoRoot, fixture.optionsEnricherManifestPath),
     })
 
     const serviceManifest = readFileSync(fixture.serviceManifestPath, 'utf8')
@@ -164,6 +190,8 @@ describe('update-manifests', () => {
     const empiricalBackfillManifest = readFileSync(fixture.empiricalBackfillManifestPath, 'utf8')
     const forecastManifest = readFileSync(fixture.forecastManifestPath, 'utf8')
     const forecastSimulationManifest = readFileSync(fixture.forecastSimulationManifestPath, 'utf8')
+    const optionsCatalogManifest = readFileSync(fixture.optionsCatalogManifestPath, 'utf8')
+    const optionsEnricherManifest = readFileSync(fixture.optionsEnricherManifestPath, 'utf8')
     expect(serviceManifest).toContain('client.knative.dev/updateTimestamp: "2026-02-21T04:00:00Z"')
     expect(serviceManifest).toContain(
       'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
@@ -196,11 +224,18 @@ describe('update-manifests', () => {
         'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
       )
     }
+    for (const manifest of [optionsCatalogManifest, optionsEnricherManifest]) {
+      expect(manifest).toContain(
+        'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
+      )
+      expect(manifest).toContain('value: v0.600.0')
+      expect(manifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
+    }
     expect(result.changed).toBe(true)
     expect(result.imageRef).toBe(
       'registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
-    expect(result.changedPaths.length).toBe(13)
+    expect(result.changedPaths.length).toBe(15)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })
@@ -226,6 +261,8 @@ describe('update-manifests', () => {
       empiricalBackfillManifestPath: relative(repoRoot, fixture.empiricalBackfillManifestPath),
       forecastManifestPath: relative(repoRoot, fixture.forecastManifestPath),
       forecastSimulationManifestPath: relative(repoRoot, fixture.forecastSimulationManifestPath),
+      optionsCatalogManifestPath: relative(repoRoot, fixture.optionsCatalogManifestPath),
+      optionsEnricherManifestPath: relative(repoRoot, fixture.optionsEnricherManifestPath),
     }
 
     __private.updateTorghutManifests(options)

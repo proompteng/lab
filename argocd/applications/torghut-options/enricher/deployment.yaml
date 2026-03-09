@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: torghut-options-enricher
+  namespace: torghut
+  labels:
+    app: torghut-options-enricher
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: torghut-options-enricher
+  template:
+    metadata:
+      labels:
+        app: torghut-options-enricher
+    spec:
+      serviceAccountName: torghut-runtime
+      containers:
+        - name: torghut-options-enricher
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:a8fba3baee3a2acf474afaa24aa6b593c8a6991e4e5942aec1742044073ed8bc
+          imagePullPolicy: IfNotPresent
+          command:
+            - uvicorn
+            - app.options_lane.enricher_service:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8080"
+          envFrom:
+            - configMapRef:
+                name: torghut-options-enricher-config
+          env:
+            - name: APP_ENV
+              value: prod
+            - name: KAFKA_SASL_USER
+              value: torghut-options
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-options
+                  key: password
+            - name: DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-options-db-app
+                  key: uri
+            - name: ALPACA_OPTIONS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-options-alpaca
+                  key: APCA_API_KEY_ID
+            - name: ALPACA_OPTIONS_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-options-alpaca
+                  key: APCA_API_SECRET_KEY
+            - name: TORGHUT_OPTIONS_VERSION
+              value: bootstrap
+            - name: TORGHUT_OPTIONS_COMMIT
+              value: "0000000000000000000000000000000000000000"
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
