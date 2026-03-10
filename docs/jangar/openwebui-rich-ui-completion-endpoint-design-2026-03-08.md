@@ -1,292 +1,737 @@
-# OpenWebUI No-Fork Rendering Plan For Jangar Chat Completions (2026-03-08)
+# OpenWebUI No-Fork Rich Activity Design For Jangar Chat Completions (2026-03-08)
 
 ## Decision
 
-Do not fork or patch OpenWebUI for Jangar chat rendering.
+Upgrade Jangar's OpenAI-compatible `POST /openai/v1/chat/completions` path so vanilla OpenWebUI can present Codex activity as a production-quality, display-only experience without registering Codex tools in OpenWebUI and without forking the OpenWebUI frontend.
 
-The production shape is:
+The production design is:
 
 1. Keep Codex execution fully owned by Jangar.
-2. Keep Jangar on the existing OpenAI-compatible `POST /openai/v1/chat/completions` path.
-3. Treat vanilla OpenWebUI as a standard chat client, not as a custom activity-renderer host.
-4. Keep the primary in-chat experience text-first using the normal OpenAI chunk fields that OpenWebUI already renders.
-5. Use Jangar-hosted signed HTML pages only for optional drill-down views that open from normal links.
+2. Keep the primary chat UX on the standard OpenAI-compatible streaming contract that vanilla OpenWebUI already renders.
+3. Make the existing text-first activity renderer the intentional primary UI for OpenWebUI, not a fallback of last resort.
+4. Move oversized or highly structured detail into Jangar-hosted signed HTML detail pages reached through normal assistant-message links.
+5. Treat `delta.jangar_event` and other backend rich-render plumbing as optional Jangar internals or future-facing transport, not as a required OpenWebUI product dependency.
 
-This document intentionally rejects the earlier plan to patch OpenWebUI to understand `choices[0].delta.jangar_event`. That is not required for a production-quality no-fork rollout, and it is not a supported extension point in stock OpenWebUI.
+This design explicitly rejects the earlier plan to patch OpenWebUI to interpret `choices[0].delta.jangar_event` and render native activity cards. That approach can be interesting for a client we control, but it is not the no-fork production plan for this repo.
 
-## Why The Old Plan Was Wrong
+## References
 
-The previous design mixed together two different things:
-
-- Rich UI embeds that stock OpenWebUI supports for its own Tools and Actions.
-- Native rendering of arbitrary custom event types coming from an external OpenAI-compatible model stream.
-
-Vanilla OpenWebUI supports the first, not the second.
-
-OpenWebUI's official docs currently describe Rich UI embedding for Tools and Actions returning HTML/iframes, and they describe custom event types as something you can use only if they are handled in your own UI code. That means the earlier "`jangar_event` + patch OpenWebUI" design was effectively a frontend-fork plan disguised as a transport plan.
-
-Relevant upstream docs:
-
-- Rich UI embedding:
+- OpenWebUI Rich UI docs:
   - `https://docs.openwebui.com/features/plugin/development/rich-ui/`
-- Events:
+- OpenWebUI Events docs:
   - `https://docs.openwebui.com/features/plugin/development/events/`
+- OpenWebUI deployment notes:
+  - `docs/jangar/openwebui.md`
+- Jangar chat request and stream orchestration:
+  - `services/jangar/src/server/chat.ts`
+- Jangar chat-completion encoder:
+  - `services/jangar/src/server/chat-completion-encoder.ts`
+- Jangar text-first tool renderer:
+  - `services/jangar/src/server/chat-tool-event-renderer.ts`
+- Jangar tool event decoder:
+  - `services/jangar/src/server/chat-tool-event.ts`
+- Jangar signed render URL helpers:
+  - `services/jangar/src/server/openwebui-render-signing.ts`
+- Jangar render blob store:
+  - `services/jangar/src/server/openwebui-render-store.ts`
+- Jangar render detail route:
+  - `services/jangar/src/routes/api/openwebui/rich-ui/render/$renderId.ts`
+- Jangar chat-completion tests:
+  - `services/jangar/src/server/__tests__/chat-completions.test.ts`
+- Jangar encoder tests:
+  - `services/jangar/src/server/__tests__/chat-completion-encoder.test.ts`
+- Canonical Codex stream normalization:
+  - `packages/codex/src/app-server-client.ts`
 
-## Reality Constraints
+## Upstream Reality Constraints
 
-These are the constraints that matter for this repo today:
+These are the constraints that matter for a no-fork design:
 
-- OpenWebUI is talking to Jangar over the OpenAI-compatible chat-completions API.
-- Jangar already maintains OpenWebUI chat/thread/transcript/worktree state in Redis.
-- The current fallback renderer already converts Codex activity into OpenWebUI-friendly text and fenced blocks.
+- Vanilla OpenWebUI knows how to render the standard OpenAI chat stream that Jangar already emits.
+- OpenWebUI Rich UI embedding is designed around Tools and Actions that return inline HTML or iframe content within OpenWebUI's own plugin surface.
+- OpenWebUI events allow custom event types, but the upstream docs are explicit that custom types require custom UI code to detect and handle them.
+- Jangar is not integrated as an OpenWebUI Tool or Action. Jangar is an external OpenAI-compatible chat-completions backend.
+- This repo does not contain an OpenWebUI frontend patch or fork that consumes `delta.jangar_event`.
+
+That leads to one hard product conclusion:
+
+- If we will not fork OpenWebUI, the production UX must be built from the rendering surfaces that vanilla OpenWebUI already supports for an external model backend:
+  - assistant text
+  - markdown
+  - links
+  - ordinary streaming semantics
+
+## Current Implementation Facts
+
+These are hard facts from `main`, not aspirations:
+
+- OpenWebUI already talks to Jangar through the OpenAI-compatible streaming path and forwards `x-openwebui-chat-id`.
+- Jangar treats OpenWebUI specially in `chat.ts`:
+  - immediate SSE keepalive to prevent client-side aborts during Codex startup
+  - Redis-backed persistence for thread id, transcript signature, turn number, and worktree name
+  - stale-thread recovery by clearing stored state and replaying the transcript
+- OpenWebUI state currently uses a 7-day TTL for the relevant Redis-backed stores.
+- The current encoder already emits valid OpenAI streaming chunks for:
+  - assistant text
+  - reasoning
+  - plan
+  - rate limits
+  - tools
+  - usage
+  - errors
+- Jangar intentionally does not emit OpenAI `tool_calls` for Codex activity, and tests assert that behavior.
 - Main now also contains backend-only rich-render plumbing:
-  - `choices[0].delta.jangar_event` emission
+  - `delta.jangar_event`
+  - render blob staging and persistence
   - signed `renderRef` generation
-  - render blob storage
-  - browser-facing signed render endpoints
-- This repo still does not contain an OpenWebUI frontend patch or fork that consumes `jangar_event`.
+  - a browser-facing detail route under `/api/openwebui/rich-ui/render/$renderId`
+- The render detail route already serves escaped HTML with:
+  - `Content-Disposition: inline`
+  - `Cache-Control: no-store`
+  - a restrictive CSP
+  - iframe height reporting via `postMessage`
 
-Those facts force a simple conclusion:
+Those existing pieces are useful, but the no-fork design must not require any OpenWebUI-side reducer, card, or metadata schema.
 
-- If we refuse a fork, we must design around stock OpenWebUI behavior.
-- Therefore the primary UX must be built from normal assistant text that vanilla OpenWebUI already knows how to render.
+## Problem
 
-## Product Goal
+We need a production-quality OpenWebUI experience for Codex activity, but several unsafe or unsupported approaches are off the table:
 
-Give users a reliable, readable view of Codex activity in vanilla OpenWebUI without:
+- Do not register Codex tools in OpenWebUI.
+- Do not emit OpenAI `tool_calls`.
+- Do not let the browser become an execution authority.
+- Do not require a custom OpenWebUI frontend patch.
+- Do not dump arbitrarily large payloads into the chat bubble.
 
-- registering Codex tools in OpenWebUI
-- emitting executable OpenAI `tool_calls`
-- requiring a frontend fork
-- making the browser an execution authority
+At the same time, the current plain markdown path is not yet specified with production rigor:
+
+- tool summaries are not defined as a stable product contract
+- large command output, diffs, and MCP payloads need explicit spillover behavior
+- detail-link expiry and degradation behavior need definition
+- reasoning, plan, and rate-limit rendering need consistent rules
+- observability, rollout, and failure handling need to be explicit
+
+## Goals
+
+- Keep Jangar as the only execution authority for Codex tools.
+- Preserve the current OpenAI-compatible streaming path for every client.
+- Give vanilla OpenWebUI a polished, readable activity experience without any frontend fork.
+- Bound chat-bubble size and define exact spillover behavior for large detail.
+- Reuse the signed render-page primitives already merged on `main`.
+- Keep reload and history deterministic by relying on persisted assistant text plus Jangar-side detail blobs, not frontend metadata reducers.
+- Define enough contract detail that implementation and rollout can proceed without re-litigating architecture.
 
 ## Non-Goals
 
-- Native OpenWebUI activity cards driven by custom SSE delta fields.
-- Teaching OpenWebUI to understand `jangar_event`.
-- Reframing Jangar as an OpenWebUI Tool, Action, or Pipe just to get iframe rendering.
-- Full-fidelity replay of every internal Codex delta inside chat history.
-- Rich inline embeds for every tool event.
+- Native OpenWebUI activity cards driven by `delta.jangar_event`.
+- Any OpenWebUI reducer or message-metadata compaction layer.
+- Registering Jangar or Codex as OpenWebUI Tools, Actions, or Pipes just to unlock embeds.
+- Returning full raw Codex event history to the browser.
+- Making OpenWebUI the owner of render-state persistence.
+- Guaranteeing inline iframe embeds inside the chat transcript in v1.
 
-## No-Fork Architecture
+## Product Shape
 
-### 1. Primary in-chat rendering stays text-first
+### Primary chat UX
 
-Jangar continues to emit ordinary OpenAI-style streaming chunks that stock OpenWebUI already renders:
+The primary OpenWebUI experience is a purpose-built text renderer inside the assistant message. It should feel like an intentional activity transcript, not a debug dump.
 
-- `choices[0].delta.content`
-- `choices[0].delta.reasoning_content`
-- final usage/error payloads as already implemented
+For each activity kind, the assistant message should provide:
 
-Codex tool activity remains summarized as markdown and fenced text through the existing fallback renderer.
+- a compact title
+- a compact status line
+- a small preview when preview adds value
+- a plain-language explanation when the event matters to a user
+- a normal markdown link to a Jangar-hosted detail page when the full payload is too large or too structured for chat
 
-This is not a compromise workaround. It is the only fully supported rendering surface available to an external OpenAI-compatible backend without modifying the OpenWebUI frontend.
+### Secondary detail UX
 
-### 2. Rich detail moves out of the chat bubble
-
-When a tool result is too large or too structured for the chat bubble, Jangar serves a signed HTML detail page from its own backend and exposes it as a normal link inside assistant content.
+Oversized or structured detail lives outside the chat bubble in signed Jangar-owned HTML pages. These pages are read-only inspection surfaces, not execution surfaces.
 
 Examples:
 
 - full command transcript
 - full unified diff
-- full MCP request/result/error inspector
-- image preview/detail page
-- large reasoning or plan snapshots when needed
+- MCP request/result/error inspector
+- large reasoning snapshot
+- image preview or result page
+- long multi-section rate-limit or usage inspection when needed
 
-The key point is that vanilla OpenWebUI only needs to render a normal link. It does not need to understand a new event type or host a custom card renderer.
+### UX principle
 
-### 3. `renderRef` remains a Jangar concern
+Do not try to make vanilla OpenWebUI pretend to be a custom event renderer. The product should instead embrace a two-layer model:
 
-The backend pieces already merged on `main` are still useful, but their role changes:
+- layer 1: readable assistant-message summaries
+- layer 2: signed detail pages when inspection depth is needed
 
-- `renderRef` is an internal Jangar mechanism for creating signed detail URLs.
-- render blobs remain a Jangar persistence concern.
-- signed render endpoints remain useful.
-- `jangar_event` is no longer a required product contract for OpenWebUI.
+That is the no-fork equivalent of "rich rendering."
 
-If `jangar_event` remains in the codebase, it should be treated as experimental or future-facing, not as something the production UX depends on.
+## Architecture
 
-### 4. OpenWebUI stays vanilla
+### 1. Transport stays standard
 
-No reducer patch.
-No custom cards.
-No message-metadata compaction logic in the frontend.
-No OpenWebUI fork lifecycle to maintain.
+The required production contract is the standard OpenAI-style streaming contract that vanilla OpenWebUI already consumes:
 
-## Concrete UX Shape
+- `choices[0].delta.content`
+- `choices[0].delta.reasoning_content`
+- final usage payloads
+- standard end-of-stream behavior
 
-### Command execution
+Jangar may continue to emit backend-only `delta.jangar_event` when explicitly enabled, but production correctness for OpenWebUI must not depend on it.
 
-Render a compact, readable summary in the assistant message:
+### 2. Rendering responsibility stays in Jangar
 
-- command title
-- started/running/completed state
-- exit code when present
-- truncated stdout/stderr preview in fenced blocks
-- a normal markdown link to "Open full transcript" when detailed output exists
+Jangar is responsible for turning normalized Codex `StreamDelta` values into a polished assistant transcript. OpenWebUI simply renders the transcript it receives.
 
-### File changes
+That means the product contract lives in:
 
-Render:
+- Jangar's text renderer
+- Jangar's spillover rules
+- Jangar's signed detail URLs
 
-- changed path summary
-- small diff preview when useful
-- a normal markdown link to "Open full diff" for larger changes
+It does not live in:
 
-### MCP tool calls
+- OpenWebUI message metadata
+- OpenWebUI reducers
+- OpenWebUI tool execution
 
-Render:
+### 3. Detail pages stay Jangar-owned
 
-- tool name
-- compact status
-- compact args/result/error summary
-- a normal markdown link to "Open full result" for large payloads
+When Jangar decides that a payload should spill out of the chat bubble, it stages a render blob and appends a signed URL to assistant content.
 
-### Dynamic tools and image generation
+The render blob and URL lifecycle remain a Jangar concern:
 
-Render:
+- blob creation
+- TTL
+- signature generation
+- signature validation
+- HTML escaping
+- detail template rendering
 
-- tool name / prompt summary
-- compact success/failure outcome
-- normal links to Jangar-hosted detail pages or asset URLs
+### 4. Persistence stays simple
 
-### Plans, reasoning, and rate limits
+The persisted chat history remains the assistant text that OpenWebUI already stores plus Jangar's existing server-side thread and transcript state.
 
-Keep these in normal text form unless there is a clear product reason to expose a separate detail page.
+The no-fork design deliberately avoids inventing a second persisted state plane inside OpenWebUI.
 
-## Transport Contract
+## Render Contract By Delta Kind
 
-### Required contract
+This section defines the production presentation contract for each normalized `StreamDelta` variant.
 
-The required, production contract is the one vanilla OpenWebUI already supports:
+### `message`
 
-- standard streaming OpenAI chat-completion chunks
-- normal markdown/text content inside assistant messages
+- Primary surface:
+  - normal `delta.content`
+- Contract:
+  - assistant prose remains authoritative
+  - message text should not be duplicated into detail pages unless a single message body exceeds the preview budget
+- Spillover:
+  - only when an assistant text body itself becomes oversized
+- Detail page:
+  - plain escaped text view if needed
 
-That is the contract we should optimize.
+### `reasoning`
 
-### Optional contract
+- Primary surface:
+  - `delta.reasoning_content`
+- Contract:
+  - emit readable reasoning text only when the existing Jangar/OpenWebUI product chooses to expose it
+  - avoid duplicating the same reasoning summary both as prose and as a second synthetic section
+- Spillover:
+  - if reasoning output becomes too large, preserve a short summary in-chat and add a detail link
+- Detail page:
+  - escaped text transcript of the reasoning snapshot
 
-`choices[0].delta.jangar_event` may continue to exist behind a feature flag for:
+### `plan`
 
-- internal experimentation
-- future upstream extension points
-- alternate clients we control
+- Primary surface:
+  - markdown checklist rendered into assistant content
+- Contract:
+  - preserve the current checklist semantics
+  - at most one in-progress step
+  - no hidden plan-only structure that the user cannot infer from the visible text
+- Spillover:
+  - not expected in normal use
+  - if a plan becomes abnormally large, keep the first visible steps and link to detail
+- Detail page:
+  - markdown or escaped text plan snapshot
 
-But OpenWebUI production behavior must not depend on it.
+### `rate_limits`
 
-## Jangar Server Changes
+- Primary surface:
+  - concise markdown blockquote or compact subsection
+- Contract:
+  - show only user-meaningful fields
+  - prefer human-readable time windows and reset timestamps
+  - avoid repeated noisy emissions if nothing meaningfully changed
+- Spillover:
+  - rare
+- Detail page:
+  - structured JSON view only if the snapshot is unusually large
 
-### Keep
+### `tool:command`
 
-- existing OpenWebUI-specific heartbeat behavior
-- stale-thread retry and transcript reconciliation
-- text-first fallback renderer in `chat-tool-event-renderer.ts`
-- signed render endpoint support
-- render blob storage for large detail payloads
+- Primary surface:
+  - title
+  - status
+  - exit code when known
+  - small stdout/stderr preview in fenced blocks when preview is meaningful
+- Contract:
+  - keep the preview readable and scoped
+  - do not stream an unbounded terminal session directly into the message forever
+  - sanitize preview text using the same safety rules already applied by the encoder
+- Spillover:
+  - full transcript moves to a detail page once preview budget is exceeded
+- Detail page:
+  - full escaped transcript including stdout, stderr, and any interactive input preview
 
-### Change
+### `tool:file`
 
-Shift the responsibility for "richness" from custom frontend rendering to better assistant-text formatting plus explicit signed links.
+- Primary surface:
+  - changed path summary
+  - compact diff preview when useful
+- Contract:
+  - keep previews focused on what changed, not entire files
+  - for large changes, prefer path summary plus detail link over giant inline diffs
+- Spillover:
+  - full unified diff in detail page
+- Detail page:
+  - escaped unified diff viewer
 
-Concretely:
+### `tool:mcp`
 
-- the fallback renderer should become the primary renderer for OpenWebUI
-- when a detail page exists, append a normal markdown link in assistant content
-- previews should stay small and readable in-chat
-- large structured payloads should live behind Jangar detail pages, not inside OpenWebUI message metadata
+- Primary surface:
+  - tool name
+  - status
+  - compact argument summary
+  - compact result or error summary
+- Contract:
+  - avoid dumping raw multi-kilobyte JSON into chat by default
+  - preserve enough context that the user can tell what happened without opening detail
+- Spillover:
+  - full args/result/error payload to detail page when large
+- Detail page:
+  - escaped pretty-printed JSON inspector
 
-### Do not require
+### `tool:webSearch`
 
-- OpenWebUI reducer changes
-- frontend message metadata schema
-- compaction/replay logic in OpenWebUI
-- any patch that consumes `jangar_event`
+- Primary surface:
+  - query
+  - completion status
+  - concise result summary when available
+- Contract:
+  - inline presentation should stay small
+  - detail page is optional and should exist only if the result payload is materially useful
 
-## Render Endpoint Requirements
+### `tool:dynamicTool`
 
-The existing Jangar render endpoint shape is still correct for no-fork detail pages.
+- Primary surface:
+  - tool name
+  - high-level argument summary
+  - success or failure outcome
+- Contract:
+  - v1 must treat this as first-class and not as an untyped blob
+- Spillover:
+  - full result or content items to detail page when large
 
-Requirements:
+### `tool:imageGeneration`
 
-- browser-reachable URL base
-- signed URLs
+- Primary surface:
+  - prompt summary
+  - result status
+  - direct asset link or Jangar-hosted preview link
+- Contract:
+  - avoid forcing image payload metadata into the transcript
+  - keep in-chat text understandable even when the asset cannot load
+- Spillover:
+  - image detail page or asset URL
+
+### `usage`
+
+- Primary surface:
+  - compact summary only when product chooses to expose it
+- Contract:
+  - usage should not dominate the visible transcript
+  - usage is informational, not the primary activity UI
+- Spillover:
+  - optional structured detail page for debugging or operator use
+
+### `error`
+
+- Primary surface:
+  - concise error explanation in assistant text
+- Contract:
+  - errors must remain visible and readable even if detail rendering fails
+  - the user must not need a detail page to understand that the turn failed
+- Spillover:
+  - structured detail page with the escaped payload when that aids debugging
+
+## Assistant Message Formatting Contract
+
+The text renderer should follow stable formatting rules so the chat output feels consistent across turns.
+
+### General rules
+
+- Prefer short labeled sections over raw JSON.
+- Use markdown fences only for content that is naturally code or terminal output.
+- Preserve chronological ordering within a turn.
+- Avoid repeating the same status line on every incremental update.
+- Avoid giant markdown tables that render poorly on mobile.
+- Keep the most important user-facing conclusion near the bottom of the message, where it survives chat compaction best.
+
+### Link rules
+
+- Use explicit link labels:
+  - `Open full transcript`
+  - `Open full diff`
+  - `Open full result`
+  - `Open image preview`
+  - `Open detail`
+- Links should appear immediately after the preview they expand.
+- Links must remain optional. The visible transcript should still stand on its own.
+
+### Preview rules
+
+- Command and diff previews should be truncated at natural boundaries when possible.
+- Truncation should indicate that more content exists.
+- If preview quality is poor, omit the preview and provide only the summary plus link.
+
+## Payload Budget And Spillover
+
+This is required for production quality.
+
+Suggested initial limits:
+
+- max inline preview per activity block:
+  - `4 KiB` of rendered text
+- max total activity-preview budget per assistant turn:
+  - `24 KiB`
+- max single structured payload kept inline before forced spillover:
+  - `8 KiB`
+
+These are product targets, not a promise that all current code already enforces them exactly. The important point is that the design explicitly requires bounded in-chat output.
+
+Spillover rules:
+
+- keep a compact preview in the assistant message
+- stage the full payload in the render blob store
+- append a signed link to the detail page
+- never make the in-chat summary depend on the detail page remaining available
+
+The main experience must survive detail-link expiry. Expiration should degrade inspection depth, not turn the transcript into gibberish.
+
+## Render Blob And Detail Page Contract
+
+The existing render blob path on `main` is the right primitive for no-fork drill-down.
+
+### Blob contents
+
+Each render blob should include:
+
+- stable `renderId`
+- semantic `kind`
+- logical source identifier
+- lane
+- escaped or escapable payload
+- preview metadata when useful
+- message binding hash
+- creation timestamp
+- expiry timestamp
+
+### Store requirements
+
+- default store:
+  - Redis
+- test/development fallback:
+  - in-memory store
+- default TTL:
+  - `7 days`
+- key prefix:
+  - `openwebui:render`
+
+### URL requirements
+
+- browser-reachable absolute base URL via `JANGAR_OPENWEBUI_EXTERNAL_BASE_URL`
+- short-lived signed link
+- `renderId` path parameter
+- signature and expiry in query params
+- message binding incorporated into the signature payload
+
+### Response requirements
+
+The detail endpoint should return:
+
 - `Content-Type: text/html; charset=utf-8`
 - `Content-Disposition: inline`
 - `Cache-Control: no-store`
 - `Access-Control-Expose-Headers: Content-Disposition`
 
-Add or keep:
+The current route already does this and should remain the base implementation.
 
-- `JANGAR_OPENWEBUI_EXTERNAL_BASE_URL`
-- render URL signing secret
-- short-lived signed URLs
-- render blob TTL aligned with existing OpenWebUI state TTL
+### HTML requirements
+
+- render escaped text or JSON only
+- no raw tool output injected as trusted HTML
+- Jangar-owned templates only
+- restrictive CSP by default
+- auto-resize height reporting with `postMessage`
+
+### Browser reachability
+
+OpenWebUI talks to Jangar's chat-completions endpoint server-to-server, but detail pages are fetched by the user's browser. That means:
+
+- cluster-internal service URLs are not sufficient for detail pages
+- `JANGAR_OPENWEBUI_EXTERNAL_BASE_URL` is required for signed links
+- the chosen base URL must be reachable from the user's browser environment
 
 ## Security Model
 
+### Execution safety
+
 - Jangar remains the only execution authority.
 - OpenWebUI never receives executable Codex tool definitions.
-- The browser only fetches read-only signed detail pages.
-- Tool output is never injected as trusted HTML.
-- Jangar-owned templates render escaped text and structured data safely.
+- Detail pages are read-only and must not perform server-side actions.
+- The browser never invokes Codex tools directly.
 
-## Current Repo Status
+### Link integrity
 
-As of `main` on 2026-03-10:
+- links must be signed
+- links must expire
+- invalid or expired signatures return a safe error page, not raw payload data
+- signatures should bind at least:
+  - `renderId`
+  - `kind`
+  - `expiresAt`
+  - message-scoped binding hash
 
-- The text-first fallback path is implemented and production-usable.
-- Backend rich-render plumbing is also implemented in Jangar.
-- The OpenWebUI frontend-side renderer is not present in this repo.
+### Content safety
 
-That means the only production-ready no-fork path is the text-first path plus signed Jangar detail links.
+- tool output is treated as untrusted content
+- detail pages escape payloads before rendering
+- images or remote assets should be linked deliberately, not blindly embedded from arbitrary sources
 
-## Recommendation
+### Privacy and retention
 
-Adopt this as the product plan:
+- render blob TTL should align with existing OpenWebUI conversation state retention unless there is a specific reason to shorten it
+- logs should never store full sensitive payloads just because detail pages exist
 
-1. Keep vanilla OpenWebUI.
-2. Make the fallback text renderer the intentional primary experience.
-3. Improve the summaries so they read like purpose-built activity output, not debug dumps.
-4. Reuse the signed render pages for drill-down links where richer inspection matters.
-5. Stop describing an OpenWebUI frontend patch as part of the required architecture.
+## Failure Modes
 
-## Implementation Notes For This Repo
+The product must degrade cleanly.
 
-The relevant code remains:
+### Render blob store unavailable
 
-- chat request/stream orchestration:
-  - `services/jangar/src/server/chat.ts`
-- text-first tool rendering:
-  - `services/jangar/src/server/chat-tool-event-renderer.ts`
-- optional structured event emission:
-  - `services/jangar/src/server/chat-completion-encoder.ts`
-- signed render URLs:
-  - `services/jangar/src/server/openwebui-render-signing.ts`
-- render blob storage:
-  - `services/jangar/src/server/openwebui-render-store.ts`
-- render detail route:
-  - `services/jangar/src/routes/api/openwebui/rich-ui/render/$renderId.ts`
+- Jangar still emits the text-first summary
+- Jangar omits the detail link when the full payload cannot be staged safely
+- the turn remains readable
 
-The main follow-up work should happen in the text renderer and message formatting, not in an OpenWebUI fork.
+### External base URL missing
 
-## Open Questions
+- Jangar still emits the text-first summary
+- signed detail links are disabled
+- logs record configuration failure once per process start or at a rate-limited cadence
 
-- Do we want detail links to open in a new tab, or should we rely on normal in-app navigation behavior only?
-- Should command/file/MCP detail links be shown only on completion, or also while the tool is running?
-- How much preview text is useful before the assistant message becomes noisy?
-- Should image-generation results link directly to the asset, a Jangar viewer page, or both?
+### Signature validation failure
 
-## Final Position
+- detail route returns a safe error page
+- the chat transcript remains intact
+- a counter is incremented for operator visibility
 
-If we want no fork, we must stop pretending stock OpenWebUI can natively render our custom stream protocol.
+### Detail blob expired or missing
 
-The realistic design is:
+- detail route returns a safe "detail unavailable" page
+- the summary text remains authoritative
 
-- vanilla OpenWebUI for chat rendering
-- Jangar for execution and detail rendering
-- normal assistant text for primary UX
-- signed Jangar links for deep inspection
+### Oversized payload
 
-That is boring, but it is real.
+- Jangar truncates the in-chat preview
+- Jangar stages full detail when possible
+- if staging fails, Jangar keeps the truncated summary rather than streaming unlimited data
+
+### Browser cannot reach external base URL
+
+- the visible transcript still works
+- the detail link fails independently
+- this should surface in monitoring and manual validation
+
+## Existing Rich-Render Plumbing On Main
+
+Main already contains more than this no-fork plan strictly requires:
+
+- `delta.jangar_event`
+- render blob staging in the encoder
+- signed `renderRef` generation
+- detail-route infrastructure
+
+This design treats those pieces as follows:
+
+- signed render blobs and detail routes:
+  - keep and use
+- `delta.jangar_event`:
+  - optional
+  - keep behind feature gating if useful for alternate clients, experiments, or future upstream extension points
+- any notion of OpenWebUI-side reducer or metadata compaction:
+  - out of scope for the no-fork production plan
+
+That preserves useful backend work without anchoring product correctness to a frontend fork.
+
+## Jangar Server Changes
+
+### `chat-tool-event-renderer.ts`
+
+This renderer becomes the primary OpenWebUI presentation layer and should be upgraded accordingly.
+
+Required improvements:
+
+- normalize the visual structure across tool kinds
+- make previews intentionally concise
+- emit canonical link labels
+- ensure truncation is readable
+- keep command, file, and MCP output distinct and recognizable
+- preserve the existing guarantee that no OpenAI `tool_calls` are emitted
+
+### `chat-completion-encoder.ts`
+
+Keep:
+
+- the current OpenAI-compatible stream behavior
+- reasoning and plan formatting helpers
+- the existing render blob spillover primitives
+
+Change:
+
+- treat spillover and detail-link emission as a production feature independent of `jangar_event`
+- ensure the text transcript can reference detail links cleanly
+- keep `jangar_event` gated and explicitly non-essential for OpenWebUI correctness
+
+### `chat.ts`
+
+Keep:
+
+- heartbeat behavior
+- stale-thread retry
+- transcript reconciliation
+- OpenWebUI chat-id handling
+
+Change:
+
+- make rich detail runtime configuration explicit
+- fail open to text-only mode when signed detail prerequisites are missing
+- do not let signed-link failures break the main assistant stream
+
+### Detail route and templates
+
+Keep the existing route and evolve templates by payload kind:
+
+- command transcript template
+- diff template
+- JSON inspector template
+- image preview template
+- generic text fallback
+
+## Observability
+
+Add or preserve counters and logs for:
+
+- OpenWebUI rich-detail mode enabled vs disabled
+- detail-link creation success vs skipped vs failed
+- render blob persistence failures
+- render blob bytes staged
+- detail route hits by kind
+- detail route signature failures
+- detail route expired-link responses
+- detail route missing-blob responses
+- assistant previews truncated by kind
+- fallback to text-only mode because external base URL or signing secret was unavailable
+
+Logs should identify:
+
+- chat id when available
+- thread id when available
+- render kind
+- render id when safe to log
+
+Logs must not dump full sensitive payload content by default.
+
+## Rollout
+
+### Phase 1
+
+- standardize the text renderer contract
+- define preview limits
+- validate signed detail routes and blob TTL behavior
+- keep the user-facing UX entirely text-plus-links
+
+### Phase 2
+
+- improve per-kind detail templates
+- tune truncation and preview quality
+- validate browser reachability from the real OpenWebUI environment
+
+### Phase 3
+
+- add observability and operator runbooks
+- validate failure-mode behavior under missing blob, expired link, and broken external URL cases
+
+### Phase 4
+
+- decide whether `delta.jangar_event` remains as an experimental transport for non-OpenWebUI clients or future upstream opportunities
+- do not let that decision block the production no-fork rollout
+
+## Required Tests
+
+### Jangar unit tests
+
+- encoder still emits no OpenAI `tool_calls`
+- text rendering remains valid for every current `StreamDelta` kind
+- oversized payloads stage render blobs when configured
+- signed links include expiry and signature
+- blob persistence waits are correct before exposing signed detail refs where ordering matters
+- missing render runtime configuration falls back cleanly to text-only mode
+
+### Detail route tests
+
+- valid signed link returns inline HTML
+- invalid signature returns safe error page
+- expired link returns safe error page
+- missing blob returns safe error page
+- HTML output escapes payload content
+- iframe height reporting script remains present
+
+### OpenWebUI integration tests
+
+- vanilla OpenWebUI renders the assistant transcript correctly with no custom frontend code
+- markdown links point to the browser-reachable Jangar base URL
+- detail links are optional and do not break the main transcript when unavailable
+
+### Browser e2e
+
+- command summary plus detail link works end-to-end
+- diff summary plus detail link works end-to-end
+- MCP summary plus detail link works end-to-end
+- image link or preview link works end-to-end
+- mobile and desktop renderings remain readable
+
+## Runbook Notes
+
+Operators need a short checklist when detail links do not work:
+
+1. Verify `JANGAR_OPENWEBUI_EXTERNAL_BASE_URL` is configured and browser-reachable.
+2. Verify `JANGAR_OPENWEBUI_RENDER_SIGNING_SECRET` is configured.
+3. Verify the render blob store is reachable and populated.
+4. Confirm the chat transcript itself remains readable even if detail pages fail.
+5. Check signature-failure and missing-blob counters before assuming a frontend problem.
+
+## Exit Criteria
+
+This design is implementation-ready when these statements are true:
+
+- the primary OpenWebUI UX is fully specified without any frontend fork
+- the assistant text format is treated as a stable product contract
+- spillover behavior is bounded and explicit
+- signed detail pages are clearly specified
+- failure modes preserve a usable transcript
+- security rules keep Jangar as the sole execution authority
+- tests and rollout phases cover the real operational risks
+
+That is the bar for a production-quality no-fork design in this repo.
