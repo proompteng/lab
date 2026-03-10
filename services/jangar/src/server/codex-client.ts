@@ -1,6 +1,8 @@
 import { CodexAppServerClient } from '@proompteng/codex'
 import { Effect } from 'effect'
 
+import { MockCodexAppServerClient, shouldUseMockCodexClient } from './mock-codex-client'
+
 type Factory = (options?: { defaultModel?: string }) => CodexAppServerClient
 
 const resolveMcpUrl = () => {
@@ -16,8 +18,12 @@ const resolveCodexBinary = () => {
   return envPath && envPath.length > 0 ? envPath : 'codex'
 }
 
-const defaultFactory: Factory = (options) =>
-  new CodexAppServerClient({
+const defaultFactory: Factory = (options) => {
+  if (shouldUseMockCodexClient()) {
+    return new MockCodexAppServerClient() as unknown as CodexAppServerClient
+  }
+
+  return new CodexAppServerClient({
     binaryPath: resolveCodexBinary(),
     cliConfigOverrides: ['mcp_servers={}', 'notify=[]'],
     defaultModel: options?.defaultModel,
@@ -31,6 +37,7 @@ const defaultFactory: Factory = (options) =>
       },
     },
   })
+}
 
 let factory: Factory = defaultFactory
 const activeClients = new Set<CodexAppServerClient>()

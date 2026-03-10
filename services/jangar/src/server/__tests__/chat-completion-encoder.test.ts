@@ -2,20 +2,26 @@ import { describe, expect, it } from 'vitest'
 
 import { chatCompletionEncoderLive } from '~/server/chat-completion-encoder'
 import type { ToolRenderer } from '~/server/chat-tool-event-renderer'
+import { createSignedOpenWebUIRenderHref, validateOpenWebUIRenderSignature } from '~/server/openwebui-render-signing'
 
 const createSession = (
   options: {
     includeUsage?: boolean
     toolRenderer?: ToolRenderer
     jangarRender?: {
-      enabled: boolean
-      mode: 'rich-ui-v1'
-      createRenderRef?: (args: { renderId: string; kind: string; messageBindingHash: string; expiresAt: string }) => {
-        id: string
-        kind: string
-        href: string
-        expiresAt: string
-      } | null
+      detailLinks?: {
+        enabled: boolean
+        createRenderRef?: (args: { renderId: string; kind: string; messageBindingHash: string; expiresAt: string }) => {
+          id: string
+          kind: string
+          href: string
+          expiresAt: string
+        } | null
+      }
+      jangarEvent?: {
+        enabled: boolean
+        mode: 'rich-ui-v1'
+      }
     }
   } = {},
 ) => {
@@ -94,6 +100,15 @@ const collectReasoningContent = (frames: Record<string, unknown>[]) =>
     .filter((value): value is string => Boolean(value))
     .join('')
 
+const resolveDetailLinks = (
+  session: ReturnType<typeof createSession>,
+  frames: Record<string, unknown>[],
+  failedRenderIds?: string[],
+) => {
+  session.resolvePendingDetailLinks(frames, failedRenderIds)
+  return frames
+}
+
 const isUsageChunk = (frame: Record<string, unknown>) => {
   const choices = frame.choices
   return Array.isArray(choices) && choices.length === 0 && asRecord(frame.usage) != null
@@ -123,6 +138,20 @@ const getMessageEvent = (frames: Record<string, unknown>[]) => {
   const events = getMessageEvents(frames)
   return events[0] ?? null
 }
+
+const extractRenderLinks = (content: string) =>
+  Array.from(content.matchAll(/<(?<href>https?:\/\/[^>]+\/api\/openwebui\/rich-ui\/render\/[^>]+)>/g)).flatMap(
+    (match) => {
+      const href = match.groups?.href?.trim()
+      return href ? [href] : []
+    },
+  )
+
+const buildMockItems = (prefix: string, count: number) =>
+  Array.from(
+    { length: count },
+    (_, index) => `${prefix} ${index + 1} with mock detail payload ${String(index + 1).padStart(4, '0')}`,
+  )
 
 describe('chat completion encoder', () => {
   it('starts the first assistant message delta on a new line', () => {
@@ -345,55 +374,203 @@ describe('chat completion encoder', () => {
   })
 
   it('includes jangar_event only when rich rendering is enabled', () => {
-    const disabled = createSession({ jangarRender: { enabled: false, mode: 'rich-ui-v1' } })
+    const disabled = createSession({ jangarRender: { jangarEvent: { enabled: false, mode: 'rich-ui-v1' } } })
     const disabledFrames = disabled.onDelta({ type: 'message', delta: 'hi' })
     expect(getJangarEvents(disabledFrames)).toHaveLength(0)
 
-    const enabled = createSession({ jangarRender: { enabled: true, mode: 'rich-ui-v1' } })
+    const enabled = createSession({ jangarRender: { jangarEvent: { enabled: true, mode: 'rich-ui-v1' } } })
     const enabledFrames = enabled.onDelta({ type: 'message', delta: 'hi' })
     expect(getJangarEvents(enabledFrames).length).toBe(1)
   })
 
-  it('stages render blobs for oversized rich events when detail rendering is configured', () => {
+  it('keeps full assistant message text inline even when detail links are enabled', () => {
     const session = createSession({
       jangarRender: {
-        enabled: true,
-        mode: 'rich-ui-v1',
-        createRenderRef: ({ renderId, kind, expiresAt }) => ({
-          id: renderId,
-          kind,
-          href: `https://jangar.test/api/openwebui/rich-ui/render/${renderId}`,
-          expiresAt,
-        }),
+        detailLinks: {
+          enabled: true,
+          createRenderRef: ({ renderId, kind, expiresAt }) => ({
+            id: renderId,
+            kind,
+            href: `https://jangar.test/api/openwebui/rich-ui/render/${renderId}`,
+            expiresAt,
+          }),
+        },
       },
     })
 
     const frames = session.onDelta({ type: 'message', delta: 'x'.repeat(9_000) })
-    const event = getMessageEvent(frames)
-    const renderRef = asRecord(event?.renderRef)
-    const blobs = session.takePendingRenderBlobs()
-
-    expect(renderRef?.kind).toBe('message')
-    expect(typeof renderRef?.href).toBe('string')
-    expect(blobs).toHaveLength(1)
-    expect(blobs[0]?.payload.text).toBe(`\n${'x'.repeat(9_000)}`)
+    expect(collectContent(frames)).toContain('x'.repeat(9_000))
+    expect(session.takePendingRenderBlobs()).toHaveLength(0)
   })
 
-  it('keeps oversized rich events inline-only when no detail renderer is configured', () => {
+  it('stages detail links for oversized command transcripts without requiring jangar_event', () => {
     const session = createSession({
-      jangarRender: { enabled: true, mode: 'rich-ui-v1' },
+      jangarRender: {
+        detailLinks: {
+          enabled: true,
+          createRenderRef: ({ renderId, kind, expiresAt }) => ({
+            id: renderId,
+            kind,
+            href: `https://jangar.test/api/openwebui/rich-ui/render/${renderId}`,
+            expiresAt,
+          }),
+        },
+      },
     })
 
-    const frames = session.onDelta({ type: 'message', delta: 'x'.repeat(9_000) })
-    const event = getMessageEvent(frames)
+    session.onDelta({
+      type: 'tool',
+      toolKind: 'command',
+      id: 'cmd-1',
+      status: 'started',
+      title: '/bin/bash -lc bun test packages/codex',
+    })
+    const frames = session.onDelta({
+      type: 'tool',
+      toolKind: 'command',
+      id: 'cmd-1',
+      status: 'completed',
+      title: '/bin/bash -lc bun test packages/codex',
+      data: { aggregatedOutput: 'x'.repeat(9_000), exitCode: 1 },
+    })
+    resolveDetailLinks(session, frames)
 
-    expect(asRecord(event?.renderRef)).toBeNull()
-    expect(session.takePendingRenderBlobs()).toHaveLength(0)
+    expect(collectContent(frames)).toContain('Open full transcript')
+    expect(getJangarEvents(frames)).toHaveLength(0)
+    const blobs = session.takePendingRenderBlobs()
+    expect(blobs).toHaveLength(1)
+    expect(blobs[0]?.kind).toBe('command')
+    expect(String(blobs[0]?.payload.text)).toContain('x'.repeat(9_000))
+  })
+
+  it('keeps transcript detail links valid when jangar_event and detail links are both enabled', () => {
+    const baseUrl = 'https://jangar.test'
+    const secret = 'test-openwebui-render-secret'
+    const session = createSession({
+      jangarRender: {
+        detailLinks: {
+          enabled: true,
+          createRenderRef: ({ renderId, kind, messageBindingHash, expiresAt }) => ({
+            id: renderId,
+            kind,
+            href: createSignedOpenWebUIRenderHref({
+              baseUrl,
+              renderId,
+              kind,
+              expiresAt,
+              messageBindingHash,
+              secret,
+            }),
+            expiresAt,
+          }),
+        },
+        jangarEvent: { enabled: true, mode: 'rich-ui-v1' },
+      },
+    })
+
+    const frames = [
+      ...session.onDelta({
+        type: 'tool',
+        toolKind: 'mcp',
+        id: 'mcp-1',
+        status: 'completed',
+        title: 'catalog.search',
+        detail: 'Collected catalog inventory.',
+        data: {
+          arguments: { collection: 'catalog', pageSize: 20 },
+          result: {
+            summary: 'Catalog inventory collected.',
+            items: buildMockItems('catalog item', 360),
+          },
+        },
+      }),
+      ...session.onDelta({
+        type: 'tool',
+        toolKind: 'dynamicTool',
+        id: 'dynamic-1',
+        status: 'completed',
+        title: 'audit.report',
+        detail: 'Generated audit findings for the mock activity.',
+        data: {
+          tool: 'audit.report',
+          arguments: { scope: 'openwebui-rich-activity' },
+          result: {
+            summary: 'Audit output complete.',
+            items: buildMockItems('audit item', 360),
+          },
+          success: true,
+        },
+      }),
+    ]
+    resolveDetailLinks(session, frames)
+
+    const content = collectContent(frames)
+    const detailLinks = extractRenderLinks(content)
+    expect(detailLinks).toHaveLength(2)
+
+    const blobsById = new Map(session.takePendingRenderBlobs().map((blob) => [blob.renderId, blob]))
+    for (const href of detailLinks) {
+      const url = new URL(href)
+      const renderId = url.pathname.split('/').at(-1) ?? ''
+      const signature = url.searchParams.get('sig') ?? ''
+      const blob = blobsById.get(renderId)
+
+      expect(blob).toBeTruthy()
+      expect(
+        validateOpenWebUIRenderSignature({
+          renderId: String(blob?.renderId),
+          kind: String(blob?.kind),
+          expiresAt: String(blob?.expiresAt),
+          messageBindingHash: String(blob?.messageBindingHash),
+          signature,
+          secret,
+        }),
+      ).toBe(true)
+    }
+  })
+
+  it('aligns detail-link expiry with the render blob retention horizon', () => {
+    const session = createSession({
+      jangarRender: {
+        detailLinks: {
+          enabled: true,
+          createRenderRef: ({ renderId, kind, expiresAt }) => ({
+            id: renderId,
+            kind,
+            href: `https://jangar.test/api/openwebui/rich-ui/render/${renderId}`,
+            expiresAt,
+          }),
+        },
+      },
+    })
+
+    session.onDelta({
+      type: 'tool',
+      toolKind: 'command',
+      id: 'cmd-ttl',
+      status: 'started',
+      title: 'bun test packages/codex',
+    })
+    session.onDelta({
+      type: 'tool',
+      toolKind: 'command',
+      id: 'cmd-ttl',
+      status: 'completed',
+      title: 'bun test packages/codex',
+      data: { aggregatedOutput: 'x'.repeat(9_000), exitCode: 1 },
+    })
+
+    const [blob] = session.takePendingRenderBlobs()
+    const expiresAtMs = new Date(String(blob?.expiresAt)).getTime()
+    const diffMs = expiresAtMs - Date.now()
+
+    expect(diffMs).toBeGreaterThan(6 * 24 * 60 * 60 * 1000)
+    expect(diffMs).toBeLessThanOrEqual(7 * 24 * 60 * 60 * 1000 + 60_000)
   })
 
   it('emits deterministic jangar event metadata for message text', () => {
     const session = createSession({
-      jangarRender: { enabled: true, mode: 'rich-ui-v1' },
+      jangarRender: { jangarEvent: { enabled: true, mode: 'rich-ui-v1' } },
     })
     const frames = session.onDelta({ type: 'message', delta: 'hi' })
     const event = getMessageEvent(frames)
@@ -411,7 +588,7 @@ describe('chat completion encoder', () => {
 
   it('keeps seq monotonic and revision monotonic per logicalId', () => {
     const session = createSession({
-      jangarRender: { enabled: true, mode: 'rich-ui-v1' },
+      jangarRender: { jangarEvent: { enabled: true, mode: 'rich-ui-v1' } },
     })
     const first = session.onDelta({ type: 'message', delta: 'hi' })
     const second = session.onDelta({ type: 'message', delta: ' there' })
@@ -426,7 +603,7 @@ describe('chat completion encoder', () => {
 
   it('emits tool events with deterministic logicalId and tool lane', () => {
     const session = createSession({
-      jangarRender: { enabled: true, mode: 'rich-ui-v1' },
+      jangarRender: { jangarEvent: { enabled: true, mode: 'rich-ui-v1' } },
       toolRenderer: {
         onToolEvent: () => [],
       },
@@ -450,7 +627,7 @@ describe('chat completion encoder', () => {
 
   it('does not include tool_calls in message deltas', () => {
     const session = createSession({
-      jangarRender: { enabled: true, mode: 'rich-ui-v1' },
+      jangarRender: { jangarEvent: { enabled: true, mode: 'rich-ui-v1' } },
     })
     const frames = session.onDelta({ type: 'message', delta: 'hi' })
     const delta = getDeltaRecord(frames[0] ?? {})

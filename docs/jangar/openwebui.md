@@ -2,7 +2,25 @@
 
 OpenWebUI is installed via the upstream Helm chart (`open-webui` v12.8.1, chart app version v0.8.8) with an explicit image override to `ghcr.io/open-webui/open-webui:v0.8.9` in the `jangar` namespace. The chart creates a StatefulSet and `open-webui` ClusterIP Service; a dedicated Tailscale LoadBalancer `openwebui-tailscale` (hostname `openwebui`) fronts it. Websocket support is enabled and backed by a Redis instance `jangar-openwebui-redis` managed by the OTCK Redis operator. Postgres comes from the existing CNPG cluster `jangar-db` (`jangar-db-app` + `jangar-db-ca`). Jangar no longer proxies or iframes OpenWebUI; users open the Tailscale host directly.
 
-OpenWebUI forwards the chat identifier in the `x-openwebui-chat-id` header (enabled via the chart values). Jangar consumes this header to map conversations to Codex thread ids and to increment turn numbers, persisting the mapping in Redis (`redis://jangar-openwebui-redis:6379/1`) with a 7-day TTL so subsequent turns stay on the same thread.
+OpenWebUI forwards the chat identifier in the `x-openwebui-chat-id` header (enabled via the chart values). Jangar consumes this header to map conversations to Codex thread ids and to increment turn numbers, persisting the mapping in Redis (`redis://jangar-openwebui-redis:6379/1`) with a 7-day TTL so subsequent turns stay on the same thread. The same 7-day retention window is used for staged OpenWebUI rich-detail blobs and their signed render links.
+
+Implementation details and local regression coverage live in `docs/jangar/openwebui-rich-activity-implementation.md`.
+
+## Rich activity details
+
+The production OpenWebUI rich-activity path lives entirely inside Jangar. OpenWebUI still consumes standard `delta.content` and `delta.reasoning_content`; there is no OpenWebUI frontend fork and no OpenAI `tool_calls` requirement for this UX. When enabled, Jangar appends signed markdown links such as `Open full transcript`, `Open full diff`, `Open full result`, and `Open detail` directly into the assistant text stream.
+
+Enable the production detail-link path with:
+
+- `JANGAR_OPENWEBUI_RICH_RENDER_ENABLED=true`
+- `JANGAR_OPENWEBUI_EXTERNAL_BASE_URL=<browser-reachable Jangar origin>`
+- `JANGAR_OPENWEBUI_RENDER_SIGNING_SECRET=<shared secret>`
+
+`JANGAR_OPENWEBUI_EXTERNAL_BASE_URL` must be reachable from the end user's browser, not just from inside the cluster, because OpenWebUI renders links to Jangar's `/api/openwebui/rich-ui/render/$renderId` route. Signed links and staged render blobs share the same 7-day lifetime, so they expire on the same horizon as the persisted OpenWebUI chat/thread mapping.
+
+If the external base URL, signing secret, or render store is unavailable, Jangar falls back to plain text streaming for that turn instead of failing the request.
+
+The request header `x-jangar-openwebui-render-mode: rich-ui-v1` is optional and experimental. It only enables `delta.jangar_event` emission for debugging or future client work; the production text-plus-links path does not require it.
 
 ## Access
 
