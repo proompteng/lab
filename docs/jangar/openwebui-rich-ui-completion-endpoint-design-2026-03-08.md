@@ -20,6 +20,14 @@ This design explicitly rejects the earlier plan to patch OpenWebUI to interpret 
   - `https://docs.openwebui.com/features/plugin/development/rich-ui/`
 - OpenWebUI Events docs:
   - `https://docs.openwebui.com/features/plugin/development/events/`
+- OpenWebUI OpenAI-compatible API integration docs:
+  - `https://docs.openwebui.com/tutorials/integrations/openai-api/`
+- OpenWebUI Direct Connections docs:
+  - `https://docs.openwebui.com/tutorials/integrations/direct-connections/`
+- OpenWebUI Reasoning & Thinking Models docs:
+  - `https://docs.openwebui.com/features/plugin/functions/filter/reasoning/`
+- OpenWebUI Open Responses docs:
+  - `https://docs.openwebui.com/tutorials/integrations/openai-responses/`
 - OpenWebUI deployment notes:
   - `docs/jangar/openwebui.md`
 - Jangar chat request and stream orchestration:
@@ -48,15 +56,19 @@ This design explicitly rejects the earlier plan to patch OpenWebUI to interpret 
 These are the constraints that matter for a no-fork design:
 
 - Vanilla OpenWebUI knows how to render the standard OpenAI chat stream that Jangar already emits.
+- OpenWebUI is designed around OpenAI-compatible chat/completions connections today; Open Responses support exists upstream but is explicitly experimental.
 - OpenWebUI Rich UI embedding is designed around Tools and Actions that return inline HTML or iframe content within OpenWebUI's own plugin surface.
 - OpenWebUI events allow custom event types, but the upstream docs are explicit that custom types require custom UI code to detect and handle them.
+- OpenWebUI already has first-class reasoning UI for supported reasoning surfaces such as `reasoning_content` and tagged reasoning blocks; we should use that supported path rather than inventing custom reasoning markup.
 - Jangar is not integrated as an OpenWebUI Tool or Action. Jangar is an external OpenAI-compatible chat-completions backend.
 - This repo does not contain an OpenWebUI frontend patch or fork that consumes `delta.jangar_event`.
+- Direct Connections are documented upstream as an experimental browser-to-provider mode. This design does not depend on Direct Connections and should assume the normal server-mediated connection path.
 
 That leads to one hard product conclusion:
 
 - If we will not fork OpenWebUI, the production UX must be built from the rendering surfaces that vanilla OpenWebUI already supports for an external model backend:
   - assistant text
+  - supported reasoning surfaces
   - markdown
   - links
   - ordinary streaming semantics
@@ -85,6 +97,11 @@ These are hard facts from `main`, not aspirations:
   - render blob staging and persistence
   - signed `renderRef` generation
   - a browser-facing detail route under `/api/openwebui/rich-ui/render/$renderId`
+- The current render blob store TTL is `7 days`.
+- The current signed render URL TTL constant is `15 minutes`.
+- The current rich-render path is gated by both:
+  - `JANGAR_OPENWEBUI_RICH_RENDER_ENABLED`
+  - request header `x-jangar-openwebui-render-mode: rich-ui-v1`
 - The render detail route already serves escaped HTML with:
   - `Content-Disposition: inline`
   - `Cache-Control: no-store`
@@ -110,6 +127,7 @@ At the same time, the current plain markdown path is not yet specified with prod
 - detail-link expiry and degradation behavior need definition
 - reasoning, plan, and rate-limit rendering need consistent rules
 - observability, rollout, and failure handling need to be explicit
+- the current rich-render implementation couples blob staging and signed refs to `jangar_event` mode, but the no-fork production plan needs detail links to work independently of any custom OpenWebUI event transport
 
 ## Goals
 
@@ -119,6 +137,7 @@ At the same time, the current plain markdown path is not yet specified with prod
 - Bound chat-bubble size and define exact spillover behavior for large detail.
 - Reuse the signed render-page primitives already merged on `main`.
 - Keep reload and history deterministic by relying on persisted assistant text plus Jangar-side detail blobs, not frontend metadata reducers.
+- Lean on upstream-supported reasoning behavior instead of inventing a second reasoning UI scheme.
 - Define enough contract detail that implementation and rollout can proceed without re-litigating architecture.
 
 ## Non-Goals
@@ -166,6 +185,22 @@ Do not try to make vanilla OpenWebUI pretend to be a custom event renderer. The 
 
 That is the no-fork equivalent of "rich rendering."
 
+## Connection Mode Assumption
+
+This design assumes the normal OpenWebUI OpenAI-compatible connection mode in which OpenWebUI talks to Jangar as a backend.
+
+This design explicitly does not assume:
+
+- Direct Connections
+- OpenWebUI Tools/Actions as the primary Jangar integration surface
+- Open Responses as the primary transport
+
+Rationale:
+
+- Direct Connections are experimental upstream and move the inference request path toward the browser.
+- Jangar's current continuity model depends on server-owned thread and transcript state keyed through the OpenWebUI chat id header.
+- The no-fork design needs a stable contract today, not a dependency on experimental connection modes or a re-architecture around OpenWebUI's plugin system.
+
 ## Architecture
 
 ### 1. Transport stays standard
@@ -178,6 +213,11 @@ The required production contract is the standard OpenAI-style streaming contract
 - standard end-of-stream behavior
 
 Jangar may continue to emit backend-only `delta.jangar_event` when explicitly enabled, but production correctness for OpenWebUI must not depend on it.
+
+For reasoning specifically, the design should prefer upstream-supported reasoning surfaces over synthetic custom formatting whenever possible:
+
+- `reasoning_content` when emitted
+- existing tagged-reasoning compatibility behavior in OpenWebUI when applicable
 
 ### 2. Rendering responsibility stays in Jangar
 
@@ -213,6 +253,17 @@ The render blob and URL lifecycle remain a Jangar concern:
 The persisted chat history remains the assistant text that OpenWebUI already stores plus Jangar's existing server-side thread and transcript state.
 
 The no-fork design deliberately avoids inventing a second persisted state plane inside OpenWebUI.
+
+### 5. Detail links are part of the product contract
+
+If the assistant transcript contains a detail link, users will reasonably treat that link as part of the retained conversation.
+
+That creates a hard product requirement:
+
+- either the link remains usable for the retained lifetime of the conversation
+- or the transcript points to a stable Jangar URL that can safely re-authorize or re-sign on demand
+
+The current code shape does not fully satisfy that bar yet because blob retention and signed-link TTL are not aligned.
 
 ## Render Contract By Delta Kind
 
@@ -366,6 +417,108 @@ This section defines the production presentation contract for each normalized `S
 - Spillover:
   - structured detail page with the escaped payload when that aids debugging
 
+## End-To-End Examples
+
+These examples make the contract concrete. They are intentionally approximate at the JSON field level but exact about the user-visible product shape.
+
+### Example 1: command execution with spillover
+
+Normalized deltas:
+
+```json
+[
+  { "type": "tool", "toolKind": "command", "id": "cmd-1", "title": "Run tests", "status": "in_progress", "detail": "bun test packages/codex" },
+  { "type": "tool", "toolKind": "command", "id": "cmd-1", "delta": "1200 lines of stdout/stderr..." },
+  { "type": "tool", "toolKind": "command", "id": "cmd-1", "status": "completed", "exitCode": 1 }
+]
+```
+
+Rendered assistant transcript:
+
+````md
+### Run tests
+Status: completed with exit code 1
+
+Command: `bun test packages/codex`
+
+Preview:
+```text
+packages/codex/src/foo.test.ts:
+  expected 2, received 1
+...
+```
+
+[Open full transcript](https://jangar.example/api/openwebui/rich-ui/render/RENDER_ID?e=UNIX_SECONDS&sig=SIGNATURE)
+````
+
+Contract notes:
+
+- the visible transcript already tells the user what ran and why it failed
+- the detail link expands inspection depth only
+- if detail staging fails, the transcript still includes the command, status, and a bounded preview
+
+### Example 2: file edit with diff spillover
+
+Normalized deltas:
+
+```json
+[
+  { "type": "tool", "toolKind": "file", "id": "file-1", "title": "Update design doc", "detail": "docs/jangar/openwebui-rich-ui-completion-endpoint-design-2026-03-08.md" },
+  { "type": "tool", "toolKind": "file", "id": "file-1", "status": "completed", "diffStat": "+42 -8" }
+]
+```
+
+Rendered assistant transcript:
+
+````md
+### Update design doc
+Status: completed
+Path: `docs/jangar/openwebui-rich-ui-completion-endpoint-design-2026-03-08.md`
+Change size: `+42 -8`
+
+Summary:
+- clarified supported vanilla OpenWebUI surfaces
+- aligned detail-link retention with transcript expectations
+- added concrete end-to-end examples
+
+[Open full diff](https://jangar.example/api/openwebui/rich-ui/render/RENDER_ID?e=UNIX_SECONDS&sig=SIGNATURE)
+````
+
+Contract notes:
+
+- the inline transcript summarizes the user-visible outcome rather than dumping a full diff
+- the detail page owns the large unified diff view
+
+### Example 3: MCP failure without requiring detail
+
+Normalized deltas:
+
+```json
+[
+  {
+    "type": "tool",
+    "toolKind": "mcp",
+    "id": "mcp-1",
+    "title": "memories.retrieve_memory",
+    "status": "failed",
+    "detail": "connection refused"
+  }
+]
+```
+
+Rendered assistant transcript:
+
+```md
+### memories.retrieve_memory
+Status: failed
+Summary: Could not reach the memories service. The turn continued without stored context.
+```
+
+Contract notes:
+
+- the user does not need a detail link to understand the failure
+- a detail link may exist for operators or debugging, but the summary stands on its own
+
 ## Assistant Message Formatting Contract
 
 The text renderer should follow stable formatting rules so the chat output feels consistent across turns.
@@ -408,6 +561,8 @@ Suggested initial limits:
   - `24 KiB`
 - max single structured payload kept inline before forced spillover:
   - `8 KiB`
+- current backend rich-render preview limit in code:
+  - `8,192 bytes`
 
 These are product targets, not a promise that all current code already enforces them exactly. The important point is that the design explicitly requires bounded in-chat output.
 
@@ -452,10 +607,25 @@ Each render blob should include:
 ### URL requirements
 
 - browser-reachable absolute base URL via `JANGAR_OPENWEBUI_EXTERNAL_BASE_URL`
-- short-lived signed link
+- signed link
 - `renderId` path parameter
 - signature and expiry in query params
 - message binding incorporated into the signature payload
+
+Production decision:
+
+- v1 should not ship with transcript-visible links that expire materially earlier than the retained conversation unless a re-sign flow exists
+- because the current code keeps blobs for `7 days` but signs links for `15 minutes`, production rollout must do one of:
+  - align signed-link TTL with retained blob lifetime
+  - add a stable Jangar route that can re-authorize or re-sign detail access without changing the stored transcript
+
+Preferred v1 choice:
+
+- make signed detail-link TTL match the render blob TTL and retained conversation horizon
+
+Rejected v1 choice:
+
+- leaving transcript-visible links to die after `15 minutes` while the conversation remains visible for `7 days`
 
 ### Response requirements
 
@@ -483,6 +653,23 @@ OpenWebUI talks to Jangar's chat-completions endpoint server-to-server, but deta
 - cluster-internal service URLs are not sufficient for detail pages
 - `JANGAR_OPENWEBUI_EXTERNAL_BASE_URL` is required for signed links
 - the chosen base URL must be reachable from the user's browser environment
+
+### Route shape
+
+The current route shape is the correct production baseline:
+
+- path:
+  - `/api/openwebui/rich-ui/render/$renderId`
+- query params:
+  - `e=<unix-seconds>`
+  - `sig=<signature>`
+
+Expected error semantics:
+
+- `400` for malformed requests
+- `404` for invalid signatures or missing blobs
+- `410` for expired links
+- `503` for missing render infrastructure such as signing or store availability
 
 ## Security Model
 
@@ -514,6 +701,7 @@ OpenWebUI talks to Jangar's chat-completions endpoint server-to-server, but deta
 
 - render blob TTL should align with existing OpenWebUI conversation state retention unless there is a specific reason to shorten it
 - logs should never store full sensitive payloads just because detail pages exist
+- if longer-lived signed URLs are used in v1, secret rotation and routine expiry remain the primary containment mechanism; do not log full URLs
 
 ## Failure Modes
 
@@ -541,6 +729,7 @@ The product must degrade cleanly.
 
 - detail route returns a safe "detail unavailable" page
 - the summary text remains authoritative
+- expired links are acceptable only after the retained conversation horizon or after an intentionally documented shorter policy
 
 ### Oversized payload
 
@@ -568,8 +757,9 @@ This design treats those pieces as follows:
 - signed render blobs and detail routes:
   - keep and use
 - `delta.jangar_event`:
-  - optional
+  - explicitly non-essential for OpenWebUI production correctness
   - keep behind feature gating if useful for alternate clients, experiments, or future upstream extension points
+  - default off in production until there is a concrete consumer beyond experiments
 - any notion of OpenWebUI-side reducer or metadata compaction:
   - out of scope for the no-fork production plan
 
@@ -603,6 +793,7 @@ Change:
 - treat spillover and detail-link emission as a production feature independent of `jangar_event`
 - ensure the text transcript can reference detail links cleanly
 - keep `jangar_event` gated and explicitly non-essential for OpenWebUI correctness
+- add transcript snapshot coverage for user-visible formatting, not only structured-event coverage
 
 ### `chat.ts`
 
@@ -644,6 +835,13 @@ Add or preserve counters and logs for:
 - assistant previews truncated by kind
 - fallback to text-only mode because external base URL or signing secret was unavailable
 
+Initial alert thresholds:
+
+- page when render-store persistence failures exceed `1%` of OpenWebUI rich-detail eligible turns over `15m`
+- page when valid detail-route requests return `5xx` above `1%` over `15m`
+- investigate when signature failures exceed `0.1%` of detail-route hits over `15m`
+- investigate when missing-blob responses occur after successful link creation in the same deployment epoch
+
 Logs should identify:
 
 - chat id when available
@@ -659,6 +857,7 @@ Logs must not dump full sensitive payload content by default.
 
 - standardize the text renderer contract
 - define preview limits
+- align signed detail-link TTL with retained blob lifetime, or implement an approved re-sign flow
 - validate signed detail routes and blob TTL behavior
 - keep the user-facing UX entirely text-plus-links
 
@@ -703,6 +902,7 @@ Logs must not dump full sensitive payload content by default.
 - vanilla OpenWebUI renders the assistant transcript correctly with no custom frontend code
 - markdown links point to the browser-reachable Jangar base URL
 - detail links are optional and do not break the main transcript when unavailable
+- reasoning content uses upstream-supported reasoning rendering rather than a custom transcript convention
 
 ### Browser e2e
 
@@ -711,6 +911,7 @@ Logs must not dump full sensitive payload content by default.
 - MCP summary plus detail link works end-to-end
 - image link or preview link works end-to-end
 - mobile and desktop renderings remain readable
+- a transcript retained longer than `15 minutes` still contains usable detail links, or the product exposes an approved re-sign path
 
 ## Runbook Notes
 
@@ -719,8 +920,9 @@ Operators need a short checklist when detail links do not work:
 1. Verify `JANGAR_OPENWEBUI_EXTERNAL_BASE_URL` is configured and browser-reachable.
 2. Verify `JANGAR_OPENWEBUI_RENDER_SIGNING_SECRET` is configured.
 3. Verify the render blob store is reachable and populated.
-4. Confirm the chat transcript itself remains readable even if detail pages fail.
-5. Check signature-failure and missing-blob counters before assuming a frontend problem.
+4. Verify the signed-link TTL policy matches the deployed product contract.
+5. Confirm the chat transcript itself remains readable even if detail pages fail.
+6. Check signature-failure and missing-blob counters before assuming a frontend problem.
 
 ## Exit Criteria
 
