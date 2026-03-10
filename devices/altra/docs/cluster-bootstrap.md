@@ -89,6 +89,9 @@ Note:
 
 - The IP can change after reboot/install (DHCP). Use console/KVM to confirm the
   post-install IP if `talosctl` can’t connect.
+- The active local-path layout on `altra` uses only the Talos install disk. The
+  spare `nvme1n1` is reserved for Ceph BlueStore metadata; see
+  [rook-ceph-bluestore-metadata-migration.md](/Users/gregkonush/.codex/worktrees/5adc/lab/docs/runbooks/rook-ceph-bluestore-metadata-migration.md).
 - `devices/altra/manifests/vfio-modules.patch.yaml` is required for KubeVirt GPU
   passthrough on Talos (it preloads `vfio_pci` so the GPU Operator VFIO manager
   can bind the GPU without `modprobe` privileges).

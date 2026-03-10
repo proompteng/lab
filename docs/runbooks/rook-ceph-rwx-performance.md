@@ -34,8 +34,10 @@ Current GitOps defaults are tuned for safe first-pass RWX investigations:
 
 These defaults do not remove the known topology ceiling:
 
-1. OSDs are HDD-only on 2 storage hosts.
-1. No fast metadata tier is configured yet.
+1. OSD data still lives on HDDs on 2 storage hosts.
+1. BlueStore DB/WAL is now offloaded to host-local NVMe on both OSD hosts:
+   `nvme1n1` on `talos-192-168-1-85` and `nvme2n1` on `talos-192-168-1-203`.
+1. The CephFS client path is still `ceph-fuse` on Talos.
 1. `readAffinity` is still disabled.
 
 ## Benchmark Assets
@@ -90,6 +92,25 @@ kubectl -n rook-ceph-benchmarks logs job/rook-cephfs-fuse-benchmark
 ```
 
 If you are comparing kernel vs FUSE, collect the same evidence set for both runs and keep the dataset size, concurrency, and node placement unchanged.
+
+## Recorded Baselines
+
+### 2026-03-10 `rook-cephfs-fuse` benchmark history
+
+Single-run values captured on the live cluster:
+
+| Phase | Seq write | Seq read | 4k randrw read | 4k randrw write | Metadata create | Metadata stat | Metadata delete |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Before CephFS tuning | ~9.1 MiB/s | ~37.9 MiB/s | ~128 KiB/s | ~56 KiB/s | ~623 ops/s | ~3806 ops/s | ~1265 ops/s |
+| After MDS `noatime` / stats tuning | ~6.2 MiB/s | ~29.0 MiB/s | ~177 KiB/s | ~78 KiB/s | ~839 ops/s | ~5050 ops/s | ~1788 ops/s |
+| After BlueStore metadata migration | ~27.6 MiB/s | ~97.3 MiB/s | ~928 KiB/s | ~408 KiB/s | ~768 ops/s | ~5008 ops/s | ~1048 ops/s |
+
+Interpretation:
+
+1. The BlueStore metadata migration produced the largest gains in bulk sequential throughput and small-block mixed IO.
+1. Metadata `stat` performance stayed near the post-MDS-tuning level.
+1. Metadata `create`/`delete` numbers did not improve on this single run, so treat metadata-heavy gains as inconclusive until repeated runs confirm a median.
+1. The cluster state around the post-BlueStore run was `HEALTH_OK`, `409 active+clean`, and all `6` OSDs were `up/in`.
 
 ## Decision Gates
 

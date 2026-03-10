@@ -10,6 +10,10 @@ Files:
 - `devices/altra/manifests/controlplane-endpoint-nuc.patch.yaml`
 - `devices/altra/manifests/ephemeral-volume.patch.yaml`
 - `devices/altra/manifests/local-path.patch.yaml`
-- `devices/altra/manifests/local-path-extra.patch.yaml`
 - `devices/altra/manifests/vfio-modules.patch.yaml`
 - `devices/altra/manifests/kubelet-maxpods.patch.yaml`
+
+Notes:
+
+- `nvme0n1` remains the Talos install disk on `altra`.
+- The spare `nvme1n1` is reserved for Ceph BlueStore metadata and is not part of the active local-path layout.

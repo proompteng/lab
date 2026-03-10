@@ -32,8 +32,7 @@ Monitor placement:
 1. `/dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA12R7C` (HDD)
 1. `/dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LKW9` (HDD)
 1. `/dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0HS7E` (HDD)
-
-The 4TB NVMe (`nvme-CT4000P3PSSD8_2402E88D0863`, `/dev/nvme1n1`) is detected but intentionally excluded while preparing baseline OSDs due historical prepare hangs in this cluster.
+1. `/dev/disk/by-id/nvme-CT4000P3PSSD8_2402E88D0863` (BlueStore metadata target)
 
 Talos install disk on `talos-192-168-1-85`:
 
@@ -44,6 +43,7 @@ Talos install disk on `talos-192-168-1-85`:
 1. `/dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0NL5D` (HDD)
 1. `/dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0MZ1M` (HDD)
 1. `/dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LVM9` (HDD)
+1. `/dev/disk/by-id/nvme-KINGSTON_SNV3S1000G_50026B76878F0B27` (BlueStore metadata target)
 
 ## Replication settings (2 storage hosts)
 
@@ -70,6 +70,7 @@ Rook operator and cluster chart versions:
 RWX performance workflow:
 
 1. `docs/runbooks/rook-ceph-rwx-performance.md`
+1. `docs/runbooks/rook-ceph-bluestore-metadata-migration.md`
 
 ## Install / rollout steps
 

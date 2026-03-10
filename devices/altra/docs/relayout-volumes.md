@@ -1,10 +1,20 @@
-# Re-layout Altra (192.168.1.85) Volumes: EPHEMERAL 300GB + Two local-path Volumes
+# Re-layout Altra (192.168.1.85) Volumes: Historical Two local-path Layout (Superseded)
 
-Goal: enforce this exact storage layout on Talos control-plane node `talos-192-168-1-85` (`192.168.1.85`):
+This document is historical.
+
+As of 2026-03-10, the spare `nvme1n1` on `talos-192-168-1-85` is being reclaimed from
+`u-local-path-provisioner-extra` and reserved for Ceph BlueStore metadata. The active local-path layout on `85`
+should only use `/var/mnt/local-path-provisioner` on the Talos install disk.
+
+Previous goal: enforce this exact storage layout on Talos control-plane node `talos-192-168-1-85`
+(`192.168.1.85`):
 
 - `EPHEMERAL` (`/var`) = `300GB` on `/dev/nvme0n1p4`
 - `u-local-path-provisioner` = rest of OS disk on `/dev/nvme0n1p5` mounted at `/var/mnt/local-path-provisioner`
 - `u-local-path-provisioner-extra` = extra NVMe (`/dev/nvme1n1p1`) mounted at `/var/mnt/local-path-provisioner-extra`
+
+Use [rook-ceph-bluestore-metadata-migration.md](/Users/gregkonush/.codex/worktrees/5adc/lab/docs/runbooks/rook-ceph-bluestore-metadata-migration.md)
+for the current production plan.
 
 ## Hard Rules
 

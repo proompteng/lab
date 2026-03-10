@@ -12,7 +12,8 @@ Inventory:
 Docs:
 
 - `devices/altra/docs/cluster-bootstrap.md` (install + join existing cluster)
-- `devices/altra/docs/relayout-volumes.md` (EPHEMERAL=300GB, local-path on OS disk + extra local-path on second NVMe)
+- `devices/altra/docs/relayout-volumes.md` (historical extra-local-path layout, now superseded)
+- `docs/runbooks/rook-ceph-bluestore-metadata-migration.md` (current production layout using the spare `nvme1n1` for Ceph BlueStore metadata)
 - `docs/incidents/2026-02-18-altra-volume-relayout-etcd-rejoin.md` (failure modes, root causes, and recovery sequence from this session)
 
 Related:
