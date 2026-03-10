@@ -236,6 +236,70 @@ Examples confirmed live:
 That is a potential low-level recovery path, but it is not a routine Rook or CSI workflow. Treat it as manual Ceph
 forensics / reconstruction work, not a normal day-two operation.
 
+### Validated in-place repair workflow
+
+This incident validated a same-name reconstruction workflow for broken images where:
+
+1. the Kubernetes PV still points at the original CSI image name
+1. `name_<image>` still exists in `rbd_directory`
+1. `rbd_id.<image>` and `rbd_header.<id>` are missing
+1. `rbd_data.<old_id>.*` objects still exist
+
+Workflow used:
+
+```bash
+# 1. Resolve old image id from the directory OMAP entry
+rados -p replicapool getomapval rbd_directory name_<image> -
+
+# 2. Remove stale directory keys for the broken image name/id
+rados -p replicapool rmomapkey rbd_directory name_<image>
+rados -p replicapool rmomapkey rbd_directory id_<old_id>
+
+# 3. Recreate a fresh image under the same original CSI image name
+rbd create replicapool/<image> --size <size> --image-feature layering
+
+# 4. Read the new image id
+rbd info --format json replicapool/<image>
+
+# 5. Copy all old data objects onto the new image prefix
+for obj in $(rados -p replicapool ls | grep "^rbd_data\\.<old_id>\\."); do
+  new_obj=${obj/<old_id>/<new_id>}
+  rados -p replicapool cp "$obj" "$new_obj"
+done
+```
+
+This keeps the original CSI image name intact, so the existing PV/PVC references do not need to be changed.
+
+### Images repaired at the metadata layer during this incident
+
+The workflow above was applied live to:
+
+1. `app/app-db-1` -> `csi-vol-69ce3d34-a57c-4aeb-828c-dfd05880f308`
+1. `jangar/jangar-db-1` -> `csi-vol-592052dd-679d-41a8-b112-ffc02d2ee8e2`
+1. `torghut/torghut-db-1` -> `csi-vol-2fdf17af-f3af-4c50-ba08-954d883b9b7d`
+1. `temporal/data-temporal-cassandra-1` -> `csi-vol-6a0f4454-e44c-405d-acb3-16a588bee08d`
+1. `observability/observability-grafana` -> `csi-vol-5c63bb98-9975-4e00-996c-19f9be0be705`
+
+Observed outcomes immediately after repair:
+
+1. `temporal/data-temporal-cassandra-1` advanced to `Running`
+1. `app/app-db-1`, `torghut/torghut-db-1`, and `observability/observability-grafana` advanced from
+   `image not found` to manual ext4 `fsck` failures
+1. `jangar/jangar-db-1` advanced from `image not found` to application/container startup failures
+
+That is still progress: those PVCs are no longer blocked on missing RBD metadata.
+
+### Important caution from the live repair
+
+If Kubernetes remounts the reconstructed image before the object-copy phase is finished, a workload may briefly see a
+partially restored or effectively empty filesystem.
+
+Operational rule:
+
+1. quiesce the workload first when possible
+1. complete the object copy
+1. then restart or remount the pod
+
 ### 3. Image opens, but the filesystem is damaged
 
 This is not an RBD-header problem. Treat it as block-device or filesystem repair:
