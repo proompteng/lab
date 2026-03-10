@@ -215,6 +215,24 @@ Observations from this incident:
 1. some also still had `rbd_data.<id>.*` objects
 1. but the matching `rbd_header.<id>` objects were gone
 
+Examples confirmed live:
+
+1. `app/app-db-1`
+   1. id `241041a8a4fc0b`
+   1. `30` `rbd_data.<id>.*` objects still present
+1. `jangar/jangar-db-1`
+   1. id `2410412cb8e29c`
+   1. `4278` `rbd_data.<id>.*` objects still present
+1. `torghut/torghut-db-1`
+   1. id `24104124cccb09`
+   1. `358` `rbd_data.<id>.*` objects still present
+1. `temporal/data-temporal-cassandra-1`
+   1. id `2410411f5a8228`
+   1. `580` `rbd_data.<id>.*` objects still present
+1. `observability/observability-grafana`
+   1. id `64e2da4ae518d`
+   1. `72` `rbd_data.<id>.*` objects still present
+
 That is a potential low-level recovery path, but it is not a routine Rook or CSI workflow. Treat it as manual Ceph
 forensics / reconstruction work, not a normal day-two operation.
 
