@@ -217,6 +217,18 @@ Final cluster state after cleanup:
 1. temporary helper pods `osd3-helper`, `osd4-helper`, and `osd5-helper` were deleted
 1. historical crash records were archived with `ceph crash archive-all`
 
+### Post-migration incident boundary
+
+The BlueStore migration itself completed successfully, but a separate RBD incident was discovered afterward in
+`replicapool`.
+
+That incident is documented separately in:
+
+1. [rook-ceph-rbd-metadata-incident-2026-03-10.md](/Users/gregkonush/.codex/worktrees/5adc/lab/docs/runbooks/rook-ceph-rbd-metadata-incident-2026-03-10.md)
+
+Do not treat the RBD image-loss investigation as proof that the Talos host migration failed. The cluster-level
+BlueStore migration ended in `HEALTH_OK` with all OSDs `up/in`.
+
 ### Post-migration RWX benchmark
 
 With the cluster back at `HEALTH_OK`, the `rook-cephfs-fuse` benchmark was rerun using

@@ -71,6 +71,7 @@ RWX performance workflow:
 
 1. `docs/runbooks/rook-ceph-rwx-performance.md`
 1. `docs/runbooks/rook-ceph-bluestore-metadata-migration.md`
+1. `docs/runbooks/rook-ceph-rbd-metadata-incident-2026-03-10.md`
 
 ## Install / rollout steps
 
