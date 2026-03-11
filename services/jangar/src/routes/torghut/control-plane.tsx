@@ -15,6 +15,7 @@ import {
 import { createFileRoute, Link } from '@tanstack/react-router'
 import * as React from 'react'
 
+import { TorghutStrategySelectValue } from '@/components/torghut-strategy-select-value'
 import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/torghut/control-plane')({
@@ -309,7 +310,11 @@ function TorghutQuantControlPlane() {
             <CardContent>
               <Select value={strategyId} onValueChange={(value) => setStrategyId(value ?? '')}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select strategy" />
+                  <TorghutStrategySelectValue
+                    placeholder="Select strategy"
+                    strategyId={strategyId}
+                    strategies={strategies}
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   {strategies.map((s) => (
