@@ -1323,32 +1323,8 @@ const buildDependencyQuorum = (input: {
     delayReasons.push('rollout_health_degraded')
   }
 
-  if (input.empiricalServices.forecast.status === 'degraded') {
-    blockReasons.push('forecast_service_unhealthy')
-  } else if (
-    input.empiricalServices.forecast.status === 'healthy' &&
-    input.empiricalServices.forecast.authoritative === false
-  ) {
-    delayReasons.push('forecast_calibration_stale')
-  }
-
-  if (input.empiricalServices.lean.status === 'degraded') {
-    blockReasons.push('lean_runner_unhealthy')
-  } else if (
-    input.empiricalServices.lean.status === 'healthy' &&
-    input.empiricalServices.lean.authoritative === false
-  ) {
-    delayReasons.push('lean_authority_missing')
-  }
-
-  if (input.empiricalServices.jobs.status === 'degraded') {
-    delayReasons.push('empirical_jobs_stale')
-  } else if (
-    input.empiricalServices.jobs.status === 'healthy' &&
-    input.empiricalServices.jobs.authoritative === false
-  ) {
-    delayReasons.push('empirical_jobs_not_authoritative')
-  }
+  // Forecast/LEAN/empirical jobs remain observable via empirical_services and degraded_components,
+  // but they are not hard admission dependencies for live trading control-plane readiness.
 
   const reasons = uniqueStrings(blockReasons.length > 0 ? blockReasons : delayReasons)
   const decision: DependencyQuorumStatus['decision'] =

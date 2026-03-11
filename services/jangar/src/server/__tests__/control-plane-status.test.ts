@@ -483,8 +483,73 @@ describe('control-plane status', () => {
     expect(status.agentrun_ingestion.status).toBe('degraded')
     expect(status.agentrun_ingestion.untouched_run_count).toBe(3)
     expect(status.agentrun_ingestion.oldest_untouched_age_seconds).toBe(180)
-    expect(status.dependency_quorum.reasons).toContain('forecast_service_unhealthy')
     expect(status.empirical_services.jobs.status).toBe('degraded')
+  })
+
+  it('keeps empirical degradations observable without delaying dependency quorum', async () => {
+    setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
+
+    const status = await buildControlPlaneStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:00:00Z'),
+        getHeartbeat: createHeartbeatResolver(),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => buildTemporalAdapter(),
+        checkDatabase: async () => buildDatabaseStatus(),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+        resolveEmpiricalServices: async () => ({
+          forecast: {
+            status: 'degraded',
+            endpoint: 'http://torghut-forecast/readyz',
+            message: 'forecast service readiness failed',
+            authoritative: false,
+          },
+          lean: {
+            status: 'healthy',
+            endpoint: 'http://torghut-lean-runner/readyz',
+            message: 'LEAN runner ready',
+            authoritative: false,
+            authoritative_modes: [],
+          },
+          jobs: {
+            status: 'degraded',
+            endpoint: 'http://torghut/trading/empirical-jobs',
+            message: 'stale empirical jobs: benchmark_parity',
+            authoritative: false,
+            eligible_jobs: ['foundation_router_parity'],
+            stale_jobs: ['benchmark_parity'],
+          },
+        }),
+      },
+    )
+
+    expect(status.dependency_quorum).toEqual({
+      decision: 'allow',
+      reasons: [],
+      message: 'Control-plane admission dependencies are healthy.',
+    })
+    expect(status.namespaces[0]?.status).toBe('degraded')
+    expect(status.namespaces[0]?.degraded_components ?? []).toContain('empirical:forecast')
+    expect(status.namespaces[0]?.degraded_components ?? []).toContain('empirical:jobs')
+    expect(status.namespaces[0]?.degraded_components ?? []).not.toContain('empirical:lean')
+    expect(status.empirical_services.forecast.status).toBe('degraded')
+    expect(status.empirical_services.lean.authoritative).toBe(false)
+    expect(status.empirical_services.jobs).toMatchObject({
+      status: 'degraded',
+      stale_jobs: ['benchmark_parity'],
+    })
   })
 
   it('marks workflows as degraded when backoff count crosses warning threshold', async () => {
