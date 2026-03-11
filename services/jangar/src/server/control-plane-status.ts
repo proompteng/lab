@@ -936,6 +936,19 @@ const unknownRolloutHealth = (): ControlPlaneRolloutHealth => ({
 const findRolloutDeployment = (rolloutHealth: ControlPlaneRolloutHealth, namespace: string, name: string) =>
   rolloutHealth.deployments.find((deployment) => deployment.namespace === namespace && deployment.name === name) ?? null
 
+const isAvailableSplitTopologyRollout = (deployment: DeploymentRolloutStatus | null) =>
+  deployment != null &&
+  (deployment.status === 'healthy' ||
+    (deployment.status === 'degraded' && deployment.ready_replicas > 0 && deployment.available_replicas > 0))
+
+const hasMaterialRolloutDegradation = (rolloutHealth: ControlPlaneRolloutHealth) =>
+  rolloutHealth.deployments.some((deployment) => {
+    if (deployment.status !== 'degraded') return false
+
+    const desiredReplicas = Math.max(deployment.desired_replicas, 1)
+    return deployment.ready_replicas < desiredReplicas || deployment.available_replicas < desiredReplicas
+  })
+
 const maybeUseSplitTopologyControllerRollout = ({
   namespace,
   now,
@@ -953,7 +966,7 @@ const maybeUseSplitTopologyControllerRollout = ({
   if (controller.status !== 'disabled' && controller.status !== 'unknown') return controller
 
   const controllersRollout = findRolloutDeployment(rolloutHealth, namespace, 'agents-controllers')
-  if (!controllersRollout || controllersRollout.status !== 'healthy') return controller
+  if (!isAvailableSplitTopologyRollout(controllersRollout)) return controller
 
   return {
     ...controller,
@@ -964,7 +977,7 @@ const maybeUseSplitTopologyControllerRollout = ({
     missing_crds: [],
     last_checked_at: now.toISOString(),
     status: 'healthy',
-    message: `derived from healthy ${controllersRollout.name} rollout`,
+    message: `derived from available ${controllersRollout.name} rollout`,
     authority: rolloutAuthority(namespace, controllersRollout.name, now.toISOString()),
   }
 }
@@ -987,7 +1000,7 @@ const maybeUseSplitTopologyRuntimeRollout = ({
   if (adapter.status !== 'disabled' && adapter.status !== 'unknown') return adapter
 
   const controllersRollout = findRolloutDeployment(rolloutHealth, namespace, 'agents-controllers')
-  if (!controllersRollout || controllersRollout.status !== 'healthy') return adapter
+  if (!isAvailableSplitTopologyRollout(controllersRollout)) return adapter
 
   return {
     ...adapter,
@@ -995,8 +1008,8 @@ const maybeUseSplitTopologyRuntimeRollout = ({
     status: 'configured',
     message:
       adapter.name === 'workflow'
-        ? `workflow runtime derived from healthy ${controllersRollout.name} rollout`
-        : `job runtime derived from healthy ${controllersRollout.name} rollout`,
+        ? `workflow runtime derived from available ${controllersRollout.name} rollout`
+        : `job runtime derived from available ${controllersRollout.name} rollout`,
     authority: rolloutAuthority(namespace, controllersRollout.name, now.toISOString()),
   }
 }
@@ -1304,7 +1317,7 @@ const buildDependencyQuorum = (input: {
     delayReasons.push('watch_reliability_degraded')
   }
 
-  if (input.rolloutHealth.status === 'degraded') {
+  if (hasMaterialRolloutDegradation(input.rolloutHealth)) {
     delayReasons.push('rollout_health_degraded')
   }
 
