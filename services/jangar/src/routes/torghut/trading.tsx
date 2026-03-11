@@ -18,7 +18,6 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
   Skeleton,
 } from '@proompteng/design/ui'
 import { createFileRoute } from '@tanstack/react-router'
@@ -26,6 +25,7 @@ import { CalendarIcon } from 'lucide-react'
 import * as React from 'react'
 import { Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts'
 
+import { TorghutStrategySelectValue } from '@/components/torghut-strategy-select-value'
 import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/torghut/trading')({
@@ -409,7 +409,11 @@ function TorghutTrading() {
             </label>
             <Select value={strategyId} onValueChange={(value) => setStrategyId(value ?? '')}>
               <SelectTrigger id="trading-strategy" className="w-full">
-                <SelectValue placeholder={strategies.length === 0 ? 'Loading strategies…' : 'Select strategy'} />
+                <TorghutStrategySelectValue
+                  placeholder={strategies.length === 0 ? 'Loading strategies…' : 'Select strategy'}
+                  strategyId={strategyId}
+                  strategies={strategies}
+                />
               </SelectTrigger>
               <SelectContent>
                 {strategies.length === 0 ? (
