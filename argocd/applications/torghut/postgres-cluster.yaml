@@ -8,7 +8,7 @@ spec:
   primaryUpdateStrategy: unsupervised
   storage:
     storageClass: rook-ceph-block
-    size: 5Gi
+    size: 50Gi
   bootstrap:
     initdb:
       database: torghut
