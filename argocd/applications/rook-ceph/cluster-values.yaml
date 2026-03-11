@@ -81,17 +81,19 @@ cephClusterSpec:
     deviceFilter: ""
     nodes:
       - name: talos-192-168-1-85
+        config:
+          metadataDevice: /dev/disk/by-id/nvme-CT4000P3PSSD8_2402E88D0863
         devices:
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA12R7C
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LKW9
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0HS7E
       - name: talos-192-168-1-203
+        config:
+          metadataDevice: /dev/disk/by-id/nvme-KINGSTON_SNV3S1000G_50026B76878F0B27
         devices:
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0NL5D
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0MZ1M
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LVM9
-    config:
-      databaseSizeMB: "2048"
 
   disruptionManagement:
     managePodBudgets: true
