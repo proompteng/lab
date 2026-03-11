@@ -48,6 +48,7 @@ data class ForwarderConfig(
   val enableTradeUpdates: Boolean,
   val torghutAccountLabel: String?,
   val enableBarsBackfill: Boolean,
+  val barsBackfillLookbackHours: Long,
   val reconnectBaseMs: Long,
   val reconnectMaxMs: Long,
   val dedupTtlSeconds: Long,
@@ -141,6 +142,11 @@ data class ForwarderConfig(
       if (enableBarsBackfill && topics.bars1m == null) {
         error("TOPIC_BARS_1M must be set when ENABLE_BARS_BACKFILL=true")
       }
+      val barsBackfillLookbackHours =
+        mergedEnv["BARS_BACKFILL_LOOKBACK_HOURS"]?.toLongOrNull() ?: 12L
+      if (barsBackfillLookbackHours <= 0) {
+        error("BARS_BACKFILL_LOOKBACK_HOURS must be > 0")
+      }
 
       val kafka =
         KafkaProducerSettings(
@@ -197,6 +203,7 @@ data class ForwarderConfig(
         enableTradeUpdates = mergedEnv["ENABLE_TRADE_UPDATES"]?.toBooleanStrictOrNull() ?: false,
         torghutAccountLabel = mergedEnv["TORGHUT_ACCOUNT_LABEL"]?.trim()?.takeIf { it.isNotEmpty() },
         enableBarsBackfill = enableBarsBackfill,
+        barsBackfillLookbackHours = barsBackfillLookbackHours,
         reconnectBaseMs = mergedEnv["RECONNECT_BASE_MS"]?.toLongOrNull() ?: 500,
         reconnectMaxMs = mergedEnv["RECONNECT_MAX_MS"]?.toLongOrNull() ?: 30_000,
         dedupTtlSeconds = mergedEnv["DEDUP_TTL_SEC"]?.toLongOrNull() ?: 5,

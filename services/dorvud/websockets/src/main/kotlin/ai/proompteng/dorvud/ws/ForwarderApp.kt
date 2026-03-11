@@ -68,7 +68,7 @@ import kotlin.system.exitProcess
 
 private val logger = KotlinLogging.logger {}
 private val marketSessionZoneId: ZoneId = ZoneId.of("America/New_York")
-private const val ALPACA_BARS_BACKFILL_LOOKBACK_HOURS = 12L
+private const val DEFAULT_ALPACA_BARS_BACKFILL_LOOKBACK_HOURS = 12L
 private const val ALPACA_BARS_BACKFILL_LIMIT = 10_000
 
 internal fun alpacaMarketDataStreamUrl(config: ForwarderConfig): String =
@@ -101,9 +101,12 @@ internal data class AlpacaBarsBackfillWindow(
   val end: Instant,
 )
 
-internal fun alpacaBarsBackfillWindow(now: Instant): AlpacaBarsBackfillWindow =
+internal fun alpacaBarsBackfillWindow(
+  now: Instant,
+  lookbackHours: Long = DEFAULT_ALPACA_BARS_BACKFILL_LOOKBACK_HOURS,
+): AlpacaBarsBackfillWindow =
   AlpacaBarsBackfillWindow(
-    start = now.minus(Duration.ofHours(ALPACA_BARS_BACKFILL_LOOKBACK_HOURS)),
+    start = now.minus(Duration.ofHours(lookbackHours)),
     end = now,
   )
 
@@ -124,7 +127,7 @@ internal fun alpacaBarsBackfillQuery(
   now: Instant,
   pageToken: String? = null,
 ): AlpacaBarsBackfillQuery {
-  val window = alpacaBarsBackfillWindow(now)
+  val window = alpacaBarsBackfillWindow(now, config.barsBackfillLookbackHours)
   return AlpacaBarsBackfillQuery(
     symbols = symbols.joinToString(","),
     timeframe = "1Min",
@@ -846,13 +849,21 @@ class ForwarderApp(
     if (!backfillDone.compareAndSet(false, true)) return
 
     try {
+      val requestNow = Instant.ofEpochMilli(nowMs())
+      val window = alpacaBarsBackfillWindow(requestNow, config.barsBackfillLookbackHours)
       val bars = fetchBackfillBars(symbols)
       if (bars.isEmpty()) {
-        logger.warn { "backfill returned 0 bars" }
+        logger.warn {
+          "backfill returned 0 bars lookback_hours=${config.barsBackfillLookbackHours} " +
+            "feed=${alpacaBarsBackfillFeed(config) ?: "none"} start=${window.start} end=${window.end}"
+        }
         return
       }
 
-      logger.info { "backfill sending ${bars.size} bars" }
+      logger.info {
+        "backfill sending ${bars.size} bars lookback_hours=${config.barsBackfillLookbackHours} " +
+          "feed=${alpacaBarsBackfillFeed(config) ?: "none"} start=${window.start} end=${window.end}"
+      }
       bars.forEach { bar ->
         val env =
           Envelope(
