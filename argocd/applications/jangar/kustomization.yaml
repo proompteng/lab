@@ -5,7 +5,6 @@ resources:
   - torghut-db-ca-sealedsecret.yaml
   - rook-ceph-rgw-jangar-sealedsecret.yaml
   - cnpg-jangar-db-objectbucketclaim.yaml
-  - cnpg-jangar-db-bucket-migration-job.yaml
   - market-context-providers-secret.yaml
   - deployment.yaml
   - jangar-worker-deployment.yaml
