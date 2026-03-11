@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 
 const childProcessMocks = vi.hoisted(() => ({
   spawn: vi.fn(),
+  spawnSync: vi.fn(),
 }))
 
 vi.mock('node:child_process', () => childProcessMocks)
@@ -17,7 +18,7 @@ vi.mock('~/server/metrics', () => ({
   recordKubeWatchRestart: (...args: unknown[]) => recordWatchRestartMock(...args),
 }))
 
-import { startResourceWatch } from '~/server/kube-watch'
+import { resetKubectlWatchCompatibilityCacheForTests, startResourceWatch } from '~/server/kube-watch'
 
 type MockWatchProcess = EventEmitter & {
   stdout: EventEmitter & { setEncoding: (encoding: string | undefined) => void }
@@ -40,14 +41,21 @@ const createMockWatchProcess = () => {
 
 describe('kube-watch', () => {
   const spawnMocks = childProcessMocks.spawn
+  const spawnSyncMocks = childProcessMocks.spawnSync
   let watchHandle: ReturnType<typeof startResourceWatch> | null = null
 
   beforeEach(() => {
     vi.useFakeTimers()
     spawnMocks.mockReset()
+    spawnSyncMocks.mockReset()
+    spawnSyncMocks.mockReturnValue({
+      stdout: '    --resource-version="":\n',
+      stderr: '',
+    })
     recordWatchEventMock.mockReset()
     recordWatchErrorMock.mockReset()
     recordWatchRestartMock.mockReset()
+    resetKubectlWatchCompatibilityCacheForTests()
   })
 
   afterEach(() => {
@@ -237,5 +245,30 @@ describe('kube-watch', () => {
 
     expect(spawnMocks).toHaveBeenCalledTimes(2)
     expect(spawnMocks.mock.calls[1]?.[1]).not.toContain('--resource-version=12345')
+  })
+
+  it('skips the resource version flag when kubectl get does not support it', () => {
+    const watchProcess = createMockWatchProcess()
+    spawnMocks.mockReturnValue(watchProcess)
+    spawnSyncMocks.mockReturnValue({
+      stdout: '    --watch-only=false:\n',
+      stderr: '',
+    })
+
+    watchHandle = startResourceWatch({
+      resource: 'approvalpolicies.approvals.proompteng.ai',
+      namespace: 'agents',
+      resourceVersion: '12345',
+      onEvent: vi.fn(),
+    })
+
+    expect(spawnSyncMocks).toHaveBeenCalledWith(
+      'kubectl',
+      ['get', '--help'],
+      expect.objectContaining({
+        encoding: 'utf8',
+      }),
+    )
+    expect(spawnMocks.mock.calls[0]?.[1]).not.toContain('--resource-version=12345')
   })
 })
