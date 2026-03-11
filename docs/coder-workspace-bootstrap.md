@@ -5,7 +5,7 @@ This document explains how to maintain the single `k8s-arm64` template in Coder,
 ## Prerequisites
 
 - Logged in to the Coder deployment (`coder login ...`).
-- `coder` CLI v2.28.6 or newer on your local machine (download instructions in the [Coder CLI manual](https://coder.com/docs/cli/install)).
+- `coder` CLI v2.31.4 or newer on your local machine (download instructions in the [Coder CLI manual](https://coder.com/docs/cli/install)).
 - Repository cloned locally (this repo, default path `~/github.com/lab`).
 
 ## Template Update Loop
