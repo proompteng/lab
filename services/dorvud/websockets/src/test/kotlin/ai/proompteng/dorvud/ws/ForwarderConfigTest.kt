@@ -33,6 +33,7 @@ class ForwarderConfigTest {
     assertEquals(15_000, cfg.kafka.requestTimeoutMs)
     assertEquals(10_000, cfg.kafka.maxBlockMs)
     assertEquals(180_000, cfg.healthNotReadyKillAfterMs)
+    assertEquals(12L, cfg.barsBackfillLookbackHours)
     assertFalse(cfg.enableTradeUpdates)
     assertEquals(AlpacaMarketType.EQUITY, cfg.alpacaMarketType)
     assertEquals("us", cfg.alpacaCryptoLocation)
@@ -53,6 +54,7 @@ class ForwarderConfigTest {
           "KAFKA_DELIVERY_TIMEOUT_MS" to "45000",
           "KAFKA_REQUEST_TIMEOUT_MS" to "12000",
           "KAFKA_MAX_BLOCK_MS" to "5000",
+          "BARS_BACKFILL_LOOKBACK_HOURS" to "120",
           "HEALTH_NOT_READY_KILL_AFTER_MS" to "120000",
         ),
       )
@@ -62,6 +64,7 @@ class ForwarderConfigTest {
     assertEquals(45_000, cfg.kafka.deliveryTimeoutMs)
     assertEquals(12_000, cfg.kafka.requestTimeoutMs)
     assertEquals(5_000, cfg.kafka.maxBlockMs)
+    assertEquals(120L, cfg.barsBackfillLookbackHours)
     assertEquals(120_000, cfg.healthNotReadyKillAfterMs)
   }
 
@@ -168,6 +171,16 @@ class ForwarderConfigTest {
           "ALPACA_SECRET_KEY" to "secret",
           "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols",
           "HEALTH_NOT_READY_KILL_AFTER_MS" to "0",
+        ),
+      )
+    }
+    assertFailsWith<IllegalStateException> {
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols",
+          "BARS_BACKFILL_LOOKBACK_HOURS" to "0",
         ),
       )
     }

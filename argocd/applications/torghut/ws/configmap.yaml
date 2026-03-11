@@ -23,6 +23,8 @@ data:
   SHARD_INDEX: "0"
   ENABLE_TRADE_UPDATES: "true"
   ENABLE_BARS_BACKFILL: "true"
+  # Span the last tradable session across weekends and overnight restarts so TA can reseed before the open.
+  BARS_BACKFILL_LOOKBACK_HOURS: "120"
   RECONNECT_BASE_MS: "500"
   RECONNECT_MAX_MS: "30000"
   DEDUP_TTL_SEC: "5"
