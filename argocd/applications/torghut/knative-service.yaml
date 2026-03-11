@@ -101,6 +101,8 @@ spec:
               value: "true"
             - name: TRADING_MODE
               value: live
+            - name: TRADING_AUTONOMY_ENABLED
+              value: "false"
             - name: TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION
               value: "false"
             - name: TRADING_ACCOUNT_LABEL
