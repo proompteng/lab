@@ -4,8 +4,7 @@ metadata:
   name: torghut-whitepapers-bootstrap
   namespace: torghut
   annotations:
-    argocd.argoproj.io/hook: PostSync
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/hook: Skip
 spec:
   backoffLimit: 2
   ttlSecondsAfterFinished: 300
