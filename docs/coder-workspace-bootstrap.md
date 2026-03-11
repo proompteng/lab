@@ -137,3 +137,4 @@ Following this loop keeps the template lineage clean and ensures future Codex ru
 - Template version `1.0.31` installs Node.js LTS via nvm alongside Bun and adds recommended CLI tools.
 - CLI installs use Bun (`bun add -g` for `convex`, `bun install -g` for `@openai/codex`).
 - `kubectl`, `argocd`, and `gh` binaries are symlinked into `/tmp/coder-script-data/bin` for non-interactive shells.
+- Template version `1.0.33` hard-pins workspace pods to `kubernetes.io/arch=arm64` so the arm64 Coder agent cannot be scheduled onto amd64 nodes and fail with `Exec format error`.

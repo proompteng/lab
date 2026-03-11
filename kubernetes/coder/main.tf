@@ -265,7 +265,7 @@ resource "kubernetes_service_account" "workspace_admin" {
 resource "kubernetes_cluster_role_binding" "workspace_admin" {
   count = data.coder_workspace.me.start_count
   metadata {
-    name      = "coder-workspace-${data.coder_workspace.me.id}-admin"
+    name = "coder-workspace-${data.coder_workspace.me.id}-admin"
     labels = {
       "app.kubernetes.io/name"     = "coder-workspace"
       "app.kubernetes.io/instance" = "coder-workspace-${data.coder_workspace.me.id}"
@@ -351,11 +351,14 @@ resource "kubernetes_deployment" "main" {
       spec {
         service_account_name            = kubernetes_service_account.workspace_admin[0].metadata[0].name
         automount_service_account_token = true
+        node_selector = {
+          "kubernetes.io/arch" = "arm64"
+        }
         security_context {
-          run_as_user     = 1000
-          fs_group        = 1000
+          run_as_user            = 1000
+          fs_group               = 1000
           fs_group_change_policy = "OnRootMismatch"
-          run_as_non_root = true
+          run_as_non_root        = true
         }
 
         container {
