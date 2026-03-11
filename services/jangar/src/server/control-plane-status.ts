@@ -57,7 +57,7 @@ type WorkflowsReliabilityStatusInput = {
 }
 
 type HeartbeatAuthoritySource = {
-  mode: 'heartbeat' | 'local' | 'unknown'
+  mode: 'heartbeat' | 'local' | 'rollout' | 'unknown'
   namespace: string
   source_deployment: string
   source_pod: string
@@ -292,6 +292,16 @@ const localAuthority = (namespace: string): HeartbeatAuthoritySource => ({
   observed_at: new Date().toISOString(),
   fresh: true,
   message: 'using local controller state',
+})
+
+const rolloutAuthority = (namespace: string, deploymentName: string, observedAt: string): HeartbeatAuthoritySource => ({
+  mode: 'rollout',
+  namespace,
+  source_deployment: deploymentName,
+  source_pod: '',
+  observed_at: observedAt,
+  fresh: true,
+  message: `derived from healthy rollout for ${deploymentName}`,
 })
 
 const buildAgentRunIngestionStatus = (
@@ -923,6 +933,74 @@ const unknownRolloutHealth = (): ControlPlaneRolloutHealth => ({
   message: 'rollout health unavailable (kubernetes query failed)',
 })
 
+const findRolloutDeployment = (rolloutHealth: ControlPlaneRolloutHealth, namespace: string, name: string) =>
+  rolloutHealth.deployments.find((deployment) => deployment.namespace === namespace && deployment.name === name) ?? null
+
+const maybeUseSplitTopologyControllerRollout = ({
+  namespace,
+  now,
+  controller,
+  health,
+  rolloutHealth,
+}: {
+  namespace: string
+  now: Date
+  controller: ControllerStatus
+  health: ControllerHealth
+  rolloutHealth: ControlPlaneRolloutHealth
+}): ControllerStatus => {
+  if (health.enabled) return controller
+  if (controller.status !== 'disabled' && controller.status !== 'unknown') return controller
+
+  const controllersRollout = findRolloutDeployment(rolloutHealth, namespace, 'agents-controllers')
+  if (!controllersRollout || controllersRollout.status !== 'healthy') return controller
+
+  return {
+    ...controller,
+    enabled: true,
+    started: true,
+    scope_namespaces: controller.scope_namespaces.length > 0 ? controller.scope_namespaces : [namespace],
+    crds_ready: true,
+    missing_crds: [],
+    last_checked_at: now.toISOString(),
+    status: 'healthy',
+    message: `derived from healthy ${controllersRollout.name} rollout`,
+    authority: rolloutAuthority(namespace, controllersRollout.name, now.toISOString()),
+  }
+}
+
+const maybeUseSplitTopologyRuntimeRollout = ({
+  namespace,
+  now,
+  adapter,
+  health,
+  rolloutHealth,
+}: {
+  namespace: string
+  now: Date
+  adapter: RuntimeAdapterStatus
+  health: ControllerHealth
+  rolloutHealth: ControlPlaneRolloutHealth
+}): RuntimeAdapterStatus => {
+  if (health.enabled) return adapter
+  if (adapter.name !== 'workflow' && adapter.name !== 'job') return adapter
+  if (adapter.status !== 'disabled' && adapter.status !== 'unknown') return adapter
+
+  const controllersRollout = findRolloutDeployment(rolloutHealth, namespace, 'agents-controllers')
+  if (!controllersRollout || controllersRollout.status !== 'healthy') return adapter
+
+  return {
+    ...adapter,
+    available: true,
+    status: 'configured',
+    message:
+      adapter.name === 'workflow'
+        ? `workflow runtime derived from healthy ${controllersRollout.name} rollout`
+        : `job runtime derived from healthy ${controllersRollout.name} rollout`,
+    authority: rolloutAuthority(namespace, controllersRollout.name, now.toISOString()),
+  }
+}
+
 const buildRolloutHealth = async ({
   namespace,
   kube,
@@ -1367,6 +1445,38 @@ export const buildControlPlaneStatus = async (
   } catch {
     rolloutHealth = unknownRolloutHealth()
   }
+  const effectiveControllers = [
+    maybeUseSplitTopologyControllerRollout({
+      namespace: options.namespace,
+      now,
+      controller: agentsController,
+      health: agentsHealth,
+      rolloutHealth,
+    }),
+    maybeUseSplitTopologyControllerRollout({
+      namespace: options.namespace,
+      now,
+      controller: supportingController,
+      health: supportingHealth,
+      rolloutHealth,
+    }),
+    maybeUseSplitTopologyControllerRollout({
+      namespace: options.namespace,
+      now,
+      controller: orchestrationController,
+      health: orchestrationHealth,
+      rolloutHealth,
+    }),
+  ]
+  const effectiveRuntimeAdapters = runtimeAdapters.map((adapter) =>
+    maybeUseSplitTopologyRuntimeRollout({
+      namespace: options.namespace,
+      now,
+      adapter,
+      health: agentsHealth,
+      rolloutHealth,
+    }),
+  )
   const warningBackoffThreshold = resolveWorkflowThreshold(
     process.env.JANGAR_WORKFLOWS_WARNING_BACKOFF_THRESHOLD,
     DEFAULT_WORKFLOWS_WARNING_BACKOFF_THRESHOLD,
@@ -1395,8 +1505,8 @@ export const buildControlPlaneStatus = async (
   const isWorkflowsDegraded = workflows.backoff_limit_exceeded_jobs >= degradedBackoffThreshold
   const agentRunIngestion = buildAgentRunIngestionStatus(options.namespace, agentsHealth)
   const dependencyQuorum = buildDependencyQuorum({
-    controllers,
-    runtimeAdapters,
+    controllers: effectiveControllers,
+    runtimeAdapters: effectiveRuntimeAdapters,
     database,
     watchReliability,
     workflows,
@@ -1409,13 +1519,13 @@ export const buildControlPlaneStatus = async (
   const leaderElection = getLeaderElectionStatus()
 
   const degradedComponents = [
-    ...controllers
+    ...effectiveControllers
       .filter(
         (controller) =>
           controller.status === 'degraded' || controller.status === 'disabled' || controller.status === 'unknown',
       )
       .map((controller) => controller.name),
-    ...runtimeAdapters
+    ...effectiveRuntimeAdapters
       .filter((adapter) => adapter.name !== 'custom' && (adapter.status === 'degraded' || adapter.status === 'unknown'))
       .map((adapter) => `runtime:${adapter.name}`),
     ...(database.status === 'healthy' ? [] : ['database']),
@@ -1445,8 +1555,8 @@ export const buildControlPlaneStatus = async (
       last_success_at: leaderElection.lastSuccessAt ?? '',
       last_error: leaderElection.lastError ?? '',
     },
-    controllers,
-    runtime_adapters: runtimeAdapters,
+    controllers: effectiveControllers,
+    runtime_adapters: effectiveRuntimeAdapters,
     database,
     grpc: grpcStatus,
     watch_reliability: {

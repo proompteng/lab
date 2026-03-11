@@ -120,7 +120,7 @@ export type RuntimeAdapterStatus = {
 }
 
 export type HeartbeatAuthoritySource = {
-  mode: 'heartbeat' | 'local' | 'unknown'
+  mode: 'heartbeat' | 'local' | 'rollout' | 'unknown'
   namespace: string
   source_deployment: string
   source_pod: string
