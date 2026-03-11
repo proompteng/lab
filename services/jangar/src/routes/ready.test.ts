@@ -106,7 +106,7 @@ describe('getReadyHandler', () => {
     expect(body.status).toBe('degraded')
   })
 
-  it('returns 503 when leader election is required but this instance is not leader', async () => {
+  it('returns 200 when leader election is required but this instance is a healthy standby', async () => {
     leaderElectionMocks.getLeaderElectionStatus.mockReturnValue({
       enabled: true,
       required: true,
@@ -118,6 +118,29 @@ describe('getReadyHandler', () => {
       lastAttemptAt: '2026-03-08T21:00:00Z',
       lastSuccessAt: '2026-03-08T21:00:00Z',
       lastError: null,
+    })
+
+    const { getReadyHandler } = await import('./ready')
+
+    const response = await getReadyHandler()
+
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body.status).toBe('ok')
+  })
+
+  it('returns 503 when leader election is required but standby has not observed a healthy lease attempt', async () => {
+    leaderElectionMocks.getLeaderElectionStatus.mockReturnValue({
+      enabled: true,
+      required: true,
+      isLeader: false,
+      leaseName: 'jangar-controller-leader',
+      leaseNamespace: 'agents',
+      identity: 'agents-controllers-2',
+      lastTransitionAt: null,
+      lastAttemptAt: null,
+      lastSuccessAt: null,
+      lastError: 'lease watch failed',
     })
 
     const { getReadyHandler } = await import('./ready')
