@@ -936,7 +936,9 @@ const unknownRolloutHealth = (): ControlPlaneRolloutHealth => ({
 const findRolloutDeployment = (rolloutHealth: ControlPlaneRolloutHealth, namespace: string, name: string) =>
   rolloutHealth.deployments.find((deployment) => deployment.namespace === namespace && deployment.name === name) ?? null
 
-const isAvailableSplitTopologyRollout = (deployment: DeploymentRolloutStatus | null) =>
+const isAvailableSplitTopologyRollout = (
+  deployment: DeploymentRolloutStatus | null,
+): deployment is DeploymentRolloutStatus =>
   deployment != null &&
   (deployment.status === 'healthy' ||
     (deployment.status === 'degraded' && deployment.ready_replicas > 0 && deployment.available_replicas > 0))
