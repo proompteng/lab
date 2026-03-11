@@ -972,6 +972,70 @@ describe('control-plane status', () => {
     })
   })
 
+  it('keeps supporting and orchestration controller degradation observable without delaying dependency quorum', async () => {
+    setRolloutDeploymentList([healthyRolloutDeployment, availableButDegradedAgentsControllersRolloutDeployment])
+
+    const nonLeaderController = {
+      enabled: true,
+      started: false,
+      namespaces: ['agents'],
+      crdsReady: null,
+      missingCrds: [],
+      lastCheckedAt: '2026-01-20T00:00:00Z',
+      agentRunIngestion: [],
+    }
+
+    const status = await buildControlPlaneStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:00:00Z'),
+        getHeartbeat: createHeartbeatResolver(
+          buildHeartbeatRows({
+            'supporting-controller': {
+              status: 'degraded',
+              message: 'supporting controller not started',
+              leadership_state: 'follower',
+            },
+            'orchestration-controller': {
+              status: 'degraded',
+              message: 'orchestration controller not started',
+              leadership_state: 'follower',
+            },
+          }),
+        ),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => nonLeaderController,
+        getOrchestrationControllerHealth: () => nonLeaderController,
+        resolveTemporalAdapter: async () => buildTemporalAdapter(),
+        checkDatabase: async () => buildDatabaseStatus(),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+      },
+    )
+
+    expect(status.controllers.find((controller) => controller.name === 'supporting-controller')?.status).toBe(
+      'degraded',
+    )
+    expect(status.controllers.find((controller) => controller.name === 'orchestration-controller')?.status).toBe(
+      'degraded',
+    )
+    expect(status.namespaces[0]?.degraded_components).toContain('supporting-controller')
+    expect(status.namespaces[0]?.degraded_components).toContain('orchestration-controller')
+    expect(status.dependency_quorum).toEqual({
+      decision: 'allow',
+      reasons: [],
+      message: 'Control-plane admission dependencies are healthy.',
+    })
+  })
+
   it('fails closed to unknown authority when a controller heartbeat is missing', async () => {
     setRolloutDeploymentList([healthyRolloutDeployment])
 

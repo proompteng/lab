@@ -1278,16 +1278,16 @@ const buildDependencyQuorum = (input: {
   for (const controller of input.controllers) {
     if (controller.status === 'healthy') continue
 
+    // Supporting and orchestration controllers are observable control-plane signals,
+    // but live trading readiness only requires agents-controller + workflow runtime.
+    if (controller.name !== 'agents-controller') continue
+
     if (controller.status === 'unknown') {
       blockReasons.push(asDependencyReason(controller.name, 'status_unknown'))
       continue
     }
 
-    if (controller.name === 'agents-controller') {
-      blockReasons.push('agents_controller_unavailable')
-      continue
-    }
-    delayReasons.push(`${controller.name.replace(/-/g, '_')}_degraded`)
+    blockReasons.push('agents_controller_unavailable')
   }
 
   const workflowAdapter = input.runtimeAdapters.find((adapter) => adapter.name === 'workflow')
@@ -1319,12 +1319,9 @@ const buildDependencyQuorum = (input: {
     delayReasons.push('watch_reliability_degraded')
   }
 
-  if (hasMaterialRolloutDegradation(input.rolloutHealth)) {
-    delayReasons.push('rollout_health_degraded')
-  }
-
-  // Forecast/LEAN/empirical jobs remain observable via empirical_services and degraded_components,
-  // but they are not hard admission dependencies for live trading control-plane readiness.
+  // Rollout churn plus supporting/orchestration/forecast/LEAN/empirical job state stay observable via
+  // rollout_health, degraded_components, and empirical_services, but they are not hard live-trading
+  // admission dependencies.
 
   const reasons = uniqueStrings(blockReasons.length > 0 ? blockReasons : delayReasons)
   const decision: DependencyQuorumStatus['decision'] =
