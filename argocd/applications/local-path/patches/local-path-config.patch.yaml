@@ -9,10 +9,7 @@ data:
       "nodePathMap":[
         {
           "node":"talos-192-168-1-85",
-          "paths":[
-            "/var/mnt/local-path-provisioner",
-            "/var/mnt/local-path-provisioner-extra"
-          ]
+          "paths":["/var/mnt/local-path-provisioner"]
         },
         {
           "node":"talos-192-168-1-194",
