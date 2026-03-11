@@ -780,15 +780,35 @@ ZSHRC_NVM
       done
     fi
 
+    install_workspace_dependencies() {
+      local install_args="$1"
+
+      if (cd "$REPO_ROOT" && bun install $install_args >"$LOG_DIR/bun-install.log" 2>&1); then
+        return 0
+      fi
+
+      log "bun install $install_args failed; retrying with --ignore-scripts"
+      {
+        printf '\n[bootstrap] bun install %s failed; retrying with --ignore-scripts\n\n' "$install_args"
+      } >>"$LOG_DIR/bun-install.log"
+
+      if (cd "$REPO_ROOT" && bun install $install_args --ignore-scripts >>"$LOG_DIR/bun-install.log" 2>&1); then
+        log "bun install completed with --ignore-scripts; packages with postinstall hooks may need manual follow-up"
+        return 0
+      fi
+
+      return 1
+    }
+
     if [ -d "$REPO_ROOT/.git" ]; then
       if [ -f "$REPO_ROOT/bun.lockb" ] || [ -f "$REPO_ROOT/bun.lock" ]; then
         log "Installing workspace dependencies with bun"
-        if ! (cd "$REPO_ROOT" && bun install --frozen-lockfile >"$LOG_DIR/bun-install.log" 2>&1); then
+        if ! install_workspace_dependencies "--frozen-lockfile"; then
           fail "bun install failed; see $LOG_DIR/bun-install.log"
         fi
       elif [ -f "$REPO_ROOT/package.json" ]; then
         log "Installing workspace dependencies with bun (no lockfile)"
-        if ! (cd "$REPO_ROOT" && bun install >"$LOG_DIR/bun-install.log" 2>&1); then
+        if ! install_workspace_dependencies ""; then
           fail "bun install failed; see $LOG_DIR/bun-install.log"
         fi
       else

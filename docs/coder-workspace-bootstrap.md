@@ -55,6 +55,7 @@ This document explains how to maintain the single `k8s-arm64` template in Coder,
 - Workspace pods run with a service account bound to `cluster-admin` via a RoleBinding (namespace-scoped) so in-cluster `kubectl` has admin access.
 - Appends `BUN_INSTALL/bin` and `~/.local/bin` to the login shells (`.profile`, `.bashrc`, `.zshrc`) so future shells inherit the toolchain.
 - Dependency install runs only when a manifest exists: `bun install --frozen-lockfile` when a Bun lockfile is present, otherwise `bun install` when only `package.json` is present.
+- If Bun fails during native install scripts, bootstrap automatically retries the install with `--ignore-scripts` so the workspace still becomes usable. Packages with postinstall/native hooks may still need manual follow-up inside the workspace.
 
 ## Inspecting Bootstrap Logs
 
@@ -138,3 +139,4 @@ Following this loop keeps the template lineage clean and ensures future Codex ru
 - CLI installs use Bun (`bun add -g` for `convex`, `bun install -g` for `@openai/codex`).
 - `kubectl`, `argocd`, and `gh` binaries are symlinked into `/tmp/coder-script-data/bin` for non-interactive shells.
 - Template version `1.0.33` hard-pins workspace pods to `kubernetes.io/arch=arm64` so the arm64 Coder agent cannot be scheduled onto amd64 nodes and fail with `Exec format error`.
+- Template version `1.0.34` retries Bun bootstrap installs with `--ignore-scripts` when native install hooks crash under Bun, which keeps the workspace usable instead of failing startup on `tree-sitter-json`.
