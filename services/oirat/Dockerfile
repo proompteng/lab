@@ -30,8 +30,6 @@ FROM oven/bun:${BUN_VERSION} AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=deps-prod /app/node_modules ./node_modules
-COPY --from=deps-prod /app/services/oirat/node_modules ./services/oirat/node_modules
-COPY --from=deps-prod /app/packages/discord/node_modules ./packages/discord/node_modules
 COPY --from=build /app/services/oirat ./services/oirat
 COPY --from=build /app/packages/discord/package.json ./packages/discord/package.json
 COPY --from=build /app/packages/discord/dist ./packages/discord/dist
