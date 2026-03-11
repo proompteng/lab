@@ -1,22 +1,22 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/jangar
-  tag: 222eafb9
-  digest: sha256:b72547d1a19cb1118039dacbd36bab9060ad419bfef29fd0d8c9d8574906a38b
+  tag: bcbe332f
+  digest: sha256:6df893661fdb35ae037707b710de0e747bef45f8ac9019a2b78e273da5fd8386
   pullPolicy: IfNotPresent
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar-control-plane
-    tag: 222eafb9
-    digest: sha256:4d42eb0876275f19bb745101bd4ecd96ccd24e84e048b57d3876e82510d546b4
+    tag: bcbe332f
+    digest: sha256:4a622d6e573fa4b66f8014ce6944b9dbf883c050304dce9b1019b396e94688eb
   env:
     vars:
       JANGAR_CONTROL_PLANE_CACHE_ENABLED: "true"
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar
-    tag: 222eafb9
-    digest: sha256:b72547d1a19cb1118039dacbd36bab9060ad419bfef29fd0d8c9d8574906a38b
+    tag: bcbe332f
+    digest: sha256:6df893661fdb35ae037707b710de0e747bef45f8ac9019a2b78e273da5fd8386
 argocdHooks:
   enabled: true
   image:
@@ -84,7 +84,6 @@ controller:
     perAgent: 10
   queue:
     perRepo: 200
-  agentRunRetentionSeconds: 604800
   jobTtlSeconds: 86400
   jobTtlSecondsAfterFinished: 86400
   logRetentionSeconds: 604800
@@ -134,3 +133,13 @@ env:
       secretName: github-token
       key: token
 envFromSecretRefs: []
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - talos-192-168-1-85
+                - talos-192-168-1-203

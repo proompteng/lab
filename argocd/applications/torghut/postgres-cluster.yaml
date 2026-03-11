@@ -8,7 +8,7 @@ spec:
   primaryUpdateStrategy: unsupervised
   storage:
     storageClass: rook-ceph-block
-    size: 5Gi
+    size: 50Gi
   bootstrap:
     initdb:
       database: torghut
@@ -17,15 +17,15 @@ spec:
       dataChecksums: true
   backup:
     barmanObjectStore:
-      destinationPath: s3://cnpg-torghut
+      destinationPath: s3://cnpg-torghut-recovery-20260311
       serverName: torghut-db-live
       endpointURL: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
       s3Credentials:
         accessKeyId:
-          name: cnpg-torghut-db
+          name: cnpg-torghut-recovery
           key: AWS_ACCESS_KEY_ID
         secretAccessKey:
-          name: cnpg-torghut-db
+          name: cnpg-torghut-recovery
           key: AWS_SECRET_ACCESS_KEY
       wal:
         maxParallel: 8

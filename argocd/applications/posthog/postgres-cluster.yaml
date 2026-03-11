@@ -1,6 +1,8 @@
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
+  annotations:
+    argocd.argoproj.io/tracking-id: posthog:postgresql.cnpg.io/Cluster:posthog/posthog-db
   name: posthog-db
   namespace: posthog
 spec:

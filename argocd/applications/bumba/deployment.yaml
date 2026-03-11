@@ -22,7 +22,7 @@ spec:
         app.kubernetes.io/name: bumba
         app.kubernetes.io/part-of: lab
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-02-09T03:09:48.289Z"
+        kubectl.kubernetes.io/restartedAt: "2026-03-11T02:15:00Z"
     spec:
       initContainers:
         - name: bootstrap-workspace
@@ -47,7 +47,7 @@ spec:
       containers:
         - name: bumba
           image: registry.ide-newton.ts.net/lab/bumba
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           ports:
             - name: health
               containerPort: 3001

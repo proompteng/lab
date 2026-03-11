@@ -13,6 +13,7 @@ resources:
   - knative-service-sim.yaml
   - tailscale-service.yaml
   - sealed-secrets.yaml
+  - recovery-sealed-secrets.yaml
   - rook-ceph-rgw-argo-workflows-sealedsecret.yaml
   - serviceaccount.yaml
   - role.yaml

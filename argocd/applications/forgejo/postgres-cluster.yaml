@@ -1,6 +1,8 @@
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
+  annotations:
+    argocd.argoproj.io/tracking-id: forgejo:postgresql.cnpg.io/Cluster:forgejo/forgejo-db
   name: forgejo-db
   namespace: forgejo
 spec:

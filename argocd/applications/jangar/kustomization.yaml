@@ -5,7 +5,6 @@ resources:
   - torghut-db-ca-sealedsecret.yaml
   - rook-ceph-rgw-jangar-sealedsecret.yaml
   - cnpg-jangar-db-objectbucketclaim.yaml
-  - cnpg-jangar-db-bucket-migration-job.yaml
   - market-context-providers-secret.yaml
   - deployment.yaml
   - jangar-worker-deployment.yaml
@@ -21,6 +20,7 @@ resources:
   - postgres-cluster.yaml
   - postgres-scheduled-backup.yaml
   - openwebui-redis.yaml
+  - pvc-bumba-rwo.yaml
   - pvc-rwo.yaml
   - pvc-worker-rwo.yaml
   - vscode-tailscale-service.yaml
@@ -61,5 +61,5 @@ helmCharts:
 
 images:
   - name: registry.ide-newton.ts.net/lab/jangar
-    newTag: "222eafb9"
-    digest: sha256:b72547d1a19cb1118039dacbd36bab9060ad419bfef29fd0d8c9d8574906a38b
+    newTag: "8d9ea4cb2"
+    digest: sha256:49a549776413c5b880b63cf29593aadc2e63534b018c4e403126ea74b9da9ce1

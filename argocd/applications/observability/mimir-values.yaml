@@ -32,7 +32,7 @@ mimir:
         sync_dir: /data/tsdb-sync
       s3:
         endpoint: ${OBS_S3_ENDPOINT}
-        bucket_name: mimir-blocks
+        bucket_name: mimir-blocks-recovery-20260311
         access_key_id: ${OBS_S3_ACCESS_KEY}
         secret_access_key: ${OBS_S3_SECRET_KEY}
         region: ${OBS_S3_REGION}
@@ -42,7 +42,7 @@ mimir:
       backend: s3
       s3:
         endpoint: ${OBS_S3_ENDPOINT}
-        bucket_name: mimir-alertmanager
+        bucket_name: mimir-alertmanager-recovery-20260311
         access_key_id: ${OBS_S3_ACCESS_KEY}
         secret_access_key: ${OBS_S3_SECRET_KEY}
         region: ${OBS_S3_REGION}
@@ -52,7 +52,7 @@ mimir:
       backend: s3
       s3:
         endpoint: ${OBS_S3_ENDPOINT}
-        bucket_name: mimir-ruler
+        bucket_name: mimir-ruler-recovery-20260311
         access_key_id: ${OBS_S3_ACCESS_KEY}
         secret_access_key: ${OBS_S3_SECRET_KEY}
         region: ${OBS_S3_REGION}

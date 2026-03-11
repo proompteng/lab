@@ -18,10 +18,12 @@ spec:
       annotations:
         kubectl.kubernetes.io/restartedAt: "2026-02-21T23:59:24Z"
     spec:
+      nodeSelector:
+        kubernetes.io/hostname: talos-192-168-1-85
       containers:
         - name: khoshut
           image: registry.ide-newton.ts.net/lab/khoshut
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 3000

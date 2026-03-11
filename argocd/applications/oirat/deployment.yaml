@@ -18,10 +18,12 @@ spec:
       annotations:
         kubectl.kubernetes.io/restartedAt: "2026-02-18T20:05:27.167Z"
     spec:
+      nodeSelector:
+        kubernetes.io/hostname: talos-192-168-1-85
       containers:
         - name: oirat
           image: registry.ide-newton.ts.net/lab/oirat
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
                 name: oirat-config

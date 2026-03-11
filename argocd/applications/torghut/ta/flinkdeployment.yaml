@@ -8,7 +8,7 @@ metadata:
 spec:
   image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:436aecef1aae71f18fd01935ca97cb26866d149154edb4dab4222d66c4e849b3
   imagePullPolicy: IfNotPresent
-  restartNonce: 3
+  restartNonce: 5
   flinkVersion: v2_0
   serviceAccount: torghut-runtime
   logConfiguration:
@@ -83,8 +83,8 @@ spec:
       # Flink Deployment Logging Overrides
       # rootLogger.level = DEBUG
   flinkConfiguration:
-    state.checkpoints.dir: s3a://flink-checkpoints/torghut/technical-analysis/checkpoints
-    state.savepoints.dir: s3a://flink-checkpoints/torghut/technical-analysis/savepoints
+    state.checkpoints.dir: s3a://flink-checkpoints-recovery-20260311/torghut/technical-analysis/checkpoints
+    state.savepoints.dir: s3a://flink-checkpoints-recovery-20260311/torghut/technical-analysis/savepoints
     execution.checkpointing.mode: EXACTLY_ONCE
     execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
     taskmanager.numberOfTaskSlots: "2"
@@ -113,7 +113,7 @@ spec:
                 name: torghut-ta-config
           env:
             - name: TA_KAFKA_DELIVERY_GUARANTEE
-              value: AT_LEAST_ONCE
+              value: EXACTLY_ONCE
             - name: TA_KAFKA_USERNAME
               value: torghut-ws
             - name: TA_KAFKA_PASSWORD
@@ -129,32 +129,32 @@ spec:
             - name: TA_S3_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: flink-checkpoints
+                  name: flink-checkpoints-recovery
                   key: AWS_ACCESS_KEY_ID
             - name: TA_S3_SECRET_KEY
               valueFrom:
                 secretKeyRef:
-                  name: flink-checkpoints
+                  name: flink-checkpoints-recovery
                   key: AWS_SECRET_ACCESS_KEY
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
-                  name: flink-checkpoints
+                  name: flink-checkpoints-recovery
                   key: AWS_ACCESS_KEY_ID
             - name: AWS_SECRET_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: flink-checkpoints
+                  name: flink-checkpoints-recovery
                   key: AWS_SECRET_ACCESS_KEY
             - name: AWS_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: flink-checkpoints
+                  name: flink-checkpoints-recovery
                   key: AWS_ACCESS_KEY_ID
             - name: AWS_SECRET_KEY
               valueFrom:
                 secretKeyRef:
-                  name: flink-checkpoints
+                  name: flink-checkpoints-recovery
                   key: AWS_SECRET_ACCESS_KEY
             - name: TORGHUT_TA_VERSION
               value: v0.560.0-20-ga2660f64
@@ -185,5 +185,5 @@ spec:
     entryClass: ai.proompteng.dorvud.ta.flink.FlinkTechnicalAnalysisJobKt
     jarURI: local:///opt/flink/usrlib/app.jar
     parallelism: 8
-    upgradeMode: last-state
+    upgradeMode: stateless
     state: running
