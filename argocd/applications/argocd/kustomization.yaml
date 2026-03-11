@@ -14,6 +14,7 @@ resources:
   - https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/v1.1.0/config/install.yaml
   - base/secrets.yaml
   - base/argo-workflows-sso-sealedsecret.yaml
+  - base/tsag-repo-sealedsecret.yaml
   - base/image-updater-git-ssh.yaml
   - base/image-updater-product.yaml
   - alloy-rbac.yaml
