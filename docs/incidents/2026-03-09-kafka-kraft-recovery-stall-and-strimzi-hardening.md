@@ -165,4 +165,5 @@ Primary causes:
 
 - [docs/incidents/2025-11-01-kafka-quorum-outage.md](2025-11-01-kafka-quorum-outage.md)
 - [docs/incidents/2025-12-20-longhorn-upgrade-kafka-failure.md](2025-12-20-longhorn-upgrade-kafka-failure.md)
+- [docs/kafka-kraft-controller-broker-separation-design-2026-03-11.md](../kafka-kraft-controller-broker-separation-design-2026-03-11.md)
 - [argocd/applications/kafka/strimzi-kafka-cluster.yaml](../../argocd/applications/kafka/strimzi-kafka-cluster.yaml)
