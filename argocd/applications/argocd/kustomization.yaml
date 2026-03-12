@@ -11,6 +11,7 @@ configMapGenerator:
 resources:
   - https://raw.githubusercontent.com/argoproj/argo-cd/v3.3.0/manifests/ha/install.yaml
   - base/ingressroute.yaml
+  - base/ingressroute-private.yaml
   - https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/v1.1.0/config/install.yaml
   - base/secrets.yaml
   - base/argo-workflows-sso-sealedsecret.yaml

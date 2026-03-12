@@ -20,7 +20,8 @@ variable "dns_split_nameservers" {
   description = "Per-domain split DNS nameservers. Keys are domains and values are the nameserver IPs for that domain."
   type        = map(list(string))
   default = {
-    "cluster.local" = ["100.88.12.116"]
+    "cluster.local"     = ["100.88.12.116"]
+    "k8s.proompteng.ai" = ["100.88.12.116"]
   }
 }
 
