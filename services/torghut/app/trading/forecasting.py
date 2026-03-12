@@ -563,12 +563,17 @@ def _json_safe_payload(value: Any) -> Any:
     if isinstance(value, Decimal):
         return str(value)
     if isinstance(value, dict):
-        return {
-            str(key): _json_safe_payload(item)
-            for key, item in cast(dict[Any, Any], value).items()
-        }
+        value_map = cast(dict[str, Any], value)
+        normalized: dict[str, Any] = {}
+        for key in value_map:
+            normalized[str(key)] = _json_safe_payload(value_map[key])
+        return normalized
     if isinstance(value, (list, tuple)):
-        return [_json_safe_payload(item) for item in value]
+        sequence = cast(list[Any] | tuple[Any, ...], value)
+        normalized_items: list[Any] = []
+        for item in sequence:
+            normalized_items.append(_json_safe_payload(item))
+        return normalized_items
     return value
 
 
