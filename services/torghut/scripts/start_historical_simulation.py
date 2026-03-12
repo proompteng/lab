@@ -46,6 +46,7 @@ from scripts.simulation_lane_contracts import (
     simulation_clickhouse_table_names,
     simulation_lane_contract,
     simulation_lane_contract_for_manifest,
+    simulation_schema_registry_subject_roles,
 )
 
 APPLY_CONFIRMATION_PHRASE = 'START_HISTORICAL_SIMULATION'
@@ -168,6 +169,7 @@ SIMULATION_POSTGRES_RUNTIME_RESET_TABLES = (
     'execution_order_events',
 )
 KAFKA_API_VERSION = (4, 1, 1)
+SCHEMA_REGISTRY_CONTENT_TYPE = 'application/vnd.schemaregistry.v1+json'
 KAFKA_HOST_SUFFIX_FALLBACKS = (
     '.kafka-kafka-brokers.kafka.svc.cluster.local',
     '.kafka-kafka-brokers.kafka.svc',
@@ -2253,6 +2255,37 @@ def _http_clickhouse_query(
         connection.close()
 
 
+def _http_request(
+    *,
+    base_url: str,
+    path: str,
+    method: str = 'GET',
+    body: str | None = None,
+    headers: Mapping[str, str] | None = None,
+) -> tuple[int, str]:
+    parsed = urlsplit(base_url)
+    scheme = parsed.scheme.lower()
+    if scheme not in {'http', 'https'}:
+        raise RuntimeError(f'unsupported_http_scheme:{scheme or "missing"}')
+    if not parsed.hostname:
+        raise RuntimeError('invalid_http_host')
+
+    target_path = parsed.path or '/'
+    if path and path != '/':
+        target_path = f'{target_path.rstrip("/")}/{path.lstrip("/")}'
+    request_headers = dict(headers or {})
+    connection_class = HTTPSConnection if scheme == 'https' else HTTPConnection
+    connection = connection_class(parsed.hostname, parsed.port)
+    try:
+        payload = body.encode('utf-8') if body is not None else None
+        connection.request(method.upper(), target_path, body=payload, headers=request_headers)
+        response = connection.getresponse()
+        response_body = response.read().decode('utf-8', errors='replace')
+        return response.status, response_body
+    finally:
+        connection.close()
+
+
 def _clickhouse_query_configs(config: ClickHouseRuntimeConfig) -> list[ClickHouseRuntimeConfig]:
     parsed = urlsplit(config.http_url)
     host = parsed.hostname
@@ -3084,6 +3117,109 @@ def _ensure_topics(
         admin.close()
 
 
+def _simulation_schema_registry_subject_specs(
+    *,
+    resources: SimulationResources,
+) -> list[dict[str, str]]:
+    lane_contract = simulation_lane_contract(resources.lane)
+    schema_files = cast(
+        Mapping[str, str],
+        lane_contract.schema_registry_schema_file_by_role,
+    )
+    repo_root = Path(__file__).resolve().parents[3]
+    specs: list[dict[str, str]] = []
+    for role in simulation_schema_registry_subject_roles(lane_contract):
+        topic = resources.simulation_topic_by_role.get(role)
+        schema_relative = _as_text(schema_files.get(role))
+        if not topic or not schema_relative:
+            continue
+        specs.append(
+            {
+                'role': role,
+                'subject': f'{topic}-value',
+                'schema_path': str((repo_root / schema_relative).resolve()),
+            }
+        )
+    return specs
+
+
+def _load_schema_registry_schema_literal(schema_path: str) -> str:
+    path = Path(schema_path)
+    if not path.exists():
+        raise RuntimeError(f'schema_registry_schema_file_missing:{schema_path}')
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f'schema_registry_schema_invalid:{schema_path}') from exc
+    return json.dumps(payload, separators=(',', ':'))
+
+
+def _ensure_simulation_schema_subjects(
+    *,
+    resources: SimulationResources,
+    ta_data: Mapping[str, Any],
+) -> dict[str, Any]:
+    registry_url = _as_text(ta_data.get('TA_SCHEMA_REGISTRY_URL'))
+    specs = _simulation_schema_registry_subject_specs(resources=resources)
+    subjects_expected = [spec['subject'] for spec in specs]
+    if not registry_url:
+        return {
+            'ready': True,
+            'reason': 'schema_registry_url_not_declared',
+            'subjects_expected': subjects_expected,
+            'subjects_existing': [],
+            'subjects_registered': [],
+        }
+    if not specs:
+        return {
+            'ready': True,
+            'reason': 'schema_registry_subjects_not_declared',
+            'url': registry_url,
+            'subjects_expected': subjects_expected,
+            'subjects_existing': [],
+            'subjects_registered': [],
+        }
+
+    status, _ = _http_request(base_url=registry_url, path='/subjects')
+    if status != 200:
+        raise RuntimeError(f'schema_registry_not_ready:http_{status}')
+
+    existing: list[str] = []
+    registered: list[str] = []
+    for spec in specs:
+        subject = spec['subject']
+        subject_path = f"/subjects/{quote_plus(subject)}/versions/latest"
+        subject_status, _ = _http_request(base_url=registry_url, path=subject_path)
+        if subject_status == 200:
+            existing.append(subject)
+            continue
+        if subject_status != 404:
+            raise RuntimeError(f'schema_registry_subject_check_failed:{subject}:http_{subject_status}')
+        schema_literal = _load_schema_registry_schema_literal(spec['schema_path'])
+        request_body = json.dumps({'schema': schema_literal})
+        create_status, create_body = _http_request(
+            base_url=registry_url,
+            path=f"/subjects/{quote_plus(subject)}/versions",
+            method='POST',
+            body=request_body,
+            headers={'Content-Type': SCHEMA_REGISTRY_CONTENT_TYPE},
+        )
+        if create_status not in {200, 201}:
+            raise RuntimeError(
+                f'schema_registry_subject_register_failed:{subject}:http_{create_status}:{create_body.strip()}'
+            )
+        registered.append(subject)
+
+    return {
+        'ready': True,
+        'reason': 'ok',
+        'url': registry_url,
+        'subjects_expected': subjects_expected,
+        'subjects_existing': existing,
+        'subjects_registered': registered,
+    }
+
+
 def _consumer_for_dump(config: KafkaRuntimeConfig, run_token: str) -> Any:
     from kafka import KafkaConsumer  # type: ignore[import-not-found]
 
@@ -3647,6 +3783,10 @@ def _apply(
             config=kafka_config,
             manifest=manifest,
         )
+        schema_registry_report = _ensure_simulation_schema_subjects(
+            resources=resources,
+            ta_data=ta_data,
+        )
         clickhouse_database_precreated = _clickhouse_database_precreated(manifest)
         if not clickhouse_database_precreated:
             _ensure_clickhouse_database(config=clickhouse_config, database=resources.clickhouse_db)
@@ -3710,6 +3850,7 @@ def _apply(
         'dump': dump_report,
         'dump_coverage': dump_coverage,
         'topics': topics_report,
+        'schema_registry': schema_registry_report,
         'ta_restart_nonce': ta_restart_nonce,
         'resources': asdict(resources)
         | {

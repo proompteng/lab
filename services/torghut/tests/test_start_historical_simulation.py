@@ -36,6 +36,7 @@ from scripts.start_historical_simulation import (
     _dump_sha256_for_replay,
     _clickhouse_query_configs,
     _clickhouse_jdbc_url_for_database,
+    _ensure_simulation_schema_subjects,
     _ensure_topics,
     _file_sha256,
     _http_clickhouse_query,
@@ -1518,6 +1519,66 @@ class TestStartHistoricalSimulation(TestCase):
             created_by_topic[resources.simulation_topic_by_role['status']].num_partitions,
             1,
         )
+
+    def test_ensure_simulation_schema_subjects_registers_equity_ta_subjects_only(self) -> None:
+        resources = _build_resources(
+            'sim-2026-03-06-open-hour',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        ta_data = {
+            'TA_SCHEMA_REGISTRY_URL': 'http://karapace.kafka:8081',
+        }
+        calls: list[tuple[str, str, str | None]] = []
+
+        def _fake_http_request(
+            *,
+            base_url: str,
+            path: str,
+            method: str = 'GET',
+            body: str | None = None,
+            headers: dict[str, str] | None = None,
+        ) -> tuple[int, str]:
+            _ = method
+            _ = headers
+            calls.append((base_url, path, body))
+            if path == '/subjects':
+                return 200, '[]'
+            if path.endswith(f"{resources.simulation_topic_by_role['ta_microbars']}-value/versions/latest"):
+                return 404, '{}'
+            if path.endswith(f"{resources.simulation_topic_by_role['ta_signals']}-value/versions/latest"):
+                return 404, '{}'
+            if path.endswith(f"{resources.simulation_topic_by_role['ta_microbars']}-value/versions"):
+                return 200, '{"id": 1}'
+            if path.endswith(f"{resources.simulation_topic_by_role['ta_signals']}-value/versions"):
+                return 200, '{"id": 2}'
+            raise AssertionError(f'unexpected request path: {path}')
+
+        with patch(
+            'scripts.start_historical_simulation._http_request',
+            side_effect=_fake_http_request,
+        ):
+            report = _ensure_simulation_schema_subjects(
+                resources=resources,
+                ta_data=ta_data,
+            )
+
+        self.assertTrue(report['ready'])
+        self.assertEqual(
+            report['subjects_expected'],
+            [
+                f"{resources.simulation_topic_by_role['ta_microbars']}-value",
+                f"{resources.simulation_topic_by_role['ta_signals']}-value",
+            ],
+        )
+        self.assertEqual(report['subjects_existing'], [])
+        self.assertEqual(report['subjects_registered'], report['subjects_expected'])
+
+        posted_bodies = [json.loads(body) for _, path, body in calls if path.endswith('/versions') and body is not None]
+        self.assertEqual(len(posted_bodies), 2)
+        schema_names = sorted(json.loads(payload['schema'])['name'] for payload in posted_bodies)
+        self.assertEqual(schema_names, ['TaBar1s', 'TaSignal'])
 
     def test_configure_torghut_service_preserves_existing_container_fields(self) -> None:
         resources = _build_resources(
@@ -3889,14 +3950,24 @@ class TestStartHistoricalSimulation(TestCase):
             ),
             patch(
                 'scripts.historical_simulation_verification._http_json_get',
-                side_effect=[(200, '[]'), (404, '{}'), (200, '{}'), (200, '{}'), (200, '{}'), (200, '{}')],
+                side_effect=[(200, '[]'), (404, '{}'), (200, '{}')],
             ),
         ):
             report = _runtime_verify(resources=resources, manifest=manifest)
 
         self.assertEqual(report['runtime_state'], 'not_ready')
         self.assertEqual(report['schema_registry']['reason'], 'schema_subject_missing')
-        self.assertTrue(report['schema_registry']['subjects_missing'])
+        self.assertEqual(
+            report['schema_registry']['subjects_checked'],
+            [
+                f"{resources.simulation_topic_by_role['ta_microbars']}-value",
+                f"{resources.simulation_topic_by_role['ta_signals']}-value",
+            ],
+        )
+        self.assertEqual(
+            report['schema_registry']['subjects_missing'],
+            [f"{resources.simulation_topic_by_role['ta_microbars']}-value"],
+        )
 
     def test_flink_runtime_health_classifies_missing_restore_state(self) -> None:
         deployment = {

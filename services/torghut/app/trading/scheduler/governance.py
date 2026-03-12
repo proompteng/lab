@@ -28,6 +28,7 @@ from ..autonomy.phase_manifest_contract import build_phase_manifest_payload_with
 from ..feature_quality import FeatureQualityThresholds, evaluate_feature_batch_quality
 from ..ingest import SignalBatch
 from ..models import SignalEnvelope
+from ..time_source import trading_now
 from .pipeline import TradingPipeline
 from .safety import (
     _coerce_recovery_reason_sequence,
@@ -551,7 +552,7 @@ class TradingSchedulerGovernanceMixin:
             self.state.emergency_stop_recovery_streak = 0
             self.state.rollback_incident_evidence_path = None
             return
-        now = datetime.now(timezone.utc)
+        now = self._governance_now()
         self.state.emergency_stop_active = False
         self.state.emergency_stop_reason = None
         self.state.emergency_stop_triggered_at = None
@@ -589,6 +590,13 @@ class TradingSchedulerGovernanceMixin:
         except (TypeError, ValueError):
             return None
 
+    def _governance_now(self) -> datetime:
+        if settings.trading_simulation_enabled and self._pipeline is not None:
+            return trading_now(
+                account_label=getattr(self._pipeline, "account_label", None)
+            )
+        return datetime.now(timezone.utc)
+
     def _trigger_emergency_stop(
         self,
         *,
@@ -598,7 +606,7 @@ class TradingSchedulerGovernanceMixin:
     ) -> None:
         if self._pipeline is None:
             return
-        now = datetime.now(timezone.utc)
+        now = self._governance_now()
         self.state.emergency_stop_active = True
         self.state.rollback_incidents_total += 1
         self.state.emergency_stop_triggered_at = now
@@ -805,7 +813,7 @@ class TradingSchedulerGovernanceMixin:
         )
         self.state.last_autonomy_iteration = autonomy_iteration
         self.state.last_autonomy_iteration_notes_path = str(notes_path)
-        now = datetime.now(timezone.utc)
+        now = self._governance_now()
         lookback_minutes = max(
             1, int(settings.trading_autonomy_signal_lookback_minutes)
         )

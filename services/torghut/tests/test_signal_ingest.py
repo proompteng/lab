@@ -97,10 +97,10 @@ class MetadataLatestIngestor(ClickHouseSignalIngestor):
 
     def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
         self.queries.append(query)
-        if "FROM system.parts" in query:
-            return [{"latest_signal_ts": int(self.latest_signal_ts.timestamp())}]
-        if "SELECT max(" in query:
-            raise AssertionError("expected system.parts freshness query to avoid a full-table aggregate")
+        if "ORDER BY event_ts DESC, symbol DESC, seq DESC" in query:
+            return [{"latest_signal_ts": self.latest_signal_ts.isoformat()}]
+        if "SELECT max(" in query or "FROM system.parts" in query:
+            raise AssertionError("expected descending latest-timestamp query to avoid aggregate freshness scans")
         return []
 
 
@@ -715,7 +715,7 @@ class TestSignalIngest(TestCase):
         self.assertEqual(first, latest)
         self.assertEqual(second, latest)
 
-    def test_latest_signal_timestamp_prefers_system_parts_metadata_for_event_ts(self) -> None:
+    def test_latest_signal_timestamp_prefers_descending_timestamp_probe_for_event_ts(self) -> None:
         latest = datetime(2026, 1, 1, tzinfo=timezone.utc)
         ingestor = MetadataLatestIngestor(
             schema="envelope",
@@ -728,7 +728,12 @@ class TestSignalIngest(TestCase):
 
         self.assertEqual(resolved, latest)
         self.assertGreaterEqual(len(ingestor.queries), 1)
-        self.assertIn("FROM system.parts", ingestor.queries[0])
+        self.assertTrue(
+            any(
+                "ORDER BY event_ts DESC, symbol DESC, seq DESC" in query
+                for query in ingestor.queries
+            )
+        )
 
     def test_latest_signal_timestamp_uses_cached_value_on_refresh_failure(self) -> None:
         latest = datetime(2026, 1, 1, tzinfo=timezone.utc)

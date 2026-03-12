@@ -16,6 +16,7 @@ import psycopg
 from scripts.simulation_lane_contracts import (
     EQUITY_SIMULATION_LANE,
     simulation_lane_contract,
+    simulation_schema_registry_subject_roles,
 )
 
 PRODUCTION_TOPIC_BY_ROLE = dict(EQUITY_SIMULATION_LANE.source_topic_by_role)
@@ -784,7 +785,11 @@ def _expected_schema_subjects(
     lane_contract: Any,
 ) -> list[str]:
     subjects: list[str] = []
-    for role, key in cast(Mapping[str, str], lane_contract.ta_topic_key_by_role).items():
+    topic_keys = cast(Mapping[str, str], lane_contract.ta_topic_key_by_role)
+    for role in simulation_schema_registry_subject_roles(lane_contract):
+        key = topic_keys.get(role)
+        if not key:
+            continue
         topic = _as_text(ta_data.get(key))
         if not topic:
             continue
