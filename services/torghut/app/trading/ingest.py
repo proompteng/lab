@@ -631,34 +631,23 @@ class ClickHouseSignalIngestor:
 
     def _latest_signal_timestamp_queries(self, time_column: str) -> list[str]:
         queries: list[str] = []
-        if time_column == "event_ts":
-            database, table = _split_table(self.table)
-            queries.append(
-                ' '.join(
-                    [
-                        'SELECT',
-                        'nullIf(toUnixTimestamp(max(max_time)), 0) AS latest_signal_ts',
-                        'FROM',
-                        'system.parts',
-                        'WHERE',
-                        'active',
-                        'AND',
-                        f"database = {_quote_literal(database)}",
-                        'AND',
-                        f"table = {_quote_literal(table)}",
-                        'FORMAT JSONEachRow',
-                    ]
-                )
-            )
-
         safe_time_column = _safe_identifier(time_column, kind='column')
+        order_clause = f'{safe_time_column} DESC'
+        if self._supports_seq_for_time_column(time_column):
+            order_clause = f'{safe_time_column} DESC, symbol DESC, seq DESC'
+        elif time_column == 'ts':
+            order_clause = f'{safe_time_column} DESC, symbol DESC'
         queries.append(
             ' '.join(
                 [
                     'SELECT',
-                    f'max({safe_time_column}) AS latest_signal_ts',
+                    f'{safe_time_column} AS latest_signal_ts',
                     'FROM',
                     self.table,
+                    'ORDER BY',
+                    order_clause,
+                    'LIMIT',
+                    '1',
                     'FORMAT JSONEachRow',
                 ]
             )
