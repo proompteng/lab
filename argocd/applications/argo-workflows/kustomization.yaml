@@ -7,6 +7,7 @@ resources:
   - codex-docker-policy.yaml
   - codex-implementation-semaphore.yaml
   - ingressroute.yaml
+  - middleware-workflows-canonical-host.yaml
   - ingressroute-private.yaml
   - rook-ceph-objectstore-user.yaml
   - rook-ceph-rgw-argo-workflows.yaml
@@ -58,7 +59,7 @@ helmCharts:
           clientSecret:
             name: argo-workflows-sso
             key: client-secret
-          redirectUrl: https://workflows.proompteng.ai/oauth2/callback
+          redirectUrl: https://workflows.k8s.proompteng.ai/oauth2/callback
           scopes:
             - openid
             - profile
