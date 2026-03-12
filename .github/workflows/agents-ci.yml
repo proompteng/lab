@@ -459,7 +459,10 @@ jobs:
 
           # Use docker.io for Bun base image in CI builds to avoid mirror image metadata drift.
           # Local image rebuilds are best-effort in CI; fall back to the public image on timeout.
-          BUILD_TIMEOUT_MINUTES=12
+          # ARC arm64 runners occasionally need materially longer than 12 minutes for the
+          # control-plane bundle graph; keep CI-specific build work lean and give the remaining
+          # build a realistic timeout instead of failing healthy progress mid-build.
+          BUILD_TIMEOUT_MINUTES=18
           KIND_LOAD_TIMEOUT_MINUTES=20
 
           if run_with_progress "Docker build" "${BUILD_TIMEOUT_MINUTES}" env DOCKER_BUILDKIT=1 docker build \
@@ -469,6 +472,9 @@ jobs:
             -t "${IMAGE}" \
             --build-arg "JANGAR_VERSION=${JANGAR_VERSION}" \
             --build-arg "JANGAR_COMMIT=${JANGAR_COMMIT}" \
+            --build-arg "JANGAR_BUILD_CI=true" \
+            --build-arg "JANGAR_BUILD_SOURCEMAP=0" \
+            --build-arg "JANGAR_BUILD_LOG_LEVEL=warn" \
             --build-arg "BUN_BASE_IMAGE=docker.io/oven/bun" \
             --progress=plain \
             "${PRUNE_DIR}"; then
