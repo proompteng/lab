@@ -1,20 +1,14 @@
-version: '3.8'
 services:
-  nginx-proxy-manager:
-    image: jc21/nginx-proxy-manager:latest
+  app:
+    image: 'jc21/nginx-proxy-manager:latest'
+    environment:
+      PUID: 1000
+      PGID: 1000
     restart: unless-stopped
     ports:
       - '80:80'
       - '81:81'
       - '443:443'
-    environment:
-      DB_SQLITE_FILE: '/data/database.sqlite'
-      DISABLE_IPV6: 'true'
     volumes:
       - ./data:/data
       - ./letsencrypt:/etc/letsencrypt
-    networks:
-      - proxy
-networks:
-  proxy:
-    external: true
