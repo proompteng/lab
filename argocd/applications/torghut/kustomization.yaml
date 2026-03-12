@@ -12,6 +12,7 @@ resources:
   - knative-service.yaml
   - knative-service-sim.yaml
   - tailscale-service.yaml
+  - ingressroute-flink-k8s-private.yaml
   - sealed-secrets.yaml
   - rook-ceph-rgw-argo-workflows-sealedsecret.yaml
   - serviceaccount.yaml

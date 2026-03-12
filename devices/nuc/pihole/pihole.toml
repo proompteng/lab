@@ -43,6 +43,13 @@ cnameRecords = [
   'argocd.lan,kube.lan',
   'grafana.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
   'argocd.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'ceph.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'jangar.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'workflows.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'feature-flags.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'flink.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'headlamp.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'kafka-ui.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
 ]
 localise = true
 

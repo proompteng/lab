@@ -32,6 +32,7 @@ resources:
   - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.50.0/install/cluster-operator/060-Deployment-strimzi-cluster-operator.yaml
   - strimzi-operator-watched-crb.yaml
   - load-balancer.yaml
+  - ingressroute-kafka-ui-k8s-private.yaml
   - strimzi-kafka-cluster.yaml
   - kafka-codex-username-secret.yaml
   - karapace.yaml

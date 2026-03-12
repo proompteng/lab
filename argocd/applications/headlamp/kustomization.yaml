@@ -4,6 +4,7 @@ namespace: headlamp
 resources:
   - headlamp-oidc-rbac.yaml
   - headlamp-oidc-sealedsecret.yaml
+  - ingressroute-headlamp-k8s-private.yaml
 helmCharts:
   - name: headlamp
     repo: https://kubernetes-sigs.github.io/headlamp

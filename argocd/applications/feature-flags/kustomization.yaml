@@ -4,6 +4,7 @@ namespace: feature-flags
 
 resources:
   - tailscale-service.yaml
+  - ingressroute-feature-flags-k8s-private.yaml
 
 helmCharts:
   - name: flipt-v2
