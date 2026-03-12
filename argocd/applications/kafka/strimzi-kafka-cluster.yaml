@@ -75,6 +75,26 @@ spec:
   replicas: 3
   roles:
     - broker
+  template:
+    pod:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  strimzi.io/cluster: kafka
+                  strimzi.io/name: kafka-kafka
+                  strimzi.io/pool-name: pool-b
+              topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              strimzi.io/cluster: kafka
+              strimzi.io/name: kafka-kafka
+              strimzi.io/pool-name: pool-b
   resources:
     requests:
       cpu: '2000m'
