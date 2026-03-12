@@ -64,6 +64,7 @@
     "convex:reseal": "bun run packages/scripts/src/convex/reseal-secrets.ts",
     "build:torghut": "bun run packages/scripts/src/torghut/build-image.ts",
     "deploy:torghut-agentruns": "bun run packages/scripts/src/torghut/deploy-agentruns.ts",
+    "whitepapers:replay": "bun run packages/scripts/src/torghut/generate-whitepaper-replay-workflows.ts",
     "build:bumba": "bun run packages/scripts/src/bumba/build-image.ts",
     "deploy:torghut": "bun run packages/scripts/src/torghut/deploy-service.ts",
     "bumba:deploy": "bun run packages/scripts/src/bumba/deploy-service.ts",

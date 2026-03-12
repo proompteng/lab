@@ -4,7 +4,7 @@ metadata:
   name: codex-whitepaper-agent
 spec:
   providerRef:
-    name: codex-spark
+    name: codex-spark-whitepaper
   defaults:
     systemPromptRef:
       kind: ConfigMap

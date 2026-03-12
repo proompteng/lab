@@ -101,6 +101,10 @@ spec:
                   name: github-token
                   key: token
                   optional: true
+            - name: JANGAR_WHITEPAPER_OUTPUT_FETCH_ATTEMPTS
+              value: "12"
+            - name: JANGAR_WHITEPAPER_OUTPUT_FETCH_DELAY_MS
+              value: "5000"
             - name: JANGAR_CODEX_REVIEWERS
               value: codex,codex[bot],chatgpt-codex-connector,chatgpt-codex-connector[bot],gregkonush
             - name: JANGAR_CI_EVENT_STREAM_ENABLED

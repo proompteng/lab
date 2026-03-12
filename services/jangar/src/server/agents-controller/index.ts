@@ -96,6 +96,8 @@ const DEFAULT_WHITEPAPER_FINALIZE_BASE_URL = 'http://torghut.torghut.svc.cluster
 const DEFAULT_SERVICE_ACCOUNT_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token'
 const DEFAULT_GITHUB_API_BASE_URL = 'https://api.github.com'
 const WHITEPAPER_FINALIZE_TIMEOUT_MS = 15_000
+const DEFAULT_WHITEPAPER_OUTPUT_FETCH_ATTEMPTS = 12
+const DEFAULT_WHITEPAPER_OUTPUT_FETCH_DELAY_MS = 5_000
 
 const BASE_REQUIRED_CRDS = [
   'agents.agents.proompteng.ai',
@@ -371,6 +373,14 @@ const parseRepositoryParts = (repository: string) => {
 
 const whitepaperFinalizeEnabled = () => parseBooleanEnv(process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED, true)
 
+const resolveWhitepaperOutputFetchAttempts = () =>
+  parseNumberEnv(process.env.JANGAR_WHITEPAPER_OUTPUT_FETCH_ATTEMPTS, DEFAULT_WHITEPAPER_OUTPUT_FETCH_ATTEMPTS, 1)
+
+const resolveWhitepaperOutputFetchDelayMs = () =>
+  parseNumberEnv(process.env.JANGAR_WHITEPAPER_OUTPUT_FETCH_DELAY_MS, DEFAULT_WHITEPAPER_OUTPUT_FETCH_DELAY_MS, 0)
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
 const resolveWhitepaperFinalizeBaseUrl = () => {
   const fromEnv = asString(process.env.JANGAR_WHITEPAPER_FINALIZE_BASE_URL)?.trim()
   if (fromEnv) return fromEnv
@@ -422,14 +432,94 @@ const buildWhitepaperArtifactPayloads = (rawArtifacts: unknown) => {
   return payloads
 }
 
+type WhitepaperOutputBranchResult =
+  | {
+      status: 'success'
+      synthesis: Record<string, unknown>
+      verdict: Record<string, unknown>
+      github: ReturnType<typeof createGitHubClient>
+    }
+  | {
+      status: 'missing_token' | 'not_found' | 'invalid_json'
+      detail: string | null
+    }
+  | {
+      status: 'fetch_error'
+      retryable: boolean
+      detail: string | null
+    }
+
+type WhitepaperOutputsResult =
+  | {
+      ok: true
+      branch: string
+      synthesis: Record<string, unknown>
+      verdict: Record<string, unknown>
+      designPullRequest: Record<string, unknown> | null
+    }
+  | {
+      ok: false
+      failureReason: string
+      detail: string | null
+    }
+
+const collectErrorMessages = (error: unknown, seen = new Set<unknown>()): string[] => {
+  if (error == null || seen.has(error)) return []
+  if (typeof error === 'string') return error.trim() ? [error.trim()] : []
+  if (typeof error !== 'object') return []
+
+  seen.add(error)
+  const messages: string[] = []
+  const record = error as Record<string, unknown>
+  const message = typeof record.message === 'string' ? record.message.trim() : ''
+  if (message) messages.push(message)
+
+  if (record.cause) {
+    messages.push(...collectErrorMessages(record.cause, seen))
+  }
+  if (record.error) {
+    messages.push(...collectErrorMessages(record.error, seen))
+  }
+
+  return messages
+}
+
+const summarizeErrorMessage = (error: unknown) => {
+  const messages = collectErrorMessages(error)
+  return messages[0] ?? (error instanceof Error ? error.toString() : String(error))
+}
+
+const parseGitHubStatusCode = (error: unknown) => {
+  for (const message of collectErrorMessages(error)) {
+    const match = message.match(/GitHub API (\d{3})\b/)
+    if (!match) continue
+    const status = Number.parseInt(match[1] ?? '', 10)
+    if (Number.isFinite(status)) return status
+  }
+  return null
+}
+
+const isRetryableGitHubStatusCode = (statusCode: number | null) => {
+  if (statusCode == null) return true
+  if (statusCode === 408 || statusCode === 409 || statusCode === 423 || statusCode === 425 || statusCode === 429) {
+    return true
+  }
+  return statusCode >= 500
+}
+
 const fetchWhitepaperOutputFromBranch = async (input: {
   owner: string
   repo: string
   branch: string
   runId: string
-}) => {
+}): Promise<WhitepaperOutputBranchResult> => {
   const githubToken = asString(process.env.GITHUB_TOKEN)?.trim() || asString(process.env.GH_TOKEN)?.trim() || null
-  if (!githubToken) return null
+  if (!githubToken) {
+    return {
+      status: 'missing_token',
+      detail: 'GITHUB_TOKEN or GH_TOKEN is required to fetch whitepaper outputs from GitHub',
+    }
+  }
   const githubApiBaseUrl = asString(process.env.GITHUB_API_BASE_URL)?.trim() || DEFAULT_GITHUB_API_BASE_URL
   const github = createGitHubClient({
     token: githubToken,
@@ -443,10 +533,26 @@ const fetchWhitepaperOutputFromBranch = async (input: {
     ])
     const synthesis = safeParseJsonRecord(synthesisFile.content)
     const verdict = safeParseJsonRecord(verdictFile.content)
-    if (!synthesis || !verdict) return null
-    return { synthesis, verdict, github }
-  } catch {
-    return null
+    if (!synthesis || !verdict) {
+      return {
+        status: 'invalid_json',
+        detail: `whitepaper outputs on ${input.branch} are not valid JSON objects`,
+      }
+    }
+    return { status: 'success', synthesis, verdict, github }
+  } catch (error) {
+    const statusCode = parseGitHubStatusCode(error)
+    if (statusCode === 404) {
+      return {
+        status: 'not_found',
+        detail: summarizeErrorMessage(error),
+      }
+    }
+    return {
+      status: 'fetch_error',
+      retryable: isRetryableGitHubStatusCode(statusCode),
+      detail: summarizeErrorMessage(error),
+    }
   }
 }
 
@@ -455,51 +561,135 @@ const fetchWhitepaperOutputs = async (input: {
   runId: string
   headBranch: string
   baseBranch: string
-}) => {
+}): Promise<WhitepaperOutputsResult> => {
   const parts = parseRepositoryParts(input.repository)
-  if (!parts) return null
+  if (!parts) {
+    return {
+      ok: false,
+      failureReason: 'whitepaper_repository_invalid',
+      detail: `repository must be in owner/repo form, got "${input.repository}"`,
+    }
+  }
   const branchCandidates = [input.headBranch, input.baseBranch, 'main']
     .map((branch) => normalizeGitBranch(branch))
     .filter((branch, index, list) => branch.length > 0 && list.indexOf(branch) === index)
-
-  for (const branch of branchCandidates) {
-    const outputs = await fetchWhitepaperOutputFromBranch({
-      owner: parts.owner,
-      repo: parts.repo,
-      branch,
-      runId: input.runId,
-    })
-    if (!outputs) continue
-
-    let designPullRequest: Record<string, unknown> | null = null
-    try {
-      const pullRequest = await outputs.github.getPullRequestByHead(parts.owner, parts.repo, `${parts.owner}:${branch}`)
-      if (pullRequest) {
-        designPullRequest = {
-          status: pullRequest.state === 'open' ? 'opened' : pullRequest.state,
-          repository: input.repository,
-          base_branch: pullRequest.baseRef,
-          head_branch: pullRequest.headRef,
-          pr_number: pullRequest.number,
-          pr_url: pullRequest.htmlUrl,
-          title: pullRequest.title,
-          body: pullRequest.body,
-          commit_sha: pullRequest.headSha,
-        }
-      }
-    } catch {
-      designPullRequest = null
-    }
-
-    return {
-      branch,
-      synthesis: outputs.synthesis,
-      verdict: outputs.verdict,
-      designPullRequest,
-    }
+  const maxAttempts = resolveWhitepaperOutputFetchAttempts()
+  const retryDelayMs = resolveWhitepaperOutputFetchDelayMs()
+  let lastFailure: { failureReason: string; detail: string | null } = {
+    failureReason: 'whitepaper_outputs_missing',
+    detail: null,
   }
 
-  return null
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    let sawRetryableFailure = false
+
+    for (const branch of branchCandidates) {
+      const outputs = await fetchWhitepaperOutputFromBranch({
+        owner: parts.owner,
+        repo: parts.repo,
+        branch,
+        runId: input.runId,
+      })
+      if (outputs.status === 'success') {
+        let designPullRequest: Record<string, unknown> | null = null
+        try {
+          const pullRequest = await outputs.github.getPullRequestByHead(
+            parts.owner,
+            parts.repo,
+            `${parts.owner}:${branch}`,
+          )
+          if (pullRequest) {
+            designPullRequest = {
+              status: pullRequest.state === 'open' ? 'opened' : pullRequest.state,
+              repository: input.repository,
+              base_branch: pullRequest.baseRef,
+              head_branch: pullRequest.headRef,
+              pr_number: pullRequest.number,
+              pr_url: pullRequest.htmlUrl,
+              title: pullRequest.title,
+              body: pullRequest.body,
+              commit_sha: pullRequest.headSha,
+            }
+          }
+        } catch (error) {
+          logAgentsControllerWarn('whitepaper finalize failed to resolve design PR', {
+            repository: input.repository,
+            runId: input.runId,
+            branch,
+            ...toLogError(error),
+          })
+        }
+
+        return {
+          ok: true,
+          branch,
+          synthesis: outputs.synthesis,
+          verdict: outputs.verdict,
+          designPullRequest,
+        }
+      }
+
+      if (outputs.status === 'missing_token') {
+        return {
+          ok: false,
+          failureReason: 'whitepaper_github_token_missing',
+          detail: outputs.detail,
+        }
+      }
+
+      if (outputs.status === 'invalid_json') {
+        return {
+          ok: false,
+          failureReason: 'whitepaper_output_invalid',
+          detail: outputs.detail,
+        }
+      }
+
+      if (outputs.status === 'fetch_error') {
+        if (!outputs.retryable) {
+          return {
+            ok: false,
+            failureReason: 'whitepaper_output_fetch_failed',
+            detail: outputs.detail,
+          }
+        }
+        sawRetryableFailure = true
+        lastFailure = {
+          failureReason: 'whitepaper_output_fetch_failed',
+          detail: outputs.detail,
+        }
+        continue
+      }
+
+      sawRetryableFailure = true
+      lastFailure = {
+        failureReason: 'whitepaper_outputs_missing',
+        detail: outputs.detail,
+      }
+    }
+
+    if (!sawRetryableFailure || attempt >= maxAttempts) {
+      break
+    }
+
+    logAgentsControllerInfo('whitepaper outputs not visible yet; retrying finalize fetch', {
+      repository: input.repository,
+      runId: input.runId,
+      attempt,
+      maxAttempts,
+      retryDelayMs,
+      headBranch: branchCandidates[0] ?? null,
+      baseBranch: branchCandidates[1] ?? null,
+      detail: lastFailure.detail,
+    })
+    await wait(retryDelayMs)
+  }
+
+  return {
+    ok: false,
+    failureReason: lastFailure.failureReason,
+    detail: lastFailure.detail,
+  }
 }
 
 const postWhitepaperFinalize = async (runId: string, payload: Record<string, unknown>) => {
@@ -581,12 +771,15 @@ const maybeFinalizeWhitepaperRun = async (resource: Record<string, unknown>, nex
     headBranch,
     baseBranch,
   })
-  if (!outputs) {
+  if (!outputs.ok) {
     payload.status = 'failed'
-    payload.failure_reason = 'whitepaper_outputs_missing'
+    payload.failure_reason = outputs.failureReason
     payload.repository = repository
     payload.head_branch = normalizeGitBranch(headBranch)
     payload.base_branch = normalizeGitBranch(baseBranch) || 'main'
+    if (outputs.detail) {
+      payload.failure_detail = outputs.detail
+    }
     await postWhitepaperFinalize(runId, payload)
     return
   }
