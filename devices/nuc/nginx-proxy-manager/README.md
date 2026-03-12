@@ -1,34 +1,49 @@
 # Nginx Proxy Manager (NUC)
 
-Snapshot of the running configuration for the home Nginx Proxy Manager instance. Sensitive artifacts (`data/database.sqlite`, `data/keys.json`, full LetsEncrypt tree) are intentionally excluded; copy them from the live host before running if you need the existing proxy records.
+This directory is a live snapshot of the Docker Compose deployment running on `nuc`
+at `kalmyk@192.168.1.130` in `~/github.com/homelab/nuc/nginx-proxy-manager`.
 
-## Layout
+`nginx-proxy-manager` currently runs in Docker Compose on the host, not in Kubernetes.
 
+## Source of truth
+
+- `docker-compose.yaml` mirrors the live Compose deployment.
+- `settings-export.json` is a generated local export of the live NPM SQLite configuration.
+- `data/nginx/` contains generated nginx config from the live instance for inspection.
+
+Runtime-only or secret-bearing files are intentionally not tracked in Git:
+
+- `data/database.sqlite`
+- `data/keys.json`
+- `data/custom_ssl/`
+- `letsencrypt/`
+- `data/logs/`
+- `settings-export.json`
+
+These are still pulled locally from `nuc` when refreshing the snapshot, but `.gitignore`
+keeps them out of version control.
+
+## Refresh From NUC
+
+```bash
+mv devices/nuc/nginx-proxy-manager devices/nuc/nginx-proxy-manager.pre-sync-$(date +%Y%m%d%H%M%S)
+mkdir -p devices/nuc/nginx-proxy-manager
+ssh kalmyk@192.168.1.130 'cd ~/github.com/homelab/nuc/nginx-proxy-manager && tar --exclude="data/logs" --exclude="npm-config-*.tgz" -czf - .' | tar -xzf - -C devices/nuc/nginx-proxy-manager
+python3 devices/nuc/nginx-proxy-manager/export-settings.py
 ```
-devices/nuc/nginx-proxy-manager/
-├── docker-compose.yaml
-├── data/                  # exported from /data inside the container (sqlite DB, nginx conf, etc.)
-└── .gitignore              # excludes letsencrypt certs and runtime logs
-```
 
-`data/letsencrypt-acme-challenge/` is retained so HTTP challenges work when the container recreates certificates. The `letsencrypt/` directory is intentionally ignored—place the real certs there out-of-band.
-
-## Refreshing the snapshot
+## Run on NUC
 
 ```bash
 ssh kalmyk@192.168.1.130
 cd ~/github.com/homelab/nuc/nginx-proxy-manager
- tar czf npm-config-$(date +%Y%m%d).tgz docker-compose.yml data
-scp kalmyk@192.168.1.130:~/github.com/homelab/nuc/nginx-proxy-manager/npm-config-YYYYMMDD.tgz .
+docker compose up -d
+docker compose ps
 ```
 
-On your workstation:
+## Notes
 
-```bash
-rm -rf devices/nuc/nginx-proxy-manager
-mkdir -p devices/nuc/nginx-proxy-manager
- tar xzf npm-config-YYYYMMDD.tgz -C devices/nuc/nginx-proxy-manager --strip-components=0
-rm -rf devices/nuc/nginx-proxy-manager/data/logs devices/nuc/nginx-proxy-manager/letsencrypt
-```
-
-Commit the updated `docker-compose.yaml` and `data/` contents; keep certificates out of Git.
+- The live admin user is not the default `admin@example.com` bootstrap user anymore.
+- `settings-export.json` is useful for local inspection, but it should not be committed.
+- To fully recreate the live instance byte-for-byte, you would also need the ignored DB,
+  encryption key, and certificate material.

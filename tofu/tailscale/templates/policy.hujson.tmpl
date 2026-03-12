@@ -50,8 +50,8 @@
   // intervention is required when k3s nodes rejoin or scale out.
   "autoApprovers": {
     "routes": {
-      "10.42.0.0/16": ["tag:kube-node"],
-      "10.43.0.0/16": ["tag:kube-node"]
+      "10.244.0.0/16": ["tag:kube-node"],
+      "10.96.0.0/12": ["tag:kube-node"]
     }
   }
 }
