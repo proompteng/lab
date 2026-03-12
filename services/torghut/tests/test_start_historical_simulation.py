@@ -10,7 +10,6 @@ from unittest import TestCase
 from unittest.mock import patch
 
 import yaml
-
 from scripts import historical_simulation_verification, start_historical_simulation
 from scripts.start_historical_simulation import (
     ArgocdAutomationConfig,
@@ -4286,7 +4285,6 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(report['analysis_images']['reason'], 'ok')
         kubectl_calls = [call.args[1][2] for call in kubectl_json.call_args_list[2:]]
         self.assertEqual(kubectl_calls, ['torghut-runtime-ready-v1', 'torghut-sim-activity-v1'])
-
     def test_build_argocd_automation_config_defaults(self) -> None:
         config = _build_argocd_automation_config({})
         self.assertFalse(config.manage_automation)
