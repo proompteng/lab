@@ -2,50 +2,58 @@
 
 - Run ID: `wp-d3cdc094c8e3184af629999a`
 - Repository: `proompteng/lab`
-- Issue URL: `https://github.com/proompteng/lab/issues/42`
+- Issue: `https://github.com/proompteng/lab/issues/42`
 - Primary PDF URL: `https://github.com/user-attachments/files/12345/sample-paper.pdf`
 - Ceph Object URI: `s3://torghut-whitepapers/raw/checksum/b5/b5d4c2daa152f53c02621a70601b11dc5b4aecbda1cc3f5962bc5f7f491bad40/source.pdf`
-- Evaluation timestamp (UTC): `2026-02-27T08:32:14Z`
+- Analysis mode: `implementation`
+- Evaluation timestamp (UTC): `2026-03-12T07:06:22Z`
 
 ## Decision
 
 `blocked` at stage `source_acquisition`.
 
-The whitepaper source could not be retrieved, so full end-to-end paper reading is impossible. Because requirement (1) is unmet, no evidence-backed implementation analysis can be produced.
+The required source PDF cannot be deterministically retrieved from any authoritative run artifact path currently reachable, so end-to-end paper reading is not possible. No evidence-backed implementation plan can be produced from the paper body.
 
 ## Evidence Log
 
-1. Primary PDF URL is not retrievable:
-   - Command: `curl -L --fail --silent --show-error "https://github.com/user-attachments/files/12345/sample-paper.pdf" -o /tmp/.../source-primary.pdf`
-   - Result: `curl: (22) The requested URL returned error: 404`
-2. Ceph object retrieval is not possible in this workspace:
-   - `aws s3 cp` is unavailable.
-   - No whitepaper Ceph credentials are present in environment variables (`WHITEPAPER_CEPH_*`, `AWS_*`, `MINIO_*` not set).
-   - Kubernetes RBAC for this pod (`system:serviceaccount:agents:default`) cannot read `torghut` namespace secrets/configmaps needed to resolve object store host/keys.
-3. Run lookup does not resolve:
-   - `GET http://torghut.torghut.svc.cluster.local/whitepapers/runs/wp-d3cdc094c8e3184af629999a` returns `{"detail":"whitepaper_run_not_found"}`.
-   - `GET http://jangar.jangar.svc.cluster.local/api/whitepapers/wp-d3cdc094c8e3184af629999a` returns `404` with `{"ok":false,"message":"whitepaper run not found"}`.
-4. Issue context does not contain analyzable paper metadata:
-   - `gh issue view 42 -R proompteng/lab` resolves to merged PR metadata (`✨ Update targetRevision to 'main' in argo-cd.yaml`) with empty body.
+1. Input lineage is inconsistent:
+   - `curl -s https://api.github.com/repos/proompteng/lab/issues/42`
+   - Result resolves to PR payload (`html_url: https://github.com/proompteng/lab/pull/42`, empty body), not a whitepaper issue payload.
+2. Primary PDF URL is unavailable:
+   - `curl -L --fail --silent --show-error "https://github.com/user-attachments/files/12345/sample-paper.pdf" -o /tmp/source-primary.pdf`
+   - Result: HTTP `404` response.
+3. Direct run lookup does not resolve:
+   - `GET http://torghut.torghut.svc.cluster.local/whitepapers/runs/wp-d3cdc094c8e3184af629999a` -> `404 {"detail":"whitepaper_run_not_found"}`.
+4. Jangar detail endpoint does not resolve:
+   - `GET http://jangar.jangar.svc.cluster.local/api/whitepapers/wp-d3cdc094c8e3184af629999a` -> `404 {"ok":false,"message":"whitepaper run not found"}`.
+5. Run is not discoverable in the active Jangar index:
+   - `GET http://jangar.jangar.svc.cluster.local/api/whitepapers/?limit=20&offset=0`
+   - Returned 4 runs, none with this run ID; run list appears to contain only current/recent synthetic IDs.
+6. Ceph source cannot be fetched in this runtime:
+   - `env | rg -n "(WHITEPAPER_CEPH|WHITEPAPER|MINIO|AWS_|S3)"` shows only `cephUri=` pointing to the target key and no usable endpoint/access key/secret.
+   - `kubectl` read against `torghut` namespace configmaps is forbidden for this service account.
 
-## Assumptions
+## Reproduction Checks
 
-1. The provided PDF URL (`sample-paper.pdf`) and issue reference are placeholders or stale.
-2. The run may not have been ingested into Torghut, or it was never persisted in the currently reachable environment.
+1. Torghut health: `GET /whitepapers/status` confirms workflow service is up and reachable.
+2. Jangar health: `GET /` serves UI and `/api/whitepapers/wp-...` returns deterministic JSON failure responses as noted.
+3. All subsequent evidence checks were executed from this environment with fixed inputs.
 
-## Impact
+## Impact and Rationale
 
-1. Full-paper review cannot be completed.
-2. Section/claim-level citations from the whitepaper cannot be produced.
-3. Any implementation recommendation would be speculative and non-auditable.
+1. Full text, section, and claim extraction from the paper is not possible.
+2. `synthesis.json` and `verdict.json` must remain in evidence-blocked mode.
+3. Any implementation guidance that cites paper sections would be non-deterministic and unverifiable.
 
-## Smallest Unblocker
+## Smallest Unblockers
 
-Provide one valid, accessible source artifact:
+Provide exactly one valid source access path for this run:
 
-1. A working PDF URL for this run, or
-2. A temporary signed HTTPS URL for the Ceph object key `raw/checksum/b5/b5d4c2daa152f53c02621a70601b11dc5b4aecbda1cc3f5962bc5f7f491bad40/source.pdf`, or
-3. A reachable Torghut/Jangar run record (`wp-d3cdc094c8e3184af629999a`) whose `/pdf` endpoint streams the source.
+1. A working direct PDF URL for `wp-d3cdc094c8e3184af629999a`.
+2. A temporary signed HTTPS URL for the exact Ceph object key.
+3. A reachable `whitepaper_run` in Torghut/Jangar including a resolvable `/pdf` stream.
+
+Once one unblocker is available, rerun deterministic end-to-end ingestion and produce a non-blocking synthesis.
 
 ## Resume Plan Once Unblocked
 
