@@ -611,7 +611,7 @@ describe('whitepaper finalize callback', () => {
     const kube = buildKube()
     const synthesis = { run_id: 'wp-abc123', executive_summary: 'summary' }
     const verdict = { run_id: 'wp-abc123', verdict: 'conditional_implement', confidence: 0.81 }
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.includes('/contents/docs%2Fwhitepapers%2Fwp-abc123%2Fsynthesis.json')) {
         return new Response(
@@ -730,6 +730,366 @@ describe('whitepaper finalize callback', () => {
         repository: 'proompteng/lab',
       }),
     )
+  })
+
+  it('retries whitepaper output fetches before reporting outputs missing', async () => {
+    const kube = buildKube()
+    const synthesis = { run_id: 'wp-retry', executive_summary: 'summary' }
+    const verdict = { run_id: 'wp-retry', verdict: 'conditional_implement', confidence: 0.74 }
+    let synthesisAttempts = 0
+    let verdictAttempts = 0
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      const synthesisPath = '/contents/docs%2Fwhitepapers%2Fwp-retry%2Fsynthesis.json'
+      const verdictPath = '/contents/docs%2Fwhitepapers%2Fwp-retry%2Fverdict.json'
+      if (url.includes(`${synthesisPath}?ref=codex-whitepaper-retry`)) {
+        synthesisAttempts += 1
+        if (synthesisAttempts === 1) {
+          return new Response('not found', { status: 404 })
+        }
+        return new Response(
+          JSON.stringify({
+            content: encodeBase64(JSON.stringify(synthesis)),
+            sha: 'sha-synth',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )
+      }
+      if (url.includes(synthesisPath)) {
+        return new Response('not found', { status: 404 })
+      }
+      if (url.includes(`${verdictPath}?ref=codex-whitepaper-retry`)) {
+        verdictAttempts += 1
+        if (verdictAttempts === 1) {
+          return new Response('not found', { status: 404 })
+        }
+        return new Response(
+          JSON.stringify({
+            content: encodeBase64(JSON.stringify(verdict)),
+            sha: 'sha-verdict',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )
+      }
+      if (url.includes(verdictPath)) {
+        return new Response('not found', { status: 404 })
+      }
+      if (url.includes('/pulls?head=proompteng%3Acodex-whitepaper-retry')) {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (url === 'http://torghut.local/whitepapers/runs/wp-retry/finalize') {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return new Response('not found', { status: 404 })
+    })
+
+    const previousFetch = globalThis.fetch
+    const previousGithubToken = process.env.GITHUB_TOKEN
+    const previousFinalizeBaseUrl = process.env.JANGAR_WHITEPAPER_FINALIZE_BASE_URL
+    const previousFinalizeToken = process.env.JANGAR_WHITEPAPER_FINALIZE_TOKEN
+    const previousFinalizeEnabled = process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED
+    const previousAttempts = process.env.JANGAR_WHITEPAPER_OUTPUT_FETCH_ATTEMPTS
+    const previousDelayMs = process.env.JANGAR_WHITEPAPER_OUTPUT_FETCH_DELAY_MS
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+    process.env.GITHUB_TOKEN = 'github-token'
+    process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED = 'true'
+    process.env.JANGAR_WHITEPAPER_FINALIZE_BASE_URL = 'http://torghut.local'
+    process.env.JANGAR_WHITEPAPER_FINALIZE_TOKEN = 'whitepaper-token'
+    process.env.JANGAR_WHITEPAPER_OUTPUT_FETCH_ATTEMPTS = '2'
+    process.env.JANGAR_WHITEPAPER_OUTPUT_FETCH_DELAY_MS = '0'
+
+    try {
+      const agentRun = buildAgentRun({
+        spec: {
+          agentRef: { name: 'agent-1' },
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: { type: 'job', config: {} },
+          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+          parameters: {
+            runId: 'wp-retry',
+            repository: 'proompteng/lab',
+            head: 'codex-whitepaper-retry',
+            base: 'main',
+          },
+        },
+        status: { phase: 'Running' },
+      })
+
+      await __test.setStatus(kube as never, agentRun, {
+        phase: 'Succeeded',
+        runtimeRef: { type: 'job', name: 'job-1', namespace: 'agents' },
+      })
+    } finally {
+      globalThis.fetch = previousFetch
+      if (previousGithubToken === undefined) {
+        delete process.env.GITHUB_TOKEN
+      } else {
+        process.env.GITHUB_TOKEN = previousGithubToken
+      }
+      if (previousFinalizeBaseUrl === undefined) {
+        delete process.env.JANGAR_WHITEPAPER_FINALIZE_BASE_URL
+      } else {
+        process.env.JANGAR_WHITEPAPER_FINALIZE_BASE_URL = previousFinalizeBaseUrl
+      }
+      if (previousFinalizeToken === undefined) {
+        delete process.env.JANGAR_WHITEPAPER_FINALIZE_TOKEN
+      } else {
+        process.env.JANGAR_WHITEPAPER_FINALIZE_TOKEN = previousFinalizeToken
+      }
+      if (previousFinalizeEnabled === undefined) {
+        delete process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED
+      } else {
+        process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED = previousFinalizeEnabled
+      }
+      if (previousAttempts === undefined) {
+        delete process.env.JANGAR_WHITEPAPER_OUTPUT_FETCH_ATTEMPTS
+      } else {
+        process.env.JANGAR_WHITEPAPER_OUTPUT_FETCH_ATTEMPTS = previousAttempts
+      }
+      if (previousDelayMs === undefined) {
+        delete process.env.JANGAR_WHITEPAPER_OUTPUT_FETCH_DELAY_MS
+      } else {
+        process.env.JANGAR_WHITEPAPER_OUTPUT_FETCH_DELAY_MS = previousDelayMs
+      }
+    }
+
+    expect(synthesisAttempts).toBe(2)
+    expect(verdictAttempts).toBe(2)
+    const finalizeCall = fetchMock.mock.calls.find((call) =>
+      String(call[0]).includes('/whitepapers/runs/wp-retry/finalize'),
+    )
+    expect(finalizeCall).toBeDefined()
+    const [, init] = finalizeCall as unknown as [RequestInfo | URL, RequestInit]
+    const finalizePayload = JSON.parse(String(init.body)) as Record<string, unknown>
+    expect(finalizePayload.status).toBe('completed')
+    expect(finalizePayload.head_branch).toBe('codex-whitepaper-retry')
+    expect(finalizePayload.synthesis).toEqual(synthesis)
+    expect(finalizePayload.verdict).toEqual(verdict)
+  })
+
+  it('retries transient GitHub fetch failures before finalizing whitepaper outputs', async () => {
+    const kube = buildKube()
+    const synthesis = { run_id: 'wp-github-retry', executive_summary: 'summary' }
+    const verdict = { run_id: 'wp-github-retry', verdict: 'implement', confidence: 0.92 }
+    let synthesisAttempts = 0
+    let verdictAttempts = 0
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/contents/docs%2Fwhitepapers%2Fwp-github-retry%2Fsynthesis.json')) {
+        synthesisAttempts += 1
+        if (synthesisAttempts === 1) {
+          return new Response('github unavailable', { status: 503 })
+        }
+        return new Response(
+          JSON.stringify({
+            content: encodeBase64(JSON.stringify(synthesis)),
+            sha: 'sha-synth',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )
+      }
+      if (url.includes('/contents/docs%2Fwhitepapers%2Fwp-github-retry%2Fverdict.json')) {
+        verdictAttempts += 1
+        if (verdictAttempts === 1) {
+          return new Response('github unavailable', { status: 503 })
+        }
+        return new Response(
+          JSON.stringify({
+            content: encodeBase64(JSON.stringify(verdict)),
+            sha: 'sha-verdict',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )
+      }
+      if (url.includes('/pulls?head=proompteng%3Acodex-whitepaper-github-retry')) {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (url === 'http://torghut.local/whitepapers/runs/wp-github-retry/finalize') {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return new Response('not found', { status: 404 })
+    })
+
+    const previousFetch = globalThis.fetch
+    const previousGithubToken = process.env.GITHUB_TOKEN
+    const previousFinalizeBaseUrl = process.env.JANGAR_WHITEPAPER_FINALIZE_BASE_URL
+    const previousFinalizeToken = process.env.JANGAR_WHITEPAPER_FINALIZE_TOKEN
+    const previousFinalizeEnabled = process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED
+    const previousAttempts = process.env.JANGAR_WHITEPAPER_OUTPUT_FETCH_ATTEMPTS
+    const previousDelayMs = process.env.JANGAR_WHITEPAPER_OUTPUT_FETCH_DELAY_MS
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+    process.env.GITHUB_TOKEN = 'github-token'
+    process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED = 'true'
+    process.env.JANGAR_WHITEPAPER_FINALIZE_BASE_URL = 'http://torghut.local'
+    process.env.JANGAR_WHITEPAPER_FINALIZE_TOKEN = 'whitepaper-token'
+    process.env.JANGAR_WHITEPAPER_OUTPUT_FETCH_ATTEMPTS = '2'
+    process.env.JANGAR_WHITEPAPER_OUTPUT_FETCH_DELAY_MS = '0'
+
+    try {
+      const agentRun = buildAgentRun({
+        spec: {
+          agentRef: { name: 'agent-1' },
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: { type: 'job', config: {} },
+          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+          parameters: {
+            runId: 'wp-github-retry',
+            repository: 'proompteng/lab',
+            head: 'codex-whitepaper-github-retry',
+            base: 'main',
+          },
+        },
+        status: { phase: 'Running' },
+      })
+
+      await __test.setStatus(kube as never, agentRun, {
+        phase: 'Succeeded',
+        runtimeRef: { type: 'job', name: 'job-1', namespace: 'agents' },
+      })
+    } finally {
+      globalThis.fetch = previousFetch
+      if (previousGithubToken === undefined) {
+        delete process.env.GITHUB_TOKEN
+      } else {
+        process.env.GITHUB_TOKEN = previousGithubToken
+      }
+      if (previousFinalizeBaseUrl === undefined) {
+        delete process.env.JANGAR_WHITEPAPER_FINALIZE_BASE_URL
+      } else {
+        process.env.JANGAR_WHITEPAPER_FINALIZE_BASE_URL = previousFinalizeBaseUrl
+      }
+      if (previousFinalizeToken === undefined) {
+        delete process.env.JANGAR_WHITEPAPER_FINALIZE_TOKEN
+      } else {
+        process.env.JANGAR_WHITEPAPER_FINALIZE_TOKEN = previousFinalizeToken
+      }
+      if (previousFinalizeEnabled === undefined) {
+        delete process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED
+      } else {
+        process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED = previousFinalizeEnabled
+      }
+      if (previousAttempts === undefined) {
+        delete process.env.JANGAR_WHITEPAPER_OUTPUT_FETCH_ATTEMPTS
+      } else {
+        process.env.JANGAR_WHITEPAPER_OUTPUT_FETCH_ATTEMPTS = previousAttempts
+      }
+      if (previousDelayMs === undefined) {
+        delete process.env.JANGAR_WHITEPAPER_OUTPUT_FETCH_DELAY_MS
+      } else {
+        process.env.JANGAR_WHITEPAPER_OUTPUT_FETCH_DELAY_MS = previousDelayMs
+      }
+    }
+
+    expect(synthesisAttempts).toBe(2)
+    expect(verdictAttempts).toBe(2)
+    const finalizeCall = fetchMock.mock.calls.find((call) =>
+      String(call[0]).includes('/whitepapers/runs/wp-github-retry/finalize'),
+    )
+    expect(finalizeCall).toBeDefined()
+    const [, init] = finalizeCall as unknown as [RequestInfo | URL, RequestInit]
+    const finalizePayload = JSON.parse(String(init.body)) as Record<string, unknown>
+    expect(finalizePayload.status).toBe('completed')
+    expect(finalizePayload.synthesis).toEqual(synthesis)
+    expect(finalizePayload.verdict).toEqual(verdict)
+  })
+
+  it('reports missing GitHub credentials explicitly for successful whitepaper runs', async () => {
+    const kube = buildKube()
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === 'http://torghut.local/whitepapers/runs/wp-no-token/finalize') {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return new Response('not found', { status: 404 })
+    })
+
+    const previousFetch = globalThis.fetch
+    const previousGithubToken = process.env.GITHUB_TOKEN
+    const previousGhToken = process.env.GH_TOKEN
+    const previousFinalizeBaseUrl = process.env.JANGAR_WHITEPAPER_FINALIZE_BASE_URL
+    const previousFinalizeToken = process.env.JANGAR_WHITEPAPER_FINALIZE_TOKEN
+    const previousFinalizeEnabled = process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+    delete process.env.GITHUB_TOKEN
+    delete process.env.GH_TOKEN
+    process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED = 'true'
+    process.env.JANGAR_WHITEPAPER_FINALIZE_BASE_URL = 'http://torghut.local'
+    process.env.JANGAR_WHITEPAPER_FINALIZE_TOKEN = 'whitepaper-token'
+
+    try {
+      const agentRun = buildAgentRun({
+        spec: {
+          agentRef: { name: 'agent-1' },
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: { type: 'job', config: {} },
+          workload: { image: 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl' },
+          parameters: {
+            runId: 'wp-no-token',
+            repository: 'proompteng/lab',
+            head: 'codex-whitepaper-no-token',
+            base: 'main',
+          },
+        },
+        status: { phase: 'Running' },
+      })
+
+      await __test.setStatus(kube as never, agentRun, {
+        phase: 'Succeeded',
+        runtimeRef: { type: 'job', name: 'job-1', namespace: 'agents' },
+      })
+    } finally {
+      globalThis.fetch = previousFetch
+      if (previousGithubToken === undefined) {
+        delete process.env.GITHUB_TOKEN
+      } else {
+        process.env.GITHUB_TOKEN = previousGithubToken
+      }
+      if (previousGhToken === undefined) {
+        delete process.env.GH_TOKEN
+      } else {
+        process.env.GH_TOKEN = previousGhToken
+      }
+      if (previousFinalizeBaseUrl === undefined) {
+        delete process.env.JANGAR_WHITEPAPER_FINALIZE_BASE_URL
+      } else {
+        process.env.JANGAR_WHITEPAPER_FINALIZE_BASE_URL = previousFinalizeBaseUrl
+      }
+      if (previousFinalizeToken === undefined) {
+        delete process.env.JANGAR_WHITEPAPER_FINALIZE_TOKEN
+      } else {
+        process.env.JANGAR_WHITEPAPER_FINALIZE_TOKEN = previousFinalizeToken
+      }
+      if (previousFinalizeEnabled === undefined) {
+        delete process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED
+      } else {
+        process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED = previousFinalizeEnabled
+      }
+    }
+
+    const finalizeCall = fetchMock.mock.calls.find((call) =>
+      String(call[0]).includes('/whitepapers/runs/wp-no-token/finalize'),
+    )
+    expect(finalizeCall).toBeDefined()
+    const [, init] = finalizeCall as unknown as [RequestInfo | URL, RequestInit]
+    const finalizePayload = JSON.parse(String(init.body)) as Record<string, unknown>
+    expect(finalizePayload.status).toBe('failed')
+    expect(finalizePayload.failure_reason).toBe('whitepaper_github_token_missing')
+    expect(finalizePayload.failure_detail).toContain('GITHUB_TOKEN')
   })
 
   it('uses service account token fallback when finalize token is not set', async () => {

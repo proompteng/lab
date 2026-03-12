@@ -20,6 +20,7 @@ resources:
   - codex-spark-smoke-implspec.yaml
   - codex-whitepaper-secretbinding.yaml
   - codex-whitepaper-agent.yaml
+  - codex-spark-whitepaper-agentprovider.yaml
   - codex-agentprovider.yaml
   - codex-spark-agentprovider.yaml
   - torghut-market-context-agentprovider.yaml

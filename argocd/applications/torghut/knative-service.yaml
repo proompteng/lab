@@ -296,6 +296,10 @@ spec:
                 secretKeyRef:
                   name: torghut-whitepapers
                   key: AWS_SECRET_ACCESS_KEY
+            - name: WHITEPAPER_CEPH_CONFIG_DIR
+              value: /etc/torghut/whitepapers-config
+            - name: WHITEPAPER_CEPH_SECRET_DIR
+              value: /etc/torghut/whitepapers-secret
             - name: WHITEPAPER_AGENTRUN_AUTO_DISPATCH
               value: "true"
             - name: WHITEPAPER_AGENTRUN_NAMESPACE
@@ -493,6 +497,12 @@ spec:
             - name: autonomy-gate-policy
               mountPath: /etc/torghut/autonomy
               readOnly: true
+            - name: whitepapers-config
+              mountPath: /etc/torghut/whitepapers-config
+              readOnly: true
+            - name: whitepapers-secret
+              mountPath: /etc/torghut/whitepapers-secret
+              readOnly: true
       volumes:
         - name: strategy-config
           configMap:
@@ -500,3 +510,9 @@ spec:
         - name: autonomy-gate-policy
           configMap:
             name: torghut-autonomy-gate-policy
+        - name: whitepapers-config
+          configMap:
+            name: torghut-whitepapers
+        - name: whitepapers-secret
+          secret:
+            secretName: torghut-whitepapers
