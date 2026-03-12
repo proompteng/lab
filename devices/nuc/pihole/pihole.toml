@@ -41,6 +41,8 @@ cnameRecords = [
   'registry.lan,kube.lan',
   'npm.lan,kube.lan',
   'argocd.lan,kube.lan',
+  'grafana.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'argocd.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
 ]
 localise = true
 

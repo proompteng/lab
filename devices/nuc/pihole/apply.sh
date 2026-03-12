@@ -14,6 +14,10 @@ tailscale_interface="${TAILSCALE_INTERFACE:-tailscale0}"
 lan_cidr="${LAN_CIDR:-192.168.1.0/24}"
 coredns_ip="${COREDNS_IP:-10.96.0.10}"
 kubernetes_probe="${KUBERNETES_PROBE_NAME:-kubernetes.default.svc.cluster.local}"
+private_https_probes=(
+  "${PRIVATE_HTTPS_PROBE_GRAFANA:-grafana.k8s.proompteng.ai}"
+  "${PRIVATE_HTTPS_PROBE_ARGOCD:-argocd.k8s.proompteng.ai}"
+)
 
 if [[ ! -f "${toml_src}" ]]; then
   echo "missing config source: ${toml_src}" >&2
@@ -60,6 +64,13 @@ if ! dig +time=2 +tries=1 @127.0.0.1 "${kubernetes_probe}" >/dev/null; then
   exit 1
 fi
 
+for private_https_probe in "${private_https_probes[@]}"; do
+  if ! dig +time=2 +tries=1 @127.0.0.1 "${private_https_probe}" >/dev/null; then
+    echo "Pi-hole did not resolve ${private_https_probe} toward the private ingress path" >&2
+    exit 1
+  fi
+done
+
 echo "Pi-hole Tailscale DNS configuration applied."
 echo "Verification:"
 echo "  tailscale status --json | jq '.Self.TailscaleIPs[0], .Self.HostName'"
@@ -67,3 +78,5 @@ echo "  grep -E '^(\\[dns\\]|interface|listeningMode|upstreams|\\[dhcp\\]|active
 echo "  dig +short @127.0.0.1 google.com"
 echo "  dig +short @127.0.0.1 kubernetes.default.svc.cluster.local"
 echo "  dig +short @$(tailscale ip -4 | head -n1) kubernetes.default.svc.cluster.local"
+echo "  dig +short @127.0.0.1 grafana.k8s.proompteng.ai"
+echo "  dig +short @127.0.0.1 argocd.k8s.proompteng.ai"

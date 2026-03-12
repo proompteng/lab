@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   - rook-ceph-rgw-loki.yaml
   - tailscale-ingresses.yaml
+  - ingressroute-grafana-k8s-private.yaml
   - graf-mimir-rules.yaml
   - graf-graf-dashboard-configmap.yaml
   - graf-bumba-dashboard-configmap.yaml

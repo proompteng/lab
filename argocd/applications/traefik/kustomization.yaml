@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: traefik
 
 resources:
+  - k8s-proompteng-ai-certificate.yaml
 helmCharts:
   - name: traefik
     repo: https://traefik.github.io/charts
