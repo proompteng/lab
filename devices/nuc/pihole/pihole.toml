@@ -85,6 +85,9 @@ set = false
 device = ''
 utc = false
 
+[misc]
+etc_dnsmasq_d = true
+
 [webserver]
 port = '8080o,8443os,[::]:8080o,[::]:84'
 headers = [

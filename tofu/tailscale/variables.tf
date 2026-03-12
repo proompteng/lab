@@ -7,21 +7,21 @@ variable "tailnet" {
 variable "dns_nameservers" {
   description = "Global nameservers used by tailnet devices when overriding local DNS settings."
   type        = list(string)
-  default = [
-    "192.168.1.130"
-  ]
+  default     = []
 }
 
 variable "override_local_dns" {
   description = "Whether to force tailnet devices to use the configured global nameservers for non-tailnet queries."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "dns_split_nameservers" {
   description = "Per-domain split DNS nameservers. Keys are domains and values are the nameserver IPs for that domain."
   type        = map(list(string))
-  default     = {}
+  default = {
+    "cluster.local" = ["100.88.12.116"]
+  }
 }
 
 variable "kubernetes_routes" {

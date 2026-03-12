@@ -4,6 +4,7 @@ resources:
   - https://raw.githubusercontent.com/tailscale/tailscale/refs/tags/v1.94.2/cmd/k8s-operator/deploy/manifests/operator.yaml
   - base/secrets.yaml
   - base/coredns-custom.yaml
+  - base/connector-subnet-router.yaml
 
 images:
   - name: tailscale/k8s-operator

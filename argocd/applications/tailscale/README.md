@@ -31,3 +31,7 @@ export TAILSCALE_SEALED_CONTROLLER_NAMESPACE=sealed-secrets
 ```
 
 After committing the refreshed `secrets.yaml`, Argo CD will reconcile the new credentials automatically.
+
+The same Argo application also carries the operator-managed `Connector` used for
+cluster subnet routing. Keep the Connector manifest in this directory aligned
+with the live pod and service CIDRs when cluster networking changes.
