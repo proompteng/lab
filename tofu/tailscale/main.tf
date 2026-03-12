@@ -59,15 +59,15 @@ resource "tailscale_dns_configuration" "tailnet" {
 data "tailscale_devices" "all" {}
 
 locals {
-  kube_devices = {
+  subnet_router_devices = {
     for device in data.tailscale_devices.all.devices :
     device.hostname => device.id
-    if length(device.hostname) > 0 && contains(coalesce(device.tags, []), "tag:kube-node")
+    if length(device.hostname) > 0 && contains(coalesce(device.tags, []), "tag:k8s-subnet-router")
   }
 }
 
-resource "tailscale_device_subnet_routes" "kube_nodes" {
-  for_each = local.kube_devices
+resource "tailscale_device_subnet_routes" "subnet_routers" {
+  for_each = local.subnet_router_devices
 
   device_id = each.value
   routes    = var.kubernetes_routes

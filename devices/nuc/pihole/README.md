@@ -20,6 +20,7 @@ Files:
   - web UI ports/theme
   - Tailscale-safe DNS listener mode (`listeningMode = 'ALL'` with firewall restriction)
 - `99-kubernetes-split-dns.conf` installs the Pi-hole dnsmasq forwarding rule for `cluster.local`.
+- Pi-hole v6 requires `misc.etc_dnsmasq_d = true` in `pihole.toml` or it will ignore files in `/etc/dnsmasq.d/`.
 - `apply.sh` installs both `pihole.toml` and `99-kubernetes-split-dns.conf`, enables `tailscale --accept-routes`, opens DNS on `tailscale0`, and restarts Pi-hole.
 
 Not stored in Git:
