@@ -54,6 +54,13 @@ dig +short @127.0.0.1 kubernetes.default.svc.cluster.local
 dig +short @100.88.12.116 kubernetes.default.svc.cluster.local
 dig +short @127.0.0.1 grafana.k8s.proompteng.ai
 dig +short @127.0.0.1 argocd.k8s.proompteng.ai
+dig +short @127.0.0.1 ceph.k8s.proompteng.ai
+dig +short @127.0.0.1 jangar.k8s.proompteng.ai
+dig +short @127.0.0.1 workflows.k8s.proompteng.ai
+dig +short @127.0.0.1 feature-flags.k8s.proompteng.ai
+dig +short @127.0.0.1 flink.k8s.proompteng.ai
+dig +short @127.0.0.1 headlamp.k8s.proompteng.ai
+dig +short @127.0.0.1 kafka-ui.k8s.proompteng.ai
 ```
 
 ## Verify from another tailnet client
@@ -65,6 +72,13 @@ dig +short kubernetes.default.svc.cluster.local
 dig +short @100.88.12.116 kubernetes.default.svc.cluster.local
 dig +short grafana.k8s.proompteng.ai
 dig +short argocd.k8s.proompteng.ai
+dig +short ceph.k8s.proompteng.ai
+dig +short jangar.k8s.proompteng.ai
+dig +short workflows.k8s.proompteng.ai
+dig +short feature-flags.k8s.proompteng.ai
+dig +short flink.k8s.proompteng.ai
+dig +short headlamp.k8s.proompteng.ai
+dig +short kafka-ui.k8s.proompteng.ai
 ```
 
 If these fail:
