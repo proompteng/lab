@@ -9,6 +9,8 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import patch
 
+import yaml
+
 from scripts import historical_simulation_verification, start_historical_simulation
 from scripts.start_historical_simulation import (
     ArgocdAutomationConfig,
@@ -3062,6 +3064,104 @@ class TestStartHistoricalSimulation(TestCase):
             ['apply', 'runtime_verify', 'replay', 'monitor', 'report'],
         )
 
+    def test_run_full_lifecycle_aborts_before_replay_when_runtime_not_ready(self) -> None:
+        resources = _build_resources(
+            'sim-runtime-gate-fail',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        manifest = {
+            'dataset_id': 'dataset-a',
+            'window': {
+                'start': '2026-02-27T14:30:00Z',
+                'end': '2026-02-27T21:00:00Z',
+            },
+        }
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+        clickhouse_config = ClickHouseRuntimeConfig(
+            http_url='http://clickhouse:8123',
+            username='torghut',
+            password=None,
+        )
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_runtime_gate',
+            simulation_db='torghut_sim_runtime_gate',
+            migrations_command='true',
+        )
+        argocd_config = ArgocdAutomationConfig(
+            manage_automation=False,
+            applicationset_name='product',
+            applicationset_namespace='argocd',
+            app_name='torghut',
+            root_app_name='root',
+            desired_mode_during_run='manual',
+            restore_mode_after_run='previous',
+            verify_timeout_seconds=600,
+        )
+        rollouts_config = RolloutsAnalysisConfig(
+            enabled=True,
+            namespace='torghut',
+            runtime_template='torghut-simulation-runtime-ready',
+            activity_template='torghut-simulation-activity',
+            teardown_template='torghut-simulation-teardown-clean',
+            artifact_template='torghut-simulation-artifact-bundle',
+            verify_timeout_seconds=60,
+            verify_poll_seconds=5,
+        )
+
+        with (
+            patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
+            patch('scripts.start_historical_simulation._update_run_state', return_value=None),
+            patch('scripts.start_historical_simulation._save_json', return_value=None),
+            patch('scripts.start_historical_simulation.persist_completion_trace', return_value={}),
+            patch('scripts.start_historical_simulation.SessionLocal') as mock_session_local,
+            patch('scripts.start_historical_simulation._prepare_argocd_for_run', return_value={'managed': False}),
+            patch('scripts.start_historical_simulation._restore_argocd_after_run', return_value={'managed': False}),
+            patch('scripts.start_historical_simulation._apply', return_value={'status': 'ok'}),
+            patch(
+                'scripts.start_historical_simulation._run_rollouts_analysis',
+                return_value={'phase': 'Failed'},
+            ),
+            patch(
+                'scripts.start_historical_simulation._runtime_verify',
+                return_value={'runtime_state': 'not_ready'},
+            ),
+            patch('scripts.start_historical_simulation._replay_dump') as replay_dump,
+            patch(
+                'scripts.start_historical_simulation._report_simulation',
+                return_value={'status': 'ok'},
+            ),
+        ):
+            mock_session_local.return_value.__enter__.return_value = SimpleNamespace(commit=lambda: None)
+            with self.assertRaisesRegex(
+                RuntimeError,
+                'simulation_run_failed:environment_incomplete',
+            ):
+                _run_full_lifecycle(
+                    resources=resources,
+                    manifest=manifest,
+                    manifest_path=Path('/tmp/manifest.json'),
+                    kafka_config=kafka_config,
+                    clickhouse_config=clickhouse_config,
+                    postgres_config=postgres_config,
+                    argocd_config=argocd_config,
+                    rollouts_config=rollouts_config,
+                    force_dump=False,
+                    force_replay=False,
+                    skip_teardown=True,
+                    report_only=False,
+                )
+
+        replay_dump.assert_not_called()
+
     def test_run_full_lifecycle_waits_for_runtime_verify_without_rollouts(self) -> None:
         resources = _build_resources(
             'sim-1',
@@ -4206,6 +4306,23 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(payload['spec']['args'][9]['value'], 'torghut_sim_sim_2026_03_06_open_hour.ta_microbars')
         self.assertEqual(payload['spec']['args'][-2]['value'], '60')
         self.assertEqual(payload['spec']['args'][-1]['value'], '5')
+
+    def test_runtime_ready_template_declares_signal_and_price_tables(self) -> None:
+        template_path = (
+            Path(__file__).resolve().parents[3]
+            / 'argocd'
+            / 'applications'
+            / 'torghut'
+            / 'analysis-template-runtime-ready.yaml'
+        )
+        template = yaml.safe_load(template_path.read_text(encoding='utf-8'))
+        spec = template['spec']
+        arg_names = [entry['name'] for entry in spec['args']]
+        self.assertIn('signalTable', arg_names)
+        self.assertIn('priceTable', arg_names)
+        args_text = spec['metrics'][0]['provider']['job']['spec']['template']['spec']['containers'][0]['args'][0]
+        self.assertIn('--signal-table "{{args.signalTable}}"', args_text)
+        self.assertIn('--price-table "{{args.priceTable}}"', args_text)
 
     def test_discover_automation_pointer_finds_nested_element(self) -> None:
         payload = {
