@@ -11,6 +11,8 @@ spec:
   routes:
     - match: Host(`workflows.proompteng.ai`)
       kind: Rule
+      middlewares:
+        - name: workflows-canonical-host
       services:
         - name: argo-workflows-server
           port: 2746
