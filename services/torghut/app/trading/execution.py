@@ -27,11 +27,11 @@ from .route_metadata import resolve_order_route_metadata
 from .execution_policy import should_retry_order_error
 from .models import ExecutionRequest, StrategyDecision, decision_hash
 from .quantity_rules import (
-    fractional_equities_enabled_for_trade,
     min_qty_for_symbol,
     quantize_qty_for_symbol,
     qty_has_valid_increment,
     qty_step_for_symbol,
+    resolve_quantity_resolution,
 )
 from .simulation import resolve_simulation_context
 from .time_source import trading_now
@@ -172,13 +172,13 @@ class OrderExecutor:
             stop_price=decision.stop_price,
             client_order_id=decision_row.decision_hash,
         )
-        fractional_equities_enabled = self._fractional_equities_enabled_for_request(
+        quantity_resolution = self._quantity_resolution_for_request(
             execution_client,
             request,
         )
         pre_submit_error = _validate_pre_submit_request(
             request,
-            fractional_equities_enabled=fractional_equities_enabled,
+            quantity_resolution=quantity_resolution,
         )
         if pre_submit_error is not None:
             raise RuntimeError(json.dumps(pre_submit_error))
@@ -212,7 +212,9 @@ class OrderExecutor:
                 self._resolve_sell_inventory_conflict(
                     request,
                     conflict=sell_inventory_conflict,
-                    fractional_equities_enabled=fractional_equities_enabled,
+                    fractional_equities_enabled=bool(
+                        quantity_resolution.fractional_allowed
+                    ),
                 )
             )
             sell_inventory_recovery: dict[str, Any] | None = None
@@ -226,7 +228,9 @@ class OrderExecutor:
                     execution_client=execution_client,
                     request=request,
                     conflict=unresolved_conflict,
-                    fractional_equities_enabled=fractional_equities_enabled,
+                    fractional_equities_enabled=bool(
+                        quantity_resolution.fractional_allowed
+                    ),
                 )
             if unresolved_conflict is not None:
                 if sell_inventory_recovery is not None:
@@ -773,16 +777,17 @@ class OrderExecutor:
             return Decimal("0")
         return remaining
 
-    def _fractional_equities_enabled_for_request(
+    def _quantity_resolution_for_request(
         self,
         execution_client: Any,
         request: ExecutionRequest,
-    ) -> bool:
+    ) -> Any:
         position_qty = self._position_qty_for_symbol(
             execution_client,
             request.symbol.strip().upper(),
         )
-        return fractional_equities_enabled_for_trade(
+        return resolve_quantity_resolution(
+            request.symbol,
             action=request.side,
             global_enabled=settings.trading_fractional_equities_enabled,
             allow_shorts=settings.trading_allow_shorts,
@@ -1210,7 +1215,7 @@ def _decision_state_payload(decision: StrategyDecision) -> dict[str, Any]:
 def _validate_pre_submit_request(
     request: ExecutionRequest,
     *,
-    fractional_equities_enabled: bool,
+    quantity_resolution: Any,
 ) -> dict[str, Any] | None:
     if request.qty <= 0:
         return {
@@ -1219,9 +1224,11 @@ def _validate_pre_submit_request(
             "reject_reason": "qty must be positive",
             "symbol": request.symbol,
             "qty": str(request.qty),
+            "quantity_resolution": quantity_resolution.to_payload(),
         }
     min_qty = min_qty_for_symbol(
-        request.symbol, fractional_equities_enabled=fractional_equities_enabled
+        request.symbol,
+        fractional_equities_enabled=bool(quantity_resolution.fractional_allowed),
     )
     if request.qty < min_qty:
         return {
@@ -1231,19 +1238,21 @@ def _validate_pre_submit_request(
             "symbol": request.symbol,
             "qty": str(request.qty),
             "min_qty": str(min_qty),
+            "quantity_resolution": quantity_resolution.to_payload(),
         }
     if not qty_has_valid_increment(
         request.symbol,
         request.qty,
-        fractional_equities_enabled=fractional_equities_enabled,
+        fractional_equities_enabled=bool(quantity_resolution.fractional_allowed),
     ):
         step = qty_step_for_symbol(
-            request.symbol, fractional_equities_enabled=fractional_equities_enabled
+            request.symbol,
+            fractional_equities_enabled=bool(quantity_resolution.fractional_allowed),
         )
         quantized_qty = quantize_qty_for_symbol(
             request.symbol,
             request.qty,
-            fractional_equities_enabled=fractional_equities_enabled,
+            fractional_equities_enabled=bool(quantity_resolution.fractional_allowed),
         )
         return {
             "source": "local_pre_submit",
@@ -1253,6 +1262,7 @@ def _validate_pre_submit_request(
             "qty": str(request.qty),
             "qty_step": str(step),
             "quantized_qty": str(quantized_qty),
+            "quantity_resolution": quantity_resolution.to_payload(),
         }
     return None
 

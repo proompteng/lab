@@ -19,10 +19,10 @@ from .microstructure import (
 from .models import StrategyDecision
 from .prices import MarketSnapshot
 from .quantity_rules import (
-    fractional_equities_enabled_for_trade,
     min_qty_for_symbol,
     qty_has_valid_increment,
     quantize_qty_for_symbol,
+    resolve_quantity_resolution,
 )
 from .tca import AdaptiveExecutionPolicyDecision
 
@@ -301,15 +301,16 @@ class ExecutionPolicy:
         reasons: list[str],
     ) -> tuple[Decimal, Decimal | None]:
         qty = _optional_decimal(decision.qty)
+        resolution = resolve_quantity_resolution(
+            decision.symbol,
+            action=decision.action,
+            global_enabled=settings.trading_fractional_equities_enabled,
+            allow_shorts=allow_shorts,
+            position_qty=position_qty,
+            requested_qty=qty,
+        )
         fractional_equities_enabled = (
-            fractional_equities_enabled_for_trade(
-                action=decision.action,
-                global_enabled=settings.trading_fractional_equities_enabled,
-                allow_shorts=allow_shorts,
-                position_qty=position_qty,
-                requested_qty=qty,
-            )
-            and not short_increasing
+            resolution.fractional_allowed and not short_increasing
         )
         min_qty = min_qty_for_symbol(
             decision.symbol, fractional_equities_enabled=fractional_equities_enabled

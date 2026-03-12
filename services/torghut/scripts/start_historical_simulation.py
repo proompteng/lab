@@ -1903,6 +1903,66 @@ def _artifact_path(resources: SimulationResources, filename: str) -> Path:
     return run_dir / filename
 
 
+def _ta_restore_policy(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    ta_restore = _as_mapping(manifest.get('ta_restore'))
+    mode = (_as_text(ta_restore.get('mode')) or 'required').strip().lower()
+    allowed_modes = {'required', 'stateless_if_missing', 'stateless'}
+    if mode not in allowed_modes:
+        raise RuntimeError(
+            'ta_restore.mode must be one of: required,stateless_if_missing,stateless'
+        )
+    return {
+        'mode': mode,
+        'stateless_recovery_enabled': mode in {'stateless_if_missing', 'stateless'},
+    }
+
+
+def _ta_restore_paths(ta_data: Mapping[str, Any]) -> dict[str, str | None]:
+    return {
+        'checkpoint_dir': _as_text(ta_data.get('TA_CHECKPOINT_DIR')),
+        'savepoint_dir': _as_text(ta_data.get('TA_SAVEPOINT_DIR')),
+    }
+
+
+def _resolve_ta_restore_configuration(
+    *,
+    ta_data: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    policy = _ta_restore_policy(manifest)
+    paths = _ta_restore_paths(ta_data)
+    missing = [name for name, value in paths.items() if not value]
+    if policy['mode'] == 'stateless':
+        return {
+            **policy,
+            **paths,
+            'configured': not missing,
+            'effective_upgrade_mode': 'stateless',
+            'fallback_applied': False,
+            'reason': 'explicit_stateless',
+        }
+    if missing:
+        missing_reason = f'restore_state_missing:{",".join(sorted(missing))}'
+        if policy['mode'] == 'stateless_if_missing':
+            return {
+                **policy,
+                **paths,
+                'configured': False,
+                'effective_upgrade_mode': 'stateless',
+                'fallback_applied': True,
+                'reason': missing_reason,
+            }
+        raise RuntimeError(missing_reason)
+    return {
+        **policy,
+        **paths,
+        'configured': True,
+        'effective_upgrade_mode': 'last-state',
+        'fallback_applied': False,
+        'reason': 'restore_state_configured',
+    }
+
+
 def _update_run_state(
     *,
     resources: SimulationResources,
@@ -2105,6 +2165,7 @@ def _build_plan_report(
     torghut_env_overrides = _torghut_env_overrides_from_manifest(manifest)
     window_policy = _validate_window_policy(manifest)
     rollouts_config = _build_rollouts_analysis_config(manifest)
+    ta_restore = _ta_restore_policy(manifest)
     return {
         'status': 'ok',
         'run_id': resources.run_id,
@@ -2148,6 +2209,7 @@ def _build_plan_report(
         },
         'argocd': asdict(argocd_config),
         'rollouts': asdict(rollouts_config),
+        'ta_restore': ta_restore,
         'artifacts': {
             'state_path': str(state_path),
             'run_manifest_path': str(run_manifest_path),
@@ -2662,7 +2724,12 @@ def _configure_ta_for_simulation(
     )
 
 
-def _restart_ta_deployment(resources: SimulationResources, *, desired_state: str) -> int:
+def _restart_ta_deployment(
+    resources: SimulationResources,
+    *,
+    desired_state: str,
+    upgrade_mode: str = 'last-state',
+) -> int:
     deployment = _kubectl_json(
         resources.namespace,
         ['get', 'flinkdeployment', resources.ta_deployment, '-o', 'json'],
@@ -2686,7 +2753,7 @@ def _restart_ta_deployment(resources: SimulationResources, *, desired_state: str
         {
             'spec': {
                 'restartNonce': next_nonce,
-                'job': {'state': desired_state},
+                'job': {'state': desired_state, 'upgradeMode': upgrade_mode},
             }
         },
     )
@@ -3559,6 +3626,16 @@ def _apply(
             _save_json(state_path, state)
 
         ta_data = _as_mapping(state.get('ta_data'))
+        ta_restore = _resolve_ta_restore_configuration(
+            ta_data=ta_data,
+            manifest=manifest,
+        )
+        if bool(ta_restore.get('fallback_applied')):
+            _log_script_event(
+                'Using stateless TA recovery for simulation run',
+                run_id=resources.run_id,
+                reason=ta_restore.get('reason'),
+            )
         _verify_isolation_guards(
             resources=resources,
             postgres_config=postgres_config,
@@ -3605,7 +3682,11 @@ def _apply(
             auto_offset_reset=auto_offset_reset,
             manifest=manifest,
         )
-        ta_restart_nonce = _restart_ta_deployment(resources, desired_state='running')
+        ta_restart_nonce = _restart_ta_deployment(
+            resources,
+            desired_state='running',
+            upgrade_mode=str(ta_restore.get('effective_upgrade_mode') or 'last-state'),
+        )
 
         _configure_torghut_service_for_simulation(
             resources=resources,
@@ -3648,6 +3729,7 @@ def _apply(
         'simulation_lock': runtime_lock,
         'evidence_lineage': _simulation_evidence_lineage(manifest),
         'torghut_env_overrides': torghut_env_overrides,
+        'ta_restore': ta_restore,
         'window_policy': window_policy,
     }
     _save_json(run_manifest_path, report)

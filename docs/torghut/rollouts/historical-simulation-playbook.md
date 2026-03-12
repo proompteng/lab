@@ -1,6 +1,6 @@
 # Historical Simulation Playbook
 
-Last updated: **2026-02-28**
+Last updated: **2026-03-12**
 
 This playbook is the production run procedure for Torghut historical simulations using
 `services/torghut/scripts/start_historical_simulation.py` on the dedicated simulation surfaces.
@@ -20,7 +20,9 @@ Use this playbook when you need to:
 
 - Never run `apply` without a unique `run_id`.
 - Never run simulation with production Postgres/ClickHouse targets.
-- Keep Torghut in paper mode during simulation (`TRADING_MODE=paper`, `TRADING_LIVE_ENABLED=false`).
+- Keep Torghut in paper mode during simulation (`TRADING_MODE=paper` and `TRADING_EXECUTION_ADAPTER=simulation`).
+- Do not expect `TRADING_LIVE_ENABLED` to appear as an explicit Knative env override during simulation validation.
+  The runtime now treats it as a deprecated derived setting from `TRADING_MODE`.
 - Run `teardown` in the same `run_id` immediately after evidence collection.
 - Keep `runtime.target_mode=dedicated_service` and `argocd.manage_automation=true` in the manifest so the script uses
   the dedicated simulation services and restores automation correctly.
@@ -79,7 +81,8 @@ Expected dedicated resources:
 - `AnalysisTemplate/torghut-simulation-activity`
 - `AnalysisTemplate/torghut-simulation-teardown-clean`
 
-This playbook is Argo-first and should not be executed locally.
+This playbook is Argo-first. The canonical execution engine is still
+`services/torghut/scripts/start_historical_simulation.py`; the WorkflowTemplate is a thin wrapper around that script.
 
 Phase 1 note:
 
@@ -132,6 +135,7 @@ argo submit --from workflowtemplate/torghut-historical-simulation \
 - runtime verification through an `AnalysisRun`,
 - activity verification through an `AnalysisRun`,
 - post-run report generation,
+- fill-price error budget generation and completion-trace persistence,
 - teardown + Argo automation restore,
 - teardown cleanliness verification through an `AnalysisRun`.
 
@@ -186,7 +190,9 @@ argo wait -n argo-workflows "${WORKFLOW_NAME}"
 argo get -n argo-workflows "${WORKFLOW_NAME}"
 ```
 
-Use `-p forceDump=false` for fresh dumps and `-p forceReplay=true` when replay artifacts already exist.
+Leave `forceDump` and `forceReplay` unset/false to reuse existing dump and replay markers for the same `run_id`.
+Use `-p forceDump=true` to capture a fresh source dump and `-p forceReplay=true` to republish an existing dump into the
+simulation topics.
 
 ## Step 4: Validate Simulation Runtime (During Run)
 
@@ -195,7 +201,6 @@ Use `-p forceDump=false` for fresh dumps and `-p forceReplay=true` when replay a
 ```bash
 kubectl get ksvc torghut-sim -n torghut -o jsonpath='
 {.spec.template.spec.containers[0].env[?(@.name=="TRADING_MODE")].value}{"\n"}
-{.spec.template.spec.containers[0].env[?(@.name=="TRADING_LIVE_ENABLED")].value}{"\n"}
 {.spec.template.spec.containers[0].env[?(@.name=="TRADING_EXECUTION_ADAPTER")].value}{"\n"}
 {.spec.template.spec.containers[0].env[?(@.name=="TRADING_SIMULATION_ENABLED")].value}{"\n"}
 {.spec.template.spec.containers[0].env[?(@.name=="TRADING_SIGNAL_TABLE")].value}{"\n"}
@@ -205,11 +210,13 @@ kubectl get ksvc torghut-sim -n torghut -o jsonpath='
 Expected values:
 
 - `paper`
-- `false`
 - `simulation`
 - `true`
 - `<simulation_db>.ta_signals`
 - `<historical override value>` (for example `43200000`)
+
+If you need to confirm the deprecated live/paper compatibility field, query `/trading/status` or service logs instead of
+expecting a literal `TRADING_LIVE_ENABLED` env entry on the Knative revision.
 
 2. Validate TA topic rewiring on `torghut-ta-sim-config`:
 
@@ -234,8 +241,27 @@ Expected values are `torghut.sim.*` topics and `TA_GROUP_ID=torghut-ta-sim-<run_
   - latest `RUN_STATE ...` lines visible in argo logs showing `subphase=replay` with non-zero records while waiting
  - `dump_coverage` present and passing
  - `window_policy` present
+ - `ta_restore.mode` present
+ - `ta_restore.effective_upgrade_mode` present
+ - if fallback was used, `ta_restore.fallback_applied=true` with explicit `reason`
  - `rollouts.runtime_analysis_run` populated after runtime gate completes
  - `rollouts.activity_analysis_run` populated after activity gate completes
+
+`artifacts/torghut/simulations/<run_token>/runtime-verify.json`:
+
+- `schema_registry.ready=true`
+- `analysis_images.ready=true`
+- `ta_runtime.upgrade_mode` matches the run intent (`last-state` or explicit `stateless`)
+- `ta_runtime.restore_state_reason` is absent for healthy runs
+- `runtime_state=ready`
+
+Interpretation shortcuts:
+
+- `schema_registry.reason=schema_subject_missing`: replay infra is incomplete; do not trust downstream activity gates.
+- `analysis_images.reason=analysis_image_stale`: analysis templates are not running the same Torghut image as the service under test.
+- `ta_runtime.restore_state_reason=restore_state_missing`: TA restore configuration or restore state is missing; rerun with an explicit simulation stateless recovery mode only if that is the intended experiment.
+- `trade_decisions > 0` with `execution_submit_attempt_total == 0`: decisioning is healthy but the pipeline is not reaching execution.
+- `execution_submit_attempt_total > 0` with zero accepted results: inspect `execution_local_reject_total`, `qty_resolution_total`, and `execution_validation_mismatch_total` before treating the run as an alpha problem.
 
 ## Step 5: Collect Empirical Evidence
 
@@ -333,7 +359,7 @@ kubectl get application torghut -n argocd -o jsonpath='
 
 Expected: `Synced`, `Healthy`, and `Succeeded`.
 
-## Known Issues (as of 2026-02-28)
+## Known Issues (as of 2026-03-12)
 
 1. `manifest.kafka.runtime_sasl_*` fields are required by design, but runbooks should avoid duplicating secrets in manifests by
    using one of:
@@ -391,6 +417,63 @@ ENGINE = ReplicatedReplacingMergeTree(
   - `/usr/local/bin/kubectl`
   - verify startup with `kubectl version --client`
 - If you see `Exec format error`, rebuild `registry.ide-newton.ts.net/lab/torghut` after updating `services/torghut/Dockerfile` with the runtime platform mapping.
+
+6. One-hour simulation replay can produce TA outputs but still fail pre-decision on feature quality.
+
+- Confirmed on `2026-03-12` for the `2026-03-11T13:30:00Z -> 2026-03-11T14:30:00Z` smoke replay.
+- Observed sequence:
+  - replay published successfully,
+  - simulation ClickHouse filled `ta_microbars` and `ta_signals`,
+  - Torghut logged repeated `Feature quality gate failed ... reasons=['non_monotonic_progression']`,
+  - `trade_decisions` and `executions` remained `0`.
+- Root cause was sequential:
+  - the simulation script configures `TRADING_SIGNAL_ALLOWED_SOURCES=ws,ta` in [`start_historical_simulation.py`](/Users/gregkonush/.codex/worktrees/4b2e/lab/services/torghut/scripts/start_historical_simulation.py#L2715), so mixed-source batches can contain a `ws` row with a large `seq` followed by `ta` rows that restart at `seq=1`,
+  - even after narrowing to `ta` only for diagnosis, the deployed ingest path still returned multi-symbol rows in ClickHouse query order when no dedupe occurred, while the feature-quality gate validates monotonicity on `(event_ts, symbol, seq)`.
+- Relevant code:
+  - ingest fetch path returns `_filter_signals(self._dedupe_signals(signals))` at [`ingest.py`](/Users/gregkonush/.codex/worktrees/4b2e/lab/services/torghut/app/trading/ingest.py#L782),
+  - `_dedupe_signals()` only sorts when dedupe removed at least one row at [`ingest.py`](/Users/gregkonush/.codex/worktrees/4b2e/lab/services/torghut/app/trading/ingest.py#L791),
+  - feature quality marks the batch non-monotonic from `(signal.event_ts, signal.symbol, signal.seq or 0)` at [`feature_quality.py`](/Users/gregkonush/.codex/worktrees/4b2e/lab/services/torghut/app/trading/feature_quality.py#L132),
+  - the scheduler rejects and commits cursor immediately at [`pipeline.py`](/Users/gregkonush/.codex/worktrees/4b2e/lab/services/torghut/app/trading/scheduler/pipeline.py#L222).
+- Operational guidance:
+  - do not interpret fresh TA tables as proof that Torghut is evaluating signals,
+  - if logs show `non_monotonic_progression`, inspect the actual `ta_signals` ordering before debugging strategy logic,
+  - treat temporary `ta`-only overrides as diagnostic only; the durable fix is to guarantee deterministic sort order before feature-quality evaluation.
+
+7. A replay can create `trade_decisions` and still produce zero executions because local pre-submit validation rejects fractional opening-short equity orders.
+
+- Confirmed on `2026-03-12` in the same replay after the signal path progressed far enough to persist decisions.
+- Observed state:
+  - `trade_decisions = 10`,
+  - `executions = 0`,
+  - all decisions ended in `status=rejected`,
+  - Torghut logs showed repeated `local_qty_invalid_increment` for `INTC` with quantities around `1.5860-1.5879`.
+- Rejection log signature:
+  - `reject_reason="qty increment invalid; step=1"`
+  - `source="local_pre_submit"`
+  - `code="local_qty_invalid_increment"`
+- Relevant code:
+  - rejection is raised in [`execution.py`](/Users/gregkonush/.codex/worktrees/4b2e/lab/services/torghut/app/trading/execution.py#L1236),
+  - execution-side fractional gating is derived by `_fractional_equities_enabled_for_request()` in [`execution.py`](/Users/gregkonush/.codex/worktrees/4b2e/lab/services/torghut/app/trading/execution.py#L776),
+  - `fractional_equities_enabled_for_trade()` disables fractional sizing for `sell` requests when `position_qty <= 0` in [`quantity_rules.py`](/Users/gregkonush/.codex/worktrees/4b2e/lab/services/torghut/app/trading/quantity_rules.py#L56),
+  - the simulation adapter reports no current positions from `list_positions()` in [`execution_adapters.py`](/Users/gregkonush/.codex/worktrees/4b2e/lab/services/torghut/app/trading/execution_adapters.py#L285).
+- This means a replay can size a fractional `sell` from decision/portfolio logic and still fail at execution time when that sell is treated as a short-increasing order with a whole-share step.
+- Operational guidance:
+  - do not treat nonzero `trade_decisions` as execution proof,
+  - inspect `trade_decisions.status` and the `broker_precheck` payload inside `decision_json`,
+  - if all decisions are rejected with local increment errors on `sell` orders and the adapter has no existing positions, verify whether the replay is attempting fractional opening shorts rather than assuming the simulation adapter is broken.
+
+8. Replay verification for `mode=run` should be interpreted as a staged pipeline, not a single binary verdict.
+
+- The `2026-03-12` replay proved three separate checkpoints:
+  - upstream replay + TA materialization can succeed after infra repair,
+  - Torghut can progress from `0` to persisted `trade_decisions`,
+  - execution can still be blocked locally afterward.
+- Use this order when triaging:
+  1. `ta_microbars` / `ta_signals` row counts
+  2. feature-quality rejection logs
+  3. `trade_decisions` count and status distribution
+  4. `executions`, `execution_order_events`, and `execution_tca_metrics`
+- A run is not execution-valid until all four layers are nonzero and internally consistent.
 
 ## Completion Checklist
 

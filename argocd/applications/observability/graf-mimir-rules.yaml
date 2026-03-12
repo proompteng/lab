@@ -1254,6 +1254,146 @@ data:
                 Clean execution ratio is below 75% for 10 minutes while decision traffic is active.
                 Hold live promotion gates and investigate dominant rejection classes before scaling.
               runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutSignalBatchOrderViolationDetected
+            expr: |
+              increase(
+                torghut_trading_signal_batch_order_violation_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut"
+                }[5m]
+              ) > 0
+            for: 0m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut signal batch ordering violation detected
+              description: |
+                Feature-quality rejected at least one live batch for non-monotonic progression in the last 5 minutes.
+                Halt live promotion and inspect ClickHouse ordering, cursor state, and ingest logs immediately.
+              runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
+          - alert: TorghutExecutionValidationMismatchDetected
+            expr: |
+              increase(
+                torghut_trading_execution_validation_mismatch_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut"
+                }[5m]
+              ) > 0
+            for: 0m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut decision and execution validation diverged
+              description: |
+                The persisted decision quantity contract disagreed with pre-submit execution validation in the last 5 minutes.
+                Treat this as a production correctness incident and stop promotion until resolved.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutExecutionAttemptsWithoutAcceptedOrders
+            expr: |
+              sum(
+                increase(
+                  torghut_trading_execution_submit_attempt_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut"
+                  }[15m]
+                )
+              ) > 0
+              and
+              sum(
+                increase(
+                  torghut_trading_execution_submit_result_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut",
+                    status="accepted"
+                  }[15m]
+                )
+              ) == 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut submit attempts are not reaching accepted orders
+              description: |
+                Submit attempts occurred in the last 15 minutes but none were accepted.
+                Check local reject taxonomy, execution adapter behavior, and simulation/live routing parity.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutExecutionLocalRejectRateHigh
+            expr: |
+              (
+                sum(
+                  increase(
+                    torghut_trading_execution_local_reject_total{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut"
+                    }[5m]
+                  )
+                )
+                /
+                clamp_min(
+                  sum(
+                    increase(
+                      torghut_trading_execution_submit_attempt_total{
+                        job="torghut",
+                        namespace="torghut",
+                        service="torghut"
+                      }[5m]
+                    )
+                  ),
+                  1
+                )
+              ) > 0.1
+              and
+              sum(
+                increase(
+                  torghut_trading_execution_submit_attempt_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut"
+                  }[5m]
+                )
+              ) >= 5
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut local execution reject rate elevated
+              description: |
+                More than 10% of submit attempts were rejected locally over the last 5 minutes.
+                Inspect quantity resolution metrics, sell inventory context, and pre-submit reject payloads.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
+          - alert: TorghutDecisionsWithoutExecutionAttempts
+            expr: |
+              increase(
+                torghut_trading_decisions_total{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut"
+                }[15m]
+              ) > 10
+              and
+              sum(
+                increase(
+                  torghut_trading_execution_submit_attempt_total{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut"
+                  }[15m]
+                )
+              ) == 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Torghut decisions are not reaching execution attempts
+              description: |
+                Decision traffic is active but no execution submit attempts were recorded in the last 15 minutes.
+                Check pipeline gating, order firewall, and execution request generation before market exposure increases.
+              runbook_url: docs/runbooks/torghut-quant-control-plane.md
           - alert: TorghutQuantQtyBelowMinRatioHigh
             expr: |
               (

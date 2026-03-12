@@ -3,7 +3,7 @@
 ## Status
 
 - Version: `v1`
-- Last updated: **2026-02-20**
+- Last updated: **2026-03-12**
 - Source of truth (config): `argocd/applications/torghut/**`
 
 ## Purpose
@@ -54,6 +54,8 @@ flowchart TD
 - ClickHouse disk free bytes below critical threshold (`TorghutClickHouseDiskFreeLowWarning/Critical`).
 - ClickHouse replica read-only (`TorghutClickHouseReplicaReadOnly`).
 - Trading service crashloop (Knative revision not Ready).
+- `TorghutSignalBatchOrderViolationDetected`.
+- `TorghutExecutionValidationMismatchDetected`.
 
 ### Ticket alerts (examples)
 
@@ -61,6 +63,9 @@ flowchart TD
 - Increased dedup rate.
 - Reconcile lag elevated but not yet impacting.
 - Intentional policy exception active (`torghut_llm_policy_exception_active=1`) with no violation.
+- `TorghutExecutionAttemptsWithoutAcceptedOrders`.
+- `TorghutExecutionLocalRejectRateHigh`.
+- `TorghutDecisionsWithoutExecutionAttempts`.
 
 ### Throughput interpretation (oncall runbook shortcut)
 
@@ -106,6 +111,9 @@ flowchart TD
 | ClickHouse disk low          | check merges, TTL, recent writes | pause TA writes; reclaim disk; restart TA    |
 | ClickHouse replica read-only | check keeper/replica status      | pause TA writes; restore replica; restart TA |
 | Knative revision failing     | check logs for UUID JSON bug     | roll back revision; apply serialization fix  |
+| Signal batch order violation | inspect `feature_quality_reject_reason_total`, cursor payload, and ClickHouse ordering | stop promotion; verify `(event_ts,symbol,seq)` ordering before resume |
+| Execution validation mismatch | compare decision `quantity_resolution` vs pre-submit reject payload | keep shorts enabled but block promotion until quantity contract is unified |
+| Submit attempts without accepted orders | inspect `execution_submit_result_total`, `execution_local_reject_total`, adapter logs | do not widen live risk; fix adapter/validation path first |
 
 ## Security considerations
 

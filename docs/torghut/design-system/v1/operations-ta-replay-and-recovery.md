@@ -142,6 +142,39 @@ Required replay isolation inputs (do not skip):
 - Preserve `PREV_TA_GROUP_ID` for rollback.
 - Preserve `PREV_TA_AUTO_OFFSET_RESET` for rollback.
 
+## Simulation-specific failure patterns observed on 2026-03-12
+
+These were confirmed during the `2026-03-11 13:30-14:30 UTC` Torghut historical simulation replay and are worth checking
+before blaming Torghut strategy code.
+
+### Karapace/schema-registry instability can block `torghut-ta-sim` before any TA rows land
+
+- Symptoms:
+  - replay publishes records successfully but `ta_microbars` / `ta_signals` stay at `0`,
+  - Flink logs contain `SerializationException: Error registering Avro schema`,
+  - Karapace logs show `Schema reader isn't ready yet` or subject-registration timeouts/500s.
+- Common trigger observed in-cluster:
+  - mixed Karapace group membership during rollout (`5.1.0` + `6.0.0`) caused master forwarding to a dead peer.
+- Operational response:
+  - verify Karapace is healthy before replaying TA,
+  - confirm the exact simulation subjects can be registered successfully,
+  - if Karapace is mid-rollout or forwarding to a dead member, complete the rollout or restart it before retrying replay.
+
+### `torghut-ta-sim` can fail restoring from a missing checkpoint path
+
+- Symptoms:
+  - `FlinkDeployment/torghut-ta-sim` shows `DEPLOYING` or `INITIALIZING`,
+  - jobmanager logs contain `JobInitializationException`,
+  - nested error shows `FileNotFoundException` for a checkpoint/savepoint under the simulation checkpoint prefix.
+- Observed signal:
+  - stale `status.jobStatus.upgradeSavepointPath` pointed at a checkpoint that no longer existed in object storage.
+- Operational response for the simulation lane:
+  - suspend the simulation FlinkDeployment,
+  - restart it in `stateless` mode,
+  - bump `spec.restartNonce`,
+  - then verify a new job reaches `RUNNING` before replaying data.
+- Do not apply this blindly to the production `torghut-ta` deployment; use incident approval and the canonical replay runbook.
+
 ## Automation (AgentRuns)
 
 AgentRuns should treat these procedures as two classes of automation:
@@ -190,6 +223,26 @@ python3 services/torghut/scripts/ta_replay_runner.py \
 - set `TA_GROUP_ID` and `TA_AUTO_OFFSET_RESET`,
 - suspend `FlinkDeployment/torghut-ta` if running,
 - resume with `restartNonce + 1`.
+
+## Failure classification shortcuts
+
+- Ingest ordering failure:
+  - `torghut_trading_feature_quality_reject_reason_total{reason="non_monotonic_progression"}` rises
+  - `torghut_trading_signal_batch_order_violation_total` rises
+  - feature-quality logs include cursor bounds and offending row samples
+- Decision normalization failure:
+  - `torghut_trading_qty_resolution_total{stage="decision",outcome="integer",reason="sell_inventory_unknown_integer_only"}` rises unexpectedly
+  - decisions persist, but sizing logs show fail-closed sell normalization
+- Execution local reject:
+  - `torghut_trading_execution_local_reject_total` rises
+  - `torghut_trading_execution_submit_attempt_total` rises
+  - `torghut_trading_execution_submit_result_total{status="accepted"}` stays flat
+- Broker-side reject:
+  - submit attempts and accepted local validation occur, but downstream order status / broker reject telemetry records the failure
+  - do not confuse this with local quantity validation
+- Replay preflight failure:
+  - `runtime-verify.json` reports `schema_subject_missing`, `analysis_image_stale`, or `restore_state_missing`
+  - correct the preflight class before trusting any activity gate
 
 ## Verification checklist
 

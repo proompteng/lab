@@ -3,7 +3,7 @@
 ## Status
 
 - Version: `v1`
-- Last updated: **2026-02-27**
+- Last updated: **2026-03-11**
 - Source of truth (config): `argocd/applications/torghut/**`
 - Implementation status: `Partial`
 - Implementation evidence: `services/torghut/scripts/start_historical_simulation.py`, `services/torghut/scripts/analyze_historical_simulation.py`, `argocd/applications/torghut/historical-simulation-workflowtemplate.yaml`, `docs/torghut/rollouts/historical-simulation-playbook.md`, `services/torghut/tests/test_start_historical_simulation.py`, `services/torghut/tests/test_analyze_historical_simulation.py`, `services/torghut/tests/test_completion_trace.py`, `services/torghut/app/config.py`
@@ -210,7 +210,10 @@ The script must implement the full startup workflow:
 
 - Set simulation signal/price tables.
 - Point order feed to simulation trade-updates topic only.
-- Force safe mode: `TRADING_MODE=paper`, `TRADING_LIVE_ENABLED=false`.
+- Force safe mode: `TRADING_MODE=paper`, `TRADING_EXECUTION_ADAPTER=simulation`, and
+  `TRADING_EXECUTION_FALLBACK_ADAPTER=none`.
+- Treat `TRADING_LIVE_ENABLED` as deprecated compatibility state derived from `TRADING_MODE`, not as a required
+  explicit env patch for simulation.
 - Set execution fallback policy to avoid accidental live mutation routes.
 
 7. Verify health and contamination guards.
@@ -225,10 +228,12 @@ The script must implement the full startup workflow:
 
 Script operational contract:
 
-- `plan` mode and `apply` mode.
-- Explicit confirmation phrase required for `apply`.
+- `plan`, `apply`, `run`, `report`, and `teardown` modes.
+- Explicit confirmation phrase required for `apply` and `run`.
 - Idempotent when re-run with same `run_id`.
 - `teardown` mode to stop simulation and restore prior config.
+- `run` performs the full lifecycle, including runtime/activity gates, reporting, teardown, and completion-trace output.
+- `report` can generate analysis from an existing run state and optionally skip or defer teardown for debugging.
 
 ## Operational workflow
 
