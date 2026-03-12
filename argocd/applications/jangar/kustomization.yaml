@@ -18,6 +18,7 @@ resources:
   - app-tailscale-service.yaml
   - tailscale-service.yaml
   - ingressroute-jangar-k8s-private.yaml
+  - ingressroute-openwebui-k8s-private.yaml
   - postgres-cluster.yaml
   - postgres-scheduled-backup.yaml
   - openwebui-redis.yaml

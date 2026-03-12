@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   - load-balancer.yaml
   - load-balancer-frontend.yaml
+  - ingressroute-temporal-k8s-private.yaml
 
 helmCharts:
   - name: temporal

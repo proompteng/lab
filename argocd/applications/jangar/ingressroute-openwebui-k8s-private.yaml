@@ -1,0 +1,16 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: openwebui-private
+  namespace: jangar
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`openwebui.k8s.proompteng.ai`)
+      services:
+        - name: open-webui
+          port: 80
+  tls:
+    secretName: wildcard-k8s-proompteng-ai-tls

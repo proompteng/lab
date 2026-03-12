@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: pgadmin
 resources:
   - pgadmin-auth-sealedsecret.yaml
+  - ingressroute-pgadmin-k8s-private.yaml
 helmCharts:
   - name: pgadmin4
     repo: https://helm.runix.net
