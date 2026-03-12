@@ -682,9 +682,11 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
         ta_data=ta_data,
         lane_contract=lane_contract,
     )
+    analysis_template_names = _analysis_template_names(manifest)
     analysis_images = _analysis_image_freshness(
         namespace=namespace,
         service=service,
+        template_names=analysis_template_names,
     )
     revision_health: dict[str, Any] | None = None
     if latest_ready_revision:
@@ -811,6 +813,7 @@ def _analysis_image_freshness(
     *,
     namespace: str,
     service: Mapping[str, Any],
+    template_names: Sequence[str],
 ) -> dict[str, Any]:
     spec = _as_mapping(service.get('spec'))
     template = _as_mapping(spec.get('template'))
@@ -828,10 +831,6 @@ def _analysis_image_freshness(
             'service_image': None,
             'analysis_images': {},
         }
-    template_names = [
-        'torghut-simulation-runtime-ready',
-        'torghut-simulation-activity',
-    ]
     analysis_images: dict[str, str] = {}
     mismatched: dict[str, str] = {}
     for template_name in template_names:
@@ -849,6 +848,13 @@ def _analysis_image_freshness(
         'analysis_images': analysis_images,
         'mismatched_templates': mismatched,
     }
+
+
+def _analysis_template_names(manifest: Mapping[str, Any]) -> tuple[str, str]:
+    rollouts = _as_mapping(manifest.get('rollouts'))
+    runtime_template = _as_text(rollouts.get('runtime_template')) or 'torghut-simulation-runtime-ready'
+    activity_template = _as_text(rollouts.get('activity_template')) or 'torghut-simulation-activity'
+    return runtime_template, activity_template
 
 
 def _analysis_template_image(template_payload: Mapping[str, Any]) -> str | None:

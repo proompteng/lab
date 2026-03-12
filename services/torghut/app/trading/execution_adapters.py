@@ -1048,7 +1048,9 @@ def _float_to_order_text(value: float) -> str:
 
 def _decimal_to_order_text(value: Decimal) -> str:
     normalized = abs(value)
-    rendered = format(normalized.normalize(), 'f').rstrip('0').rstrip('.')
+    rendered = format(normalized, 'f')
+    if '.' in rendered:
+        rendered = rendered.rstrip('0').rstrip('.')
     if not rendered:
         return '0'
     return rendered

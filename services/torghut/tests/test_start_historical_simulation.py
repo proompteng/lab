@@ -3966,6 +3966,126 @@ class TestStartHistoricalSimulation(TestCase):
             report['analysis_images']['mismatched_templates'],
         )
 
+    def test_runtime_verify_uses_manifest_override_for_analysis_templates(self) -> None:
+        manifest = {
+            'window': {
+                'start': '2026-03-06T14:30:00Z',
+                'end': '2026-03-06T15:30:00Z',
+            },
+            'rollouts': {
+                'runtime_template': 'torghut-runtime-ready-v1',
+                'activity_template': 'torghut-sim-activity-v1',
+            },
+        }
+        resources = _build_resources(
+            'sim-2026-03-06-open-hour',
+            {
+                'dataset_id': 'dataset-a',
+                'runtime': {
+                    'target_mode': 'dedicated_service',
+                    'namespace': 'torghut',
+                    'ta_configmap': 'torghut-ta-sim-config',
+                    'ta_deployment': 'torghut-ta-sim',
+                    'torghut_service': 'torghut-sim',
+                    'torghut_forecast_service': 'torghut-forecast-sim',
+                },
+            },
+        )
+        kservice_payload = {
+            'spec': {
+                'template': {
+                    'spec': {
+                        'containers': [
+                            {
+                                'name': 'user-container',
+                                'image': 'registry.ide-newton.ts.net/lab/torghut@sha256:service',
+                                'env': [
+                                    {'name': 'TRADING_ENABLED', 'value': 'true'},
+                                    {'name': 'TRADING_SIMULATION_ENABLED', 'value': 'true'},
+                                    {'name': 'TRADING_SIGNAL_TABLE', 'value': resources.clickhouse_signal_table},
+                                    {'name': 'TRADING_PRICE_TABLE', 'value': resources.clickhouse_price_table},
+                                    {'name': 'TRADING_ORDER_FEED_ENABLED', 'value': 'true'},
+                                    {'name': 'TRADING_ORDER_FEED_TOPIC', 'value': resources.simulation_topic_by_role['order_updates']},
+                                    {'name': 'TRADING_SIMULATION_ORDER_UPDATES_TOPIC', 'value': resources.simulation_topic_by_role['order_updates']},
+                                    {'name': 'TRADING_SIMULATION_RUN_ID', 'value': resources.run_id},
+                                    {'name': 'TRADING_SIGNAL_ALLOWED_SOURCES', 'value': 'ws,ta'},
+                                ],
+                            }
+                        ]
+                    }
+                }
+            },
+            'status': {
+                'latestReadyRevisionName': 'torghut-sim-00001',
+                'conditions': [{'type': 'Ready', 'status': 'True'}],
+            },
+        }
+        ta_configmap_payload = {
+            'data': {
+                'TA_TRADES_TOPIC': resources.simulation_topic_by_role['trades'],
+                'TA_QUOTES_TOPIC': resources.simulation_topic_by_role['quotes'],
+                'TA_BARS1M_TOPIC': resources.simulation_topic_by_role['bars'],
+                'TA_MICROBARS_TOPIC': resources.simulation_topic_by_role['ta_microbars'],
+                'TA_SIGNALS_TOPIC': resources.simulation_topic_by_role['ta_signals'],
+                'TA_CLICKHOUSE_URL': f'jdbc:clickhouse://clickhouse/{resources.clickhouse_db}',
+            }
+        }
+        runtime_template_payload = {
+            'spec': {
+                'metrics': [
+                    {
+                        'provider': {
+                            'job': {
+                                'spec': {
+                                    'template': {
+                                        'spec': {
+                                            'containers': [
+                                                {'image': 'registry.ide-newton.ts.net/lab/torghut@sha256:service'}
+                                            ]
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+        activity_template_payload = runtime_template_payload
+
+        with (
+            patch(
+                'scripts.historical_simulation_verification._kubectl_json',
+                side_effect=[
+                    kservice_payload,
+                    ta_configmap_payload,
+                    runtime_template_payload,
+                    activity_template_payload,
+                ],
+            ) as kubectl_json,
+            patch(
+                'scripts.historical_simulation_verification._deployment_replica_health',
+                side_effect=[
+                    {'name': 'torghut-sim-00001-deployment', 'ready_replicas': 1, 'available_replicas': 1, 'replicas': 1},
+                    {'name': 'torghut-forecast-sim', 'ready_replicas': 1, 'available_replicas': 1, 'replicas': 1},
+                ],
+            ),
+            patch(
+                'scripts.historical_simulation_verification._flink_runtime_health',
+                return_value={
+                    'name': 'torghut-ta-sim',
+                    'desired_state': 'running',
+                    'lifecycle_state': 'RUNNING',
+                    'job_manager_status': 'DEPLOYED',
+                },
+            ),
+        ):
+            report = _runtime_verify(resources=resources, manifest=manifest)
+
+        self.assertEqual(report['analysis_images']['reason'], 'ok')
+        kubectl_calls = [call.args[1][2] for call in kubectl_json.call_args_list[2:]]
+        self.assertEqual(kubectl_calls, ['torghut-runtime-ready-v1', 'torghut-sim-activity-v1'])
+
     def test_build_argocd_automation_config_defaults(self) -> None:
         config = _build_argocd_automation_config({})
         self.assertFalse(config.manage_automation)

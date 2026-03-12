@@ -199,6 +199,38 @@ class TestExecutionAdapters(TestCase):
             ],
         )
 
+    def test_simulation_adapter_preserves_integer_magnitude_in_positions(self) -> None:
+        adapter = SimulationExecutionAdapter(
+            bootstrap_servers=None,
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+            topic='torghut.sim.trade-updates.v1',
+            account_label='paper',
+            simulation_run_id='sim-2026-02-27-01',
+            dataset_id='dataset-1',
+        )
+        adapter.submit_order(
+            symbol='AAPL',
+            side='buy',
+            qty=10.0,
+            order_type='market',
+            time_in_force='day',
+            extra_params={'client_order_id': 'decision-integer'},
+        )
+        self.assertEqual(
+            adapter.list_positions(),
+            [
+                {
+                    'symbol': 'AAPL',
+                    'qty': '10',
+                    'side': 'long',
+                    'alpaca_account_label': 'paper',
+                }
+            ],
+        )
+
         adapter.submit_order(
             symbol='AAPL',
             side='sell',
@@ -213,8 +245,8 @@ class TestExecutionAdapters(TestCase):
             [
                 {
                     'symbol': 'AAPL',
-                    'qty': '0.5',
-                    'side': 'short',
+                    'qty': '8',
+                    'side': 'long',
                     'alpaca_account_label': 'paper',
                 }
             ],
