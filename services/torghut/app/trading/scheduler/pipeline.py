@@ -311,7 +311,8 @@ class TradingPipeline:
             "cash": str(account_snapshot.cash),
             "buying_power": str(account_snapshot.buying_power),
         }
-        positions = _clone_positions(account_snapshot.positions)
+        snapshot_positions = _clone_positions(account_snapshot.positions)
+        positions = self._resolve_execution_context_positions(snapshot_positions)
 
         universe_resolution = self.universe_resolver.get_resolution()
         self.state.universe_source_status = universe_resolution.status
@@ -364,6 +365,50 @@ class TradingPipeline:
             return None
 
         return account_snapshot, account, positions, allowed_symbols
+
+    def _resolve_execution_context_positions(
+        self,
+        snapshot_positions: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        seed_snapshot = getattr(self.execution_adapter, "seed_positions_snapshot", None)
+        if not callable(seed_snapshot):
+            return _clone_positions(snapshot_positions)
+        try:
+            seed_snapshot(_clone_positions(snapshot_positions))
+        except Exception as exc:
+            logger.warning(
+                "Failed to seed simulation execution positions account=%s error=%s",
+                self.account_label,
+                exc,
+            )
+            return _clone_positions(snapshot_positions)
+
+        list_positions = getattr(self.execution_adapter, "list_positions", None)
+        if not callable(list_positions):
+            return _clone_positions(snapshot_positions)
+        try:
+            seeded_positions = list_positions()
+        except Exception as exc:
+            logger.warning(
+                "Failed to read simulation execution positions account=%s error=%s",
+                self.account_label,
+                exc,
+            )
+            return _clone_positions(snapshot_positions)
+        if not isinstance(seeded_positions, list):
+            return _clone_positions(snapshot_positions)
+
+        normalized_positions: list[dict[str, Any]] = []
+        for raw_position in cast(list[Any], seeded_positions):
+            if not isinstance(raw_position, Mapping):
+                continue
+            normalized_positions.append(
+                {
+                    str(key): value
+                    for key, value in cast(Mapping[object, Any], raw_position).items()
+                }
+            )
+        return normalized_positions
 
     def _process_batch_signals(
         self,

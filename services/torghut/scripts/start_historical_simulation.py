@@ -4742,7 +4742,24 @@ def _run_full_lifecycle(
                 bool(rollouts_report['enabled'])
                 and _as_mapping(cast(Mapping[str, Any], rollouts_report['runtime_analysis_run'])).get('phase') != 'Successful'
             ):
-                errors.append('environment_incomplete')
+                runtime_failure = {
+                    'reason': 'environment_incomplete',
+                    'runtime_state': runtime_verify_report.get('runtime_state'),
+                    'analysis_run': rollouts_report['runtime_analysis_run'],
+                }
+                _update_run_state(
+                    resources=resources,
+                    phase='replay',
+                    status='skipped',
+                    details=runtime_failure,
+                )
+                _update_run_state(
+                    resources=resources,
+                    phase='activity_verify',
+                    status='skipped',
+                    details=runtime_failure,
+                )
+                raise RuntimeError('environment_incomplete')
 
             _update_run_state(resources=resources, phase='replay', status='running')
             replay_report = _replay_dump(

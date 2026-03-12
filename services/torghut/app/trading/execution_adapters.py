@@ -148,6 +148,7 @@ class SimulationExecutionAdapter:
         self._orders_by_id: dict[str, dict[str, Any]] = {}
         self._order_id_by_client_id: dict[str, str] = {}
         self._positions_by_symbol: dict[str, Decimal] = {}
+        self._seeded_from_snapshot = False
         self._producer: Any | None = None
         self._producer_init_error: str | None = None
         self._kafka_security_kwargs: dict[str, str] = {}
@@ -161,6 +162,35 @@ class SimulationExecutionAdapter:
             self._kafka_security_kwargs['sasl_plain_password'] = sasl_password
         if bootstrap_servers and bootstrap_servers.strip():
             self._producer = self._build_producer(bootstrap_servers.strip())
+
+    def seed_positions_snapshot(self, positions: list[dict[str, Any]] | None) -> None:
+        """Seed the adapter once from the broker snapshot used by decisioning."""
+
+        if self._seeded_from_snapshot:
+            return
+        seeded_positions: dict[str, Decimal] = {}
+        for raw_position in positions or []:
+            symbol = str(raw_position.get('symbol') or '').strip().upper()
+            if not symbol:
+                continue
+            raw_qty = raw_position.get('qty') or raw_position.get('quantity')
+            if raw_qty is None:
+                continue
+            try:
+                qty = Decimal(str(raw_qty))
+            except Exception:
+                continue
+            if qty == 0:
+                continue
+            side = str(raw_position.get('side') or '').strip().lower()
+            signed_qty = -abs(qty) if side == 'short' else qty
+            net_qty = seeded_positions.get(symbol, Decimal('0')) + signed_qty
+            if net_qty == 0:
+                seeded_positions.pop(symbol, None)
+                continue
+            seeded_positions[symbol] = net_qty
+        self._positions_by_symbol = seeded_positions
+        self._seeded_from_snapshot = True
 
     def submit_order(
         self,
