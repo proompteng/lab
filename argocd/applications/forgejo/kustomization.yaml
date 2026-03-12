@@ -4,6 +4,7 @@ namespace: forgejo
 resources:
   - admin-sealedsecret.yaml
   - postgres-cluster.yaml
+  - ingressroute-forgejo-k8s-private.yaml
 helmCharts:
   - name: forgejo
     repo: oci://code.forgejo.org/forgejo-helm

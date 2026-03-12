@@ -61,6 +61,13 @@ dig +short @127.0.0.1 feature-flags.k8s.proompteng.ai
 dig +short @127.0.0.1 flink.k8s.proompteng.ai
 dig +short @127.0.0.1 headlamp.k8s.proompteng.ai
 dig +short @127.0.0.1 kafka-ui.k8s.proompteng.ai
+dig +short @127.0.0.1 temporal.k8s.proompteng.ai
+dig +short @127.0.0.1 pgadmin.k8s.proompteng.ai
+dig +short @127.0.0.1 inngest.k8s.proompteng.ai
+dig +short @127.0.0.1 forgejo.k8s.proompteng.ai
+dig +short @127.0.0.1 coder.k8s.proompteng.ai
+dig +short @127.0.0.1 registry.k8s.proompteng.ai
+dig +short @127.0.0.1 openwebui.k8s.proompteng.ai
 ```
 
 ## Verify from another tailnet client
@@ -79,6 +86,13 @@ dig +short feature-flags.k8s.proompteng.ai
 dig +short flink.k8s.proompteng.ai
 dig +short headlamp.k8s.proompteng.ai
 dig +short kafka-ui.k8s.proompteng.ai
+dig +short temporal.k8s.proompteng.ai
+dig +short pgadmin.k8s.proompteng.ai
+dig +short inngest.k8s.proompteng.ai
+dig +short forgejo.k8s.proompteng.ai
+dig +short coder.k8s.proompteng.ai
+dig +short registry.k8s.proompteng.ai
+dig +short openwebui.k8s.proompteng.ai
 ```
 
 If these fail:

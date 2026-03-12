@@ -1,0 +1,16 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: registry-private
+  namespace: registry
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`registry.k8s.proompteng.ai`)
+      services:
+        - name: registry
+          port: 80
+  tls:
+    secretName: wildcard-k8s-proompteng-ai-tls

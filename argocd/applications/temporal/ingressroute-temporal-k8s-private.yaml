@@ -1,0 +1,16 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: temporal-web-private
+  namespace: temporal
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`temporal.k8s.proompteng.ai`)
+      services:
+        - name: temporal-web
+          port: 8080
+  tls:
+    secretName: wildcard-k8s-proompteng-ai-tls

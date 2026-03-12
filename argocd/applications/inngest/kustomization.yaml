@@ -6,6 +6,7 @@ resources:
   - redis.yaml
   - sealed-secret.yaml
   - tailscale-service.yaml
+  - ingressroute-inngest-k8s-private.yaml
 patches:
   - target:
       kind: Secret

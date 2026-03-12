@@ -50,6 +50,13 @@ cnameRecords = [
   'flink.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
   'headlamp.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
   'kafka-ui.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'temporal.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'pgadmin.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'inngest.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'forgejo.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'coder.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'registry.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'openwebui.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
 ]
 localise = true
 
