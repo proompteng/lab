@@ -166,6 +166,92 @@ class TestExecutionAdapters(TestCase):
         fetched = adapter.get_order(order_id)
         self.assertEqual(fetched.get('status'), 'filled')
 
+    def test_simulation_adapter_tracks_synthetic_positions(self) -> None:
+        adapter = SimulationExecutionAdapter(
+            bootstrap_servers=None,
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+            topic='torghut.sim.trade-updates.v1',
+            account_label='paper',
+            simulation_run_id='sim-2026-02-27-01',
+            dataset_id='dataset-1',
+        )
+        adapter.submit_order(
+            symbol='AAPL',
+            side='buy',
+            qty=1.5,
+            order_type='market',
+            time_in_force='day',
+            extra_params={'client_order_id': 'decision-long'},
+        )
+        positions = adapter.list_positions()
+        self.assertEqual(
+            positions,
+            [
+                {
+                    'symbol': 'AAPL',
+                    'qty': '1.5',
+                    'side': 'long',
+                    'alpaca_account_label': 'paper',
+                }
+            ],
+        )
+
+    def test_simulation_adapter_preserves_integer_magnitude_in_positions(self) -> None:
+        adapter = SimulationExecutionAdapter(
+            bootstrap_servers=None,
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+            topic='torghut.sim.trade-updates.v1',
+            account_label='paper',
+            simulation_run_id='sim-2026-02-27-01',
+            dataset_id='dataset-1',
+        )
+        adapter.submit_order(
+            symbol='AAPL',
+            side='buy',
+            qty=10.0,
+            order_type='market',
+            time_in_force='day',
+            extra_params={'client_order_id': 'decision-integer'},
+        )
+        self.assertEqual(
+            adapter.list_positions(),
+            [
+                {
+                    'symbol': 'AAPL',
+                    'qty': '10',
+                    'side': 'long',
+                    'alpaca_account_label': 'paper',
+                }
+            ],
+        )
+
+        adapter.submit_order(
+            symbol='AAPL',
+            side='sell',
+            qty=2.0,
+            order_type='market',
+            time_in_force='day',
+            extra_params={'client_order_id': 'decision-short'},
+        )
+        positions = adapter.list_positions()
+        self.assertEqual(
+            positions,
+            [
+                {
+                    'symbol': 'AAPL',
+                    'qty': '8',
+                    'side': 'long',
+                    'alpaca_account_label': 'paper',
+                }
+            ],
+        )
+
     def test_build_execution_adapter_uses_simulation_when_enabled(self) -> None:
         original_adapter = config.settings.trading_execution_adapter
         original_sim_enabled = config.settings.trading_simulation_enabled

@@ -73,6 +73,20 @@ _SIMPLE_MAP_METRICS: dict[str, tuple[str, str, str, str, str]] = {
         "reason",
         "int",
     ),
+    "feature_quality_reject_reason_total": (
+        "torghut_trading_feature_quality_reject_reason_total",
+        "Count of feature-quality rejection reasons.",
+        "counter",
+        "reason",
+        "int",
+    ),
+    "feature_quality_cursor_commit_blocked_total": (
+        "torghut_trading_feature_quality_cursor_commit_blocked_total",
+        "Count of prevented cursor commits on rejected feature-quality batches.",
+        "counter",
+        "reason",
+        "int",
+    ),
     "domain_telemetry_event_total": (
         "torghut_trading_domain_telemetry_event_total",
         "Count of attempted domain telemetry events by event name.",
@@ -323,6 +337,20 @@ _SIMPLE_MAP_METRICS: dict[str, tuple[str, str, str, str, str]] = {
         "Current hypothesis capital stages by stage.",
         "gauge",
         "stage",
+        "int",
+    ),
+    "simulation_position_state_total": (
+        "torghut_trading_simulation_position_state_total",
+        "Count of simulation position state observations.",
+        "counter",
+        "state",
+        "int",
+    ),
+    "simulation_preflight_failure_total": (
+        "torghut_trading_simulation_preflight_failure_total",
+        "Count of simulation preflight failures by reason.",
+        "counter",
+        "reason",
         "int",
     ),
 }
@@ -731,6 +759,127 @@ def _render_allocator_multiplier_total_map(values: Mapping[str, object]) -> list
     return lines
 
 
+def _render_qty_resolution_total_map(values: Mapping[str, object]) -> list[str]:
+    metric_name = "torghut_trading_qty_resolution_total"
+    lines = _metric_headers(
+        metric_name,
+        "Count of quantity-resolution outcomes by stage, outcome, and reason.",
+        "counter",
+    )
+    for key, count in _sorted_metric_items(values, numeric_kind="int"):
+        stage = "unknown"
+        outcome = "unknown"
+        reason = "unknown"
+        parts = key.split("|", 2)
+        if len(parts) == 3:
+            stage, outcome, reason = parts
+        lines.extend(
+            _render_labeled_metric(
+                metric_name=metric_name,
+                labels={"stage": stage, "outcome": outcome, "reason": reason},
+                value=count,
+            )
+        )
+    return lines
+
+
+def _render_sell_inventory_context_total_map(values: Mapping[str, object]) -> list[str]:
+    metric_name = "torghut_trading_sell_inventory_context_total"
+    lines = _metric_headers(
+        metric_name,
+        "Count of sell inventory context observations by stage and context.",
+        "counter",
+    )
+    for key, count in _sorted_metric_items(values, numeric_kind="int"):
+        stage = "unknown"
+        context = "unknown"
+        parts = key.split("|", 1)
+        if len(parts) == 2:
+            stage, context = parts
+        lines.extend(
+            _render_labeled_metric(
+                metric_name=metric_name,
+                labels={"stage": stage, "context": context},
+                value=count,
+            )
+        )
+    return lines
+
+
+def _render_execution_local_reject_total_map(values: Mapping[str, object]) -> list[str]:
+    metric_name = "torghut_trading_execution_local_reject_total"
+    lines = _metric_headers(
+        metric_name,
+        "Count of local execution rejects by code and reason.",
+        "counter",
+    )
+    for key, count in _sorted_metric_items(values, numeric_kind="int"):
+        code = "unknown"
+        reason = "unknown"
+        parts = key.split("|", 1)
+        if len(parts) == 2:
+            code, reason = parts
+        lines.extend(
+            _render_labeled_metric(
+                metric_name=metric_name,
+                labels={"code": code, "reason": reason},
+                value=count,
+            )
+        )
+    return lines
+
+
+def _render_execution_submit_attempt_total_map(values: Mapping[str, object]) -> list[str]:
+    metric_name = "torghut_trading_execution_submit_attempt_total"
+    lines = _metric_headers(
+        metric_name,
+        "Count of execution submit attempts by adapter, side, and asset class.",
+        "counter",
+    )
+    for key, count in _sorted_metric_items(values, numeric_kind="int"):
+        adapter = "unknown"
+        side = "unknown"
+        asset_class = "unknown"
+        parts = key.split("|", 2)
+        if len(parts) == 3:
+            adapter, side, asset_class = parts
+        lines.extend(
+            _render_labeled_metric(
+                metric_name=metric_name,
+                labels={
+                    "adapter": adapter,
+                    "side": side,
+                    "asset_class": asset_class,
+                },
+                value=count,
+            )
+        )
+    return lines
+
+
+def _render_execution_submit_result_total_map(values: Mapping[str, object]) -> list[str]:
+    metric_name = "torghut_trading_execution_submit_result_total"
+    lines = _metric_headers(
+        metric_name,
+        "Count of execution submit results by status and adapter.",
+        "counter",
+    )
+    for key, count in _sorted_metric_items(values, numeric_kind="int"):
+        status = "unknown"
+        adapter = "unknown"
+        parts = key.split("|", 1)
+        if len(parts) == 2:
+            status, adapter = parts
+        lines.extend(
+            _render_labeled_metric(
+                metric_name=metric_name,
+                labels={"status": status, "adapter": adapter},
+                value=count,
+            )
+        )
+    return lines
+
+
 def _render_tca_summary_map(values: Mapping[str, object]) -> list[str]:
     lines: list[str] = []
     scalar_metrics: list[tuple[str, str]] = [
@@ -804,12 +953,17 @@ def _render_strategy_runtime_map(key: str, values: Mapping[str, object]) -> list
 
 _SPECIAL_MAP_RENDERERS = {
     "execution_fallback_total": _render_execution_fallback_total_map,
+    "execution_local_reject_total": _render_execution_local_reject_total_map,
+    "execution_submit_attempt_total": _render_execution_submit_attempt_total_map,
+    "execution_submit_result_total": _render_execution_submit_result_total_map,
     "lean_failure_taxonomy_total": _render_lean_failure_taxonomy_total_map,
     "route_provenance": _render_route_provenance_map,
     "forecast_calibration_error": _render_forecast_calibration_error_map,
     "forecast_route_selection_total": _render_forecast_route_selection_total_map,
     "llm_committee_verdict_total": _render_llm_committee_verdict_total_map,
     "allocator_multiplier_total": _render_allocator_multiplier_total_map,
+    "qty_resolution_total": _render_qty_resolution_total_map,
+    "sell_inventory_context_total": _render_sell_inventory_context_total_map,
     "universe_resolution_total": _render_universe_resolution_total_map,
     "tca_summary": _render_tca_summary_map,
 }
@@ -922,6 +1076,26 @@ def _render_scalar_metric(
             )
         )
         lines.append(f"torghut_trading_orders_rejected_total {value}")
+        return lines
+
+    if key == "signal_batch_order_violation_total":
+        metric_name = "torghut_trading_signal_batch_order_violation_total"
+        lines = _metric_headers(
+            metric_name,
+            "Count of signal batch ordering violations detected by the feature-quality gate.",
+            "counter",
+        )
+        lines.append(f"{metric_name} {value}")
+        return lines
+
+    if key == "execution_validation_mismatch_total":
+        metric_name = "torghut_trading_execution_validation_mismatch_total"
+        lines = _metric_headers(
+            metric_name,
+            "Count of mismatches between earlier quantity planning and execution validation.",
+            "counter",
+        )
+        lines.append(f"{metric_name} {value}")
         return lines
 
     metric_name = f"torghut_trading_{key}"

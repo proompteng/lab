@@ -7,6 +7,7 @@ import logging
 import time
 from datetime import datetime, timezone
 from collections.abc import Mapping
+from decimal import Decimal
 from http.client import HTTPConnection, HTTPSConnection
 from typing import Any, Optional, Protocol, cast
 from urllib.parse import quote, urlencode
@@ -146,6 +147,7 @@ class SimulationExecutionAdapter:
         self._seq = 0
         self._orders_by_id: dict[str, dict[str, Any]] = {}
         self._order_id_by_client_id: dict[str, str] = {}
+        self._positions_by_symbol: dict[str, Decimal] = {}
         self._producer: Any | None = None
         self._producer_init_error: str | None = None
         self._kafka_security_kwargs: dict[str, str] = {}
@@ -230,6 +232,7 @@ class SimulationExecutionAdapter:
         self.last_idempotency_key = idempotency_key
         self._orders_by_id[order_id] = dict(order)
         self._order_id_by_client_id[client_order_id] = order_id
+        self._apply_fill_to_positions(order)
         self._publish_trade_update(order, event_type='fill', event_ts=now)
         return dict(order)
 
@@ -284,7 +287,39 @@ class SimulationExecutionAdapter:
 
     def list_positions(self) -> list[dict[str, Any]]:
         self.last_route = self.name
-        return []
+        positions: list[dict[str, Any]] = []
+        for symbol, net_qty in sorted(self._positions_by_symbol.items()):
+            if net_qty == 0:
+                continue
+            side = 'long' if net_qty > 0 else 'short'
+            positions.append(
+                {
+                    'symbol': symbol,
+                    'qty': _decimal_to_order_text(abs(net_qty)),
+                    'side': side,
+                    'alpaca_account_label': self._account_label,
+                }
+            )
+        return positions
+
+    def _apply_fill_to_positions(self, order: Mapping[str, Any]) -> None:
+        symbol = str(order.get('symbol') or '').strip().upper()
+        if not symbol:
+            return
+        raw_qty = order.get('filled_qty') or order.get('qty')
+        try:
+            qty = Decimal(str(raw_qty or '0'))
+        except Exception:
+            return
+        if qty <= 0:
+            return
+        side = str(order.get('side') or '').strip().lower()
+        delta = qty if side == 'buy' else -qty
+        updated = self._positions_by_symbol.get(symbol, Decimal('0')) + delta
+        if updated == 0:
+            self._positions_by_symbol.pop(symbol, None)
+            return
+        self._positions_by_symbol[symbol] = updated
 
     def _build_producer(self, bootstrap_servers: str) -> Any | None:
         try:
@@ -1006,6 +1041,16 @@ def _resolve_simulation_event_ts(
 def _float_to_order_text(value: float) -> str:
     normalized = max(float(value), 0.0)
     rendered = f'{normalized:.8f}'.rstrip('0').rstrip('.')
+    if not rendered:
+        return '0'
+    return rendered
+
+
+def _decimal_to_order_text(value: Decimal) -> str:
+    normalized = abs(value)
+    rendered = format(normalized, 'f')
+    if '.' in rendered:
+        rendered = rendered.rstrip('0').rstrip('.')
     if not rendered:
         return '0'
     return rendered

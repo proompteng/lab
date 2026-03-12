@@ -684,8 +684,20 @@ class TestTradingPipeline(TestCase):
 
             pipeline.run_once()
 
-            self.assertEqual(ingestor.committed_batches, 1)
+            self.assertEqual(ingestor.committed_batches, 0)
             self.assertEqual(state.metrics.feature_quality_rejections_total, 1)
+            self.assertEqual(
+                state.metrics.feature_quality_reject_reason_total.get(
+                    "feature_staleness_exceeds_budget"
+                ),
+                1,
+            )
+            self.assertEqual(
+                state.metrics.feature_quality_cursor_commit_blocked_total.get(
+                    "feature_staleness_exceeds_budget"
+                ),
+                1,
+            )
             self.assertGreater(state.metrics.feature_staleness_ms_p95, 1_000)
             self.assertEqual(execution_adapter.submitted, [])
         finally:

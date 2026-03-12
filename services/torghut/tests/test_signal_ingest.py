@@ -833,6 +833,58 @@ class TestSignalIngest(TestCase):
             self.assertEqual(cursor.cursor_seq, 1)
             self.assertEqual(cursor.cursor_symbol, "MSFT")
 
+    def test_fetch_signals_sorts_multi_symbol_batch_before_returning(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+        rows = [
+            {
+                "event_ts": "2026-01-01T00:00:00Z",
+                "symbol": "MSFT",
+                "payload": {"feature_schema_version": "3.0.0"},
+                "timeframe": "1Min",
+                "seq": 2,
+                "source": "ta",
+            },
+            {
+                "event_ts": "2026-01-01T00:00:00Z",
+                "symbol": "AAPL",
+                "payload": {"feature_schema_version": "3.0.0"},
+                "timeframe": "5Min",
+                "seq": 3,
+                "source": "ta",
+            },
+            {
+                "event_ts": "2026-01-01T00:00:00Z",
+                "symbol": "AAPL",
+                "payload": {"feature_schema_version": "3.0.0"},
+                "timeframe": "1Min",
+                "seq": 1,
+                "source": "ta",
+            },
+        ]
+
+        class SortedCursorIngestor(ClickHouseSignalIngestor):
+            def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
+                _ = query
+                return rows
+
+        ingestor = SortedCursorIngestor(
+            schema="envelope",
+            table="torghut.ta_signals",
+            url="http://example",
+            fast_forward_stale_cursor=False,
+        )
+
+        with session_local() as session:
+            batch = ingestor.fetch_signals(session)
+
+        self.assertEqual(
+            [(signal.symbol, signal.timeframe, signal.seq) for signal in batch.signals],
+            [("AAPL", "1Min", 1), ("AAPL", "5Min", 3), ("MSFT", "1Min", 2)],
+        )
+
     def test_cursor_is_account_scoped(self) -> None:
         engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
         Base.metadata.create_all(engine)

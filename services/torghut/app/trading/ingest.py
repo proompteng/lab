@@ -238,7 +238,9 @@ class ClickHouseSignalIngestor:
             cursor_seq=cursor_seq,
             cursor_symbol=cursor_symbol,
         )
-        signals = self._filter_signals(self._dedupe_signals(signals))
+        signals = self._sorted_signals(
+            self._filter_signals(self._dedupe_signals(signals))
+        )
         max_event_ts: Optional[datetime] = None
         max_seq: Optional[int] = None
         max_symbol: Optional[str] = None
@@ -397,7 +399,9 @@ class ClickHouseSignalIngestor:
             if overlap_cutoff is not None and signal.event_ts < overlap_cutoff:
                 continue
             parsed_signals.append(signal)
-        signals = self._filter_signals(self._dedupe_signals(parsed_signals))
+        signals = self._sorted_signals(
+            self._filter_signals(self._dedupe_signals(parsed_signals))
+        )
         max_event_ts: Optional[datetime] = None
         max_seq: Optional[int] = None
         max_symbol: Optional[str] = None
@@ -557,7 +561,7 @@ class ClickHouseSignalIngestor:
             signal = self.parse_row(row)
             if signal is not None:
                 signals.append(signal)
-        return self._filter_signals(self._dedupe_signals(signals))
+        return self._sorted_signals(self._filter_signals(self._dedupe_signals(signals)))
 
     def _resolve_replay_no_signal_reason(
         self,
@@ -786,7 +790,7 @@ class ClickHouseSignalIngestor:
             if signal is None:
                 continue
             signals.append(signal)
-        return self._filter_signals(self._dedupe_signals(signals))
+        return self._sorted_signals(self._filter_signals(self._dedupe_signals(signals)))
 
     def _dedupe_signals(self, signals: list[SignalEnvelope]) -> list[SignalEnvelope]:
         if self.schema == "flat" or len(signals) < 2:
@@ -813,6 +817,11 @@ class ClickHouseSignalIngestor:
             for signal in signals
             if (signal.source or "").strip().lower() in allowed_sources
         ]
+
+    def _sorted_signals(self, signals: list[SignalEnvelope]) -> list[SignalEnvelope]:
+        if len(signals) < 2:
+            return signals
+        return sorted(signals, key=_signal_sort_key)
 
     def _query_clickhouse(self, query: str) -> list[dict[str, Any]]:
         params = {"query": query}

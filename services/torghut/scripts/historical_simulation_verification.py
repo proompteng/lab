@@ -442,12 +442,50 @@ def _flink_runtime_health(namespace: str, name: str) -> dict[str, Any]:
     status = _as_mapping(deployment.get('status'))
     job_status = _as_mapping(status.get('jobStatus'))
     lifecycle_state = _as_text(job_status.get('state')) or _as_text(status.get('jobManagerDeploymentStatus'))
+    job_spec = _as_mapping(spec.get('job'))
+    restore_error = _classify_restore_state_error(
+        _first_text(
+            job_status.get('error'),
+            job_status.get('message'),
+            status.get('error'),
+            status.get('message'),
+        )
+    )
     return {
         'name': name,
-        'desired_state': _as_text(_as_mapping(spec.get('job')).get('state')) or 'unknown',
+        'desired_state': _as_text(job_spec.get('state')) or 'unknown',
         'lifecycle_state': lifecycle_state or 'unknown',
         'job_manager_status': _as_text(status.get('jobManagerDeploymentStatus')) or 'unknown',
+        'upgrade_mode': _as_text(job_spec.get('upgradeMode')) or 'unknown',
+        'status_error': _first_text(
+            job_status.get('error'),
+            job_status.get('message'),
+            status.get('error'),
+            status.get('message'),
+        ),
+        'restore_state_reason': restore_error,
     }
+
+
+def _first_text(*values: Any) -> str | None:
+    for value in values:
+        text = _as_text(value)
+        if text:
+            return text
+    return None
+
+
+def _classify_restore_state_error(message: str | None) -> str | None:
+    normalized = (message or '').strip().lower()
+    if not normalized:
+        return None
+    has_state_term = any(term in normalized for term in ('checkpoint', 'savepoint', 'last-state'))
+    has_missing_term = any(
+        term in normalized for term in ('not found', 'no such file', 'does not exist', 'missing')
+    )
+    if has_state_term and has_missing_term:
+        return 'restore_state_missing'
+    return None
 
 
 def _kservice_env(service: Mapping[str, Any]) -> tuple[str, list[dict[str, Any]]]:
@@ -640,6 +678,16 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
         _as_text(ta_data.get(lane_contract.ta_clickhouse_url_key)) or ''
     )
     ta_runtime_config_complete = all(ta_runtime_config.values())
+    schema_registry = _schema_registry_health(
+        ta_data=ta_data,
+        lane_contract=lane_contract,
+    )
+    analysis_template_names = _analysis_template_names(manifest)
+    analysis_images = _analysis_image_freshness(
+        namespace=namespace,
+        service=service,
+        template_names=analysis_template_names,
+    )
     revision_health: dict[str, Any] | None = None
     if latest_ready_revision:
         revision_health = _deployment_replica_health(namespace, f'{latest_ready_revision}-deployment')
@@ -655,6 +703,8 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
         and forecast_health['ready_replicas'] > 0
         and trading_config_complete
         and ta_runtime_config_complete
+        and bool(schema_registry.get('ready'))
+        and bool(analysis_images.get('ready'))
         else 'not_ready',
         'target_mode': _as_text(_resource_attr(resources, 'target_mode')),
         'window_start': window_start.astimezone(timezone.utc).isoformat(),
@@ -668,11 +718,161 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
         },
         'ta_runtime': ta_health,
         'ta_runtime_config': ta_runtime_config,
+        'schema_registry': schema_registry,
+        'analysis_images': analysis_images,
         'forecast_runtime': forecast_health,
         'environment_state': 'complete'
-        if forecast_health['ready_replicas'] > 0 and trading_config_complete and ta_runtime_config_complete
+        if (
+            forecast_health['ready_replicas'] > 0
+            and trading_config_complete
+            and ta_runtime_config_complete
+            and bool(schema_registry.get('ready'))
+            and bool(analysis_images.get('ready'))
+        )
         else 'environment_incomplete',
     }
+
+
+def _schema_registry_health(
+    *,
+    ta_data: Mapping[str, Any],
+    lane_contract: Any,
+) -> dict[str, Any]:
+    registry_url = _as_text(ta_data.get('TA_SCHEMA_REGISTRY_URL'))
+    if not registry_url:
+        return {
+            'ready': True,
+            'reason': 'schema_registry_url_not_declared',
+            'subjects_checked': [],
+            'subjects_missing': [],
+        }
+    subjects = _expected_schema_subjects(ta_data=ta_data, lane_contract=lane_contract)
+    try:
+        status, _ = _http_json_get(registry_url, '/subjects')
+    except Exception as exc:
+        return {
+            'ready': False,
+            'reason': f'schema_registry_not_ready:{exc}',
+            'subjects_checked': subjects,
+            'subjects_missing': subjects,
+        }
+    if status != 200:
+        return {
+            'ready': False,
+            'reason': f'schema_registry_not_ready:http_{status}',
+            'subjects_checked': subjects,
+            'subjects_missing': subjects,
+        }
+    missing: list[str] = []
+    for subject in subjects:
+        subject_path = f"/subjects/{quote_plus(subject)}/versions/latest"
+        subject_status, _ = _http_json_get(registry_url, subject_path)
+        if subject_status != 200:
+            missing.append(subject)
+    return {
+        'ready': len(missing) == 0,
+        'reason': 'ok' if not missing else 'schema_subject_missing',
+        'url': registry_url,
+        'subjects_checked': subjects,
+        'subjects_missing': missing,
+    }
+
+
+def _expected_schema_subjects(
+    *,
+    ta_data: Mapping[str, Any],
+    lane_contract: Any,
+) -> list[str]:
+    subjects: list[str] = []
+    for role, key in cast(Mapping[str, str], lane_contract.ta_topic_key_by_role).items():
+        topic = _as_text(ta_data.get(key))
+        if not topic:
+            continue
+        subjects.append(f'{topic}-value')
+    return sorted(set(subjects))
+
+
+def _http_json_get(base_url: str, path: str) -> tuple[int, str]:
+    parsed = urlsplit(base_url)
+    if not parsed.scheme or not parsed.hostname:
+        raise RuntimeError(f'invalid_http_url:{base_url}')
+    connection_class = HTTPSConnection if parsed.scheme == 'https' else HTTPConnection
+    connection = connection_class(parsed.hostname, parsed.port)
+    target_path = parsed.path or '/'
+    if path and path != '/':
+        target_path = f'{target_path.rstrip("/")}/{path.lstrip("/")}'
+    try:
+        connection.request('GET', target_path)
+        response = connection.getresponse()
+        return response.status, response.read().decode('utf-8', errors='replace')
+    finally:
+        connection.close()
+
+
+def _analysis_image_freshness(
+    *,
+    namespace: str,
+    service: Mapping[str, Any],
+    template_names: Sequence[str],
+) -> dict[str, Any]:
+    spec = _as_mapping(service.get('spec'))
+    template = _as_mapping(spec.get('template'))
+    template_spec = _as_mapping(template.get('spec'))
+    containers = template_spec.get('containers')
+    service_image: str | None = None
+    if isinstance(containers, list) and containers:
+        first = containers[0]
+        if isinstance(first, Mapping):
+            service_image = _as_text(cast(Mapping[str, Any], first).get('image'))
+    if not service_image:
+        return {
+            'ready': True,
+            'reason': 'service_image_not_declared',
+            'service_image': None,
+            'analysis_images': {},
+        }
+    analysis_images: dict[str, str] = {}
+    mismatched: dict[str, str] = {}
+    for template_name in template_names:
+        template_payload = _kubectl_json(namespace, ['get', 'analysistemplate', template_name, '-o', 'json'])
+        image = _analysis_template_image(template_payload)
+        if not image:
+            continue
+        analysis_images[template_name] = image
+        if image != service_image:
+            mismatched[template_name] = image
+    return {
+        'ready': len(mismatched) == 0,
+        'reason': 'ok' if not mismatched else 'analysis_image_stale',
+        'service_image': service_image,
+        'analysis_images': analysis_images,
+        'mismatched_templates': mismatched,
+    }
+
+
+def _analysis_template_names(manifest: Mapping[str, Any]) -> tuple[str, str]:
+    rollouts = _as_mapping(manifest.get('rollouts'))
+    runtime_template = _as_text(rollouts.get('runtime_template')) or 'torghut-simulation-runtime-ready'
+    activity_template = _as_text(rollouts.get('activity_template')) or 'torghut-simulation-activity'
+    return runtime_template, activity_template
+
+
+def _analysis_template_image(template_payload: Mapping[str, Any]) -> str | None:
+    spec = _as_mapping(template_payload.get('spec'))
+    metrics = spec.get('metrics')
+    if not isinstance(metrics, list) or not metrics:
+        return None
+    provider = _as_mapping(_as_mapping(metrics[0]).get('provider'))
+    job_spec = _as_mapping(provider.get('job'))
+    template = _as_mapping(_as_mapping(job_spec.get('spec')).get('template'))
+    pod_spec = _as_mapping(template.get('spec'))
+    containers = pod_spec.get('containers')
+    if not isinstance(containers, list) or not containers:
+        return None
+    first = containers[0]
+    if not isinstance(first, Mapping):
+        return None
+    return _as_text(cast(Mapping[str, Any], first).get('image'))
 
 
 def _current_activity_report(

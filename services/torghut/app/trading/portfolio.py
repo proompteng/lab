@@ -18,9 +18,9 @@ from .fragility import (
 from .regime_hmm import resolve_hmm_context
 from .models import StrategyDecision
 from .quantity_rules import (
-    fractional_equities_enabled_for_trade,
     min_qty_for_symbol,
     quantize_qty_for_symbol,
+    resolve_quantity_resolution,
 )
 
 ALLOCATOR_REJECT_NO_PRICE = "allocator_reject_no_price"
@@ -356,7 +356,8 @@ class PortfolioSizer:
             return Decimal("0"), Decimal("0"), False, reasons, diagnostics
 
         target_qty = notional / price
-        fractional_equities_enabled = fractional_equities_enabled_for_trade(
+        resolution = resolve_quantity_resolution(
+            decision.symbol,
             action=decision.action,
             global_enabled=settings.trading_fractional_equities_enabled,
             allow_shorts=settings.trading_allow_shorts,
@@ -366,12 +367,13 @@ class PortfolioSizer:
         qty = quantize_qty_for_symbol(
             decision.symbol,
             target_qty,
-            fractional_equities_enabled=fractional_equities_enabled,
+            fractional_equities_enabled=resolution.fractional_allowed,
         )
         min_qty = min_qty_for_symbol(
-            decision.symbol, fractional_equities_enabled=fractional_equities_enabled
+            decision.symbol, fractional_equities_enabled=resolution.fractional_allowed
         )
-        diagnostics["fractional_allowed"] = fractional_equities_enabled
+        diagnostics["fractional_allowed"] = resolution.fractional_allowed
+        diagnostics["quantity_resolution"] = resolution.to_payload()
         diagnostics["min_executable_qty"] = _decimal_str(min_qty)
         diagnostics["min_executable_notional"] = _decimal_str(min_qty * price)
         diagnostics["remaining_room_notional"] = _decimal_str(notional)
@@ -476,7 +478,8 @@ class IntentAggregator:
                 chosen_qty = sell_qty - buy_qty
 
             primary = bucket[0]
-            fractional_equities_enabled = fractional_equities_enabled_for_trade(
+            resolution = resolve_quantity_resolution(
+                primary.symbol,
                 action=chosen_action,
                 global_enabled=settings.trading_fractional_equities_enabled,
                 allow_shorts=settings.trading_allow_shorts,
@@ -485,7 +488,7 @@ class IntentAggregator:
             chosen_qty = quantize_qty_for_symbol(
                 primary.symbol,
                 chosen_qty,
-                fractional_equities_enabled=fractional_equities_enabled,
+                fractional_equities_enabled=resolution.fractional_allowed,
             )
             params = dict(primary.params)
             allocator_meta = dict(_mapping(params.get("allocator")))
@@ -920,7 +923,8 @@ class PortfolioAllocator:
         reason_codes: list[str],
     ) -> tuple[Decimal, bool, bool, Decimal]:
         target_qty = approved_notional / price
-        fractional_equities_enabled = fractional_equities_enabled_for_trade(
+        resolution = resolve_quantity_resolution(
+            decision.symbol,
             action=decision.action,
             global_enabled=settings.trading_fractional_equities_enabled,
             allow_shorts=settings.trading_allow_shorts,
@@ -930,10 +934,10 @@ class PortfolioAllocator:
         adjusted_qty = quantize_qty_for_symbol(
             decision.symbol,
             target_qty,
-            fractional_equities_enabled=fractional_equities_enabled,
+            fractional_equities_enabled=resolution.fractional_allowed,
         )
         min_qty = min_qty_for_symbol(
-            decision.symbol, fractional_equities_enabled=fractional_equities_enabled
+            decision.symbol, fractional_equities_enabled=resolution.fractional_allowed
         )
         if adjusted_qty < min_qty:
             if approved_notional > 0:

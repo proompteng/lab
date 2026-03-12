@@ -192,6 +192,91 @@ class TestDecisionEngine(TestCase):
             settings.trading_fractional_equities_enabled = original_fractional
             settings.trading_allow_shorts = original_allow_shorts
 
+    def test_legacy_sell_without_inventory_defaults_to_integer_qty(self) -> None:
+        original_fractional = settings.trading_fractional_equities_enabled
+        original_allow_shorts = settings.trading_allow_shorts
+        settings.trading_fractional_equities_enabled = True
+        settings.trading_allow_shorts = True
+        try:
+            engine = DecisionEngine(price_fetcher=None)
+            strategy = Strategy(
+                name="integer-sell",
+                description=None,
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=None,
+                max_position_pct_equity=None,
+                max_notional_per_trade=Decimal("150"),
+            )
+            signal = SignalEnvelope(
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": Decimal("0.1"), "signal": Decimal("1.0")},
+                    "rsi14": Decimal("80"),
+                    "price": Decimal("100"),
+                },
+                timeframe="1Min",
+            )
+
+            decisions = engine.evaluate(signal, [strategy], positions=None)
+
+            self.assertEqual(len(decisions), 1)
+            self.assertEqual(decisions[0].qty, Decimal("1"))
+            sizing = decisions[0].params.get("sizing")
+            assert isinstance(sizing, dict)
+            quantity_resolution = sizing.get("quantity_resolution")
+            assert isinstance(quantity_resolution, dict)
+            self.assertFalse(quantity_resolution.get("fractional_allowed"))
+            self.assertEqual(
+                quantity_resolution.get("reason"),
+                "sell_inventory_unknown_integer_only",
+            )
+        finally:
+            settings.trading_fractional_equities_enabled = original_fractional
+            settings.trading_allow_shorts = original_allow_shorts
+
+    def test_legacy_sell_reducing_long_can_remain_fractional(self) -> None:
+        original_fractional = settings.trading_fractional_equities_enabled
+        original_allow_shorts = settings.trading_allow_shorts
+        settings.trading_fractional_equities_enabled = True
+        settings.trading_allow_shorts = True
+        try:
+            engine = DecisionEngine(price_fetcher=None)
+            strategy = Strategy(
+                name="fractional-reduce-sell",
+                description=None,
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=None,
+                max_position_pct_equity=None,
+                max_notional_per_trade=Decimal("50"),
+            )
+            signal = SignalEnvelope(
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": Decimal("0.1"), "signal": Decimal("1.0")},
+                    "rsi14": Decimal("80"),
+                    "price": Decimal("100"),
+                },
+                timeframe="1Min",
+            )
+
+            decisions = engine.evaluate(
+                signal,
+                [strategy],
+                positions=[{"symbol": "AAPL", "qty": "1", "side": "long"}],
+            )
+
+            self.assertEqual(len(decisions), 1)
+            self.assertEqual(decisions[0].qty, Decimal("0.5000"))
+        finally:
+            settings.trading_fractional_equities_enabled = original_fractional
+            settings.trading_allow_shorts = original_allow_shorts
+
     def test_scheduler_runtime_mode_emits_aggregated_metadata(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
