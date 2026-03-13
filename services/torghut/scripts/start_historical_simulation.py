@@ -4810,15 +4810,14 @@ def _apply(
             upgrade_mode=str(ta_restore.get('effective_upgrade_mode') or 'last-state'),
         )
 
-        if not warm_lane_enabled:
-            _configure_torghut_service_for_simulation(
-                resources=resources,
-                manifest=manifest,
-                postgres_config=postgres_config,
-                clickhouse_config=clickhouse_config,
-                kafka_config=kafka_config,
-                torghut_env_overrides=torghut_env_overrides,
-            )
+        _configure_torghut_service_for_simulation(
+            resources=resources,
+            manifest=manifest,
+            postgres_config=postgres_config,
+            clickhouse_config=clickhouse_config,
+            kafka_config=kafka_config,
+            torghut_env_overrides=torghut_env_overrides,
+        )
     except Exception:
         _release_simulation_runtime_lock(resources=resources)
         raise
@@ -4917,13 +4916,9 @@ def _teardown(
 
     state = _load_json(state_path)
     _restore_ta_configuration(resources, state)
-    if warm_lane_enabled:
-        original_state = _as_text(state.get('ta_job_state')) or 'running'
-        ta_restart_nonce = _restart_ta_deployment(resources, desired_state=original_state)
-    else:
-        _restore_torghut_env(resources, state)
-        original_state = _as_text(state.get('ta_job_state')) or 'running'
-        ta_restart_nonce = _restart_ta_deployment(resources, desired_state=original_state)
+    _restore_torghut_env(resources, state)
+    original_state = _as_text(state.get('ta_job_state')) or 'running'
+    ta_restart_nonce = _restart_ta_deployment(resources, desired_state=original_state)
     lock_report = _release_simulation_runtime_lock(resources=resources)
     report = {
         'status': 'ok',
