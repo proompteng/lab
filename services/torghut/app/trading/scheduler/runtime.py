@@ -25,7 +25,8 @@ from ..order_feed import OrderFeedIngestor
 from ..prices import ClickHousePriceFetcher
 from ..reconcile import Reconciler
 from ..risk import RiskEngine
-from ..time_source import trading_now, trading_time_status
+from ..simulation import resolve_market_context_as_of
+from ..time_source import trading_time_status
 from ..universe import UniverseResolver
 from .governance import TradingSchedulerGovernanceMixin
 from .pipeline import TradingPipeline
@@ -166,7 +167,7 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
         )
         if not isinstance(market_context_client, MarketContextClient):
             market_context_client = MarketContextClient()
-        as_of = trading_now() if settings.trading_simulation_enabled else None
+        as_of = resolve_market_context_as_of()
         if self.state.last_market_context_symbol:
             try:
                 health = market_context_client.fetch_health(

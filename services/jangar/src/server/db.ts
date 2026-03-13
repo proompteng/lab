@@ -630,6 +630,115 @@ type TorghutQuantPipelineHealth = {
   created_at: Generated<Timestamp>
 }
 
+type TorghutSimulationRuns = {
+  run_id: string
+  idempotency_key: string
+  workflow_name: string | null
+  workflow_uid: string | null
+  namespace: string
+  status: string
+  workflow_phase: string | null
+  lane: string
+  lane_id: string | null
+  profile: string
+  cache_policy: string
+  cache_key: string | null
+  cache_status: string
+  priority: string
+  run_class: string
+  candidate_ref: string | null
+  strategy_ref: string | null
+  dataset_id: string | null
+  artifact_root: string | null
+  output_root: string | null
+  manifest: JsonValue
+  manifest_digest: string
+  metadata: JsonValue
+  progress: JsonValue
+  final_verdict: JsonValue
+  submitted_by: string | null
+  started_at: Timestamp | null
+  finished_at: Timestamp | null
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+}
+
+type TorghutSimulationRunEvents = {
+  id: Generated<string>
+  run_id: string
+  seq: number
+  event_type: string
+  payload: JsonValue
+  created_at: Generated<Timestamp>
+}
+
+type TorghutSimulationArtifacts = {
+  id: Generated<string>
+  run_id: string
+  name: string
+  path: string
+  kind: string
+  metadata: JsonValue
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+}
+
+type TorghutSimulationDatasetCache = {
+  cache_key: string
+  lane: string
+  status: string
+  window_start: Timestamp | null
+  window_end: Timestamp | null
+  source_digest: string | null
+  schema_digest: string | null
+  code_digest: string | null
+  dump_format: string
+  artifact_path: string | null
+  chunk_manifest_path: string | null
+  records_total: number
+  bytes_total: number
+  built_by_run_id: string | null
+  expires_at: Timestamp | null
+  last_verified_at: Timestamp | null
+  metadata: JsonValue
+  hit_count: number
+  last_used_at: Timestamp | null
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+}
+
+type TorghutSimulationCampaigns = {
+  campaign_id: string
+  name: string
+  status: string
+  request_payload: JsonValue
+  summary: JsonValue
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+}
+
+type TorghutSimulationCampaignRuns = {
+  campaign_id: string
+  run_id: string
+  candidate_ref: string | null
+  window_label: string | null
+  created_at: Generated<Timestamp>
+}
+
+type TorghutSimulationLaneLeases = {
+  lane_id: string
+  lane_class: string
+  status: string
+  run_id: string | null
+  cache_key: string | null
+  lease_owner: string | null
+  lease_expires_at: Timestamp | null
+  last_heartbeat_at: Timestamp | null
+  metadata: JsonValue
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+}
+
 type TorghutMarketContextSnapshots = {
   id: Generated<string>
   symbol: string
@@ -758,6 +867,13 @@ export type Database = {
   'torghut_control_plane.quant_metrics_series': TorghutQuantMetricsSeries
   'torghut_control_plane.quant_alerts': TorghutQuantAlerts
   'torghut_control_plane.quant_pipeline_health': TorghutQuantPipelineHealth
+  'torghut_control_plane.simulation_runs': TorghutSimulationRuns
+  'torghut_control_plane.simulation_run_events': TorghutSimulationRunEvents
+  'torghut_control_plane.simulation_artifacts': TorghutSimulationArtifacts
+  'torghut_control_plane.dataset_cache': TorghutSimulationDatasetCache
+  'torghut_control_plane.simulation_campaigns': TorghutSimulationCampaigns
+  'torghut_control_plane.simulation_campaign_runs': TorghutSimulationCampaignRuns
+  'torghut_control_plane.simulation_lane_leases': TorghutSimulationLaneLeases
   torghut_market_context_snapshots: TorghutMarketContextSnapshots
   torghut_market_context_dispatch_state: TorghutMarketContextDispatchState
   torghut_market_context_runs: TorghutMarketContextRuns

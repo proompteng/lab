@@ -11,7 +11,7 @@ from typing import Any
 
 from scripts.historical_simulation_verification import (
     _artifact_bundle,
-    _monitor_run_completion,
+    _current_activity_report,
     _replace_database_in_dsn,
     _runtime_verify,
     _teardown_clean,
@@ -263,7 +263,7 @@ def main() -> None:
 
     clickhouse_config = _clickhouse_config(args)
     runtime_verify = _runtime_verify(resources=resources, manifest=manifest)
-    report = _monitor_run_completion(
+    report = _current_activity_report(
         resources=resources,
         manifest=manifest,
         postgres_config=postgres_config,

@@ -76,6 +76,7 @@ import { Route as V1OrchestrationRunsIdRouteImport } from './routes/v1/orchestra
 import { Route as V1MemoriesIdRouteImport } from './routes/v1/memories/$id'
 import { Route as V1AgentsIdRouteImport } from './routes/v1/agents/$id'
 import { Route as V1AgentRunsIdRouteImport } from './routes/v1/agent-runs/$id'
+import { Route as TorghutControlPlaneSimulationRouteImport } from './routes/torghut/control-plane/simulation'
 import { Route as TerminalsSessionIdFullscreenRouteImport } from './routes/terminals/$sessionId/fullscreen'
 import { Route as OpenaiV1ModelsRouteImport } from './routes/openai/v1/models'
 import { Route as LibraryWhitepapersSearchRouteImport } from './routes/library/whitepapers/search'
@@ -132,6 +133,11 @@ import { Route as ApiTorghutTaLatestRouteImport } from './routes/api/torghut/ta/
 import { Route as ApiTorghutTaBarsRouteImport } from './routes/api/torghut/ta/bars'
 import { Route as ApiTorghutSymbolsSearchRouteImport } from './routes/api/torghut/symbols/search'
 import { Route as ApiTorghutSymbolsSymbolRouteImport } from './routes/api/torghut/symbols/$symbol'
+import { Route as ApiTorghutSimulationStreamRouteImport } from './routes/api/torghut/simulation/stream'
+import { Route as ApiTorghutSimulationRunsRouteImport } from './routes/api/torghut/simulation/runs'
+import { Route as ApiTorghutSimulationPresetsRouteImport } from './routes/api/torghut/simulation/presets'
+import { Route as ApiTorghutSimulationCampaignsRouteImport } from './routes/api/torghut/simulation/campaigns'
+import { Route as ApiTorghutSimulationArtifactsRouteImport } from './routes/api/torghut/simulation/artifacts'
 import { Route as ApiTorghutMarketContextIngestRouteImport } from './routes/api/torghut/market-context/ingest'
 import { Route as ApiTorghutMarketContextHealthRouteImport } from './routes/api/torghut/market-context/health'
 import { Route as ApiTorghutDecisionEngineStreamRouteImport } from './routes/api/torghut/decision-engine/stream'
@@ -152,6 +158,8 @@ import { Route as ApiAgentsControlPlaneResourceRouteImport } from './routes/api/
 import { Route as ApiAgentsControlPlaneLogsRouteImport } from './routes/api/agents/control-plane/logs'
 import { Route as ApiAgentsControlPlaneEventsRouteImport } from './routes/api/agents/control-plane/events'
 import { Route as GithubPullsOwnerRepoNumberRouteImport } from './routes/github/pulls/$owner/$repo/$number'
+import { Route as ApiTorghutSimulationRunsIdRouteImport } from './routes/api/torghut/simulation/runs/$id'
+import { Route as ApiTorghutSimulationCampaignsIdRouteImport } from './routes/api/torghut/simulation/campaigns/$id'
 import { Route as ApiTorghutMarketContextRunsStartRouteImport } from './routes/api/torghut/market-context/runs/start'
 import { Route as ApiTorghutMarketContextRunsProgressRouteImport } from './routes/api/torghut/market-context/runs/progress'
 import { Route as ApiTorghutMarketContextRunsFinalizeRouteImport } from './routes/api/torghut/market-context/runs/finalize'
@@ -531,6 +539,12 @@ const V1AgentRunsIdRoute = V1AgentRunsIdRouteImport.update({
   path: '/$id',
   getParentRoute: () => V1AgentRunsRoute,
 } as any)
+const TorghutControlPlaneSimulationRoute =
+  TorghutControlPlaneSimulationRouteImport.update({
+    id: '/simulation',
+    path: '/simulation',
+    getParentRoute: () => TorghutControlPlaneRoute,
+  } as any)
 const TerminalsSessionIdFullscreenRoute =
   TerminalsSessionIdFullscreenRouteImport.update({
     id: '/fullscreen',
@@ -835,6 +849,36 @@ const ApiTorghutSymbolsSymbolRoute = ApiTorghutSymbolsSymbolRouteImport.update({
   path: '/$symbol',
   getParentRoute: () => ApiTorghutSymbolsRoute,
 } as any)
+const ApiTorghutSimulationStreamRoute =
+  ApiTorghutSimulationStreamRouteImport.update({
+    id: '/api/torghut/simulation/stream',
+    path: '/api/torghut/simulation/stream',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiTorghutSimulationRunsRoute =
+  ApiTorghutSimulationRunsRouteImport.update({
+    id: '/api/torghut/simulation/runs',
+    path: '/api/torghut/simulation/runs',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiTorghutSimulationPresetsRoute =
+  ApiTorghutSimulationPresetsRouteImport.update({
+    id: '/api/torghut/simulation/presets',
+    path: '/api/torghut/simulation/presets',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiTorghutSimulationCampaignsRoute =
+  ApiTorghutSimulationCampaignsRouteImport.update({
+    id: '/api/torghut/simulation/campaigns',
+    path: '/api/torghut/simulation/campaigns',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiTorghutSimulationArtifactsRoute =
+  ApiTorghutSimulationArtifactsRouteImport.update({
+    id: '/api/torghut/simulation/artifacts',
+    path: '/api/torghut/simulation/artifacts',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiTorghutMarketContextIngestRoute =
   ApiTorghutMarketContextIngestRouteImport.update({
     id: '/api/torghut/market-context/ingest',
@@ -951,6 +995,18 @@ const GithubPullsOwnerRepoNumberRoute =
     id: '/$owner/$repo/$number',
     path: '/$owner/$repo/$number',
     getParentRoute: () => GithubPullsRoute,
+  } as any)
+const ApiTorghutSimulationRunsIdRoute =
+  ApiTorghutSimulationRunsIdRouteImport.update({
+    id: '/$id',
+    path: '/$id',
+    getParentRoute: () => ApiTorghutSimulationRunsRoute,
+  } as any)
+const ApiTorghutSimulationCampaignsIdRoute =
+  ApiTorghutSimulationCampaignsIdRouteImport.update({
+    id: '/$id',
+    path: '/$id',
+    getParentRoute: () => ApiTorghutSimulationCampaignsRoute,
   } as any)
 const ApiTorghutMarketContextRunsStartRoute =
   ApiTorghutMarketContextRunsStartRouteImport.update({
@@ -1138,7 +1194,7 @@ export interface FileRoutesByFullPath {
   '/github/pulls': typeof GithubPullsRouteWithChildren
   '/terminals/$sessionId': typeof TerminalsSessionIdRouteWithChildren
   '/torghut/charts': typeof TorghutChartsRoute
-  '/torghut/control-plane': typeof TorghutControlPlaneRoute
+  '/torghut/control-plane': typeof TorghutControlPlaneRouteWithChildren
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/trading': typeof TorghutTradingRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
@@ -1195,6 +1251,7 @@ export interface FileRoutesByFullPath {
   '/library/whitepapers/search': typeof LibraryWhitepapersSearchRoute
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/terminals/$sessionId/fullscreen': typeof TerminalsSessionIdFullscreenRoute
+  '/torghut/control-plane/simulation': typeof TorghutControlPlaneSimulationRoute
   '/v1/agent-runs/$id': typeof V1AgentRunsIdRoute
   '/v1/agents/$id': typeof V1AgentsIdRoute
   '/v1/memories/$id': typeof V1MemoriesIdRoute
@@ -1244,6 +1301,11 @@ export interface FileRoutesByFullPath {
   '/api/torghut/decision-engine/stream': typeof ApiTorghutDecisionEngineStreamRoute
   '/api/torghut/market-context/health': typeof ApiTorghutMarketContextHealthRoute
   '/api/torghut/market-context/ingest': typeof ApiTorghutMarketContextIngestRoute
+  '/api/torghut/simulation/artifacts': typeof ApiTorghutSimulationArtifactsRoute
+  '/api/torghut/simulation/campaigns': typeof ApiTorghutSimulationCampaignsRouteWithChildren
+  '/api/torghut/simulation/presets': typeof ApiTorghutSimulationPresetsRoute
+  '/api/torghut/simulation/runs': typeof ApiTorghutSimulationRunsRouteWithChildren
+  '/api/torghut/simulation/stream': typeof ApiTorghutSimulationStreamRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
   '/api/torghut/symbols/search': typeof ApiTorghutSymbolsSearchRoute
   '/api/torghut/ta/bars': typeof ApiTorghutTaBarsRoute
@@ -1268,6 +1330,8 @@ export interface FileRoutesByFullPath {
   '/api/torghut/market-context/runs/finalize': typeof ApiTorghutMarketContextRunsFinalizeRoute
   '/api/torghut/market-context/runs/progress': typeof ApiTorghutMarketContextRunsProgressRoute
   '/api/torghut/market-context/runs/start': typeof ApiTorghutMarketContextRunsStartRoute
+  '/api/torghut/simulation/campaigns/$id': typeof ApiTorghutSimulationCampaignsIdRoute
+  '/api/torghut/simulation/runs/$id': typeof ApiTorghutSimulationRunsIdRoute
   '/github/pulls/$owner/$repo/$number': typeof GithubPullsOwnerRepoNumberRoute
   '/api/github/pulls/$owner/$repo/$number': typeof ApiGithubPullsOwnerRepoNumberRouteWithChildren
   '/api/torghut/trading/control-plane/llm/rollout': typeof ApiTorghutTradingControlPlaneLlmRolloutRoute
@@ -1308,7 +1372,7 @@ export interface FileRoutesByTo {
   '/codex/runs': typeof CodexRunsRoute
   '/codex/search': typeof CodexSearchRoute
   '/torghut/charts': typeof TorghutChartsRoute
-  '/torghut/control-plane': typeof TorghutControlPlaneRoute
+  '/torghut/control-plane': typeof TorghutControlPlaneRouteWithChildren
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/trading': typeof TorghutTradingRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
@@ -1365,6 +1429,7 @@ export interface FileRoutesByTo {
   '/library/whitepapers/search': typeof LibraryWhitepapersSearchRoute
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/terminals/$sessionId/fullscreen': typeof TerminalsSessionIdFullscreenRoute
+  '/torghut/control-plane/simulation': typeof TorghutControlPlaneSimulationRoute
   '/v1/agent-runs/$id': typeof V1AgentRunsIdRoute
   '/v1/agents/$id': typeof V1AgentsIdRoute
   '/v1/memories/$id': typeof V1MemoriesIdRoute
@@ -1414,6 +1479,11 @@ export interface FileRoutesByTo {
   '/api/torghut/decision-engine/stream': typeof ApiTorghutDecisionEngineStreamRoute
   '/api/torghut/market-context/health': typeof ApiTorghutMarketContextHealthRoute
   '/api/torghut/market-context/ingest': typeof ApiTorghutMarketContextIngestRoute
+  '/api/torghut/simulation/artifacts': typeof ApiTorghutSimulationArtifactsRoute
+  '/api/torghut/simulation/campaigns': typeof ApiTorghutSimulationCampaignsRouteWithChildren
+  '/api/torghut/simulation/presets': typeof ApiTorghutSimulationPresetsRoute
+  '/api/torghut/simulation/runs': typeof ApiTorghutSimulationRunsRouteWithChildren
+  '/api/torghut/simulation/stream': typeof ApiTorghutSimulationStreamRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
   '/api/torghut/symbols/search': typeof ApiTorghutSymbolsSearchRoute
   '/api/torghut/ta/bars': typeof ApiTorghutTaBarsRoute
@@ -1438,6 +1508,8 @@ export interface FileRoutesByTo {
   '/api/torghut/market-context/runs/finalize': typeof ApiTorghutMarketContextRunsFinalizeRoute
   '/api/torghut/market-context/runs/progress': typeof ApiTorghutMarketContextRunsProgressRoute
   '/api/torghut/market-context/runs/start': typeof ApiTorghutMarketContextRunsStartRoute
+  '/api/torghut/simulation/campaigns/$id': typeof ApiTorghutSimulationCampaignsIdRoute
+  '/api/torghut/simulation/runs/$id': typeof ApiTorghutSimulationRunsIdRoute
   '/github/pulls/$owner/$repo/$number': typeof GithubPullsOwnerRepoNumberRoute
   '/api/github/pulls/$owner/$repo/$number': typeof ApiGithubPullsOwnerRepoNumberRouteWithChildren
   '/api/torghut/trading/control-plane/llm/rollout': typeof ApiTorghutTradingControlPlaneLlmRolloutRoute
@@ -1481,7 +1553,7 @@ export interface FileRoutesById {
   '/github/pulls': typeof GithubPullsRouteWithChildren
   '/terminals/$sessionId': typeof TerminalsSessionIdRouteWithChildren
   '/torghut/charts': typeof TorghutChartsRoute
-  '/torghut/control-plane': typeof TorghutControlPlaneRoute
+  '/torghut/control-plane': typeof TorghutControlPlaneRouteWithChildren
   '/torghut/symbols': typeof TorghutSymbolsRoute
   '/torghut/trading': typeof TorghutTradingRoute
   '/torghut/visuals': typeof TorghutVisualsRoute
@@ -1538,6 +1610,7 @@ export interface FileRoutesById {
   '/library/whitepapers/search': typeof LibraryWhitepapersSearchRoute
   '/openai/v1/models': typeof OpenaiV1ModelsRoute
   '/terminals/$sessionId/fullscreen': typeof TerminalsSessionIdFullscreenRoute
+  '/torghut/control-plane/simulation': typeof TorghutControlPlaneSimulationRoute
   '/v1/agent-runs/$id': typeof V1AgentRunsIdRoute
   '/v1/agents/$id': typeof V1AgentsIdRoute
   '/v1/memories/$id': typeof V1MemoriesIdRoute
@@ -1587,6 +1660,11 @@ export interface FileRoutesById {
   '/api/torghut/decision-engine/stream': typeof ApiTorghutDecisionEngineStreamRoute
   '/api/torghut/market-context/health': typeof ApiTorghutMarketContextHealthRoute
   '/api/torghut/market-context/ingest': typeof ApiTorghutMarketContextIngestRoute
+  '/api/torghut/simulation/artifacts': typeof ApiTorghutSimulationArtifactsRoute
+  '/api/torghut/simulation/campaigns': typeof ApiTorghutSimulationCampaignsRouteWithChildren
+  '/api/torghut/simulation/presets': typeof ApiTorghutSimulationPresetsRoute
+  '/api/torghut/simulation/runs': typeof ApiTorghutSimulationRunsRouteWithChildren
+  '/api/torghut/simulation/stream': typeof ApiTorghutSimulationStreamRoute
   '/api/torghut/symbols/$symbol': typeof ApiTorghutSymbolsSymbolRoute
   '/api/torghut/symbols/search': typeof ApiTorghutSymbolsSearchRoute
   '/api/torghut/ta/bars': typeof ApiTorghutTaBarsRoute
@@ -1611,6 +1689,8 @@ export interface FileRoutesById {
   '/api/torghut/market-context/runs/finalize': typeof ApiTorghutMarketContextRunsFinalizeRoute
   '/api/torghut/market-context/runs/progress': typeof ApiTorghutMarketContextRunsProgressRoute
   '/api/torghut/market-context/runs/start': typeof ApiTorghutMarketContextRunsStartRoute
+  '/api/torghut/simulation/campaigns/$id': typeof ApiTorghutSimulationCampaignsIdRoute
+  '/api/torghut/simulation/runs/$id': typeof ApiTorghutSimulationRunsIdRoute
   '/github/pulls/$owner/$repo/$number': typeof GithubPullsOwnerRepoNumberRoute
   '/api/github/pulls/$owner/$repo/$number': typeof ApiGithubPullsOwnerRepoNumberRouteWithChildren
   '/api/torghut/trading/control-plane/llm/rollout': typeof ApiTorghutTradingControlPlaneLlmRolloutRoute
@@ -1712,6 +1792,7 @@ export interface FileRouteTypes {
     | '/library/whitepapers/search'
     | '/openai/v1/models'
     | '/terminals/$sessionId/fullscreen'
+    | '/torghut/control-plane/simulation'
     | '/v1/agent-runs/$id'
     | '/v1/agents/$id'
     | '/v1/memories/$id'
@@ -1761,6 +1842,11 @@ export interface FileRouteTypes {
     | '/api/torghut/decision-engine/stream'
     | '/api/torghut/market-context/health'
     | '/api/torghut/market-context/ingest'
+    | '/api/torghut/simulation/artifacts'
+    | '/api/torghut/simulation/campaigns'
+    | '/api/torghut/simulation/presets'
+    | '/api/torghut/simulation/runs'
+    | '/api/torghut/simulation/stream'
     | '/api/torghut/symbols/$symbol'
     | '/api/torghut/symbols/search'
     | '/api/torghut/ta/bars'
@@ -1785,6 +1871,8 @@ export interface FileRouteTypes {
     | '/api/torghut/market-context/runs/finalize'
     | '/api/torghut/market-context/runs/progress'
     | '/api/torghut/market-context/runs/start'
+    | '/api/torghut/simulation/campaigns/$id'
+    | '/api/torghut/simulation/runs/$id'
     | '/github/pulls/$owner/$repo/$number'
     | '/api/github/pulls/$owner/$repo/$number'
     | '/api/torghut/trading/control-plane/llm/rollout'
@@ -1882,6 +1970,7 @@ export interface FileRouteTypes {
     | '/library/whitepapers/search'
     | '/openai/v1/models'
     | '/terminals/$sessionId/fullscreen'
+    | '/torghut/control-plane/simulation'
     | '/v1/agent-runs/$id'
     | '/v1/agents/$id'
     | '/v1/memories/$id'
@@ -1931,6 +2020,11 @@ export interface FileRouteTypes {
     | '/api/torghut/decision-engine/stream'
     | '/api/torghut/market-context/health'
     | '/api/torghut/market-context/ingest'
+    | '/api/torghut/simulation/artifacts'
+    | '/api/torghut/simulation/campaigns'
+    | '/api/torghut/simulation/presets'
+    | '/api/torghut/simulation/runs'
+    | '/api/torghut/simulation/stream'
     | '/api/torghut/symbols/$symbol'
     | '/api/torghut/symbols/search'
     | '/api/torghut/ta/bars'
@@ -1955,6 +2049,8 @@ export interface FileRouteTypes {
     | '/api/torghut/market-context/runs/finalize'
     | '/api/torghut/market-context/runs/progress'
     | '/api/torghut/market-context/runs/start'
+    | '/api/torghut/simulation/campaigns/$id'
+    | '/api/torghut/simulation/runs/$id'
     | '/github/pulls/$owner/$repo/$number'
     | '/api/github/pulls/$owner/$repo/$number'
     | '/api/torghut/trading/control-plane/llm/rollout'
@@ -2054,6 +2150,7 @@ export interface FileRouteTypes {
     | '/library/whitepapers/search'
     | '/openai/v1/models'
     | '/terminals/$sessionId/fullscreen'
+    | '/torghut/control-plane/simulation'
     | '/v1/agent-runs/$id'
     | '/v1/agents/$id'
     | '/v1/memories/$id'
@@ -2103,6 +2200,11 @@ export interface FileRouteTypes {
     | '/api/torghut/decision-engine/stream'
     | '/api/torghut/market-context/health'
     | '/api/torghut/market-context/ingest'
+    | '/api/torghut/simulation/artifacts'
+    | '/api/torghut/simulation/campaigns'
+    | '/api/torghut/simulation/presets'
+    | '/api/torghut/simulation/runs'
+    | '/api/torghut/simulation/stream'
     | '/api/torghut/symbols/$symbol'
     | '/api/torghut/symbols/search'
     | '/api/torghut/ta/bars'
@@ -2127,6 +2229,8 @@ export interface FileRouteTypes {
     | '/api/torghut/market-context/runs/finalize'
     | '/api/torghut/market-context/runs/progress'
     | '/api/torghut/market-context/runs/start'
+    | '/api/torghut/simulation/campaigns/$id'
+    | '/api/torghut/simulation/runs/$id'
     | '/github/pulls/$owner/$repo/$number'
     | '/api/github/pulls/$owner/$repo/$number'
     | '/api/torghut/trading/control-plane/llm/rollout'
@@ -2170,7 +2274,7 @@ export interface RootRouteChildren {
   GithubPullsRoute: typeof GithubPullsRouteWithChildren
   TerminalsSessionIdRoute: typeof TerminalsSessionIdRouteWithChildren
   TorghutChartsRoute: typeof TorghutChartsRoute
-  TorghutControlPlaneRoute: typeof TorghutControlPlaneRoute
+  TorghutControlPlaneRoute: typeof TorghutControlPlaneRouteWithChildren
   TorghutSymbolsRoute: typeof TorghutSymbolsRoute
   TorghutTradingRoute: typeof TorghutTradingRoute
   TorghutVisualsRoute: typeof TorghutVisualsRoute
@@ -2257,6 +2361,11 @@ export interface RootRouteChildren {
   ApiTorghutDecisionEngineStreamRoute: typeof ApiTorghutDecisionEngineStreamRoute
   ApiTorghutMarketContextHealthRoute: typeof ApiTorghutMarketContextHealthRoute
   ApiTorghutMarketContextIngestRoute: typeof ApiTorghutMarketContextIngestRoute
+  ApiTorghutSimulationArtifactsRoute: typeof ApiTorghutSimulationArtifactsRoute
+  ApiTorghutSimulationCampaignsRoute: typeof ApiTorghutSimulationCampaignsRouteWithChildren
+  ApiTorghutSimulationPresetsRoute: typeof ApiTorghutSimulationPresetsRoute
+  ApiTorghutSimulationRunsRoute: typeof ApiTorghutSimulationRunsRouteWithChildren
+  ApiTorghutSimulationStreamRoute: typeof ApiTorghutSimulationStreamRoute
   ApiTorghutTaBarsRoute: typeof ApiTorghutTaBarsRoute
   ApiTorghutTaLatestRoute: typeof ApiTorghutTaLatestRoute
   ApiTorghutTaSignalsRoute: typeof ApiTorghutTaSignalsRoute
@@ -2757,6 +2866,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof V1AgentRunsIdRouteImport
       parentRoute: typeof V1AgentRunsRoute
     }
+    '/torghut/control-plane/simulation': {
+      id: '/torghut/control-plane/simulation'
+      path: '/simulation'
+      fullPath: '/torghut/control-plane/simulation'
+      preLoaderRoute: typeof TorghutControlPlaneSimulationRouteImport
+      parentRoute: typeof TorghutControlPlaneRoute
+    }
     '/terminals/$sessionId/fullscreen': {
       id: '/terminals/$sessionId/fullscreen'
       path: '/fullscreen'
@@ -3149,6 +3265,41 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTorghutSymbolsSymbolRouteImport
       parentRoute: typeof ApiTorghutSymbolsRoute
     }
+    '/api/torghut/simulation/stream': {
+      id: '/api/torghut/simulation/stream'
+      path: '/api/torghut/simulation/stream'
+      fullPath: '/api/torghut/simulation/stream'
+      preLoaderRoute: typeof ApiTorghutSimulationStreamRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/torghut/simulation/runs': {
+      id: '/api/torghut/simulation/runs'
+      path: '/api/torghut/simulation/runs'
+      fullPath: '/api/torghut/simulation/runs'
+      preLoaderRoute: typeof ApiTorghutSimulationRunsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/torghut/simulation/presets': {
+      id: '/api/torghut/simulation/presets'
+      path: '/api/torghut/simulation/presets'
+      fullPath: '/api/torghut/simulation/presets'
+      preLoaderRoute: typeof ApiTorghutSimulationPresetsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/torghut/simulation/campaigns': {
+      id: '/api/torghut/simulation/campaigns'
+      path: '/api/torghut/simulation/campaigns'
+      fullPath: '/api/torghut/simulation/campaigns'
+      preLoaderRoute: typeof ApiTorghutSimulationCampaignsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/torghut/simulation/artifacts': {
+      id: '/api/torghut/simulation/artifacts'
+      path: '/api/torghut/simulation/artifacts'
+      fullPath: '/api/torghut/simulation/artifacts'
+      preLoaderRoute: typeof ApiTorghutSimulationArtifactsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/torghut/market-context/ingest': {
       id: '/api/torghut/market-context/ingest'
       path: '/api/torghut/market-context/ingest'
@@ -3288,6 +3439,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/github/pulls/$owner/$repo/$number'
       preLoaderRoute: typeof GithubPullsOwnerRepoNumberRouteImport
       parentRoute: typeof GithubPullsRoute
+    }
+    '/api/torghut/simulation/runs/$id': {
+      id: '/api/torghut/simulation/runs/$id'
+      path: '/$id'
+      fullPath: '/api/torghut/simulation/runs/$id'
+      preLoaderRoute: typeof ApiTorghutSimulationRunsIdRouteImport
+      parentRoute: typeof ApiTorghutSimulationRunsRoute
+    }
+    '/api/torghut/simulation/campaigns/$id': {
+      id: '/api/torghut/simulation/campaigns/$id'
+      path: '/$id'
+      fullPath: '/api/torghut/simulation/campaigns/$id'
+      preLoaderRoute: typeof ApiTorghutSimulationCampaignsIdRouteImport
+      parentRoute: typeof ApiTorghutSimulationCampaignsRoute
     }
     '/api/torghut/market-context/runs/start': {
       id: '/api/torghut/market-context/runs/start'
@@ -3557,6 +3722,17 @@ const TerminalsSessionIdRouteChildren: TerminalsSessionIdRouteChildren = {
 const TerminalsSessionIdRouteWithChildren =
   TerminalsSessionIdRoute._addFileChildren(TerminalsSessionIdRouteChildren)
 
+interface TorghutControlPlaneRouteChildren {
+  TorghutControlPlaneSimulationRoute: typeof TorghutControlPlaneSimulationRoute
+}
+
+const TorghutControlPlaneRouteChildren: TorghutControlPlaneRouteChildren = {
+  TorghutControlPlaneSimulationRoute: TorghutControlPlaneSimulationRoute,
+}
+
+const TorghutControlPlaneRouteWithChildren =
+  TorghutControlPlaneRoute._addFileChildren(TorghutControlPlaneRouteChildren)
+
 interface V1AgentRunsRouteChildren {
   V1AgentRunsIdRoute: typeof V1AgentRunsIdRoute
 }
@@ -3723,6 +3899,34 @@ const ApiTorghutDecisionEngineRunsRouteWithChildren =
     ApiTorghutDecisionEngineRunsRouteChildren,
   )
 
+interface ApiTorghutSimulationCampaignsRouteChildren {
+  ApiTorghutSimulationCampaignsIdRoute: typeof ApiTorghutSimulationCampaignsIdRoute
+}
+
+const ApiTorghutSimulationCampaignsRouteChildren: ApiTorghutSimulationCampaignsRouteChildren =
+  {
+    ApiTorghutSimulationCampaignsIdRoute: ApiTorghutSimulationCampaignsIdRoute,
+  }
+
+const ApiTorghutSimulationCampaignsRouteWithChildren =
+  ApiTorghutSimulationCampaignsRoute._addFileChildren(
+    ApiTorghutSimulationCampaignsRouteChildren,
+  )
+
+interface ApiTorghutSimulationRunsRouteChildren {
+  ApiTorghutSimulationRunsIdRoute: typeof ApiTorghutSimulationRunsIdRoute
+}
+
+const ApiTorghutSimulationRunsRouteChildren: ApiTorghutSimulationRunsRouteChildren =
+  {
+    ApiTorghutSimulationRunsIdRoute: ApiTorghutSimulationRunsIdRoute,
+  }
+
+const ApiTorghutSimulationRunsRouteWithChildren =
+  ApiTorghutSimulationRunsRoute._addFileChildren(
+    ApiTorghutSimulationRunsRouteChildren,
+  )
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   HealthRoute: HealthRoute,
@@ -3746,7 +3950,7 @@ const rootRouteChildren: RootRouteChildren = {
   GithubPullsRoute: GithubPullsRouteWithChildren,
   TerminalsSessionIdRoute: TerminalsSessionIdRouteWithChildren,
   TorghutChartsRoute: TorghutChartsRoute,
-  TorghutControlPlaneRoute: TorghutControlPlaneRoute,
+  TorghutControlPlaneRoute: TorghutControlPlaneRouteWithChildren,
   TorghutSymbolsRoute: TorghutSymbolsRoute,
   TorghutTradingRoute: TorghutTradingRoute,
   TorghutVisualsRoute: TorghutVisualsRoute,
@@ -3842,6 +4046,12 @@ const rootRouteChildren: RootRouteChildren = {
   ApiTorghutDecisionEngineStreamRoute: ApiTorghutDecisionEngineStreamRoute,
   ApiTorghutMarketContextHealthRoute: ApiTorghutMarketContextHealthRoute,
   ApiTorghutMarketContextIngestRoute: ApiTorghutMarketContextIngestRoute,
+  ApiTorghutSimulationArtifactsRoute: ApiTorghutSimulationArtifactsRoute,
+  ApiTorghutSimulationCampaignsRoute:
+    ApiTorghutSimulationCampaignsRouteWithChildren,
+  ApiTorghutSimulationPresetsRoute: ApiTorghutSimulationPresetsRoute,
+  ApiTorghutSimulationRunsRoute: ApiTorghutSimulationRunsRouteWithChildren,
+  ApiTorghutSimulationStreamRoute: ApiTorghutSimulationStreamRoute,
   ApiTorghutTaBarsRoute: ApiTorghutTaBarsRoute,
   ApiTorghutTaLatestRoute: ApiTorghutTaLatestRoute,
   ApiTorghutTaSignalsRoute: ApiTorghutTaSignalsRoute,

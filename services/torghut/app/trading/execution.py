@@ -33,7 +33,7 @@ from .quantity_rules import (
     qty_step_for_symbol,
     resolve_quantity_resolution,
 )
-from .simulation import resolve_simulation_context
+from .simulation import resolve_event_persisted_at, resolve_simulation_context, simulation_context_enabled
 from .time_source import trading_now
 from .tca import upsert_execution_tca_metric
 
@@ -87,7 +87,10 @@ class OrderExecutor:
             rationale=decision.rationale,
             status="planned",
             decision_hash=digest,
-            created_at=decision.event_ts if settings.trading_simulation_enabled else trading_now(account_label=account_label),
+            created_at=resolve_event_persisted_at(
+                event_ts=decision.event_ts,
+                account_label=account_label,
+            ),
         )
         session.add(decision_row)
         try:
@@ -297,7 +300,10 @@ class OrderExecutor:
             decision_row,
             execution,
             account_label,
-            submitted_at=decision.event_ts if settings.trading_simulation_enabled else trading_now(account_label=account_label),
+            submitted_at=resolve_event_persisted_at(
+                event_ts=decision.event_ts,
+                account_label=account_label,
+            ),
             status_override="submitted",
         )
         session.add(decision_row)
@@ -1357,7 +1363,7 @@ def _resolve_submission_simulation_context(
     decision_row: TradeDecision,
 ) -> dict[str, Any] | None:
     adapter_name = str(getattr(execution_client, "name", "") or "").strip().lower()
-    if adapter_name != "simulation" and not settings.trading_simulation_enabled:
+    if adapter_name != "simulation" and not simulation_context_enabled():
         return None
     source_context = decision.params.get("simulation_context")
     source_context_payload: dict[str, Any] | None = None

@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, cast
 
 from ..config import settings
+from .time_source import trading_now
 
 
 def _coerce_context_mapping(value: Any) -> dict[str, Any]:
@@ -18,6 +19,32 @@ def _coerce_context_mapping(value: Any) -> dict[str, Any]:
 
 def simulation_context_enabled() -> bool:
     return settings.trading_simulation_enabled
+
+
+def signal_ingest_runtime(
+    *,
+    fast_forward_stale_cursor: bool,
+    empty_batch_advance_seconds: int,
+) -> tuple[bool, int]:
+    if simulation_context_enabled():
+        return False, 0
+    return fast_forward_stale_cursor, max(0, empty_batch_advance_seconds)
+
+
+def resolve_event_persisted_at(
+    *,
+    event_ts: datetime | None,
+    account_label: str | None = None,
+) -> datetime:
+    if simulation_context_enabled() and isinstance(event_ts, datetime):
+        return event_ts
+    return trading_now(account_label=account_label)
+
+
+def resolve_market_context_as_of(*, account_label: str | None = None) -> datetime | None:
+    if simulation_context_enabled():
+        return trading_now(account_label=account_label)
+    return None
 
 
 def resolve_simulation_context(
@@ -72,4 +99,10 @@ def resolve_simulation_context(
     return None
 
 
-__all__ = ["resolve_simulation_context", "simulation_context_enabled"]
+__all__ = [
+    'resolve_event_persisted_at',
+    'resolve_market_context_as_of',
+    'resolve_simulation_context',
+    'signal_ingest_runtime',
+    'simulation_context_enabled',
+]
