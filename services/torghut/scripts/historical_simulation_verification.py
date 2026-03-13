@@ -148,6 +148,21 @@ def _safe_float(value: Any, *, default: float = 0.0) -> float:
     return default
 
 
+def _cluster_service_host_candidates(host: str) -> list[str]:
+    host = host.strip()
+    if not host:
+        return []
+
+    candidates = [host]
+    host_parts = host.split('.')
+    if len(host_parts) == 2:
+        candidates.append(f'{host}.svc')
+        candidates.append(f'{host}.svc.cluster.local')
+    if host.endswith('.svc') and not host.endswith('.svc.cluster.local'):
+        candidates.append(f'{host}.cluster.local')
+    return candidates
+
+
 def _normalized_string_set(raw: str | None) -> set[str]:
     if raw is None:
         return set()
@@ -1134,16 +1149,24 @@ def _http_json_get(
     if not parsed.scheme or not parsed.hostname:
         raise RuntimeError(f'invalid_http_url:{base_url}')
     connection_class = HTTPSConnection if parsed.scheme == 'https' else HTTPConnection
-    connection = connection_class(parsed.hostname, parsed.port, timeout=timeout_seconds)
     target_path = parsed.path or '/'
     if path and path != '/':
         target_path = f'{target_path.rstrip("/")}/{path.lstrip("/")}'
-    try:
-        connection.request('GET', target_path)
-        response = connection.getresponse()
-        return response.status, response.read().decode('utf-8', errors='replace')
-    finally:
-        connection.close()
+    last_error: OSError | None = None
+    for hostname in _cluster_service_host_candidates(parsed.hostname):
+        connection = connection_class(hostname, parsed.port, timeout=timeout_seconds)
+        try:
+            connection.request('GET', target_path)
+            response = connection.getresponse()
+            return response.status, response.read().decode('utf-8', errors='replace')
+        except OSError as exc:
+            last_error = exc
+            continue
+        finally:
+            connection.close()
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError('http_request_failed_without_attempts')
 
 
 def _analysis_image_freshness(

@@ -71,6 +71,51 @@ from scripts.start_historical_simulation import (
 
 
 class TestStartHistoricalSimulation(TestCase):
+    def test_verification_cluster_service_host_candidates_expand_service_namespace_short_form(self) -> None:
+        self.assertEqual(
+            historical_simulation_verification._cluster_service_host_candidates('karapace.kafka'),
+            ['karapace.kafka', 'karapace.kafka.svc', 'karapace.kafka.svc.cluster.local'],
+        )
+
+    def test_verification_http_json_get_retries_cluster_local_service_hostnames(self) -> None:
+        attempted_hosts: list[str] = []
+
+        class _FakeResponse:
+            status = 200
+
+            def read(self) -> bytes:
+                return b'[]'
+
+        class _FakeConnection:
+            def __init__(self, host: str, port: int | None, timeout: int | None = None) -> None:
+                attempted_hosts.append(host)
+                self._host = host
+                self._port = port
+                self._timeout = timeout
+
+            def request(self, method: str, path: str) -> None:
+                if self._host == 'karapace.kafka':
+                    raise OSError('lookup failed')
+
+            def getresponse(self) -> _FakeResponse:
+                return _FakeResponse()
+
+            def close(self) -> None:
+                return None
+
+        with patch(
+            'scripts.historical_simulation_verification.HTTPConnection',
+            _FakeConnection,
+        ):
+            status, body = historical_simulation_verification._http_json_get(
+                'http://karapace.kafka:8081',
+                '/subjects',
+            )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body, '[]')
+        self.assertEqual(attempted_hosts, ['karapace.kafka', 'karapace.kafka.svc'])
+
     def test_cluster_service_host_candidates_expand_cluster_local_for_partially_qualified_service(self) -> None:
         self.assertEqual(
             start_historical_simulation._cluster_service_host_candidates('karapace.kafka.svc'),
