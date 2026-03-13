@@ -13,6 +13,7 @@ class SimulationParityGuardTest(unittest.TestCase):
             'market_session.py',
             'simulation.py',
             'simulation_progress.py',
+            'simulation_window.py',
             'time_source.py',
             'universe.py',
         }
