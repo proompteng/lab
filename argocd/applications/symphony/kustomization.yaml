@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: jangar
+configMapGenerator:
+  - name: symphony-workflow
+    files:
+      - WORKFLOW.md
+    options:
+      disableNameSuffixHash: true
+resources:
+  - linear-api-key-sealedsecret.yaml
+  - pvc-rwo.yaml
+  - deployment.yaml
+  - service.yaml
+images:
+  - name: registry.ide-newton.ts.net/lab/symphony
+    newName: registry.ide-newton.ts.net/lab/symphony
+    newTag: "ca7550d11-livefix1"
+    digest: sha256:4beccb2068b9465dd11ac75b7847d665f060f3e668e4ab5ae180f35b587532e3
