@@ -17,6 +17,7 @@ import subprocess
 import sys
 import socket
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -3170,12 +3171,14 @@ def _seed_simulation_trade_cursor(
                 cursor.execute(
                     """
                     INSERT INTO trade_cursor (
+                      id,
                       source,
                       account_label,
                       cursor_at,
                       cursor_seq,
                       cursor_symbol
                     ) VALUES (
+                      %(id)s,
                       'clickhouse',
                       %(account_label)s,
                       %(cursor_at)s,
@@ -3189,6 +3192,7 @@ def _seed_simulation_trade_cursor(
                       updated_at = NOW()
                     """,
                     {
+                        'id': uuid.uuid4(),
                         'account_label': account_label,
                         'cursor_at': window_start,
                     },
