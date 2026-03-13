@@ -106,23 +106,7 @@ class DecisionEngine:
                 equity=equity,
                 positions=positions,
             )
-            if decisions:
-                return decisions
-            runtime_telemetry = self._last_runtime_telemetry
-            legacy_decisions = self._evaluate_legacy(
-                signal,
-                filtered,
-                equity=equity,
-                positions=positions,
-            )
-            self._last_runtime_telemetry = DecisionRuntimeTelemetry(
-                mode=settings.trading_strategy_runtime_mode,
-                runtime_enabled=True,
-                fallback_to_legacy=True,
-                errors=runtime_telemetry.errors,
-                observation=runtime_telemetry.observation,
-            )
-            return legacy_decisions
+            return decisions
 
         return self._evaluate_legacy(
             signal,
