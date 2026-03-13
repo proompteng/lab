@@ -50,6 +50,7 @@ describe('torghut simulation control plane', () => {
       replayProfile: 'compact',
       dumpFormat: 'jsonl.zst',
     })
+    expect(manifest.ta_restore).toMatchObject({ mode: 'stateless' })
     expect(manifest.cachePolicy).toBe('require_cache')
   })
 

@@ -37,6 +37,9 @@ proof_gates:
   minimum_underlyings: 2
   require_profitability_artifacts: true
 
+ta_restore:
+  mode: stateless
+
 window:
   trading_day: '2026-03-06'
   timezone: America/New_York

@@ -2187,7 +2187,13 @@ def _artifact_path(resources: SimulationResources, filename: str) -> Path:
 
 def _ta_restore_policy(manifest: Mapping[str, Any]) -> dict[str, Any]:
     ta_restore = _as_mapping(manifest.get('ta_restore'))
-    mode = (_as_text(ta_restore.get('mode')) or 'required').strip().lower()
+    replay_profile = _as_text(_performance_config(manifest).get('replay_profile')) or DEFAULT_SIMULATION_REPLAY_PROFILE
+    explicit_mode = (_as_text(ta_restore.get('mode')) or '').strip().lower()
+    mode = explicit_mode
+    source = 'explicit'
+    if not mode:
+        mode = 'required' if replay_profile == 'full_day' else 'stateless'
+        source = f'profile_default:{replay_profile}'
     allowed_modes = {'required', 'stateless_if_missing', 'stateless'}
     if mode not in allowed_modes:
         raise RuntimeError(
@@ -2195,6 +2201,8 @@ def _ta_restore_policy(manifest: Mapping[str, Any]) -> dict[str, Any]:
         )
     return {
         'mode': mode,
+        'source': source,
+        'replay_profile': replay_profile,
         'stateless_recovery_enabled': mode in {'stateless_if_missing', 'stateless'},
     }
 
@@ -2221,7 +2229,7 @@ def _resolve_ta_restore_configuration(
             'configured': not missing,
             'effective_upgrade_mode': 'stateless',
             'fallback_applied': False,
-            'reason': 'explicit_stateless',
+            'reason': 'profile_default_stateless' if str(policy.get('source', '')).startswith('profile_default:') else 'explicit_stateless',
         }
     if missing:
         missing_reason = f'restore_state_missing:{",".join(sorted(missing))}'

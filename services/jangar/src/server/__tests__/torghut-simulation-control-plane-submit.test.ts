@@ -87,6 +87,11 @@ const buildFakeDb = (currentState: FakeState) => {
       return mode === 'rows' ? rows : rows[0]
     }
 
+    if (table === 'torghut_control_plane.simulation_lane_leases') {
+      const rows = [...currentState.lanes.values()].filter(filterValue)
+      return mode === 'rows' ? rows : rows[0]
+    }
+
     return mode === 'rows' ? [] : undefined
   }
 
@@ -188,9 +193,10 @@ const buildFakeDb = (currentState: FakeState) => {
             'insert or update on table "simulation_lane_leases" violates foreign key constraint "simulation_lane_leases_run_id_fkey"',
           )
         }
-        const lane = currentState.lanes.get('sim-fast-1')
+        const laneId = String(filters.find(([column]) => column === 'lane_id')?.[1] ?? 'sim-fast-1')
+        const lane = currentState.lanes.get(laneId)
         if (!lane || lane.status !== 'available') return { numUpdatedRows: 0 }
-        currentState.lanes.set('sim-fast-1', {
+        currentState.lanes.set(laneId, {
           ...lane,
           ...values,
         })
@@ -210,8 +216,9 @@ const buildFakeDb = (currentState: FakeState) => {
         }
         if (table === 'torghut_control_plane.simulation_lane_leases') {
           const runId = String(filters.find(([column]) => column === 'run_id')?.[1] ?? '')
+          const laneIdFilter = String(filters.find(([column]) => column === 'lane_id')?.[1] ?? '')
           for (const [laneId, lane] of currentState.lanes.entries()) {
-            if (lane.run_id === runId) {
+            if ((runId && lane.run_id === runId) || (laneIdFilter && laneId === laneIdFilter)) {
               currentState.lanes.set(laneId, {
                 ...lane,
                 ...values,
@@ -339,5 +346,38 @@ describe('submitTorghutSimulationRun', () => {
         }),
       }),
     )
+  })
+
+  it('reclaims lanes reserved by terminal runs before reserving a new one', async () => {
+    state.runs.set('sim-finished', {
+      run_id: 'sim-finished',
+      status: 'succeeded',
+    })
+    state.lanes.set('sim-fast-1', {
+      lane_id: 'sim-fast-1',
+      lane_class: 'interactive',
+      status: 'reserved',
+      run_id: 'sim-finished',
+      lease_expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+    })
+
+    const result = await submitTorghutSimulationRun({
+      runId: 'sim-reclaim-proof',
+      profile: 'compact',
+      cachePolicy: 'prefer_cache',
+      manifest: {
+        dataset_id: 'dataset-a',
+        candidate_id: 'intraday_tsmom_v1@prod',
+        strategy_spec_ref: 'strategy-specs/intraday_tsmom_v1@1.1.0.json',
+        window: {
+          start: '2026-03-06T14:30:00Z',
+          end: '2026-03-06T14:45:00Z',
+        },
+      },
+    })
+
+    expect(result.run.runId).toBe('sim-reclaim-proof')
+    expect(state.lanes.get('sim-fast-1')?.run_id).toBe('sim-reclaim-proof')
+    expect((state.lanes.get('sim-fast-1')?.metadata as Record<string, unknown>)?.releaseReason).toBeUndefined()
   })
 })

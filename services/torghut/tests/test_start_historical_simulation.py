@@ -97,6 +97,38 @@ class TestStartHistoricalSimulation(TestCase):
     def test_normalize_run_token(self) -> None:
         self.assertEqual(_normalize_run_token('Sim-2026/02/27#Run-01'), 'sim_2026_02_27_run_01')
 
+    def test_ta_restore_policy_defaults_compact_profiles_to_stateless(self) -> None:
+        policy = start_historical_simulation._ta_restore_policy(
+            {
+                'window': {
+                    'start': '2026-03-06T14:30:00Z',
+                    'end': '2026-03-06T14:45:00Z',
+                },
+                'performance': {
+                    'replayProfile': 'compact',
+                },
+            }
+        )
+
+        self.assertEqual(policy['mode'], 'stateless')
+        self.assertEqual(policy['source'], 'profile_default:compact')
+
+    def test_ta_restore_policy_defaults_full_day_profiles_to_required(self) -> None:
+        policy = start_historical_simulation._ta_restore_policy(
+            {
+                'window': {
+                    'start': '2026-03-06T14:30:00Z',
+                    'end': '2026-03-06T21:00:00Z',
+                },
+                'performance': {
+                    'replayProfile': 'full_day',
+                },
+            }
+        )
+
+        self.assertEqual(policy['mode'], 'required')
+        self.assertEqual(policy['source'], 'profile_default:full_day')
+
     def test_analysis_run_name_uses_dns1123_safe_token(self) -> None:
         self.assertEqual(
             _analysis_run_name(
@@ -794,7 +826,8 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertIn('state_path', report['artifacts'])
         self.assertIn('run_manifest_path', report['artifacts'])
         self.assertIn('dump_path', report['artifacts'])
-        self.assertEqual(report['ta_restore']['mode'], 'required')
+        self.assertEqual(report['ta_restore']['mode'], 'stateless')
+        self.assertEqual(report['ta_restore']['source'], 'profile_default:hourly')
         postgres_dsn = report['resources']['postgres_simulation_dsn']
         assert isinstance(postgres_dsn, str)
         self.assertIn(':***@', postgres_dsn)
@@ -1140,6 +1173,7 @@ class TestStartHistoricalSimulation(TestCase):
         )
         manifest = {
             'dataset_id': 'dataset-a',
+            'ta_restore': {'mode': 'required'},
             'window': {
                 'start': '2026-02-27T14:30:00Z',
                 'end': '2026-02-27T15:30:00Z',
@@ -1176,6 +1210,104 @@ class TestStartHistoricalSimulation(TestCase):
                     )
 
         release_lock.assert_called_once_with(resources=resources)
+
+    def test_apply_defaults_compact_profiles_to_stateless_restore(self) -> None:
+        resources = _build_resources('sim-1', {'dataset_id': 'dataset-a'})
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+        clickhouse_config = ClickHouseRuntimeConfig(
+            http_url='http://clickhouse:8123',
+            username='torghut',
+            password='secret',
+        )
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1',
+            simulation_db='torghut_sim_sim_1',
+            migrations_command='true',
+        )
+        manifest = {
+            'dataset_id': 'dataset-a',
+            'clickhouse': {'database_precreated': True},
+            'postgres': {'database_precreated': True},
+            'window': {
+                'start': '2026-02-27T14:30:00Z',
+                'end': '2026-02-27T15:00:00Z',
+            },
+            'performance': {
+                'replayProfile': 'compact',
+            },
+        }
+
+        with TemporaryDirectory() as tmpdir:
+            resources = replace(resources, output_root=Path(tmpdir))
+            with (
+                patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
+                patch('scripts.start_historical_simulation._ensure_lz4_codec_available', return_value=None),
+                patch(
+                    'scripts.start_historical_simulation._acquire_simulation_runtime_lock',
+                    return_value={'status': 'acquired', 'run_id': resources.run_id},
+                ),
+                patch(
+                    'scripts.start_historical_simulation._capture_cluster_state',
+                    return_value={
+                        'ta_data': {
+                            'TA_GROUP_ID': 'prod-ta-group',
+                            'TA_CHECKPOINT_DIR': '/checkpoints',
+                            'TA_SAVEPOINT_DIR': '/savepoints',
+                        }
+                    },
+                ),
+                patch('scripts.start_historical_simulation._ensure_topics', return_value={'status': 'ok'}),
+                patch('scripts.start_historical_simulation._ensure_clickhouse_database'),
+                patch('scripts.start_historical_simulation._ensure_clickhouse_runtime_tables', return_value=None),
+                patch('scripts.start_historical_simulation._ensure_postgres_database'),
+                patch(
+                    'scripts.start_historical_simulation._ensure_postgres_runtime_permissions',
+                    return_value={'grants_applied': True},
+                ),
+                patch('scripts.start_historical_simulation._run_migrations', return_value=None),
+                patch('scripts.start_historical_simulation._reset_postgres_runtime_state', return_value=None),
+                patch(
+                    'scripts.start_historical_simulation._dump_topics',
+                    return_value={'records': 1, 'sha256': 'abc'},
+                ),
+                patch(
+                    'scripts.start_historical_simulation._validate_dump_coverage',
+                    return_value={'coverage_ratio': 1.0},
+                ),
+                patch('scripts.start_historical_simulation._configure_ta_for_simulation', return_value=None),
+                patch(
+                    'scripts.start_historical_simulation._restart_ta_deployment',
+                    return_value='nonce',
+                ) as restart_ta,
+                patch(
+                    'scripts.start_historical_simulation._configure_torghut_service_for_simulation',
+                    return_value=None,
+                ),
+            ):
+                report = start_historical_simulation._apply(
+                    resources=resources,
+                    manifest=manifest,
+                    kafka_config=kafka_config,
+                    clickhouse_config=clickhouse_config,
+                    postgres_config=postgres_config,
+                    force_dump=False,
+                    force_replay=False,
+                )
+
+        restart_ta.assert_called_once_with(
+            resources,
+            desired_state='running',
+            upgrade_mode='stateless',
+        )
+        self.assertEqual(report['ta_restore']['effective_upgrade_mode'], 'stateless')
+        self.assertEqual(report['ta_restore']['reason'], 'profile_default_stateless')
 
     def test_apply_falls_back_to_stateless_when_restore_state_config_missing(self) -> None:
         resources = _build_resources('sim-1', {'dataset_id': 'dataset-a'})
@@ -3765,7 +3897,7 @@ class TestStartHistoricalSimulation(TestCase):
                 'TA_BARS1M_TOPIC': 'torghut.sim.bars.1m.v1.sim_2026_03_06_open_hour',
                 'TA_MICROBARS_TOPIC': 'torghut.sim.ta.bars.1s.v1.sim_2026_03_06_open_hour',
                 'TA_SIGNALS_TOPIC': 'torghut.sim.ta.signals.v1.sim_2026_03_06_open_hour',
-                'TA_CLICKHOUSE_URL': 'jdbc:clickhouse://clickhouse/torghut_sim_2026_03_06_open_hour',
+                'TA_CLICKHOUSE_URL': f'jdbc:clickhouse://clickhouse/{resources.clickhouse_db}',
             }
         }
 
@@ -3807,6 +3939,108 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(report['environment_state'], 'complete')
         self.assertEqual(report['torghut_service']['name'], 'torghut-sim')
         self.assertTrue(all(report['ta_runtime_config'].values()))
+
+    def test_runtime_verify_requires_exact_clickhouse_database_match(self) -> None:
+        manifest = {
+            'window': {
+                'start': '2026-03-06T14:30:00Z',
+                'end': '2026-03-06T15:30:00Z',
+            }
+        }
+        resources = _build_resources(
+            'sim-2026-03-06-open-hour',
+            {
+                'dataset_id': 'dataset-a',
+                'runtime': {
+                    'target_mode': 'dedicated_service',
+                    'namespace': 'torghut',
+                    'ta_configmap': 'torghut-ta-sim-config',
+                    'ta_deployment': 'torghut-ta-sim',
+                    'torghut_service': 'torghut-sim',
+                    'torghut_forecast_service': 'torghut-forecast-sim',
+                },
+            },
+        )
+        wrong_database = f'{resources.clickhouse_db}_stale'
+        kservice_payload = {
+            'spec': {
+                'template': {
+                    'spec': {
+                        'containers': [
+                            {
+                                'name': 'user-container',
+                                'env': [
+                                    {'name': 'TRADING_ENABLED', 'value': 'true'},
+                                    {'name': 'TRADING_SIMULATION_ENABLED', 'value': 'true'},
+                                    {'name': 'TRADING_STRATEGY_RUNTIME_MODE', 'value': 'scheduler_v3'},
+                                    {'name': 'TRADING_STRATEGY_SCHEDULER_ENABLED', 'value': 'true'},
+                                    {'name': 'TRADING_SIGNAL_TABLE', 'value': resources.clickhouse_signal_table},
+                                    {'name': 'TRADING_PRICE_TABLE', 'value': resources.clickhouse_price_table},
+                                    {'name': 'TRADING_ORDER_FEED_ENABLED', 'value': 'true'},
+                                    {'name': 'TRADING_ORDER_FEED_TOPIC', 'value': resources.simulation_topic_by_role['order_updates']},
+                                    {'name': 'TRADING_SIMULATION_ORDER_UPDATES_TOPIC', 'value': resources.simulation_topic_by_role['order_updates']},
+                                    {'name': 'TRADING_SIMULATION_RUN_ID', 'value': resources.run_id},
+                                    {'name': 'TRADING_SIGNAL_ALLOWED_SOURCES', 'value': 'ws,ta'},
+                                ],
+                            }
+                        ]
+                    }
+                }
+            },
+            'status': {
+                'latestReadyRevisionName': 'torghut-sim-00001',
+                'conditions': [{'type': 'Ready', 'status': 'True'}],
+            },
+        }
+        ta_configmap_payload = {
+            'data': {
+                'TA_TRADES_TOPIC': resources.simulation_topic_by_role['trades'],
+                'TA_QUOTES_TOPIC': resources.simulation_topic_by_role['quotes'],
+                'TA_BARS1M_TOPIC': resources.simulation_topic_by_role['bars'],
+                'TA_MICROBARS_TOPIC': resources.simulation_topic_by_role['ta_microbars'],
+                'TA_SIGNALS_TOPIC': resources.simulation_topic_by_role['ta_signals'],
+                'TA_CLICKHOUSE_URL': f'jdbc:clickhouse://clickhouse/{wrong_database}?run={resources.run_token}',
+            }
+        }
+
+        with (
+            patch(
+                'scripts.historical_simulation_verification._kubectl_json',
+                side_effect=[kservice_payload, ta_configmap_payload],
+            ),
+            patch(
+                'scripts.historical_simulation_verification._deployment_replica_health',
+                side_effect=[
+                    {
+                        'name': 'torghut-sim-00001-deployment',
+                        'ready_replicas': 1,
+                        'available_replicas': 1,
+                        'replicas': 1,
+                    },
+                    {
+                        'name': 'torghut-forecast-sim',
+                        'ready_replicas': 1,
+                        'available_replicas': 1,
+                        'replicas': 1,
+                    },
+                ],
+            ),
+            patch(
+                'scripts.historical_simulation_verification._flink_runtime_health',
+                return_value={
+                    'name': 'torghut-ta-sim',
+                    'desired_state': 'running',
+                    'lifecycle_state': 'RUNNING',
+                    'job_manager_status': 'DEPLOYED',
+                },
+            ),
+        ):
+            report = _runtime_verify(resources=resources, manifest=manifest)
+
+        self.assertEqual(report['runtime_state'], 'not_ready')
+        self.assertFalse(report['ta_runtime_config']['clickhouse_database'])
+        self.assertEqual(report['ta_runtime_config']['expected_clickhouse_database'], resources.clickhouse_db)
+        self.assertEqual(report['ta_runtime_config']['current_clickhouse_database'], wrong_database)
 
     def test_runtime_verify_accepts_options_lane_topics_and_tables(self) -> None:
         manifest = {
@@ -4002,7 +4236,7 @@ class TestStartHistoricalSimulation(TestCase):
                 'TA_BARS1M_TOPIC': 'torghut.sim.bars.1m.v1.sim_2026_03_06_open_hour',
                 'TA_MICROBARS_TOPIC': 'torghut.sim.ta.bars.1s.v1.sim_2026_03_06_open_hour',
                 'TA_SIGNALS_TOPIC': 'torghut.sim.ta.signals.v1.sim_2026_03_06_open_hour',
-                'TA_CLICKHOUSE_URL': 'jdbc:clickhouse://clickhouse/torghut_sim_2026_03_06_open_hour',
+                'TA_CLICKHOUSE_URL': f'jdbc:clickhouse://clickhouse/{resources.clickhouse_db}',
             }
         }
 
