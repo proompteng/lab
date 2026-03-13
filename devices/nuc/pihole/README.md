@@ -61,6 +61,7 @@ dig +short @127.0.0.1 feature-flags.k8s.proompteng.ai
 dig +short @127.0.0.1 flink.k8s.proompteng.ai
 dig +short @127.0.0.1 headlamp.k8s.proompteng.ai
 dig +short @127.0.0.1 kafka-ui.k8s.proompteng.ai
+dig +short @127.0.0.1 sealed-secrets.k8s.proompteng.ai
 dig +short @127.0.0.1 temporal.k8s.proompteng.ai
 dig +short @127.0.0.1 pgadmin.k8s.proompteng.ai
 dig +short @127.0.0.1 inngest.k8s.proompteng.ai
@@ -86,6 +87,7 @@ dig +short feature-flags.k8s.proompteng.ai
 dig +short flink.k8s.proompteng.ai
 dig +short headlamp.k8s.proompteng.ai
 dig +short kafka-ui.k8s.proompteng.ai
+dig +short sealed-secrets.k8s.proompteng.ai
 dig +short temporal.k8s.proompteng.ai
 dig +short pgadmin.k8s.proompteng.ai
 dig +short inngest.k8s.proompteng.ai

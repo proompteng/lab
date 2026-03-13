@@ -1,0 +1,170 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: headlamp-auth-bridge
+  namespace: headlamp
+data:
+  auth.html: |
+    <!doctype html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta http-equiv="Cache-Control" content="no-store" />
+        <title>Completing Headlamp Sign-In</title>
+        <style>
+          :root {
+            color-scheme: dark;
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+          }
+
+          body {
+            margin: 0;
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            background: #1f1f1f;
+            color: #f5f5f5;
+          }
+
+          main {
+            width: min(28rem, calc(100vw - 2rem));
+            padding: 2rem;
+            border: 1px solid #3f3f46;
+            border-radius: 1rem;
+            background: #27272a;
+            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+          }
+
+          h1 {
+            margin: 0 0 0.75rem;
+            font-size: 1.5rem;
+          }
+
+          p {
+            margin: 0.75rem 0 0;
+            line-height: 1.5;
+            color: #d4d4d8;
+          }
+
+          a {
+            color: #fde047;
+          }
+        </style>
+      </head>
+      <body>
+        <main>
+          <h1>Completing sign-in…</h1>
+          <p id="status">Redirecting back to Headlamp.</p>
+          <p>
+            If nothing happens,
+            <a id="continue-link" href="/">continue to Headlamp</a>.
+          </p>
+        </main>
+        <script>
+          (() => {
+            const params = new URLSearchParams(window.location.search);
+            const cluster = params.get('cluster');
+            const status = document.getElementById('status');
+            const continueLink = document.getElementById('continue-link');
+
+            if (!cluster) {
+              status.textContent = 'Cluster information is missing. Continue to the Headlamp login page.';
+              continueLink.href = '/';
+              return;
+            }
+
+            const target = `/c/${encodeURIComponent(cluster)}`;
+            continueLink.href = target;
+
+            const markAuthSuccess = storage => {
+              storage.removeItem('auth_status');
+              storage.setItem('auth_status', 'success');
+            };
+
+            try {
+              markAuthSuccess(window.localStorage);
+            } catch (error) {
+              console.error('Failed to update local auth state', error);
+            }
+
+            let openerRedirected = false;
+
+            try {
+              if (window.opener && !window.opener.closed) {
+                markAuthSuccess(window.opener.localStorage);
+                window.opener.location.replace(target);
+                window.opener.focus();
+                openerRedirected = true;
+              }
+            } catch (error) {
+              console.error('Failed to redirect Headlamp opener', error);
+            }
+
+            status.textContent = openerRedirected
+              ? 'Sign-in complete. Returning to Headlamp.'
+              : 'Sign-in complete. Opening Headlamp.';
+
+            window.setTimeout(() => {
+              if (openerRedirected) {
+                window.close();
+              }
+
+              window.location.replace(target);
+            }, 150);
+          })();
+        </script>
+      </body>
+    </html>
+  server.py: |
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from pathlib import Path
+    from urllib.parse import urlparse
+
+    AUTH_HTML = Path('/app/auth.html').read_bytes()
+
+
+    class Handler(BaseHTTPRequestHandler):
+      def _handle(self, include_body):
+        path = urlparse(self.path).path
+
+        if path == '/healthz':
+          body = b'ok'
+          self.send_response(200)
+          self.send_header('Content-Type', 'text/plain; charset=utf-8')
+          self.send_header('Cache-Control', 'no-store')
+          self.send_header('Content-Length', str(len(body)))
+          self.end_headers()
+          if include_body:
+            self.wfile.write(body)
+          return
+
+        if path.startswith('/auth'):
+          self.send_response(200)
+          self.send_header('Content-Type', 'text/html; charset=utf-8')
+          self.send_header('Cache-Control', 'no-store')
+          self.send_header('Content-Length', str(len(AUTH_HTML)))
+          self.end_headers()
+          if include_body:
+            self.wfile.write(AUTH_HTML)
+          return
+
+        body = b'not found'
+        self.send_response(404)
+        self.send_header('Content-Type', 'text/plain; charset=utf-8')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        if include_body:
+          self.wfile.write(body)
+
+      def do_GET(self):
+        self._handle(True)
+
+      def do_HEAD(self):
+        self._handle(False)
+
+      def log_message(self, format, *args):
+        return
+
+
+    ThreadingHTTPServer(('0.0.0.0', 8080), Handler).serve_forever()

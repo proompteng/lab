@@ -14,6 +14,12 @@ kubectl -n argocd get application sealed-secrets
 kubectl -n sealed-secrets get deploy,pod
 ```
 
+Private HTTPS host:
+
+- `https://sealed-secrets.k8s.proompteng.ai`
+- Backed by `argocd/applications/sealed-secrets/ingressroute-sealed-secrets-k8s-private.yaml`
+- Requires the wildcard `k8s.proompteng.ai` TLS secret to be reflected into the `sealed-secrets` namespace and the NUC Pi-hole CNAME entry in `devices/nuc/pihole/pihole.toml`
+
 ### Install kubeseal CLI
 
 ```bash

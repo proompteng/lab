@@ -3,6 +3,9 @@ kind: Kustomization
 
 namespace: sealed-secrets
 
+resources:
+  - ingressroute-sealed-secrets-k8s-private.yaml
+
 helmCharts:
   - name: sealed-secrets
     repo: https://bitnami-labs.github.io/sealed-secrets

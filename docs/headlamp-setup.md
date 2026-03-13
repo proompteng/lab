@@ -9,10 +9,27 @@ This runbook covers Headlamp deployment, OIDC wiring with Keycloak, control-plan
 - Helm release: `headlamp` (chart from https://kubernetes-sigs.github.io/headlamp)
 - OIDC secret (SealedSecret): `argocd/applications/headlamp/headlamp-oidc-sealedsecret.yaml`
 - RBAC manifest: `argocd/applications/headlamp/headlamp-oidc-rbac.yaml`
+- OIDC auth bridge: `argocd/applications/headlamp/headlamp-auth-bridge-*.yaml`
+
+## Operations model
+
+- Headlamp application config is GitOps-managed from `argocd/applications/headlamp`.
+- The `/auth` popup callback is fronted by a tiny auth bridge service so successful OIDC redirects can always hand control back to the main Headlamp window.
+- Keycloak client bootstrap for Headlamp is GitOps-managed from `argocd/applications/keycloak/headlamp-client-bootstrap-job.yaml`.
+- Kube-apiserver OIDC settings have an Ansible playbook only for `k3s` clusters: `ansible/playbooks/k3s-oidc.yml`.
+- The current `galactic` cluster is Talos-based, so the control-plane OIDC path here is Talos machine config patches, not the `k3s` Ansible playbook.
+
+Operationally:
+
+1. Update or reseal the Headlamp OIDC secret in Git.
+2. Update or reseal the Keycloak client bootstrap secret in Git.
+3. Sync the `keycloak` and `headlamp` Argo CD apps.
+4. If control-plane OIDC settings change, patch the Talos control-plane nodes listed below.
 
 ## Keycloak client (OIDC)
 
 Create a confidential OpenID Connect client (e.g., `kubernetes`) and use it for both Headlamp and the kube-apiserver.
+This repo now bootstraps that client from `argocd/applications/keycloak/headlamp-client-bootstrap-job.yaml`.
 
 Capabilities:
 
@@ -25,11 +42,12 @@ Capabilities:
 
 Login settings:
 
-- Root URL: `https://headlamp.ide-newton.ts.net`
-- Home URL: `https://headlamp.ide-newton.ts.net`
-- Valid redirect URIs: `https://headlamp.ide-newton.ts.net/oidc-callback`
-- Web origins: `https://headlamp.ide-newton.ts.net`
-- Valid post logout redirect URIs: `https://headlamp.ide-newton.ts.net`
+- Valid redirect URIs:
+  - `https://headlamp.ide-newton.ts.net/oidc-callback`
+  - `https://headlamp.k8s.proompteng.ai/oidc-callback`
+- Web origins:
+  - `https://headlamp.ide-newton.ts.net`
+  - `https://headlamp.k8s.proompteng.ai`
 
 OIDC values:
 
@@ -46,7 +64,8 @@ Optional (recommended) group mapper:
 
 ## Reseal Headlamp OIDC secret
 
-Update `argocd/applications/headlamp/headlamp-oidc-sealedsecret.yaml` whenever the client ID/secret changes.
+Update `argocd/applications/headlamp/headlamp-oidc-sealedsecret.yaml` and
+`argocd/applications/keycloak/headlamp-client-sealedsecret.yaml` whenever the client ID/secret changes.
 
 ```bash
 kubectl -n headlamp create secret generic headlamp-oidc \
@@ -54,14 +73,23 @@ kubectl -n headlamp create secret generic headlamp-oidc \
   --from-literal=OIDC_CLIENT_SECRET='<client-secret>' \
   --from-literal=OIDC_ISSUER_URL='https://auth.proompteng.ai/realms/master' \
   --from-literal=OIDC_SCOPES='openid profile email' \
-  --from-literal=OIDC_CALLBACK_URL='https://headlamp.ide-newton.ts.net/oidc-callback' \
   --dry-run=client -o yaml \
   | kubeseal --controller-name sealed-secrets \
   --controller-namespace sealed-secrets -o yaml \
   > argocd/applications/headlamp/headlamp-oidc-sealedsecret.yaml
 ```
 
-Commit and sync the Headlamp Argo CD app.
+Headlamp now derives the callback URL dynamically from the request host when `config.oidc.callbackURL`
+is omitted, so the same deployment can complete OIDC flows on both the Tailscale hostname and the private
+`k8s.proompteng.ai` hostname.
+
+Commit and sync the Keycloak and Headlamp Argo CD apps.
+
+Recommended sync order:
+
+1. Sync `keycloak` so the bootstrap job creates or updates the OIDC client.
+2. Sync `headlamp` so the deployment consumes the matching client settings.
+3. Restart `deploy/headlamp` only if the deployment does not roll automatically.
 
 ## Session tuning (Keycloak)
 
@@ -141,6 +169,8 @@ Make sure the Keycloak groups mapper is configured so the `groups` claim is pres
 
 - **401 Unauthorized**: kube-apiserver OIDC config missing or mismatched (issuer/client-id/CA).
 - **403 Forbidden**: RBAC missing. Add/update `headlamp-oidc-rbac.yaml` and sync Argo CD.
+- **Redirect always goes to the Tailscale hostname**: the running Headlamp deployment still has a fixed `-oidc-callback-url`. Sync the updated Headlamp manifests so it can derive the callback from the request host.
+- **Sign-in gets stuck on `/auth?cluster=...`**: sync the `headlamp-auth-bridge` resources and the patched Tailscale Ingress. The bridge page forces the popup flow to hand control back to the main Headlamp window even if Headlamp misses the original storage-event handoff.
 - **Old config in Headlamp**: sync the Argo CD app and restart the deployment:
 
 ```bash
