@@ -665,54 +665,70 @@ async function loadHistoryViaCli({
     '--output',
     'json',
   ] as const
+  const maxAttempts = normalizeRetryConfig(process.env.TEMPORAL_CLI_COMMAND_MAX_ATTEMPTS, 3)
+  const retryDelayMs = normalizeRetryConfig(process.env.TEMPORAL_CLI_COMMAND_RETRY_MS, 500)
 
-  let child: ReturnType<typeof Bun.spawn> | undefined
-  try {
-    child = Bun.spawn([binary, ...args], {
-      stdout: 'pipe',
-      stderr: 'pipe',
-      env: buildCliEnv(config, namespace),
-    })
-  } catch (error) {
-    throw new ReplayCommandError(`Temporal CLI binary not found at ${binary}`, { cause: error })
-  }
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    let child: ReturnType<typeof Bun.spawn> | undefined
+    try {
+      child = Bun.spawn([binary, ...args], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: buildCliEnv(config, namespace),
+      })
+    } catch (error) {
+      throw new ReplayCommandError(`Temporal CLI binary not found at ${binary}`, { cause: error })
+    }
 
-  const [exitCode, stdout, stderr] = await Promise.all([
-    child.exited,
-    readStream(child.stdout),
-    readStream(child.stderr),
-  ])
+    const [exitCode, stdout, stderr] = await Promise.all([
+      child.exited,
+      readStream(child.stdout),
+      readStream(child.stderr),
+    ])
 
-  if (exitCode !== 0) {
+    if (exitCode === 0) {
+      try {
+        const parsed = JSON.parse(stdout) as unknown
+        const events = decodeHistoryJson(parsed)
+        if (events.length === 0) {
+          throw new ReplayCommandError('Temporal CLI returned an empty history response')
+        }
+        return {
+          events,
+          source: 'cli',
+          description: `${binary} ${args.join(' ')}`,
+          metadata: {
+            workflowId: options.execution.workflowId,
+            runId: options.execution.runId,
+            namespace,
+          },
+        }
+      } catch (error) {
+        if (error instanceof ReplayCommandError) {
+          throw error
+        }
+        throw new ReplayCommandError('Failed to parse Temporal CLI history output', { cause: error, stdout })
+      }
+    }
+
+    const detail = [stderr, stdout]
+      .filter((value) => value.trim().length > 0)
+      .join('\n')
+      .trim()
+    if (attempt < maxAttempts && isTemporalCliEndpointUnavailable(detail)) {
+      await Bun.sleep(retryDelayMs * attempt)
+      continue
+    }
+
     throw new ReplayCommandError('Temporal CLI returned a non-zero exit code', {
       exitCode,
       stderr,
       stdout,
+      attempts: attempt,
     })
   }
 
-  try {
-    const parsed = JSON.parse(stdout) as unknown
-    const events = decodeHistoryJson(parsed)
-    if (events.length === 0) {
-      throw new ReplayCommandError('Temporal CLI returned an empty history response')
-    }
-    return {
-      events,
-      source: 'cli',
-      description: `${binary} ${args.join(' ')}`,
-      metadata: {
-        workflowId: options.execution.workflowId,
-        runId: options.execution.runId,
-        namespace,
-      },
-    }
-  } catch (error) {
-    if (error instanceof ReplayCommandError) {
-      throw error
-    }
-    throw new ReplayCommandError('Failed to parse Temporal CLI history output', { cause: error, stdout })
-  }
+  throw new ReplayCommandError('Temporal CLI history fetch retries were exhausted')
 }
 
 const buildCliEnv = (config: TemporalConfig, namespace: string): Record<string, string> => {
@@ -936,6 +952,27 @@ const describeHistoryLoaderError = (error: unknown): string => {
   return String(error)
 }
 
+const isTemporalCliEndpointUnavailable = (detail: string): boolean => {
+  const normalized = detail.toLowerCase()
+  return (
+    normalized.includes('failed reaching server') ||
+    normalized.includes('no children to pick from') ||
+    normalized.includes('connection refused') ||
+    normalized.includes('context deadline exceeded') ||
+    normalized.includes('getaddrinfo') ||
+    normalized.includes('transport: error while dialing') ||
+    normalized.includes('unavailable')
+  )
+}
+
+function normalizeRetryConfig(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value ?? '', 10)
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return fallback
+  }
+  return parsed
+}
+
 const readStream = async (stream: BunReadableStream): Promise<string> => {
   if (!stream || typeof stream === 'number') {
     return ''
@@ -1061,5 +1098,6 @@ const stripTypeAnnotations = (value: unknown): unknown => {
 export const replayCommandTestHooks = {
   loadHistoryFromFile,
   loadExecutionHistory,
+  loadHistoryViaCli,
   executeReplay,
 }

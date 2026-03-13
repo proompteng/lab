@@ -45,7 +45,7 @@ jobs:
       TEMPORAL_TEST_SERVER: '1'
       TEMPORAL_TEST_TIMEOUT: '5000'
       TEMPORAL_INTEGRATION_TESTS: '1'
-      TEMPORAL_ADDRESS: temporal-grpc.ide-newton.ts.net:7233
+      TEMPORAL_ADDRESS: temporal-grpc:7233
       TEMPORAL_NAMESPACE: default
       TEMPORAL_ENFORCE_REMOTE_ADDRESS: '1'
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -105,6 +105,13 @@ jobs:
               exit 1
               ;;
           esac
+
+      - name: Verify ARC Tailscale short host
+        run: |
+          if ! getent hosts temporal-grpc >/dev/null; then
+            echo "temporal-grpc must resolve on ARC runners via Tailscale search domains."
+            exit 1
+          fi
 
       - name: Run Oxfmt check (temporal-bun-sdk)
         run: bunx oxfmt --check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests
