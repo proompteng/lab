@@ -223,3 +223,48 @@ class TestRunSimulationAnalysis(TestCase):
         self.assertEqual(ctx.exception.code, 1)
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload['activity_classification'], 'executions_absent')
+
+    def test_teardown_clean_does_not_require_window_arguments(self) -> None:
+        stdout = io.StringIO()
+        with (
+            patch(
+                'sys.argv',
+                [
+                    'run_simulation_analysis.py',
+                    'teardown-clean',
+                    '--run-id',
+                    'sim-1',
+                    '--dataset-id',
+                    'dataset-a',
+                    '--namespace',
+                    'torghut',
+                    '--ta-configmap',
+                    'torghut-ta-sim-config',
+                    '--ta-deployment',
+                    'torghut-ta-sim',
+                    '--torghut-service',
+                    'torghut-sim',
+                    '--forecast-service',
+                    'torghut-forecast-sim',
+                    '--signal-table',
+                    'torghut_sim_sim_1.ta_signals',
+                    '--price-table',
+                    'torghut_sim_sim_1.ta_microbars',
+                    '--postgres-base-dsn',
+                    'postgresql://torghut:secret@localhost:5432/postgres',
+                    '--postgres-database',
+                    'torghut_sim_sim_1',
+                    '--json',
+                ],
+            ),
+            patch(
+                'scripts.run_simulation_analysis._teardown_clean',
+                return_value={'status': 'ok', 'activity_classification': 'success', 'restored': True},
+            ),
+            redirect_stdout(stdout),
+        ):
+            main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload['status'], 'ok')
+        self.assertTrue(payload['restored'])

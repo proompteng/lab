@@ -175,12 +175,14 @@ def _resources_from_args(args: argparse.Namespace) -> _Resources:
 
 
 def _manifest_from_args(args: argparse.Namespace) -> dict[str, Any]:
-    manifest = {
-        'window': {
-            'start': args.window_start,
-            'end': args.window_end,
+    manifest: dict[str, Any] = {}
+    window_start = getattr(args, 'window_start', '')
+    window_end = getattr(args, 'window_end', '')
+    if window_start and window_end:
+        manifest['window'] = {
+            'start': window_start,
+            'end': window_end,
         }
-    }
     if hasattr(args, 'monitor_timeout_seconds'):
         manifest['monitor'] = {
             'timeout_seconds': args.monitor_timeout_seconds,
