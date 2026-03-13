@@ -156,6 +156,13 @@ spec:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: auto
                 enabled: "true"
+              - name: symphony
+                path: argocd/applications/symphony
+                namespace: jangar
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: auto
+                enabled: "true"
               - name: oirat
                 path: argocd/applications/oirat
                 namespace: oirat
