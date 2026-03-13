@@ -1306,11 +1306,10 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
         lane_contract.simulation_topic_by_role,
         simulation_topic_overrides,
     )
-    if not warm_lane:
-        for role, topic in list(simulation_topics.items()):
-            if role in simulation_topic_overrides:
-                continue
-            simulation_topics[role] = f'{topic}.{run_token}'
+    for role, topic in list(simulation_topics.items()):
+        if role in simulation_topic_overrides:
+            continue
+        simulation_topics[role] = f'{topic}.{run_token}'
 
     replay_topic_by_source_topic = {
         source_topics[role]: simulation_topics[role]

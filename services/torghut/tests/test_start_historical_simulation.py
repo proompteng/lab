@@ -293,7 +293,7 @@ class TestStartHistoricalSimulation(TestCase):
             'torghut.sim.trades.v1.sim_2026_02_27_01',
         )
 
-    def test_build_resources_uses_stable_defaults_when_warm_lane_enabled(self) -> None:
+    def test_build_resources_uses_run_scoped_topics_when_warm_lane_enabled(self) -> None:
         resources = _build_resources(
             'sim-2026-02-27-01',
             {
@@ -309,11 +309,11 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(resources.clickhouse_signal_table, 'torghut_sim_default.ta_signals')
         self.assertEqual(
             resources.simulation_topic_by_role['order_updates'],
-            'torghut.sim.trade-updates.v1',
+            'torghut.sim.trade-updates.v1.sim_2026_02_27_01',
         )
         self.assertEqual(
             resources.replay_topic_by_source_topic['torghut.trades.v1'],
-            'torghut.sim.trades.v1',
+            'torghut.sim.trades.v1.sim_2026_02_27_01',
         )
 
     def test_build_resources_derives_options_lane_isolation_names(self) -> None:
