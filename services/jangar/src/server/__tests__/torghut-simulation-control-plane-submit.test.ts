@@ -318,8 +318,12 @@ describe('submitTorghutSimulationRun', () => {
       'argo-workflows',
     )
     expect(kubeMocks.apply).toHaveBeenCalledOnce()
-    expect((kubeMocks.apply.mock.calls[0]?.[0] as Record<string, unknown>)?.metadata).toMatchObject({
-      namespace: 'argo-workflows',
-    })
+    expect(kubeMocks.apply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          namespace: 'argo-workflows',
+        }),
+      }),
+    )
   })
 })
