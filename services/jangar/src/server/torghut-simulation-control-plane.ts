@@ -105,7 +105,8 @@ export type TorghutSimulationPreset = {
   manifest: JsonRecord
 }
 
-const DEFAULT_NAMESPACE = 'torghut'
+const DEFAULT_TORGHUT_NAMESPACE = 'torghut'
+const DEFAULT_WORKFLOW_NAMESPACE = 'argo-workflows'
 const DEFAULT_OUTPUT_ROOT = 'artifacts/torghut/simulations'
 const DEFAULT_PRIORITY = 'interactive'
 const DEFAULT_PROFILE = 'smoke'
@@ -231,7 +232,12 @@ const resolveSimulationServiceName = (manifest: JsonRecord) => {
 
 const resolveSimulationNamespace = (manifest: JsonRecord) => {
   const runtime = asRecord(manifest.runtime)
-  return asString(runtime.namespace) ?? DEFAULT_NAMESPACE
+  return asString(runtime.namespace) ?? DEFAULT_TORGHUT_NAMESPACE
+}
+
+const resolveSimulationWorkflowNamespace = (manifest: JsonRecord) => {
+  const runtime = asRecord(manifest.runtime)
+  return asString(runtime.workflow_namespace) ?? DEFAULT_WORKFLOW_NAMESPACE
 }
 
 const buildSimulationCacheKey = (manifest: JsonRecord, profile: string) =>
@@ -711,6 +717,7 @@ const ensureDb = async () => {
 const buildWorkflowManifest = (params: {
   runId: string
   manifest: JsonRecord
+  workflowNamespace: string
   forceReplay: boolean
   forceDump: boolean
   allowMissingState: boolean
@@ -720,7 +727,7 @@ const buildWorkflowManifest = (params: {
   kind: 'Workflow',
   metadata: {
     generateName: 'torghut-historical-simulation-',
-    namespace: DEFAULT_NAMESPACE,
+    namespace: params.workflowNamespace,
     labels: {
       'jangar.proompteng.ai/control-plane': 'torghut-simulation',
       'jangar.proompteng.ai/run-id': params.runId,
@@ -924,7 +931,7 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
       idempotency_key: idempotencyKey,
       workflow_name: null,
       workflow_uid: null,
-      namespace: DEFAULT_NAMESPACE,
+      namespace: resolveSimulationWorkflowNamespace(manifest),
       status: 'submitting',
       workflow_phase: null,
       lane,
@@ -946,6 +953,7 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
         ...request.metadata,
         torghutService: resolveSimulationServiceName(manifest),
         torghutNamespace: resolveSimulationNamespace(manifest),
+        workflowNamespace: resolveSimulationWorkflowNamespace(manifest),
       },
       progress: {
         phase: 'submitting',
@@ -981,6 +989,7 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
         },
         torghutService: resolveSimulationServiceName(manifest),
         torghutNamespace: resolveSimulationNamespace(manifest),
+        workflowNamespace: resolveSimulationWorkflowNamespace(manifest),
       },
       progress: {
         phase: 'lane_reserved',
@@ -993,6 +1002,7 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
   const workflowManifest = buildWorkflowManifest({
     runId,
     manifest,
+    workflowNamespace: resolveSimulationWorkflowNamespace(manifest),
     forceReplay: request.forceReplay ?? false,
     forceDump: request.forceDump ?? false,
     allowMissingState: request.allowMissingState ?? false,
@@ -1027,6 +1037,7 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
         },
         torghutService: resolveSimulationServiceName(manifest),
         torghutNamespace: resolveSimulationNamespace(manifest),
+        workflowNamespace: resolveSimulationWorkflowNamespace(manifest),
         workflowResource: created,
       },
       progress: {

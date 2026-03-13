@@ -308,10 +308,18 @@ describe('submitTorghutSimulationRun', () => {
 
     expect(result.idempotent).toBe(false)
     expect(result.run.runId).toBe('sim-fk-proof')
+    expect(result.run.namespace).toBe('argo-workflows')
     expect(state.operationLog.indexOf('insert-run')).toBeLessThan(state.operationLog.indexOf('reserve-lane'))
     expect(state.lanes.get('sim-fast-1')?.run_id).toBe('sim-fk-proof')
     expect(state.runs.get('sim-fk-proof')?.lane_id).toBe('sim-fast-1')
+    expect(state.runs.get('sim-fk-proof')?.namespace).toBe('argo-workflows')
     expect(state.runs.get('sim-fk-proof')?.workflow_name).toBe('workflow-demo')
+    expect((state.runs.get('sim-fk-proof')?.metadata as Record<string, unknown>)?.workflowNamespace).toBe(
+      'argo-workflows',
+    )
     expect(kubeMocks.apply).toHaveBeenCalledOnce()
+    expect((kubeMocks.apply.mock.calls[0]?.[0] as Record<string, unknown>)?.metadata).toMatchObject({
+      namespace: 'argo-workflows',
+    })
   })
 })
