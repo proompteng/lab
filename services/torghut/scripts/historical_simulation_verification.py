@@ -857,6 +857,17 @@ def _clickhouse_database_from_jdbc_url(raw_url: str | None) -> str | None:
     return database or None
 
 
+def _clickhouse_database_from_table_name(table_name: str | None) -> str | None:
+    text = (table_name or '').strip()
+    if not text:
+        return None
+    database, separator, _table = text.partition('.')
+    if not separator:
+        return None
+    database = database.strip()
+    return database or None
+
+
 def _classify_activity_snapshot(
     *,
     runtime_ready: bool,
@@ -1005,7 +1016,11 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
     trading_config_complete = all(trading_config.values())
     ta_config = _kubectl_json(namespace, ['get', 'configmap', ta_configmap, '-o', 'json'])
     ta_data = _as_mapping(ta_config.get('data'))
-    expected_clickhouse_database = _as_text(_resource_attr(resources, 'clickhouse_db'))
+    expected_clickhouse_database = (
+        _as_text(_resource_attr(resources, 'clickhouse_db'))
+        or _clickhouse_database_from_table_name(_as_text(_resource_attr(resources, 'clickhouse_signal_table')))
+        or _clickhouse_database_from_table_name(_as_text(_resource_attr(resources, 'clickhouse_price_table')))
+    )
     ta_runtime_config = {
         f'{role}_topic': _as_text(ta_data.get(key)) == _as_text(expected_topics.get(role))
         for role, key in lane_contract.ta_topic_key_by_role.items()

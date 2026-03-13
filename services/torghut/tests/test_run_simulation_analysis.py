@@ -27,6 +27,22 @@ class TestRunSimulationAnalysis(TestCase):
             resources.simulation_topic_by_role['order_updates'],
             'torghut.sim.trade-updates.v1.sim_2026_03_06_open_30m_r3',
         )
+        self.assertEqual(resources.clickhouse_db, 'torghut_sim_2026_03_06_open_30m')
+
+    def test_runtime_ready_resources_derive_clickhouse_db_from_price_table_when_signal_table_missing(self) -> None:
+        class _Args:
+            run_id = 'sim-2026-03-06-open-30m-r3'
+            dataset_id = 'torghut-smoke-open-30m-20260306'
+            namespace = 'torghut'
+            ta_configmap = 'torghut-ta-sim-config'
+            ta_deployment = 'torghut-ta-sim'
+            torghut_service = 'torghut-sim'
+            forecast_service = 'torghut-forecast-sim'
+            signal_table = ''
+            price_table = 'torghut_sim_2026_03_06_open_30m.ta_microbars'
+
+        resources = _resources_from_args(_Args())
+        self.assertEqual(resources.clickhouse_db, 'torghut_sim_2026_03_06_open_30m')
 
     def test_runtime_ready_exits_zero_with_json_payload(self) -> None:
         stdout = io.StringIO()

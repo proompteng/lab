@@ -31,6 +31,7 @@ class _Resources:
     torghut_forecast_service: str
     clickhouse_signal_table: str
     clickhouse_price_table: str
+    clickhouse_db: str
     simulation_topic_by_role: dict[str, str]
     order_feed_group_id: str
     ta_group_id: str
@@ -61,6 +62,14 @@ def _normalize_run_token(run_id: str) -> str:
     if not token:
         raise SystemExit('run-id must contain at least one alphanumeric character')
     return token
+
+
+def _clickhouse_database_from_table_name(table_name: str) -> str:
+    table_name = table_name.strip()
+    if not table_name:
+        return ''
+    database, separator, _table = table_name.partition('.')
+    return database.strip() if separator else ''
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -141,6 +150,9 @@ def _emit(payload: Mapping[str, Any], *, json_only: bool) -> None:
 
 def _resources_from_args(args: argparse.Namespace) -> _Resources:
     run_token = _normalize_run_token(args.run_id)
+    signal_table = getattr(args, 'signal_table', '')
+    price_table = getattr(args, 'price_table', '')
+    clickhouse_db = _clickhouse_database_from_table_name(signal_table) or _clickhouse_database_from_table_name(price_table)
     return _Resources(
         run_id=args.run_id,
         run_token=run_token,
@@ -151,8 +163,9 @@ def _resources_from_args(args: argparse.Namespace) -> _Resources:
         ta_deployment=args.ta_deployment,
         torghut_service=args.torghut_service,
         torghut_forecast_service=args.forecast_service,
-        clickhouse_signal_table=getattr(args, 'signal_table', ''),
-        clickhouse_price_table=getattr(args, 'price_table', ''),
+        clickhouse_signal_table=signal_table,
+        clickhouse_price_table=price_table,
+        clickhouse_db=clickhouse_db,
         simulation_topic_by_role={
             'order_updates': f'torghut.sim.trade-updates.v1.{run_token}',
         },
