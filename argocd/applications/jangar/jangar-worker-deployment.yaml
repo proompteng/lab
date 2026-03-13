@@ -20,7 +20,7 @@ spec:
         app.kubernetes.io/name: jangar-worker
         app.kubernetes.io/part-of: lab
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-03-13T11:53:27Z"
+        kubectl.kubernetes.io/restartedAt: "2026-03-13T16:24:53Z"
     spec:
       initContainers:
         - name: bootstrap-workspace
