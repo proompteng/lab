@@ -5510,6 +5510,7 @@ def _run_full_lifecycle(
     argocd_prepare_succeeded = False
     argocd_restore_required = False
     previous_root_application_sync_policy: dict[str, Any] | None = None
+    teardown_succeeded = False
 
     try:
         if report_only:
@@ -5825,23 +5826,8 @@ def _run_full_lifecycle(
                     manifest=manifest,
                     allow_missing_state=True,
                 )
-                if bool(rollouts_report['enabled']):
-                    teardown_analysis_run = _run_rollouts_analysis(
-                        resources=resources,
-                        manifest=manifest,
-                        postgres_config=postgres_config,
-                        clickhouse_config=clickhouse_config,
-                        rollouts_config=rollouts_config,
-                        phase='teardown-clean',
-                        template_name=rollouts_config.teardown_template,
-                    )
-                    rollouts_report['teardown_analysis_run'] = teardown_analysis_run
-                teardown_report['analysis_run'] = rollouts_report['teardown_analysis_run']
+                teardown_succeeded = True
                 _update_run_state(resources=resources, phase='teardown', status='ok')
-                if bool(rollouts_report['enabled']) and _as_mapping(
-                    cast(Mapping[str, Any], rollouts_report['teardown_analysis_run'])
-                ).get('phase') != 'Successful':
-                    errors.append('teardown:environment_incomplete')
             except Exception as exc:
                 errors.append(f'teardown:{exc}')
                 _update_run_state(
@@ -5899,6 +5885,34 @@ def _run_full_lifecycle(
                     status='error',
                     details={'error': str(exc)},
                 )
+
+        if (
+            teardown_succeeded
+            and not report_only
+            and bool(rollouts_report['enabled'])
+            and not any(error.startswith('argocd_restore:') for error in errors)
+        ):
+            try:
+                teardown_analysis_run = _run_rollouts_analysis(
+                    resources=resources,
+                    manifest=manifest,
+                    postgres_config=postgres_config,
+                    clickhouse_config=clickhouse_config,
+                    rollouts_config=rollouts_config,
+                    phase='teardown-clean',
+                    template_name=rollouts_config.teardown_template,
+                )
+                rollouts_report['teardown_analysis_run'] = teardown_analysis_run
+                if teardown_report is None:
+                    teardown_report = {}
+                teardown_report['analysis_run'] = teardown_analysis_run
+                if _as_mapping(teardown_analysis_run).get('phase') != 'Successful':
+                    errors.append('teardown:environment_incomplete')
+            except Exception as exc:
+                errors.append(f'teardown:{exc}')
+                if teardown_report is None:
+                    teardown_report = {}
+                teardown_report['analysis_run_error'] = str(exc)
 
     report = {
         'status': 'ok' if not errors else 'error',

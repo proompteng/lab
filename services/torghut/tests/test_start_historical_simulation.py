@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from datetime import datetime, timezone
-from types import SimpleNamespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from typing import Any
 from unittest import TestCase
 from unittest.mock import call, patch
 
@@ -3662,6 +3663,243 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(report['status'], 'ok')
         self.assertEqual(report['monitor']['activity_classification'], 'success')
         self.assertEqual(report['rollouts']['activity_analysis_run']['phase'], 'Failed')
+
+    def test_run_full_lifecycle_runs_teardown_analysis_after_argocd_restore(self) -> None:
+        resources = _build_resources(
+            'sim-teardown-clean-order',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        manifest = {
+            'dataset_id': 'dataset-a',
+            'window': {
+                'start': '2026-02-27T14:30:00Z',
+                'end': '2026-02-27T21:00:00Z',
+            },
+        }
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+        clickhouse_config = ClickHouseRuntimeConfig(
+            http_url='http://clickhouse:8123',
+            username='torghut',
+            password=None,
+        )
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_teardown_order',
+            simulation_db='torghut_sim_teardown_order',
+            migrations_command='true',
+        )
+        argocd_config = ArgocdAutomationConfig(
+            manage_automation=False,
+            applicationset_name='product',
+            applicationset_namespace='argocd',
+            app_name='torghut',
+            root_app_name='root',
+            desired_mode_during_run='manual',
+            restore_mode_after_run='previous',
+            verify_timeout_seconds=600,
+        )
+        rollouts_config = RolloutsAnalysisConfig(
+            enabled=True,
+            namespace='torghut',
+            runtime_template='torghut-simulation-runtime-ready',
+            activity_template='torghut-simulation-activity',
+            teardown_template='torghut-simulation-teardown-clean',
+            artifact_template='torghut-simulation-artifact-bundle',
+            verify_timeout_seconds=30,
+            verify_poll_seconds=5,
+        )
+        call_order: list[str] = []
+
+        def _rollouts_side_effect(*, phase: str, **_: Any) -> dict[str, Any]:
+            call_order.append(phase)
+            return {'phase': 'Successful'}
+
+        with (
+            patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
+            patch('scripts.start_historical_simulation._update_run_state', return_value=None),
+            patch('scripts.start_historical_simulation._save_json', return_value=None),
+            patch('scripts.start_historical_simulation.persist_completion_trace', return_value={}),
+            patch('scripts.start_historical_simulation._upsert_simulation_progress_row', return_value=None),
+            patch('scripts.start_historical_simulation.SessionLocal') as mock_session_local,
+            patch('scripts.start_historical_simulation._prepare_argocd_for_run', return_value={'managed': False}),
+            patch(
+                'scripts.start_historical_simulation._restore_argocd_after_run',
+                side_effect=lambda **_: call_order.append('argocd_restore') or {'managed': False},
+            ),
+            patch('scripts.start_historical_simulation._apply', return_value={'status': 'ok'}),
+            patch('scripts.start_historical_simulation._run_rollouts_analysis', side_effect=_rollouts_side_effect),
+            patch('scripts.start_historical_simulation._runtime_verify', return_value={'runtime_state': 'ready'}),
+            patch('scripts.start_historical_simulation._replay_dump', return_value={'status': 'ok'}),
+            patch(
+                'scripts.start_historical_simulation._monitor_run_completion',
+                return_value={
+                    'status': 'ok',
+                    'activity_classification': 'success',
+                    'final_snapshot': {
+                        'signal_rows': 5,
+                        'price_rows': 5,
+                        'trade_decisions': 3,
+                        'cursor_at': '2026-02-27T21:00:00Z',
+                        'executions': 2,
+                        'execution_tca_metrics': 2,
+                        'execution_order_events': 2,
+                    },
+                },
+            ),
+            patch('scripts.start_historical_simulation._report_simulation', return_value={'status': 'ok'}),
+            patch(
+                'scripts.start_historical_simulation._build_strategy_proof_artifact',
+                return_value={'status': 'ok', 'legacy_path_count': 0},
+            ),
+            patch(
+                'scripts.start_historical_simulation._teardown',
+                side_effect=lambda **_: call_order.append('teardown') or {'status': 'ok'},
+            ),
+        ):
+            mock_session_local.return_value.__enter__.return_value = SimpleNamespace(commit=lambda: None)
+            report = _run_full_lifecycle(
+                resources=resources,
+                manifest=manifest,
+                manifest_path=Path('/tmp/manifest.json'),
+                kafka_config=kafka_config,
+                clickhouse_config=clickhouse_config,
+                postgres_config=postgres_config,
+                argocd_config=argocd_config,
+                rollouts_config=rollouts_config,
+                force_dump=False,
+                force_replay=False,
+                skip_teardown=False,
+                report_only=False,
+            )
+
+        self.assertEqual(report['status'], 'ok')
+        self.assertEqual(report['teardown']['analysis_run']['phase'], 'Successful')
+        self.assertEqual(
+            call_order,
+            ['runtime-ready', 'activity', 'teardown', 'argocd_restore', 'teardown-clean'],
+        )
+
+    def test_run_full_lifecycle_fails_when_teardown_analysis_is_unsuccessful_after_restore(self) -> None:
+        resources = _build_resources(
+            'sim-teardown-clean-fail',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        manifest = {
+            'dataset_id': 'dataset-a',
+            'window': {
+                'start': '2026-02-27T14:30:00Z',
+                'end': '2026-02-27T21:00:00Z',
+            },
+        }
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+        clickhouse_config = ClickHouseRuntimeConfig(
+            http_url='http://clickhouse:8123',
+            username='torghut',
+            password=None,
+        )
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_teardown_fail',
+            simulation_db='torghut_sim_teardown_fail',
+            migrations_command='true',
+        )
+        argocd_config = ArgocdAutomationConfig(
+            manage_automation=False,
+            applicationset_name='product',
+            applicationset_namespace='argocd',
+            app_name='torghut',
+            root_app_name='root',
+            desired_mode_during_run='manual',
+            restore_mode_after_run='previous',
+            verify_timeout_seconds=600,
+        )
+        rollouts_config = RolloutsAnalysisConfig(
+            enabled=True,
+            namespace='torghut',
+            runtime_template='torghut-simulation-runtime-ready',
+            activity_template='torghut-simulation-activity',
+            teardown_template='torghut-simulation-teardown-clean',
+            artifact_template='torghut-simulation-artifact-bundle',
+            verify_timeout_seconds=30,
+            verify_poll_seconds=5,
+        )
+
+        def _rollouts_side_effect(*, phase: str, **_: Any) -> dict[str, Any]:
+            if phase == 'teardown-clean':
+                return {'phase': 'Failed'}
+            return {'phase': 'Successful'}
+
+        with (
+            patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
+            patch('scripts.start_historical_simulation._update_run_state', return_value=None),
+            patch('scripts.start_historical_simulation._save_json', return_value=None),
+            patch('scripts.start_historical_simulation.persist_completion_trace', return_value={}),
+            patch('scripts.start_historical_simulation._upsert_simulation_progress_row', return_value=None),
+            patch('scripts.start_historical_simulation.SessionLocal') as mock_session_local,
+            patch('scripts.start_historical_simulation._prepare_argocd_for_run', return_value={'managed': False}),
+            patch('scripts.start_historical_simulation._restore_argocd_after_run', return_value={'managed': False}),
+            patch('scripts.start_historical_simulation._apply', return_value={'status': 'ok'}),
+            patch('scripts.start_historical_simulation._run_rollouts_analysis', side_effect=_rollouts_side_effect),
+            patch('scripts.start_historical_simulation._runtime_verify', return_value={'runtime_state': 'ready'}),
+            patch('scripts.start_historical_simulation._replay_dump', return_value={'status': 'ok'}),
+            patch(
+                'scripts.start_historical_simulation._monitor_run_completion',
+                return_value={
+                    'status': 'ok',
+                    'activity_classification': 'success',
+                    'final_snapshot': {
+                        'signal_rows': 5,
+                        'price_rows': 5,
+                        'trade_decisions': 3,
+                        'cursor_at': '2026-02-27T21:00:00Z',
+                        'executions': 2,
+                        'execution_tca_metrics': 2,
+                        'execution_order_events': 2,
+                    },
+                },
+            ),
+            patch('scripts.start_historical_simulation._report_simulation', return_value={'status': 'ok'}),
+            patch(
+                'scripts.start_historical_simulation._build_strategy_proof_artifact',
+                return_value={'status': 'ok', 'legacy_path_count': 0},
+            ),
+            patch('scripts.start_historical_simulation._teardown', return_value={'status': 'ok'}),
+        ):
+            mock_session_local.return_value.__enter__.return_value = SimpleNamespace(commit=lambda: None)
+            with self.assertRaisesRegex(
+                RuntimeError,
+                'simulation_run_failed:teardown:environment_incomplete',
+            ):
+                _run_full_lifecycle(
+                    resources=resources,
+                    manifest=manifest,
+                    manifest_path=Path('/tmp/manifest.json'),
+                    kafka_config=kafka_config,
+                    clickhouse_config=clickhouse_config,
+                    postgres_config=postgres_config,
+                    argocd_config=argocd_config,
+                    rollouts_config=rollouts_config,
+                    force_dump=False,
+                    force_replay=False,
+                    skip_teardown=False,
+                    report_only=False,
+                )
 
     def test_run_full_lifecycle_aborts_before_replay_when_runtime_not_ready(self) -> None:
         resources = _build_resources(
