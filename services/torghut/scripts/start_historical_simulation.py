@@ -1343,11 +1343,9 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
         if lane_contract.lane == 'options'
         else 'torghut-order-feed-sim'
     )
-    ta_group_id = (
-        f'{ta_group_prefix}-default'
-        if warm_lane
-        else f'{ta_group_prefix}-{run_token}'
-    )
+    # Warm lanes reuse infrastructure, not consumer offsets. Each replay still needs
+    # a fresh TA consumer group so the source stream is re-read deterministically.
+    ta_group_id = f'{ta_group_prefix}-{run_token}'
     order_feed_group_id = (
         f'{order_feed_group_prefix}-default'
         if warm_lane
@@ -4799,22 +4797,20 @@ def _apply(
         )
         replay_cfg = _as_mapping(manifest.get('replay'))
         auto_offset_reset = (_as_text(replay_cfg.get('auto_offset_reset')) or 'earliest').lower()
-        if warm_lane_enabled:
-            ta_restart_nonce = None
-        else:
-            _configure_ta_for_simulation(
-                resources=resources,
-                clickhouse_config=clickhouse_config,
-                clickhouse_database=resources.clickhouse_db,
-                auto_offset_reset=auto_offset_reset,
-                manifest=manifest,
-            )
-            ta_restart_nonce = _restart_ta_deployment(
-                resources,
-                desired_state='running',
-                upgrade_mode=str(ta_restore.get('effective_upgrade_mode') or 'last-state'),
-            )
+        _configure_ta_for_simulation(
+            resources=resources,
+            clickhouse_config=clickhouse_config,
+            clickhouse_database=resources.clickhouse_db,
+            auto_offset_reset=auto_offset_reset,
+            manifest=manifest,
+        )
+        ta_restart_nonce = _restart_ta_deployment(
+            resources,
+            desired_state='running',
+            upgrade_mode=str(ta_restore.get('effective_upgrade_mode') or 'last-state'),
+        )
 
+        if not warm_lane_enabled:
             _configure_torghut_service_for_simulation(
                 resources=resources,
                 manifest=manifest,
@@ -4920,11 +4916,11 @@ def _teardown(
         }
 
     state = _load_json(state_path)
+    _restore_ta_configuration(resources, state)
     if warm_lane_enabled:
-        original_state = 'running'
-        ta_restart_nonce = None
+        original_state = _as_text(state.get('ta_job_state')) or 'running'
+        ta_restart_nonce = _restart_ta_deployment(resources, desired_state=original_state)
     else:
-        _restore_ta_configuration(resources, state)
         _restore_torghut_env(resources, state)
         original_state = _as_text(state.get('ta_job_state')) or 'running'
         ta_restart_nonce = _restart_ta_deployment(resources, desired_state=original_state)
@@ -4940,7 +4936,7 @@ def _teardown(
         'ta_restart_nonce': ta_restart_nonce,
         'restored_ta_state': original_state,
         'warm_lane_enabled': warm_lane_enabled,
-        'skipped_restore': warm_lane_enabled,
+        'skipped_restore': False,
         'simulation_lock': lock_report,
     }
     _save_json(run_manifest_path.with_name('teardown-manifest.json'), report)
