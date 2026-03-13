@@ -45,7 +45,7 @@ jobs:
       TEMPORAL_TEST_SERVER: '1'
       TEMPORAL_TEST_TIMEOUT: '5000'
       TEMPORAL_INTEGRATION_TESTS: '1'
-      TEMPORAL_ADDRESS: temporal-grpc:7233
+      TEMPORAL_ADDRESS: temporal-grpc.ide-newton.ts.net:7233
       TEMPORAL_NAMESPACE: default
       TEMPORAL_ENFORCE_REMOTE_ADDRESS: '1'
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

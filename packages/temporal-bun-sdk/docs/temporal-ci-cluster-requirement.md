@@ -17,7 +17,8 @@ They must **not** be switched to a local `start-dev` Temporal server in CI.
 
 ## Required CI behavior
 
-- Keep CI pointed at the ArgoCD Temporal endpoint (`TEMPORAL_ADDRESS=temporal-grpc:7233` in current workflow).
+- Keep CI pointed at the ArgoCD Temporal endpoint (`TEMPORAL_ADDRESS=temporal-grpc.ide-newton.ts.net:7233`
+  in the current workflow). ARC runners do not reliably resolve the short `temporal-grpc` MagicDNS alias.
 - Keep `TEMPORAL_TEST_SERVER=1` in CI for SDK test jobs.
 - Keep `TEMPORAL_ENFORCE_REMOTE_ADDRESS=1` in CI so localhost targets fail fast.
 - If readiness is slow, improve readiness retries/diagnostics, but do not redirect CI to local Temporal.
