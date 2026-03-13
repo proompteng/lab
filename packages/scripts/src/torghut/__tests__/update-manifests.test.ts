@@ -152,6 +152,20 @@ spec:
 }
 
 describe('update-manifests', () => {
+  it('keeps workflow template postgres password injection logic in repo', () => {
+    const historicalWorkflowManifest = readFileSync(
+      join(repoRoot, 'argocd/applications/torghut/historical-simulation-workflowtemplate.yaml'),
+      'utf8',
+    )
+
+    expect(historicalWorkflowManifest).toContain('- name: TORGHUT_POSTGRES_ADMIN_PASSWORD')
+    expect(historicalWorkflowManifest).toContain('name: torghut-db-superuser')
+    expect(historicalWorkflowManifest).toContain('def _with_password_if_missing')
+    expect(historicalWorkflowManifest).toContain('admin_dsn_password_env')
+    expect(historicalWorkflowManifest).toContain('simulation_dsn_password_env')
+    expect(historicalWorkflowManifest).toContain('runtime_simulation_dsn_password_env')
+  })
+
   it('updates service and migration image digest, rollout timestamp, and metadata env values', () => {
     const fixture = createFixture()
     const result = __private.updateTorghutManifests({
