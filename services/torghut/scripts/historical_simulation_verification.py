@@ -66,6 +66,7 @@ DEFAULT_RUN_MONITOR_MIN_EXECUTIONS = 1
 DEFAULT_RUN_MONITOR_MIN_TCA = 1
 DEFAULT_RUN_MONITOR_MIN_ORDER_EVENTS = 0
 DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS = 120
+DEFAULT_HTTP_PROBE_TIMEOUT_SECONDS = 5
 TRANSIENT_POSTGRES_ERROR_PATTERNS = (
     'connection refused',
     'connection reset by peer',
@@ -820,12 +821,17 @@ def _expected_schema_subjects(
     return sorted(set(subjects))
 
 
-def _http_json_get(base_url: str, path: str) -> tuple[int, str]:
+def _http_json_get(
+    base_url: str,
+    path: str,
+    *,
+    timeout_seconds: int = DEFAULT_HTTP_PROBE_TIMEOUT_SECONDS,
+) -> tuple[int, str]:
     parsed = urlsplit(base_url)
     if not parsed.scheme or not parsed.hostname:
         raise RuntimeError(f'invalid_http_url:{base_url}')
     connection_class = HTTPSConnection if parsed.scheme == 'https' else HTTPConnection
-    connection = connection_class(parsed.hostname, parsed.port)
+    connection = connection_class(parsed.hostname, parsed.port, timeout=timeout_seconds)
     target_path = parsed.path or '/'
     if path and path != '/':
         target_path = f'{target_path.rstrip("/")}/{path.lstrip("/")}'
