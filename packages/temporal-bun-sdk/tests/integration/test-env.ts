@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import { Effect, Exit } from 'effect'
 
 import { loadTemporalConfig } from '../../src/config'
@@ -30,7 +32,7 @@ export interface IntegrationTestEnv {
 export const CLI_CONFIG = {
   address: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
   namespace: process.env.TEMPORAL_NAMESPACE ?? 'default',
-  taskQueue: process.env.TEMPORAL_TASK_QUEUE ?? 'temporal-bun-integration',
+  taskQueue: process.env.TEMPORAL_TASK_QUEUE ?? `temporal-bun-integration-${randomUUID()}`,
 }
 
 const isLoopbackTemporalAddress = (address: string): boolean => {
