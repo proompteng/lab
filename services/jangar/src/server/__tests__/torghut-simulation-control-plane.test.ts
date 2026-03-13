@@ -45,7 +45,7 @@ describe('torghut simulation control plane', () => {
       },
     )
 
-    expect(manifest.runtime).toMatchObject({ output_root: '/tmp/torghut-sim' })
+    expect(manifest.runtime).toMatchObject({ output_root: '/tmp/torghut-sim', use_warm_lane: true })
     expect(manifest.performance).toMatchObject({
       replayProfile: 'compact',
       dumpFormat: 'jsonl.zst',

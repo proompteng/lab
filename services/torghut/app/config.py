@@ -959,6 +959,11 @@ class Settings(BaseSettings):
         alias="TRADING_SIMULATION_CLOCK_CACHE_SECONDS",
         description="Cache TTL for replay clock lookups against the simulation cursor store.",
     )
+    trading_simulation_fetch_window_seconds: int = Field(
+        default=10,
+        alias="TRADING_SIMULATION_FETCH_WINDOW_SECONDS",
+        description="Maximum simulation signal window drained per ingest fetch.",
+    )
     trading_simulation_universe_symbols_path: Optional[str] = Field(
         default=None,
         alias="TRADING_SIMULATION_UNIVERSE_SYMBOLS_PATH",
