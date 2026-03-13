@@ -97,10 +97,15 @@ spec:
     runId: ${runId}
     stage: backtest-robustness
     artifactPath: ${artifactPath}
-    datasetSnapshotId: ${datasetSnapshotId}
-    strategyId: ${strategyId}
-    strategyVersion: ${strategyVersion}
+    candidateRef: ${candidateRef}
+    baselineCandidateRef: ${baselineCandidateRef}
+    strategyRef: ${strategyRef}
+    windowSetRef: ${windowSetRef}
+    simulationProfile: ${simulationProfile}
     costModelVersion: ${costModelVersion}
+    artifactRoot: ${artifactRoot}
+    gateConfigRef: ${gateConfigRef}
+    campaignMode: ${campaignMode}
   workflow:
     steps:
       - name: implement

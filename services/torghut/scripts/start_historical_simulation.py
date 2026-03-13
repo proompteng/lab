@@ -42,6 +42,11 @@ from app.trading.completion import (
     persist_completion_trace,
 )
 from app.trading.evaluation import build_fill_price_error_budget_report_v1
+from app.trading.simulation_progress import (
+    COMPONENT_ARTIFACTS,
+    COMPONENT_REPLAY,
+    COMPONENT_TA,
+)
 from scripts import historical_simulation_verification as simulation_verification
 from scripts.simulation_lane_contracts import (
     EQUITY_SIMULATION_LANE,
@@ -209,6 +214,14 @@ TRANSIENT_POSTGRES_ERROR_PATTERNS = (
     'connection to server at',
     'terminating connection due to administrator command',
     'timeout expired',
+)
+NON_TRANSIENT_POSTGRES_ERROR_PATTERNS = (
+    'password authentication failed',
+    'no pg_hba.conf entry',
+    'role "',
+    'database "',
+    'permission denied',
+    'must be superuser',
 )
 VECTOR_EXTENSION_NAME = 'vector'
 POSTGRES_VECTOR_EXTENSION_PERMISSION_ERROR_MARKERS = (
@@ -651,6 +664,15 @@ def _parse_rfc3339_timestamp(value: str | None, *, label: str) -> datetime:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _parse_optional_rfc3339_timestamp(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        return _parse_rfc3339_timestamp(value, label='timestamp')
+    except Exception:
+        return None
 
 
 def _safe_int(value: Any, *, default: int = 0) -> int:
@@ -1425,6 +1447,8 @@ def _run_command(
 
 def _is_transient_postgres_error(error: Exception) -> bool:
     message = str(error).lower()
+    if any(pattern in message for pattern in NON_TRANSIENT_POSTGRES_ERROR_PATTERNS):
+        return False
     return any(pattern in message for pattern in TRANSIENT_POSTGRES_ERROR_PATTERNS)
 
 
@@ -2288,6 +2312,161 @@ def _ensure_directory(path: Path) -> None:
 def _save_json(path: Path, payload: Mapping[str, Any]) -> None:
     _ensure_directory(path)
     path.write_text(json.dumps(dict(payload), indent=2, sort_keys=True), encoding='utf-8')
+
+
+def _utc_from_millis(value: int | None) -> datetime | None:
+    if value is None:
+        return None
+    return datetime.fromtimestamp(value / 1000.0, tz=timezone.utc)
+
+
+def _upsert_simulation_progress_row(
+    *,
+    postgres_config: PostgresRuntimeConfig | None,
+    resources: SimulationResources,
+    component: str,
+    status: str,
+    workflow_name: str | None = None,
+    last_source_ts: datetime | None = None,
+    last_signal_ts: datetime | None = None,
+    last_price_ts: datetime | None = None,
+    cursor_at: datetime | None = None,
+    records_dumped: int = 0,
+    records_replayed: int = 0,
+    trade_decisions: int = 0,
+    executions: int = 0,
+    execution_tca_metrics: int = 0,
+    execution_order_events: int = 0,
+    strategy_type: str | None = None,
+    legacy_path_count: int = 0,
+    fallback_count: int = 0,
+    terminal_state: str | None = None,
+    last_error_code: str | None = None,
+    last_error_message: str | None = None,
+    payload: Mapping[str, Any] | None = None,
+) -> None:
+    if postgres_config is None:
+        return
+    dsn = postgres_config.torghut_runtime_dsn
+
+    def _write() -> None:
+        with psycopg.connect(dsn) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO simulation_run_progress (
+                      run_id,
+                      component,
+                      dataset_id,
+                      lane,
+                      workflow_name,
+                      status,
+                      last_source_ts,
+                      last_signal_ts,
+                      last_price_ts,
+                      cursor_at,
+                      records_dumped,
+                      records_replayed,
+                      trade_decisions,
+                      executions,
+                      execution_tca_metrics,
+                      execution_order_events,
+                      strategy_type,
+                      legacy_path_count,
+                      fallback_count,
+                      terminal_state,
+                      last_error_code,
+                      last_error_message,
+                      payload_json
+                    ) VALUES (
+                      %(run_id)s,
+                      %(component)s,
+                      %(dataset_id)s,
+                      %(lane)s,
+                      %(workflow_name)s,
+                      %(status)s,
+                      %(last_source_ts)s,
+                      %(last_signal_ts)s,
+                      %(last_price_ts)s,
+                      %(cursor_at)s,
+                      %(records_dumped)s,
+                      %(records_replayed)s,
+                      %(trade_decisions)s,
+                      %(executions)s,
+                      %(execution_tca_metrics)s,
+                      %(execution_order_events)s,
+                      %(strategy_type)s,
+                      %(legacy_path_count)s,
+                      %(fallback_count)s,
+                      %(terminal_state)s,
+                      %(last_error_code)s,
+                      %(last_error_message)s,
+                      %(payload_json)s::jsonb
+                    )
+                    ON CONFLICT (run_id, component) DO UPDATE SET
+                      dataset_id = EXCLUDED.dataset_id,
+                      lane = EXCLUDED.lane,
+                      workflow_name = COALESCE(EXCLUDED.workflow_name, simulation_run_progress.workflow_name),
+                      status = EXCLUDED.status,
+                      last_source_ts = COALESCE(EXCLUDED.last_source_ts, simulation_run_progress.last_source_ts),
+                      last_signal_ts = COALESCE(EXCLUDED.last_signal_ts, simulation_run_progress.last_signal_ts),
+                      last_price_ts = COALESCE(EXCLUDED.last_price_ts, simulation_run_progress.last_price_ts),
+                      cursor_at = COALESCE(EXCLUDED.cursor_at, simulation_run_progress.cursor_at),
+                      records_dumped = EXCLUDED.records_dumped,
+                      records_replayed = EXCLUDED.records_replayed,
+                      trade_decisions = EXCLUDED.trade_decisions,
+                      executions = EXCLUDED.executions,
+                      execution_tca_metrics = EXCLUDED.execution_tca_metrics,
+                      execution_order_events = EXCLUDED.execution_order_events,
+                      strategy_type = COALESCE(EXCLUDED.strategy_type, simulation_run_progress.strategy_type),
+                      legacy_path_count = EXCLUDED.legacy_path_count,
+                      fallback_count = EXCLUDED.fallback_count,
+                      terminal_state = COALESCE(EXCLUDED.terminal_state, simulation_run_progress.terminal_state),
+                      last_error_code = COALESCE(EXCLUDED.last_error_code, simulation_run_progress.last_error_code),
+                      last_error_message = COALESCE(EXCLUDED.last_error_message, simulation_run_progress.last_error_message),
+                      payload_json = COALESCE(simulation_run_progress.payload_json, '{}'::jsonb) || COALESCE(EXCLUDED.payload_json, '{}'::jsonb),
+                      updated_at = NOW()
+                    """,
+                    {
+                        'run_id': resources.run_id,
+                        'component': component,
+                        'dataset_id': resources.dataset_id,
+                        'lane': resources.lane,
+                        'workflow_name': workflow_name,
+                        'status': status,
+                        'last_source_ts': last_source_ts,
+                        'last_signal_ts': last_signal_ts,
+                        'last_price_ts': last_price_ts,
+                        'cursor_at': cursor_at,
+                        'records_dumped': int(records_dumped),
+                        'records_replayed': int(records_replayed),
+                        'trade_decisions': int(trade_decisions),
+                        'executions': int(executions),
+                        'execution_tca_metrics': int(execution_tca_metrics),
+                        'execution_order_events': int(execution_order_events),
+                        'strategy_type': strategy_type,
+                        'legacy_path_count': int(legacy_path_count),
+                        'fallback_count': int(fallback_count),
+                        'terminal_state': terminal_state,
+                        'last_error_code': last_error_code,
+                        'last_error_message': last_error_message,
+                        'payload_json': json.dumps(dict(payload or {}), sort_keys=True),
+                    },
+                )
+            conn.commit()
+
+    try:
+        _run_with_transient_postgres_retry(
+            label=f'upsert_simulation_progress:{component}',
+            operation=_write,
+        )
+    except Exception as exc:
+        _log_script_event(
+            'Failed to write simulation progress row',
+            run_id=resources.run_id,
+            component=component,
+            error=str(exc),
+        )
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -3614,11 +3793,28 @@ def _dump_topics(
     manifest: Mapping[str, Any],
     dump_path: Path,
     force: bool,
+    postgres_config: PostgresRuntimeConfig | None = None,
 ) -> dict[str, Any]:
     performance_cfg = _performance_config(manifest)
     if not force:
         reusable_report = _reusable_dump_report(dump_path)
         if reusable_report is not None:
+            _upsert_simulation_progress_row(
+                postgres_config=postgres_config,
+                resources=resources,
+                component=COMPONENT_REPLAY,
+                status='dump_reused',
+                records_dumped=_safe_int(reusable_report.get('records')),
+                last_source_ts=_utc_from_millis(
+                    _safe_int(reusable_report.get('max_source_timestamp_ms'), default=0) or None
+                ),
+                payload={
+                    'dump_path': str(dump_path),
+                    'dump_format': reusable_report.get('dump_format'),
+                    'reused_existing_dump': True,
+                    'records_by_topic': reusable_report.get('records_by_topic', {}),
+                },
+            )
             return reusable_report
 
     window = _as_mapping(manifest.get('window'))
@@ -3781,6 +3977,21 @@ def _dump_topics(
             'cache_policy': _as_text(performance_cfg.get('cache_policy')) or 'prefer_cache',
             'replay_profile': _as_text(performance_cfg.get('replay_profile')) or DEFAULT_SIMULATION_REPLAY_PROFILE,
         }
+        _upsert_simulation_progress_row(
+            postgres_config=postgres_config,
+            resources=resources,
+            component=COMPONENT_REPLAY,
+            status='dumped',
+            records_dumped=count,
+            last_source_ts=_utc_from_millis(max_source_timestamp_ms),
+            payload={
+                'dump_path': str(dump_path),
+                'dump_format': dump_format,
+                'records_by_topic': count_by_topic,
+                'payload_sha256': hasher.hexdigest(),
+                'dump_sha256': file_sha256,
+            },
+        )
         _save_json(
             _dump_marker_path(dump_path),
             {
@@ -3992,6 +4203,7 @@ def _replay_dump(
     manifest: Mapping[str, Any],
     dump_path: Path,
     force: bool,
+    postgres_config: PostgresRuntimeConfig | None = None,
 ) -> dict[str, Any]:
     if not dump_path.exists():
         raise RuntimeError(f'dump file does not exist: {dump_path}')
@@ -4003,6 +4215,22 @@ def _replay_dump(
         current_dump_sha = _dump_sha256_for_replay(dump_path)
         if marker_dump_sha == current_dump_sha:
             marker_payload['reused_existing_replay'] = True
+            _upsert_simulation_progress_row(
+                postgres_config=postgres_config,
+                resources=resources,
+                component=COMPONENT_REPLAY,
+                status='replay_reused',
+                records_replayed=_safe_int(marker_payload.get('records')),
+                last_source_ts=_utc_from_millis(
+                    _safe_int(marker_payload.get('max_source_timestamp_ms'), default=0) or None
+                ),
+                payload={
+                    'dump_format': marker_payload.get('dump_format'),
+                    'reused_existing_replay': True,
+                    'records_by_topic': marker_payload.get('records_by_topic', {}),
+                    'replay_profile': marker_payload.get('replay_profile'),
+                },
+            )
             return marker_payload
 
     performance_cfg = _performance_config(manifest)
@@ -4125,6 +4353,19 @@ def _replay_dump(
                             'records_by_topic': count_by_topic,
                         },
                     )
+                    _upsert_simulation_progress_row(
+                        postgres_config=postgres_config,
+                        resources=resources,
+                        component=COMPONENT_REPLAY,
+                        status='replaying',
+                        records_replayed=count,
+                        last_source_ts=_utc_from_millis(current_ts_ms),
+                        payload={
+                            'records_by_topic': count_by_topic,
+                            'replay_profile': replay_profile,
+                            'pace_mode': pace_mode,
+                        },
+                    )
                     next_status_update_at = now + status_update_every_seconds
                 if count % flush_every_records == 0:
                     _producer_flush_with_retry(
@@ -4141,6 +4382,20 @@ def _replay_dump(
                 'records': count,
                 'records_by_topic': count_by_topic,
                 'flush_reason': 'completed',
+            },
+        )
+        _upsert_simulation_progress_row(
+            postgres_config=postgres_config,
+            resources=resources,
+            component=COMPONENT_REPLAY,
+            status='replay_flush',
+            records_replayed=count,
+            last_source_ts=_utc_from_millis(previous_ts_ms),
+            payload={
+                'records_by_topic': count_by_topic,
+                'flush_reason': 'completed',
+                'replay_profile': replay_profile,
+                'pace_mode': pace_mode,
             },
         )
         _producer_flush_with_retry(
@@ -4173,6 +4428,23 @@ def _replay_dump(
         'records_per_second': count / duration_seconds if count > 0 else 0.0,
         'completed_at': datetime.now(timezone.utc).isoformat(),
     }
+    _upsert_simulation_progress_row(
+        postgres_config=postgres_config,
+        resources=resources,
+        component=COMPONENT_REPLAY,
+        status='replayed',
+        records_replayed=count,
+        last_source_ts=_utc_from_millis(previous_ts_ms),
+        terminal_state='complete',
+        payload={
+            'records_by_topic': count_by_topic,
+            'dump_format': _dump_format_for_path(dump_path),
+            'replay_profile': replay_profile,
+            'pace_mode': pace_mode,
+            'records_per_second': marker_payload['records_per_second'],
+            'duration_seconds': duration_seconds,
+        },
+    )
     _save_json(marker_path, marker_payload)
     return marker_payload
 
@@ -4272,6 +4544,27 @@ def _apply(
         postgres_permissions_report = _ensure_postgres_runtime_permissions(postgres_config)
         _run_migrations(postgres_config)
         _reset_postgres_runtime_state(postgres_config)
+        _upsert_simulation_progress_row(
+            postgres_config=postgres_config,
+            resources=resources,
+            component=COMPONENT_REPLAY,
+            status='pending',
+            payload={'phase': 'apply'},
+        )
+        _upsert_simulation_progress_row(
+            postgres_config=postgres_config,
+            resources=resources,
+            component=COMPONENT_TA,
+            status='pending',
+            payload={'phase': 'runtime_verify'},
+        )
+        _upsert_simulation_progress_row(
+            postgres_config=postgres_config,
+            resources=resources,
+            component=COMPONENT_ARTIFACTS,
+            status='pending',
+            payload={'phase': 'report'},
+        )
 
         dump_report = _dump_topics(
             resources=resources,
@@ -4279,6 +4572,7 @@ def _apply(
             manifest=manifest,
             dump_path=dump_path,
             force=force_dump,
+            postgres_config=postgres_config,
         )
         dump_coverage = _validate_dump_coverage(
             manifest=manifest,
@@ -5294,6 +5588,14 @@ def _run_full_lifecycle(
                 )
             runtime_verify_report['analysis_run'] = rollouts_report['runtime_analysis_run']
             _save_json(_artifact_path(resources, 'runtime-verify.json'), runtime_verify_report)
+            _upsert_simulation_progress_row(
+                postgres_config=postgres_config,
+                resources=resources,
+                component=COMPONENT_TA,
+                status='ready' if runtime_verify_report.get('runtime_state') == 'ready' else 'not_ready',
+                terminal_state='complete' if runtime_verify_report.get('runtime_state') == 'ready' else None,
+                payload=runtime_verify_report,
+            )
             _update_run_state(
                 resources=resources,
                 phase='runtime_verify',
@@ -5330,6 +5632,7 @@ def _run_full_lifecycle(
                 manifest=manifest,
                 dump_path=_state_paths(resources, manifest)[2],
                 force=force_replay,
+                postgres_config=postgres_config,
             )
             _save_json(_artifact_path(resources, 'replay-report.json'), replay_report)
             _update_run_state(
@@ -5367,6 +5670,22 @@ def _run_full_lifecycle(
                 rollouts_report['activity_analysis_run'] = activity_analysis_run
             monitor_report['analysis_run'] = rollouts_report['activity_analysis_run']
             _save_json(_artifact_path(resources, 'activity-debug.json'), monitor_report)
+            _upsert_simulation_progress_row(
+                postgres_config=postgres_config,
+                resources=resources,
+                component=COMPONENT_ARTIFACTS,
+                status='activity_verified',
+                last_signal_ts=_parse_optional_rfc3339_timestamp(
+                    _as_text(_as_mapping(monitor_report.get('final_snapshot')).get('last_signal_ts'))
+                ),
+                last_price_ts=_parse_optional_rfc3339_timestamp(
+                    _as_text(_as_mapping(monitor_report.get('final_snapshot')).get('last_price_ts'))
+                ),
+                cursor_at=_parse_optional_rfc3339_timestamp(
+                    _as_text(_as_mapping(monitor_report.get('final_snapshot')).get('cursor_at'))
+                ),
+                payload=monitor_report,
+            )
             _save_json(_artifact_path(resources, 'signal-activity.json'), {
                 'activity_classification': monitor_report.get('activity_classification'),
                 'signal_rows': _as_mapping(monitor_report.get('final_snapshot')).get('signal_rows'),
@@ -5463,6 +5782,23 @@ def _run_full_lifecycle(
             errors=errors,
         )
         _save_json(_artifact_path(resources, 'run-summary.json'), run_summary_report)
+        _upsert_simulation_progress_row(
+            postgres_config=postgres_config,
+            resources=resources,
+            component=COMPONENT_ARTIFACTS,
+            status='reported',
+            terminal_state='complete',
+            strategy_type=_as_text(strategy_proof_report.get('strategy_type')),
+            legacy_path_count=_safe_int(strategy_proof_report.get('legacy_path_count')),
+            fallback_count=_safe_int(strategy_proof_report.get('fallback_count')),
+            payload={
+                'activity_debug_path': str(_artifact_path(resources, 'activity-debug.json')),
+                'strategy_proof_path': str(_artifact_path(resources, 'strategy-proof.json')),
+                'performance_path': str(_artifact_path(resources, 'performance.json')),
+                'run_summary_path': str(_artifact_path(resources, 'run-summary.json')),
+                'gate_input_path': str(_artifact_path(resources, 'gate-input.json')),
+            },
+        )
         _update_run_state(resources=resources, phase='report', status='ok')
     except Exception as exc:
         errors.append(str(exc))

@@ -65,6 +65,7 @@ from .trading.hypotheses import (
 from .trading.lean_lanes import LeanLaneManager
 from .trading.llm.evaluation import build_llm_evaluation_metrics
 from .trading.tca import build_tca_gate_inputs
+from .trading.simulation_progress import simulation_progress_snapshot
 from .trading.time_source import trading_time_status
 from .whitepapers import (
     WhitepaperKafkaWorker,
@@ -1699,6 +1700,20 @@ def trading_metrics(session: Session = Depends(get_session)) -> dict[str, object
             dependency_quorum=hypothesis_dependency_quorum,
         ),
     }
+
+
+@app.get("/trading/simulation/progress")
+def trading_simulation_progress(
+    run_id: str | None = Query(default=None),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    """Expose durable simulation progress for the current or requested run."""
+
+    snapshot = simulation_progress_snapshot(session, run_id=run_id)
+    snapshot["requested_run_id"] = run_id
+    snapshot["active_run_id"] = settings.trading_simulation_run_id
+    snapshot["simulation_enabled"] = settings.trading_simulation_enabled
+    return cast(dict[str, object], snapshot)
 
 
 @app.post("/trading/lean/backtests")

@@ -658,32 +658,96 @@ def _monitor_snapshot(postgres_config: Any) -> dict[str, Any]:
     )
 
 
+def _progress_component_snapshot(*, resources: Any, postgres_config: Any) -> dict[str, dict[str, Any]]:
+    dsn = _as_text(_resource_attr(postgres_config, 'torghut_runtime_dsn')) or _as_text(_resource_attr(postgres_config, 'simulation_dsn'))
+    run_id = _as_text(_resource_attr(resources, 'run_id'))
+    if dsn is None or run_id is None:
+        return {}
+
+    def _load() -> dict[str, dict[str, Any]]:
+        with psycopg.connect(dsn) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                      component,
+                      status,
+                      dataset_id,
+                      lane,
+                      workflow_name,
+                      last_source_ts,
+                      last_signal_ts,
+                      last_price_ts,
+                      cursor_at,
+                      records_dumped,
+                      records_replayed,
+                      trade_decisions,
+                      executions,
+                      execution_tca_metrics,
+                      execution_order_events,
+                      strategy_type,
+                      legacy_path_count,
+                      fallback_count,
+                      terminal_state,
+                      last_error_code,
+                      last_error_message,
+                      payload_json
+                    FROM simulation_run_progress
+                    WHERE run_id = %s
+                    """,
+                    (run_id,),
+                )
+                rows = cursor.fetchall()
+        components: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            component = _as_text(row[0])
+            if component is None:
+                continue
+            components[component] = {
+                'status': _as_text(row[1]),
+                'dataset_id': _as_text(row[2]),
+                'lane': _as_text(row[3]),
+                'workflow_name': _as_text(row[4]),
+                'last_source_ts': row[5].astimezone(timezone.utc).isoformat() if isinstance(row[5], datetime) else None,
+                'last_signal_ts': row[6].astimezone(timezone.utc).isoformat() if isinstance(row[6], datetime) else None,
+                'last_price_ts': row[7].astimezone(timezone.utc).isoformat() if isinstance(row[7], datetime) else None,
+                'cursor_at': row[8].astimezone(timezone.utc).isoformat() if isinstance(row[8], datetime) else None,
+                'records_dumped': _safe_int(row[9]),
+                'records_replayed': _safe_int(row[10]),
+                'trade_decisions': _safe_int(row[11]),
+                'executions': _safe_int(row[12]),
+                'execution_tca_metrics': _safe_int(row[13]),
+                'execution_order_events': _safe_int(row[14]),
+                'strategy_type': _as_text(row[15]),
+                'legacy_path_count': _safe_int(row[16]),
+                'fallback_count': _safe_int(row[17]),
+                'terminal_state': _as_text(row[18]),
+                'last_error_code': _as_text(row[19]),
+                'last_error_message': _as_text(row[20]),
+                'payload': _as_mapping(row[21]),
+            }
+        return components
+
+    try:
+        return cast(
+            dict[str, dict[str, Any]],
+            _run_with_transient_postgres_retry(label='progress_component_snapshot', operation=_load),
+        )
+    except Exception:
+        return {}
+
+
 def _clickhouse_table_activity(*, config: Any, table: str) -> dict[str, Any]:
-    count_status, count_body = _http_clickhouse_query(
-        config=config,
-        query=f'SELECT count() FROM {table}',
-    )
-    if count_status < 200 or count_status >= 300:
-        return {
-            'rows': 0,
-            'last_event_ts': None,
-        }
-    rows = _safe_int(count_body.strip(), default=0)
-    if rows <= 0:
-        return {
-            'rows': 0,
-            'last_event_ts': None,
-        }
     last_status, last_body = _http_clickhouse_query(
         config=config,
-        query=f"SELECT toString(max(event_ts)) FROM {table}",
+        query=f"SELECT toString(maxOrNull(event_ts)) FROM {table}",
     )
     last_event_ts = None
     if 200 <= last_status < 300:
         parsed = _parse_optional_rfc3339_timestamp(_as_text(last_body.strip()))
         last_event_ts = parsed.isoformat() if parsed is not None else None
     return {
-        'rows': rows,
+        'rows': 1 if last_event_ts is not None else 0,
         'last_event_ts': last_event_ts,
     }
 
@@ -701,6 +765,56 @@ def _signal_snapshot(*, resources: Any, clickhouse_config: Any) -> dict[str, Any
         elif key == 'price_rows':
             counts['last_price_ts'] = _as_text(activity.get('last_event_ts'))
     return counts
+
+
+def _simulation_progress_snapshot(
+    *,
+    resources: Any,
+    postgres_config: Any,
+    clickhouse_config: Any,
+) -> dict[str, Any]:
+    components = _progress_component_snapshot(resources=resources, postgres_config=postgres_config)
+    if not components:
+        snapshot = _monitor_snapshot(postgres_config)
+        snapshot.update(_signal_snapshot(resources=resources, clickhouse_config=clickhouse_config))
+        snapshot['progress_source'] = 'direct_tables'
+        snapshot['components'] = {}
+        return snapshot
+
+    torghut = _as_mapping(components.get('torghut'))
+    replay = _as_mapping(components.get('replay'))
+    ta = _as_mapping(components.get('ta'))
+    signal_snapshot = _signal_snapshot(resources=resources, clickhouse_config=clickhouse_config)
+    last_signal_ts = (
+        _as_text(signal_snapshot.get('last_signal_ts'))
+        or _as_text(torghut.get('last_signal_ts'))
+        or _as_text(replay.get('last_signal_ts'))
+        or _as_text(ta.get('last_signal_ts'))
+    )
+    last_price_ts = (
+        _as_text(signal_snapshot.get('last_price_ts'))
+        or _as_text(torghut.get('last_price_ts'))
+        or _as_text(replay.get('last_price_ts'))
+        or _as_text(ta.get('last_price_ts'))
+    )
+    return {
+        'progress_source': 'simulation_run_progress',
+        'components': components,
+        'trade_decisions': _safe_int(torghut.get('trade_decisions')),
+        'executions': _safe_int(torghut.get('executions')),
+        'execution_tca_metrics': _safe_int(torghut.get('execution_tca_metrics')),
+        'execution_order_events': _safe_int(torghut.get('execution_order_events')),
+        'cursor_at': _as_text(torghut.get('cursor_at')),
+        'signal_rows': 1 if last_signal_ts is not None else 0,
+        'price_rows': 1 if last_price_ts is not None else 0,
+        'last_signal_ts': last_signal_ts,
+        'last_price_ts': last_price_ts,
+        'records_dumped': _safe_int(replay.get('records_dumped')),
+        'records_replayed': _safe_int(replay.get('records_replayed')),
+        'strategy_type': _as_text(torghut.get('strategy_type')) or _as_text(replay.get('strategy_type')),
+        'legacy_path_count': _safe_int(torghut.get('legacy_path_count')),
+        'fallback_count': _safe_int(torghut.get('fallback_count')),
+    }
 
 
 def _effective_terminal_signal_ts(
@@ -1087,8 +1201,11 @@ def _current_activity_report(
     runtime_verify: Mapping[str, Any],
 ) -> dict[str, Any]:
     settings = _monitor_settings(manifest)
-    snapshot = _monitor_snapshot(postgres_config)
-    snapshot.update(_signal_snapshot(resources=resources, clickhouse_config=clickhouse_config))
+    snapshot = _simulation_progress_snapshot(
+        resources=resources,
+        postgres_config=postgres_config,
+        clickhouse_config=clickhouse_config,
+    )
     activity_state = _activity_state(
         manifest=manifest,
         runtime_verify=runtime_verify,
@@ -1128,8 +1245,11 @@ def _monitor_run_completion(
     polls: list[dict[str, Any]] = []
     cursor_reached_at: datetime | None = None
     while True:
-        snapshot = _monitor_snapshot(postgres_config)
-        snapshot.update(_signal_snapshot(resources=resources, clickhouse_config=clickhouse_config))
+        snapshot = _simulation_progress_snapshot(
+            resources=resources,
+            postgres_config=postgres_config,
+            clickhouse_config=clickhouse_config,
+        )
         polled_at = datetime.now(timezone.utc)
         poll_payload = {'polled_at': polled_at.isoformat(), **snapshot}
         polls.append(poll_payload)

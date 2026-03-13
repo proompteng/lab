@@ -485,6 +485,13 @@ class TestStartHistoricalSimulation(TestCase):
             'postgresql://torghut:***@localhost:5432/torghut_sim',
         )
 
+    def test_is_transient_postgres_error_rejects_fatal_auth_config_failures(self) -> None:
+        error = RuntimeError(
+            'connection to server at "127.0.0.1", port 5432 failed: FATAL: role "torghut" does not exist'
+        )
+
+        self.assertFalse(start_historical_simulation._is_transient_postgres_error(error))
+
     def test_find_vector_extension_blocking_revision(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         target = _find_vector_extension_blocking_revision(repo_root)

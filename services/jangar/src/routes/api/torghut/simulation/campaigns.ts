@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { requireLeaderForMutationHttp } from '~/server/leader-election'
 
 import {
   listTorghutSimulationCampaigns,
@@ -35,6 +36,8 @@ export const listSimulationCampaignsHandler = async (request: Request) => {
 }
 
 export const submitSimulationCampaignHandler = async (request: Request) => {
+  const leaderResponse = requireLeaderForMutationHttp()
+  if (leaderResponse) return leaderResponse
   const payload: unknown = await request.json().catch(() => null)
   const parsed = parseTorghutSimulationCampaignRequest(payload)
   if (!parsed.ok) {

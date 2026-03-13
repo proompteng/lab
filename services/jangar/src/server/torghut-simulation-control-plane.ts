@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 
+import { sql } from 'kysely'
+
 import { getDb } from '~/server/db'
 import { ensureMigrations } from '~/server/kysely-migrations'
 import { createKubernetesClient } from '~/server/primitives-kube'
@@ -29,8 +31,17 @@ export type TorghutSimulationCampaignRequest = {
     end: string
     label?: string | null
   }>
+  candidateRef?: string | null
   candidateRefs?: string[]
   baselineCandidateRef?: string | null
+  strategyRef?: string | null
+  windowSetRef?: string | null
+  simulationProfile?: string | null
+  costModelVersion?: string | null
+  artifactRoot?: string | null
+  gateConfigRef?: string | null
+  campaignMode?: string | null
+  stressProfile?: JsonRecord | null
   priority?: string
   cachePolicy?: string
   profile?: string
@@ -44,9 +55,13 @@ export type TorghutSimulationRunSnapshot = {
   status: string
   workflowPhase: string | null
   lane: string
+  laneId: string | null
   profile: string
   cachePolicy: string
+  cacheKey: string | null
+  cacheStatus: string
   priority: string
+  runClass: string
   candidateRef: string | null
   strategyRef: string | null
   datasetId: string | null
@@ -54,6 +69,8 @@ export type TorghutSimulationRunSnapshot = {
   outputRoot: string | null
   manifest: JsonRecord
   metadata: JsonRecord
+  progress: JsonRecord
+  finalVerdict: JsonRecord
   submittedBy: string | null
   startedAt: string | null
   finishedAt: string | null
@@ -191,6 +208,218 @@ const DEFAULT_SIMULATION_PRESETS: TorghutSimulationPreset[] = [
   },
 ]
 
+const TERMINAL_RUN_STATUSES = new Set(['succeeded', 'failed', 'cancelled'])
+const INTERACTIVE_LANES = ['sim-fast-1', 'sim-fast-2', 'sim-fast-3'] as const
+const BATCH_LANES = ['sim-batch-1'] as const
+const CONTROL_PLANE_LEASE_OWNER = 'jangar-control-plane'
+const PROGRESS_FETCH_TIMEOUT_MS = 2_500
+
+const resolveRunClass = (profile: string, priority: string) => {
+  const normalizedProfile = profile.trim().toLowerCase()
+  const normalizedPriority = priority.trim().toLowerCase()
+  return normalizedProfile === 'full_day' || normalizedPriority === 'batch' ? 'batch' : 'interactive'
+}
+
+const resolveLaneIds = (runClass: string) => (runClass === 'batch' ? BATCH_LANES : INTERACTIVE_LANES)
+
+const resolveSimulationServiceName = (manifest: JsonRecord) => {
+  const runtime = asRecord(manifest.runtime)
+  const targetMode = (asString(runtime.target_mode) ?? 'dedicated_service').toLowerCase()
+  if (asString(runtime.torghut_service)) return String(runtime.torghut_service)
+  return targetMode === 'in_place' ? 'torghut' : 'torghut-sim'
+}
+
+const resolveSimulationNamespace = (manifest: JsonRecord) => {
+  const runtime = asRecord(manifest.runtime)
+  return asString(runtime.namespace) ?? DEFAULT_NAMESPACE
+}
+
+const buildSimulationCacheKey = (manifest: JsonRecord, profile: string) =>
+  createHash('sha256')
+    .update(
+      JSON.stringify({
+        lane: asString(manifest.lane) ?? 'equity',
+        dataset_id: asString(manifest.dataset_id),
+        window: asRecord(manifest.window),
+        strategy_spec_ref: asString(manifest.strategy_spec_ref),
+        candidate_id: asString(manifest.candidate_id),
+        baseline_candidate_id: asString(manifest.baseline_candidate_id),
+        dump_format: asString(asRecord(manifest.performance).dumpFormat) ?? DEFAULT_DUMP_FORMAT,
+        profile,
+      }),
+    )
+    .digest('hex')
+
+const reserveSimulationLane = async (params: { runId: string; runClass: string; cacheKey: string | null }) => {
+  const db = await ensureDb()
+  const laneIds = resolveLaneIds(params.runClass)
+  const now = new Date()
+  const leaseExpiresAt = new Date(now.getTime() + 15 * 60 * 1000)
+
+  for (const laneId of laneIds) {
+    const result = await db
+      .updateTable('torghut_control_plane.simulation_lane_leases')
+      .set({
+        status: 'reserved',
+        run_id: params.runId,
+        cache_key: params.cacheKey,
+        lease_owner: CONTROL_PLANE_LEASE_OWNER,
+        lease_expires_at: leaseExpiresAt,
+        last_heartbeat_at: now,
+        updated_at: now,
+        metadata: {
+          reservedAt: now.toISOString(),
+          reservedBy: CONTROL_PLANE_LEASE_OWNER,
+        },
+      })
+      .where('lane_id', '=', laneId)
+      .where((eb) =>
+        eb.or([
+          eb('status', '=', 'available'),
+          eb('run_id', '=', params.runId),
+          eb('lease_expires_at', 'is', null),
+          eb('lease_expires_at', '<', now),
+        ]),
+      )
+      .executeTakeFirst()
+    if (Number(result.numUpdatedRows ?? 0) > 0) {
+      return {
+        laneId,
+        leaseExpiresAt,
+      }
+    }
+  }
+
+  throw new Error(`no simulation lane available for run_class=${params.runClass}`)
+}
+
+const releaseSimulationLane = async (runId: string) => {
+  const db = await ensureDb()
+  await db
+    .updateTable('torghut_control_plane.simulation_lane_leases')
+    .set({
+      status: 'available',
+      run_id: null,
+      cache_key: null,
+      lease_owner: null,
+      lease_expires_at: null,
+      last_heartbeat_at: new Date(),
+      updated_at: new Date(),
+      metadata: {
+        releasedAt: new Date().toISOString(),
+        releasedBy: CONTROL_PLANE_LEASE_OWNER,
+      },
+    })
+    .where('run_id', '=', runId)
+    .execute()
+}
+
+const upsertDatasetCache = async (params: {
+  cacheKey: string
+  lane: string
+  manifest: JsonRecord
+  profile: string
+  runId: string
+  outputRoot: string
+  runToken: string
+  status: string
+  hitCountIncrement?: boolean
+}) => {
+  const db = await ensureDb()
+  const performance = asRecord(params.manifest.performance)
+  const window = asRecord(params.manifest.window)
+  const dumpFormat = asString(performance.dumpFormat) ?? DEFAULT_DUMP_FORMAT
+  const artifactPath = `${params.outputRoot.replace(/\/+$/, '')}/${params.runToken}/source-dump${
+    dumpFormat === 'jsonl.gz' ? '.jsonl.gz' : dumpFormat === 'jsonl.zst' ? '.jsonl.zst' : '.ndjson'
+  }`
+  const chunkManifestPath = `${artifactPath}.manifest.json`
+  await db
+    .insertInto('torghut_control_plane.dataset_cache')
+    .values({
+      cache_key: params.cacheKey,
+      lane: params.lane,
+      status: params.status,
+      window_start: asString(window.start) ? new Date(String(window.start)) : null,
+      window_end: asString(window.end) ? new Date(String(window.end)) : null,
+      source_digest: asString(params.manifest.dataset_id),
+      schema_digest: asString(params.manifest.strategy_spec_ref),
+      code_digest: asString(asRecord(params.manifest.metadata).imageDigest),
+      dump_format: dumpFormat,
+      artifact_path: artifactPath,
+      chunk_manifest_path: chunkManifestPath,
+      records_total: 0,
+      bytes_total: 0,
+      built_by_run_id: params.runId,
+      expires_at: null,
+      last_verified_at: null,
+      metadata: {
+        replayProfile: params.profile,
+      },
+      hit_count: params.hitCountIncrement ? 1 : 0,
+      last_used_at: new Date(),
+    })
+    .onConflict((oc) =>
+      oc.column('cache_key').doUpdateSet({
+        status: params.status,
+        artifact_path: artifactPath,
+        chunk_manifest_path: chunkManifestPath,
+        built_by_run_id: params.runId,
+        metadata: {
+          replayProfile: params.profile,
+        },
+        hit_count: params.hitCountIncrement
+          ? sql<number>`torghut_control_plane.dataset_cache.hit_count + 1`
+          : sql<number>`torghut_control_plane.dataset_cache.hit_count`,
+        last_used_at: new Date(),
+        updated_at: new Date(),
+      }),
+    )
+    .execute()
+}
+
+const fetchSimulationProgress = async (run: TorghutSimulationRunSnapshot) => {
+  const serviceName = resolveSimulationServiceName(run.manifest)
+  const namespace = resolveSimulationNamespace(run.manifest)
+  const url = `http://${serviceName}.${namespace}.svc.cluster.local/trading/simulation/progress?run_id=${encodeURIComponent(
+    run.runId,
+  )}`
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), PROGRESS_FETCH_TIMEOUT_MS)
+  try {
+    const response = await fetch(url, { signal: controller.signal })
+    if (!response.ok) return null
+    const payload = (await response.json().catch(() => null)) as JsonRecord | null
+    return payload
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+const deriveFinalVerdict = (run: TorghutSimulationRunSnapshot, progress: JsonRecord) => {
+  const summary = asRecord(progress.summary)
+  const executions = Number(summary.executions ?? 0)
+  const orderEvents = Number(summary.execution_order_events ?? 0)
+  const tca = Number(summary.execution_tca_metrics ?? 0)
+  const decisions = Number(summary.trade_decisions ?? 0)
+  const legacyPathCount = Number(summary.legacy_path_count ?? 0)
+  const authoritativeSuccess =
+    run.status === 'succeeded' && decisions > 0 && executions > 0 && tca > 0 && orderEvents > 0 && legacyPathCount === 0
+  return {
+    authoritative: TERMINAL_RUN_STATUSES.has(run.status),
+    status: authoritativeSuccess ? 'success' : run.status,
+    decisions,
+    executions,
+    executionTcaMetrics: tca,
+    executionOrderEvents: orderEvents,
+    activityClassification: asString(summary.activity_classification),
+    legacyPathCount,
+    imageDigest: asString(asRecord(progress.summary).image_digest) ?? asString(asRecord(run.metadata).imageDigest),
+    updatedAt: new Date().toISOString(),
+  }
+}
+
 const asRecord = (value: unknown): JsonRecord => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
   return value as JsonRecord
@@ -283,6 +512,72 @@ const normalizeSimulationManifest = (
   return manifest
 }
 
+const buildRobustnessScorecard = (runs: TorghutSimulationRunSnapshot[]) => {
+  const totals = {
+    runs: runs.length,
+    authoritativeSuccesses: 0,
+    failed: 0,
+    cancelled: 0,
+  }
+  const candidates = new Map<
+    string,
+    {
+      runCount: number
+      authoritativeSuccesses: number
+      decisions: number
+      executions: number
+      executionTcaMetrics: number
+      executionOrderEvents: number
+    }
+  >()
+
+  for (const run of runs) {
+    const finalVerdict = asRecord(run.finalVerdict)
+    const decisions = Number(finalVerdict.decisions ?? 0)
+    const executions = Number(finalVerdict.executions ?? 0)
+    const executionTcaMetrics = Number(finalVerdict.executionTcaMetrics ?? 0)
+    const executionOrderEvents = Number(finalVerdict.executionOrderEvents ?? 0)
+    const candidateKey = run.candidateRef ?? 'unknown'
+    const entry = candidates.get(candidateKey) ?? {
+      runCount: 0,
+      authoritativeSuccesses: 0,
+      decisions: 0,
+      executions: 0,
+      executionTcaMetrics: 0,
+      executionOrderEvents: 0,
+    }
+    entry.runCount += 1
+    entry.decisions += decisions
+    entry.executions += executions
+    entry.executionTcaMetrics += executionTcaMetrics
+    entry.executionOrderEvents += executionOrderEvents
+    if (finalVerdict.status === 'success') {
+      entry.authoritativeSuccesses += 1
+      totals.authoritativeSuccesses += 1
+    } else if (run.status === 'failed') {
+      totals.failed += 1
+    } else if (run.status === 'cancelled') {
+      totals.cancelled += 1
+    }
+    candidates.set(candidateKey, entry)
+  }
+
+  return {
+    schemaVersion: 'robustness-scorecard-v1',
+    generatedAt: new Date().toISOString(),
+    totals,
+    candidates: Object.fromEntries(
+      [...candidates.entries()].map(([candidateRef, entry]) => [
+        candidateRef,
+        {
+          ...entry,
+          executionRate: entry.runCount > 0 ? entry.executions / entry.runCount : 0,
+        },
+      ]),
+    ),
+  }
+}
+
 const campaignSummaryFromRuns = (
   request: TorghutSimulationCampaignRequest,
   runs: TorghutSimulationRunSnapshot[],
@@ -296,29 +591,51 @@ const campaignSummaryFromRuns = (
     totalRuns: runs.length,
     statuses: Object.fromEntries(counts),
     runIds: runs.map((run) => run.runId),
+    candidateRef: request.candidateRef ?? null,
     candidateRefs: request.candidateRefs ?? [],
     windows: request.windows,
     baselineCandidateRef: request.baselineCandidateRef ?? null,
+    strategyRef: request.strategyRef ?? null,
+    windowSetRef: request.windowSetRef ?? null,
+    simulationProfile: request.simulationProfile ?? null,
+    costModelVersion: request.costModelVersion ?? null,
+    artifactRoot: request.artifactRoot ?? null,
+    gateConfigRef: request.gateConfigRef ?? null,
+    campaignMode: request.campaignMode ?? null,
+    stressProfile: request.stressProfile ?? null,
     statusOverride: statusOverride ?? null,
+    robustnessScorecard: buildRobustnessScorecard(runs),
   }
 }
 
 const normalizeCampaignRequest = (request: TorghutSimulationCampaignRequest) => {
   const manifest = structuredClone(request.manifest)
+  const candidateRef = request.candidateRef ?? asString(manifest.candidate_id)
   const candidateRefs =
     request.candidateRefs && request.candidateRefs.length > 0
       ? request.candidateRefs
-      : [asString(manifest.candidate_id) ?? 'intraday_tsmom_v1@candidate']
+      : [candidateRef ?? 'intraday_tsmom_v1@candidate']
+  const profile = request.profile ?? request.simulationProfile ?? DEFAULT_PROFILE
   return {
     campaignId: request.campaignId ?? `campaign-${new Date().toISOString().replace(/[:.]/g, '-').toLowerCase()}`,
     name: request.name ?? 'Torghut Simulation Campaign',
     manifest,
     windows: request.windows,
+    candidateRef,
     candidateRefs,
     baselineCandidateRef: request.baselineCandidateRef ?? asString(manifest.baseline_candidate_id),
+    strategyRef: request.strategyRef ?? asString(manifest.strategy_spec_ref),
+    windowSetRef: request.windowSetRef ?? asString(asRecord(manifest.campaign).windowSetRef),
+    simulationProfile: request.simulationProfile ?? profile,
+    costModelVersion: request.costModelVersion ?? asString(manifest.cost_model_version),
+    artifactRoot: request.artifactRoot ?? asString(asRecord(manifest.runtime).output_root),
+    gateConfigRef: request.gateConfigRef ?? asString(asRecord(manifest.campaign).gateConfigRef),
+    campaignMode: request.campaignMode ?? 'baseline_vs_candidate',
+    stressProfile:
+      request.stressProfile ?? (asRecord(manifest.campaign).stressProfile as JsonRecord | undefined) ?? null,
     priority: request.priority ?? DEFAULT_PRIORITY,
     cachePolicy: request.cachePolicy ?? DEFAULT_CACHE_POLICY,
-    profile: request.profile ?? DEFAULT_PROFILE,
+    profile,
     submittedBy: request.submittedBy ?? null,
   }
 }
@@ -330,9 +647,13 @@ const snapshotFromRow = (row: Record<string, unknown>): TorghutSimulationRunSnap
   status: String(row.status),
   workflowPhase: asString(row.workflow_phase),
   lane: String(row.lane),
+  laneId: asString(row.lane_id),
   profile: String(row.profile),
   cachePolicy: String(row.cache_policy),
+  cacheKey: asString(row.cache_key),
+  cacheStatus: String(row.cache_status ?? 'unknown'),
   priority: String(row.priority),
+  runClass: String(row.run_class ?? 'interactive'),
   candidateRef: asString(row.candidate_ref),
   strategyRef: asString(row.strategy_ref),
   datasetId: asString(row.dataset_id),
@@ -340,6 +661,8 @@ const snapshotFromRow = (row: Record<string, unknown>): TorghutSimulationRunSnap
   outputRoot: asString(row.output_root),
   manifest: asRecord(row.manifest),
   metadata: asRecord(row.metadata),
+  progress: asRecord(row.progress),
+  finalVerdict: asRecord(row.final_verdict),
   submittedBy: asString(row.submitted_by),
   startedAt: parseTimestamp(row.started_at),
   finishedAt: parseTimestamp(row.finished_at),
@@ -532,8 +855,17 @@ export const parseTorghutSimulationCampaignRequest = (
       name: asString(body.name) ?? undefined,
       manifest,
       windows,
+      candidateRef: asString(body.candidateRef),
       candidateRefs,
       baselineCandidateRef: asString(body.baselineCandidateRef),
+      strategyRef: asString(body.strategyRef),
+      windowSetRef: asString(body.windowSetRef),
+      simulationProfile: asString(body.simulationProfile),
+      costModelVersion: asString(body.costModelVersion),
+      artifactRoot: asString(body.artifactRoot),
+      gateConfigRef: asString(body.gateConfigRef),
+      campaignMode: asString(body.campaignMode),
+      stressProfile: asRecord(body.stressProfile),
       priority: asString(body.priority) ?? undefined,
       cachePolicy: asString(body.cachePolicy) ?? undefined,
       profile: asString(body.profile) ?? undefined,
@@ -552,6 +884,11 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
     cachePolicy: request.cachePolicy,
     profile: request.profile,
   })
+  const performance = asRecord(manifest.performance)
+  const lane = asString(manifest.lane) ?? 'equity'
+  const profile = asString(performance.replayProfile) ?? DEFAULT_PROFILE
+  const runClass = resolveRunClass(profile, request.priority ?? DEFAULT_PRIORITY)
+  const cacheKey = buildSimulationCacheKey(manifest, profile)
   const digest = manifestDigest(manifest)
   const idempotencyKey = `${runId}:${digest}:${request.forceReplay ? 'replay' : 'noreplay'}:${request.forceDump ? 'dump' : 'nodump'}`
 
@@ -568,9 +905,22 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
   }
 
   const runtime = asRecord(manifest.runtime)
-  const performance = asRecord(manifest.performance)
   const outputRoot = String(runtime.output_root ?? DEFAULT_OUTPUT_ROOT)
   const artifactRoot = `${outputRoot.replace(/\/+$/, '')}/${normalizeRunToken(runId)}`
+  const cachedDataset = await db
+    .selectFrom('torghut_control_plane.dataset_cache')
+    .selectAll()
+    .where('cache_key', '=', cacheKey)
+    .executeTakeFirst()
+  const cacheStatus = cachedDataset ? 'hit' : 'miss'
+  if ((request.cachePolicy ?? DEFAULT_CACHE_POLICY) === 'require_cache' && !cachedDataset) {
+    throw new Error(`required simulation dataset cache is missing for cache_key=${cacheKey}`)
+  }
+  const laneReservation = await reserveSimulationLane({
+    runId,
+    runClass,
+    cacheKey,
+  })
   const workflowManifest = buildWorkflowManifest({
     runId,
     manifest,
@@ -579,7 +929,13 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
     allowMissingState: request.allowMissingState ?? false,
     outputRoot,
   })
-  const created = await kube.apply(workflowManifest as Record<string, unknown>)
+  let created: Record<string, unknown>
+  try {
+    created = await kube.apply(workflowManifest as Record<string, unknown>)
+  } catch (error) {
+    await releaseSimulationLane(runId)
+    throw error
+  }
   const metadata = asRecord(created.metadata)
   const status = asRecord(created.status)
   const workflowName = asString(metadata.name)
@@ -596,10 +952,14 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
       namespace: DEFAULT_NAMESPACE,
       status: workflowPhaseToStatus(workflowPhase),
       workflow_phase: workflowPhase,
-      lane: asString(manifest.lane) ?? 'equity',
-      profile: asString(performance.replayProfile) ?? DEFAULT_PROFILE,
+      lane,
+      lane_id: laneReservation.laneId,
+      profile,
       cache_policy: asString(manifest.cachePolicy) ?? DEFAULT_CACHE_POLICY,
+      cache_key: cacheKey,
+      cache_status: cacheStatus,
       priority: request.priority ?? DEFAULT_PRIORITY,
+      run_class: runClass,
       candidate_ref: asString(manifest.candidate_id),
       strategy_ref: asString(manifest.strategy_spec_ref),
       dataset_id: asString(manifest.dataset_id),
@@ -609,8 +969,18 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
       manifest_digest: digest,
       metadata: {
         ...request.metadata,
+        laneReservation: {
+          laneId: laneReservation.laneId,
+          leaseExpiresAt: laneReservation.leaseExpiresAt.toISOString(),
+        },
+        torghutService: resolveSimulationServiceName(manifest),
+        torghutNamespace: resolveSimulationNamespace(manifest),
         workflowResource: created,
       },
+      progress: {
+        phase: workflowPhase,
+      },
+      final_verdict: {},
       submitted_by: request.submittedBy ?? null,
       started_at: asString(status.startedAt) ? new Date(String(status.startedAt)) : null,
       finished_at: asString(status.finishedAt) ? new Date(String(status.finishedAt)) : null,
@@ -621,6 +991,20 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
     workflowName,
     workflowUid,
     workflowPhase,
+    laneId: laneReservation.laneId,
+    cacheStatus,
+    cacheKey,
+  })
+  await upsertDatasetCache({
+    cacheKey,
+    lane,
+    manifest,
+    profile,
+    runId,
+    outputRoot,
+    runToken: normalizeRunToken(runId),
+    status: cachedDataset ? 'ready' : 'building',
+    hitCountIncrement: Boolean(cachedDataset),
   })
   await upsertExpectedArtifacts(runId, outputRoot, asString(performance.dumpFormat) ?? DEFAULT_DUMP_FORMAT)
 
@@ -682,7 +1066,7 @@ export const submitTorghutSimulationCampaign = async (request: TorghutSimulation
   const db = await ensureDb()
   const normalized = normalizeCampaignRequest(request)
   const campaignId = normalizeRunToken(normalized.campaignId)
-  const outputRoot = `${DEFAULT_CAMPAIGN_OUTPUT_ROOT}/${campaignId}`
+  const outputRoot = normalized.artifactRoot ?? `${DEFAULT_CAMPAIGN_OUTPUT_ROOT}/${campaignId}`
 
   await db
     .insertInto('torghut_control_plane.simulation_campaigns')
@@ -694,6 +1078,15 @@ export const submitTorghutSimulationCampaign = async (request: TorghutSimulation
       summary: {
         totalRuns: 0,
         runIds: [],
+        candidateRef: normalized.candidateRef,
+        candidateRefs: normalized.candidateRefs,
+        strategyRef: normalized.strategyRef,
+        windowSetRef: normalized.windowSetRef,
+        simulationProfile: normalized.simulationProfile,
+        costModelVersion: normalized.costModelVersion,
+        artifactRoot: outputRoot,
+        gateConfigRef: normalized.gateConfigRef,
+        campaignMode: normalized.campaignMode,
       },
     })
     .onConflict((oc) =>
@@ -716,8 +1109,18 @@ export const submitTorghutSimulationCampaign = async (request: TorghutSimulation
       }
       manifest.candidate_id = candidateRef
       if (normalized.baselineCandidateRef) manifest.baseline_candidate_id = normalized.baselineCandidateRef
+      if (normalized.strategyRef) manifest.strategy_spec_ref = normalized.strategyRef
+      if (normalized.costModelVersion) manifest.cost_model_version = normalized.costModelVersion
       const label = asString(windowSpec.label)
       if (label) manifest.window_label = label
+      manifest.campaign = {
+        ...(asRecord(manifest.campaign) ?? {}),
+        campaignId,
+        windowSetRef: normalized.windowSetRef,
+        gateConfigRef: normalized.gateConfigRef,
+        campaignMode: normalized.campaignMode,
+        stressProfile: normalized.stressProfile,
+      }
 
       const result = await submitTorghutSimulationRun({
         runId: buildCampaignRunId(campaignId, candidateRef, windowSpec),
@@ -732,9 +1135,24 @@ export const submitTorghutSimulationCampaign = async (request: TorghutSimulation
           candidateRef,
           window: windowSpec,
           campaignName: normalized.name,
+          strategyRef: normalized.strategyRef,
+          simulationProfile: normalized.simulationProfile,
+          costModelVersion: normalized.costModelVersion,
+          gateConfigRef: normalized.gateConfigRef,
+          campaignMode: normalized.campaignMode,
         },
       })
       runs.push(result.run)
+      await db
+        .insertInto('torghut_control_plane.simulation_campaign_runs')
+        .values({
+          campaign_id: campaignId,
+          run_id: result.run.runId,
+          candidate_ref: candidateRef,
+          window_label: asString(windowSpec.label),
+        })
+        .onConflict((oc) => oc.columns(['campaign_id', 'run_id']).doNothing())
+        .execute()
     }
   }
 
@@ -769,11 +1187,20 @@ export const getTorghutSimulationCampaign = async (campaignId: string) => {
     .executeTakeFirst()
   if (!row) return null
 
+  const campaignRunRows = await db
+    .selectFrom('torghut_control_plane.simulation_campaign_runs')
+    .select(['run_id'])
+    .where('campaign_id', '=', campaignId)
+    .orderBy('created_at', 'asc')
+    .execute()
   const requestPayload = asRecord(row.request_payload)
   const summary = asRecord(row.summary)
-  const runIds = asArray(summary.runIds)
-    .map((item) => asString(item))
-    .filter((item): item is string => Boolean(item))
+  const runIds =
+    campaignRunRows.length > 0
+      ? campaignRunRows.map((item) => item.run_id)
+      : asArray(summary.runIds)
+          .map((item) => asString(item))
+          .filter((item): item is string => Boolean(item))
   const runs: TorghutSimulationRunSnapshot[] = []
   for (const runId of runIds) {
     const run = await syncTorghutSimulationRun(runId)
@@ -793,7 +1220,16 @@ export const getTorghutSimulationCampaign = async (campaignId: string) => {
     candidateRefs: asArray(requestPayload.candidateRefs)
       .map((item) => asString(item))
       .filter((item): item is string => Boolean(item)),
+    candidateRef: asString(requestPayload.candidateRef),
     baselineCandidateRef: asString(requestPayload.baselineCandidateRef),
+    strategyRef: asString(requestPayload.strategyRef),
+    windowSetRef: asString(requestPayload.windowSetRef),
+    simulationProfile: asString(requestPayload.simulationProfile),
+    costModelVersion: asString(requestPayload.costModelVersion),
+    artifactRoot: asString(requestPayload.artifactRoot),
+    gateConfigRef: asString(requestPayload.gateConfigRef),
+    campaignMode: asString(requestPayload.campaignMode),
+    stressProfile: asRecord(requestPayload.stressProfile),
     priority: asString(requestPayload.priority) ?? undefined,
     cachePolicy: asString(requestPayload.cachePolicy) ?? undefined,
     profile: asString(requestPayload.profile) ?? undefined,
@@ -887,12 +1323,57 @@ export const syncTorghutSimulationRun = async (runId: string) => {
     })
   }
 
-  const updated = await db
+  let updated = await db
     .selectFrom('torghut_control_plane.simulation_runs')
     .selectAll()
     .where('run_id', '=', runId)
     .executeTakeFirstOrThrow()
-  return snapshotFromRow(updated as unknown as Record<string, unknown>)
+  let snapshot = snapshotFromRow(updated as unknown as Record<string, unknown>)
+  const progress = (await fetchSimulationProgress(snapshot)) ?? snapshot.progress
+  const finalVerdict = TERMINAL_RUN_STATUSES.has(snapshot.status)
+    ? deriveFinalVerdict(snapshot, progress)
+    : snapshot.finalVerdict
+
+  await db
+    .updateTable('torghut_control_plane.simulation_runs')
+    .set({
+      progress,
+      final_verdict: finalVerdict,
+      cache_status: TERMINAL_RUN_STATUSES.has(snapshot.status)
+        ? snapshot.status === 'succeeded'
+          ? 'ready'
+          : 'failed'
+        : snapshot.cacheStatus,
+      updated_at: new Date(),
+    })
+    .where('run_id', '=', runId)
+    .execute()
+
+  if (TERMINAL_RUN_STATUSES.has(snapshot.status)) {
+    await releaseSimulationLane(runId)
+    await upsertDatasetCache({
+      cacheKey: snapshot.cacheKey ?? buildSimulationCacheKey(snapshot.manifest, snapshot.profile),
+      lane: snapshot.lane,
+      manifest: snapshot.manifest,
+      profile: snapshot.profile,
+      runId: snapshot.runId,
+      outputRoot: snapshot.outputRoot ?? DEFAULT_OUTPUT_ROOT,
+      runToken: normalizeRunToken(snapshot.runId),
+      status: snapshot.status === 'succeeded' ? 'ready' : 'failed',
+    })
+    await appendRunEvent(runId, 'simulation_run.completed', {
+      status: snapshot.status,
+      finalVerdict,
+    })
+  }
+
+  updated = await db
+    .selectFrom('torghut_control_plane.simulation_runs')
+    .selectAll()
+    .where('run_id', '=', runId)
+    .executeTakeFirstOrThrow()
+  snapshot = snapshotFromRow(updated as unknown as Record<string, unknown>)
+  return snapshot
 }
 
 export const cancelTorghutSimulationRun = async (runId: string) => {
@@ -914,6 +1395,12 @@ export const cancelTorghutSimulationRun = async (runId: string) => {
     .set({
       status: 'cancelled',
       workflow_phase: 'Cancelled',
+      cache_status: 'failed',
+      final_verdict: {
+        authoritative: true,
+        status: 'cancelled',
+        updatedAt: new Date().toISOString(),
+      },
       finished_at: new Date(),
       updated_at: new Date(),
     })
@@ -921,12 +1408,15 @@ export const cancelTorghutSimulationRun = async (runId: string) => {
     .execute()
 
   await appendRunEvent(runId, 'simulation_run.cancelled', {})
+  await releaseSimulationLane(runId)
   return getTorghutSimulationRun(runId)
 }
 
 export const __private = {
+  buildRobustnessScorecard,
   expectedArtifactsForRun,
   buildCampaignRunId,
+  normalizeCampaignRequest,
   normalizeRunToken,
   normalizeSimulationManifest,
 }

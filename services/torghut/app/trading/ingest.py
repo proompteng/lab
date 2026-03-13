@@ -18,7 +18,7 @@ from ..config import settings
 from ..models import TradeCursor
 from .clickhouse import normalize_symbol, to_datetime64
 from .models import SignalEnvelope
-from .simulation import resolve_simulation_context
+from .simulation import resolve_simulation_context, signal_ingest_runtime, simulation_context_enabled
 from .time_source import trading_now
 
 logger = logging.getLogger(__name__)
@@ -106,11 +106,13 @@ class ClickHouseSignalIngestor:
         self.initial_lookback_minutes = initial_lookback_minutes or settings.trading_signal_lookback_minutes
         self.schema = schema or settings.trading_signal_schema
         self.account_label = account_label or settings.trading_account_label
-        simulation_mode = bool(settings.trading_simulation_enabled)
-        self.simulation_mode = simulation_mode
-        self.fast_forward_stale_cursor = False if simulation_mode else fast_forward_stale_cursor
-        self.empty_batch_advance_seconds = (
-            0 if simulation_mode else max(0, settings.trading_signal_empty_batch_advance_seconds)
+        self.simulation_mode = simulation_context_enabled()
+        (
+            self.fast_forward_stale_cursor,
+            self.empty_batch_advance_seconds,
+        ) = signal_ingest_runtime(
+            fast_forward_stale_cursor=fast_forward_stale_cursor,
+            empty_batch_advance_seconds=settings.trading_signal_empty_batch_advance_seconds,
         )
         self._columns: Optional[set[str]] = None
         self._time_column: Optional[str] = None
@@ -131,11 +133,7 @@ class ClickHouseSignalIngestor:
                 no_signal_reason="clickhouse_url_missing",
             )
 
-        poll_started_at = (
-            trading_now(account_label=self.account_label)
-            if self.simulation_mode
-            else datetime.now(timezone.utc)
-        )
+        poll_started_at = trading_now(account_label=self.account_label)
         time_column = self._resolve_time_column()
         latest_signal_at = self._latest_signal_timestamp(time_column)
         cursor_at, cursor_seq, cursor_symbol, fast_forwarded = self._prepare_fetch_cursor(

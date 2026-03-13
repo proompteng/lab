@@ -14,6 +14,7 @@ from .entities import (
     ResearchPromotion,
     ResearchRun,
     ResearchStressMetrics,
+    SimulationRunProgress,
     StrategyCapitalAllocation,
     StrategyHypothesis,
     StrategyHypothesisMetricWindow,
@@ -74,6 +75,7 @@ __all__ = [
     "ResearchPromotion",
     "ResearchRun",
     "ResearchStressMetrics",
+    "SimulationRunProgress",
     "StrategyCapitalAllocation",
     "StrategyHypothesis",
     "StrategyHypothesisMetricWindow",
@@ -107,3 +109,7 @@ __all__ = [
     "TradeDecision",
     "TradeCursor",
 ]
+
+from ..trading import simulation_progress as _simulation_progress  # noqa: E402
+
+assert _simulation_progress is not None

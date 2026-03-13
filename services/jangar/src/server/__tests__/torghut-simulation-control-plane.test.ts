@@ -75,13 +75,24 @@ describe('torghut simulation control plane', () => {
           label: 'open-1',
         },
       ],
+      candidateRef: 'intraday_tsmom_v1@candidate',
       candidateRefs: ['intraday_tsmom_v1@candidate', 'intraday_tsmom_v1@baseline'],
+      baselineCandidateRef: 'intraday_tsmom_v1@baseline',
+      strategyRef: 'strategy-specs/intraday_tsmom_v1@1.1.0.json',
+      windowSetRef: 'windows/open-hour',
+      simulationProfile: 'hourly',
+      costModelVersion: 'cost-model-v3',
+      artifactRoot: 'artifacts/torghut/simulations/campaigns/open-hour-campaign',
+      gateConfigRef: 'gates/tsmom-profitability-v1.json',
+      campaignMode: 'baseline_vs_candidate',
       profile: 'hourly',
     })
 
     expect(parsed.ok).toBe(true)
     if (!parsed.ok) return
+    expect(parsed.value.candidateRef).toBe('intraday_tsmom_v1@candidate')
     expect(parsed.value.candidateRefs).toEqual(['intraday_tsmom_v1@candidate', 'intraday_tsmom_v1@baseline'])
+    expect(parsed.value.strategyRef).toBe('strategy-specs/intraday_tsmom_v1@1.1.0.json')
     expect(parsed.value.windows[0]?.label).toBe('open-1')
   })
 

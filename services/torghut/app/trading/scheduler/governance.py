@@ -591,11 +591,7 @@ class TradingSchedulerGovernanceMixin:
             return None
 
     def _governance_now(self) -> datetime:
-        if settings.trading_simulation_enabled and self._pipeline is not None:
-            return trading_now(
-                account_label=getattr(self._pipeline, "account_label", None)
-            )
-        return datetime.now(timezone.utc)
+        return trading_now(account_label=getattr(self._pipeline, "account_label", None))
 
     def _trigger_emergency_stop(
         self,
