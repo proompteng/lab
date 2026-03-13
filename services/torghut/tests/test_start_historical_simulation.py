@@ -103,6 +103,55 @@ class TestStartHistoricalSimulation(TestCase):
             'torghut-sim-runtime-ready-sim-2026-03-06-open-hour',
         )
 
+    def test_schema_registry_http_json_get_sets_connection_timeout(self) -> None:
+        captured: dict[str, object] = {}
+
+        class _FakeResponse:
+            status = 200
+
+            def read(self) -> bytes:
+                return b'{}'
+
+        class _FakeConnection:
+            def __init__(
+                self,
+                host: str,
+                port: int | None,
+                *,
+                timeout: int | float | None = None,
+            ) -> None:
+                captured['host'] = host
+                captured['port'] = port
+                captured['timeout'] = timeout
+
+            def request(self, method: str, path: str) -> None:
+                captured['method'] = method
+                captured['path'] = path
+
+            def getresponse(self) -> _FakeResponse:
+                return _FakeResponse()
+
+            def close(self) -> None:
+                captured['closed'] = True
+
+        with patch('scripts.historical_simulation_verification.HTTPConnection', _FakeConnection):
+            status, body = historical_simulation_verification._http_json_get(
+                'http://schema-registry:8081',
+                '/subjects',
+            )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body, '{}')
+        self.assertEqual(captured.get('host'), 'schema-registry')
+        self.assertEqual(captured.get('port'), 8081)
+        self.assertEqual(
+            captured.get('timeout'),
+            historical_simulation_verification.DEFAULT_HTTP_PROBE_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(captured.get('method'), 'GET')
+        self.assertEqual(captured.get('path'), '/subjects')
+        self.assertTrue(captured.get('closed'))
+
     def test_build_resources_derives_isolation_names(self) -> None:
         resources = _build_resources(
             'sim-2026-02-27-01',

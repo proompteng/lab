@@ -148,6 +148,7 @@ class SimulationExecutionAdapter:
         self._orders_by_id: dict[str, dict[str, Any]] = {}
         self._order_id_by_client_id: dict[str, str] = {}
         self._positions_by_symbol: dict[str, Decimal] = {}
+        self._position_market_value_by_symbol: dict[str, Decimal] = {}
         self._seeded_from_snapshot = False
         self._producer: Any | None = None
         self._producer_init_error: str | None = None
@@ -169,6 +170,7 @@ class SimulationExecutionAdapter:
         if self._seeded_from_snapshot:
             return
         seeded_positions: dict[str, Decimal] = {}
+        seeded_market_values: dict[str, Decimal] = {}
         for raw_position in positions or []:
             symbol = str(raw_position.get('symbol') or '').strip().upper()
             if not symbol:
@@ -187,9 +189,14 @@ class SimulationExecutionAdapter:
             net_qty = seeded_positions.get(symbol, Decimal('0')) + signed_qty
             if net_qty == 0:
                 seeded_positions.pop(symbol, None)
+                seeded_market_values.pop(symbol, None)
                 continue
             seeded_positions[symbol] = net_qty
+            signed_market_value = _signed_position_market_value(raw_position, side=side)
+            if signed_market_value is not None:
+                seeded_market_values[symbol] = seeded_market_values.get(symbol, Decimal('0')) + signed_market_value
         self._positions_by_symbol = seeded_positions
+        self._position_market_value_by_symbol = seeded_market_values
         self._seeded_from_snapshot = True
 
     def submit_order(
@@ -322,14 +329,16 @@ class SimulationExecutionAdapter:
             if net_qty == 0:
                 continue
             side = 'long' if net_qty > 0 else 'short'
-            positions.append(
-                {
-                    'symbol': symbol,
-                    'qty': _decimal_to_order_text(abs(net_qty)),
-                    'side': side,
-                    'alpaca_account_label': self._account_label,
-                }
-            )
+            position = {
+                'symbol': symbol,
+                'qty': _decimal_to_order_text(abs(net_qty)),
+                'side': side,
+                'alpaca_account_label': self._account_label,
+            }
+            market_value = self._position_market_value_by_symbol.get(symbol)
+            if market_value is not None:
+                position['market_value'] = _signed_decimal_to_text(market_value)
+            positions.append(position)
         return positions
 
     def _apply_fill_to_positions(self, order: Mapping[str, Any]) -> None:
@@ -345,11 +354,27 @@ class SimulationExecutionAdapter:
             return
         side = str(order.get('side') or '').strip().lower()
         delta = qty if side == 'buy' else -qty
-        updated = self._positions_by_symbol.get(symbol, Decimal('0')) + delta
+        current_qty = self._positions_by_symbol.get(symbol, Decimal('0'))
+        updated = current_qty + delta
         if updated == 0:
             self._positions_by_symbol.pop(symbol, None)
+            self._position_market_value_by_symbol.pop(symbol, None)
             return
         self._positions_by_symbol[symbol] = updated
+
+        fill_price = _optional_decimal(order.get('filled_avg_price'))
+        if fill_price is None:
+            return
+        market_value_delta = delta * fill_price
+        current_market_value = self._position_market_value_by_symbol.get(symbol)
+        if current_market_value is not None:
+            self._position_market_value_by_symbol[symbol] = current_market_value + market_value_delta
+            return
+        if current_qty == 0:
+            self._position_market_value_by_symbol[symbol] = market_value_delta
+            return
+        if current_qty > 0 > updated or current_qty < 0 < updated:
+            self._position_market_value_by_symbol[symbol] = updated * fill_price
 
     def _build_producer(self, bootstrap_servers: str) -> Any | None:
         try:
@@ -1084,6 +1109,36 @@ def _decimal_to_order_text(value: Decimal) -> str:
     if not rendered:
         return '0'
     return rendered
+
+
+def _signed_decimal_to_text(value: Decimal) -> str:
+    rendered = format(value, 'f')
+    if '.' in rendered:
+        rendered = rendered.rstrip('0').rstrip('.')
+    if rendered in {'', '-0'}:
+        return '0'
+    return rendered
+
+
+def _optional_decimal(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return None
+
+
+def _signed_position_market_value(position: Mapping[str, Any], *, side: str) -> Decimal | None:
+    market_value = _optional_decimal(position.get('market_value'))
+    if market_value is None:
+        return None
+    normalized_side = side.strip().lower()
+    if normalized_side == 'short':
+        return -abs(market_value)
+    if normalized_side == 'long':
+        return abs(market_value)
+    return market_value
 
 
 def _resolve_simulation_context_payload(

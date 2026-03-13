@@ -184,6 +184,7 @@ class TestExecutionAdapters(TestCase):
             qty=1.5,
             order_type='market',
             time_in_force='day',
+            limit_price=10.0,
             extra_params={'client_order_id': 'decision-long'},
         )
         positions = adapter.list_positions()
@@ -194,6 +195,7 @@ class TestExecutionAdapters(TestCase):
                     'symbol': 'AAPL',
                     'qty': '1.5',
                     'side': 'long',
+                    'market_value': '15',
                     'alpaca_account_label': 'paper',
                 }
             ],
@@ -204,6 +206,7 @@ class TestExecutionAdapters(TestCase):
             qty=2.0,
             order_type='market',
             time_in_force='day',
+            limit_price=10.0,
             extra_params={'client_order_id': 'decision-short'},
         )
         positions = adapter.list_positions()
@@ -214,6 +217,7 @@ class TestExecutionAdapters(TestCase):
                     'symbol': 'AAPL',
                     'qty': '0.5',
                     'side': 'short',
+                    'market_value': '-5',
                     'alpaca_account_label': 'paper',
                 }
             ],
@@ -233,8 +237,8 @@ class TestExecutionAdapters(TestCase):
         )
         adapter.seed_positions_snapshot(
             [
-                {'symbol': 'AAPL', 'qty': '2.5', 'side': 'long'},
-                {'symbol': 'MSFT', 'qty': '1', 'side': 'short'},
+                {'symbol': 'AAPL', 'qty': '2.5', 'side': 'long', 'market_value': '250'},
+                {'symbol': 'MSFT', 'qty': '1', 'side': 'short', 'market_value': '10'},
             ]
         )
         adapter.seed_positions_snapshot(
@@ -249,6 +253,7 @@ class TestExecutionAdapters(TestCase):
             qty=0.5,
             order_type='market',
             time_in_force='day',
+            limit_price=100.0,
             extra_params={'client_order_id': 'decision-seeded-sell'},
         )
 
@@ -259,12 +264,14 @@ class TestExecutionAdapters(TestCase):
                     'symbol': 'AAPL',
                     'qty': '2',
                     'side': 'long',
+                    'market_value': '200',
                     'alpaca_account_label': 'paper',
                 },
                 {
                     'symbol': 'MSFT',
                     'qty': '1',
                     'side': 'short',
+                    'market_value': '-10',
                     'alpaca_account_label': 'paper',
                 },
             ],
@@ -288,6 +295,7 @@ class TestExecutionAdapters(TestCase):
             qty=10.0,
             order_type='market',
             time_in_force='day',
+            limit_price=100.0,
             extra_params={'client_order_id': 'decision-integer'},
         )
         self.assertEqual(
@@ -297,6 +305,88 @@ class TestExecutionAdapters(TestCase):
                     'symbol': 'AAPL',
                     'qty': '10',
                     'side': 'long',
+                    'market_value': '1000',
+                    'alpaca_account_label': 'paper',
+                }
+            ],
+        )
+
+    def test_simulation_adapter_does_not_emit_partial_market_value_for_untracked_seed(self) -> None:
+        adapter = SimulationExecutionAdapter(
+            bootstrap_servers=None,
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+            topic='torghut.sim.trade-updates.v1',
+            account_label='paper',
+            simulation_run_id='sim-2026-02-27-01',
+            dataset_id='dataset-1',
+        )
+        adapter.seed_positions_snapshot(
+            [
+                {'symbol': 'AAPL', 'qty': '2', 'side': 'long'},
+            ]
+        )
+
+        adapter.submit_order(
+            symbol='AAPL',
+            side='sell',
+            qty=0.5,
+            order_type='market',
+            time_in_force='day',
+            limit_price=100.0,
+            extra_params={'client_order_id': 'decision-seeded-reduce'},
+        )
+
+        self.assertEqual(
+            adapter.list_positions(),
+            [
+                {
+                    'symbol': 'AAPL',
+                    'qty': '1.5',
+                    'side': 'long',
+                    'alpaca_account_label': 'paper',
+                }
+            ],
+        )
+
+    def test_simulation_adapter_tracks_cross_zero_market_value_after_untracked_seed(self) -> None:
+        adapter = SimulationExecutionAdapter(
+            bootstrap_servers=None,
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+            topic='torghut.sim.trade-updates.v1',
+            account_label='paper',
+            simulation_run_id='sim-2026-02-27-01',
+            dataset_id='dataset-1',
+        )
+        adapter.seed_positions_snapshot(
+            [
+                {'symbol': 'AAPL', 'qty': '2', 'side': 'long'},
+            ]
+        )
+
+        adapter.submit_order(
+            symbol='AAPL',
+            side='sell',
+            qty=3.0,
+            order_type='market',
+            time_in_force='day',
+            limit_price=100.0,
+            extra_params={'client_order_id': 'decision-seeded-cross-zero'},
+        )
+
+        self.assertEqual(
+            adapter.list_positions(),
+            [
+                {
+                    'symbol': 'AAPL',
+                    'qty': '1',
+                    'side': 'short',
+                    'market_value': '-100',
                     'alpaca_account_label': 'paper',
                 }
             ],
