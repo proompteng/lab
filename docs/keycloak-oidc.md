@@ -74,6 +74,9 @@ Issuer and scopes:
 - Issuer: Realm → **Realm settings** → **Endpoints** → **OpenID Endpoint Configuration** (`issuer`)
 - Scopes: `openid profile email`
 - The kube-apiserver on `galactic` binds Kubernetes usernames from the OIDC `preferred_username` claim with the `oidc:` prefix, so RBAC subjects should look like `oidc:<preferred_username>`.
+- The GitOps bootstrap job also enforces a `kubernetes-audience` protocol mapper so access tokens
+  include audience `kubernetes`, which Headlamp needs when it uses the OIDC access token for
+  websocket watches, logs, exec, and port-forward traffic.
 
 Optional (recommended) group mapper:
 

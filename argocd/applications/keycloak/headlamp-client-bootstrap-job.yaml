@@ -83,6 +83,23 @@ spec:
               }
               EOF
 
+              cat > /tmp/kubernetes-audience-mapper.json <<EOF
+              {
+                "name": "kubernetes-audience",
+                "protocol": "openid-connect",
+                "protocolMapper": "oidc-audience-mapper",
+                "consentRequired": false,
+                "config": {
+                  "included.client.audience": "${HEADLAMP_OIDC_CLIENT_ID}",
+                  "access.token.claim": "true",
+                  "id.token.claim": "false",
+                  "userinfo.token.claim": "false",
+                  "introspection.token.claim": "true",
+                  "lightweight.claim": "false"
+                }
+              }
+              EOF
+
               client_resource_id="$(
                 /opt/keycloak/bin/kcadm.sh get clients \
                   --config "$KCADM_CONFIG" \
@@ -130,6 +147,31 @@ spec:
                 --config "$KCADM_CONFIG" \
                 -r "$KEYCLOAK_REALM" \
                 -s "secret=${HEADLAMP_OIDC_CLIENT_SECRET}"
+
+              mapper_resource_id="$(
+                /opt/keycloak/bin/kcadm.sh get "clients/$client_resource_id/protocol-mappers/models" \
+                  --config "$KCADM_CONFIG" \
+                  -r "$KEYCLOAK_REALM" \
+                  --fields id,name \
+                  --format csv \
+                  --noquotes \
+                  | tr -d '\r' \
+                  | awk -F, '$2=="kubernetes-audience"{print $1; exit}'
+              )"
+
+              if [ -n "$mapper_resource_id" ]; then
+                /opt/keycloak/bin/kcadm.sh update "clients/$client_resource_id/protocol-mappers/models/$mapper_resource_id" \
+                  --config "$KCADM_CONFIG" \
+                  -r "$KEYCLOAK_REALM" \
+                  --merge \
+                  -f /tmp/kubernetes-audience-mapper.json
+              else
+                /opt/keycloak/bin/kcadm.sh create "clients/$client_resource_id/protocol-mappers/models" \
+                  --config "$KCADM_CONFIG" \
+                  -r "$KEYCLOAK_REALM" \
+                  -f /tmp/kubernetes-audience-mapper.json \
+                  >/dev/null
+              fi
 
               echo "Configured Keycloak client ${HEADLAMP_OIDC_CLIENT_ID} in realm ${KEYCLOAK_REALM}"
           securityContext:
