@@ -630,6 +630,80 @@ type TorghutQuantPipelineHealth = {
   created_at: Generated<Timestamp>
 }
 
+type TorghutSimulationRuns = {
+  run_id: string
+  idempotency_key: string
+  workflow_name: string | null
+  workflow_uid: string | null
+  namespace: string
+  status: string
+  workflow_phase: string | null
+  lane: string
+  profile: string
+  cache_policy: string
+  priority: string
+  candidate_ref: string | null
+  strategy_ref: string | null
+  dataset_id: string | null
+  artifact_root: string | null
+  output_root: string | null
+  manifest: JsonValue
+  manifest_digest: string
+  metadata: JsonValue
+  submitted_by: string | null
+  started_at: Timestamp | null
+  finished_at: Timestamp | null
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+}
+
+type TorghutSimulationRunEvents = {
+  id: Generated<string>
+  run_id: string
+  seq: number
+  event_type: string
+  payload: JsonValue
+  created_at: Generated<Timestamp>
+}
+
+type TorghutSimulationArtifacts = {
+  id: Generated<string>
+  run_id: string
+  name: string
+  path: string
+  kind: string
+  metadata: JsonValue
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+}
+
+type TorghutSimulationDatasetCache = {
+  cache_key: string
+  lane: string
+  window_start: Timestamp | null
+  window_end: Timestamp | null
+  source_digest: string | null
+  schema_digest: string | null
+  code_digest: string | null
+  dump_format: string
+  artifact_path: string | null
+  metadata: JsonValue
+  hit_count: number
+  last_used_at: Timestamp | null
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+}
+
+type TorghutSimulationCampaigns = {
+  campaign_id: string
+  name: string
+  status: string
+  request_payload: JsonValue
+  summary: JsonValue
+  created_at: Generated<Timestamp>
+  updated_at: Generated<Timestamp>
+}
+
 type TorghutMarketContextSnapshots = {
   id: Generated<string>
   symbol: string
@@ -758,6 +832,11 @@ export type Database = {
   'torghut_control_plane.quant_metrics_series': TorghutQuantMetricsSeries
   'torghut_control_plane.quant_alerts': TorghutQuantAlerts
   'torghut_control_plane.quant_pipeline_health': TorghutQuantPipelineHealth
+  'torghut_control_plane.simulation_runs': TorghutSimulationRuns
+  'torghut_control_plane.simulation_run_events': TorghutSimulationRunEvents
+  'torghut_control_plane.simulation_artifacts': TorghutSimulationArtifacts
+  'torghut_control_plane.dataset_cache': TorghutSimulationDatasetCache
+  'torghut_control_plane.simulation_campaigns': TorghutSimulationCampaigns
   torghut_market_context_snapshots: TorghutMarketContextSnapshots
   torghut_market_context_dispatch_state: TorghutMarketContextDispatchState
   torghut_market_context_runs: TorghutMarketContextRuns

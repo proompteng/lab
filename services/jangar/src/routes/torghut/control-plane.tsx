@@ -299,6 +299,14 @@ function TorghutQuantControlPlane() {
           <p className="text-sm text-zinc-400">
             Near-real-time performance, risk, and execution surfaces. Read-only; Torghut remains execution authority.
           </p>
+          <div className="pt-2">
+            <Link
+              to="/torghut/control-plane/simulation"
+              className="inline-flex h-8 items-center rounded-md border border-zinc-700 bg-zinc-900 px-3 text-xs font-medium text-zinc-100 hover:bg-zinc-800"
+            >
+              Open simulation control plane
+            </Link>
+          </div>
         </div>
 
         <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-3">

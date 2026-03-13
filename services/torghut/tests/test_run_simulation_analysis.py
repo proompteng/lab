@@ -196,7 +196,7 @@ class TestRunSimulationAnalysis(TestCase):
                 return_value={'runtime_state': 'ready', 'environment_state': 'complete'},
             ),
             patch(
-                'scripts.run_simulation_analysis._monitor_run_completion',
+                'scripts.run_simulation_analysis._current_activity_report',
                 return_value={'status': 'degraded', 'activity_classification': 'executions_absent'},
             ),
             redirect_stdout(stdout),

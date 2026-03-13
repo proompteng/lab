@@ -27,6 +27,8 @@ from scripts.start_historical_simulation import (
     _build_resources,
     _build_rollouts_analysis_config,
     _build_simulation_completion_trace,
+    _compress_dump_file,
+    _count_lines,
     _configure_torghut_service_for_simulation,
     _doc29_simulation_gate_ids,
     _discover_automation_pointer,
@@ -42,6 +44,7 @@ from scripts.start_historical_simulation import (
     _merge_env_entries,
     _monitor_run_completion,
     _normalize_run_token,
+    _open_dump_reader,
     _offset_for_time_lookup,
     _pacing_delay_seconds,
     _prepare_argocd_for_run,
@@ -151,6 +154,45 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(captured.get('method'), 'GET')
         self.assertEqual(captured.get('path'), '/subjects')
         self.assertTrue(captured.get('closed'))
+
+    def test_compress_dump_file_round_trips_gzip_dump(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            raw_path = Path(tmpdir) / 'source.ndjson'
+            dump_path = Path(tmpdir) / 'source-dump.jsonl.gz'
+            payload = '\n'.join(
+                [
+                    '{"topic":"torghut.trades.v1","ts":"2026-03-06T14:30:00Z"}',
+                    '{"topic":"torghut.quotes.v1","ts":"2026-03-06T14:30:01Z"}',
+                ]
+            )
+            raw_path.write_text(f'{payload}\n', encoding='utf-8')
+
+            _compress_dump_file(source_path=raw_path, dump_path=dump_path)
+
+            self.assertFalse(raw_path.exists())
+            self.assertTrue(dump_path.exists())
+            self.assertEqual(_count_lines(dump_path), 2)
+            with _open_dump_reader(dump_path) as handle:
+                self.assertEqual(handle.read().strip(), payload)
+
+    def test_dump_sha256_for_replay_is_stable_across_ndjson_and_gzip(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            raw_path = Path(tmpdir) / 'source.ndjson'
+            gzip_path = Path(tmpdir) / 'source-dump.jsonl.gz'
+            payload = '\n'.join(
+                [
+                    '{"topic":"torghut.trades.v1","ts":"2026-03-06T14:30:00Z","value":1}',
+                    '{"topic":"torghut.trades.v1","ts":"2026-03-06T14:30:01Z","value":2}',
+                ]
+            )
+            raw_path.write_text(f'{payload}\n', encoding='utf-8')
+            expected = _dump_sha256_for_replay(raw_path)
+
+            second_raw = Path(tmpdir) / 'source-copy.ndjson'
+            second_raw.write_text(f'{payload}\n', encoding='utf-8')
+            _compress_dump_file(source_path=second_raw, dump_path=gzip_path)
+
+            self.assertEqual(_dump_sha256_for_replay(gzip_path), expected)
 
     def test_build_resources_derives_isolation_names(self) -> None:
         resources = _build_resources(
@@ -372,6 +414,36 @@ class TestStartHistoricalSimulation(TestCase):
             lineage['runtime_version_refs'],
             ['services/torghut@sha256:abc'],
         )
+
+    def test_build_resources_rejects_legacy_strategy_without_explicit_override(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, 'legacy_strategy_not_allowed'):
+            _build_resources(
+                'sim-legacy-1',
+                {
+                    'dataset_id': 'dataset-a',
+                    'candidate_id': 'legacy_macd_rsi@prod',
+                    'baseline_candidate_id': 'legacy_macd_rsi@baseline',
+                    'strategy_spec_ref': 'strategy-specs/legacy_macd_rsi@1.0.0.json',
+                    'model_refs': ['rules/legacy_macd_rsi'],
+                },
+            )
+
+    def test_build_resources_allows_legacy_strategy_with_explicit_override(self) -> None:
+        resources = _build_resources(
+            'sim-legacy-1',
+            {
+                'dataset_id': 'dataset-a',
+                'candidate_id': 'legacy_macd_rsi@prod',
+                'baseline_candidate_id': 'legacy_macd_rsi@baseline',
+                'strategy_spec_ref': 'strategy-specs/legacy_macd_rsi@1.0.0.json',
+                'model_refs': ['rules/legacy_macd_rsi'],
+                'experimental': {
+                    'allowLegacyStrategy': True,
+                },
+            },
+        )
+
+        self.assertEqual(resources.dataset_id, 'dataset-a')
 
     def test_build_postgres_runtime_config_supports_admin_dsn_password_env(self) -> None:
         with patch.dict('os.environ', {'TORGHUT_POSTGRES_PASSWORD': 'postgres-secret'}, clear=False):
@@ -3020,6 +3092,65 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(report['status'], 'degraded')
         self.assertEqual(report['activity_classification'], 'executions_absent')
 
+    def test_monitor_run_completion_succeeds_when_terminal_signal_precedes_window_end(self) -> None:
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1',
+            simulation_db='torghut_sim_sim_1',
+            migrations_command='true',
+        )
+        manifest = {
+            'window': {
+                'start': '2026-03-11T13:30:00Z',
+                'end': '2026-03-11T13:35:00Z',
+            },
+            'monitor': {
+                'timeout_seconds': 30,
+                'poll_seconds': 1,
+                'cursor_grace_seconds': 5,
+            },
+        }
+        resources = _build_resources('sim-1', {'dataset_id': 'dataset-a'})
+        clickhouse_config = ClickHouseRuntimeConfig(
+            http_url='http://clickhouse:8123',
+            username='torghut',
+            password=None,
+        )
+        with (
+            patch(
+                'scripts.historical_simulation_verification._monitor_snapshot',
+                return_value={
+                    'trade_decisions': 12,
+                    'executions': 12,
+                    'execution_tca_metrics': 12,
+                    'execution_order_events': 12,
+                    'cursor_at': '2026-03-11T13:34:58Z',
+                },
+            ),
+            patch(
+                'scripts.historical_simulation_verification._signal_snapshot',
+                return_value={
+                    'signal_rows': 120,
+                    'price_rows': 120,
+                    'last_signal_ts': '2026-03-11T13:34:58Z',
+                    'last_price_ts': '2026-03-11T13:34:59Z',
+                },
+            ),
+            patch('scripts.historical_simulation_verification.time.sleep', return_value=None),
+        ):
+            report = _monitor_run_completion(
+                resources=resources,
+                manifest=manifest,
+                postgres_config=postgres_config,
+                clickhouse_config=clickhouse_config,
+                runtime_verify={'runtime_state': 'ready'},
+            )
+
+        self.assertEqual(report['status'], 'ok')
+        self.assertEqual(report['activity_classification'], 'success')
+        self.assertEqual(report['effective_terminal_signal_ts'], '2026-03-11T13:34:58+00:00')
+        self.assertEqual(report['dataset_alignment'], 'window_declared_beyond_dataset')
+
     def test_run_full_lifecycle_fails_when_activity_verify_is_degraded(self) -> None:
         resources = _build_resources(
             'sim-1',
@@ -3091,6 +3222,10 @@ class TestStartHistoricalSimulation(TestCase):
                 },
             ),
             patch('scripts.start_historical_simulation._report_simulation', return_value={'status': 'ok'}),
+            patch(
+                'scripts.start_historical_simulation._build_strategy_proof_artifact',
+                return_value={'status': 'ok', 'legacy_path_count': 0},
+            ),
         ):
             mock_session_local.return_value.__enter__.return_value = SimpleNamespace(commit=lambda: None)
             with self.assertRaisesRegex(RuntimeError, 'simulation_run_failed:activity:decisions_absent'):
@@ -3204,6 +3339,10 @@ class TestStartHistoricalSimulation(TestCase):
                 'scripts.start_historical_simulation._report_simulation',
                 side_effect=lambda **_: call_order.append('report') or {'status': 'ok'},
             ),
+            patch(
+                'scripts.start_historical_simulation._build_strategy_proof_artifact',
+                return_value={'status': 'ok', 'legacy_path_count': 0},
+            ),
         ):
             mock_session_local.return_value.__enter__.return_value = SimpleNamespace(commit=lambda: None)
             _run_full_lifecycle(
@@ -3225,6 +3364,119 @@ class TestStartHistoricalSimulation(TestCase):
             call_order,
             ['apply', 'runtime_verify', 'replay', 'monitor', 'report'],
         )
+
+    def test_run_full_lifecycle_does_not_fail_when_activity_analysis_corroboration_is_unsuccessful(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        manifest = {
+            'dataset_id': 'dataset-a',
+            'window': {
+                'start': '2026-02-27T14:30:00Z',
+                'end': '2026-02-27T21:00:00Z',
+            },
+        }
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+        clickhouse_config = ClickHouseRuntimeConfig(
+            http_url='http://clickhouse:8123',
+            username='torghut',
+            password=None,
+        )
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1',
+            simulation_db='torghut_sim_sim_1',
+            migrations_command='true',
+        )
+        argocd_config = ArgocdAutomationConfig(
+            manage_automation=False,
+            applicationset_name='product',
+            applicationset_namespace='argocd',
+            app_name='torghut',
+            root_app_name='root',
+            desired_mode_during_run='manual',
+            restore_mode_after_run='previous',
+            verify_timeout_seconds=600,
+        )
+        rollouts_config = RolloutsAnalysisConfig(
+            enabled=True,
+            namespace='torghut',
+            runtime_template='torghut-simulation-runtime-ready',
+            activity_template='torghut-simulation-activity',
+            teardown_template='torghut-simulation-teardown-clean',
+            artifact_template='torghut-simulation-artifact-bundle',
+            verify_timeout_seconds=30,
+            verify_poll_seconds=5,
+        )
+
+        with (
+            patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
+            patch('scripts.start_historical_simulation._update_run_state', return_value=None),
+            patch('scripts.start_historical_simulation._save_json', return_value=None),
+            patch('scripts.start_historical_simulation.persist_completion_trace', return_value={}),
+            patch('scripts.start_historical_simulation.SessionLocal') as mock_session_local,
+            patch('scripts.start_historical_simulation._prepare_argocd_for_run', return_value={'managed': False}),
+            patch('scripts.start_historical_simulation._restore_argocd_after_run', return_value={'managed': False}),
+            patch('scripts.start_historical_simulation._apply', return_value={'status': 'ok'}),
+            patch(
+                'scripts.start_historical_simulation._run_rollouts_analysis',
+                side_effect=[
+                    {'phase': 'Successful'},
+                    {'phase': 'Failed'},
+                ],
+            ),
+            patch('scripts.start_historical_simulation._runtime_verify', return_value={'runtime_state': 'ready'}),
+            patch('scripts.start_historical_simulation._replay_dump', return_value={'status': 'ok'}),
+            patch(
+                'scripts.start_historical_simulation._monitor_run_completion',
+                return_value={
+                    'status': 'ok',
+                    'activity_classification': 'success',
+                    'final_snapshot': {
+                        'signal_rows': 5,
+                        'price_rows': 5,
+                        'trade_decisions': 3,
+                        'cursor_at': '2026-02-27T21:00:00Z',
+                        'executions': 2,
+                        'execution_tca_metrics': 2,
+                        'execution_order_events': 2,
+                    },
+                },
+            ),
+            patch('scripts.start_historical_simulation._report_simulation', return_value={'status': 'ok'}),
+            patch(
+                'scripts.start_historical_simulation._build_strategy_proof_artifact',
+                return_value={'status': 'ok', 'legacy_path_count': 0},
+            ),
+        ):
+            mock_session_local.return_value.__enter__.return_value = SimpleNamespace(commit=lambda: None)
+            report = _run_full_lifecycle(
+                resources=resources,
+                manifest=manifest,
+                manifest_path=Path('/tmp/manifest.json'),
+                kafka_config=kafka_config,
+                clickhouse_config=clickhouse_config,
+                postgres_config=postgres_config,
+                argocd_config=argocd_config,
+                rollouts_config=rollouts_config,
+                force_dump=False,
+                force_replay=False,
+                skip_teardown=True,
+                report_only=False,
+            )
+
+        self.assertEqual(report['status'], 'ok')
+        self.assertEqual(report['monitor']['activity_classification'], 'success')
+        self.assertEqual(report['rollouts']['activity_analysis_run']['phase'], 'Failed')
 
     def test_run_full_lifecycle_aborts_before_replay_when_runtime_not_ready(self) -> None:
         resources = _build_resources(
@@ -3300,6 +3552,10 @@ class TestStartHistoricalSimulation(TestCase):
             patch(
                 'scripts.start_historical_simulation._report_simulation',
                 return_value={'status': 'ok'},
+            ),
+            patch(
+                'scripts.start_historical_simulation._build_strategy_proof_artifact',
+                return_value={'status': 'ok', 'legacy_path_count': 0},
             ),
         ):
             mock_session_local.return_value.__enter__.return_value = SimpleNamespace(commit=lambda: None)
@@ -3412,6 +3668,10 @@ class TestStartHistoricalSimulation(TestCase):
                 },
             ),
             patch('scripts.start_historical_simulation._report_simulation', return_value={'status': 'ok'}),
+            patch(
+                'scripts.start_historical_simulation._build_strategy_proof_artifact',
+                return_value={'status': 'ok', 'legacy_path_count': 0},
+            ),
         ):
             mock_session_local.return_value.__enter__.return_value = SimpleNamespace(commit=lambda: None)
             _run_full_lifecycle(

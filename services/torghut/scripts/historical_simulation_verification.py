@@ -67,6 +67,29 @@ DEFAULT_RUN_MONITOR_MIN_TCA = 1
 DEFAULT_RUN_MONITOR_MIN_ORDER_EVENTS = 0
 DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS = 120
 DEFAULT_HTTP_PROBE_TIMEOUT_SECONDS = 5
+DEFAULT_RUN_MONITOR_PROFILE = 'smoke'
+MONITOR_PROFILE_DEFAULTS: dict[str, dict[str, int]] = {
+    'compact': {
+        'timeout_seconds': 300,
+        'poll_seconds': 5,
+        'cursor_grace_seconds': 15,
+    },
+    'smoke': {
+        'timeout_seconds': 900,
+        'poll_seconds': 10,
+        'cursor_grace_seconds': 30,
+    },
+    'hourly': {
+        'timeout_seconds': 1500,
+        'poll_seconds': 10,
+        'cursor_grace_seconds': 45,
+    },
+    'full_day': {
+        'timeout_seconds': 3600,
+        'poll_seconds': 20,
+        'cursor_grace_seconds': 120,
+    },
+}
 TRANSIENT_POSTGRES_ERROR_PATTERNS = (
     'connection refused',
     'connection reset by peer',
@@ -166,6 +189,15 @@ def _parse_rfc3339_timestamp(value: str | None, *, label: str) -> datetime:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _parse_optional_rfc3339_timestamp(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        return _parse_rfc3339_timestamp(value, label='timestamp')
+    except Exception:
+        return None
 
 
 def _resolve_window_bounds(manifest: Mapping[str, Any]) -> tuple[datetime, datetime]:
@@ -527,10 +559,35 @@ def _kservice_env(
     return container_name, env
 
 
-def _monitor_settings(manifest: Mapping[str, Any]) -> dict[str, int]:
+def _infer_monitor_profile(*, start: datetime, end: datetime) -> str:
+    duration_minutes = (end - start).total_seconds() / 60.0
+    if duration_minutes <= 15:
+        return 'compact'
+    if duration_minutes <= 90:
+        return 'hourly'
+    if duration_minutes >= US_EQUITIES_REGULAR_MINUTES:
+        return 'full_day'
+    return DEFAULT_RUN_MONITOR_PROFILE
+
+
+def _monitor_settings(manifest: Mapping[str, Any]) -> dict[str, int | str]:
     monitor = _as_mapping(manifest.get('monitor'))
-    timeout_seconds = _safe_int(monitor.get('timeout_seconds'), default=DEFAULT_RUN_MONITOR_TIMEOUT_SECONDS)
-    poll_seconds = _safe_int(monitor.get('poll_seconds'), default=DEFAULT_RUN_MONITOR_POLL_SECONDS)
+    start, end = _resolve_window_bounds(manifest)
+    profile = (_as_text(monitor.get('profile')) or '').strip().lower()
+    if not profile:
+        profile = _infer_monitor_profile(start=start, end=end)
+    if profile not in MONITOR_PROFILE_DEFAULTS:
+        raise RuntimeError(f'unsupported_monitor_profile:{profile}')
+
+    defaults = MONITOR_PROFILE_DEFAULTS[profile]
+    timeout_seconds = _safe_int(
+        monitor.get('timeout_seconds'),
+        default=defaults.get('timeout_seconds', DEFAULT_RUN_MONITOR_TIMEOUT_SECONDS),
+    )
+    poll_seconds = _safe_int(
+        monitor.get('poll_seconds'),
+        default=defaults.get('poll_seconds', DEFAULT_RUN_MONITOR_POLL_SECONDS),
+    )
     min_decisions = _safe_int(monitor.get('min_trade_decisions'), default=DEFAULT_RUN_MONITOR_MIN_DECISIONS)
     min_executions = _safe_int(monitor.get('min_executions'), default=DEFAULT_RUN_MONITOR_MIN_EXECUTIONS)
     min_tca = _safe_int(monitor.get('min_execution_tca_metrics'), default=DEFAULT_RUN_MONITOR_MIN_TCA)
@@ -540,7 +597,7 @@ def _monitor_settings(manifest: Mapping[str, Any]) -> dict[str, int]:
     )
     cursor_grace_seconds = _safe_int(
         monitor.get('cursor_grace_seconds'),
-        default=DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS,
+        default=defaults.get('cursor_grace_seconds', DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS),
     )
     if timeout_seconds <= 0:
         raise RuntimeError('monitor.timeout_seconds must be > 0')
@@ -551,6 +608,7 @@ def _monitor_settings(manifest: Mapping[str, Any]) -> dict[str, int]:
     if cursor_grace_seconds < 0:
         raise RuntimeError('monitor.cursor_grace_seconds cannot be negative')
     return {
+        'profile': profile,
         'timeout_seconds': timeout_seconds,
         'poll_seconds': poll_seconds,
         'min_trade_decisions': min_decisions,
@@ -569,21 +627,22 @@ def _monitor_snapshot(postgres_config: Any) -> dict[str, Any]:
     def _snapshot() -> dict[str, Any]:
         with psycopg.connect(dsn) as conn:
             with conn.cursor() as cursor:
-                cursor.execute('SELECT count(*) FROM trade_decisions')
-                decision_row = cursor.fetchone()
-                trade_decisions = _safe_int(decision_row[0] if decision_row else 0)
-                cursor.execute('SELECT count(*) FROM executions')
-                execution_row = cursor.fetchone()
-                executions = _safe_int(execution_row[0] if execution_row else 0)
-                cursor.execute('SELECT count(*) FROM execution_tca_metrics')
-                tca_row = cursor.fetchone()
-                execution_tca_metrics = _safe_int(tca_row[0] if tca_row else 0)
-                cursor.execute('SELECT count(*) FROM execution_order_events')
-                order_event_row = cursor.fetchone()
-                execution_order_events = _safe_int(order_event_row[0] if order_event_row else 0)
-                cursor.execute("SELECT max(cursor_at) FROM trade_cursor WHERE source='clickhouse'")
+                cursor.execute(
+                    """
+                    SELECT
+                      (SELECT count(*) FROM trade_decisions) AS trade_decisions,
+                      (SELECT count(*) FROM executions) AS executions,
+                      (SELECT count(*) FROM execution_tca_metrics) AS execution_tca_metrics,
+                      (SELECT count(*) FROM execution_order_events) AS execution_order_events,
+                      (SELECT max(cursor_at) FROM trade_cursor WHERE source = 'clickhouse') AS cursor_at
+                    """
+                )
                 row = cursor.fetchone()
-                cursor_at_raw = row[0] if row else None
+                trade_decisions = _safe_int(row[0] if row else 0)
+                executions = _safe_int(row[1] if row else 0)
+                execution_tca_metrics = _safe_int(row[2] if row else 0)
+                execution_order_events = _safe_int(row[3] if row else 0)
+                cursor_at_raw = row[4] if row else None
                 cursor_at = cursor_at_raw.astimezone(timezone.utc) if isinstance(cursor_at_raw, datetime) else None
         return {
             'trade_decisions': trade_decisions,
@@ -599,33 +658,79 @@ def _monitor_snapshot(postgres_config: Any) -> dict[str, Any]:
     )
 
 
-def _signal_snapshot(*, resources: Any, clickhouse_config: Any) -> dict[str, int]:
-    counts: dict[str, int] = {}
+def _clickhouse_table_activity(*, config: Any, table: str) -> dict[str, Any]:
+    count_status, count_body = _http_clickhouse_query(
+        config=config,
+        query=f'SELECT count() FROM {table}',
+    )
+    if count_status < 200 or count_status >= 300:
+        return {
+            'rows': 0,
+            'last_event_ts': None,
+        }
+    rows = _safe_int(count_body.strip(), default=0)
+    if rows <= 0:
+        return {
+            'rows': 0,
+            'last_event_ts': None,
+        }
+    last_status, last_body = _http_clickhouse_query(
+        config=config,
+        query=f"SELECT toString(max(event_ts)) FROM {table}",
+    )
+    last_event_ts = None
+    if 200 <= last_status < 300:
+        parsed = _parse_optional_rfc3339_timestamp(_as_text(last_body.strip()))
+        last_event_ts = parsed.isoformat() if parsed is not None else None
+    return {
+        'rows': rows,
+        'last_event_ts': last_event_ts,
+    }
+
+
+def _signal_snapshot(*, resources: Any, clickhouse_config: Any) -> dict[str, Any]:
+    counts: dict[str, Any] = {}
     for key, table in {
         'signal_rows': _resource_attr(resources, 'clickhouse_signal_table'),
         'price_rows': _resource_attr(resources, 'clickhouse_price_table'),
     }.items():
-        query = f'SELECT count() FROM {table}'
-        status, body = _http_clickhouse_query(config=clickhouse_config, query=query)
-        if status < 200 or status >= 300:
-            counts[key] = 0
-            continue
-        counts[key] = _safe_int(body.strip(), default=0)
+        activity = _clickhouse_table_activity(config=clickhouse_config, table=str(table))
+        counts[key] = _safe_int(activity.get('rows'), default=0)
+        if key == 'signal_rows':
+            counts['last_signal_ts'] = _as_text(activity.get('last_event_ts'))
+        elif key == 'price_rows':
+            counts['last_price_ts'] = _as_text(activity.get('last_event_ts'))
     return counts
+
+
+def _effective_terminal_signal_ts(
+    *,
+    window_end: datetime,
+    last_signal_ts: datetime | None,
+) -> datetime:
+    if last_signal_ts is None:
+        return window_end
+    if last_signal_ts < window_end:
+        return last_signal_ts
+    return window_end
 
 
 def _classify_activity_snapshot(
     *,
     runtime_ready: bool,
     snapshot: Mapping[str, Any],
+    effective_terminal_signal_ts: datetime,
 ) -> str:
+    cursor_at = _parse_optional_rfc3339_timestamp(_as_text(snapshot.get('cursor_at')))
     cursor_at_raw = snapshot.get('cursor_at')
     if not runtime_ready:
         return 'infra_not_active'
-    if cursor_at_raw is None:
-        return 'cursor_not_advancing'
     if _safe_int(snapshot.get('signal_rows')) <= 0:
         return 'signals_absent'
+    if cursor_at_raw is None or cursor_at is None:
+        return 'cursor_not_advancing'
+    if cursor_at < effective_terminal_signal_ts:
+        return 'cursor_stalled_before_terminal_signal'
     if _safe_int(snapshot.get('trade_decisions')) <= 0:
         return 'decisions_absent'
     if (
@@ -638,6 +743,71 @@ def _classify_activity_snapshot(
     ):
         return 'executions_absent'
     return 'success'
+
+
+def _activity_state(
+    *,
+    manifest: Mapping[str, Any],
+    runtime_verify: Mapping[str, Any],
+    snapshot: Mapping[str, Any],
+) -> dict[str, Any]:
+    start, end = _resolve_window_bounds(manifest)
+    runtime_ready = bool(runtime_verify.get('runtime_state') == 'ready')
+    last_signal_ts = _parse_optional_rfc3339_timestamp(_as_text(snapshot.get('last_signal_ts')))
+    last_price_ts = _parse_optional_rfc3339_timestamp(_as_text(snapshot.get('last_price_ts')))
+    cursor_at = _parse_optional_rfc3339_timestamp(_as_text(snapshot.get('cursor_at')))
+    effective_terminal_signal_ts = _effective_terminal_signal_ts(
+        window_end=end,
+        last_signal_ts=last_signal_ts,
+    )
+    trade_decisions = _safe_int(snapshot.get('trade_decisions'))
+    executions = _safe_int(snapshot.get('executions'))
+    execution_tca_metrics = _safe_int(snapshot.get('execution_tca_metrics'))
+    execution_order_events = _safe_int(snapshot.get('execution_order_events'))
+    thresholds_met = (
+        trade_decisions >= _safe_int(_as_mapping(manifest.get('monitor')).get('min_trade_decisions'), default=DEFAULT_RUN_MONITOR_MIN_DECISIONS)
+        and executions >= _safe_int(_as_mapping(manifest.get('monitor')).get('min_executions'), default=DEFAULT_RUN_MONITOR_MIN_EXECUTIONS)
+        and execution_tca_metrics >= _safe_int(
+            _as_mapping(manifest.get('monitor')).get('min_execution_tca_metrics'),
+            default=DEFAULT_RUN_MONITOR_MIN_TCA,
+        )
+        and execution_order_events >= _safe_int(
+            _as_mapping(manifest.get('monitor')).get('min_execution_order_events'),
+            default=DEFAULT_RUN_MONITOR_MIN_ORDER_EVENTS,
+        )
+    )
+    order_event_contract_met = executions <= 0 or execution_order_events > 0
+    terminal_reached = cursor_at is not None and cursor_at >= effective_terminal_signal_ts
+    classification = _classify_activity_snapshot(
+        runtime_ready=runtime_ready,
+        snapshot=snapshot,
+        effective_terminal_signal_ts=effective_terminal_signal_ts,
+    )
+    cursor_gap_seconds: float | None = None
+    if cursor_at is not None:
+        cursor_gap_seconds = max((effective_terminal_signal_ts - cursor_at).total_seconds(), 0.0)
+    terminal_reason = 'window_end_reached'
+    if last_signal_ts is not None and last_signal_ts < end:
+        terminal_reason = 'terminal_signal_reached'
+    return {
+        'window_start': start.isoformat(),
+        'window_end': end.isoformat(),
+        'effective_terminal_signal_ts': effective_terminal_signal_ts.isoformat(),
+        'last_signal_ts': last_signal_ts.isoformat() if last_signal_ts is not None else None,
+        'last_price_ts': last_price_ts.isoformat() if last_price_ts is not None else None,
+        'cursor_at': cursor_at.isoformat() if cursor_at is not None else None,
+        'cursor_gap_seconds': cursor_gap_seconds,
+        'thresholds_met': thresholds_met,
+        'order_event_contract_met': order_event_contract_met,
+        'terminal_reached': terminal_reached,
+        'activity_classification': classification,
+        'completion_reason': terminal_reason if terminal_reached else 'waiting_for_terminal_signal',
+        'dataset_alignment': (
+            'window_declared_beyond_dataset'
+            if last_signal_ts is not None and last_signal_ts < end
+            else 'window_aligned_with_dataset'
+        ),
+    }
 
 
 def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str, Any]:
@@ -916,19 +1086,18 @@ def _current_activity_report(
     clickhouse_config: Any,
     runtime_verify: Mapping[str, Any],
 ) -> dict[str, Any]:
-    start, end = _resolve_window_bounds(manifest)
     settings = _monitor_settings(manifest)
     snapshot = _monitor_snapshot(postgres_config)
     snapshot.update(_signal_snapshot(resources=resources, clickhouse_config=clickhouse_config))
-    classification = _classify_activity_snapshot(
-        runtime_ready=bool(runtime_verify.get('runtime_state') == 'ready'),
+    activity_state = _activity_state(
+        manifest=manifest,
+        runtime_verify=runtime_verify,
         snapshot=snapshot,
     )
+    classification = _as_text(activity_state.get('activity_classification')) or 'unknown'
     return {
         'status': 'ok' if classification == 'success' else 'degraded',
         'activity_classification': classification,
-        'window_start': start.isoformat(),
-        'window_end': end.isoformat(),
         'monitor': settings,
         'poll_count': 1,
         'final_snapshot': {
@@ -936,6 +1105,7 @@ def _current_activity_report(
             **snapshot,
         },
         'polls': [],
+        **activity_state,
     }
 
 
@@ -947,31 +1117,34 @@ def _monitor_run_completion(
     clickhouse_config: Any,
     runtime_verify: Mapping[str, Any],
 ) -> dict[str, Any]:
-    start, end = _resolve_window_bounds(manifest)
     settings = _monitor_settings(manifest)
-    deadline = datetime.now(timezone.utc) + timedelta(seconds=settings['timeout_seconds'])
+    timeout_seconds = _safe_int(settings.get('timeout_seconds'), default=DEFAULT_RUN_MONITOR_TIMEOUT_SECONDS)
+    poll_seconds = _safe_int(settings.get('poll_seconds'), default=DEFAULT_RUN_MONITOR_POLL_SECONDS)
+    cursor_grace_seconds = _safe_int(
+        settings.get('cursor_grace_seconds'),
+        default=DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS,
+    )
+    deadline = datetime.now(timezone.utc) + timedelta(seconds=timeout_seconds)
     polls: list[dict[str, Any]] = []
     cursor_reached_at: datetime | None = None
-    runtime_ready = bool(runtime_verify.get('runtime_state') == 'ready')
     while True:
         snapshot = _monitor_snapshot(postgres_config)
         snapshot.update(_signal_snapshot(resources=resources, clickhouse_config=clickhouse_config))
         polled_at = datetime.now(timezone.utc)
         poll_payload = {'polled_at': polled_at.isoformat(), **snapshot}
         polls.append(poll_payload)
-        cursor_at_raw = snapshot.get('cursor_at')
-        cursor_at = _parse_rfc3339_timestamp(cast(str | None, cursor_at_raw), label='cursor_at') if isinstance(cursor_at_raw, str) else None
-        cursor_reached = cursor_at is not None and cursor_at >= end
-        thresholds_met = (
-            _safe_int(snapshot.get('trade_decisions')) >= settings['min_trade_decisions']
-            and _safe_int(snapshot.get('executions')) >= settings['min_executions']
-            and _safe_int(snapshot.get('execution_tca_metrics')) >= settings['min_execution_tca_metrics']
-            and _safe_int(snapshot.get('execution_order_events')) >= settings['min_execution_order_events']
+        activity_state = _activity_state(
+            manifest=manifest,
+            runtime_verify=runtime_verify,
+            snapshot=snapshot,
         )
-        executions = _safe_int(snapshot.get('executions'))
-        order_events = _safe_int(snapshot.get('execution_order_events'))
-        order_event_contract_met = executions <= 0 or order_events > 0
-        completion_ready = thresholds_met and order_event_contract_met
+        effective_terminal_signal_ts = _parse_rfc3339_timestamp(
+            _as_text(activity_state.get('effective_terminal_signal_ts')),
+            label='effective_terminal_signal_ts',
+        )
+        cursor_at = _parse_optional_rfc3339_timestamp(_as_text(activity_state.get('cursor_at')))
+        cursor_reached = cursor_at is not None and cursor_at >= effective_terminal_signal_ts
+        completion_ready = bool(activity_state.get('thresholds_met')) and bool(activity_state.get('order_event_contract_met'))
 
         if cursor_reached and cursor_reached_at is None:
             cursor_reached_at = polled_at
@@ -979,30 +1152,28 @@ def _monitor_run_completion(
             return {
                 'status': 'ok',
                 'activity_classification': 'success',
-                'window_start': start.isoformat(),
-                'window_end': end.isoformat(),
                 'monitor': settings,
                 'poll_count': len(polls),
                 'final_snapshot': poll_payload,
                 'polls': polls[-20:],
+                **activity_state,
             }
         if polled_at >= deadline or (
             cursor_reached
             and cursor_reached_at is not None
-            and int((polled_at - cursor_reached_at).total_seconds()) >= settings['cursor_grace_seconds']
+            and int((polled_at - cursor_reached_at).total_seconds()) >= cursor_grace_seconds
         ):
-            classification = _classify_activity_snapshot(runtime_ready=runtime_ready, snapshot=snapshot)
+            classification = _as_text(activity_state.get('activity_classification')) or 'unknown'
             return {
                 'status': 'ok' if classification == 'success' else 'degraded',
                 'activity_classification': classification,
-                'window_start': start.isoformat(),
-                'window_end': end.isoformat(),
                 'monitor': settings,
                 'poll_count': len(polls),
                 'final_snapshot': poll_payload,
                 'polls': polls[-20:],
+                **activity_state,
             }
-        time.sleep(settings['poll_seconds'])
+        time.sleep(poll_seconds)
 
 
 def _verify_isolation_guards(

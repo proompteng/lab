@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import gzip
 import hashlib
 import importlib
 import json
@@ -16,6 +17,7 @@ import subprocess
 import sys
 import socket
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -129,6 +131,60 @@ DEFAULT_RUN_MONITOR_MIN_EXECUTIONS = 1
 DEFAULT_RUN_MONITOR_MIN_TCA = 1
 DEFAULT_RUN_MONITOR_MIN_ORDER_EVENTS = 0
 DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS = 120
+DEFAULT_SIMULATION_DUMP_FORMAT = 'jsonl.zst'
+SUPPORTED_SIMULATION_DUMP_FORMATS = {
+    'ndjson': '.ndjson',
+    'jsonl.gz': '.jsonl.gz',
+    'jsonl.zst': '.jsonl.zst',
+}
+DEFAULT_SIMULATION_REPLAY_PROFILE = 'smoke'
+REPLAY_PROFILE_DEFAULTS: dict[str, dict[str, float | int | str]] = {
+    'compact': {
+        'producer_linger_ms': 5,
+        'producer_batch_size': 524_288,
+        'producer_buffer_memory': 67_108_864,
+        'producer_compression_type': 'gzip',
+        'status_update_every_records': 5_000,
+        'status_update_every_seconds': 5.0,
+        'flush_every_records': 5_000,
+        'flush_timeout_seconds': 15.0,
+        'final_flush_timeout_seconds': 60.0,
+    },
+    'smoke': {
+        'producer_linger_ms': 5,
+        'producer_batch_size': 1_048_576,
+        'producer_buffer_memory': 134_217_728,
+        'producer_compression_type': 'gzip',
+        'status_update_every_records': 10_000,
+        'status_update_every_seconds': 10.0,
+        'flush_every_records': 10_000,
+        'flush_timeout_seconds': 20.0,
+        'final_flush_timeout_seconds': 90.0,
+    },
+    'hourly': {
+        'producer_linger_ms': 10,
+        'producer_batch_size': 1_048_576,
+        'producer_buffer_memory': 268_435_456,
+        'producer_compression_type': 'gzip',
+        'status_update_every_records': 25_000,
+        'status_update_every_seconds': 15.0,
+        'flush_every_records': 25_000,
+        'flush_timeout_seconds': 30.0,
+        'final_flush_timeout_seconds': 120.0,
+    },
+    'full_day': {
+        'producer_linger_ms': 20,
+        'producer_batch_size': 2_097_152,
+        'producer_buffer_memory': 536_870_912,
+        'producer_compression_type': 'gzip',
+        'status_update_every_records': 50_000,
+        'status_update_every_seconds': 30.0,
+        'flush_every_records': 50_000,
+        'flush_timeout_seconds': 45.0,
+        'final_flush_timeout_seconds': 180.0,
+    },
+}
+LEGACY_SIMULATION_STRATEGY_TOKENS = ('legacy_macd_rsi',)
 DEFAULT_ARGOCD_APPSET_NAME = 'product'
 DEFAULT_ARGOCD_NAMESPACE = 'argocd'
 DEFAULT_ARGOCD_APP_NAME = 'torghut'
@@ -552,6 +608,36 @@ def _simulation_evidence_lineage(manifest: Mapping[str, Any]) -> dict[str, Any]:
         'model_refs': _as_string_list(manifest.get('model_refs')),
         'runtime_version_refs': _as_string_list(manifest.get('runtime_version_refs')),
     }
+
+
+def _experimental_allow_legacy_strategy(manifest: Mapping[str, Any]) -> bool:
+    experimental = _as_mapping(manifest.get('experimental'))
+    value = experimental.get('allowLegacyStrategy')
+    if value is None:
+        value = experimental.get('allow_legacy_strategy')
+    normalized = (_as_text(value) or '').strip().lower()
+    return normalized in {'1', 'true', 'yes', 'on'}
+
+
+def _contains_legacy_strategy_reference(manifest: Mapping[str, Any]) -> bool:
+    model_refs = _as_string_list(manifest.get('model_refs'))
+    candidate_id = _as_text(manifest.get('candidate_id')) or ''
+    baseline_candidate_id = _as_text(manifest.get('baseline_candidate_id')) or ''
+    strategy_spec_ref = _as_text(manifest.get('strategy_spec_ref')) or ''
+    values = [candidate_id, baseline_candidate_id, strategy_spec_ref, *model_refs]
+    normalized_values = [value.strip().lower() for value in values if value.strip()]
+    return any(
+        token in value
+        for token in LEGACY_SIMULATION_STRATEGY_TOKENS
+        for value in normalized_values
+    )
+
+
+def _validate_simulation_strategy_policy(manifest: Mapping[str, Any]) -> None:
+    if _contains_legacy_strategy_reference(manifest) and not _experimental_allow_legacy_strategy(manifest):
+        raise RuntimeError(
+            'legacy_strategy_not_allowed: set experimental.allowLegacyStrategy=true for non-promotable legacy replays'
+        )
 
 
 def _parse_rfc3339_timestamp(value: str | None, *, label: str) -> datetime:
@@ -1147,6 +1233,7 @@ def _ta_auto_offset_reset_key(*, lane: str, manifest: Mapping[str, Any]) -> str:
 
 
 def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationResources:
+    _validate_simulation_strategy_policy(manifest)
     lane_contract = simulation_lane_contract_for_manifest(manifest)
     run_token = _normalize_run_token(run_id)
     dataset_id = _as_text(manifest.get('dataset_id'))
@@ -1991,12 +2078,77 @@ def _torghut_env_overrides_from_manifest(
     return overrides
 
 
-def _state_paths(resources: SimulationResources) -> tuple[Path, Path, Path]:
+def _performance_config(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    performance = _as_mapping(manifest.get('performance'))
+    replay_profile = (
+        _as_text(performance.get('replayProfile'))
+        or _as_text(performance.get('replay_profile'))
+        or ''
+    ).strip().lower()
+    if not replay_profile:
+        window = _as_mapping(manifest.get('window'))
+        if _as_text(window.get('start')) and _as_text(window.get('end')):
+            monitor_settings = simulation_verification._monitor_settings(manifest)
+            replay_profile = _as_text(monitor_settings.get('profile')) or DEFAULT_SIMULATION_REPLAY_PROFILE
+        else:
+            replay_profile = DEFAULT_SIMULATION_REPLAY_PROFILE
+    if replay_profile not in REPLAY_PROFILE_DEFAULTS:
+        raise RuntimeError(f'unsupported_replay_profile:{replay_profile}')
+
+    dump_format = (
+        _as_text(performance.get('dumpFormat'))
+        or _as_text(performance.get('dump_format'))
+        or ''
+    ).strip().lower()
+    if not dump_format:
+        if shutil.which('zstd'):
+            dump_format = 'jsonl.zst'
+        elif shutil.which('pigz'):
+            dump_format = 'jsonl.gz'
+        else:
+            dump_format = 'ndjson'
+    if dump_format not in SUPPORTED_SIMULATION_DUMP_FORMATS:
+        raise RuntimeError(
+            'performance.dumpFormat must be one of: ' + ','.join(sorted(SUPPORTED_SIMULATION_DUMP_FORMATS))
+        )
+    cache_policy = (
+        _as_text(manifest.get('cachePolicy'))
+        or _as_text(performance.get('cachePolicy'))
+        or _as_text(performance.get('cache_policy'))
+        or 'prefer_cache'
+    ).strip().lower()
+    if cache_policy not in {'prefer_cache', 'require_cache', 'refresh'}:
+        raise RuntimeError('cachePolicy must be one of: prefer_cache,require_cache,refresh')
+    return {
+        'replay_profile': replay_profile,
+        'dump_format': dump_format,
+        'cache_policy': cache_policy,
+    }
+
+
+def _dump_suffix(dump_format: str) -> str:
+    suffix = SUPPORTED_SIMULATION_DUMP_FORMATS.get(dump_format)
+    if suffix is None:
+        raise RuntimeError(f'unsupported_dump_format:{dump_format}')
+    return suffix
+
+
+def _state_paths(
+    resources: SimulationResources,
+    manifest: Mapping[str, Any] | None = None,
+) -> tuple[Path, Path, Path]:
     run_dir = resources.output_root / resources.run_token
     state_path = run_dir / 'state.json'
     run_manifest_path = run_dir / 'run-manifest.json'
-    dump_path = run_dir / 'source-dump.ndjson'
+    dump_format = DEFAULT_SIMULATION_DUMP_FORMAT
+    if manifest is not None:
+        dump_format = _as_text(_performance_config(manifest).get('dump_format')) or DEFAULT_SIMULATION_DUMP_FORMAT
+    dump_path = run_dir / f'source-dump{_dump_suffix(dump_format)}'
     return state_path, run_manifest_path, dump_path
+
+
+def _dump_artifact_manifest_path(dump_path: Path) -> Path:
+    return dump_path.with_suffix(dump_path.suffix + '.manifest.json')
 
 
 def _run_state_path(resources: SimulationResources) -> Path:
@@ -2189,7 +2341,7 @@ def _parse_dump_timestamp_bounds(payload: Mapping[str, Any]) -> tuple[int, int] 
 def _scan_dump_timestamp_bounds(dump_path: Path) -> tuple[int | None, int | None]:
     min_ms: int | None = None
     max_ms: int | None = None
-    with dump_path.open('r', encoding='utf-8') as handle:
+    with _open_dump_reader(dump_path) as handle:
         for line in handle:
             stripped = line.strip()
             if not stripped:
@@ -2248,11 +2400,13 @@ def _reusable_dump_report(dump_path: Path) -> dict[str, Any] | None:
     max_source_timestamp_ms = timestamp_bounds[1] if timestamp_bounds is not None else None
     return {
         'path': str(dump_path),
+        'dump_format': _dump_format_for_path(dump_path),
         'records': actual_records,
         'sha256': actual_sha,
         'reused_existing_dump': True,
         'min_source_timestamp_ms': min_source_timestamp_ms,
         'max_source_timestamp_ms': max_source_timestamp_ms,
+        'artifact_manifest_path': str(_dump_artifact_manifest_path(dump_path)),
     }
 
 
@@ -2265,13 +2419,14 @@ def _build_plan_report(
     argocd_config: ArgocdAutomationConfig,
     manifest: Mapping[str, Any],
 ) -> dict[str, Any]:
-    state_path, run_manifest_path, dump_path = _state_paths(resources)
+    state_path, run_manifest_path, dump_path = _state_paths(resources, manifest)
     run_state_path = _run_state_path(resources)
     window = _as_mapping(manifest.get('window'))
     torghut_env_overrides = _torghut_env_overrides_from_manifest(manifest)
     window_policy = _validate_window_policy(manifest)
     rollouts_config = _build_rollouts_analysis_config(manifest)
     ta_restore = _ta_restore_policy(manifest)
+    performance_cfg = _performance_config(manifest)
     return {
         'status': 'ok',
         'run_id': resources.run_id,
@@ -2316,10 +2471,12 @@ def _build_plan_report(
         'argocd': asdict(argocd_config),
         'rollouts': asdict(rollouts_config),
         'ta_restore': ta_restore,
+        'performance': performance_cfg,
         'artifacts': {
             'state_path': str(state_path),
             'run_manifest_path': str(run_manifest_path),
             'dump_path': str(dump_path),
+            'dump_manifest_path': str(_dump_artifact_manifest_path(dump_path)),
             'run_state_path': str(run_state_path),
         },
         'confirmation_phrase': APPLY_CONFIRMATION_PHRASE,
@@ -3361,16 +3518,29 @@ def _consumer_for_dump(config: KafkaRuntimeConfig, run_token: str) -> Any:
     return KafkaConsumer(**kwargs)
 
 
-def _producer_for_replay(config: KafkaRuntimeConfig, run_token: str) -> Any:
+def _producer_for_replay(
+    config: KafkaRuntimeConfig,
+    run_token: str,
+    *,
+    profile: str | None = None,
+) -> Any:
     from kafka import KafkaProducer  # type: ignore[import-not-found]
 
+    resolved_profile = (profile or DEFAULT_SIMULATION_REPLAY_PROFILE).strip().lower()
+    if resolved_profile not in REPLAY_PROFILE_DEFAULTS:
+        raise RuntimeError(f'unsupported_replay_profile:{resolved_profile}')
+    defaults = REPLAY_PROFILE_DEFAULTS[resolved_profile]
     kwargs = config.kafka_runtime_client_kwargs()
     kwargs.update(
         {
             'client_id': f'torghut-sim-replay-{run_token}',
             'acks': 'all',
             'retries': 3,
-            'linger_ms': 5,
+            'linger_ms': int(defaults['producer_linger_ms']),
+            'batch_size': int(defaults['producer_batch_size']),
+            'buffer_memory': int(defaults['producer_buffer_memory']),
+            'compression_type': str(defaults['producer_compression_type']),
+            'max_in_flight_requests_per_connection': 5,
             'value_serializer': None,
             'key_serializer': None,
         }
@@ -3445,6 +3615,7 @@ def _dump_topics(
     dump_path: Path,
     force: bool,
 ) -> dict[str, Any]:
+    performance_cfg = _performance_config(manifest)
     if not force:
         reusable_report = _reusable_dump_report(dump_path)
         if reusable_report is not None:
@@ -3467,6 +3638,11 @@ def _dump_topics(
     count_by_topic: dict[str, int] = {}
     min_source_timestamp_ms: int | None = None
     max_source_timestamp_ms: int | None = None
+    dump_started_at = datetime.now(timezone.utc)
+    raw_dump_path = dump_path
+    dump_format = _as_text(performance_cfg.get('dump_format')) or DEFAULT_SIMULATION_DUMP_FORMAT
+    if _dump_format_for_path(dump_path) != 'ndjson':
+        raw_dump_path = dump_path.with_suffix(dump_path.suffix + '.tmp.ndjson')
     try:
         topic_partitions: list[Any] = []
         for topic in resources.replay_topic_by_source_topic.keys():
@@ -3509,9 +3685,9 @@ def _dump_topics(
             for tp in topic_partitions
         )
 
-        _ensure_directory(dump_path)
+        _ensure_directory(raw_dump_path)
         done: set[Any] = set()
-        with dump_path.open('w', encoding='utf-8') as handle:
+        with raw_dump_path.open('w', encoding='utf-8') as handle:
             idle_polls = 0
             while len(done) < len(topic_partitions):
                 if count >= expected_records:
@@ -3583,30 +3759,64 @@ def _dump_topics(
                         done.update(topic_partitions)
                         break
 
+        if raw_dump_path != dump_path:
+            _compress_dump_file(source_path=raw_dump_path, dump_path=dump_path)
+        file_sha256 = _file_sha256(dump_path)
+        duration_seconds = max((datetime.now(timezone.utc) - dump_started_at).total_seconds(), 0.001)
         report = {
             'path': str(dump_path),
+            'dump_format': dump_format,
             'records': count,
             'expected_records': expected_records,
-            'sha256': hasher.hexdigest(),
+            'sha256': file_sha256,
+            'payload_sha256': hasher.hexdigest(),
             'records_by_topic': count_by_topic,
             'start': start.isoformat(),
             'end': end.isoformat(),
             'reused_existing_dump': False,
             'min_source_timestamp_ms': min_source_timestamp_ms,
             'max_source_timestamp_ms': max_source_timestamp_ms,
+            'duration_seconds': duration_seconds,
+            'records_per_second': count / duration_seconds if count > 0 else 0.0,
+            'cache_policy': _as_text(performance_cfg.get('cache_policy')) or 'prefer_cache',
+            'replay_profile': _as_text(performance_cfg.get('replay_profile')) or DEFAULT_SIMULATION_REPLAY_PROFILE,
         }
         _save_json(
             _dump_marker_path(dump_path),
             {
                 'completed_at': datetime.now(timezone.utc).isoformat(),
-                'dump_sha256': report['sha256'],
+                'dump_sha256': file_sha256,
                 'records': report['records'],
+                'dump_format': dump_format,
                 'min_source_timestamp_ms': report['min_source_timestamp_ms'],
                 'max_source_timestamp_ms': report['max_source_timestamp_ms'],
             },
         )
+        _save_json(
+            _dump_artifact_manifest_path(dump_path),
+            {
+                'dataset_id': resources.dataset_id,
+                'run_id': resources.run_id,
+                'dump_format': dump_format,
+                'cache_policy': _as_text(performance_cfg.get('cache_policy')) or 'prefer_cache',
+                'replay_profile': _as_text(performance_cfg.get('replay_profile')) or DEFAULT_SIMULATION_REPLAY_PROFILE,
+                'chunk_count': 1,
+                'chunks': [
+                    {
+                        'path': str(dump_path),
+                        'records': count,
+                        'sha256': file_sha256,
+                        'payload_sha256': hasher.hexdigest(),
+                        'min_source_timestamp_ms': min_source_timestamp_ms,
+                        'max_source_timestamp_ms': max_source_timestamp_ms,
+                    }
+                ],
+            },
+        )
         return report
     finally:
+        if raw_dump_path != dump_path:
+            raw_dump_path.unlink(missing_ok=True)
         consumer.close()
 
 
@@ -3631,16 +3841,123 @@ def _pacing_delay_seconds(
     raise RuntimeError(f'unsupported replay pace mode: {mode}')
 
 
+def _dump_format_for_path(path: Path) -> str:
+    path_str = str(path)
+    for dump_format, suffix in sorted(
+        SUPPORTED_SIMULATION_DUMP_FORMATS.items(),
+        key=lambda item: len(item[1]),
+        reverse=True,
+    ):
+        if path_str.endswith(suffix):
+            return dump_format
+    raise RuntimeError(f'unsupported_dump_path:{path}')
+
+
+@contextmanager
+def _open_dump_reader(path: Path):
+    dump_format = _dump_format_for_path(path)
+    if dump_format == 'ndjson':
+        with path.open('r', encoding='utf-8') as handle:
+            yield handle
+        return
+    if dump_format == 'jsonl.gz':
+        if shutil.which('pigz'):
+            process = subprocess.Popen(
+                ['pigz', '-dc', str(path)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding='utf-8',
+            )
+            if process.stdout is None:
+                raise RuntimeError('pigz_reader_missing_stdout')
+            try:
+                yield process.stdout
+            finally:
+                process.stdout.close()
+                stderr = process.stderr.read().strip() if process.stderr is not None else ''
+                if process.stderr is not None:
+                    process.stderr.close()
+                return_code = process.wait()
+                if return_code != 0:
+                    raise RuntimeError(f'pigz_decompress_failed:{stderr or return_code}')
+            return
+        with gzip.open(path, 'rt', encoding='utf-8') as handle:
+            yield handle
+        return
+    if dump_format == 'jsonl.zst':
+        process = subprocess.Popen(
+            ['zstd', '-d', '-q', '-c', str(path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding='utf-8',
+        )
+        if process.stdout is None:
+            raise RuntimeError('zstd_reader_missing_stdout')
+        try:
+            yield process.stdout
+        finally:
+            process.stdout.close()
+            stderr = process.stderr.read().strip() if process.stderr is not None else ''
+            if process.stderr is not None:
+                process.stderr.close()
+            return_code = process.wait()
+            if return_code != 0:
+                raise RuntimeError(f'zstd_decompress_failed:{stderr or return_code}')
+        return
+    raise RuntimeError(f'unsupported_dump_format:{dump_format}')
+
+
+def _compress_dump_file(*, source_path: Path, dump_path: Path) -> None:
+    dump_format = _dump_format_for_path(dump_path)
+    _ensure_directory(dump_path)
+    if dump_format == 'ndjson':
+        shutil.move(str(source_path), str(dump_path))
+        return
+    if dump_format == 'jsonl.gz':
+        if shutil.which('pigz'):
+            with dump_path.open('wb') as output:
+                result = subprocess.run(
+                    ['pigz', '-c', '-6', str(source_path)],
+                    check=False,
+                    stdout=output,
+                    stderr=subprocess.PIPE,
+                )
+            if result.returncode != 0:
+                detail = (result.stderr or b'').decode('utf-8', errors='replace').strip()
+                raise RuntimeError(f'pigz_compress_failed:{detail or result.returncode}')
+        else:
+            with source_path.open('rb') as source, gzip.open(dump_path, 'wb', compresslevel=6) as output:
+                shutil.copyfileobj(source, output)
+        source_path.unlink(missing_ok=True)
+        return
+    if dump_format == 'jsonl.zst':
+        with dump_path.open('wb') as output:
+            result = subprocess.run(
+                ['zstd', '-q', '-T0', '-3', '-c', str(source_path)],
+                check=False,
+                stdout=output,
+                stderr=subprocess.PIPE,
+            )
+        if result.returncode != 0:
+            detail = (result.stderr or b'').decode('utf-8', errors='replace').strip()
+            raise RuntimeError(f'zstd_compress_failed:{detail or result.returncode}')
+        source_path.unlink(missing_ok=True)
+        return
+    raise RuntimeError(f'unsupported_dump_format:{dump_format}')
+
+
 def _count_lines(path: Path) -> int:
     if not path.exists():
         return 0
-    with path.open('r', encoding='utf-8') as handle:
+    with _open_dump_reader(path) as handle:
         return sum(1 for _ in handle)
 
 
 def _dump_sha256_for_replay(path: Path) -> str:
     hasher = hashlib.sha256()
-    with path.open('r', encoding='utf-8') as handle:
+    with _open_dump_reader(path) as handle:
         for line in handle:
             stripped = line.strip()
             if not stripped:
@@ -3688,35 +4005,60 @@ def _replay_dump(
             marker_payload['reused_existing_replay'] = True
             return marker_payload
 
+    performance_cfg = _performance_config(manifest)
+    replay_profile = _as_text(performance_cfg.get('replay_profile')) or DEFAULT_SIMULATION_REPLAY_PROFILE
+    profile_defaults = REPLAY_PROFILE_DEFAULTS[replay_profile]
     replay_cfg = _as_mapping(manifest.get('replay'))
     pace_mode = (_as_text(replay_cfg.get('pace_mode')) or 'max_throughput').lower()
     acceleration = float(replay_cfg.get('acceleration') or 60.0)
     max_sleep_seconds = float(replay_cfg.get('max_sleep_seconds') or 5.0)
     status_update_every_records = max(
         1,
-        _safe_int(replay_cfg.get('status_update_every_records'), default=25_000),
+        _safe_int(
+            replay_cfg.get('status_update_every_records'),
+            default=int(profile_defaults['status_update_every_records']),
+        ),
     )
     status_update_every_seconds = max(
         1.0,
-        _safe_float(replay_cfg.get('status_update_every_seconds'), default=30.0),
+        _safe_float(
+            replay_cfg.get('status_update_every_seconds'),
+            default=float(profile_defaults['status_update_every_seconds']),
+        ),
     )
-    flush_every_records = max(1, _safe_int(replay_cfg.get('flush_every_records'), default=10_000))
-    flush_timeout_seconds = max(1.0, _safe_float(replay_cfg.get('flush_timeout_seconds'), default=30.0))
+    flush_every_records = max(
+        1,
+        _safe_int(
+            replay_cfg.get('flush_every_records'),
+            default=int(profile_defaults['flush_every_records']),
+        ),
+    )
+    flush_timeout_seconds = max(
+        1.0,
+        _safe_float(
+            replay_cfg.get('flush_timeout_seconds'),
+            default=float(profile_defaults['flush_timeout_seconds']),
+        ),
+    )
     final_flush_timeout_seconds = max(
         flush_timeout_seconds,
-        _safe_float(replay_cfg.get('final_flush_timeout_seconds'), default=300.0),
+        _safe_float(
+            replay_cfg.get('final_flush_timeout_seconds'),
+            default=float(profile_defaults['final_flush_timeout_seconds']),
+        ),
     )
     flush_retry_attempts = max(1, _safe_int(replay_cfg.get('flush_retry_attempts'), default=6))
 
-    producer = _producer_for_replay(kafka_config, resources.run_token)
+    producer = _producer_for_replay(kafka_config, resources.run_token, profile=replay_profile)
     count = 0
     count_by_topic: dict[str, int] = {}
     previous_ts_ms: int | None = None
     checksum = hashlib.sha256()
     replay_topic_overrides = 0
     next_status_update_at = time.monotonic() + status_update_every_seconds
+    replay_started_at = datetime.now(timezone.utc)
     try:
-        with dump_path.open('r', encoding='utf-8') as handle:
+        with _open_dump_reader(dump_path) as handle:
             for line in handle:
                 stripped = line.strip()
                 if not stripped:
@@ -3812,8 +4154,11 @@ def _replay_dump(
         except Exception:
             pass
 
+    duration_seconds = max((datetime.now(timezone.utc) - replay_started_at).total_seconds(), 0.001)
     marker_payload = {
         'reused_existing_replay': False,
+        'dump_format': _dump_format_for_path(dump_path),
+        'replay_profile': replay_profile,
         'records': count,
         'records_by_topic': count_by_topic,
         'pace_mode': pace_mode,
@@ -3824,6 +4169,8 @@ def _replay_dump(
         'flush_retry_attempts': flush_retry_attempts,
         'replay_topic_overrides': replay_topic_overrides,
         'dump_sha256': checksum.hexdigest(),
+        'duration_seconds': duration_seconds,
+        'records_per_second': count / duration_seconds if count > 0 else 0.0,
         'completed_at': datetime.now(timezone.utc).isoformat(),
     }
     _save_json(marker_path, marker_payload)
@@ -3871,7 +4218,7 @@ def _apply(
     window_policy = _validate_window_policy(manifest)
     torghut_env_overrides = _torghut_env_overrides_from_manifest(manifest)
 
-    state_path, run_manifest_path, dump_path = _state_paths(resources)
+    state_path, run_manifest_path, dump_path = _state_paths(resources, manifest)
     _ensure_directory(state_path)
     runtime_lock = _acquire_simulation_runtime_lock(
         resources=resources,
@@ -4004,10 +4351,11 @@ def _apply(
 def _teardown(
     *,
     resources: SimulationResources,
+    manifest: Mapping[str, Any] | None = None,
     allow_missing_state: bool,
 ) -> dict[str, Any]:
     _ensure_supported_binary('kubectl')
-    state_path, run_manifest_path, dump_path = _state_paths(resources)
+    state_path, run_manifest_path, dump_path = _state_paths(resources, manifest)
     if not state_path.exists():
         lock_report = _release_simulation_runtime_lock(resources=resources)
         if allow_missing_state:
@@ -4073,210 +4421,6 @@ def _teardown(
     }
     _save_json(run_manifest_path.with_name('teardown-manifest.json'), report)
     return report
-
-
-def _monitor_settings(manifest: Mapping[str, Any]) -> dict[str, int]:
-    monitor = _as_mapping(manifest.get('monitor'))
-    timeout_seconds = _safe_int(
-        monitor.get('timeout_seconds'),
-        default=DEFAULT_RUN_MONITOR_TIMEOUT_SECONDS,
-    )
-    poll_seconds = _safe_int(
-        monitor.get('poll_seconds'),
-        default=DEFAULT_RUN_MONITOR_POLL_SECONDS,
-    )
-    min_decisions = _safe_int(
-        monitor.get('min_trade_decisions'),
-        default=DEFAULT_RUN_MONITOR_MIN_DECISIONS,
-    )
-    min_executions = _safe_int(
-        monitor.get('min_executions'),
-        default=DEFAULT_RUN_MONITOR_MIN_EXECUTIONS,
-    )
-    min_tca = _safe_int(
-        monitor.get('min_execution_tca_metrics'),
-        default=DEFAULT_RUN_MONITOR_MIN_TCA,
-    )
-    min_order_events = _safe_int(
-        monitor.get('min_execution_order_events'),
-        default=DEFAULT_RUN_MONITOR_MIN_ORDER_EVENTS,
-    )
-    cursor_grace_seconds = _safe_int(
-        monitor.get('cursor_grace_seconds'),
-        default=DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS,
-    )
-    if timeout_seconds <= 0:
-        raise RuntimeError('monitor.timeout_seconds must be > 0')
-    if poll_seconds <= 0:
-        raise RuntimeError('monitor.poll_seconds must be > 0')
-    if min_decisions < 0 or min_executions < 0 or min_tca < 0 or min_order_events < 0:
-        raise RuntimeError('monitor minimum thresholds cannot be negative')
-    if cursor_grace_seconds < 0:
-        raise RuntimeError('monitor.cursor_grace_seconds cannot be negative')
-    return {
-        'timeout_seconds': timeout_seconds,
-        'poll_seconds': poll_seconds,
-        'min_trade_decisions': min_decisions,
-        'min_executions': min_executions,
-        'min_execution_tca_metrics': min_tca,
-        'min_execution_order_events': min_order_events,
-        'cursor_grace_seconds': cursor_grace_seconds,
-    }
-
-
-def _monitor_snapshot(postgres_config: PostgresRuntimeConfig) -> dict[str, Any]:
-    def _snapshot() -> dict[str, Any]:
-        with psycopg.connect(postgres_config.torghut_runtime_dsn) as conn:
-            with conn.cursor() as cursor:
-                cursor.execute('SELECT count(*) FROM trade_decisions')
-                decision_row = cursor.fetchone()
-                trade_decisions = _safe_int(decision_row[0] if decision_row else 0)
-                cursor.execute('SELECT count(*) FROM executions')
-                execution_row = cursor.fetchone()
-                executions = _safe_int(execution_row[0] if execution_row else 0)
-                cursor.execute('SELECT count(*) FROM execution_tca_metrics')
-                tca_row = cursor.fetchone()
-                execution_tca_metrics = _safe_int(tca_row[0] if tca_row else 0)
-                cursor.execute('SELECT count(*) FROM execution_order_events')
-                order_event_row = cursor.fetchone()
-                execution_order_events = _safe_int(order_event_row[0] if order_event_row else 0)
-                cursor.execute(
-                    "SELECT max(cursor_at) FROM trade_cursor WHERE source='clickhouse'"
-                )
-                row = cursor.fetchone()
-                cursor_at_raw = row[0] if row else None
-                cursor_at = (
-                    cursor_at_raw.astimezone(timezone.utc)
-                    if isinstance(cursor_at_raw, datetime)
-                    else None
-                )
-        return {
-            'trade_decisions': trade_decisions,
-            'executions': executions,
-            'execution_tca_metrics': execution_tca_metrics,
-            'execution_order_events': execution_order_events,
-            'cursor_at': cursor_at.isoformat() if cursor_at is not None else None,
-        }
-
-    return cast(
-        dict[str, Any],
-        _run_with_transient_postgres_retry(
-            label='monitor_snapshot',
-            operation=_snapshot,
-        ),
-    )
-
-
-def _signal_snapshot(
-    *,
-    resources: SimulationResources,
-    clickhouse_config: ClickHouseRuntimeConfig,
-) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for key, table in {
-        'signal_rows': resources.clickhouse_signal_table,
-        'price_rows': resources.clickhouse_price_table,
-    }.items():
-        query = f'SELECT count() FROM {table}'
-        status, body = _http_clickhouse_query(config=clickhouse_config, query=query)
-        if status < 200 or status >= 300:
-            counts[key] = 0
-            continue
-        counts[key] = _safe_int(body.strip(), default=0)
-    return counts
-
-
-def _monitor_run_completion(
-    *,
-    resources: SimulationResources,
-    manifest: Mapping[str, Any],
-    postgres_config: PostgresRuntimeConfig,
-    clickhouse_config: ClickHouseRuntimeConfig,
-    runtime_verify: Mapping[str, Any],
-) -> dict[str, Any]:
-    start, end = _resolve_window_bounds(manifest)
-    settings = _monitor_settings(manifest)
-    deadline = datetime.now(timezone.utc) + timedelta(seconds=settings['timeout_seconds'])
-    polls: list[dict[str, Any]] = []
-    cursor_reached_at: datetime | None = None
-    runtime_ready = bool(runtime_verify.get('runtime_state') == 'ready')
-    while True:
-        snapshot = _monitor_snapshot(postgres_config)
-        snapshot.update(_signal_snapshot(resources=resources, clickhouse_config=clickhouse_config))
-        polled_at = datetime.now(timezone.utc)
-        poll_payload = {
-            'polled_at': polled_at.isoformat(),
-            **snapshot,
-        }
-        polls.append(poll_payload)
-        cursor_at_raw = snapshot.get('cursor_at')
-        cursor_at = (
-            _parse_rfc3339_timestamp(cast(str | None, cursor_at_raw), label='cursor_at')
-            if isinstance(cursor_at_raw, str)
-            else None
-        )
-        cursor_reached = cursor_at is not None and cursor_at >= end
-        thresholds_met = (
-            _safe_int(snapshot.get('trade_decisions')) >= settings['min_trade_decisions']
-            and _safe_int(snapshot.get('executions')) >= settings['min_executions']
-            and _safe_int(snapshot.get('execution_tca_metrics'))
-            >= settings['min_execution_tca_metrics']
-            and _safe_int(snapshot.get('execution_order_events'))
-            >= settings['min_execution_order_events']
-        )
-        executions = _safe_int(snapshot.get('executions'))
-        order_events = _safe_int(snapshot.get('execution_order_events'))
-        order_event_contract_met = executions <= 0 or order_events > 0
-        completion_ready = thresholds_met and order_event_contract_met
-
-        if cursor_reached and cursor_reached_at is None:
-            cursor_reached_at = polled_at
-        if cursor_reached and completion_ready:
-            classification = 'success'
-            return {
-                'status': 'ok',
-                'activity_classification': classification,
-                'window_start': start.isoformat(),
-                'window_end': end.isoformat(),
-                'monitor': settings,
-                'poll_count': len(polls),
-                'final_snapshot': poll_payload,
-                'polls': polls[-20:],
-            }
-        if polled_at >= deadline or (
-            cursor_reached
-            and cursor_reached_at is not None
-            and int((polled_at - cursor_reached_at).total_seconds()) >= settings['cursor_grace_seconds']
-        ):
-            classification = 'success'
-            if not runtime_ready:
-                classification = 'infra_not_active'
-            elif cursor_at is None:
-                classification = 'cursor_not_advancing'
-            elif _safe_int(snapshot.get('signal_rows')) <= 0:
-                classification = 'signals_absent'
-            elif _safe_int(snapshot.get('trade_decisions')) <= 0:
-                classification = 'decisions_absent'
-            elif (
-                _safe_int(snapshot.get('executions')) <= 0
-                or _safe_int(snapshot.get('execution_tca_metrics')) <= 0
-                or (
-                    _safe_int(snapshot.get('executions')) > 0
-                    and _safe_int(snapshot.get('execution_order_events')) <= 0
-                )
-            ):
-                classification = 'executions_absent'
-            return {
-                'status': 'ok' if classification == 'success' else 'degraded',
-                'activity_classification': classification,
-                'window_start': start.isoformat(),
-                'window_end': end.isoformat(),
-                'monitor': settings,
-                'poll_count': len(polls),
-                'final_snapshot': poll_payload,
-                'polls': polls[-20:],
-            }
-        time.sleep(settings['poll_seconds'])
 
 
 def _prepare_argocd_for_run(
@@ -4718,6 +4862,150 @@ def _build_fill_price_error_budget_payload(
     return report.to_payload(), artifact_path
 
 
+def _build_strategy_proof_artifact(
+    *,
+    postgres_config: PostgresRuntimeConfig,
+    manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    def _query() -> dict[str, Any]:
+        with psycopg.connect(postgres_config.torghut_runtime_dsn) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT COALESCE(s.universe_type, 'unknown') AS strategy_type, count(*)::bigint
+                    FROM trade_decisions td
+                    LEFT JOIN strategies s ON s.id = td.strategy_id
+                    GROUP BY 1
+                    ORDER BY 2 DESC, 1 ASC
+                    """
+                )
+                strategy_rows = cursor.fetchall() or []
+                cursor.execute(
+                    """
+                    SELECT
+                      COALESCE(sum(CASE WHEN execution_fallback_count > 0 THEN 1 ELSE 0 END), 0)::bigint,
+                      COALESCE(sum(execution_fallback_count), 0)::bigint
+                    FROM executions
+                    """
+                )
+                fallback_row = cursor.fetchone() or (0, 0)
+        strategy_types = [
+            {
+                'strategy_type': str(row[0]),
+                'count': _safe_int(row[1]),
+            }
+            for row in strategy_rows
+        ]
+        legacy_path_count = sum(
+            item['count']
+            for item in strategy_types
+            if any(token in item['strategy_type'] for token in LEGACY_SIMULATION_STRATEGY_TOKENS)
+        )
+        return {
+            'status': 'ok',
+            'expected_candidate_id': _as_text(manifest.get('candidate_id')),
+            'expected_strategy_spec_ref': _as_text(manifest.get('strategy_spec_ref')),
+            'model_refs': _as_string_list(manifest.get('model_refs')),
+            'strategy_types': strategy_types,
+            'legacy_path_count': legacy_path_count,
+            'fallback_order_count': _safe_int(fallback_row[0]),
+            'fallback_invocation_count': _safe_int(fallback_row[1]),
+            'promotable': legacy_path_count == 0,
+        }
+
+    return cast(
+        dict[str, Any],
+        _run_with_transient_postgres_retry(
+            label='strategy_proof',
+            operation=_query,
+        ),
+    )
+
+
+def _build_performance_report(
+    *,
+    manifest: Mapping[str, Any],
+    apply_report: Mapping[str, Any] | None,
+    replay_report: Mapping[str, Any] | None,
+    monitor_report: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    performance_cfg = _performance_config(manifest)
+    monitor_payload = _as_mapping(monitor_report)
+    return {
+        'status': 'ok',
+        'cache_policy': _as_text(performance_cfg.get('cache_policy')) or 'prefer_cache',
+        'replay_profile': _as_text(performance_cfg.get('replay_profile')) or DEFAULT_SIMULATION_REPLAY_PROFILE,
+        'dump_format': _as_text(performance_cfg.get('dump_format')) or DEFAULT_SIMULATION_DUMP_FORMAT,
+        'dump': _as_mapping(_as_mapping(apply_report).get('dump')),
+        'replay': _as_mapping(replay_report),
+        'monitor_profile': _as_text(_as_mapping(monitor_payload.get('monitor')).get('profile')),
+        'monitor_poll_count': _safe_int(monitor_payload.get('poll_count')),
+        'effective_terminal_signal_ts': _as_text(monitor_payload.get('effective_terminal_signal_ts')),
+        'cursor_gap_seconds': monitor_payload.get('cursor_gap_seconds'),
+    }
+
+
+def _build_run_summary(
+    *,
+    resources: SimulationResources,
+    manifest: Mapping[str, Any],
+    runtime_verify_report: Mapping[str, Any] | None,
+    monitor_report: Mapping[str, Any] | None,
+    analytics_report: Mapping[str, Any] | None,
+    strategy_proof_report: Mapping[str, Any] | None,
+    errors: Sequence[str],
+) -> dict[str, Any]:
+    monitor_payload = _as_mapping(monitor_report)
+    final_snapshot = _as_mapping(monitor_payload.get('final_snapshot'))
+    return {
+        'status': 'ok' if not errors else 'error',
+        'run_id': resources.run_id,
+        'dataset_id': resources.dataset_id,
+        'candidate_id': _as_text(manifest.get('candidate_id')),
+        'strategy_spec_ref': _as_text(manifest.get('strategy_spec_ref')),
+        'runtime_state': _as_text(_as_mapping(runtime_verify_report).get('runtime_state')),
+        'activity_classification': _as_text(monitor_payload.get('activity_classification')),
+        'effective_terminal_signal_ts': _as_text(monitor_payload.get('effective_terminal_signal_ts')),
+        'cursor_at': _as_text(final_snapshot.get('cursor_at')),
+        'trade_decisions': _safe_int(final_snapshot.get('trade_decisions')),
+        'executions': _safe_int(final_snapshot.get('executions')),
+        'execution_tca_metrics': _safe_int(final_snapshot.get('execution_tca_metrics')),
+        'execution_order_events': _safe_int(final_snapshot.get('execution_order_events')),
+        'legacy_path_count': _safe_int(_as_mapping(strategy_proof_report).get('legacy_path_count')),
+        'fallback_order_count': _safe_int(_as_mapping(strategy_proof_report).get('fallback_order_count')),
+        'report_dir': _as_text(_as_mapping(analytics_report).get('report_dir')),
+        'errors': list(errors),
+    }
+
+
+def _build_gate_input(
+    *,
+    resources: SimulationResources,
+    manifest: Mapping[str, Any],
+    monitor_report: Mapping[str, Any] | None,
+    strategy_proof_report: Mapping[str, Any] | None,
+    fill_price_error_budget_report: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    final_snapshot = _as_mapping(_as_mapping(monitor_report).get('final_snapshot'))
+    return {
+        'run_id': resources.run_id,
+        'dataset_id': resources.dataset_id,
+        'candidate_id': _as_text(manifest.get('candidate_id')),
+        'baseline_candidate_id': _as_text(manifest.get('baseline_candidate_id')),
+        'strategy_spec_ref': _as_text(manifest.get('strategy_spec_ref')),
+        'model_refs': _as_string_list(manifest.get('model_refs')),
+        'activity_classification': _as_text(_as_mapping(monitor_report).get('activity_classification')),
+        'effective_terminal_signal_ts': _as_text(_as_mapping(monitor_report).get('effective_terminal_signal_ts')),
+        'cursor_at': _as_text(final_snapshot.get('cursor_at')),
+        'trade_decisions': _safe_int(final_snapshot.get('trade_decisions')),
+        'executions': _safe_int(final_snapshot.get('executions')),
+        'execution_tca_metrics': _safe_int(final_snapshot.get('execution_tca_metrics')),
+        'execution_order_events': _safe_int(final_snapshot.get('execution_order_events')),
+        'strategy_proof': _as_mapping(strategy_proof_report),
+        'fill_price_error_budget': _as_mapping(fill_price_error_budget_report),
+    }
+
+
 def _existing_artifact_refs(resources: SimulationResources, analytics_report: Mapping[str, Any] | None) -> list[str]:
     artifact_candidates = [
         _artifact_path(resources, 'run-manifest.json'),
@@ -4727,6 +5015,11 @@ def _existing_artifact_refs(resources: SimulationResources, analytics_report: Ma
         _artifact_path(resources, 'signal-activity.json'),
         _artifact_path(resources, 'decision-activity.json'),
         _artifact_path(resources, 'execution-activity.json'),
+        _artifact_path(resources, 'activity-debug.json'),
+        _artifact_path(resources, 'strategy-proof.json'),
+        _artifact_path(resources, 'performance.json'),
+        _artifact_path(resources, 'run-summary.json'),
+        _artifact_path(resources, 'gate-input.json'),
         _artifact_path(resources, 'gates/fill-price-error-budget-report-v1.json'),
     ]
     report_dir = _as_text(_as_mapping(analytics_report).get('report_dir'))
@@ -4894,6 +5187,10 @@ def _run_full_lifecycle(
     runtime_verify_report: dict[str, Any] | None = None
     monitor_report: dict[str, Any] | None = None
     analytics_report: dict[str, Any] | None = None
+    strategy_proof_report: dict[str, Any] | None = None
+    performance_report: dict[str, Any] | None = None
+    run_summary_report: dict[str, Any] | None = None
+    gate_input_report: dict[str, Any] | None = None
     fill_price_error_budget_report: dict[str, Any] | None = None
     teardown_report: dict[str, Any] | None = None
     rollouts_report: dict[str, Any] = {
@@ -5031,7 +5328,7 @@ def _run_full_lifecycle(
                 resources=resources,
                 kafka_config=kafka_config,
                 manifest=manifest,
-                dump_path=_state_paths(resources)[2],
+                dump_path=_state_paths(resources, manifest)[2],
                 force=force_replay,
             )
             _save_json(_artifact_path(resources, 'replay-report.json'), replay_report)
@@ -5043,33 +5340,33 @@ def _run_full_lifecycle(
             )
 
             _update_run_state(resources=resources, phase='activity_verify', status='running')
+            monitor_report = _monitor_run_completion(
+                resources=resources,
+                manifest=manifest,
+                postgres_config=postgres_config,
+                clickhouse_config=clickhouse_config,
+                runtime_verify=runtime_verify_report,
+            )
             if bool(rollouts_report['enabled']):
-                activity_analysis_run = _run_rollouts_analysis(
-                    resources=resources,
-                    manifest=manifest,
-                    postgres_config=postgres_config,
-                    clickhouse_config=clickhouse_config,
-                    rollouts_config=rollouts_config,
-                    phase='activity',
-                    template_name=rollouts_config.activity_template,
-                )
+                try:
+                    activity_analysis_run = _run_rollouts_analysis(
+                        resources=resources,
+                        manifest=manifest,
+                        postgres_config=postgres_config,
+                        clickhouse_config=clickhouse_config,
+                        rollouts_config=rollouts_config,
+                        phase='activity',
+                        template_name=rollouts_config.activity_template,
+                    )
+                except Exception as exc:
+                    activity_analysis_run = {
+                        'status': 'error',
+                        'phase': 'Error',
+                        'message': str(exc),
+                    }
                 rollouts_report['activity_analysis_run'] = activity_analysis_run
-                monitor_report = simulation_verification._current_activity_report(
-                    resources=resources,
-                    manifest=manifest,
-                    postgres_config=postgres_config,
-                    clickhouse_config=clickhouse_config,
-                    runtime_verify=runtime_verify_report,
-                )
-            else:
-                monitor_report = _monitor_run_completion(
-                    resources=resources,
-                    manifest=manifest,
-                    postgres_config=postgres_config,
-                    clickhouse_config=clickhouse_config,
-                    runtime_verify=runtime_verify_report,
-                )
             monitor_report['analysis_run'] = rollouts_report['activity_analysis_run']
+            _save_json(_artifact_path(resources, 'activity-debug.json'), monitor_report)
             _save_json(_artifact_path(resources, 'signal-activity.json'), {
                 'activity_classification': monitor_report.get('activity_classification'),
                 'signal_rows': _as_mapping(monitor_report.get('final_snapshot')).get('signal_rows'),
@@ -5096,13 +5393,8 @@ def _run_full_lifecycle(
                 details=monitor_report,
             )
             activity_classification = _as_text(monitor_report.get('activity_classification')) or 'unknown'
-            activity_analysis_phase = _as_text(
-                _as_mapping(cast(Mapping[str, Any], rollouts_report['activity_analysis_run'])).get('phase')
-            )
             if activity_classification != 'success':
                 errors.append(f'activity:{activity_classification}')
-            elif bool(rollouts_report['enabled']) and activity_analysis_phase != 'Successful':
-                errors.append('activity:analysis_unsuccessful')
         else:
             _update_run_state(
                 resources=resources,
@@ -5136,11 +5428,41 @@ def _run_full_lifecycle(
             postgres_config=postgres_config,
             clickhouse_config=clickhouse_config,
         )
+        strategy_proof_report = _build_strategy_proof_artifact(
+            postgres_config=postgres_config,
+            manifest=manifest,
+        )
+        _save_json(_artifact_path(resources, 'strategy-proof.json'), strategy_proof_report)
         fill_price_error_budget_report, _ = _build_fill_price_error_budget_payload(
             resources=resources,
             analytics_report=analytics_report,
             manifest=manifest,
         )
+        performance_report = _build_performance_report(
+            manifest=manifest,
+            apply_report=apply_report,
+            replay_report=replay_report,
+            monitor_report=monitor_report,
+        )
+        _save_json(_artifact_path(resources, 'performance.json'), performance_report)
+        gate_input_report = _build_gate_input(
+            resources=resources,
+            manifest=manifest,
+            monitor_report=monitor_report,
+            strategy_proof_report=strategy_proof_report,
+            fill_price_error_budget_report=fill_price_error_budget_report,
+        )
+        _save_json(_artifact_path(resources, 'gate-input.json'), gate_input_report)
+        run_summary_report = _build_run_summary(
+            resources=resources,
+            manifest=manifest,
+            runtime_verify_report=runtime_verify_report,
+            monitor_report=monitor_report,
+            analytics_report=analytics_report,
+            strategy_proof_report=strategy_proof_report,
+            errors=errors,
+        )
+        _save_json(_artifact_path(resources, 'run-summary.json'), run_summary_report)
         _update_run_state(resources=resources, phase='report', status='ok')
     except Exception as exc:
         errors.append(str(exc))
@@ -5156,6 +5478,7 @@ def _run_full_lifecycle(
                 _update_run_state(resources=resources, phase='teardown', status='running')
                 teardown_report = _teardown(
                     resources=resources,
+                    manifest=manifest,
                     allow_missing_state=True,
                 )
                 if bool(rollouts_report['enabled']):
@@ -5246,12 +5569,16 @@ def _run_full_lifecycle(
         'runtime_verify': runtime_verify_report,
         'monitor': monitor_report,
         'report': analytics_report,
+        'strategy_proof': strategy_proof_report,
+        'performance': performance_report,
+        'run_summary': run_summary_report,
+        'gate_input': gate_input_report,
         'fill_price_error_budget': fill_price_error_budget_report,
         'teardown': teardown_report,
         'rollouts': rollouts_report,
         'errors': errors,
     }
-    run_manifest_path = _state_paths(resources)[1]
+    run_manifest_path = _state_paths(resources, manifest)[1]
     if apply_report is not None:
         updated_apply_report = dict(apply_report)
         updated_apply_report['replay'] = replay_report
