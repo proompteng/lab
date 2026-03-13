@@ -18,6 +18,8 @@ config:
 env:
   - name: OIDC_SCOPES
     value: 'openid profile email offline_access'
+  - name: OIDC_USE_ACCESS_TOKEN
+    value: 'true'
 ingress:
   enabled: true
   ingressClassName: tailscale

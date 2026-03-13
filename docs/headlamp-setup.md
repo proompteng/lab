@@ -83,6 +83,10 @@ Headlamp now derives the callback URL dynamically from the request host when `co
 is omitted, so the same deployment can complete OIDC flows on both the Tailscale hostname and the private
 `k8s.proompteng.ai` hostname.
 
+For OIDC-backed cluster watches, logs, exec, and port-forward websocket upgrades, keep
+`OIDC_USE_ACCESS_TOKEN=true` in the Headlamp deployment env. Without it, ordinary REST
+requests may work while websocket watches fail with `1006` and repeated `401` health checks.
+
 Commit and sync the Keycloak and Headlamp Argo CD apps.
 
 Recommended sync order:
@@ -170,6 +174,7 @@ Make sure the Keycloak groups mapper is configured so the `groups` claim is pres
 ## Troubleshooting
 
 - **401 Unauthorized**: kube-apiserver OIDC config missing or mismatched (issuer/client-id/CA).
+- **WebSocket watches fail (`1006`) or `/clusters/<name>/healthz` loops on 401**: make sure Headlamp is started with `OIDC_USE_ACCESS_TOKEN=true` so it can authenticate websocket upgrades for OIDC-backed clusters.
 - **403 Forbidden**: RBAC missing. Add/update `headlamp-oidc-rbac.yaml` and sync Argo CD.
 - **Redirect always goes to the Tailscale hostname**: the running Headlamp deployment still has a fixed `-oidc-callback-url`. Sync the updated Headlamp manifests so it can derive the callback from the request host.
 - **Sign-in gets stuck on `/auth?cluster=...`**: sync the `headlamp-auth-bridge` resources and the patched Tailscale Ingress. The bridge page forces the popup flow to hand control back to the main Headlamp window even if Headlamp misses the original storage-event handoff.
