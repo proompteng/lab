@@ -1,10 +1,10 @@
 dataset_id: torghut-smoke-open-30m-20260306
 dataset_snapshot_ref: torghut-smoke-open-30m-20260306
-candidate_id: legacy_macd_rsi@prod
-baseline_candidate_id: legacy_macd_rsi@baseline
-strategy_spec_ref: strategy-specs/legacy_macd_rsi@1.0.0.json
+candidate_id: intraday_tsmom_v1@prod
+baseline_candidate_id: intraday_tsmom_v1@baseline
+strategy_spec_ref: strategy-specs/intraday_tsmom_v1@1.1.0.json
 model_refs:
-  - rules/legacy_macd_rsi
+  - rules/intraday_tsmom_v1
 runtime_version_refs:
   - services/torghut@simulation
   - services/torghut-forecast@simulation
