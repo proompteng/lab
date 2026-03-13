@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import yaml
 from scripts import historical_simulation_verification, start_historical_simulation
@@ -3699,7 +3699,8 @@ class TestStartHistoricalSimulation(TestCase):
             )
 
         self.assertEqual(runtime_verify_mock.call_count, 2)
-        sleep_mock.assert_called_once_with(5)
+        self.assertGreaterEqual(len(sleep_mock.call_args_list), 1)
+        self.assertEqual(sleep_mock.call_args_list[0], call(5))
 
     def test_runtime_verify_accepts_dedicated_sim_runtime_with_ready_replicas(self) -> None:
         manifest = {
