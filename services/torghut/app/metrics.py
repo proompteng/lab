@@ -73,6 +73,20 @@ _SIMPLE_MAP_METRICS: dict[str, tuple[str, str, str, str, str]] = {
         "reason",
         "int",
     ),
+    "submission_block_total": (
+        "torghut_trading_submission_block_total",
+        "Count of blocked submissions by reason.",
+        "counter",
+        "reason",
+        "int",
+    ),
+    "decision_state_total": (
+        "torghut_trading_decision_state_total",
+        "Count of observed decision lifecycle states by status.",
+        "counter",
+        "status",
+        "int",
+    ),
     "feature_quality_reject_reason_total": (
         "torghut_trading_feature_quality_reject_reason_total",
         "Count of feature-quality rejection reasons.",
@@ -398,6 +412,10 @@ _SERVICE_LABEL_GAUGES: dict[str, tuple[str, str]] = {
     "universe_cache_age_seconds": (
         "torghut_trading_universe_cache_age_seconds",
         "Age of cached authoritative universe symbols in seconds.",
+    ),
+    "planned_decision_age_seconds": (
+        "torghut_trading_planned_decision_age_seconds",
+        "Age in seconds of the most recently observed planned decision.",
     ),
 }
 

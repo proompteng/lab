@@ -78,6 +78,7 @@ class TradingMetrics:
     planned_decisions_with_execution_total: int = 0
     planned_decisions_stale_total: int = 0
     planned_decisions_timeout_rejected_total: int = 0
+    planned_decision_age_seconds: int = 0
     reconcile_updates_total: int = 0
     llm_requests_total: int = 0
     llm_approve_total: int = 0
@@ -357,6 +358,12 @@ class TradingMetrics:
     decision_reject_reason_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
+    submission_block_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    decision_state_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
     qty_resolution_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
@@ -573,6 +580,27 @@ class TradingMetrics:
                 self.decision_reject_reason_total[normalized] = (
                     self.decision_reject_reason_total.get(normalized, 0) + 1
                 )
+
+    def record_submission_block(self, reasons: Sequence[str] | str) -> None:
+        raw_reasons = [reasons] if isinstance(reasons, str) else list(reasons)
+        for reason in raw_reasons:
+            reason_parts = _split_reason_codes(reason)
+            if not reason_parts:
+                reason_parts = [_normalize_reason_metric(reason)]
+            for reason_part in reason_parts:
+                normalized = _normalize_reason_metric(reason_part)
+                self.submission_block_total[normalized] = (
+                    self.submission_block_total.get(normalized, 0) + 1
+                )
+
+    def record_decision_state(self, status: str | None) -> None:
+        normalized = _normalize_reason_metric(status)
+        self.decision_state_total[normalized] = (
+            self.decision_state_total.get(normalized, 0) + 1
+        )
+
+    def observe_planned_decision_age(self, age_seconds: int | float) -> None:
+        self.planned_decision_age_seconds = max(0, int(age_seconds))
 
     def record_feature_quality_rejection(self, reasons: Sequence[str]) -> None:
         for reason in reasons:

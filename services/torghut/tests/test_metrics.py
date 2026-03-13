@@ -218,6 +218,27 @@ class TestTradingMetrics(TestCase):
         self.assertIn("torghut_trading_execution_clean_ratio 0.8", payload)
         self.assertIn("torghut_trading_execution_reject_ratio 0.2", payload)
 
+    def test_submission_block_and_decision_state_metrics_are_exported(self) -> None:
+        metrics = TradingMetrics()
+        metrics.record_submission_block("capital_stage_shadow")
+        metrics.record_decision_state("blocked")
+        metrics.observe_planned_decision_age(17)
+
+        payload = render_trading_metrics(metrics.__dict__)
+
+        self.assertIn(
+            'torghut_trading_submission_block_total{reason="capital_stage_shadow"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_decision_state_total{status="blocked"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_planned_decision_age_seconds{service="torghut"} 17',
+            payload,
+        )
+
     def test_committee_metrics_are_exported(self) -> None:
         metrics = TradingMetrics()
         metrics.record_llm_committee_member(

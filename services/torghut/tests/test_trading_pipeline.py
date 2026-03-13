@@ -496,16 +496,56 @@ class TestTradingPipeline(TestCase):
         )
         from app import config
 
-        self._original_llm_enabled = config.settings.llm_enabled
-        self._original_kill_switch = config.settings.trading_kill_switch_enabled
+        self._settings_snapshot = {
+            name: getattr(config.settings, name)
+            for name in (
+                "trading_enabled",
+                "trading_mode",
+                "trading_live_enabled",
+                "trading_autonomy_allow_live_promotion",
+                "trading_kill_switch_enabled",
+                "trading_universe_source",
+                "trading_static_symbols_raw",
+                "trading_feature_quality_enabled",
+                "trading_feature_max_staleness_ms",
+                "trading_execution_adapter",
+                "trading_allow_shorts",
+                "trading_fractional_equities_enabled",
+                "trading_market_context_fail_mode",
+                "llm_enabled",
+                "llm_min_confidence",
+                "llm_adjustment_allowed",
+                "llm_fail_mode",
+                "llm_fail_mode_enforcement",
+                "llm_abstain_fail_mode",
+                "llm_escalate_fail_mode",
+                "llm_quality_fail_mode",
+                "llm_fail_open_live_approved",
+                "llm_shadow_mode",
+                "llm_allowed_models_raw",
+                "llm_evaluation_report",
+                "llm_effective_challenge_id",
+                "llm_shadow_completed_at",
+                "llm_model_version_lock",
+                "llm_adjustment_approved",
+                "llm_dspy_runtime_mode",
+                "llm_dspy_artifact_hash",
+                "llm_dspy_program_name",
+                "llm_dspy_signature_version",
+                "llm_rollout_stage",
+                "llm_dspy_live_runtime_block_fail_mode",
+                "llm_dspy_live_runtime_block_qty_multiplier",
+                "jangar_base_url",
+            )
+        }
         config.settings.llm_enabled = False
         config.settings.trading_kill_switch_enabled = False
 
     def tearDown(self) -> None:
         from app import config
 
-        config.settings.llm_enabled = self._original_llm_enabled
-        config.settings.trading_kill_switch_enabled = self._original_kill_switch
+        for name, value in self._settings_snapshot.items():
+            setattr(config.settings, name, value)
 
     def test_pipeline_empty_signal_batch_commits_cursor(self) -> None:
         from app import config
@@ -624,6 +664,7 @@ class TestTradingPipeline(TestCase):
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
             "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "trading_feature_quality_enabled": config.settings.trading_feature_quality_enabled,
@@ -705,6 +746,9 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_autonomy_allow_live_promotion = original[
+                "trading_autonomy_allow_live_promotion"
+            ]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
             ]
@@ -725,6 +769,7 @@ class TestTradingPipeline(TestCase):
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
             "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "trading_feature_quality_enabled": config.settings.trading_feature_quality_enabled,
@@ -812,6 +857,9 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_autonomy_allow_live_promotion = original[
+                "trading_autonomy_allow_live_promotion"
+            ]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
             ]
@@ -835,6 +883,7 @@ class TestTradingPipeline(TestCase):
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
             "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "trading_feature_quality_enabled": config.settings.trading_feature_quality_enabled,
@@ -931,6 +980,9 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_autonomy_allow_live_promotion = original[
+                "trading_autonomy_allow_live_promotion"
+            ]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
             ]
@@ -947,7 +999,7 @@ class TestTradingPipeline(TestCase):
                 "trading_kill_switch_enabled"
             ]
 
-    def test_stale_planned_decision_is_force_rejected(self) -> None:
+    def test_stale_planned_decision_is_force_blocked(self) -> None:
         from app import config
 
         original_timeout = config.settings.trading_planned_decision_timeout_seconds
@@ -1009,19 +1061,25 @@ class TestTradingPipeline(TestCase):
                 self.assertIsNone(pending)
                 refreshed = session.get(TradeDecision, decision_row.id)
                 assert refreshed is not None
-                self.assertEqual(refreshed.status, "rejected")
+                self.assertEqual(refreshed.status, "blocked")
                 decision_json = refreshed.decision_json
                 assert isinstance(decision_json, dict)
-                risk_reasons = decision_json.get("risk_reasons")
-                assert isinstance(risk_reasons, list)
-                self.assertTrue(
-                    any(
-                        str(reason).startswith("decision_timeout_unsubmitted:")
-                        for reason in risk_reasons
-                    )
+                self.assertEqual(
+                    decision_json.get("submission_block_reason"),
+                    "stale_planned_cleanup",
+                )
+                submission_block_atomic = decision_json.get("submission_block_atomic")
+                assert isinstance(submission_block_atomic, list)
+                self.assertIn("stale_planned_cleanup", submission_block_atomic)
+                self.assertEqual(
+                    decision_json.get("submission_stage"),
+                    "blocked_stale_planned_cleanup",
                 )
                 self.assertEqual(
-                    pipeline.state.metrics.planned_decisions_timeout_rejected_total, 1
+                    pipeline.state.metrics.submission_block_total.get(
+                        "stale_planned_cleanup"
+                    ),
+                    1,
                 )
                 self.assertEqual(
                     pipeline.state.metrics.planned_decisions_stale_total, 1
@@ -1128,6 +1186,121 @@ class TestTradingPipeline(TestCase):
                 original_load_cursor
             )
             time_source_module._TIME_SOURCE._cache_by_account.clear()
+
+    def test_live_shadow_stage_blocks_policy_approved_decision(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_autonomy_enabled": config.settings.trading_autonomy_enabled,
+            "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
+            "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_live_enabled = True
+        config.settings.trading_autonomy_enabled = False
+        config.settings.trading_autonomy_allow_live_promotion = False
+        config.settings.trading_kill_switch_enabled = False
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="shadow-stage",
+                    description="shadow stage block",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                timeframe="1Min",
+                payload={
+                    "macd": {"macd": 1.2, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+            )
+            alpaca_client = FakeAlpacaClient()
+            state = TradingState()
+            pipeline = TradingPipeline(
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
+                ingestor=FakeIngestor([signal]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=alpaca_client,
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=state,
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+
+            pipeline.run_once()
+
+            with self.session_local() as session:
+                decision_rows = session.execute(select(TradeDecision)).scalars().all()
+                self.assertEqual(len(decision_rows), 1)
+                decision_row = decision_rows[0]
+                self.assertEqual(decision_row.status, "blocked")
+                decision_json = decision_row.decision_json
+                assert isinstance(decision_json, dict)
+                self.assertEqual(
+                    decision_json.get("submission_block_reason"),
+                    "capital_stage_shadow",
+                )
+                self.assertEqual(
+                    decision_json.get("submission_stage"),
+                    "blocked_capital_stage_shadow",
+                )
+                control_plane_snapshot = decision_json.get("control_plane_snapshot")
+                assert isinstance(control_plane_snapshot, dict)
+                self.assertEqual(control_plane_snapshot.get("capital_stage"), "shadow")
+                self.assertEqual(
+                    control_plane_snapshot.get(
+                        "trading_autonomy_allow_live_promotion"
+                    ),
+                    False,
+                )
+
+            self.assertEqual(alpaca_client.submitted, [])
+            self.assertEqual(
+                state.metrics.submission_block_total.get("capital_stage_shadow"), 1
+            )
+            self.assertEqual(state.metrics.decision_state_total.get("blocked"), 1)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_autonomy_enabled = original[
+                "trading_autonomy_enabled"
+            ]
+            config.settings.trading_autonomy_allow_live_promotion = original[
+                "trading_autonomy_allow_live_promotion"
+            ]
+            config.settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
 
     def test_decision_engine_macd_rsi(self) -> None:
         engine = DecisionEngine()
@@ -4268,6 +4441,7 @@ class TestTradingPipeline(TestCase):
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
             "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "trading_reconcile_ms": config.settings.trading_reconcile_ms,
@@ -4329,6 +4503,9 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_autonomy_allow_live_promotion = original[
+                "trading_autonomy_allow_live_promotion"
+            ]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
             ]
@@ -4420,6 +4597,7 @@ class TestTradingPipeline(TestCase):
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
             "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
@@ -4541,6 +4719,7 @@ class TestTradingPipeline(TestCase):
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
             "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
@@ -4697,6 +4876,7 @@ class TestTradingPipeline(TestCase):
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
             "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
@@ -4799,6 +4979,7 @@ class TestTradingPipeline(TestCase):
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
             "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
@@ -4934,6 +5115,7 @@ class TestTradingPipeline(TestCase):
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
             "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
@@ -5051,6 +5233,7 @@ class TestTradingPipeline(TestCase):
 
             config.settings.trading_mode = "live"
             config.settings.trading_live_enabled = True
+            config.settings.trading_autonomy_allow_live_promotion = True
             live_signal = SignalEnvelope(
                 event_ts=datetime.now(timezone.utc),
                 symbol="AAPL",
@@ -5088,6 +5271,9 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_autonomy_allow_live_promotion = original[
+                "trading_autonomy_allow_live_promotion"
+            ]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
             ]
@@ -5161,6 +5347,7 @@ class TestTradingPipeline(TestCase):
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
             "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
@@ -5287,6 +5474,7 @@ class TestTradingPipeline(TestCase):
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
             "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
@@ -5311,6 +5499,7 @@ class TestTradingPipeline(TestCase):
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
         config.settings.trading_live_enabled = True
+        config.settings.trading_autonomy_allow_live_promotion = True
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
@@ -5391,6 +5580,9 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_autonomy_allow_live_promotion = original[
+                "trading_autonomy_allow_live_promotion"
+            ]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
             ]
@@ -5436,6 +5628,7 @@ class TestTradingPipeline(TestCase):
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
             "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
@@ -5463,6 +5656,7 @@ class TestTradingPipeline(TestCase):
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
         config.settings.trading_live_enabled = True
+        config.settings.trading_autonomy_allow_live_promotion = True
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
@@ -5537,6 +5731,9 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_autonomy_allow_live_promotion = original[
+                "trading_autonomy_allow_live_promotion"
+            ]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
             ]
@@ -5583,6 +5780,7 @@ class TestTradingPipeline(TestCase):
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
             "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
@@ -5606,6 +5804,7 @@ class TestTradingPipeline(TestCase):
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
         config.settings.trading_live_enabled = True
+        config.settings.trading_autonomy_allow_live_promotion = True
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
@@ -5683,6 +5882,9 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_autonomy_allow_live_promotion = original[
+                "trading_autonomy_allow_live_promotion"
+            ]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
             ]
@@ -5726,6 +5928,7 @@ class TestTradingPipeline(TestCase):
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
             "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
@@ -5749,6 +5952,7 @@ class TestTradingPipeline(TestCase):
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
         config.settings.trading_live_enabled = True
+        config.settings.trading_autonomy_allow_live_promotion = True
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
@@ -5831,6 +6035,9 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_autonomy_allow_live_promotion = original[
+                "trading_autonomy_allow_live_promotion"
+            ]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
             ]
@@ -6424,6 +6631,7 @@ class TestTradingPipeline(TestCase):
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
             "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
@@ -6450,6 +6658,7 @@ class TestTradingPipeline(TestCase):
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
         config.settings.trading_live_enabled = True
+        config.settings.trading_autonomy_allow_live_promotion = True
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
@@ -6535,6 +6744,9 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_autonomy_allow_live_promotion = original[
+                "trading_autonomy_allow_live_promotion"
+            ]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
             ]
@@ -6587,6 +6799,7 @@ class TestTradingPipeline(TestCase):
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
             "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_execution_adapter": config.settings.trading_execution_adapter,
             "trading_allow_shorts": config.settings.trading_allow_shorts,
             "trading_fractional_equities_enabled": config.settings.trading_fractional_equities_enabled,
@@ -6616,6 +6829,7 @@ class TestTradingPipeline(TestCase):
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
         config.settings.trading_live_enabled = True
+        config.settings.trading_autonomy_allow_live_promotion = True
         config.settings.trading_execution_adapter = "simulation"
         config.settings.trading_allow_shorts = True
         config.settings.trading_fractional_equities_enabled = True
@@ -6735,6 +6949,9 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_autonomy_allow_live_promotion = original[
+                "trading_autonomy_allow_live_promotion"
+            ]
             config.settings.trading_execution_adapter = original[
                 "trading_execution_adapter"
             ]
@@ -7368,8 +7585,12 @@ class TestTradingPipeline(TestCase):
             with self.session_local() as session:
                 decisions = session.execute(select(TradeDecision)).scalars().all()
                 executions = session.execute(select(Execution)).scalars().all()
-                self.assertEqual(decisions[0].status, "submitted")
-                self.assertEqual(len(executions), 1)
+                self.assertEqual(decisions[0].status, "blocked")
+                self.assertEqual(
+                    decisions[0].decision_json.get("submission_block_reason"),
+                    "capital_stage_shadow",
+                )
+                self.assertEqual(len(executions), 0)
                 self.assertEqual(pipeline.state.metrics.llm_fail_mode_override_total, 0)
                 self.assertEqual(
                     pipeline.state.metrics.llm_fail_mode_exception_total, 0
@@ -7511,8 +7732,12 @@ class TestTradingPipeline(TestCase):
                 policy_resolution = reviews[0].response_json.get("policy_resolution")
                 self.assertIsInstance(policy_resolution, dict)
                 # Stage1 rollout must stay shadow-only even when fail mode is configured as fail_closed.
-                self.assertEqual(decisions[0].status, "submitted")
-                self.assertEqual(len(executions), 1)
+                self.assertEqual(decisions[0].status, "blocked")
+                self.assertEqual(
+                    decisions[0].decision_json.get("submission_block_reason"),
+                    "capital_stage_shadow",
+                )
+                self.assertEqual(len(executions), 0)
                 self.assertEqual(
                     pipeline.state.metrics.llm_market_context_block_total, 1
                 )

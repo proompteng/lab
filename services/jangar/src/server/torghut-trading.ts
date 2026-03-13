@@ -34,12 +34,61 @@ export type TorghutRejectedDecisionRow = {
   strategyName: string
 }
 
+export type TorghutDecisionRow = {
+  id: string
+  createdAt: string
+  alpacaAccountLabel: string
+  symbol: string
+  timeframe: string
+  status: string
+  rationale: string | null
+  submissionBlockReason: string | null
+  submissionBlockAtomic: string[]
+  submissionStage: string | null
+  executionAdapterSelected: boolean
+  strategyId: string
+  strategyName: string
+}
+
 export type TorghutPositionSnapshotPoint = {
   asOf: string
   alpacaAccountLabel: string
   equity: number
   cash: number
   buyingPower: number
+}
+
+type SubmissionFunnel = {
+  generatedCount: number
+  blockedCount: number
+  submittedCount: number
+  filledCount: number
+  rejectedCount: number
+}
+
+type RuntimeProfitabilitySummary = {
+  available: boolean
+  schemaVersion: string | null
+  lookbackHours: number | null
+  decisionCount: number
+  executionCount: number
+  tcaSampleCount: number
+  realizedPnlProxyNotional: number | null
+  avgAbsSlippageBps: number | null
+  caveatCodes: string[]
+  error: string | null
+}
+
+type RuntimeControlPlaneSummary = {
+  available: boolean
+  activeRevision: string | null
+  capitalStage: string | null
+  capitalStageTotals: { stage: string; count: number }[]
+  criticalToggleParity: {
+    status: string | null
+    mismatches: string[]
+  }
+  error: string | null
 }
 
 const parseUuid = (value: string | null) => {
@@ -103,6 +152,195 @@ const classifyRejectClass = (decision: TorghutRejectedDecisionRow) => {
 
 const decisionReasonTokens = (decision: TorghutRejectedDecisionRow) =>
   decision.rejectReasonAtomic.length > 0 ? decision.rejectReasonAtomic : decision.riskReasons.flatMap(splitRiskReason)
+
+const TORGHUT_API_BASE_URL = (process.env.TORGHUT_API_BASE_URL ?? 'http://torghut.torghut.svc.cluster.local').replace(
+  /\/+$/,
+  '',
+)
+
+const SUBMITTED_DECISION_STATUSES = new Set(['submitted', 'filled', 'canceled', 'cancelled', 'expired'])
+const SUBMIT_ATTEMPT_DECISION_STAGES = new Set(['submit_requested', 'submitted', 'rejected_submit'])
+const STALE_PLANNED_THRESHOLD_MS = 60_000
+
+const countMapToSortedList = (counts: Map<string, number>, limit = 12) =>
+  [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([reason, count]) => ({ reason, count }))
+
+const toIsoString = (value: Date) => value.toISOString()
+
+const isSubmittedDecisionStatus = (status: string) => SUBMITTED_DECISION_STATUSES.has(status.trim().toLowerCase())
+
+const hasSubmitAttempt = (decision: TorghutDecisionRow) => {
+  const submissionStage = decision.submissionStage?.trim().toLowerCase() ?? ''
+  if (SUBMIT_ATTEMPT_DECISION_STAGES.has(submissionStage)) return true
+  if (isSubmittedDecisionStatus(decision.status)) return true
+  return decision.executionAdapterSelected
+}
+
+const summarizeDecisionLifecycle = (decisions: TorghutDecisionRow[], staleCutoffIso: string) => {
+  const blockedReasonCounts = new Map<string, number>()
+  const staleCutoff = Date.parse(staleCutoffIso)
+  let plannedCount = 0
+  let blockedCount = 0
+  let stalePlannedCount = 0
+  let executionSubmitAttempts = 0
+  let submittedCount = 0
+
+  for (const decision of decisions) {
+    const status = decision.status.trim().toLowerCase()
+    if (status === 'planned') {
+      plannedCount += 1
+      const createdAt = Date.parse(decision.createdAt)
+      if (Number.isFinite(createdAt) && Number.isFinite(staleCutoff) && createdAt <= staleCutoff) {
+        stalePlannedCount += 1
+      }
+    }
+    if (status === 'blocked') {
+      blockedCount += 1
+      const blockReasons =
+        decision.submissionBlockAtomic.length > 0
+          ? decision.submissionBlockAtomic
+          : decision.submissionBlockReason
+            ? [decision.submissionBlockReason]
+            : []
+      for (const reason of blockReasons) {
+        blockedReasonCounts.set(reason, (blockedReasonCounts.get(reason) ?? 0) + 1)
+      }
+    }
+    if (hasSubmitAttempt(decision)) executionSubmitAttempts += 1
+    if (isSubmittedDecisionStatus(status)) submittedCount += 1
+  }
+
+  return {
+    plannedCount,
+    blockedCount,
+    stalePlannedCount,
+    executionSubmitAttempts,
+    topBlockedReasons: countMapToSortedList(blockedReasonCounts, 8),
+    submissionFunnel: {
+      generatedCount: decisions.length,
+      blockedCount,
+      submittedCount,
+      filledCount: 0,
+      rejectedCount: decisions.filter((decision) => decision.status.trim().toLowerCase() === 'rejected').length,
+    } satisfies SubmissionFunnel,
+  }
+}
+
+const normalizeCapitalStageTotals = (value: unknown) => {
+  if (!value || typeof value !== 'object') return []
+  return Object.entries(value as Record<string, unknown>)
+    .map(([stage, count]) => ({ stage, count: Math.max(0, toNumber(count) ?? 0) }))
+    .sort((a, b) => b.count - a.count)
+}
+
+const parseRuntimeProfitabilitySummary = (payload: unknown): RuntimeProfitabilitySummary => {
+  if (!payload || typeof payload !== 'object') {
+    return {
+      available: false,
+      schemaVersion: null,
+      lookbackHours: null,
+      decisionCount: 0,
+      executionCount: 0,
+      tcaSampleCount: 0,
+      realizedPnlProxyNotional: null,
+      avgAbsSlippageBps: null,
+      caveatCodes: [],
+      error: 'invalid_profitability_payload',
+    }
+  }
+
+  const record = payload as Record<string, unknown>
+  const windowValue =
+    typeof record.window === 'object' && record.window !== null ? (record.window as Record<string, unknown>) : {}
+  const realizedSummary =
+    typeof record.realized_pnl_summary === 'object' && record.realized_pnl_summary !== null
+      ? (record.realized_pnl_summary as Record<string, unknown>)
+      : {}
+  const caveatCodes = Array.isArray(record.caveats)
+    ? record.caveats
+        .map((item) =>
+          item && typeof item === 'object' && 'code' in item && typeof item.code === 'string' ? item.code : null,
+        )
+        .filter((item): item is string => item !== null)
+    : []
+
+  return {
+    available: true,
+    schemaVersion: typeof record.schema_version === 'string' ? record.schema_version : null,
+    lookbackHours: Math.max(0, toNumber(windowValue.lookback_hours) ?? 0),
+    decisionCount: Math.max(0, toNumber(windowValue.decision_count) ?? 0),
+    executionCount: Math.max(0, toNumber(windowValue.execution_count) ?? 0),
+    tcaSampleCount: Math.max(0, toNumber(windowValue.tca_sample_count) ?? 0),
+    realizedPnlProxyNotional: toNumber(realizedSummary.realized_pnl_proxy_notional),
+    avgAbsSlippageBps: toNumber(realizedSummary.avg_abs_slippage_bps),
+    caveatCodes,
+    error: null,
+  }
+}
+
+const parseRuntimeControlPlaneSummary = (payload: unknown): RuntimeControlPlaneSummary => {
+  if (!payload || typeof payload !== 'object') {
+    return {
+      available: false,
+      activeRevision: null,
+      capitalStage: null,
+      capitalStageTotals: [],
+      criticalToggleParity: { status: null, mismatches: [] },
+      error: 'invalid_control_plane_payload',
+    }
+  }
+
+  const record = payload as Record<string, unknown>
+  const build =
+    typeof record.build === 'object' && record.build !== null ? (record.build as Record<string, unknown>) : {}
+  const shadowFirst =
+    typeof record.shadow_first === 'object' && record.shadow_first !== null
+      ? (record.shadow_first as Record<string, unknown>)
+      : {}
+  const parity =
+    typeof shadowFirst.critical_toggle_parity === 'object' && shadowFirst.critical_toggle_parity !== null
+      ? (shadowFirst.critical_toggle_parity as Record<string, unknown>)
+      : {}
+
+  return {
+    available: true,
+    activeRevision:
+      typeof build.active_revision === 'string'
+        ? build.active_revision
+        : typeof shadowFirst.active_revision === 'string'
+          ? shadowFirst.active_revision
+          : null,
+    capitalStage: typeof shadowFirst.capital_stage === 'string' ? shadowFirst.capital_stage : null,
+    capitalStageTotals: normalizeCapitalStageTotals(shadowFirst.capital_stage_totals),
+    criticalToggleParity: {
+      status: typeof parity.status === 'string' ? parity.status : null,
+      mismatches: Array.isArray(parity.mismatches)
+        ? parity.mismatches.filter((item): item is string => typeof item === 'string')
+        : [],
+    },
+    error: null,
+  }
+}
+
+const fetchTorghutJson = async (path: string) => {
+  const url = `${TORGHUT_API_BASE_URL}${path}`
+  try {
+    const response = await fetch(url, { headers: { accept: 'application/json' } })
+    if (!response.ok) {
+      const text = await response.text()
+      return { ok: false as const, error: `torghut_request_failed:${response.status}:${text.slice(0, 200)}` }
+    }
+    return { ok: true as const, payload: (await response.json()) as unknown }
+  } catch (error) {
+    return {
+      ok: false as const,
+      error: error instanceof Error ? error.message : 'torghut_request_failed',
+    }
+  }
+}
 
 export const listTorghutTradingStrategies = async (params: { pool: Pool; limit?: number }) => {
   const limit = Math.max(1, Math.min(params.limit ?? 200, 1000))
@@ -249,6 +487,60 @@ export const listTorghutTradingRejectedDecisions = async (params: {
   })) satisfies TorghutRejectedDecisionRow[]
 }
 
+export const listTorghutTradingDecisionRows = async (params: {
+  pool: Pool
+  startUtc: string
+  endUtc: string
+  strategyId?: string | null
+  limit?: number
+}) => {
+  const limit = Math.max(1, Math.min(params.limit ?? 5_000, 10_000))
+  const strategyId = params.strategyId ?? null
+
+  const result = await params.pool.query(
+    `
+      select
+        td.id::text as id,
+        td.created_at as created_at,
+        td.alpaca_account_label as alpaca_account_label,
+        td.symbol as symbol,
+        td.timeframe as timeframe,
+        td.status as status,
+        td.rationale as rationale,
+        td.decision_json->>'submission_block_reason' as submission_block_reason,
+        td.decision_json->'submission_block_atomic' as submission_block_atomic,
+        td.decision_json->>'submission_stage' as submission_stage,
+        case when td.decision_json->'params'->'execution_adapter' is null then false else true end as execution_adapter_selected,
+        s.id::text as strategy_id,
+        s.name as strategy_name
+      from trade_decisions td
+      join strategies s on s.id = td.strategy_id
+      where td.created_at >= $1
+        and td.created_at < $2
+        and ($3::uuid is null or s.id = $3::uuid)
+      order by td.created_at desc
+      limit $4
+    `,
+    [params.startUtc, params.endUtc, strategyId, limit],
+  )
+
+  return result.rows.map((row) => ({
+    id: String(row.id),
+    createdAt: new Date(row.created_at as string | Date).toISOString(),
+    alpacaAccountLabel: String(row.alpaca_account_label),
+    symbol: String(row.symbol),
+    timeframe: String(row.timeframe),
+    status: String(row.status),
+    rationale: row.rationale ? String(row.rationale) : null,
+    submissionBlockReason: row.submission_block_reason ? String(row.submission_block_reason) : null,
+    submissionBlockAtomic: coerceStringArray(row.submission_block_atomic),
+    submissionStage: row.submission_stage ? String(row.submission_stage) : null,
+    executionAdapterSelected: Boolean(row.execution_adapter_selected),
+    strategyId: String(row.strategy_id),
+    strategyName: String(row.strategy_name),
+  })) satisfies TorghutDecisionRow[]
+}
+
 export const listTorghutTradingPositionSnapshots = async (params: {
   pool: Pool
   startUtc: string
@@ -304,6 +596,15 @@ export type TorghutTradingSummary = {
     warnings: string[]
   }
   executions: { filledCount: number }
+  decisions: {
+    generatedCount: number
+    plannedCount: number
+    blockedCount: number
+    stalePlannedCount: number
+    executionSubmitAttempts: number
+    topBlockedReasons: { reason: string; count: number }[]
+    submissionFunnel: SubmissionFunnel
+  }
   rejections: {
     rejectedCount: number
     topReasons: { reason: string; count: number }[]
@@ -336,6 +637,10 @@ export type TorghutTradingSummary = {
       delta: number
       series: { ts: string; equity: number }[]
     }[]
+  }
+  runtime: {
+    profitability: RuntimeProfitabilitySummary
+    controlPlane: RuntimeControlPlaneSummary
   }
 }
 
@@ -462,7 +767,16 @@ export const buildTorghutTradingSummary = async (params: {
   strategyId?: string | null
 }) => {
   const strategyId = params.strategyId ?? null
-  const [executions, rejections, rollingRejections, strategies, snapshots] = await Promise.all([
+  const [
+    executions,
+    rejections,
+    rollingRejections,
+    strategies,
+    snapshots,
+    decisions,
+    profitabilityResult,
+    controlPlaneResult,
+  ] = await Promise.all([
     listTorghutTradingFilledExecutions({
       pool: params.pool,
       startUtc: params.interval.startUtc,
@@ -491,6 +805,15 @@ export const buildTorghutTradingSummary = async (params: {
       endUtc: params.interval.endUtc,
       limit: 25_000,
     }),
+    listTorghutTradingDecisionRows({
+      pool: params.pool,
+      startUtc: params.interval.startUtc,
+      endUtc: params.interval.endUtc,
+      strategyId,
+      limit: 5_000,
+    }),
+    fetchTorghutJson('/trading/profitability/runtime'),
+    fetchTorghutJson('/trading/status'),
   ])
 
   const selectedStrategyId = parseUuid(strategyId)
@@ -501,6 +824,35 @@ export const buildTorghutTradingSummary = async (params: {
     selectedStrategyId && selectedStrategyRow ? { id: selectedStrategyId, name: selectedStrategyRow.name } : null
 
   const pnl = computeRealizedPnlAverageCostLongOnly(executions)
+  const staleReferenceTime = Math.min(Date.parse(params.interval.endUtc), Date.now())
+  const staleCutoffIso = toIsoString(
+    new Date((Number.isFinite(staleReferenceTime) ? staleReferenceTime : Date.now()) - STALE_PLANNED_THRESHOLD_MS),
+  )
+  const decisionLifecycle = summarizeDecisionLifecycle(decisions, staleCutoffIso)
+  const runtimeProfitability: RuntimeProfitabilitySummary = profitabilityResult.ok
+    ? parseRuntimeProfitabilitySummary(profitabilityResult.payload)
+    : {
+        available: false,
+        schemaVersion: null,
+        lookbackHours: null,
+        decisionCount: 0,
+        executionCount: 0,
+        tcaSampleCount: 0,
+        realizedPnlProxyNotional: null,
+        avgAbsSlippageBps: null,
+        caveatCodes: [],
+        error: profitabilityResult.error,
+      }
+  const runtimeControlPlane: RuntimeControlPlaneSummary = controlPlaneResult.ok
+    ? parseRuntimeControlPlaneSummary(controlPlaneResult.payload)
+    : {
+        available: false,
+        activeRevision: null,
+        capitalStage: null,
+        capitalStageTotals: [],
+        criticalToggleParity: { status: null, mismatches: [] },
+        error: controlPlaneResult.error,
+      }
 
   const reasonsCount = new Map<string, number>()
   const classCounts = new Map<string, number>()
@@ -578,6 +930,19 @@ export const buildTorghutTradingSummary = async (params: {
       warnings: pnl.warnings,
     },
     executions: { filledCount: executions.length },
+    decisions: {
+      generatedCount: decisionLifecycle.submissionFunnel.generatedCount,
+      plannedCount: decisionLifecycle.plannedCount,
+      blockedCount: decisionLifecycle.blockedCount,
+      stalePlannedCount: decisionLifecycle.stalePlannedCount,
+      executionSubmitAttempts: decisionLifecycle.executionSubmitAttempts,
+      topBlockedReasons: decisionLifecycle.topBlockedReasons,
+      submissionFunnel: {
+        ...decisionLifecycle.submissionFunnel,
+        filledCount: executions.length,
+        rejectedCount: rejections.length,
+      },
+    },
     rejections: {
       rejectedCount: rejections.length,
       topReasons,
@@ -598,6 +963,10 @@ export const buildTorghutTradingSummary = async (params: {
       available: equityByAccount.length > 0,
       byAccount: equityByAccount,
     },
+    runtime: {
+      profitability: runtimeProfitability,
+      controlPlane: runtimeControlPlane,
+    },
   } satisfies TorghutTradingSummary
 }
 
@@ -614,4 +983,7 @@ export const __private = {
   classifyRejectClass,
   classifySessionByMarketTime,
   buildRolling5DayRejectionTrend,
+  summarizeDecisionLifecycle,
+  parseRuntimeProfitabilitySummary,
+  parseRuntimeControlPlaneSummary,
 }

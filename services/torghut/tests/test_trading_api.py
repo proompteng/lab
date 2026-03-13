@@ -1462,6 +1462,8 @@ class TestTradingApi(TestCase):
         self.assertIn("hypotheses", payload)
         self.assertIn("llm_evaluation", payload)
         self.assertIn("control_plane_contract", payload)
+        self.assertIn("build", payload)
+        self.assertIn("shadow_first", payload)
         self.assertIn("forecast_service", payload)
         self.assertIn("lean_authority", payload)
         self.assertIn("empirical_jobs", payload)
@@ -1481,6 +1483,9 @@ class TestTradingApi(TestCase):
         self.assertIn("signal_continuity_alert_active", control_plane_contract)
         self.assertIn("signal_continuity_promotion_block_total", control_plane_contract)
         self.assertIn("signal_expected_staleness_total", control_plane_contract)
+        self.assertIn("submission_block_total", control_plane_contract)
+        self.assertIn("decision_state_total", control_plane_contract)
+        self.assertIn("planned_decision_age_seconds", control_plane_contract)
         self.assertIn("market_session_open", control_plane_contract)
         self.assertIn("universe_fail_safe_blocked", control_plane_contract)
         self.assertIn("domain_telemetry_event_total", control_plane_contract)
@@ -1488,6 +1493,13 @@ class TestTradingApi(TestCase):
         self.assertEqual(control_plane_contract["alpha_readiness_hypotheses_total"], 3)
         self.assertEqual(control_plane_contract["alpha_readiness_blocked_total"], 1)
         self.assertEqual(control_plane_contract["alpha_readiness_shadow_total"], 2)
+        self.assertIn(control_plane_contract["active_capital_stage"], {"shadow", None})
+        self.assertIn("critical_toggle_parity", control_plane_contract)
+        self.assertIn(payload["shadow_first"]["critical_toggle_parity"]["status"], {"aligned", "diverged"})
+        self.assertEqual(
+            payload["build"]["active_revision"],
+            control_plane_contract["active_revision"],
+        )
         self.assertEqual(
             control_plane_contract["alpha_readiness_dependency_quorum_decision"],
             "unknown",
@@ -1578,6 +1590,8 @@ class TestTradingApi(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertIn("control_plane_contract", payload)
+        self.assertIn("build", payload)
+        self.assertIn("shadow_first", payload)
         self.assertEqual(
             payload["control_plane_contract"]["contract_version"],
             "torghut.quant-producer.v1",
@@ -1591,6 +1605,8 @@ class TestTradingApi(TestCase):
         self.assertEqual(
             payload["control_plane_contract"]["alpha_readiness_shadow_total"], 2
         )
+        self.assertIn("critical_toggle_parity", payload["control_plane_contract"])
+        self.assertIn("active_revision", payload["build"])
 
     def test_trading_status_and_metrics_expose_execution_advisor_counters(self) -> None:
         original_scheduler = getattr(app.state, "trading_scheduler", None)

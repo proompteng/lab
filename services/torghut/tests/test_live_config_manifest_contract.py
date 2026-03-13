@@ -8,9 +8,25 @@ from yaml import safe_load
 
 from app.config import Settings
 
+_CRITICAL_TRADING_TOGGLE_KEYS = {
+    "TRADING_ENABLED",
+    "TRADING_AUTONOMY_ENABLED",
+    "TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION",
+    "TRADING_KILL_SWITCH_ENABLED",
+    "TRADING_MODE",
+    "TRADING_EXECUTION_ADAPTER_POLICY",
+}
+
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
+
+
+def _manifest_bool(env: dict[str, object], key: str) -> bool:
+    raw = env.get(key)
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() == "true"
 
 
 def _load_torghut_knative_env() -> dict[str, object]:
@@ -42,6 +58,21 @@ def _load_torghut_knative_env() -> dict[str, object]:
             raw_value = item["value"]
             env[name] = raw_value if isinstance(raw_value, str) else str(raw_value)
     return env
+
+
+def _load_torghut_autonomy_config_env() -> dict[str, object]:
+    manifest_path = (
+        _repo_root() / "argocd" / "applications" / "torghut" / "autonomy-configmap.yaml"
+    )
+    manifest = safe_load(manifest_path.read_text(encoding="utf-8"))
+    data = manifest.get("data")
+    if not isinstance(data, dict):
+        raise AssertionError("autonomy-configmap.yaml missing data map")
+    return {
+        str(name): value if isinstance(value, str) else str(value)
+        for name, value in data.items()
+        if isinstance(name, str)
+    }
 
 
 def _load_torghut_lean_runner_env() -> dict[str, object]:
@@ -174,6 +205,30 @@ class TestLiveConfigManifestContract(TestCase):
         cutover_allowed, cutover_reasons = settings.llm_dspy_cutover_migration_guard()
         self.assertTrue(cutover_allowed)
         self.assertEqual(cutover_reasons, ())
+
+    def test_critical_live_toggles_have_single_gitops_source(self) -> None:
+        knative_env = _load_torghut_knative_env()
+        autonomy_env = _load_torghut_autonomy_config_env()
+        duplicated = sorted(
+            _CRITICAL_TRADING_TOGGLE_KEYS.intersection(knative_env).intersection(
+                autonomy_env
+            )
+        )
+        self.assertEqual(duplicated, [])
+
+    def test_manifest_shadow_first_profile_is_enforced(self) -> None:
+        env = {
+            **_load_torghut_autonomy_config_env(),
+            **_load_torghut_knative_env(),
+        }
+        self.assertTrue(_manifest_bool(env, "TRADING_ENABLED"))
+        self.assertEqual(env.get("TRADING_MODE"), "live")
+        self.assertFalse(_manifest_bool(env, "TRADING_AUTONOMY_ENABLED"))
+        self.assertFalse(
+            _manifest_bool(env, "TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION")
+        )
+        self.assertFalse(_manifest_bool(env, "TRADING_KILL_SWITCH_ENABLED"))
+        self.assertEqual(env.get("TRADING_EXECUTION_ADAPTER_POLICY"), "all")
 
     def test_manifest_rollout_toggles_disable_execution_advisor(self) -> None:
         knative_env = _load_torghut_knative_env()
