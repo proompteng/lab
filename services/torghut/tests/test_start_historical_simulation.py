@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -720,6 +721,70 @@ class TestStartHistoricalSimulation(TestCase):
                 ),
             ],
         )
+
+    def test_seed_simulation_trade_cursor_includes_primary_key(self) -> None:
+        config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_default',
+            simulation_db='torghut_sim_default',
+            migrations_command='/opt/venv/bin/alembic upgrade heads',
+        )
+        manifest = {
+            'window': {
+                'start': '2026-03-11T13:30:00Z',
+                'end': '2026-03-11T13:45:00Z',
+            }
+        }
+        statements: list[tuple[object, object | None]] = []
+
+        class _FakeCursor:
+            def __enter__(self) -> _FakeCursor:
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                _ = (exc_type, exc, tb)
+                return False
+
+            def execute(self, statement: object, params: object | None = None) -> None:
+                statements.append((statement, params))
+
+        class _FakeConnection:
+            def __enter__(self) -> _FakeConnection:
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                _ = (exc_type, exc, tb)
+                return False
+
+            def cursor(self) -> _FakeCursor:
+                return _FakeCursor()
+
+        def _fake_retry(*, label: str, operation: object, attempts: int = 8, sleep_seconds: float = 0.5) -> None:
+            _ = (label, attempts, sleep_seconds)
+            return operation()
+
+        with (
+            patch('scripts.start_historical_simulation.psycopg.connect', return_value=_FakeConnection()),
+            patch(
+                'scripts.start_historical_simulation._run_with_transient_postgres_retry',
+                side_effect=_fake_retry,
+            ),
+        ):
+            seeded_at = start_historical_simulation._seed_simulation_trade_cursor(
+                config=config,
+                manifest=manifest,
+            )
+
+        self.assertEqual(seeded_at, datetime(2026, 3, 11, 13, 30, tzinfo=timezone.utc))
+        rendered = [(str(statement), params) for statement, params in statements]
+        self.assertEqual(len(rendered), 1)
+        statement, params = rendered[0]
+        self.assertIn('INSERT INTO trade_cursor', statement)
+        self.assertIsInstance(params, dict)
+        assert isinstance(params, dict)
+        self.assertIsInstance(params['id'], uuid.UUID)
+        self.assertEqual(params['account_label'], 'TORGHUT_SIM')
+        self.assertEqual(params['cursor_at'], datetime(2026, 3, 11, 13, 30, tzinfo=timezone.utc))
 
     def test_merge_env_entries_updates_and_removes(self) -> None:
         current = [
