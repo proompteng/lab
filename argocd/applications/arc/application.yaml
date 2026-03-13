@@ -37,12 +37,18 @@ spec:
                   storage: 20Gi
           listenerTemplate:
             spec:
+              dnsConfig:
+                searches:
+                  - ide-newton.ts.net
               containers:
                 - name: listener
           template:
             spec:
               nodeSelector:
                 kubernetes.io/arch: arm64
+              dnsConfig:
+                searches:
+                  - ide-newton.ts.net
               securityContext:
                 runAsNonRoot: false
                 # ARC runners need a writable tool cache under /home/runner/_work/_tool.
