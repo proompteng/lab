@@ -3126,7 +3126,6 @@ def _simulation_schema_registry_subject_specs(
         Mapping[str, str],
         lane_contract.schema_registry_schema_file_by_role,
     )
-    repo_root = Path(__file__).resolve().parents[3]
     specs: list[dict[str, str]] = []
     for role in simulation_schema_registry_subject_roles(lane_contract):
         topic = resources.simulation_topic_by_role.get(role)
@@ -3137,10 +3136,19 @@ def _simulation_schema_registry_subject_specs(
             {
                 'role': role,
                 'subject': f'{topic}-value',
-                'schema_path': str((repo_root / schema_relative).resolve()),
+                'schema_path': str(_resolve_schema_registry_schema_path(schema_relative)),
             }
         )
     return specs
+
+
+def _resolve_schema_registry_schema_path(schema_relative: str) -> Path:
+    script_path = Path(__file__).resolve()
+    for candidate_root in (script_path.parent, *script_path.parents):
+        candidate_path = (candidate_root / schema_relative).resolve()
+        if candidate_path.exists():
+            return candidate_path
+    return (script_path.parents[min(3, len(script_path.parents) - 1)] / schema_relative).resolve()
 
 
 def _load_schema_registry_schema_literal(schema_path: str) -> str:
