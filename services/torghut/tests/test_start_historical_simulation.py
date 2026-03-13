@@ -54,6 +54,7 @@ from scripts.start_historical_simulation import (
     _replay_dump,
     _run_full_lifecycle,
     _run_rollouts_analysis,
+    _simulation_schema_registry_subject_specs,
     _simulation_evidence_lineage,
     _set_argocd_application_sync_policy,
     _set_argocd_automation_mode,
@@ -167,6 +168,28 @@ class TestStartHistoricalSimulation(TestCase):
                     'underlyings': ['AAPL'],
                 },
             )
+
+    def test_simulation_schema_registry_subject_specs_resolves_container_layout(self) -> None:
+        resources = _build_resources(
+            'sim-2026-03-11-open-1h',
+            {
+                'dataset_id': 'torghut-tsmom-open-hour-20260311',
+            },
+        )
+        with TemporaryDirectory() as tmpdir:
+            app_root = Path(tmpdir) / 'app'
+            script_path = app_root / 'scripts' / 'start_historical_simulation.py'
+            schema_path = app_root / 'docs' / 'torghut' / 'schemas' / 'ta-signals.avsc'
+            script_path.parent.mkdir(parents=True)
+            script_path.write_text('# test', encoding='utf-8')
+            schema_path.parent.mkdir(parents=True)
+            schema_path.write_text('{"type":"record","name":"Signal","fields":[]}', encoding='utf-8')
+
+            with patch.object(start_historical_simulation, '__file__', str(script_path)):
+                specs = _simulation_schema_registry_subject_specs(resources=resources)
+
+        ta_signal_spec = next(spec for spec in specs if spec['role'] == 'ta_signals')
+        self.assertEqual(ta_signal_spec['schema_path'], str(schema_path.resolve()))
 
     def test_build_postgres_runtime_config_uses_template(self) -> None:
         config = _build_postgres_runtime_config(
