@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { posix as pathPosix } from 'node:path'
 
 import { sql } from 'kysely'
 
@@ -108,6 +109,7 @@ export type TorghutSimulationPreset = {
 const DEFAULT_TORGHUT_NAMESPACE = 'torghut'
 const DEFAULT_WORKFLOW_NAMESPACE = 'argo-workflows'
 const DEFAULT_OUTPUT_ROOT = 'artifacts/torghut/simulations'
+const DEFAULT_WORKFLOW_OUTPUT_ROOT = '/tmp/torghut-simulations'
 const DEFAULT_PRIORITY = 'interactive'
 const DEFAULT_PROFILE = 'smoke'
 const DEFAULT_CACHE_POLICY = 'prefer_cache'
@@ -255,6 +257,13 @@ const buildSimulationCacheKey = (manifest: JsonRecord, profile: string) =>
       }),
     )
     .digest('hex')
+
+const resolveWorkflowOutputRoot = (outputRoot: string) => {
+  const normalized = outputRoot.trim().replace(/\/+$/, '')
+  if (!normalized) return DEFAULT_WORKFLOW_OUTPUT_ROOT
+  if (normalized.startsWith('/')) return normalized
+  return pathPosix.join(DEFAULT_WORKFLOW_OUTPUT_ROOT, normalized)
+}
 
 const reserveSimulationLane = async (params: { runId: string; runClass: string; cacheKey: string | null }) => {
   const db = await ensureDb()
@@ -913,6 +922,7 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
 
   const runtime = asRecord(manifest.runtime)
   const outputRoot = String(runtime.output_root ?? DEFAULT_OUTPUT_ROOT)
+  const workflowOutputRoot = resolveWorkflowOutputRoot(outputRoot)
   const artifactRoot = `${outputRoot.replace(/\/+$/, '')}/${normalizeRunToken(runId)}`
   const cachedDataset = await db
     .selectFrom('torghut_control_plane.dataset_cache')
@@ -954,6 +964,7 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
         torghutService: resolveSimulationServiceName(manifest),
         torghutNamespace: resolveSimulationNamespace(manifest),
         workflowNamespace: resolveSimulationWorkflowNamespace(manifest),
+        workflowOutputRoot,
       },
       progress: {
         phase: 'submitting',
@@ -990,6 +1001,7 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
         torghutService: resolveSimulationServiceName(manifest),
         torghutNamespace: resolveSimulationNamespace(manifest),
         workflowNamespace: resolveSimulationWorkflowNamespace(manifest),
+        workflowOutputRoot,
       },
       progress: {
         phase: 'lane_reserved',
@@ -1006,7 +1018,7 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
     forceReplay: request.forceReplay ?? false,
     forceDump: request.forceDump ?? false,
     allowMissingState: request.allowMissingState ?? false,
-    outputRoot,
+    outputRoot: workflowOutputRoot,
   })
   let created: Record<string, unknown>
   try {
@@ -1038,6 +1050,7 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
         torghutService: resolveSimulationServiceName(manifest),
         torghutNamespace: resolveSimulationNamespace(manifest),
         workflowNamespace: resolveSimulationWorkflowNamespace(manifest),
+        workflowOutputRoot,
         workflowResource: created,
       },
       progress: {
@@ -1482,4 +1495,5 @@ export const __private = {
   normalizeCampaignRequest,
   normalizeRunToken,
   normalizeSimulationManifest,
+  resolveWorkflowOutputRoot,
 }

@@ -53,6 +53,13 @@ describe('torghut simulation control plane', () => {
     expect(manifest.cachePolicy).toBe('require_cache')
   })
 
+  it('resolves a writable workflow output root for relative artifact paths', () => {
+    expect(__private.resolveWorkflowOutputRoot('artifacts/torghut/simulations')).toBe(
+      '/tmp/torghut-simulations/artifacts/torghut/simulations',
+    )
+    expect(__private.resolveWorkflowOutputRoot('/tmp/custom-output')).toBe('/tmp/custom-output')
+  })
+
   it('derives expected artifact paths from run id and dump format', () => {
     const artifacts = __private.expectedArtifactsForRun('Sim-2026/03/06#Open', '/tmp/runs', 'jsonl.gz')
     const dump = artifacts.find((artifact) => artifact.name.endsWith('.jsonl.gz'))

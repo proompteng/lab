@@ -313,15 +313,29 @@ describe('submitTorghutSimulationRun', () => {
     expect(state.lanes.get('sim-fast-1')?.run_id).toBe('sim-fk-proof')
     expect(state.runs.get('sim-fk-proof')?.lane_id).toBe('sim-fast-1')
     expect(state.runs.get('sim-fk-proof')?.namespace).toBe('argo-workflows')
+    expect(state.runs.get('sim-fk-proof')?.output_root).toBe('artifacts/torghut/simulations')
     expect(state.runs.get('sim-fk-proof')?.workflow_name).toBe('workflow-demo')
     expect((state.runs.get('sim-fk-proof')?.metadata as Record<string, unknown>)?.workflowNamespace).toBe(
       'argo-workflows',
+    )
+    expect((state.runs.get('sim-fk-proof')?.metadata as Record<string, unknown>)?.workflowOutputRoot).toBe(
+      '/tmp/torghut-simulations/artifacts/torghut/simulations',
     )
     expect(kubeMocks.apply).toHaveBeenCalledOnce()
     expect(kubeMocks.apply).toHaveBeenCalledWith(
       expect.objectContaining({
         metadata: expect.objectContaining({
           namespace: 'argo-workflows',
+        }),
+        spec: expect.objectContaining({
+          arguments: expect.objectContaining({
+            parameters: expect.arrayContaining([
+              expect.objectContaining({
+                name: 'outputRoot',
+                value: '/tmp/torghut-simulations/artifacts/torghut/simulations',
+              }),
+            ]),
+          }),
         }),
       }),
     )
