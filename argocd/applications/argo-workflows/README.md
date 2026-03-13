@@ -1,46 +1,38 @@
 # Argo Workflows storage (Ceph RGW)
 
-Argo Workflows uses Ceph RGW object storage for workflow artifacts.
+Argo Workflows uses a Rook `ObjectBucketClaim` backed by Ceph RGW for workflow artifacts.
 
 ## Sources of truth
 
 1. `argocd/applications/argo-workflows/kustomization.yaml`
-2. `argocd/applications/argo-workflows/rook-ceph-objectstore-user.yaml`
-3. `argocd/applications/argo-workflows/rook-ceph-rgw-argo-workflows.yaml`
-4. `argocd/applications/argo-workflows/rgw-bucket-job.yaml`
+2. `argocd/applications/argo-workflows/objectbucketclaim.yaml`
 
 ## Required buckets
 
 - `argo-workflows`
 
-The `argocd/applications/argo-workflows/rgw-bucket-job.yaml` hook ensures the bucket exists.
+The `ObjectBucketClaim` provisions the bucket and a same-named secret in the `argo-workflows` namespace.
 
-## Rotate RGW credentials
-
-1. Ensure the `CephObjectStoreUser` exists and is `Ready`:
+## Inspect live credentials
 
 ```bash
-kubectl -n rook-ceph get cephobjectstoreuser argo-workflows
-kubectl -n rook-ceph get secret rook-ceph-object-user-objectstore-argo-workflows
+kubectl -n argo-workflows get objectbucketclaim argo-workflows
+kubectl -n argo-workflows get secret argo-workflows
 ```
 
-2. Generate a sealed secret for Argo Workflows using the active Sealed Secrets controller:
+## Validate artifact bucket access
 
 ```bash
-kubectl -n rook-ceph get secret rook-ceph-object-user-objectstore-argo-workflows -o json \
-  | jq 'del(.metadata.uid,.metadata.resourceVersion,.metadata.creationTimestamp,.metadata.managedFields,.metadata.ownerReferences,.metadata.annotations,.metadata.labels) \
-        | .metadata.name="rook-ceph-rgw-argo-workflows" \
-        | .metadata.namespace="argo-workflows" \
-        | .type="Opaque" \
-        | .data={"accessKey": .data.AccessKey, "secretKey": .data.SecretKey}' \
-  | kubectl apply -f -
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
 
-./scripts/reseal-secret-from-cluster.sh \
-  argo-workflows \
-  rook-ceph-rgw-argo-workflows \
-  argocd/applications/argo-workflows/rook-ceph-rgw-argo-workflows.yaml
+ACCESS=$(kubectl -n argo-workflows get secret argo-workflows -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d)
+SECRET=$(kubectl -n argo-workflows get secret argo-workflows -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d)
 
-kubectl -n argo-workflows delete secret rook-ceph-rgw-argo-workflows
+MC_CONFIG_DIR="$tmp" mc alias set --api S3v4 argo \
+  http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80 \
+  "$ACCESS" \
+  "$SECRET"
+
+MC_CONFIG_DIR="$tmp" mc ls argo/argo-workflows
 ```
-
-3. Commit and sync `argo-workflows`.
