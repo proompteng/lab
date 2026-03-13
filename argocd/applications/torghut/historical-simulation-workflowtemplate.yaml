@@ -62,6 +62,11 @@ spec:
             secretKeyRef:
               name: torghut-db-app
               key: password
+        - name: TORGHUT_POSTGRES_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: torghut-db-superuser
+              key: password
       command:
         - /bin/bash
         - -lc
@@ -117,6 +122,42 @@ spec:
           runtime.setdefault("torghut_forecast_service", "torghut-forecast-sim")
           runtime["output_root"] = output_root
           payload["runtime"] = runtime
+
+          def _with_password_if_missing(dsn: str | None, password: str | None) -> str | None:
+            if not dsn or not password:
+              return dsn
+            from urllib.parse import quote_plus, urlsplit
+            parsed = urlsplit(dsn)
+            if parsed.password is not None or parsed.username is None or parsed.hostname is None:
+              return dsn
+            host = parsed.hostname
+            if parsed.port is not None:
+              host = f"{host}:{parsed.port}"
+            return parsed._replace(netloc=f"{quote_plus(parsed.username)}:{quote_plus(password)}@{host}").geturl()
+
+          postgres = payload.get("postgres")
+          if not isinstance(postgres, dict):
+            postgres = {}
+          admin_password_env = postgres.get("admin_dsn_password_env")
+          admin_password = os.environ.get(admin_password_env) if isinstance(admin_password_env, str) else None
+          simulation_password_env = postgres.get("simulation_dsn_password_env")
+          if not isinstance(simulation_password_env, str) or not simulation_password_env:
+            simulation_password_env = "TORGHUT_POSTGRES_PASSWORD"
+          simulation_password = os.environ.get(simulation_password_env)
+          runtime_simulation_password_env = postgres.get("runtime_simulation_dsn_password_env")
+          if not isinstance(runtime_simulation_password_env, str) or not runtime_simulation_password_env:
+            runtime_simulation_password_env = simulation_password_env
+          runtime_simulation_password = os.environ.get(runtime_simulation_password_env)
+          admin_dsn = postgres.get("admin_dsn")
+          if isinstance(admin_dsn, str):
+            postgres["admin_dsn"] = _with_password_if_missing(admin_dsn, admin_password)
+          simulation_dsn = postgres.get("simulation_dsn")
+          if isinstance(simulation_dsn, str):
+            postgres["simulation_dsn"] = _with_password_if_missing(simulation_dsn, simulation_password)
+          runtime_simulation_dsn = postgres.get("runtime_simulation_dsn")
+          if isinstance(runtime_simulation_dsn, str):
+            postgres["runtime_simulation_dsn"] = _with_password_if_missing(runtime_simulation_dsn, runtime_simulation_password)
+          payload["postgres"] = postgres
 
           rollouts = payload.get("rollouts")
           if not isinstance(rollouts, dict):
