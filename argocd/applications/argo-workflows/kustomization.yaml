@@ -9,9 +9,7 @@ resources:
   - ingressroute.yaml
   - middleware-workflows-canonical-host.yaml
   - ingressroute-private.yaml
-  - rook-ceph-objectstore-user.yaml
-  - rook-ceph-rgw-argo-workflows.yaml
-  - rgw-bucket-job.yaml
+  - objectbucketclaim.yaml
   - alloy-rbac.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
@@ -79,11 +77,11 @@ helmCharts:
           endpoint: rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
           insecure: true
           accessKeySecret:
-            name: rook-ceph-rgw-argo-workflows
-            key: accessKey
+            name: argo-workflows
+            key: AWS_ACCESS_KEY_ID
           secretKeySecret:
-            name: rook-ceph-rgw-argo-workflows
-            key: secretKey
+            name: argo-workflows
+            key: AWS_SECRET_ACCESS_KEY
           useSDKCreds: false
   - name: argo-events
     repo: https://argoproj.github.io/argo-helm

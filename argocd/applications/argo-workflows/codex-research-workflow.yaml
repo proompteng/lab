@@ -178,8 +178,8 @@ spec:
               region: "{{inputs.parameters.artifactRegion}}"
               insecure: true
               accessKeySecret:
-                name: rook-ceph-rgw-argo-workflows
-                key: accessKey
+                name: argo-workflows
+                key: AWS_ACCESS_KEY_ID
               secretKeySecret:
-                name: rook-ceph-rgw-argo-workflows
-                key: secretKey
+                name: argo-workflows
+                key: AWS_SECRET_ACCESS_KEY
