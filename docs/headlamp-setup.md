@@ -153,7 +153,9 @@ Grant permissions using a ClusterRoleBinding in GitOps.
 Default binding (user-based):
 
 - `argocd/applications/headlamp/headlamp-oidc-rbac.yaml`
-- Binds `User: oidc:gregkonush` to `cluster-admin`.
+- Binds `User: oidc:admin` to `cluster-admin` for the current Keycloak admin login.
+- Keeps `User: oidc:gregkonush` as a second subject so a dedicated user can be added without losing access.
+- Match these subjects to the value emitted in the OIDC `preferred_username` claim. The kube-apiserver in `galactic` uses `--oidc-username-claim=preferred_username` and `--oidc-username-prefix=oidc:`.
 
 If you prefer group-based RBAC, change the subject to:
 

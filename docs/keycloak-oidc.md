@@ -73,6 +73,7 @@ Issuer and scopes:
 
 - Issuer: Realm → **Realm settings** → **Endpoints** → **OpenID Endpoint Configuration** (`issuer`)
 - Scopes: `openid profile email`
+- The kube-apiserver on `galactic` binds Kubernetes usernames from the OIDC `preferred_username` claim with the `oidc:` prefix, so RBAC subjects should look like `oidc:<preferred_username>`.
 
 Optional (recommended) group mapper:
 
