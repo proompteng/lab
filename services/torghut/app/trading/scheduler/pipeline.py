@@ -241,16 +241,34 @@ class TradingPipeline:
                 self.state.metrics.record_feature_quality_rejection(
                     quality_report.reasons
                 )
-                self.state.metrics.record_feature_quality_cursor_commit_blocked(
-                    quality_report.reasons
-                )
                 failure_payload = self._feature_quality_failure_payload(
                     batch=batch,
                     quality_signals=quality_signals,
                     quality_report=quality_report,
                 )
-                logger.error(
-                    "Feature quality gate failed component=%s account_label=%s rows=%s reasons=%s "
+                if quality_report.blocking_reasons:
+                    self.state.metrics.record_feature_quality_cursor_commit_blocked(
+                        quality_report.blocking_reasons
+                    )
+                    logger.error(
+                        "Feature quality gate failed component=%s account_label=%s rows=%s reasons=%s "
+                        "cursor_at=%s cursor_symbol=%s cursor_seq=%s staleness_ms_p95=%s duplicate_ratio=%s "
+                        "sample=%s",
+                        failure_payload["component"],
+                        failure_payload["account_label"],
+                        quality_report.rows_total,
+                        quality_report.reasons,
+                        failure_payload["cursor_at"],
+                        failure_payload["cursor_symbol"],
+                        failure_payload["cursor_seq"],
+                        quality_report.staleness_ms_p95,
+                        quality_report.duplicate_ratio,
+                        failure_payload["sample_rows"],
+                    )
+                    return False
+
+                logger.warning(
+                    "Feature quality degradation observed component=%s account_label=%s rows=%s reasons=%s "
                     "cursor_at=%s cursor_symbol=%s cursor_seq=%s staleness_ms_p95=%s duplicate_ratio=%s "
                     "sample=%s",
                     failure_payload["component"],
@@ -264,7 +282,6 @@ class TradingPipeline:
                     quality_report.duplicate_ratio,
                     failure_payload["sample_rows"],
                 )
-                return False
 
         self.state.metrics.no_signal_reason_streak = {}
         self.state.metrics.no_signal_streak = 0

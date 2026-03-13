@@ -828,6 +828,125 @@ class TestTradingPipeline(TestCase):
                 "trading_kill_switch_enabled"
             ]
 
+    def test_pipeline_continues_when_feature_quality_has_warning_only_null_rate(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "trading_feature_quality_enabled": config.settings.trading_feature_quality_enabled,
+            "trading_feature_max_staleness_ms": config.settings.trading_feature_max_staleness_ms,
+            "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL,MSFT"
+        config.settings.trading_feature_quality_enabled = True
+        config.settings.trading_feature_max_staleness_ms = 1_000
+        config.settings.trading_kill_switch_enabled = False
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="quality-gate warning-only regression",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL", "MSFT"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            valid_signal = SignalEnvelope(
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                ingest_ts=datetime(2026, 1, 1, 0, 0, 0, 500000, tzinfo=timezone.utc),
+                symbol="AAPL",
+                timeframe="1Min",
+                seq=1,
+                payload={
+                    "feature_schema_version": "3.0.0",
+                    "macd": {"macd": 1.2, "signal": 0.5},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+            )
+            incomplete_signal = SignalEnvelope(
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                ingest_ts=datetime(2026, 1, 1, 0, 0, 0, 500000, tzinfo=timezone.utc),
+                symbol="MSFT",
+                timeframe="1Min",
+                seq=2,
+                payload={
+                    "feature_schema_version": "3.0.0",
+                    "macd": {"macd": None, "signal": None},
+                    "rsi14": None,
+                    "price": 100,
+                },
+            )
+
+            alpaca_client = FakeAlpacaClient()
+            execution_adapter = FakeAlpacaClient()
+            ingestor = FakeIngestor([valid_signal, incomplete_signal])
+            state = TradingState()
+            pipeline = TradingPipeline(
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
+                ingestor=ingestor,
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=execution_adapter,
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=state,
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+
+            pipeline.run_once()
+
+            self.assertEqual(ingestor.committed_batches, 1)
+            self.assertEqual(state.metrics.feature_quality_rejections_total, 1)
+            self.assertEqual(
+                state.metrics.feature_quality_reject_reason_total.get(
+                    "required_feature_null_rate_exceeds_threshold"
+                ),
+                1,
+            )
+            self.assertIsNone(
+                state.metrics.feature_quality_cursor_commit_blocked_total.get(
+                    "required_feature_null_rate_exceeds_threshold"
+                )
+            )
+            self.assertEqual(len(alpaca_client.submitted), 1)
+            self.assertEqual(alpaca_client.submitted[0]["symbol"], "AAPL")
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+            config.settings.trading_feature_quality_enabled = original[
+                "trading_feature_quality_enabled"
+            ]
+            config.settings.trading_feature_max_staleness_ms = original[
+                "trading_feature_max_staleness_ms"
+            ]
+            config.settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
+
     def test_stale_planned_decision_is_force_rejected(self) -> None:
         from app import config
 
