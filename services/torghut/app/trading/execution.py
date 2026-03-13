@@ -438,6 +438,9 @@ class OrderExecutor:
     ) -> None:
         decision_row.status = "rejected"
         decision_json = _coerce_json(decision_row.decision_json)
+        decision_json["submission_stage"] = str(
+            decision_json.get("submission_stage") or "rejected"
+        )
         existing = decision_json.get("risk_reasons")
         if isinstance(existing, list):
             risk_reasons = [str(item) for item in cast(list[Any], existing)]
@@ -463,9 +466,31 @@ class OrderExecutor:
             for atomic_reason in reject_atomic
         ):
             decision_json["sizing_debug"] = sizing_debug
-        if metadata_update:
-            for key, value in metadata_update.items():
-                decision_json[key] = coerce_json_payload(value)
+        _merge_decision_metadata(decision_json, metadata_update)
+        decision_row.decision_json = decision_json
+        session.add(decision_row)
+        session.commit()
+
+    def mark_blocked(
+        self,
+        session: Session,
+        decision_row: TradeDecision,
+        reason: str,
+        metadata_update: Mapping[str, Any] | None = None,
+    ) -> None:
+        decision_row.status = "blocked"
+        decision_json = _coerce_json(decision_row.decision_json)
+        decision_json["submission_block_reason"] = reason
+        decision_json["submission_stage"] = str(
+            decision_json.get("submission_stage") or "blocked"
+        )
+        block_atomic = _merge_unique_strings(
+            _coerce_string_list(decision_json.get("submission_block_atomic")),
+            _normalize_submission_block_reasons(reason),
+        )
+        if block_atomic:
+            decision_json["submission_block_atomic"] = block_atomic
+        _merge_decision_metadata(decision_json, metadata_update)
         decision_row.decision_json = decision_json
         session.add(decision_row)
         session.commit()
@@ -1143,6 +1168,26 @@ def _merge_unique_strings(existing: list[str], updates: list[str]) -> list[str]:
     return merged
 
 
+def _merge_decision_metadata(
+    decision_json: dict[str, Any],
+    metadata_update: Mapping[str, Any] | None,
+) -> None:
+    if not metadata_update:
+        return
+    for key, value in metadata_update.items():
+        if key == "control_plane_snapshot" and isinstance(value, Mapping):
+            existing_snapshot = _coerce_json(decision_json.get("control_plane_snapshot"))
+            for snapshot_key, snapshot_value in cast(Mapping[object, Any], value).items():
+                existing_snapshot[str(snapshot_key)] = coerce_json_payload(
+                    snapshot_value
+                )
+            decision_json["control_plane_snapshot"] = coerce_json_payload(
+                existing_snapshot
+            )
+            continue
+        decision_json[str(key)] = coerce_json_payload(value)
+
+
 class _NormalizedRejectReason(NamedTuple):
     atomic_reason: str
     reject_class: str
@@ -1182,6 +1227,16 @@ def _normalize_reject_reason(reason: str) -> _NormalizedRejectReason:
 
 def _normalize_reject_reasons(reason: str) -> list[_NormalizedRejectReason]:
     return [_normalize_reject_reason(part.strip()) for part in reason.split(";") if part.strip()]
+
+
+def _normalize_submission_block_reasons(reason: str) -> list[str]:
+    return [
+        normalized
+        for normalized in (
+            part.strip().replace(" ", "_").lower() for part in reason.split(";")
+        )
+        if normalized
+    ]
 
 
 def _extract_sizing_debug(decision_json: Mapping[str, Any]) -> dict[str, Any]:
@@ -1420,8 +1475,12 @@ def _apply_execution_status(
     submitted_at: Optional[datetime] = None,
     status_override: Optional[str] = None,
 ) -> None:
-    decision_row.status = status_override or execution.status or "submitted"
+    applied_status = status_override or execution.status or "submitted"
+    decision_row.status = applied_status
     decision_row.alpaca_account_label = account_label
+    decision_json = _coerce_json(decision_row.decision_json)
+    decision_json["submission_stage"] = applied_status
+    decision_row.decision_json = decision_json
     if submitted_at is not None and decision_row.executed_at is None:
         decision_row.executed_at = submitted_at
     if execution.status == "filled" and decision_row.executed_at is None:

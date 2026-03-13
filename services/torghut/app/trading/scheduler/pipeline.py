@@ -7,6 +7,7 @@ import hashlib
 import json
 import inspect
 import logging
+import os
 from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -19,7 +20,13 @@ from sqlalchemy.orm import Session
 from ...alpaca_client import TorghutAlpacaClient
 from ...config import settings
 from ...db import SessionLocal
-from ...models import LLMDecisionReview, Strategy, TradeDecision, coerce_json_payload
+from ...models import (
+    Execution,
+    LLMDecisionReview,
+    Strategy,
+    TradeDecision,
+    coerce_json_payload,
+)
 from ...observability import capture_posthog_event
 from ...snapshots import snapshot_account_and_positions
 from ...strategies import StrategyCatalog
@@ -151,6 +158,7 @@ class TradingPipeline:
 
     def run_once(self) -> None:
         with self.session_factory() as session:
+            self.state.metrics.planned_decision_age_seconds = 0
             strategies = self._prepare_run_once(session)
             if not strategies:
                 return
@@ -869,10 +877,14 @@ class TradingPipeline:
                 self.state.metrics.orders_rejected_total += 1
                 reason_code = f"decision_handler_error_{type(exc).__name__}"
                 self.state.metrics.record_decision_rejection_reasons([reason_code])
+                self.state.metrics.record_decision_state("rejected")
                 self.executor.mark_rejected(
                     session,
                     decision_row,
                     reason_code,
+                    metadata_update=self._decision_lifecycle_metadata(
+                        submission_stage="rejected_handler_error"
+                    ),
                 )
             return None
 
@@ -896,6 +908,93 @@ class TradingPipeline:
             return strategy, strategy_symbols
         return strategy, allowed_symbols
 
+    def _decision_row_age_seconds(self, decision_row: TradeDecision) -> int:
+        created_at = decision_row.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        return max(
+            0,
+            int(
+                (
+                    trading_now(account_label=self.account_label) - created_at
+                ).total_seconds()
+            ),
+        )
+
+    def _submission_capital_stage(self) -> str:
+        if settings.trading_mode != "live":
+            return settings.trading_mode
+        if not settings.trading_autonomy_allow_live_promotion:
+            return "shadow"
+        return "0.10x canary"
+
+    def _submission_control_plane_snapshot(
+        self,
+        *,
+        capital_stage: str | None = None,
+    ) -> dict[str, object]:
+        return {
+            "active_revision": os.getenv("K_REVISION", "").strip() or None,
+            "trading_enabled": settings.trading_enabled,
+            "trading_mode": settings.trading_mode,
+            "trading_autonomy_enabled": settings.trading_autonomy_enabled,
+            "trading_autonomy_allow_live_promotion": settings.trading_autonomy_allow_live_promotion,
+            "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
+            "trading_execution_adapter_policy": settings.trading_execution_adapter_policy,
+            "capital_stage": capital_stage or self._submission_capital_stage(),
+        }
+
+    def _decision_lifecycle_metadata(
+        self,
+        *,
+        submission_stage: str,
+        capital_stage: str | None = None,
+        extra: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        metadata: dict[str, Any] = {
+            "submission_stage": submission_stage,
+            "control_plane_snapshot": self._submission_control_plane_snapshot(
+                capital_stage=capital_stage
+            ),
+        }
+        if extra:
+            metadata.update({str(key): value for key, value in extra.items()})
+        return metadata
+
+    def _block_decision_submission(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+        reason: str,
+        submission_stage: str,
+        capital_stage: str | None = None,
+        extra_metadata: Mapping[str, Any] | None = None,
+        severity: str = "warning",
+    ) -> None:
+        metadata = self._decision_lifecycle_metadata(
+            submission_stage=submission_stage,
+            capital_stage=capital_stage,
+            extra=extra_metadata,
+        )
+        self.state.metrics.record_submission_block(reason)
+        self.state.metrics.record_decision_state("blocked")
+        self.executor.mark_blocked(
+            session,
+            decision_row,
+            reason,
+            metadata_update=metadata,
+        )
+        self._emit_domain_telemetry(
+            event_name="torghut.decision.blocked",
+            severity=severity,
+            decision=decision,
+            decision_row=decision_row,
+            reason_codes=[reason],
+            extra_properties={"decision_status": "blocked"},
+        )
+
     def _ensure_pending_decision_row(
         self,
         *,
@@ -908,13 +1007,34 @@ class TradingPipeline:
         )
         if decision_row.status != "planned":
             return None
+        self.state.metrics.record_decision_state("planned")
+        age_seconds = self._decision_row_age_seconds(decision_row)
+        self.state.metrics.observe_planned_decision_age(age_seconds)
         if self.executor.execution_exists(session, decision_row):
             self.state.metrics.planned_decisions_with_execution_total += 1
+            execution_status = session.execute(
+                select(Execution.status)
+                .where(Execution.trade_decision_id == decision_row.id)
+                .order_by(Execution.created_at.desc())
+                .limit(1)
+            ).scalars().first()
+            resolved_status = str(execution_status or "submitted").strip() or "submitted"
+            decision_json = _coerce_json(decision_row.decision_json)
+            decision_json["submission_stage"] = "execution_backfilled"
+            decision_json["control_plane_snapshot"] = coerce_json_payload(
+                self._submission_control_plane_snapshot()
+            )
+            decision_row.status = resolved_status
+            decision_row.decision_json = decision_json
+            session.add(decision_row)
+            session.commit()
+            self.state.metrics.record_decision_state(resolved_status)
             logger.warning(
-                "Decision remained planned while execution already exists decision_id=%s strategy_id=%s symbol=%s",
+                "Resolved planned decision with existing execution decision_id=%s strategy_id=%s symbol=%s resolved_status=%s",
                 decision_row.id,
                 decision.strategy_id,
                 decision.symbol,
+                resolved_status,
             )
             return None
         if self._expire_stale_planned_decision(
@@ -933,22 +1053,25 @@ class TradingPipeline:
         timeout_seconds = settings.trading_planned_decision_timeout_seconds
         if timeout_seconds <= 0:
             return False
-        created_at = decision_row.created_at
-        if created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=timezone.utc)
-        age_seconds = int(
-            (trading_now(account_label=self.account_label) - created_at).total_seconds()
-        )
+        age_seconds = self._decision_row_age_seconds(decision_row)
+        self.state.metrics.observe_planned_decision_age(age_seconds)
         if age_seconds < timeout_seconds:
             return False
         self.state.metrics.planned_decisions_stale_total += 1
-        self.state.metrics.planned_decisions_timeout_rejected_total += 1
-        self.state.metrics.orders_rejected_total += 1
-        reason = f"decision_timeout_unsubmitted:{age_seconds}s"
-        self.state.metrics.record_decision_rejection_reasons([reason])
-        self.executor.mark_rejected(session, decision_row, reason)
+        self._block_decision_submission(
+            session=session,
+            decision=decision,
+            decision_row=decision_row,
+            reason="stale_planned_cleanup",
+            submission_stage="blocked_stale_planned_cleanup",
+            extra_metadata={
+                "stale_planned_age_seconds": age_seconds,
+                "planned_decision_timeout_seconds": timeout_seconds,
+            },
+            severity="error",
+        )
         logger.error(
-            "Rejected stale planned decision decision_id=%s strategy_id=%s symbol=%s age_seconds=%s timeout_seconds=%s",
+            "Recovered stale planned decision decision_id=%s strategy_id=%s symbol=%s age_seconds=%s timeout_seconds=%s",
             decision_row.id,
             decision.strategy_id,
             decision.symbol,
@@ -1327,9 +1450,17 @@ class TradingPipeline:
             return
         self.state.metrics.orders_rejected_total += 1
         self.state.metrics.record_decision_rejection_reasons(reasons)
+        self.state.metrics.record_decision_state("rejected")
         for reason in reasons:
             logger.info(log_template, decision.strategy_id, decision.symbol, reason)
-        self.executor.mark_rejected(session, decision_row, ";".join(reasons))
+        self.executor.mark_rejected(
+            session,
+            decision_row,
+            ";".join(reasons),
+            metadata_update=self._decision_lifecycle_metadata(
+                submission_stage="rejected_pre_submit"
+            ),
+        )
         self._emit_domain_telemetry(
             event_name="torghut.decision.blocked",
             severity="warning",
@@ -1496,15 +1627,51 @@ class TradingPipeline:
         decision_row: TradeDecision,
     ) -> bool:
         if not settings.trading_enabled:
+            self._block_decision_submission(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+                reason="trading_disabled",
+                submission_stage="blocked_trading_disabled",
+            )
+            logger.warning(
+                "Decision blocked because trading is disabled strategy_id=%s decision_id=%s symbol=%s",
+                decision.strategy_id,
+                decision_row.id,
+                decision.symbol,
+            )
+            return False
+        if (
+            settings.trading_mode == "live"
+            and not settings.trading_autonomy_allow_live_promotion
+        ):
+            self._block_decision_submission(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+                reason="capital_stage_shadow",
+                submission_stage="blocked_capital_stage_shadow",
+                capital_stage="shadow",
+            )
+            logger.info(
+                "Decision held in shadow stage strategy_id=%s decision_id=%s symbol=%s",
+                decision.strategy_id,
+                decision_row.id,
+                decision.symbol,
+            )
             return False
         if not (
             settings.trading_emergency_stop_enabled and self.state.emergency_stop_active
         ):
             return True
-        self.state.metrics.orders_rejected_total += 1
         reason = self.state.emergency_stop_reason or "emergency_stop_active"
-        self.state.metrics.record_decision_rejection_reasons([reason])
-        self.executor.mark_rejected(session, decision_row, reason)
+        self._block_decision_submission(
+            session=session,
+            decision=decision,
+            decision_row=decision_row,
+            reason=reason,
+            submission_stage="blocked_emergency_stop",
+        )
         logger.error(
             "Decision blocked by emergency stop strategy_id=%s decision_id=%s symbol=%s reason=%s",
             decision.strategy_id,
@@ -1535,6 +1702,11 @@ class TradingPipeline:
             selected_adapter_name=selected_adapter_name,
         )
         self.state.metrics.record_execution_request(selected_adapter_name)
+        self.executor.update_decision_json(
+            session,
+            decision_row,
+            self._decision_lifecycle_metadata(submission_stage="submit_requested"),
+        )
         self.executor.update_decision_params(
             session,
             decision_row,
@@ -1578,9 +1750,15 @@ class TradingPipeline:
                 symbol=decision.symbol,
             )
             self.state.metrics.orders_submitted_total += 1
+            self.state.metrics.record_decision_state("submitted")
             self.state.metrics.record_execution_submit_result(
                 status="accepted",
                 adapter=selected_adapter_name,
+            )
+            self.executor.update_decision_json(
+                session,
+                decision_row,
+                self._decision_lifecycle_metadata(submission_stage="submitted"),
             )
             self._emit_domain_telemetry(
                 event_name="torghut.execution.submitted",
@@ -1614,6 +1792,7 @@ class TradingPipeline:
             symbol=decision.symbol,
         )
         self.state.metrics.orders_submitted_total += 1
+        self.state.metrics.record_decision_state("submitted")
         self.state.metrics.record_execution_submit_result(
             status="accepted",
             adapter=actual_adapter_name,
@@ -1717,12 +1896,20 @@ class TradingPipeline:
             return execution, False
         except OrderFirewallBlocked as exc:
             self.state.metrics.orders_rejected_total += 1
+            self.state.metrics.record_decision_state("rejected")
             self.state.metrics.record_execution_submit_result(
                 status="rejected",
                 adapter=selected_adapter_name,
             )
             self.state.metrics.record_decision_rejection_reasons([str(exc)])
-            self.executor.mark_rejected(session, decision_row, str(exc))
+            self.executor.mark_rejected(
+                session,
+                decision_row,
+                str(exc),
+                metadata_update=self._decision_lifecycle_metadata(
+                    submission_stage="rejected_submit"
+                ),
+            )
             self._emit_domain_telemetry(
                 event_name="torghut.execution.rejected",
                 severity="warning",
@@ -1741,6 +1928,7 @@ class TradingPipeline:
             return None, True
         except Exception as exc:
             self.state.metrics.orders_rejected_total += 1
+            self.state.metrics.record_decision_state("rejected")
             self.state.metrics.record_decision_rejection_reasons(
                 [f"order_submit_error_{type(exc).__name__}"]
             )
@@ -1821,7 +2009,10 @@ class TradingPipeline:
                 session,
                 decision_row,
                 reason,
-                metadata_update=metadata_update,
+                metadata_update=self._decision_lifecycle_metadata(
+                    submission_stage="rejected_submit",
+                    extra=metadata_update,
+                ),
             )
             self.state.metrics.record_execution_submit_result(
                 status="rejected",

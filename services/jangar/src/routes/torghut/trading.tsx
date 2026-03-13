@@ -60,6 +60,21 @@ type TradingSummary = {
     warnings: string[]
   }
   executions: { filledCount: number }
+  decisions: {
+    generatedCount: number
+    plannedCount: number
+    blockedCount: number
+    stalePlannedCount: number
+    executionSubmitAttempts: number
+    topBlockedReasons: { reason: string; count: number }[]
+    submissionFunnel: {
+      generatedCount: number
+      blockedCount: number
+      submittedCount: number
+      filledCount: number
+      rejectedCount: number
+    }
+  }
   rejections: {
     rejectedCount: number
     topReasons: { reason: string; count: number }[]
@@ -67,6 +82,31 @@ type TradingSummary = {
   equity: {
     available: boolean
     byAccount: { alpacaAccountLabel: string; delta: number; series: { ts: string; equity: number }[] }[]
+  }
+  runtime: {
+    profitability: {
+      available: boolean
+      schemaVersion: string | null
+      lookbackHours: number | null
+      decisionCount: number
+      executionCount: number
+      tcaSampleCount: number
+      realizedPnlProxyNotional: number | null
+      avgAbsSlippageBps: number | null
+      caveatCodes: string[]
+      error: string | null
+    }
+    controlPlane: {
+      available: boolean
+      activeRevision: string | null
+      capitalStage: string | null
+      capitalStageTotals: { stage: string; count: number }[]
+      criticalToggleParity: {
+        status: string | null
+        mismatches: string[]
+      }
+      error: string | null
+    }
   }
 }
 
@@ -344,6 +384,16 @@ function TorghutTrading() {
   )
 
   const equityAccounts = summary?.equity.byAccount ?? []
+  const runtimeProfitability = summary?.runtime.profitability ?? null
+  const runtimeControlPlane = summary?.runtime.controlPlane ?? null
+  const runtimePnlProxyNotional = runtimeProfitability?.realizedPnlProxyNotional ?? null
+  const runtimeAbsSlippageBps = runtimeProfitability?.avgAbsSlippageBps ?? null
+  let runtimePnlTone: 'default' | 'success' | 'warning' | 'danger' = 'default'
+  if ((runtimePnlProxyNotional ?? 0) > 0) {
+    runtimePnlTone = 'success'
+  } else if ((runtimePnlProxyNotional ?? 0) < 0) {
+    runtimePnlTone = 'danger'
+  }
 
   return (
     <main className="mx-auto w-full max-w-6xl space-y-6 p-6">
@@ -588,28 +638,81 @@ function TorghutTrading() {
         <Card>
           <CardHeader className="border-b">
             <CardTitle>Counts</CardTitle>
-            <CardDescription>Fills vs rejections for the selected day</CardDescription>
+            <CardDescription>Decision funnel and execution posture for the selected day</CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-3 pt-4 md:grid-cols-2">
-            <div className="rounded-none border bg-card p-3">
-              <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
-                Filled executions
-              </div>
-              <div className="mt-2 text-2xl font-medium tabular-nums">
-                {summary ? summary.executions.filledCount : isLoading ? '…' : '—'}
-              </div>
-            </div>
-            <div className="rounded-none border bg-card p-3">
-              <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
-                Rejected decisions
-              </div>
-              <div className="mt-2 text-2xl font-medium tabular-nums">
-                {summary ? summary.rejections.rejectedCount : isLoading ? '…' : '—'}
-              </div>
-            </div>
+          <CardContent className="grid gap-3 pt-4 md:grid-cols-2 xl:grid-cols-3">
+            <MetricTile
+              label="Generated decisions"
+              value={summary ? summary.decisions.generatedCount : isLoading ? '…' : '—'}
+            />
+            <MetricTile
+              label="Blocked decisions"
+              value={summary ? summary.decisions.blockedCount : isLoading ? '…' : '—'}
+            />
+            <MetricTile label="Planned rows" value={summary ? summary.decisions.plannedCount : isLoading ? '…' : '—'} />
+            <MetricTile
+              label="Stale planned"
+              value={summary ? summary.decisions.stalePlannedCount : isLoading ? '…' : '—'}
+              tone={summary && summary.decisions.stalePlannedCount > 0 ? 'danger' : 'default'}
+            />
+            <MetricTile
+              label="Submit attempts"
+              value={summary ? summary.decisions.executionSubmitAttempts : isLoading ? '…' : '—'}
+            />
+            <MetricTile
+              label="Filled executions"
+              value={summary ? summary.executions.filledCount : isLoading ? '…' : '—'}
+              tone={summary && summary.executions.filledCount > 0 ? 'success' : 'default'}
+            />
+            <MetricTile
+              label="Rejected decisions"
+              value={summary ? summary.rejections.rejectedCount : isLoading ? '…' : '—'}
+              tone={summary && summary.rejections.rejectedCount > 0 ? 'warning' : 'default'}
+            />
           </CardContent>
         </Card>
 
+        <Card>
+          <CardHeader className="border-b">
+            <CardTitle>Submission Funnel</CardTitle>
+            <CardDescription>Generated to blocked/submitted with current shadow-first posture</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4 pt-4">
+            {summary ? (
+              <>
+                <div className="grid gap-3 md:grid-cols-5">
+                  <MetricTile label="Generated" value={summary.decisions.submissionFunnel.generatedCount} compact />
+                  <MetricTile label="Blocked" value={summary.decisions.submissionFunnel.blockedCount} compact />
+                  <MetricTile label="Submitted" value={summary.decisions.submissionFunnel.submittedCount} compact />
+                  <MetricTile label="Filled" value={summary.decisions.submissionFunnel.filledCount} compact />
+                  <MetricTile label="Rejected" value={summary.decisions.submissionFunnel.rejectedCount} compact />
+                </div>
+                <div className="space-y-2">
+                  <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+                    Top blocked reasons
+                  </div>
+                  {summary.decisions.topBlockedReasons.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {summary.decisions.topBlockedReasons.map((item) => (
+                        <span key={item.reason} className="rounded-none border border-border px-2 py-1 text-xs">
+                          {item.reason}
+                          <span className="ml-2 tabular-nums text-muted-foreground">{item.count}</span>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-muted-foreground">No blocked decisions recorded.</div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <Skeleton className="h-40 w-full" />
+            )}
+          </CardContent>
+        </Card>
+      </section>
+
+      <section className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader className="border-b">
             <CardTitle>Top Rejection Reasons</CardTitle>
@@ -638,6 +741,88 @@ function TorghutTrading() {
               ) : (
                 <div className="p-4 text-xs text-muted-foreground">No rejection reasons recorded.</div>
               )
+            ) : (
+              <Skeleton className="h-56 w-full" />
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="border-b">
+            <CardTitle>Runtime Control Plane</CardTitle>
+            <CardDescription>Torghut live posture from runtime status and profitability evidence</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4 pt-4">
+            {summary ? (
+              <>
+                <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                  <span className="rounded-none border border-border px-2 py-0.5">
+                    Capital stage:{' '}
+                    <span className="font-medium text-foreground">
+                      {runtimeControlPlane?.capitalStage ?? 'unknown'}
+                    </span>
+                  </span>
+                  <span className="rounded-none border border-border px-2 py-0.5">
+                    Toggle parity:{' '}
+                    <span className="font-medium text-foreground">
+                      {runtimeControlPlane?.criticalToggleParity.status ?? 'unknown'}
+                    </span>
+                  </span>
+                  <span className="rounded-none border border-border px-2 py-0.5">
+                    Revision:{' '}
+                    <span className="font-medium text-foreground">
+                      {runtimeControlPlane?.activeRevision ?? 'unknown'}
+                    </span>
+                  </span>
+                </div>
+                {runtimeControlPlane?.criticalToggleParity.mismatches.length ? (
+                  <div className="rounded-none border border-amber-500/40 bg-amber-50/40 p-3 text-xs text-amber-900">
+                    Shadow-first parity mismatches: {runtimeControlPlane.criticalToggleParity.mismatches.join(', ')}
+                  </div>
+                ) : null}
+                <div className="grid gap-3 md:grid-cols-2">
+                  <MetricTile
+                    label="Runtime PnL proxy"
+                    value={runtimePnlProxyNotional === null ? '—' : currency.format(runtimePnlProxyNotional)}
+                    compact
+                    tone={runtimePnlTone}
+                  />
+                  <MetricTile
+                    label="Abs slippage"
+                    value={runtimeAbsSlippageBps === null ? '—' : `${compactNumber.format(runtimeAbsSlippageBps)} bps`}
+                    compact
+                  />
+                  <MetricTile label="Runtime decisions" value={runtimeProfitability?.decisionCount ?? '—'} compact />
+                  <MetricTile label="Runtime executions" value={runtimeProfitability?.executionCount ?? '—'} compact />
+                </div>
+                <div className="space-y-1 text-xs text-muted-foreground">
+                  <div>
+                    Profitability lookback:{' '}
+                    <span className="tabular-nums text-foreground">{runtimeProfitability?.lookbackHours ?? '—'}h</span>
+                  </div>
+                  <div>
+                    TCA samples:{' '}
+                    <span className="tabular-nums text-foreground">{runtimeProfitability?.tcaSampleCount ?? '—'}</span>
+                  </div>
+                </div>
+                {runtimeProfitability?.caveatCodes.length ? (
+                  <div className="flex flex-wrap gap-2">
+                    {runtimeProfitability.caveatCodes.map((code) => (
+                      <span
+                        key={code}
+                        className="rounded-none border border-border px-2 py-0.5 text-[11px] text-muted-foreground"
+                      >
+                        {code}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                {runtimeProfitability?.error || runtimeControlPlane?.error ? (
+                  <div className="rounded-none border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive">
+                    {runtimeProfitability?.error ?? runtimeControlPlane?.error}
+                  </div>
+                ) : null}
+              </>
             ) : (
               <Skeleton className="h-56 w-full" />
             )}
@@ -790,6 +975,34 @@ function EquityChart({
         ))}
       </LineChart>
     </ChartContainer>
+  )
+}
+
+function MetricTile({
+  label,
+  value,
+  tone = 'default',
+  compact = false,
+}: {
+  label: string
+  value: React.ReactNode
+  tone?: 'default' | 'success' | 'warning' | 'danger'
+  compact?: boolean
+}) {
+  let toneClass = 'text-foreground'
+  if (tone === 'success') {
+    toneClass = 'text-emerald-600'
+  } else if (tone === 'warning') {
+    toneClass = 'text-amber-600'
+  } else if (tone === 'danger') {
+    toneClass = 'text-rose-600'
+  }
+
+  return (
+    <div className="rounded-none border bg-card p-3">
+      <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">{label}</div>
+      <div className={cn('mt-2 font-medium tabular-nums', compact ? 'text-xl' : 'text-2xl', toneClass)}>{value}</div>
+    </div>
   )
 }
 

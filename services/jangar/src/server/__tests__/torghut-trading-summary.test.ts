@@ -134,4 +134,141 @@ describe('torghut trading summary reason parsing', () => {
       topReasons: [{ reason: 'qty_below_min', count: 1 }],
     })
   })
+
+  it('summarizes decision lifecycle counts with blocked reasons and stale planned rows', () => {
+    const lifecycle = __private.summarizeDecisionLifecycle(
+      [
+        {
+          id: '1',
+          createdAt: '2026-01-15T14:20:00.000Z',
+          alpacaAccountLabel: 'paper',
+          symbol: 'AAPL',
+          timeframe: '1m',
+          status: 'blocked',
+          rationale: null,
+          submissionBlockReason: 'capital_stage_shadow',
+          submissionBlockAtomic: ['capital_stage_shadow'],
+          submissionStage: 'blocked_capital_stage_shadow',
+          executionAdapterSelected: false,
+          strategyId: '1',
+          strategyName: 'test',
+        },
+        {
+          id: '2',
+          createdAt: '2026-01-15T14:21:00.000Z',
+          alpacaAccountLabel: 'paper',
+          symbol: 'MSFT',
+          timeframe: '1m',
+          status: 'planned',
+          rationale: null,
+          submissionBlockReason: null,
+          submissionBlockAtomic: [],
+          submissionStage: null,
+          executionAdapterSelected: false,
+          strategyId: '1',
+          strategyName: 'test',
+        },
+        {
+          id: '3',
+          createdAt: '2026-01-15T14:22:00.000Z',
+          alpacaAccountLabel: 'paper',
+          symbol: 'NVDA',
+          timeframe: '1m',
+          status: 'submitted',
+          rationale: null,
+          submissionBlockReason: null,
+          submissionBlockAtomic: [],
+          submissionStage: 'submitted',
+          executionAdapterSelected: true,
+          strategyId: '1',
+          strategyName: 'test',
+        },
+        {
+          id: '4',
+          createdAt: '2026-01-15T14:23:00.000Z',
+          alpacaAccountLabel: 'paper',
+          symbol: 'META',
+          timeframe: '1m',
+          status: 'rejected',
+          rationale: null,
+          submissionBlockReason: null,
+          submissionBlockAtomic: [],
+          submissionStage: 'rejected_submit',
+          executionAdapterSelected: true,
+          strategyId: '1',
+          strategyName: 'test',
+        },
+      ],
+      '2026-01-15T14:24:30.000Z',
+    )
+
+    expect(lifecycle.plannedCount).toBe(1)
+    expect(lifecycle.blockedCount).toBe(1)
+    expect(lifecycle.stalePlannedCount).toBe(1)
+    expect(lifecycle.executionSubmitAttempts).toBe(2)
+    expect(lifecycle.topBlockedReasons).toEqual([{ reason: 'capital_stage_shadow', count: 1 }])
+    expect(lifecycle.submissionFunnel).toEqual({
+      generatedCount: 4,
+      blockedCount: 1,
+      submittedCount: 1,
+      filledCount: 0,
+      rejectedCount: 1,
+    })
+  })
+
+  it('parses runtime profitability and control-plane summaries from Torghut payloads', () => {
+    const profitability = __private.parseRuntimeProfitabilitySummary({
+      schema_version: 'torghut.runtime-profitability.v1',
+      window: {
+        lookback_hours: 72,
+        decision_count: 14,
+        execution_count: 2,
+        tca_sample_count: 2,
+      },
+      realized_pnl_summary: {
+        realized_pnl_proxy_notional: '-3.5',
+        avg_abs_slippage_bps: '7.2',
+      },
+      caveats: [{ code: 'evidence_only_no_profitability_certainty' }],
+    })
+    const controlPlane = __private.parseRuntimeControlPlaneSummary({
+      build: {
+        active_revision: 'torghut-00121',
+      },
+      shadow_first: {
+        capital_stage: 'shadow',
+        capital_stage_totals: {
+          shadow: 3,
+        },
+        critical_toggle_parity: {
+          status: 'aligned',
+          mismatches: [],
+        },
+      },
+    })
+
+    expect(profitability).toEqual({
+      available: true,
+      schemaVersion: 'torghut.runtime-profitability.v1',
+      lookbackHours: 72,
+      decisionCount: 14,
+      executionCount: 2,
+      tcaSampleCount: 2,
+      realizedPnlProxyNotional: -3.5,
+      avgAbsSlippageBps: 7.2,
+      caveatCodes: ['evidence_only_no_profitability_certainty'],
+      error: null,
+    })
+    expect(controlPlane).toEqual({
+      available: true,
+      activeRevision: 'torghut-00121',
+      capitalStage: 'shadow',
+      capitalStageTotals: [{ stage: 'shadow', count: 3 }],
+      criticalToggleParity: {
+        status: 'aligned',
+        mismatches: [],
+      },
+      error: null,
+    })
+  })
 })

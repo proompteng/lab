@@ -81,6 +81,13 @@ logger = logging.getLogger(__name__)
 BUILD_VERSION = os.getenv("TORGHUT_VERSION", "dev")
 BUILD_COMMIT = os.getenv("TORGHUT_COMMIT", "unknown")
 BUILD_IMAGE_DIGEST = os.getenv("TORGHUT_IMAGE_DIGEST", "").strip() or None
+_CAPITAL_STAGE_ORDER = (
+    "shadow",
+    "0.10x canary",
+    "0.25x canary",
+    "0.50x live",
+    "1.00x live",
+)
 RUNTIME_PROFITABILITY_LOOKBACK_HOURS = 72
 RUNTIME_PROFITABILITY_SCHEMA_VERSION = "torghut.runtime-profitability.v1"
 LEAN_LANE_MANAGER = LeanLaneManager()
@@ -1539,6 +1546,10 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
             market_context_status=market_context_status,
         )
     )
+    shadow_first_runtime = _build_shadow_first_runtime_payload(
+        state=state,
+        hypothesis_summary=hypothesis_summary,
+    )
     control_plane_contract = _build_control_plane_contract(
         state,
         hypothesis_summary=hypothesis_summary,
@@ -1551,6 +1562,13 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
         "autonomy_enabled": settings.trading_autonomy_enabled,
         "mode": settings.trading_mode,
         "kill_switch_enabled": settings.trading_kill_switch_enabled,
+        "build": {
+            "version": BUILD_VERSION,
+            "commit": BUILD_COMMIT,
+            "image_digest": BUILD_IMAGE_DIGEST,
+            "active_revision": shadow_first_runtime["active_revision"],
+        },
+        "shadow_first": shadow_first_runtime,
         "execution_advisor": {
             "enabled": settings.trading_execution_advisor_enabled,
             "live_apply_enabled": settings.trading_execution_advisor_live_apply_enabled,
@@ -1691,8 +1709,19 @@ def trading_metrics(session: Session = Depends(get_session)) -> dict[str, object
             market_context_status=market_context_status,
         )
     )
+    shadow_first_runtime = _build_shadow_first_runtime_payload(
+        state=scheduler.state,
+        hypothesis_summary=hypothesis_summary,
+    )
     return {
         "metrics": metrics.__dict__,
+        "build": {
+            "version": BUILD_VERSION,
+            "commit": BUILD_COMMIT,
+            "image_digest": BUILD_IMAGE_DIGEST,
+            "active_revision": shadow_first_runtime["active_revision"],
+        },
+        "shadow_first": shadow_first_runtime,
         "tca": tca_summary,
         "control_plane_contract": _build_control_plane_contract(
             scheduler.state,
@@ -2285,8 +2314,14 @@ def _build_control_plane_contract(
         if isinstance(raw_state_totals, Mapping)
         else {}
     )
+    capital_stage_totals = (
+        dict(cast(Mapping[str, Any], summary.get("capital_stage_totals", {})))
+        if isinstance(summary.get("capital_stage_totals"), Mapping)
+        else {}
+    )
     return {
         "contract_version": "torghut.quant-producer.v1",
+        "active_revision": _active_runtime_revision(),
         "signal_lag_seconds": signal_lag_seconds,
         "signal_continuity_state": getattr(state, "last_signal_continuity_state", None),
         "signal_continuity_reason": getattr(
@@ -2335,6 +2370,11 @@ def _build_control_plane_contract(
         "running": bool(getattr(state, "running", False)),
         "last_run_at": last_run_at,
         "last_reconcile_at": last_reconcile_at,
+        "submission_block_total": getattr(metrics, "submission_block_total", None),
+        "decision_state_total": getattr(metrics, "decision_state_total", None),
+        "planned_decision_age_seconds": getattr(
+            metrics, "planned_decision_age_seconds", None
+        ),
         "last_autonomy_recommendation_trace_id": getattr(
             state, "last_autonomy_recommendation_trace_id", None
         ),
@@ -2349,6 +2389,8 @@ def _build_control_plane_contract(
         "alpha_readiness_shadow_total": state_totals.get("shadow", 0),
         "alpha_readiness_canary_live_total": state_totals.get("canary_live", 0),
         "alpha_readiness_scaled_live_total": state_totals.get("scaled_live", 0),
+        "capital_stage_totals": capital_stage_totals,
+        "active_capital_stage": _resolve_active_capital_stage(summary),
         "alpha_readiness_promotion_eligible_total": summary.get(
             "promotion_eligible_total", 0
         ),
@@ -2358,8 +2400,94 @@ def _build_control_plane_contract(
         "alpha_readiness_dependency_quorum_decision": (
             dependency_quorum.decision if dependency_quorum is not None else "unknown"
         ),
+        "critical_toggle_parity": _build_shadow_first_toggle_parity(),
         "market_context_required": settings.trading_market_context_required,
         "market_context_max_staleness_seconds": settings.trading_market_context_max_staleness_seconds,
+    }
+
+
+def _active_runtime_revision() -> str | None:
+    revision = os.getenv("K_REVISION", "").strip()
+    return revision or None
+
+
+def _critical_trading_toggle_snapshot() -> dict[str, object]:
+    return {
+        "TRADING_ENABLED": settings.trading_enabled,
+        "TRADING_AUTONOMY_ENABLED": settings.trading_autonomy_enabled,
+        "TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION": settings.trading_autonomy_allow_live_promotion,
+        "TRADING_KILL_SWITCH_ENABLED": settings.trading_kill_switch_enabled,
+        "TRADING_MODE": settings.trading_mode,
+        "TRADING_EXECUTION_ADAPTER_POLICY": settings.trading_execution_adapter_policy,
+    }
+
+
+def _build_shadow_first_toggle_parity() -> dict[str, object]:
+    expected = {
+        "TRADING_ENABLED": True,
+        "TRADING_AUTONOMY_ENABLED": False,
+        "TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION": False,
+        "TRADING_KILL_SWITCH_ENABLED": False,
+        "TRADING_MODE": "live",
+    }
+    effective = _critical_trading_toggle_snapshot()
+    mismatches = [
+        key
+        for key, expected_value in expected.items()
+        if effective.get(key) != expected_value
+    ]
+    return {
+        "status": "aligned" if not mismatches else "diverged",
+        "mismatches": mismatches,
+        "expected": expected,
+        "effective": effective,
+    }
+
+
+def _resolve_active_capital_stage(
+    hypothesis_summary: Mapping[str, Any] | None,
+) -> str | None:
+    if not isinstance(hypothesis_summary, Mapping):
+        return None
+    totals_raw = hypothesis_summary.get("capital_stage_totals")
+    if not isinstance(totals_raw, Mapping):
+        return None
+    totals = cast(Mapping[str, Any], totals_raw)
+    for stage in reversed(_CAPITAL_STAGE_ORDER):
+        count = totals.get(stage)
+        if isinstance(count, int) and count > 0:
+            return stage
+    return "shadow" if totals else None
+
+
+def _build_shadow_first_runtime_payload(
+    *,
+    state: object,
+    hypothesis_summary: Mapping[str, Any] | None,
+) -> dict[str, object]:
+    metrics = getattr(state, "metrics", None)
+    return {
+        "active_revision": _active_runtime_revision(),
+        "capital_stage": _resolve_active_capital_stage(hypothesis_summary),
+        "capital_stage_totals": (
+            dict(cast(Mapping[str, Any], hypothesis_summary.get("capital_stage_totals", {})))
+            if isinstance(hypothesis_summary, Mapping)
+            and isinstance(hypothesis_summary.get("capital_stage_totals"), Mapping)
+            else {}
+        ),
+        "submission_block_total": dict(
+            cast(
+                Mapping[str, int],
+                getattr(metrics, "submission_block_total", {}) or {},
+            )
+        ),
+        "decision_state_total": dict(
+            cast(Mapping[str, int], getattr(metrics, "decision_state_total", {}) or {})
+        ),
+        "planned_decision_age_seconds": getattr(
+            metrics, "planned_decision_age_seconds", 0
+        ),
+        "critical_toggle_parity": _build_shadow_first_toggle_parity(),
     }
 
 

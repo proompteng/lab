@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 BACKFILL_DECISION_LOOKBACK_DAYS = 7
 BACKFILL_DECISION_LIMIT = 200
+DECISION_FINAL_STATUSES = FINAL_STATUSES | {"blocked"}
 
 
 class Reconciler:
@@ -88,7 +89,7 @@ class Reconciler:
             .where(
                 TradeDecision.decision_hash.is_not(None),
                 TradeDecision.created_at >= cutoff,
-                ~TradeDecision.status.in_(FINAL_STATUSES),
+                ~TradeDecision.status.in_(DECISION_FINAL_STATUSES),
             )
             .order_by(TradeDecision.created_at.desc())
             .limit(BACKFILL_DECISION_LIMIT)
