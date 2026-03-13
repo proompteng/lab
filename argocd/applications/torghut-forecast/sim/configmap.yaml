@@ -12,7 +12,7 @@ data:
     {
       "schema_version": "torghut-forecast-registry.v1",
       "registry_ref": "s3://torghut-forecast-sim/registry/bootstrap-registry-v1.json",
-      "generated_at": "2026-03-06T00:00:00Z",
+      "generated_at": "2026-03-13T01:11:00Z",
       "models": [
         {
           "model_family": "chronos",
@@ -22,7 +22,7 @@ data:
           "dataset_snapshot_ref": "datasets/market-replay/2026-03-05/chronos.parquet",
           "calibration_ref": "calibrations/chronos/2026-03-06-001.json",
           "calibration_score": "0.94",
-          "calibration_updated_at": "2026-03-06T00:00:00Z",
+          "calibration_updated_at": "2026-03-13T01:11:00Z",
           "latency_ms_floor": 35,
           "latency_ms_span": 40,
           "parameters": {
@@ -44,7 +44,7 @@ data:
           "dataset_snapshot_ref": "datasets/market-replay/2026-03-05/moment.parquet",
           "calibration_ref": "calibrations/moment/2026-03-06-001.json",
           "calibration_score": "0.92",
-          "calibration_updated_at": "2026-03-06T00:00:00Z",
+          "calibration_updated_at": "2026-03-13T01:11:00Z",
           "latency_ms_floor": 25,
           "latency_ms_span": 35,
           "parameters": {
@@ -66,7 +66,7 @@ data:
           "dataset_snapshot_ref": "datasets/market-replay/2026-03-05/financial-tsfm.parquet",
           "calibration_ref": "calibrations/financial-tsfm/2026-03-06-001.json",
           "calibration_score": "0.95",
-          "calibration_updated_at": "2026-03-06T00:00:00Z",
+          "calibration_updated_at": "2026-03-13T01:11:00Z",
           "latency_ms_floor": 45,
           "latency_ms_span": 50,
           "parameters": {
