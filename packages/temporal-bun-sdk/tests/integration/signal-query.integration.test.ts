@@ -8,6 +8,7 @@ import { EventType } from '../../src/proto/temporal/api/enums/v1/event_type_pb'
 import { WorkerRuntime } from '../../src/worker/runtime'
 import {
   findTemporalCliUnavailableError,
+  isTemporalEndpointUnavailable,
   TemporalCliCommandError,
   TemporalCliUnavailableError,
   createIntegrationHarness,
@@ -21,6 +22,8 @@ const shouldRunIntegration = process.env.TEMPORAL_INTEGRATION_TESTS === '1'
 const describeIntegration = shouldRunIntegration ? describe : describe.skip
 const scenarioTimeoutMs = 60_000
 const hookTimeoutMs = 60_000
+const temporalCliCommandMaxAttempts = normalizeRetryConfig(process.env.TEMPORAL_CLI_COMMAND_MAX_ATTEMPTS, 3)
+const temporalCliCommandRetryMs = normalizeRetryConfig(process.env.TEMPORAL_CLI_COMMAND_RETRY_MS, 500)
 
 const CLI_CONFIG: TemporalDevServerConfig = {
   address: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
@@ -95,22 +98,43 @@ describeIntegration('Signal + query integration', () => {
   }, { timeout: hookTimeoutMs })
 
   const runTemporalCli = async (...args: string[]): Promise<string> => {
-    const child = Bun.spawn(['temporal', '--address', CLI_CONFIG.address, ...args], {
-      stdout: 'pipe',
-      stderr: 'pipe',
-      env: {
-        ...process.env,
-        TEMPORAL_ADDRESS: CLI_CONFIG.address,
-        TEMPORAL_NAMESPACE: CLI_CONFIG.namespace,
-      },
-    })
-    const exitCode = await child.exited
-    const stdout = child.stdout ? await new Response(child.stdout).text() : ''
-    const stderr = child.stderr ? await new Response(child.stderr).text() : ''
-    if (exitCode !== 0) {
-      throw new TemporalCliCommandError(['temporal', ...args], exitCode, stdout, stderr)
+    const command = ['temporal', '--address', CLI_CONFIG.address, ...args] as const
+    const attempts: Array<{ candidate: string; error: string }> = []
+    for (let attempt = 1; attempt <= temporalCliCommandMaxAttempts; attempt += 1) {
+      const child = Bun.spawn(command, {
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: {
+          ...process.env,
+          TEMPORAL_ADDRESS: CLI_CONFIG.address,
+          TEMPORAL_NAMESPACE: CLI_CONFIG.namespace,
+        },
+      })
+      const exitCode = await child.exited
+      const stdout = child.stdout ? await new Response(child.stdout).text() : ''
+      const stderr = child.stderr ? await new Response(child.stderr).text() : ''
+      if (exitCode === 0) {
+        return stdout.trim()
+      }
+
+      const cliError = new TemporalCliCommandError(command, exitCode, stdout, stderr)
+      if (!isTemporalEndpointUnavailable(cliError)) {
+        throw cliError
+      }
+
+      attempts.push({ candidate: CLI_CONFIG.address, error: stderr || stdout || cliError.message })
+      if (attempt < temporalCliCommandMaxAttempts) {
+        await Bun.sleep(temporalCliCommandRetryMs * attempt)
+        continue
+      }
+
+      throw new TemporalCliUnavailableError(
+        `Temporal endpoint ${CLI_CONFIG.address} is unavailable while running "${command.join(' ')}"`,
+        attempts,
+      )
     }
-    return stdout.trim()
+
+    throw new TemporalCliUnavailableError(`Temporal endpoint ${CLI_CONFIG.address} is unavailable`, attempts)
   }
 
   const executeWorkflow = async (workflowType: string): Promise<WorkflowExecutionHandle> => {
@@ -235,7 +259,17 @@ describeIntegration('Signal + query integration', () => {
       console.warn(`[temporal-bun-sdk] CLI unavailable; skipping signal/query scenario "${name}"`)
       return
     }
-    await scenario()
+    try {
+      await scenario()
+    } catch (error) {
+      const unavailable = findTemporalCliUnavailableError(error)
+      if (unavailable) {
+        cliUnavailable = true
+        console.warn(`[temporal-bun-sdk] CLI unavailable; skipping signal/query scenario "${name}": ${unavailable.message}`)
+        return
+      }
+      throw error
+    }
   }
 
   test('workflow exposes signal-driven query state', async () => {
@@ -257,3 +291,11 @@ describeIntegration('Signal + query integration', () => {
     })
   }, scenarioTimeoutMs)
 })
+
+function normalizeRetryConfig(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value ?? '', 10)
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return fallback
+  }
+  return parsed
+}

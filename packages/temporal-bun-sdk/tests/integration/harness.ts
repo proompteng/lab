@@ -134,6 +134,8 @@ export const findTemporalCliUnavailableError = (
 
 const textDecoder = new TextDecoder()
 const reuseExistingServer = process.env.TEMPORAL_TEST_SERVER === '1'
+const temporalCliCommandMaxAttempts = normalizeRetryConfig(process.env.TEMPORAL_CLI_COMMAND_MAX_ATTEMPTS, 3)
+const temporalCliCommandRetryMs = normalizeRetryConfig(process.env.TEMPORAL_CLI_COMMAND_RETRY_MS, 500)
 
 export const createIntegrationHarness = (
   config: TemporalDevServerConfig,
@@ -182,34 +184,58 @@ export const createIntegrationHarness = (
       const command = [cliExecutable, '--address', config.address, ...args]
       return Effect.tryPromise({
         try: async () => {
-          console.info('[temporal-bun-sdk] running CLI command', command.join(' '))
-          const child = Bun.spawn(command, {
-            stdout: 'pipe',
-            stderr: 'pipe',
-            env: {
-              ...process.env,
-              ...cliEnv,
-            },
-          })
-          const exitCode = await child.exited
-          const stdout = child.stdout ? await readStream(child.stdout) : ''
-          const stderr = child.stderr ? await readStream(child.stderr) : ''
-          if (exitCode !== 0) {
-            const cliError = new TemporalCliCommandError(command, exitCode, stdout, stderr)
-            console.error('[temporal-bun-sdk] CLI command failed', { command, exitCode, stdout, stderr })
-            if (isTemporalEndpointUnavailable(cliError)) {
-              throw new TemporalCliUnavailableError(
-                `Temporal endpoint ${config.address} is unavailable while running "${command.join(' ')}"`,
-                [{ candidate: config.address, error: stderr || stdout || cliError.message }],
-              )
+          const attempts: Array<{ candidate: string; error: string }> = []
+          for (let attempt = 1; attempt <= temporalCliCommandMaxAttempts; attempt += 1) {
+            console.info('[temporal-bun-sdk] running CLI command', command.join(' '))
+            const child = Bun.spawn(command, {
+              stdout: 'pipe',
+              stderr: 'pipe',
+              env: {
+                ...process.env,
+                ...cliEnv,
+              },
+            })
+            const exitCode = await child.exited
+            const stdout = child.stdout ? await readStream(child.stdout) : ''
+            const stderr = child.stderr ? await readStream(child.stderr) : ''
+            if (exitCode === 0) {
+              console.info('[temporal-bun-sdk] CLI command stdout', stdout)
+              if (stderr.trim().length > 0) {
+                console.info('[temporal-bun-sdk] CLI command stderr', stderr)
+              }
+              return stdout
             }
-            throw cliError
+
+            const cliError = new TemporalCliCommandError(command, exitCode, stdout, stderr)
+            if (!isTemporalEndpointUnavailable(cliError)) {
+              console.error('[temporal-bun-sdk] CLI command failed', { command, exitCode, stdout, stderr })
+              throw cliError
+            }
+
+            const detail = stderr || stdout || cliError.message
+            attempts.push({ candidate: config.address, error: detail })
+            console.warn('[temporal-bun-sdk] Temporal CLI transport failed', {
+              command,
+              attempt,
+              maxAttempts: temporalCliCommandMaxAttempts,
+              error: detail,
+            })
+
+            if (attempt < temporalCliCommandMaxAttempts) {
+              await Bun.sleep(temporalCliCommandRetryMs * attempt)
+              continue
+            }
+
+            throw new TemporalCliUnavailableError(
+              `Temporal endpoint ${config.address} is unavailable while running "${command.join(' ')}"`,
+              attempts,
+            )
           }
-          console.info('[temporal-bun-sdk] CLI command stdout', stdout)
-          if (stderr.trim().length > 0) {
-            console.info('[temporal-bun-sdk] CLI command stderr', stderr)
-          }
-          return stdout
+
+          throw new TemporalCliUnavailableError(
+            `Temporal endpoint ${config.address} is unavailable while running "${command.join(' ')}"`,
+            attempts,
+          )
         },
         catch: (error) => {
           if (error instanceof TemporalCliUnavailableError || error instanceof TemporalCliCommandError) {
@@ -471,7 +497,7 @@ const compactStringEnv = (values: Record<string, string | undefined>): Record<st
   return env
 }
 
-const isTemporalEndpointUnavailable = (error: unknown): boolean => {
+export const isTemporalEndpointUnavailable = (error: unknown): boolean => {
   if (error instanceof TemporalCliUnavailableError) {
     return true
   }
@@ -492,6 +518,14 @@ const isTemporalEndpointUnavailable = (error: unknown): boolean => {
     normalized.includes('transport: error while dialing') ||
     normalized.includes('unavailable')
   )
+}
+
+function normalizeRetryConfig(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value ?? '', 10)
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return fallback
+  }
+  return parsed
 }
 
 const normalizeTemporalCliError = (error: unknown, command: readonly string[]): TemporalCliError => {
