@@ -39,6 +39,7 @@ describe('torghut simulation control plane', () => {
         },
       },
       {
+        runId: 'sim-demo-compact',
         outputRoot: '/tmp/torghut-sim',
         cachePolicy: 'require_cache',
         profile: 'compact',
@@ -52,6 +53,68 @@ describe('torghut simulation control plane', () => {
     })
     expect(manifest.ta_restore).toMatchObject({ mode: 'stateless' })
     expect(manifest.cachePolicy).toBe('require_cache')
+    expect(manifest.kafka).toMatchObject({
+      bootstrap_servers: 'kafka-kafka-bootstrap.kafka.svc.cluster.local:9092',
+      runtime_bootstrap_servers: 'kafka-kafka-bootstrap.kafka.svc.cluster.local:9092',
+      sasl_password_env: 'TORGHUT_SIM_KAFKA_PASSWORD',
+      runtime_sasl_password_env: 'TORGHUT_SIM_KAFKA_PASSWORD',
+    })
+    expect(manifest.clickhouse).toMatchObject({
+      http_url: 'http://torghut-clickhouse.torghut.svc.cluster.local:8123',
+      simulation_database: 'torghut_sim_default',
+    })
+    expect(manifest.postgres).toMatchObject({
+      admin_dsn: 'postgresql://postgres@torghut-db-rw.torghut.svc.cluster.local:5432/postgres',
+      admin_dsn_password_env: 'TORGHUT_POSTGRES_ADMIN_PASSWORD',
+      simulation_dsn: 'postgresql://torghut_app@torghut-db-rw.torghut.svc.cluster.local:5432/torghut_sim_default',
+      runtime_simulation_dsn:
+        'postgresql://torghut_app@torghut-db-rw.torghut.svc.cluster.local:5432/torghut_sim_default',
+      migrations_command: '/opt/venv/bin/alembic upgrade heads',
+    })
+    expect(manifest.rollouts).toMatchObject({
+      enabled: true,
+      namespace: 'torghut',
+      runtime_template: 'torghut-simulation-runtime-ready',
+      activity_template: 'torghut-simulation-activity',
+      teardown_template: 'torghut-simulation-teardown-clean',
+      artifact_template: 'torghut-simulation-artifact-bundle',
+    })
+    expect(manifest.argocd).toMatchObject({
+      manage_automation: true,
+      app_name: 'torghut',
+      desired_mode_during_run: 'manual',
+    })
+  })
+
+  it('derives isolated simulation databases when warm lanes are disabled', () => {
+    const manifest = __private.normalizeSimulationManifest(
+      {
+        dataset_id: 'dataset-a',
+        lane: 'options',
+        runtime: {
+          target_mode: 'dedicated_service',
+          use_warm_lane: false,
+        },
+        window: {
+          start: '2026-03-06T14:30:00Z',
+          end: '2026-03-06T15:30:00Z',
+        },
+      },
+      {
+        runId: 'sim-options-proof',
+        profile: 'hourly',
+      },
+    )
+
+    expect(manifest.clickhouse).toMatchObject({
+      simulation_database: 'torghut_sim_sim_options_proof',
+    })
+    expect(manifest.postgres).toMatchObject({
+      simulation_dsn:
+        'postgresql://torghut_app@torghut-db-rw.torghut.svc.cluster.local:5432/torghut_sim_sim_options_proof',
+      runtime_simulation_dsn:
+        'postgresql://torghut_app@torghut-db-rw.torghut.svc.cluster.local:5432/torghut_sim_sim_options_proof',
+    })
   })
 
   it('resolves a writable workflow output root for relative artifact paths', () => {

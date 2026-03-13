@@ -117,6 +117,24 @@ const DEFAULT_CONFIRM_PHRASE = 'START_HISTORICAL_SIMULATION'
 const DEFAULT_WORKFLOW_TEMPLATE_NAME = 'torghut-historical-simulation'
 const DEFAULT_DUMP_FORMAT = 'jsonl.zst'
 const DEFAULT_CAMPAIGN_OUTPUT_ROOT = `${DEFAULT_OUTPUT_ROOT}/campaigns`
+const DEFAULT_SIMULATION_KAFKA_BOOTSTRAP = 'kafka-kafka-bootstrap.kafka.svc.cluster.local:9092'
+const DEFAULT_SIMULATION_KAFKA_USERNAME = 'kafka-codex-credentials'
+const DEFAULT_SIMULATION_KAFKA_PASSWORD_ENV = 'TORGHUT_SIM_KAFKA_PASSWORD'
+const DEFAULT_SIMULATION_CLICKHOUSE_HTTP_URL = 'http://torghut-clickhouse.torghut.svc.cluster.local:8123'
+const DEFAULT_SIMULATION_CLICKHOUSE_USERNAME = 'torghut'
+const DEFAULT_SIMULATION_CLICKHOUSE_PASSWORD_ENV = 'TORGHUT_CLICKHOUSE_PASSWORD'
+const DEFAULT_SIMULATION_POSTGRES_HOST = 'torghut-db-rw.torghut.svc.cluster.local:5432'
+const DEFAULT_SIMULATION_POSTGRES_ADMIN_DSN = `postgresql://postgres@${DEFAULT_SIMULATION_POSTGRES_HOST}/postgres`
+const DEFAULT_SIMULATION_POSTGRES_ADMIN_PASSWORD_ENV = 'TORGHUT_POSTGRES_ADMIN_PASSWORD'
+const DEFAULT_SIMULATION_POSTGRES_RUNTIME_USER = 'torghut_app'
+const DEFAULT_SIMULATION_POSTGRES_MIGRATIONS_COMMAND = '/opt/venv/bin/alembic upgrade heads'
+const DEFAULT_WARM_LANE_DATABASE = 'torghut_sim_default'
+const DEFAULT_RUNTIME_VERSION_REFS = ['services/torghut@simulation', 'services/torghut-forecast@simulation'] as const
+const DEFAULT_ROLLOUTS_NAMESPACE = 'torghut'
+const DEFAULT_ROLLOUTS_RUNTIME_TEMPLATE = 'torghut-simulation-runtime-ready'
+const DEFAULT_ROLLOUTS_ACTIVITY_TEMPLATE = 'torghut-simulation-activity'
+const DEFAULT_ROLLOUTS_TEARDOWN_TEMPLATE = 'torghut-simulation-teardown-clean'
+const DEFAULT_ROLLOUTS_ARTIFACT_TEMPLATE = 'torghut-simulation-artifact-bundle'
 const DEFAULT_EXPECTED_ARTIFACTS = [
   'run-manifest.json',
   'runtime-verify.json',
@@ -495,6 +513,12 @@ const buildCampaignRunId = (
   return `${normalizeRunToken(campaignId)}-${candidateToken(candidateRef)}-${startToken}${labelToken}`.slice(0, 120)
 }
 
+const defaultSimulationDatabaseName = (runIdSeed: string, useWarmLane: boolean) =>
+  useWarmLane ? DEFAULT_WARM_LANE_DATABASE : `torghut_sim_${normalizeRunToken(runIdSeed)}`
+
+const defaultSimulationPostgresDsn = (database: string) =>
+  `postgresql://${DEFAULT_SIMULATION_POSTGRES_RUNTIME_USER}@${DEFAULT_SIMULATION_POSTGRES_HOST}/${database}`
+
 const parseTimestamp = (value: unknown) => {
   const text = asString(value)
   if (!text) return null
@@ -503,7 +527,7 @@ const parseTimestamp = (value: unknown) => {
 
 const normalizeSimulationManifest = (
   manifestInput: JsonRecord,
-  overrides: Pick<TorghutSimulationRunRequest, 'outputRoot' | 'cachePolicy' | 'profile'>,
+  overrides: Pick<TorghutSimulationRunRequest, 'runId' | 'outputRoot' | 'cachePolicy' | 'profile'>,
 ) => {
   const manifest = structuredClone(manifestInput)
   const window = asRecord(manifest.window)
@@ -521,6 +545,9 @@ const normalizeSimulationManifest = (
     runtime.use_warm_lane = targetMode === 'dedicated_service' && lane === 'equity'
   }
   manifest.runtime = runtime
+  const useWarmLane = Boolean(runtime.use_warm_lane ?? runtime.useWarmLane)
+  const runIdSeed = overrides.runId ?? `${String(manifest.dataset_id)}-${String(window.start)}-${String(window.end)}`
+  const simulationDatabase = defaultSimulationDatabaseName(runIdSeed, useWarmLane)
 
   const performance = asRecord(manifest.performance)
   if (overrides.profile) performance.replayProfile = overrides.profile
@@ -537,6 +564,66 @@ const normalizeSimulationManifest = (
   } else if (!asString(manifest.cachePolicy)) {
     manifest.cachePolicy = DEFAULT_CACHE_POLICY
   }
+
+  const kafka = asRecord(manifest.kafka)
+  if (!asString(kafka.bootstrap_servers)) kafka.bootstrap_servers = DEFAULT_SIMULATION_KAFKA_BOOTSTRAP
+  if (!asString(kafka.runtime_bootstrap_servers)) kafka.runtime_bootstrap_servers = kafka.bootstrap_servers
+  if (!asString(kafka.security_protocol)) kafka.security_protocol = 'SASL_PLAINTEXT'
+  if (!asString(kafka.sasl_mechanism)) kafka.sasl_mechanism = 'SCRAM-SHA-512'
+  if (!asString(kafka.sasl_username)) kafka.sasl_username = DEFAULT_SIMULATION_KAFKA_USERNAME
+  if (!asString(kafka.sasl_password_env)) kafka.sasl_password_env = DEFAULT_SIMULATION_KAFKA_PASSWORD_ENV
+  if (!asString(kafka.runtime_security_protocol)) kafka.runtime_security_protocol = kafka.security_protocol
+  if (!asString(kafka.runtime_sasl_mechanism)) kafka.runtime_sasl_mechanism = kafka.sasl_mechanism
+  if (!asString(kafka.runtime_sasl_username)) kafka.runtime_sasl_username = kafka.sasl_username
+  if (!asString(kafka.runtime_sasl_password_env)) kafka.runtime_sasl_password_env = kafka.sasl_password_env
+  if (!asString(kafka.default_partitions)) kafka.default_partitions = 8
+  if (!asString(kafka.replication_factor)) kafka.replication_factor = 1
+  manifest.kafka = kafka
+
+  const clickhouse = asRecord(manifest.clickhouse)
+  if (!asString(clickhouse.http_url)) clickhouse.http_url = DEFAULT_SIMULATION_CLICKHOUSE_HTTP_URL
+  if (!asString(clickhouse.username)) clickhouse.username = DEFAULT_SIMULATION_CLICKHOUSE_USERNAME
+  if (!asString(clickhouse.password_env)) clickhouse.password_env = DEFAULT_SIMULATION_CLICKHOUSE_PASSWORD_ENV
+  if (!asString(clickhouse.simulation_database)) clickhouse.simulation_database = simulationDatabase
+  manifest.clickhouse = clickhouse
+
+  const postgres = asRecord(manifest.postgres)
+  if (!asString(postgres.admin_dsn)) postgres.admin_dsn = DEFAULT_SIMULATION_POSTGRES_ADMIN_DSN
+  if (!asString(postgres.admin_dsn_password_env)) {
+    postgres.admin_dsn_password_env = DEFAULT_SIMULATION_POSTGRES_ADMIN_PASSWORD_ENV
+  }
+  if (!asString(postgres.simulation_dsn)) {
+    postgres.simulation_dsn = defaultSimulationPostgresDsn(simulationDatabase)
+  }
+  if (!asString(postgres.runtime_simulation_dsn)) {
+    postgres.runtime_simulation_dsn = defaultSimulationPostgresDsn(simulationDatabase)
+  }
+  if (!asString(postgres.migrations_command)) {
+    postgres.migrations_command = DEFAULT_SIMULATION_POSTGRES_MIGRATIONS_COMMAND
+  }
+  manifest.postgres = postgres
+
+  if (!Array.isArray(manifest.runtime_version_refs)) {
+    manifest.runtime_version_refs = [...DEFAULT_RUNTIME_VERSION_REFS]
+  }
+
+  const rollouts = asRecord(manifest.rollouts)
+  if (rollouts.enabled === undefined) rollouts.enabled = true
+  if (!asString(rollouts.namespace)) rollouts.namespace = DEFAULT_ROLLOUTS_NAMESPACE
+  if (!asString(rollouts.runtime_template)) rollouts.runtime_template = DEFAULT_ROLLOUTS_RUNTIME_TEMPLATE
+  if (!asString(rollouts.activity_template)) rollouts.activity_template = DEFAULT_ROLLOUTS_ACTIVITY_TEMPLATE
+  if (!asString(rollouts.teardown_template)) rollouts.teardown_template = DEFAULT_ROLLOUTS_TEARDOWN_TEMPLATE
+  if (!asString(rollouts.artifact_template)) rollouts.artifact_template = DEFAULT_ROLLOUTS_ARTIFACT_TEMPLATE
+  manifest.rollouts = rollouts
+
+  const argocd = asRecord(manifest.argocd)
+  if (argocd.manage_automation === undefined) argocd.manage_automation = true
+  if (!asString(argocd.applicationset_name)) argocd.applicationset_name = 'product'
+  if (!asString(argocd.applicationset_namespace)) argocd.applicationset_namespace = 'argocd'
+  if (!asString(argocd.app_name)) argocd.app_name = 'torghut'
+  if (!asString(argocd.desired_mode_during_run)) argocd.desired_mode_during_run = 'manual'
+  if (!asString(argocd.restore_mode_after_run)) argocd.restore_mode_after_run = 'previous'
+  manifest.argocd = argocd
 
   return manifest
 }
@@ -953,6 +1040,7 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
   const runId =
     request.runId ?? `sim-${new Date().toISOString().replace(/[:.]/g, '-').toLowerCase()}-${randomUUID().slice(0, 8)}`
   const manifest = normalizeSimulationManifest(request.manifest, {
+    runId,
     outputRoot: request.outputRoot,
     cachePolicy: request.cachePolicy,
     profile: request.profile,
