@@ -9,6 +9,7 @@ import { WorkerRuntime } from '../../src/worker/runtime'
 import {
   findTemporalCliUnavailableError,
   isTemporalEndpointUnavailable,
+  runHarnessEffect,
   TemporalCliCommandError,
   TemporalCliUnavailableError,
   createIntegrationHarness,
@@ -141,7 +142,7 @@ describeIntegration('Signal + query integration', () => {
     if (!harness) {
       throw new Error('Integration harness not initialised')
     }
-    return await Effect.runPromise(
+    return await runHarnessEffect(
       harness.executeWorkflow({
         workflowType,
         workflowId: `signal-query-${crypto.randomUUID()}`,
@@ -156,7 +157,7 @@ describeIntegration('Signal + query integration', () => {
     if (!harness) {
       throw new Error('Integration harness not initialised')
     }
-    return await Effect.runPromise(harness.fetchWorkflowHistory(handle))
+    return await runHarnessEffect(harness.fetchWorkflowHistory(handle))
   }
 
   const sendSignal = async (workflowId: string, runId: string, signal: string, input: string) => {

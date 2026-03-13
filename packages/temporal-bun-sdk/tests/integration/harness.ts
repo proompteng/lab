@@ -3,7 +3,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, write
 import { join } from 'node:path'
 
 import { fromJson } from '@bufbuild/protobuf'
-import { Effect } from 'effect'
+import { Effect, Exit } from 'effect'
 
 import { HistorySchema, type HistoryEvent } from '../../src/proto/temporal/api/history/v1/message_pb'
 import { EventType } from '../../src/proto/temporal/api/enums/v1/event_type_pb'
@@ -122,14 +122,27 @@ export const findTemporalCliUnavailableError = (
     return null
   }
   visited.add(value)
-  const record = value as Record<string, unknown>
-  for (const key of ['error', 'cause', 'left', 'right']) {
-    const match = findTemporalCliUnavailableError(record[key], visited)
+  const record = value as Record<PropertyKey, unknown>
+  const values = Array.isArray(value) ? value : Reflect.ownKeys(record).map((key) => record[key])
+  for (const candidate of values) {
+    const match = findTemporalCliUnavailableError(candidate, visited)
     if (match) {
       return match
     }
   }
   return null
+}
+
+export const runHarnessEffect = async <A>(effect: Effect.Effect<A, TemporalCliError, never>): Promise<A> => {
+  const exit = await Effect.runPromiseExit(effect)
+  if (Exit.isFailure(exit)) {
+    const unavailable = findTemporalCliUnavailableError(exit.cause)
+    if (unavailable) {
+      throw unavailable
+    }
+    throw exit.cause
+  }
+  return exit.value
 }
 
 const textDecoder = new TextDecoder()

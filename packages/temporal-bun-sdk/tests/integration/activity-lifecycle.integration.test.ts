@@ -8,6 +8,7 @@ import { WorkerRuntime } from '../../src/worker/runtime'
 import { EventType } from '../../src/proto/temporal/api/enums/v1/event_type_pb'
 import {
   findTemporalCliUnavailableError,
+  runHarnessEffect,
   TemporalCliCommandError,
   TemporalCliUnavailableError,
   createIntegrationHarness,
@@ -155,7 +156,7 @@ describeIntegration('Activity lifecycle integration', () => {
       throw new Error('Integration harness not initialised')
     }
     try {
-      return await Effect.runPromise(
+      return await runHarnessEffect(
         harness.executeWorkflow({
           workflowType,
           workflowId: `lifecycle-${crypto.randomUUID()}`,
@@ -176,6 +177,6 @@ describeIntegration('Activity lifecycle integration', () => {
     if (!harness) {
       throw new Error('Integration harness not initialised')
     }
-    return await Effect.runPromise(harness.fetchWorkflowHistory(handle))
+    return await runHarnessEffect(harness.fetchWorkflowHistory(handle))
   }
 })

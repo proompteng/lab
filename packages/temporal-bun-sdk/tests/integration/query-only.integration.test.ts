@@ -9,6 +9,7 @@ import { WorkerRuntime } from '../../src/worker/runtime'
 import {
   findTemporalCliUnavailableError,
   isTemporalEndpointUnavailable,
+  runHarnessEffect,
   TemporalCliCommandError,
   TemporalCliUnavailableError,
   createIntegrationHarness,
@@ -147,7 +148,7 @@ describeIntegration('Query-only workflow tasks', () => {
     if (!harness) {
       throw new Error('Integration harness not initialised')
     }
-    return await Effect.runPromise(
+    return await runHarnessEffect(
       harness.executeWorkflow({
         workflowType,
         workflowId: `query-only-${crypto.randomUUID()}`,
@@ -162,7 +163,7 @@ describeIntegration('Query-only workflow tasks', () => {
     if (!harness) {
       throw new Error('Integration harness not initialised')
     }
-    return await Effect.runPromise(harness.fetchWorkflowHistory(handle))
+    return await runHarnessEffect(harness.fetchWorkflowHistory(handle))
   }
 
   const queryWorkflow = async (handle: WorkflowExecutionHandle) => {
