@@ -170,6 +170,99 @@ SIMULATION_POSTGRES_RUNTIME_RESET_TABLES = (
 )
 KAFKA_API_VERSION = (4, 1, 1)
 SCHEMA_REGISTRY_CONTENT_TYPE = 'application/vnd.schemaregistry.v1+json'
+EMBEDDED_SCHEMA_REGISTRY_SCHEMA_BY_SUFFIX = {
+    'docs/torghut/schemas/ta-bars-1s.avsc': (
+        '{"type":"record","name":"TaBar1s","namespace":"torghut.ta","fields":['
+        '{"name":"ingest_ts","type":"string"},'
+        '{"name":"event_ts","type":"string"},'
+        '{"name":"symbol","type":"string"},'
+        '{"name":"seq","type":"long"},'
+        '{"name":"is_final","type":["null","boolean"],"default":null},'
+        '{"name":"source","type":["null","string"],"default":null},'
+        '{"name":"window","type":["null",{"type":"record","name":"WindowBar1s","fields":['
+        '{"name":"size","type":"string"},'
+        '{"name":"step","type":["null","string"],"default":null},'
+        '{"name":"start","type":["null","string"],"default":null},'
+        '{"name":"end","type":["null","string"],"default":null}'
+        ']}],"default":null},'
+        '{"name":"o","type":"double"},'
+        '{"name":"h","type":"double"},'
+        '{"name":"l","type":"double"},'
+        '{"name":"c","type":"double"},'
+        '{"name":"v","type":"double"},'
+        '{"name":"vwap","type":["null","double"],"default":null},'
+        '{"name":"count","type":"long"},'
+        '{"name":"version","type":["int","null"],"default":1}'
+        ']}'
+    ),
+    'docs/torghut/schemas/ta-signals.avsc': (
+        '{"type":"record","name":"TaSignal","namespace":"torghut.ta","fields":['
+        '{"name":"ingest_ts","type":"string"},'
+        '{"name":"event_ts","type":"string"},'
+        '{"name":"symbol","type":"string"},'
+        '{"name":"seq","type":"long"},'
+        '{"name":"feature_schema_version","type":["null","string"],"default":null},'
+        '{"name":"is_final","type":["null","boolean"],"default":null},'
+        '{"name":"signal_quality_flag","type":["null","string"],"default":null},'
+        '{"name":"source","type":["null","string"],"default":null},'
+        '{"name":"window","type":["null",{"type":"record","name":"WindowSignal","fields":['
+        '{"name":"size","type":"string"},'
+        '{"name":"step","type":["null","string"],"default":null},'
+        '{"name":"start","type":["null","string"],"default":null},'
+        '{"name":"end","type":["null","string"],"default":null}'
+        ']}],"default":null},'
+        '{"name":"macd","type":["null",{"type":"record","name":"Macd","fields":['
+        '{"name":"macd","type":"double"},'
+        '{"name":"signal","type":"double"},'
+        '{"name":"hist","type":"double"}'
+        ']}],"default":null},'
+        '{"name":"ema","type":["null",{"type":"record","name":"Ema","fields":['
+        '{"name":"ema12","type":"double"},'
+        '{"name":"ema26","type":"double"}'
+        ']}],"default":null},'
+        '{"name":"rsi14","type":["null","double"],"default":null},'
+        '{"name":"boll","type":["null",{"type":"record","name":"Bollinger","fields":['
+        '{"name":"mid","type":"double"},'
+        '{"name":"upper","type":"double"},'
+        '{"name":"lower","type":"double"}'
+        ']}],"default":null},'
+        '{"name":"vwap","type":["null",{"type":"record","name":"Vwap","fields":['
+        '{"name":"session","type":"double"},'
+        '{"name":"w5m","type":["null","double"],"default":null}'
+        ']}],"default":null},'
+        '{"name":"imbalance","type":["null",{"type":"record","name":"Imbalance","fields":['
+        '{"name":"spread","type":"double"},'
+        '{"name":"bid_px","type":"double"},'
+        '{"name":"ask_px","type":"double"},'
+        '{"name":"bid_sz","type":"double"},'
+        '{"name":"ask_sz","type":"double"}'
+        ']}],"default":null},'
+        '{"name":"vol_realized","type":["null",{"type":"record","name":"RealizedVol","fields":['
+        '{"name":"w60s","type":"double"}'
+        ']}],"default":null},'
+        '{"name":"microstructure_signal_v1","type":["null",{"type":"record","name":"MicrostructureSignalV1","fields":['
+        '{"name":"schema_version","type":"string"},'
+        '{"name":"symbol","type":"string"},'
+        '{"name":"horizon","type":"string"},'
+        '{"name":"direction_probabilities","type":{"type":"record","name":"DirectionProbabilities","fields":['
+        '{"name":"up","type":"double"},'
+        '{"name":"flat","type":"double"},'
+        '{"name":"down","type":"double"}'
+        ']}},'
+        '{"name":"uncertainty_band","type":"string"},'
+        '{"name":"expected_spread_impact_bps","type":"double"},'
+        '{"name":"expected_slippage_bps","type":"double"},'
+        '{"name":"feature_quality_status","type":"string"},'
+        '{"name":"artifact","type":{"type":"record","name":"MicrostructureSignalArtifact","fields":['
+        '{"name":"model_id","type":"string"},'
+        '{"name":"feature_schema_version","type":"string"},'
+        '{"name":"training_run_id","type":"string"}'
+        ']}}'
+        ']}],"default":null},'
+        '{"name":"version","type":["int","null"],"default":1}'
+        ']}'
+    ),
+}
 KAFKA_HOST_SUFFIX_FALLBACKS = (
     '.kafka-kafka-brokers.kafka.svc.cluster.local',
     '.kafka-kafka-brokers.kafka.svc',
@@ -3154,6 +3247,10 @@ def _resolve_schema_registry_schema_path(schema_relative: str) -> Path:
 def _load_schema_registry_schema_literal(schema_path: str) -> str:
     path = Path(schema_path)
     if not path.exists():
+        normalized_path = schema_path.replace('\\', '/')
+        for suffix, schema_literal in EMBEDDED_SCHEMA_REGISTRY_SCHEMA_BY_SUFFIX.items():
+            if normalized_path.endswith(suffix):
+                return schema_literal
         raise RuntimeError(f'schema_registry_schema_file_missing:{schema_path}')
     try:
         payload = json.loads(path.read_text(encoding='utf-8'))
