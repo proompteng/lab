@@ -1456,6 +1456,22 @@ class TestStartHistoricalSimulation(TestCase):
                     'scripts.start_historical_simulation._validate_dump_coverage',
                     return_value={'coverage_ratio': 1.0},
                 ),
+                patch(
+                    'scripts.start_historical_simulation._configure_ta_for_simulation',
+                    return_value=None,
+                ),
+                patch(
+                    'scripts.start_historical_simulation._restart_ta_deployment',
+                    return_value=1,
+                ),
+                patch(
+                    'scripts.start_historical_simulation._configure_torghut_service_for_simulation',
+                    return_value=None,
+                ),
+                patch(
+                    'scripts.start_historical_simulation._release_simulation_runtime_lock',
+                    return_value={'status': 'released', 'run_id': resources.run_id},
+                ),
             ):
                 start_historical_simulation._apply(
                     resources=resources,
