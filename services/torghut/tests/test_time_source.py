@@ -14,6 +14,7 @@ class TestTradingTimeSource(TestCase):
             "trading_simulation_enabled": config.settings.trading_simulation_enabled,
             "trading_simulation_clock_mode": config.settings.trading_simulation_clock_mode,
             "trading_simulation_window_start": config.settings.trading_simulation_window_start,
+            "trading_simulation_window_end": config.settings.trading_simulation_window_end,
             "trading_simulation_clock_cache_seconds": config.settings.trading_simulation_clock_cache_seconds,
         }
 
@@ -21,6 +22,7 @@ class TestTradingTimeSource(TestCase):
         config.settings.trading_simulation_enabled = self._snapshot["trading_simulation_enabled"]
         config.settings.trading_simulation_clock_mode = self._snapshot["trading_simulation_clock_mode"]
         config.settings.trading_simulation_window_start = self._snapshot["trading_simulation_window_start"]
+        config.settings.trading_simulation_window_end = self._snapshot["trading_simulation_window_end"]
         config.settings.trading_simulation_clock_cache_seconds = self._snapshot["trading_simulation_clock_cache_seconds"]
 
     def test_snapshot_uses_cursor_time_when_available(self) -> None:
@@ -43,6 +45,20 @@ class TestTradingTimeSource(TestCase):
         source = TradingTimeSource()
 
         with patch.object(source, "_load_clickhouse_cursor", return_value=None):
+            snapshot = source.snapshot(account_label="TORGHUT_SIM")
+
+        self.assertEqual(snapshot.now, datetime(2026, 3, 6, 18, 0, tzinfo=timezone.utc))
+        self.assertEqual(snapshot.source, "window_start")
+
+    def test_snapshot_ignores_cursor_outside_simulation_window(self) -> None:
+        config.settings.trading_simulation_enabled = True
+        config.settings.trading_simulation_clock_mode = "cursor"
+        config.settings.trading_simulation_window_start = "2026-03-06T18:00:00Z"
+        config.settings.trading_simulation_window_end = "2026-03-06T18:15:00Z"
+        source = TradingTimeSource()
+        stale_cursor = datetime(2026, 3, 6, 19, 5, tzinfo=timezone.utc)
+
+        with patch.object(source, "_load_clickhouse_cursor", return_value=stale_cursor):
             snapshot = source.snapshot(account_label="TORGHUT_SIM")
 
         self.assertEqual(snapshot.now, datetime(2026, 3, 6, 18, 0, tzinfo=timezone.utc))

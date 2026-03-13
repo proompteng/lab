@@ -19,6 +19,7 @@ from ..models import TradeCursor
 from .clickhouse import normalize_symbol, to_datetime64
 from .models import SignalEnvelope
 from .simulation import resolve_simulation_context, signal_ingest_runtime, simulation_context_enabled
+from .simulation_window import normalize_simulation_cursor, simulation_window_bounds
 from .time_source import trading_now
 
 logger = logging.getLogger(__name__)
@@ -195,18 +196,31 @@ class ClickHouseSignalIngestor:
         fast_forwarded: bool,
     ) -> "SignalBatch":
         query_window_start = cursor_at
-        if latest_signal_at is None:
+        _window_start, simulation_window_end = simulation_window_bounds()
+        effective_latest_signal_at = latest_signal_at
+        if (
+            simulation_window_end is not None
+            and effective_latest_signal_at is not None
+            and effective_latest_signal_at > simulation_window_end
+        ):
+            effective_latest_signal_at = simulation_window_end
+
+        if effective_latest_signal_at is None:
             query_window_end = query_window_start + _simulation_fetch_window()
+            if simulation_window_end is not None:
+                query_window_end = min(query_window_end, simulation_window_end)
         else:
-            effective_end = latest_signal_at or poll_started_at
+            effective_end = effective_latest_signal_at
             query_window_end = min(
                 max(query_window_start, effective_end),
                 query_window_start + _simulation_fetch_window(),
             )
+            if simulation_window_end is not None:
+                query_window_end = min(query_window_end, simulation_window_end)
         if query_window_end <= query_window_start:
             lag = (
-                max(0.0, (poll_started_at - latest_signal_at).total_seconds())
-                if latest_signal_at is not None
+                max(0.0, (poll_started_at - effective_latest_signal_at).total_seconds())
+                if effective_latest_signal_at is not None
                 else None
             )
             return SignalBatch(
@@ -217,7 +231,7 @@ class ClickHouseSignalIngestor:
                 query_start=query_window_start,
                 query_end=query_window_end,
                 signal_lag_seconds=lag,
-                no_signal_reason="cursor_tail_stable" if latest_signal_at is not None else "no_signals_in_window",
+                no_signal_reason="cursor_tail_stable" if effective_latest_signal_at is not None else "no_signals_in_window",
             )
 
         time_column = _safe_identifier(self._resolve_time_column(), kind='column')
@@ -262,8 +276,20 @@ class ClickHouseSignalIngestor:
                 no_signal_reason=None,
             )
 
-        if latest_signal_at is not None and query_window_end >= latest_signal_at:
-            lag = max(0.0, (poll_started_at - latest_signal_at).total_seconds())
+        if effective_latest_signal_at is None:
+            return SignalBatch(
+                signals=[],
+                cursor_at=query_window_start,
+                cursor_seq=cursor_seq if fast_forwarded else None,
+                cursor_symbol=cursor_symbol if fast_forwarded else None,
+                query_start=query_window_start,
+                query_end=query_window_end,
+                signal_lag_seconds=None,
+                no_signal_reason="no_signals_in_window",
+            )
+
+        if query_window_end >= effective_latest_signal_at:
+            lag = max(0.0, (poll_started_at - effective_latest_signal_at).total_seconds())
             return SignalBatch(
                 signals=[],
                 cursor_at=query_window_end,
@@ -636,21 +662,31 @@ class ClickHouseSignalIngestor:
             order_clause = f'{safe_time_column} DESC, symbol DESC, seq DESC'
         elif time_column == 'ts':
             order_clause = f'{safe_time_column} DESC, symbol DESC'
-        queries.append(
-            ' '.join(
-                [
-                    'SELECT',
-                    f'{safe_time_column} AS latest_signal_ts',
-                    'FROM',
-                    self.table,
-                    'ORDER BY',
-                    order_clause,
-                    'LIMIT',
-                    '1',
-                    'FORMAT JSONEachRow',
-                ]
-            )
+        query_parts = [
+            'SELECT',
+            f'{safe_time_column} AS latest_signal_ts',
+            'FROM',
+            self.table,
+        ]
+        if self.simulation_mode:
+            window_start, window_end = simulation_window_bounds()
+            where_parts: list[str] = []
+            if window_start is not None:
+                where_parts.append(f'{safe_time_column} >= {to_datetime64(window_start)}')
+            if window_end is not None:
+                where_parts.append(f'{safe_time_column} <= {to_datetime64(window_end)}')
+            if where_parts:
+                query_parts.extend(['WHERE', ' AND '.join(where_parts)])
+        query_parts.extend(
+            [
+                'ORDER BY',
+                order_clause,
+                'LIMIT',
+                '1',
+                'FORMAT JSONEachRow',
+            ]
         )
+        queries.append(' '.join(query_parts))
         return queries
 
     def commit_cursor(self, session: Session, batch: "SignalBatch") -> None:
@@ -976,6 +1012,10 @@ class ClickHouseSignalIngestor:
                 cursor_at = cursor_at.replace(tzinfo=timezone.utc)
             if self.simulation_mode and cursor_at <= SIMULATION_CURSOR_BASELINE:
                 return trading_now(account_label=self.account_label), None, None
+            if self.simulation_mode:
+                normalized_cursor = normalize_simulation_cursor(cursor_at)
+                if normalized_cursor is not None and normalized_cursor != cursor_at:
+                    return normalized_cursor, None, None
             return cursor_at, cursor_row.cursor_seq, cursor_row.cursor_symbol
 
         if self.simulation_mode:
