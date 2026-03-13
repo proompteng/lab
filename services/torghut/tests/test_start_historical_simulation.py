@@ -304,7 +304,7 @@ class TestStartHistoricalSimulation(TestCase):
             },
         )
         self.assertTrue(resources.warm_lane_enabled)
-        self.assertEqual(resources.ta_group_id, 'torghut-ta-sim-default')
+        self.assertEqual(resources.ta_group_id, 'torghut-ta-sim-sim_2026_02_27_01')
         self.assertEqual(resources.order_feed_group_id, 'torghut-order-feed-sim-default')
         self.assertEqual(resources.clickhouse_signal_table, 'torghut_sim_default.ta_signals')
         self.assertEqual(
@@ -1196,7 +1196,7 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertTrue(report['postgres']['database_precreated'])
         self.assertEqual(report['simulation_lock']['status'], 'acquired')
 
-    def test_apply_skips_runtime_reconfiguration_for_warm_lane(self) -> None:
+    def test_apply_reconfigures_ta_for_warm_lane(self) -> None:
         resources = _build_resources(
             'sim-1',
             {
@@ -1267,7 +1267,10 @@ class TestStartHistoricalSimulation(TestCase):
                     return_value={'coverage_ratio': 1.0},
                 ),
                 patch('scripts.start_historical_simulation._configure_ta_for_simulation') as configure_ta,
-                patch('scripts.start_historical_simulation._restart_ta_deployment') as restart_ta,
+                patch(
+                    'scripts.start_historical_simulation._restart_ta_deployment',
+                    return_value=7,
+                ) as restart_ta,
                 patch('scripts.start_historical_simulation._configure_torghut_service_for_simulation') as configure_service,
             ):
                 report = start_historical_simulation._apply(
@@ -1280,8 +1283,8 @@ class TestStartHistoricalSimulation(TestCase):
                     force_replay=False,
                 )
 
-        configure_ta.assert_not_called()
-        restart_ta.assert_not_called()
+        configure_ta.assert_called_once()
+        restart_ta.assert_called_once()
         configure_service.assert_not_called()
         self.assertTrue(report['warm_lane_enabled'])
         self.assertEqual(report['seeded_cursor_at'], '2026-02-27T14:30:00+00:00')
@@ -3346,7 +3349,7 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertFalse(report['state_found'])
         self.assertEqual(report['simulation_lock']['status'], 'released')
 
-    def test_teardown_skips_runtime_restore_for_warm_lane(self) -> None:
+    def test_teardown_restores_ta_configuration_for_warm_lane(self) -> None:
         resources = _build_resources(
             'sim-1',
             {
@@ -3371,7 +3374,10 @@ class TestStartHistoricalSimulation(TestCase):
                 ) as release_lock,
                 patch('scripts.start_historical_simulation._restore_ta_configuration') as restore_ta,
                 patch('scripts.start_historical_simulation._restore_torghut_env') as restore_env,
-                patch('scripts.start_historical_simulation._restart_ta_deployment') as restart_ta,
+                patch(
+                    'scripts.start_historical_simulation._restart_ta_deployment',
+                    return_value=11,
+                ) as restart_ta,
                 patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
             ):
                 report = start_historical_simulation._teardown(
@@ -3379,13 +3385,13 @@ class TestStartHistoricalSimulation(TestCase):
                     allow_missing_state=False,
                 )
 
-        restore_ta.assert_not_called()
+        restore_ta.assert_called_once_with(resources, {'ta_job_state': 'running'})
         restore_env.assert_not_called()
-        restart_ta.assert_not_called()
+        restart_ta.assert_called_once_with(resources, desired_state='running')
         release_lock.assert_called_once_with(resources=resources)
         self.assertTrue(report['warm_lane_enabled'])
-        self.assertTrue(report['skipped_restore'])
-        self.assertIsNone(report['ta_restart_nonce'])
+        self.assertFalse(report['skipped_restore'])
+        self.assertEqual(report['ta_restart_nonce'], 11)
 
     def test_build_simulation_completion_trace_marks_smoke_gate_satisfied(self) -> None:
         resources = _build_resources(
