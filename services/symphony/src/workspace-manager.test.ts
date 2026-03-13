@@ -3,9 +3,13 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:f
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
+import { Effect, Layer, ManagedRuntime } from 'effect'
+import * as Stream from 'effect/Stream'
+
 import { createLogger } from './logger'
 import type { SymphonyConfig } from './types'
-import { WorkspaceManager } from './workspace-manager'
+import { WorkflowService } from './workflow'
+import { makeShellLayer, makeWorkspaceLayer, WorkspaceService } from './workspace-manager'
 
 const makeConfig = (workspaceRoot: string): SymphonyConfig => ({
   workflowPath: path.join(workspaceRoot, 'WORKFLOW.md'),
@@ -65,26 +69,55 @@ describe('workspace manager', () => {
   })
 
   test('creates deterministic sanitized workspaces and runs hooks with correct lifecycle', async () => {
-    const manager = new WorkspaceManager(async () => config, createLogger({ test: 'workspace' }))
+    const workflowLayer = Layer.succeed(WorkflowService, {
+      current: Effect.succeed({ definition: { config: {}, promptTemplate: '' }, config }),
+      config: Effect.succeed(config),
+      reload: Effect.succeed({ definition: { config: {}, promptTemplate: '' }, config }),
+      changes: Stream.empty,
+    })
+    const runtime = ManagedRuntime.make(
+      makeWorkspaceLayer(createLogger({ test: 'workspace' }))
+        .pipe(Layer.provide(makeShellLayer(createLogger({ test: 'workspace-shell' }))))
+        .pipe(Layer.provide(workflowLayer)),
+    )
 
-    const first = await manager.createForIssue('ABC/123')
-    expect(first.workspaceKey).toBe('ABC_123')
-    expect(first.createdNow).toBe(true)
-    expect(first.path).toBe(path.join(tempDir, 'ABC_123'))
+    try {
+      const first = await runtime.runPromise(
+        Effect.gen(function* () {
+          const manager = yield* WorkspaceService
+          return yield* manager.createForIssue('ABC/123')
+        }),
+      )
+      expect(first.workspaceKey).toBe('ABC_123')
+      expect(first.createdNow).toBe(true)
+      expect(first.path).toBe(path.join(tempDir, 'ABC_123'))
 
-    mkdirSync(path.join(first.path, 'tmp'), { recursive: true })
-    mkdirSync(path.join(first.path, '.elixir_ls'), { recursive: true })
+      mkdirSync(path.join(first.path, 'tmp'), { recursive: true })
+      mkdirSync(path.join(first.path, '.elixir_ls'), { recursive: true })
 
-    const second = await manager.createForIssue('ABC/123')
-    expect(second.createdNow).toBe(false)
-    expect(existsSync(path.join(second.path, 'tmp'))).toBe(false)
-    expect(existsSync(path.join(second.path, '.elixir_ls'))).toBe(false)
+      const second = await runtime.runPromise(
+        Effect.gen(function* () {
+          const manager = yield* WorkspaceService
+          return yield* manager.createForIssue('ABC/123')
+        }),
+      )
+      expect(second.createdNow).toBe(false)
+      expect(existsSync(path.join(second.path, 'tmp'))).toBe(false)
+      expect(existsSync(path.join(second.path, '.elixir_ls'))).toBe(false)
 
-    await manager.runBeforeRun(second.path)
-    await manager.runAfterRun(second.path)
-    await manager.removeWorkspace('ABC/123')
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const manager = yield* WorkspaceService
+          yield* manager.runBeforeRun(second.path)
+          yield* manager.runAfterRun(second.path)
+          yield* manager.removeWorkspace('ABC/123')
+        }),
+      )
 
-    const hookLog = readFileSync(path.join(tempDir, 'hooks.log'), 'utf8').trim().split('\n')
-    expect(hookLog).toEqual(['after_create', 'before_run', 'after_run', 'before_remove'])
+      const hookLog = readFileSync(path.join(tempDir, 'hooks.log'), 'utf8').trim().split('\n')
+      expect(hookLog).toEqual(['after_create', 'before_run', 'after_run', 'before_remove'])
+    } finally {
+      await runtime.dispose()
+    }
   })
 })

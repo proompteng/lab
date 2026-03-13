@@ -1,31 +1,52 @@
-import { readFile, watch, type FSWatcher } from 'node:fs'
+import { readFile, watch } from 'node:fs'
 import { stat } from 'node:fs/promises'
+import type { FSWatcher } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 
+import type * as ParseResult from '@effect/schema/ParseResult'
+import * as Schema from '@effect/schema/Schema'
+import * as TreeFormatter from '@effect/schema/TreeFormatter'
+import { Context, Effect, Layer, Runtime } from 'effect'
+import * as SubscriptionRef from 'effect/SubscriptionRef'
+import * as Stream from 'effect/Stream'
 import YAML from 'yaml'
 
-import { SymphonyError } from './errors'
+import { toSymphonyConfigEffect } from './config'
+import { ConfigError, WorkflowError, toLogError } from './errors'
+import type { LoadedWorkflow, SymphonyConfig, WorkflowDefinition } from './types'
 import type { Logger } from './logger'
-import { toSymphonyConfig } from './config'
-import type { SymphonyConfig, WorkflowDefinition } from './types'
 
-const readFileText = async (filePath: string): Promise<string> =>
-  new Promise((resolvePromise, rejectPromise) => {
+const WorkflowFrontMatterSchema = Schema.Record({
+  key: Schema.String,
+  value: Schema.Unknown,
+})
+
+const decodeWorkflowFrontMatter = Schema.decodeUnknown(WorkflowFrontMatterSchema)
+
+const formatSchemaError = (error: ParseResult.ParseError): string => TreeFormatter.formatErrorSync(error)
+
+const readFileText = (filePath: string): Effect.Effect<string, WorkflowError, never> =>
+  Effect.async((resume) => {
     readFile(filePath, 'utf8', (error, data) => {
       if (error) {
-        rejectPromise(error)
+        resume(
+          Effect.fail(new WorkflowError('missing_workflow_file', `failed to read workflow file ${filePath}`, error)),
+        )
         return
       }
-      resolvePromise(data)
+      resume(Effect.succeed(data))
     })
   })
 
-const readFrontMatter = (content: string): WorkflowDefinition => {
+const parseFrontMatter = (
+  workflowPath: string,
+  content: string,
+): Effect.Effect<WorkflowDefinition, WorkflowError, never> => {
   if (!content.startsWith('---')) {
-    return {
+    return Effect.succeed({
       config: {},
       promptTemplate: content.trim(),
-    }
+    })
   }
 
   const lines = content.split(/\r?\n/)
@@ -36,127 +57,167 @@ const readFrontMatter = (content: string): WorkflowDefinition => {
       break
     }
   }
+
   if (closingIndex === -1) {
-    throw new SymphonyError('workflow_parse_error', 'workflow front matter is missing closing delimiter')
+    return Effect.fail(
+      new WorkflowError('workflow_parse_error', `workflow ${workflowPath} front matter is missing closing delimiter`),
+    )
   }
 
   const yamlText = lines.slice(1, closingIndex).join('\n')
-  const body = lines
+  const promptTemplate = lines
     .slice(closingIndex + 1)
     .join('\n')
     .trim()
 
-  let parsed: unknown
-  try {
-    parsed = yamlText.trim().length > 0 ? YAML.parse(yamlText) : {}
-  } catch (error) {
-    throw new SymphonyError('workflow_parse_error', 'failed to parse workflow front matter', error)
-  }
-
-  if (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') {
-    throw new SymphonyError('workflow_front_matter_not_a_map', 'workflow front matter must decode to a map')
-  }
-
-  return {
-    config: parsed as Record<string, unknown>,
-    promptTemplate: body,
-  }
+  return Effect.try({
+    try: () => (yamlText.trim().length > 0 ? YAML.parse(yamlText) : {}),
+    catch: (error) => new WorkflowError('workflow_parse_error', 'failed to parse workflow front matter', error),
+  }).pipe(
+    Effect.flatMap((parsed) =>
+      decodeWorkflowFrontMatter(parsed).pipe(
+        Effect.mapError(
+          (error) => new WorkflowError('workflow_front_matter_not_a_map', formatSchemaError(error), error),
+        ),
+      ),
+    ),
+    Effect.map((config) => ({
+      config,
+      promptTemplate,
+    })),
+  )
 }
 
-export const loadWorkflowFile = async (workflowPath: string): Promise<WorkflowDefinition> => {
-  try {
-    const content = await readFileText(workflowPath)
-    return readFrontMatter(content)
-  } catch (error) {
-    if (error instanceof SymphonyError) throw error
-    throw new SymphonyError('missing_workflow_file', `failed to read workflow file ${workflowPath}`, error)
-  }
-}
-
-export class WorkflowStore {
-  private readonly workflowPath: string
-  private readonly logger: Logger
-  private watcher: FSWatcher | null = null
-  private lastKnownGood: { definition: WorkflowDefinition; config: SymphonyConfig } | null = null
-  private lastLoadedMtimeMs = 0
-
-  constructor(workflowPath: string, logger: Logger) {
-    this.workflowPath = resolve(workflowPath)
-    this.logger = logger.child({ component: 'workflow-store', workflow_path: this.workflowPath })
-  }
-
-  async initialize(): Promise<void> {
-    const loaded = await this.reload()
-    this.lastKnownGood = loaded
-  }
-
-  async getCurrent(): Promise<{ definition: WorkflowDefinition; config: SymphonyConfig }> {
-    await this.reloadIfChanged()
-    if (!this.lastKnownGood) {
-      await this.initialize()
-    }
-    if (!this.lastKnownGood) {
-      throw new SymphonyError('missing_workflow_file', `workflow file ${this.workflowPath} is unavailable`)
-    }
-    return this.lastKnownGood
-  }
-
-  startWatching(): void {
-    if (this.watcher) return
-    const directory = dirname(this.workflowPath)
-    this.watcher = watch(directory, { persistent: false }, async (_eventType, filename) => {
-      if (filename && resolve(directory, filename.toString()) !== this.workflowPath) return
-      try {
-        await this.reload()
-      } catch (error) {
-        this.logger.log('error', 'workflow_reload_failed', {
-          error: error instanceof Error ? error.message : String(error),
-        })
-      }
+const readLoadedWorkflowEffect = (
+  workflowPath: string,
+): Effect.Effect<LoadedWorkflow, WorkflowError | ConfigError, never> =>
+  Effect.gen(function* () {
+    const resolvedPath = resolve(workflowPath)
+    const content = yield* readFileText(resolvedPath)
+    const definition = yield* parseFrontMatter(resolvedPath, content)
+    const metadata = yield* Effect.tryPromise({
+      try: () => stat(resolvedPath),
+      catch: (error) =>
+        new WorkflowError('missing_workflow_file', `failed to stat workflow file ${resolvedPath}`, error),
     })
-  }
+    const config = yield* toSymphonyConfigEffect(resolvedPath, definition.config)
 
-  close(): void {
-    this.watcher?.close()
-    this.watcher = null
-  }
+    return {
+      definition,
+      config,
+      mtimeMs: metadata.mtimeMs,
+    } satisfies LoadedWorkflow
+  })
 
-  private async reloadIfChanged(): Promise<void> {
-    let nextMtimeMs: number
-    try {
-      const metadata = await stat(this.workflowPath)
-      nextMtimeMs = metadata.mtimeMs
-    } catch (error) {
-      if (!this.lastKnownGood) {
-        throw new SymphonyError('missing_workflow_file', `failed to stat workflow file ${this.workflowPath}`, error)
-      }
-      this.logger.log('warn', 'workflow_stat_failed', { error: error instanceof Error ? error.message : String(error) })
-      return
-    }
+export const loadWorkflowFileEffect = (workflowPath: string): Effect.Effect<WorkflowDefinition, WorkflowError, never> =>
+  readFileText(resolve(workflowPath)).pipe(
+    Effect.flatMap((content) => parseFrontMatter(resolve(workflowPath), content)),
+  )
 
-    if (nextMtimeMs <= this.lastLoadedMtimeMs && this.lastKnownGood) return
-    try {
-      await this.reload()
-    } catch (error) {
-      if (!this.lastKnownGood) throw error
-      this.logger.log('error', 'workflow_reload_failed', {
-        error: error instanceof Error ? error.message : String(error),
+export const loadWorkflowFile = (workflowPath: string): Promise<WorkflowDefinition> =>
+  Effect.runPromise(loadWorkflowFileEffect(workflowPath))
+
+export interface WorkflowServiceDefinition {
+  readonly current: Effect.Effect<
+    { definition: WorkflowDefinition; config: SymphonyConfig },
+    WorkflowError | ConfigError
+  >
+  readonly config: Effect.Effect<SymphonyConfig, WorkflowError | ConfigError>
+  readonly reload: Effect.Effect<
+    { definition: WorkflowDefinition; config: SymphonyConfig },
+    WorkflowError | ConfigError
+  >
+  readonly changes: Stream.Stream<{ definition: WorkflowDefinition; config: SymphonyConfig }>
+}
+
+export class WorkflowService extends Context.Tag('symphony/WorkflowService')<
+  WorkflowService,
+  WorkflowServiceDefinition
+>() {}
+
+export const makeWorkflowLayer = (workflowPath: string, logger: Logger) =>
+  Layer.scoped(
+    WorkflowService,
+    Effect.gen(function* () {
+      const resolvedPath = resolve(workflowPath)
+      const runtime = yield* Effect.runtime<never>()
+      const workflowLogger = logger.child({ component: 'workflow-service', workflow_path: resolvedPath })
+      const initial = yield* readLoadedWorkflowEffect(resolvedPath)
+      const ref = yield* SubscriptionRef.make(initial)
+
+      const reloadAndKeepLastKnownGood = readLoadedWorkflowEffect(resolvedPath).pipe(
+        Effect.flatMap((loaded) =>
+          SubscriptionRef.set(ref, loaded).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                workflowLogger.log('info', 'workflow_reloaded', {
+                  poll_interval_ms: loaded.config.pollingIntervalMs,
+                  max_concurrent_agents: loaded.config.agent.maxConcurrentAgents,
+                })
+              }),
+            ),
+            Effect.as(loaded),
+          ),
+        ),
+      )
+
+      const safeReload = reloadAndKeepLastKnownGood.pipe(
+        Effect.catchAll((error) =>
+          Effect.sync(() => {
+            workflowLogger.log('error', 'workflow_reload_failed', toLogError(error))
+          }).pipe(Effect.zipRight(SubscriptionRef.get(ref))),
+        ),
+      )
+
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          watch(dirname(resolvedPath), { persistent: false }, (_eventType, filename) => {
+            if (filename && resolve(dirname(resolvedPath), filename.toString()) !== resolvedPath) return
+            Runtime.runFork(runtime)(safeReload)
+          }),
+        ),
+        (resource: FSWatcher) =>
+          Effect.sync(() => {
+            resource.close()
+          }),
+      )
+
+      const current = Effect.gen(function* () {
+        const latest = yield* SubscriptionRef.get(ref)
+        const metadata = yield* Effect.tryPromise({
+          try: () => stat(resolvedPath),
+          catch: (error) =>
+            new WorkflowError('missing_workflow_file', `failed to stat workflow file ${resolvedPath}`, error),
+        }).pipe(
+          Effect.catchAll((error) =>
+            Effect.sync(() => {
+              workflowLogger.log('warn', 'workflow_stat_failed', toLogError(error))
+            }).pipe(Effect.zipRight(Effect.succeed<{ mtimeMs: number }>({ mtimeMs: latest.mtimeMs }))),
+          ),
+        )
+
+        if (metadata.mtimeMs > latest.mtimeMs) {
+          return yield* safeReload.pipe(
+            Effect.map((loaded) => ({ definition: loaded.definition, config: loaded.config })),
+          )
+        }
+
+        return {
+          definition: latest.definition,
+          config: latest.config,
+        }
       })
-    }
-  }
 
-  private async reload(): Promise<{ definition: WorkflowDefinition; config: SymphonyConfig }> {
-    const definition = await loadWorkflowFile(this.workflowPath)
-    const config = toSymphonyConfig(this.workflowPath, definition.config)
-    const metadata = await stat(this.workflowPath)
-
-    const loaded = { definition, config }
-    this.lastKnownGood = loaded
-    this.lastLoadedMtimeMs = metadata.mtimeMs
-    this.logger.log('info', 'workflow_reloaded', {
-      poll_interval_ms: config.pollingIntervalMs,
-      max_concurrent_agents: config.agent.maxConcurrentAgents,
-    })
-    return loaded
-  }
-}
+      return {
+        current,
+        config: current.pipe(Effect.map((loaded) => loaded.config)),
+        reload: safeReload.pipe(Effect.map((loaded) => ({ definition: loaded.definition, config: loaded.config }))),
+        changes: ref.changes.pipe(
+          Stream.map((loaded) => ({
+            definition: loaded.definition,
+            config: loaded.config,
+          })),
+        ),
+      } satisfies WorkflowServiceDefinition
+    }),
+  )
