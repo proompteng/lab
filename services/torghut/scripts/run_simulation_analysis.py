@@ -35,6 +35,7 @@ class _Resources:
     simulation_topic_by_role: dict[str, str]
     order_feed_group_id: str
     ta_group_id: str
+    warm_lane_enabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -153,6 +154,8 @@ def _resources_from_args(args: argparse.Namespace) -> _Resources:
     signal_table = getattr(args, 'signal_table', '')
     price_table = getattr(args, 'price_table', '')
     clickhouse_db = _clickhouse_database_from_table_name(signal_table) or _clickhouse_database_from_table_name(price_table)
+    warm_lane_enabled = clickhouse_db == 'torghut_sim_default'
+    default_order_updates_topic = 'torghut.sim.trade-updates.v1'
     return _Resources(
         run_id=args.run_id,
         run_token=run_token,
@@ -167,10 +170,11 @@ def _resources_from_args(args: argparse.Namespace) -> _Resources:
         clickhouse_price_table=price_table,
         clickhouse_db=clickhouse_db,
         simulation_topic_by_role={
-            'order_updates': f'torghut.sim.trade-updates.v1.{run_token}',
+            'order_updates': default_order_updates_topic if warm_lane_enabled else f'{default_order_updates_topic}.{run_token}',
         },
-        order_feed_group_id=f'torghut-order-feed-sim-{run_token}',
-        ta_group_id=f'torghut-ta-sim-{run_token}',
+        order_feed_group_id='torghut-order-feed-sim-default' if warm_lane_enabled else f'torghut-order-feed-sim-{run_token}',
+        ta_group_id='torghut-ta-sim-default' if warm_lane_enabled else f'torghut-ta-sim-{run_token}',
+        warm_lane_enabled=warm_lane_enabled,
     )
 
 

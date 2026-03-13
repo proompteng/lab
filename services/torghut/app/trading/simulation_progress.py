@@ -340,6 +340,10 @@ def simulation_progress_snapshot(
     ta = components.get(COMPONENT_TA, {})
     artifacts = components.get(COMPONENT_ARTIFACTS, {})
     artifacts_payload = cast(dict[str, Any], artifacts.get('payload') or {})
+    analysis_run = artifacts_payload.get('analysis_run')
+    activity_classification = artifacts_payload.get('activity_classification')
+    if activity_classification is None and isinstance(analysis_run, Mapping):
+        activity_classification = cast(dict[str, Any], analysis_run).get('activity_classification')
     strategy_type = cast(Optional[str], torghut.get('strategy_type') or replay.get('strategy_type'))
     statuses = {component: payload.get('status') for component, payload in components.items()}
     return {
@@ -363,11 +367,7 @@ def simulation_progress_snapshot(
             'strategy_type': strategy_type,
             'legacy_path_count': int(torghut.get('legacy_path_count') or 0),
             'fallback_count': int(torghut.get('fallback_count') or 0),
-            'activity_classification': (
-                cast(dict[str, Any], artifacts_payload.get('analysis_run') or {}).get('activity_classification')
-                if isinstance(artifacts_payload.get('analysis_run'), Mapping)
-                else artifacts_payload.get('activity_classification')
-            ),
+            'activity_classification': activity_classification,
             'final_artifacts_ready': bool(artifacts.get('terminal_state') == 'complete'),
         },
     }

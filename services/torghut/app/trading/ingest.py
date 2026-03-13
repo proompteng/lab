@@ -27,7 +27,8 @@ FLAT_CURSOR_OVERLAP = timedelta(seconds=2)
 LATEST_SIGNAL_TS_CACHE_TTL = timedelta(seconds=30)
 LATEST_SIGNAL_TS_ERROR_LOG_COOLDOWN = timedelta(minutes=5)
 SIMULATION_CURSOR_BASELINE = datetime(1970, 1, 1, tzinfo=timezone.utc)
-SIMULATION_FETCH_WINDOW = timedelta(seconds=10)
+def _simulation_fetch_window() -> timedelta:
+    return timedelta(seconds=max(1, settings.trading_simulation_fetch_window_seconds))
 
 FLAT_SIGNAL_COLUMNS = [
     "ts",
@@ -195,12 +196,12 @@ class ClickHouseSignalIngestor:
     ) -> "SignalBatch":
         query_window_start = cursor_at
         if latest_signal_at is None:
-            query_window_end = query_window_start + SIMULATION_FETCH_WINDOW
+            query_window_end = query_window_start + _simulation_fetch_window()
         else:
             effective_end = latest_signal_at or poll_started_at
             query_window_end = min(
                 max(query_window_start, effective_end),
-                query_window_start + SIMULATION_FETCH_WINDOW,
+                query_window_start + _simulation_fetch_window(),
             )
         if query_window_end <= query_window_start:
             lag = (

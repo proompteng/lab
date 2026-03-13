@@ -992,6 +992,7 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
         _as_mapping(_resource_attr(resources, 'simulation_topic_by_role')).get('order_updates')
     )
     expected_topics = _as_mapping(_resource_attr(resources, 'simulation_topic_by_role'))
+    warm_lane_enabled = bool(_resource_attr(resources, 'warm_lane_enabled', default=False))
     runtime_mode = _env_value('TRADING_STRATEGY_RUNTIME_MODE')
     scheduler_enabled = _env_value('TRADING_STRATEGY_SCHEDULER_ENABLED') == 'true'
     strategy_runtime_active = runtime_mode == 'plugin_v3' or (
@@ -1010,7 +1011,8 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
         'order_feed_topic': _env_value('TRADING_ORDER_FEED_TOPIC') == expected_order_updates_topic,
         'simulation_order_updates_topic': _env_value('TRADING_SIMULATION_ORDER_UPDATES_TOPIC')
         == expected_order_updates_topic,
-        'simulation_run_id': _env_value('TRADING_SIMULATION_RUN_ID') == _as_text(_resource_attr(resources, 'run_id')),
+        'simulation_run_id': warm_lane_enabled
+        or _env_value('TRADING_SIMULATION_RUN_ID') == _as_text(_resource_attr(resources, 'run_id')),
         'signal_allowed_sources': 'ta' in _normalized_string_set(_env_value('TRADING_SIGNAL_ALLOWED_SOURCES')),
     }
     trading_config_complete = all(trading_config.values())
@@ -1369,6 +1371,7 @@ def _verify_isolation_guards(
     clickhouse_signal_table = _as_text(_resource_attr(resources, 'clickhouse_signal_table'))
     clickhouse_price_table = _as_text(_resource_attr(resources, 'clickhouse_price_table'))
     ta_group_id = _as_text(_resource_attr(resources, 'ta_group_id'))
+    warm_lane_enabled = bool(_resource_attr(resources, 'warm_lane_enabled', default=False))
     simulation_db = _as_text(_resource_attr(postgres_config, 'simulation_db'))
     simulation_dsn = _as_text(_resource_attr(postgres_config, 'simulation_dsn'))
     simulation_topics_disjoint = all(
@@ -1388,7 +1391,8 @@ def _verify_isolation_guards(
     report = {
         'lane': lane_contract.lane,
         'simulation_topics_isolated_from_sources': simulation_topics_disjoint,
-        'ta_group_isolated': ta_group_id != _as_text(ta_data.get(lane_contract.ta_group_id_key)),
+        'ta_group_isolated': warm_lane_enabled
+        or ta_group_id != _as_text(ta_data.get(lane_contract.ta_group_id_key)),
         'signal_table_isolated': signal_table_isolated,
         'price_table_isolated': price_table_isolated,
         'auxiliary_tables_isolated': auxiliary_tables_isolated,

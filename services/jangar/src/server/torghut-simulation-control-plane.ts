@@ -212,8 +212,8 @@ const DEFAULT_SIMULATION_PRESETS: TorghutSimulationPreset[] = [
 ]
 
 const TERMINAL_RUN_STATUSES = new Set(['succeeded', 'failed', 'cancelled'])
-const INTERACTIVE_LANES = ['sim-fast-1', 'sim-fast-2', 'sim-fast-3'] as const
-const BATCH_LANES = ['sim-batch-1'] as const
+const INTERACTIVE_LANES = ['sim-fast-1'] as const
+const BATCH_LANES = ['sim-fast-1'] as const
 const CONTROL_PLANE_LEASE_OWNER = 'jangar-control-plane'
 const PROGRESS_FETCH_TIMEOUT_MS = 2_500
 
@@ -512,8 +512,14 @@ const normalizeSimulationManifest = (
   if (!asString(window.end)) throw new Error('manifest.window.end is required')
 
   const runtime = asRecord(manifest.runtime)
+  const targetMode = (asString(runtime.target_mode) ?? 'dedicated_service').toLowerCase()
+  runtime.target_mode = targetMode
   if (overrides.outputRoot) runtime.output_root = overrides.outputRoot
   if (!asString(runtime.output_root)) runtime.output_root = DEFAULT_OUTPUT_ROOT
+  if (runtime.use_warm_lane === undefined && runtime.useWarmLane === undefined) {
+    const lane = (asString(manifest.lane) ?? 'equity').toLowerCase()
+    runtime.use_warm_lane = targetMode === 'dedicated_service' && lane === 'equity'
+  }
   manifest.runtime = runtime
 
   const performance = asRecord(manifest.performance)

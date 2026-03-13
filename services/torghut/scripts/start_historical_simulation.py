@@ -46,6 +46,7 @@ from app.trading.simulation_progress import (
     COMPONENT_ARTIFACTS,
     COMPONENT_REPLAY,
     COMPONENT_TA,
+    COMPONENT_TORGHUT,
 )
 from scripts import historical_simulation_verification as simulation_verification
 from scripts.simulation_lane_contracts import (
@@ -136,6 +137,7 @@ DEFAULT_RUN_MONITOR_MIN_EXECUTIONS = 1
 DEFAULT_RUN_MONITOR_MIN_TCA = 1
 DEFAULT_RUN_MONITOR_MIN_ORDER_EVENTS = 0
 DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS = 120
+DEFAULT_WARM_LANE_SIMULATION_DATABASE = 'torghut_sim_default'
 DEFAULT_SIMULATION_DUMP_FORMAT = 'jsonl.zst'
 SUPPORTED_SIMULATION_DUMP_FORMATS = {
     'ndjson': '.ndjson',
@@ -506,6 +508,7 @@ class SimulationResources:
     clickhouse_table_by_role: dict[str, str]
     clickhouse_signal_table: str
     clickhouse_price_table: str
+    warm_lane_enabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -1254,6 +1257,20 @@ def _ta_auto_offset_reset_key(*, lane: str, manifest: Mapping[str, Any]) -> str:
     )
 
 
+def _warm_lane_enabled(*, manifest: Mapping[str, Any], lane: str, target_mode: str) -> bool:
+    runtime = _as_mapping(manifest.get('runtime'))
+    explicit = runtime.get('use_warm_lane')
+    if explicit is None:
+        explicit = runtime.get('useWarmLane')
+    return explicit is not None and str(explicit).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _default_simulation_postgres_db(resources: SimulationResources) -> str:
+    if resources.warm_lane_enabled:
+        return DEFAULT_WARM_LANE_SIMULATION_DATABASE
+    return f'torghut_sim_{resources.run_token}'
+
+
 def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationResources:
     _validate_simulation_strategy_policy(manifest)
     lane_contract = simulation_lane_contract_for_manifest(manifest)
@@ -1266,6 +1283,11 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
     target_mode = (_as_text(runtime.get('target_mode')) or 'dedicated_service').strip().lower()
     if target_mode not in {'dedicated_service', 'in_place'}:
         raise RuntimeError('runtime.target_mode must be one of: dedicated_service,in_place')
+    warm_lane = _warm_lane_enabled(
+        manifest=manifest,
+        lane=lane_contract.lane,
+        target_mode=target_mode,
+    )
     output_root_raw = _as_text(runtime.get('output_root'))
     if output_root_raw:
         output_root = Path(output_root_raw)
@@ -1283,10 +1305,11 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
         lane_contract.simulation_topic_by_role,
         simulation_topic_overrides,
     )
-    for role, topic in list(simulation_topics.items()):
-        if role in simulation_topic_overrides:
-            continue
-        simulation_topics[role] = f'{topic}.{run_token}'
+    if not warm_lane:
+        for role, topic in list(simulation_topics.items()):
+            if role in simulation_topic_overrides:
+                continue
+            simulation_topics[role] = f'{topic}.{run_token}'
 
     replay_topic_by_source_topic = {
         source_topics[role]: simulation_topics[role]
@@ -1296,7 +1319,7 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
     clickhouse_cfg = _as_mapping(manifest.get('clickhouse'))
     clickhouse_db = (
         _as_text(clickhouse_cfg.get('simulation_database'))
-        or f'torghut_sim_{run_token}'
+        or (DEFAULT_WARM_LANE_SIMULATION_DATABASE if warm_lane else f'torghut_sim_{run_token}')
     )
     clickhouse_table_by_role = simulation_clickhouse_table_names(
         lane=lane_contract.lane,
@@ -1319,6 +1342,16 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
         if lane_contract.lane == 'options'
         else 'torghut-order-feed-sim'
     )
+    ta_group_id = (
+        f'{ta_group_prefix}-default'
+        if warm_lane
+        else f'{ta_group_prefix}-{run_token}'
+    )
+    order_feed_group_id = (
+        f'{order_feed_group_prefix}-default'
+        if warm_lane
+        else f'{order_feed_group_prefix}-{run_token}'
+    )
 
     return SimulationResources(
         run_id=run_id,
@@ -1337,12 +1370,13 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
         source_topic_by_role=source_topics,
         simulation_topic_by_role=simulation_topics,
         replay_topic_by_source_topic=replay_topic_by_source_topic,
-        ta_group_id=f'{ta_group_prefix}-{run_token}',
-        order_feed_group_id=f'{order_feed_group_prefix}-{run_token}',
+        ta_group_id=ta_group_id,
+        order_feed_group_id=order_feed_group_id,
         clickhouse_db=clickhouse_db,
         clickhouse_table_by_role=clickhouse_table_by_role,
         clickhouse_signal_table=clickhouse_signal_table,
         clickhouse_price_table=clickhouse_price_table,
+        warm_lane_enabled=warm_lane,
     )
 
 
@@ -3122,6 +3156,51 @@ def _reset_postgres_runtime_state(config: PostgresRuntimeConfig) -> None:
     )
 
 
+def _seed_simulation_trade_cursor(
+    *,
+    config: PostgresRuntimeConfig,
+    manifest: Mapping[str, Any],
+    account_label: str = 'TORGHUT_SIM',
+) -> datetime:
+    window_start, _window_end = _resolve_window_bounds(manifest)
+
+    def _seed() -> None:
+        with psycopg.connect(config.torghut_runtime_dsn, autocommit=True) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO trade_cursor (
+                      source,
+                      account_label,
+                      cursor_at,
+                      cursor_seq,
+                      cursor_symbol
+                    ) VALUES (
+                      'clickhouse',
+                      %(account_label)s,
+                      %(cursor_at)s,
+                      NULL,
+                      NULL
+                    )
+                    ON CONFLICT (source, account_label) DO UPDATE SET
+                      cursor_at = EXCLUDED.cursor_at,
+                      cursor_seq = NULL,
+                      cursor_symbol = NULL,
+                      updated_at = NOW()
+                    """,
+                    {
+                        'account_label': account_label,
+                        'cursor_at': window_start,
+                    },
+                )
+
+    _run_with_transient_postgres_retry(
+        label='seed_simulation_trade_cursor',
+        operation=_seed,
+    )
+    return window_start
+
+
 def _runtime_sessionmaker(config: PostgresRuntimeConfig) -> tuple[Any, Any]:
     runtime_dsn = config.torghut_runtime_dsn
     if runtime_dsn.startswith('postgresql://'):
@@ -4497,6 +4576,7 @@ def _apply(
     _ensure_lz4_codec_available()
     window_policy = _validate_window_policy(manifest)
     torghut_env_overrides = _torghut_env_overrides_from_manifest(manifest)
+    warm_lane_enabled = resources.warm_lane_enabled
 
     state_path, run_manifest_path, dump_path = _state_paths(resources, manifest)
     _ensure_directory(state_path)
@@ -4552,6 +4632,10 @@ def _apply(
         postgres_permissions_report = _ensure_postgres_runtime_permissions(postgres_config)
         _run_migrations(postgres_config)
         _reset_postgres_runtime_state(postgres_config)
+        seeded_cursor_at = _seed_simulation_trade_cursor(
+            config=postgres_config,
+            manifest=manifest,
+        )
         _upsert_simulation_progress_row(
             postgres_config=postgres_config,
             resources=resources,
@@ -4588,27 +4672,30 @@ def _apply(
         )
         replay_cfg = _as_mapping(manifest.get('replay'))
         auto_offset_reset = (_as_text(replay_cfg.get('auto_offset_reset')) or 'earliest').lower()
-        _configure_ta_for_simulation(
-            resources=resources,
-            clickhouse_config=clickhouse_config,
-            clickhouse_database=resources.clickhouse_db,
-            auto_offset_reset=auto_offset_reset,
-            manifest=manifest,
-        )
-        ta_restart_nonce = _restart_ta_deployment(
-            resources,
-            desired_state='running',
-            upgrade_mode=str(ta_restore.get('effective_upgrade_mode') or 'last-state'),
-        )
+        if warm_lane_enabled:
+            ta_restart_nonce = None
+        else:
+            _configure_ta_for_simulation(
+                resources=resources,
+                clickhouse_config=clickhouse_config,
+                clickhouse_database=resources.clickhouse_db,
+                auto_offset_reset=auto_offset_reset,
+                manifest=manifest,
+            )
+            ta_restart_nonce = _restart_ta_deployment(
+                resources,
+                desired_state='running',
+                upgrade_mode=str(ta_restore.get('effective_upgrade_mode') or 'last-state'),
+            )
 
-        _configure_torghut_service_for_simulation(
-            resources=resources,
-            manifest=manifest,
-            postgres_config=postgres_config,
-            clickhouse_config=clickhouse_config,
-            kafka_config=kafka_config,
-            torghut_env_overrides=torghut_env_overrides,
-        )
+            _configure_torghut_service_for_simulation(
+                resources=resources,
+                manifest=manifest,
+                postgres_config=postgres_config,
+                clickhouse_config=clickhouse_config,
+                kafka_config=kafka_config,
+                torghut_env_overrides=torghut_env_overrides,
+            )
     except Exception:
         _release_simulation_runtime_lock(resources=resources)
         raise
@@ -4625,6 +4712,8 @@ def _apply(
         'topics': topics_report,
         'schema_registry': schema_registry_report,
         'ta_restart_nonce': ta_restart_nonce,
+        'warm_lane_enabled': warm_lane_enabled,
+        'seeded_cursor_at': seeded_cursor_at.isoformat(),
         'resources': asdict(resources)
         | {
             'output_root': str(resources.output_root),
@@ -4657,6 +4746,7 @@ def _teardown(
     allow_missing_state: bool,
 ) -> dict[str, Any]:
     _ensure_supported_binary('kubectl')
+    warm_lane_enabled = resources.warm_lane_enabled
     state_path, run_manifest_path, dump_path = _state_paths(resources, manifest)
     if not state_path.exists():
         lock_report = _release_simulation_runtime_lock(resources=resources)
@@ -4703,11 +4793,14 @@ def _teardown(
         }
 
     state = _load_json(state_path)
-    _restore_ta_configuration(resources, state)
-    _restore_torghut_env(resources, state)
-
-    original_state = _as_text(state.get('ta_job_state')) or 'running'
-    ta_restart_nonce = _restart_ta_deployment(resources, desired_state=original_state)
+    if warm_lane_enabled:
+        original_state = 'running'
+        ta_restart_nonce = None
+    else:
+        _restore_ta_configuration(resources, state)
+        _restore_torghut_env(resources, state)
+        original_state = _as_text(state.get('ta_job_state')) or 'running'
+        ta_restart_nonce = _restart_ta_deployment(resources, desired_state=original_state)
     lock_report = _release_simulation_runtime_lock(resources=resources)
     report = {
         'status': 'ok',
@@ -4719,6 +4812,8 @@ def _teardown(
         'dump_path': str(dump_path),
         'ta_restart_nonce': ta_restart_nonce,
         'restored_ta_state': original_state,
+        'warm_lane_enabled': warm_lane_enabled,
+        'skipped_restore': warm_lane_enabled,
         'simulation_lock': lock_report,
     }
     _save_json(run_manifest_path.with_name('teardown-manifest.json'), report)
@@ -5659,6 +5754,35 @@ def _run_full_lifecycle(
                 clickhouse_config=clickhouse_config,
                 runtime_verify=runtime_verify_report,
             )
+            final_snapshot = _as_mapping(monitor_report.get('final_snapshot'))
+            _upsert_simulation_progress_row(
+                postgres_config=postgres_config,
+                resources=resources,
+                component=COMPONENT_TORGHUT,
+                status='activity_verified',
+                last_signal_ts=_parse_optional_rfc3339_timestamp(
+                    _as_text(final_snapshot.get('last_signal_ts'))
+                ),
+                last_price_ts=_parse_optional_rfc3339_timestamp(
+                    _as_text(final_snapshot.get('last_price_ts'))
+                ),
+                cursor_at=_parse_optional_rfc3339_timestamp(
+                    _as_text(final_snapshot.get('cursor_at'))
+                ),
+                trade_decisions=_safe_int(final_snapshot.get('trade_decisions')),
+                executions=_safe_int(final_snapshot.get('executions')),
+                execution_tca_metrics=_safe_int(final_snapshot.get('execution_tca_metrics')),
+                execution_order_events=_safe_int(final_snapshot.get('execution_order_events')),
+                legacy_path_count=_safe_int(final_snapshot.get('legacy_path_count')),
+                fallback_count=_safe_int(final_snapshot.get('fallback_count')),
+                terminal_state='complete'
+                if _as_text(monitor_report.get('activity_classification')) == 'success'
+                else None,
+                payload={
+                    'activity_classification': monitor_report.get('activity_classification'),
+                    'effective_terminal_signal_ts': monitor_report.get('effective_terminal_signal_ts'),
+                },
+            )
             if bool(rollouts_report['enabled']):
                 try:
                     activity_analysis_run = _run_rollouts_analysis(
@@ -5791,6 +5915,21 @@ def _run_full_lifecycle(
             errors=errors,
         )
         _save_json(_artifact_path(resources, 'run-summary.json'), run_summary_report)
+        _upsert_simulation_progress_row(
+            postgres_config=postgres_config,
+            resources=resources,
+            component=COMPONENT_TORGHUT,
+            status='reported',
+            strategy_type=_as_text(strategy_proof_report.get('strategy_type')),
+            legacy_path_count=_safe_int(strategy_proof_report.get('legacy_path_count')),
+            fallback_count=_safe_int(strategy_proof_report.get('fallback_order_count')),
+            terminal_state='complete',
+            payload={
+                'strategy_type': strategy_proof_report.get('strategy_type'),
+                'legacy_path_count': strategy_proof_report.get('legacy_path_count'),
+                'fallback_order_count': strategy_proof_report.get('fallback_order_count'),
+            },
+        )
         _upsert_simulation_progress_row(
             postgres_config=postgres_config,
             resources=resources,
@@ -6064,7 +6203,7 @@ def main() -> None:
     )
     postgres_config = _build_postgres_runtime_config(
         manifest,
-        simulation_db=f'torghut_sim_{resources.run_token}',
+        simulation_db=_default_simulation_postgres_db(resources),
     )
     _log_script_event(
         'postgres_config_ready',

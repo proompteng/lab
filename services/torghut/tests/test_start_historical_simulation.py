@@ -291,6 +291,29 @@ class TestStartHistoricalSimulation(TestCase):
             'torghut.sim.trades.v1.sim_2026_02_27_01',
         )
 
+    def test_build_resources_uses_stable_defaults_when_warm_lane_enabled(self) -> None:
+        resources = _build_resources(
+            'sim-2026-02-27-01',
+            {
+                'dataset_id': 'torghut-trades-2025q4',
+                'runtime': {
+                    'use_warm_lane': True,
+                },
+            },
+        )
+        self.assertTrue(resources.warm_lane_enabled)
+        self.assertEqual(resources.ta_group_id, 'torghut-ta-sim-default')
+        self.assertEqual(resources.order_feed_group_id, 'torghut-order-feed-sim-default')
+        self.assertEqual(resources.clickhouse_signal_table, 'torghut_sim_default.ta_signals')
+        self.assertEqual(
+            resources.simulation_topic_by_role['order_updates'],
+            'torghut.sim.trade-updates.v1',
+        )
+        self.assertEqual(
+            resources.replay_topic_by_source_topic['torghut.trades.v1'],
+            'torghut.sim.trades.v1',
+        )
+
     def test_build_resources_derives_options_lane_isolation_names(self) -> None:
         resources = _build_resources(
             'options-sim-2026-03-06-open',
@@ -1073,6 +1096,10 @@ class TestStartHistoricalSimulation(TestCase):
                 patch('scripts.start_historical_simulation._run_migrations', return_value=None),
                 patch('scripts.start_historical_simulation._reset_postgres_runtime_state', return_value=None),
                 patch(
+                    'scripts.start_historical_simulation._seed_simulation_trade_cursor',
+                    return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
+                ),
+                patch(
                     'scripts.start_historical_simulation._dump_topics',
                     return_value={'records': 1, 'sha256': 'abc'},
                 ),
@@ -1102,6 +1129,96 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertTrue(report['clickhouse']['database_precreated'])
         self.assertTrue(report['postgres']['database_precreated'])
         self.assertEqual(report['simulation_lock']['status'], 'acquired')
+
+    def test_apply_skips_runtime_reconfiguration_for_warm_lane(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+                'runtime': {'use_warm_lane': True},
+            },
+        )
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+        clickhouse_config = ClickHouseRuntimeConfig(
+            http_url='http://clickhouse:8123',
+            username='torghut',
+            password='secret',
+        )
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_default',
+            simulation_db='torghut_sim_default',
+            migrations_command='true',
+        )
+        manifest = {
+            'dataset_id': 'dataset-a',
+            'runtime': {'use_warm_lane': True},
+            'clickhouse': {'database_precreated': True},
+            'postgres': {'database_precreated': True},
+            'window': {
+                'start': '2026-02-27T14:30:00Z',
+                'end': '2026-02-27T15:30:00Z',
+            },
+        }
+
+        with TemporaryDirectory() as tmpdir:
+            resources = replace(resources, output_root=Path(tmpdir))
+            with (
+                patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
+                patch('scripts.start_historical_simulation._ensure_lz4_codec_available', return_value=None),
+                patch(
+                    'scripts.start_historical_simulation._acquire_simulation_runtime_lock',
+                    return_value={'status': 'acquired', 'run_id': resources.run_id},
+                ),
+                patch(
+                    'scripts.start_historical_simulation._capture_cluster_state',
+                    return_value={'ta_data': {'TA_GROUP_ID': 'torghut-ta-sim-default'}},
+                ),
+                patch('scripts.start_historical_simulation._ensure_topics', return_value={'status': 'ok'}),
+                patch('scripts.start_historical_simulation._ensure_clickhouse_runtime_tables', return_value=None),
+                patch(
+                    'scripts.start_historical_simulation._ensure_postgres_runtime_permissions',
+                    return_value={'grants_applied': True},
+                ),
+                patch('scripts.start_historical_simulation._run_migrations', return_value=None),
+                patch('scripts.start_historical_simulation._reset_postgres_runtime_state', return_value=None),
+                patch(
+                    'scripts.start_historical_simulation._seed_simulation_trade_cursor',
+                    return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
+                ),
+                patch(
+                    'scripts.start_historical_simulation._dump_topics',
+                    return_value={'records': 1, 'sha256': 'abc'},
+                ),
+                patch(
+                    'scripts.start_historical_simulation._validate_dump_coverage',
+                    return_value={'coverage_ratio': 1.0},
+                ),
+                patch('scripts.start_historical_simulation._configure_ta_for_simulation') as configure_ta,
+                patch('scripts.start_historical_simulation._restart_ta_deployment') as restart_ta,
+                patch('scripts.start_historical_simulation._configure_torghut_service_for_simulation') as configure_service,
+            ):
+                report = start_historical_simulation._apply(
+                    resources=resources,
+                    manifest=manifest,
+                    kafka_config=kafka_config,
+                    clickhouse_config=clickhouse_config,
+                    postgres_config=postgres_config,
+                    force_dump=False,
+                    force_replay=False,
+                )
+
+        configure_ta.assert_not_called()
+        restart_ta.assert_not_called()
+        configure_service.assert_not_called()
+        self.assertTrue(report['warm_lane_enabled'])
+        self.assertEqual(report['seeded_cursor_at'], '2026-02-27T14:30:00+00:00')
 
     def test_apply_uses_stateless_ta_restart_when_manifest_requests_it(self) -> None:
         resources = _build_resources('sim-1', {'dataset_id': 'dataset-a'})
@@ -1161,6 +1278,10 @@ class TestStartHistoricalSimulation(TestCase):
                 ),
                 patch('scripts.start_historical_simulation._run_migrations', return_value=None),
                 patch('scripts.start_historical_simulation._reset_postgres_runtime_state', return_value=None),
+                patch(
+                    'scripts.start_historical_simulation._seed_simulation_trade_cursor',
+                    return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
+                ),
                 patch(
                     'scripts.start_historical_simulation._dump_topics',
                     return_value={'records': 1, 'sha256': 'abc'},
@@ -1320,6 +1441,10 @@ class TestStartHistoricalSimulation(TestCase):
                 patch('scripts.start_historical_simulation._run_migrations', return_value=None),
                 patch('scripts.start_historical_simulation._reset_postgres_runtime_state', return_value=None),
                 patch(
+                    'scripts.start_historical_simulation._seed_simulation_trade_cursor',
+                    return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
+                ),
+                patch(
                     'scripts.start_historical_simulation._dump_topics',
                     return_value={'records': 1, 'sha256': 'abc'},
                 ),
@@ -1409,6 +1534,10 @@ class TestStartHistoricalSimulation(TestCase):
                 ),
                 patch('scripts.start_historical_simulation._run_migrations', return_value=None),
                 patch('scripts.start_historical_simulation._reset_postgres_runtime_state', return_value=None),
+                patch(
+                    'scripts.start_historical_simulation._seed_simulation_trade_cursor',
+                    return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
+                ),
                 patch(
                     'scripts.start_historical_simulation._dump_topics',
                     return_value={'records': 1, 'sha256': 'abc'},
@@ -2968,6 +3097,47 @@ class TestStartHistoricalSimulation(TestCase):
         release_lock.assert_called_once_with(resources=resources)
         self.assertFalse(report['state_found'])
         self.assertEqual(report['simulation_lock']['status'], 'released')
+
+    def test_teardown_skips_runtime_restore_for_warm_lane(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+                'runtime': {'use_warm_lane': True},
+            },
+        )
+        with TemporaryDirectory() as tmpdir:
+            resources = replace(resources, output_root=Path(tmpdir))
+            state_path = resources.output_root / resources.run_token / 'state.json'
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            state_path.write_text(json.dumps({'ta_job_state': 'running'}))
+
+            with (
+                patch(
+                    'scripts.start_historical_simulation._read_simulation_runtime_lock',
+                    return_value={'run_id': resources.run_id},
+                ),
+                patch(
+                    'scripts.start_historical_simulation._release_simulation_runtime_lock',
+                    return_value={'status': 'released', 'run_id': resources.run_id},
+                ) as release_lock,
+                patch('scripts.start_historical_simulation._restore_ta_configuration') as restore_ta,
+                patch('scripts.start_historical_simulation._restore_torghut_env') as restore_env,
+                patch('scripts.start_historical_simulation._restart_ta_deployment') as restart_ta,
+                patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
+            ):
+                report = start_historical_simulation._teardown(
+                    resources=resources,
+                    allow_missing_state=False,
+                )
+
+        restore_ta.assert_not_called()
+        restore_env.assert_not_called()
+        restart_ta.assert_not_called()
+        release_lock.assert_called_once_with(resources=resources)
+        self.assertTrue(report['warm_lane_enabled'])
+        self.assertTrue(report['skipped_restore'])
+        self.assertIsNone(report['ta_restart_nonce'])
 
     def test_build_simulation_completion_trace_marks_smoke_gate_satisfied(self) -> None:
         resources = _build_resources(

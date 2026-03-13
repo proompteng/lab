@@ -22,9 +22,9 @@ from scripts.start_historical_simulation import (
     _build_clickhouse_runtime_config,
     _build_postgres_runtime_config,
     _build_resources,
+    _default_simulation_postgres_db,
     _http_clickhouse_query,
     _load_manifest,
-    _normalize_run_token,
     _parse_rfc3339_timestamp,
     _resolve_window_bounds,
     _safe_float,
@@ -479,11 +479,9 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
     manifest_path = Path(args.dataset_manifest)
     manifest = _load_manifest(manifest_path)
     resources = _build_resources(args.run_id, manifest)
-    run_token = _normalize_run_token(args.run_id)
-
     postgres_config = _build_postgres_runtime_config(
         manifest,
-        simulation_db=f'torghut_sim_{run_token}',
+        simulation_db=_default_simulation_postgres_db(resources),
     )
     if args.simulation_dsn:
         postgres_config = type(postgres_config)(
@@ -1048,7 +1046,7 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
 
     run_metadata = {
         'run_id': args.run_id,
-        'run_token': run_token,
+        'run_token': resources.run_token,
         'dataset_id': resources.dataset_id,
         'lane': resources.lane,
         'generated_at': datetime.now(timezone.utc).isoformat(),
