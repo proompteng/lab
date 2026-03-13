@@ -54,6 +54,7 @@ from scripts.start_historical_simulation import (
     _replay_dump,
     _run_full_lifecycle,
     _run_rollouts_analysis,
+    _load_schema_registry_schema_literal,
     _simulation_schema_registry_subject_specs,
     _simulation_evidence_lineage,
     _set_argocd_application_sync_policy,
@@ -190,6 +191,12 @@ class TestStartHistoricalSimulation(TestCase):
 
         ta_signal_spec = next(spec for spec in specs if spec['role'] == 'ta_signals')
         self.assertEqual(ta_signal_spec['schema_path'], str(schema_path.resolve()))
+
+    def test_load_schema_registry_schema_literal_uses_embedded_fallback(self) -> None:
+        schema_literal = _load_schema_registry_schema_literal('/docs/torghut/schemas/ta-bars-1s.avsc')
+        payload = json.loads(schema_literal)
+        self.assertEqual(payload['name'], 'TaBar1s')
+        self.assertEqual(payload['namespace'], 'torghut.ta')
 
     def test_build_postgres_runtime_config_uses_template(self) -> None:
         config = _build_postgres_runtime_config(
