@@ -829,6 +829,19 @@ def _effective_terminal_signal_ts(
     return window_end
 
 
+def _clickhouse_database_from_jdbc_url(raw_url: str | None) -> str | None:
+    text = (raw_url or '').strip()
+    if not text:
+        return None
+    if text.startswith('jdbc:'):
+        text = text[len('jdbc:') :]
+    parsed = urlsplit(text)
+    if not parsed.path:
+        return None
+    database = parsed.path.lstrip('/').split('/', 1)[0]
+    return database or None
+
+
 def _classify_activity_snapshot(
     *,
     runtime_ready: bool,
@@ -977,16 +990,22 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
     trading_config_complete = all(trading_config.values())
     ta_config = _kubectl_json(namespace, ['get', 'configmap', ta_configmap, '-o', 'json'])
     ta_data = _as_mapping(ta_config.get('data'))
-    run_token = _as_text(_resource_attr(resources, 'run_token')) or ''
+    expected_clickhouse_database = _as_text(_resource_attr(resources, 'clickhouse_db'))
     ta_runtime_config = {
         f'{role}_topic': _as_text(ta_data.get(key)) == _as_text(expected_topics.get(role))
         for role, key in lane_contract.ta_topic_key_by_role.items()
         if role in expected_topics
     }
-    ta_runtime_config['clickhouse_database'] = bool(run_token) and run_token in (
-        _as_text(ta_data.get(lane_contract.ta_clickhouse_url_key)) or ''
+    ta_runtime_config['clickhouse_database'] = _clickhouse_database_from_jdbc_url(
+        _as_text(ta_data.get(lane_contract.ta_clickhouse_url_key))
+    ) == expected_clickhouse_database
+    ta_runtime_config['expected_clickhouse_database'] = expected_clickhouse_database
+    ta_runtime_config['current_clickhouse_database'] = _clickhouse_database_from_jdbc_url(
+        _as_text(ta_data.get(lane_contract.ta_clickhouse_url_key))
     )
-    ta_runtime_config_complete = all(ta_runtime_config.values())
+    ta_runtime_config_complete = all(
+        value for key, value in ta_runtime_config.items() if key not in {'expected_clickhouse_database', 'current_clickhouse_database'}
+    )
     schema_registry = _schema_registry_health(
         ta_data=ta_data,
         lane_contract=lane_contract,
@@ -1356,7 +1375,7 @@ def _teardown_clean(
     ta_configmap = _as_text(resource_payload.get('ta_configmap'))
     ta_deployment = _as_text(resource_payload.get('ta_deployment'))
     run_id = _as_text(resource_payload.get('run_id')) or ''
-    run_token = _as_text(resource_payload.get('run_token')) or ''
+    simulation_clickhouse_db = _as_text(resource_payload.get('clickhouse_db')) or ''
     clickhouse_signal_table = _as_text(resource_payload.get('clickhouse_signal_table')) or ''
     clickhouse_price_table = _as_text(resource_payload.get('clickhouse_price_table')) or ''
     order_feed_group_id = _as_text(resource_payload.get('order_feed_group_id')) or ''
@@ -1385,7 +1404,10 @@ def _teardown_clean(
         'price_table': _as_text(_as_mapping(env_by_name.get('TRADING_PRICE_TABLE')).get('value')) == clickhouse_price_table,
         'order_feed_group_id': _as_text(_as_mapping(env_by_name.get('TRADING_ORDER_FEED_GROUP_ID')).get('value')) == order_feed_group_id,
         'ta_group_id': _as_text(ta_data.get(lane_contract.ta_group_id_key)) == ta_group_id,
-        'ta_clickhouse_database': bool(run_token) and run_token in (_as_text(ta_data.get(lane_contract.ta_clickhouse_url_key)) or ''),
+        'ta_clickhouse_database': _clickhouse_database_from_jdbc_url(
+            _as_text(ta_data.get(lane_contract.ta_clickhouse_url_key))
+        )
+        == simulation_clickhouse_db,
     }
     restored = not any(simulation_markers_present.values())
     return {

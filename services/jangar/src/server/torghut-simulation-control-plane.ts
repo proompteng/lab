@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { posix as pathPosix } from 'node:path'
 
 import { sql } from 'kysely'
 
@@ -108,6 +109,7 @@ export type TorghutSimulationPreset = {
 const DEFAULT_TORGHUT_NAMESPACE = 'torghut'
 const DEFAULT_WORKFLOW_NAMESPACE = 'argo-workflows'
 const DEFAULT_OUTPUT_ROOT = 'artifacts/torghut/simulations'
+const DEFAULT_WORKFLOW_OUTPUT_ROOT = '/tmp/torghut-simulations'
 const DEFAULT_PRIORITY = 'interactive'
 const DEFAULT_PROFILE = 'smoke'
 const DEFAULT_CACHE_POLICY = 'prefer_cache'
@@ -215,6 +217,9 @@ const BATCH_LANES = ['sim-batch-1'] as const
 const CONTROL_PLANE_LEASE_OWNER = 'jangar-control-plane'
 const PROGRESS_FETCH_TIMEOUT_MS = 2_500
 
+const defaultTaRestoreMode = (profile: string) =>
+  profile.trim().toLowerCase() === 'full_day' ? 'required' : 'stateless'
+
 const resolveRunClass = (profile: string, priority: string) => {
   const normalizedProfile = profile.trim().toLowerCase()
   const normalizedPriority = priority.trim().toLowerCase()
@@ -256,8 +261,16 @@ const buildSimulationCacheKey = (manifest: JsonRecord, profile: string) =>
     )
     .digest('hex')
 
+const resolveWorkflowOutputRoot = (outputRoot: string) => {
+  const normalized = outputRoot.trim().replace(/\/+$/, '')
+  if (!normalized) return DEFAULT_WORKFLOW_OUTPUT_ROOT
+  if (normalized.startsWith('/')) return normalized
+  return pathPosix.join(DEFAULT_WORKFLOW_OUTPUT_ROOT, normalized)
+}
+
 const reserveSimulationLane = async (params: { runId: string; runClass: string; cacheKey: string | null }) => {
   const db = await ensureDb()
+  await reconcileSimulationLaneLeases(db)
   const laneIds = resolveLaneIds(params.runClass)
   const now = new Date()
   const leaseExpiresAt = new Date(now.getTime() + 15 * 60 * 1000)
@@ -509,6 +522,10 @@ const normalizeSimulationManifest = (
   if (!asString(performance.dumpFormat)) performance.dumpFormat = DEFAULT_DUMP_FORMAT
   manifest.performance = performance
 
+  const taRestore = asRecord(manifest.ta_restore)
+  if (!asString(taRestore.mode)) taRestore.mode = defaultTaRestoreMode(String(performance.replayProfile))
+  manifest.ta_restore = taRestore
+
   if (overrides.cachePolicy) {
     manifest.cachePolicy = overrides.cachePolicy
   } else if (!asString(manifest.cachePolicy)) {
@@ -516,6 +533,49 @@ const normalizeSimulationManifest = (
   }
 
   return manifest
+}
+
+const reconcileSimulationLaneLeases = async (db: Awaited<ReturnType<typeof ensureDb>>) => {
+  const now = new Date()
+  const lanes = await db.selectFrom('torghut_control_plane.simulation_lane_leases').selectAll().execute()
+
+  for (const lane of lanes) {
+    const laneRow = lane as Record<string, unknown>
+    const runId = asString(laneRow.run_id)
+    const leaseExpiresAt = asString(laneRow.lease_expires_at)
+    const expired = leaseExpiresAt ? new Date(leaseExpiresAt).getTime() <= now.getTime() : false
+    let terminal = false
+
+    if (runId) {
+      const run = await db
+        .selectFrom('torghut_control_plane.simulation_runs')
+        .selectAll()
+        .where('run_id', '=', runId)
+        .executeTakeFirst()
+      terminal = Boolean(run && TERMINAL_RUN_STATUSES.has(String((run as Record<string, unknown>).status)))
+    }
+
+    if (!expired && !terminal) continue
+
+    await db
+      .updateTable('torghut_control_plane.simulation_lane_leases')
+      .set({
+        status: 'available',
+        run_id: null,
+        cache_key: null,
+        lease_owner: null,
+        lease_expires_at: null,
+        last_heartbeat_at: now,
+        updated_at: now,
+        metadata: {
+          releasedAt: now.toISOString(),
+          releasedBy: CONTROL_PLANE_LEASE_OWNER,
+          releaseReason: terminal ? 'run_terminal' : 'lease_expired',
+        },
+      })
+      .where('lane_id', '=', String(laneRow.lane_id))
+      .execute()
+  }
 }
 
 const buildRobustnessScorecard = (runs: TorghutSimulationRunSnapshot[]) => {
@@ -913,6 +973,7 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
 
   const runtime = asRecord(manifest.runtime)
   const outputRoot = String(runtime.output_root ?? DEFAULT_OUTPUT_ROOT)
+  const workflowOutputRoot = resolveWorkflowOutputRoot(outputRoot)
   const artifactRoot = `${outputRoot.replace(/\/+$/, '')}/${normalizeRunToken(runId)}`
   const cachedDataset = await db
     .selectFrom('torghut_control_plane.dataset_cache')
@@ -954,6 +1015,7 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
         torghutService: resolveSimulationServiceName(manifest),
         torghutNamespace: resolveSimulationNamespace(manifest),
         workflowNamespace: resolveSimulationWorkflowNamespace(manifest),
+        workflowOutputRoot,
       },
       progress: {
         phase: 'submitting',
@@ -990,6 +1052,7 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
         torghutService: resolveSimulationServiceName(manifest),
         torghutNamespace: resolveSimulationNamespace(manifest),
         workflowNamespace: resolveSimulationWorkflowNamespace(manifest),
+        workflowOutputRoot,
       },
       progress: {
         phase: 'lane_reserved',
@@ -1006,7 +1069,7 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
     forceReplay: request.forceReplay ?? false,
     forceDump: request.forceDump ?? false,
     allowMissingState: request.allowMissingState ?? false,
-    outputRoot,
+    outputRoot: workflowOutputRoot,
   })
   let created: Record<string, unknown>
   try {
@@ -1038,6 +1101,7 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
         torghutService: resolveSimulationServiceName(manifest),
         torghutNamespace: resolveSimulationNamespace(manifest),
         workflowNamespace: resolveSimulationWorkflowNamespace(manifest),
+        workflowOutputRoot,
         workflowResource: created,
       },
       progress: {
@@ -1096,6 +1160,7 @@ export const getTorghutSimulationRun = async (runId: string) => {
 
 export const listTorghutSimulationRuns = async (limit = 20) => {
   const db = await ensureDb()
+  await reconcileSimulationLaneLeases(db)
   const rows = await db
     .selectFrom('torghut_control_plane.simulation_runs')
     .selectAll()
@@ -1482,4 +1547,5 @@ export const __private = {
   normalizeCampaignRequest,
   normalizeRunToken,
   normalizeSimulationManifest,
+  resolveWorkflowOutputRoot,
 }

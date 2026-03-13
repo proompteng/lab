@@ -9,6 +9,9 @@ runtime_version_refs:
   - services/torghut@simulation
   - services/torghut-forecast@simulation
 
+ta_restore:
+  mode: stateless
+
 window:
   trading_day: '2026-03-06'
   timezone: America/New_York

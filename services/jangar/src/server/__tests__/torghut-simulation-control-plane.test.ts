@@ -50,7 +50,15 @@ describe('torghut simulation control plane', () => {
       replayProfile: 'compact',
       dumpFormat: 'jsonl.zst',
     })
+    expect(manifest.ta_restore).toMatchObject({ mode: 'stateless' })
     expect(manifest.cachePolicy).toBe('require_cache')
+  })
+
+  it('resolves a writable workflow output root for relative artifact paths', () => {
+    expect(__private.resolveWorkflowOutputRoot('artifacts/torghut/simulations')).toBe(
+      '/tmp/torghut-simulations/artifacts/torghut/simulations',
+    )
+    expect(__private.resolveWorkflowOutputRoot('/tmp/custom-output')).toBe('/tmp/custom-output')
   })
 
   it('derives expected artifact paths from run id and dump format', () => {
