@@ -916,44 +916,19 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
   if ((request.cachePolicy ?? DEFAULT_CACHE_POLICY) === 'require_cache' && !cachedDataset) {
     throw new Error(`required simulation dataset cache is missing for cache_key=${cacheKey}`)
   }
-  const laneReservation = await reserveSimulationLane({
-    runId,
-    runClass,
-    cacheKey,
-  })
-  const workflowManifest = buildWorkflowManifest({
-    runId,
-    manifest,
-    forceReplay: request.forceReplay ?? false,
-    forceDump: request.forceDump ?? false,
-    allowMissingState: request.allowMissingState ?? false,
-    outputRoot,
-  })
-  let created: Record<string, unknown>
-  try {
-    created = await kube.apply(workflowManifest as Record<string, unknown>)
-  } catch (error) {
-    await releaseSimulationLane(runId)
-    throw error
-  }
-  const metadata = asRecord(created.metadata)
-  const status = asRecord(created.status)
-  const workflowName = asString(metadata.name)
-  const workflowUid = asString(metadata.uid)
-  const workflowPhase = asString(status.phase)
 
   await db
     .insertInto('torghut_control_plane.simulation_runs')
     .values({
       run_id: runId,
       idempotency_key: idempotencyKey,
-      workflow_name: workflowName,
-      workflow_uid: workflowUid,
+      workflow_name: null,
+      workflow_uid: null,
       namespace: DEFAULT_NAMESPACE,
-      status: workflowPhaseToStatus(workflowPhase),
-      workflow_phase: workflowPhase,
+      status: 'submitting',
+      workflow_phase: null,
       lane,
-      lane_id: laneReservation.laneId,
+      lane_id: null,
       profile,
       cache_policy: asString(manifest.cachePolicy) ?? DEFAULT_CACHE_POLICY,
       cache_key: cacheKey,
@@ -969,6 +944,83 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
       manifest_digest: digest,
       metadata: {
         ...request.metadata,
+        torghutService: resolveSimulationServiceName(manifest),
+        torghutNamespace: resolveSimulationNamespace(manifest),
+      },
+      progress: {
+        phase: 'submitting',
+      },
+      final_verdict: {},
+      submitted_by: request.submittedBy ?? null,
+      started_at: null,
+      finished_at: null,
+    })
+    .execute()
+
+  let laneReservation: { laneId: string; leaseExpiresAt: Date }
+  try {
+    laneReservation = await reserveSimulationLane({
+      runId,
+      runClass,
+      cacheKey,
+    })
+  } catch (error) {
+    await db.deleteFrom('torghut_control_plane.simulation_runs').where('run_id', '=', runId).execute()
+    throw error
+  }
+
+  await db
+    .updateTable('torghut_control_plane.simulation_runs')
+    .set({
+      lane_id: laneReservation.laneId,
+      metadata: {
+        ...request.metadata,
+        laneReservation: {
+          laneId: laneReservation.laneId,
+          leaseExpiresAt: laneReservation.leaseExpiresAt.toISOString(),
+        },
+        torghutService: resolveSimulationServiceName(manifest),
+        torghutNamespace: resolveSimulationNamespace(manifest),
+      },
+      progress: {
+        phase: 'lane_reserved',
+      },
+      updated_at: new Date(),
+    })
+    .where('run_id', '=', runId)
+    .execute()
+
+  const workflowManifest = buildWorkflowManifest({
+    runId,
+    manifest,
+    forceReplay: request.forceReplay ?? false,
+    forceDump: request.forceDump ?? false,
+    allowMissingState: request.allowMissingState ?? false,
+    outputRoot,
+  })
+  let created: Record<string, unknown>
+  try {
+    created = await kube.apply(workflowManifest as Record<string, unknown>)
+  } catch (error) {
+    await releaseSimulationLane(runId)
+    await db.deleteFrom('torghut_control_plane.simulation_runs').where('run_id', '=', runId).execute()
+    throw error
+  }
+  const metadata = asRecord(created.metadata)
+  const status = asRecord(created.status)
+  const workflowName = asString(metadata.name)
+  const workflowUid = asString(metadata.uid)
+  const workflowPhase = asString(status.phase)
+
+  await db
+    .updateTable('torghut_control_plane.simulation_runs')
+    .set({
+      workflow_name: workflowName,
+      workflow_uid: workflowUid,
+      status: workflowPhaseToStatus(workflowPhase),
+      workflow_phase: workflowPhase,
+      metadata: {
+        ...request.metadata,
         laneReservation: {
           laneId: laneReservation.laneId,
           leaseExpiresAt: laneReservation.leaseExpiresAt.toISOString(),
@@ -980,11 +1032,11 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
       progress: {
         phase: workflowPhase,
       },
-      final_verdict: {},
-      submitted_by: request.submittedBy ?? null,
       started_at: asString(status.startedAt) ? new Date(String(status.startedAt)) : null,
       finished_at: asString(status.finishedAt) ? new Date(String(status.finishedAt)) : null,
+      updated_at: new Date(),
     })
+    .where('run_id', '=', runId)
     .execute()
 
   await appendRunEvent(runId, 'simulation_run.submitted', {
