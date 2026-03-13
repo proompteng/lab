@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest import TestCase
 
 from sqlalchemy import create_engine
@@ -365,7 +365,8 @@ class TestCompletionTrace(TestCase):
                     )
                 )
 
-            paper_window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            paper_window_start = now - timedelta(days=2)
             for index in range(4):
                 session.add(
                     StrategyHypothesisMetricWindow(
@@ -393,7 +394,7 @@ class TestCompletionTrace(TestCase):
                     )
                 )
 
-            live_window_start = datetime(2026, 3, 7, 14, 30, tzinfo=timezone.utc)
+            live_window_start = now - timedelta(days=1)
             for index in range(10):
                 session.add(
                     StrategyHypothesisMetricWindow(
