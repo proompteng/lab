@@ -45,6 +45,8 @@ RUN apt-get update \
       ca-certificates \
       curl \
       libpq5 \
+      pigz \
+      zstd \
  && PLATFORM="${TARGETPLATFORM:-linux/$(dpkg --print-architecture 2>/dev/null || uname -m)}" \
  && case "${PLATFORM}" in \
       linux/amd64|linux/amd64/*|amd64|x86_64) KUBECTL_ARCH="amd64" ;; \
