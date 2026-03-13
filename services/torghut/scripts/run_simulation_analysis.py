@@ -170,7 +170,7 @@ def _resources_from_args(args: argparse.Namespace) -> _Resources:
         clickhouse_price_table=price_table,
         clickhouse_db=clickhouse_db,
         simulation_topic_by_role={
-            'order_updates': default_order_updates_topic if warm_lane_enabled else f'{default_order_updates_topic}.{run_token}',
+            'order_updates': f'{default_order_updates_topic}.{run_token}',
         },
         order_feed_group_id='torghut-order-feed-sim-default' if warm_lane_enabled else f'torghut-order-feed-sim-{run_token}',
         ta_group_id='torghut-ta-sim-default' if warm_lane_enabled else f'torghut-ta-sim-{run_token}',
