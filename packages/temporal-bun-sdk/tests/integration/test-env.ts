@@ -11,7 +11,6 @@ import type { IntegrationHarness } from './harness'
 import {
   createIntegrationHarness,
   findTemporalCliUnavailableError,
-  TemporalCliUnavailableError,
   TemporalCliCommandError,
 } from './harness'
 import { integrationActivities, integrationWorkflows } from './workflows'
@@ -147,9 +146,10 @@ const setupIntegrationTestEnv = async (): Promise<IntegrationTestEnv> => {
         harness.runScenario(name, () => Effect.tryPromise(scenario)),
       )
     } catch (error) {
-      if (error instanceof TemporalCliUnavailableError) {
+      const unavailable = findTemporalCliUnavailableError(error)
+      if (unavailable) {
         cliUnavailable = true
-        console.warn(`[temporal-bun-sdk] skipped integration scenario ${name}: ${error.message}`)
+        console.warn(`[temporal-bun-sdk] skipped integration scenario ${name}: ${unavailable.message}`)
         return undefined
       }
       console.error(

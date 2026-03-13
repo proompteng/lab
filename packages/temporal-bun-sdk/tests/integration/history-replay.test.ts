@@ -9,7 +9,14 @@ import { createDefaultDataConverter } from '../../src/common/payloads'
 import { makeStickyCache } from '../../src/worker/sticky-cache'
 import { ingestWorkflowHistory, diffDeterminismState } from '../../src/workflow/replay'
 import type { HistoryEvent } from '../../src/proto/temporal/api/history/v1/message_pb'
-import { TemporalCliCommandError, type IntegrationHarness, type WorkflowExecutionHandle } from './harness'
+import {
+  isTemporalEndpointUnavailable,
+  runHarnessEffect,
+  TemporalCliCommandError,
+  TemporalCliUnavailableError,
+  type IntegrationHarness,
+  type WorkflowExecutionHandle,
+} from './harness'
 import { acquireIntegrationTestEnv, releaseIntegrationTestEnv, CLI_CONFIG, type IntegrationTestEnv } from './test-env'
 import {
   continueAsNewWorkflow,
@@ -142,7 +149,6 @@ describe('Temporal CLI history ingestion', () => {
     await execScenario('temporal-bun replay cli command', async () => {
       const execution = await runTimerWorkflow('replay-cli')
       const result = await runReplayCliCommand(execution)
-      expect(result.exitCode).toBe(0)
       const summaryLine = extractJsonSummary(result.stdout)
       expect(summaryLine).toBeDefined()
       const summary = summaryLine ? JSON.parse(summaryLine) : null
@@ -187,19 +193,19 @@ describe('Temporal CLI history ingestion', () => {
     })
   })
 
-test('sticky cache remains empty after workflow completion', { timeout: replayTimeoutMs }, async () => {
-  await execScenario('sticky cache cleanup', async () => {
-    if (!stickyCacheSizeEffect) {
-      throw new Error('Sticky cache not initialised')
-    }
-    if (stickyCacheClearEffect) {
-      await Effect.runPromise(stickyCacheClearEffect)
-    }
-    await runTimerWorkflow()
-    const size = await waitForStickyDrain(stickyCacheSizeEffect)
-    expect(size).toBe(0)
+  test('sticky cache remains empty after workflow completion', { timeout: replayTimeoutMs }, async () => {
+    await execScenario('sticky cache cleanup', async () => {
+      if (!stickyCacheSizeEffect) {
+        throw new Error('Sticky cache not initialised')
+      }
+      if (stickyCacheClearEffect) {
+        await Effect.runPromise(stickyCacheClearEffect)
+      }
+      await runTimerWorkflow()
+      const size = await waitForStickyDrain(stickyCacheSizeEffect)
+      expect(size).toBe(0)
+    })
   })
-})
 })
 
 const waitForStickyDrain = async (sizeEffect: Effect.Effect<number, never, never>, timeoutMs = 5_000): Promise<number> => {
@@ -246,6 +252,16 @@ const runReplayCliCommand = async (
   const exitCode = await child.exited
   const stdout = await readCliStream(child.stdout)
   const stderr = await readCliStream(child.stderr)
+  if (exitCode !== 0) {
+    const cliError = new TemporalCliCommandError(command, exitCode, stdout, stderr)
+    if (isTemporalEndpointUnavailable(cliError)) {
+      throw new TemporalCliUnavailableError(
+        `Temporal endpoint ${CLI_CONFIG.address} is unavailable while running "${command.join(' ')}"`,
+        [{ candidate: CLI_CONFIG.address, error: stderr || stdout || cliError.message }],
+      )
+    }
+    throw cliError
+  }
   return { exitCode, stdout, stderr }
 }
 
@@ -279,7 +295,7 @@ const extractJsonSummary = (stdout: string): string | undefined => {
 
 const runTimerWorkflow = async (): Promise<WorkflowExecutionHandle> => {
   try {
-    const handle = await Effect.runPromise(
+    const handle = await runHarnessEffect(
       harness!.executeWorkflow({
         workflowType: timerWorkflow.name,
         workflowId: createWorkflowId('timer'),
@@ -304,7 +320,7 @@ const runTimerWorkflow = async (): Promise<WorkflowExecutionHandle> => {
 
 const runActivityWorkflow = async (seed: string): Promise<WorkflowExecutionHandle> => {
   const workflowId = createWorkflowId(seed)
-  return await Effect.runPromise(
+  return await runHarnessEffect(
     harness!.executeWorkflow({
       workflowType: activityWorkflow.name,
       workflowId,
@@ -316,7 +332,7 @@ const runActivityWorkflow = async (seed: string): Promise<WorkflowExecutionHandl
 
 const runParentWorkflow = async (seed: string): Promise<WorkflowExecutionHandle> => {
   const workflowId = createWorkflowId(seed)
-  return await Effect.runPromise(
+  return await runHarnessEffect(
     harness!.executeWorkflow({
       workflowType: parentWorkflow.name,
       workflowId,
@@ -327,7 +343,7 @@ const runParentWorkflow = async (seed: string): Promise<WorkflowExecutionHandle>
 }
 
 const runContinueWorkflow = async (iterations: number): Promise<WorkflowExecutionHandle> =>
-  await Effect.runPromise(
+  await runHarnessEffect(
     harness!.executeWorkflow({
       workflowType: continueAsNewWorkflow.name,
       workflowId: createWorkflowId('continue'),
@@ -337,7 +353,7 @@ const runContinueWorkflow = async (iterations: number): Promise<WorkflowExecutio
   )
 
 const fetchHistory = async (handle: WorkflowExecutionHandle): Promise<HistoryEvent[]> =>
-  await Effect.runPromise(harness!.fetchWorkflowHistory(handle))
+  await runHarnessEffect(harness!.fetchWorkflowHistory(handle))
 
 const buildWorkflowInfo = (workflowType: string, handle: WorkflowExecutionHandle) => ({
   namespace: CLI_CONFIG.namespace,
