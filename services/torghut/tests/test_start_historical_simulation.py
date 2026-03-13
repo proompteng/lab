@@ -3430,6 +3430,7 @@ class TestStartHistoricalSimulation(TestCase):
             patch('scripts.start_historical_simulation._update_run_state', return_value=None),
             patch('scripts.start_historical_simulation._save_json', return_value=None),
             patch('scripts.start_historical_simulation.persist_completion_trace', return_value={}),
+            patch('scripts.start_historical_simulation._upsert_simulation_progress_row', return_value=None),
             patch('scripts.start_historical_simulation.SessionLocal') as mock_session_local,
             patch('scripts.start_historical_simulation._prepare_argocd_for_run', return_value={'managed': False}),
             patch('scripts.start_historical_simulation._restore_argocd_after_run', return_value={'managed': False}),
