@@ -68,6 +68,29 @@ from scripts.start_historical_simulation import (
 
 
 class TestStartHistoricalSimulation(TestCase):
+    def test_cluster_service_host_candidates_expand_cluster_local_for_partially_qualified_service(self) -> None:
+        self.assertEqual(
+            start_historical_simulation._cluster_service_host_candidates('karapace.kafka.svc'),
+            ['karapace.kafka.svc', 'karapace.kafka.svc.cluster.local'],
+        )
+
+    def test_cluster_service_host_candidates_expand_service_namespace_short_form(self) -> None:
+        self.assertEqual(
+            start_historical_simulation._cluster_service_host_candidates('karapace.kafka'),
+            ['karapace.kafka', 'karapace.kafka.svc', 'karapace.kafka.svc.cluster.local'],
+        )
+
+    def test_kafka_host_candidates_expand_cluster_local_for_partially_qualified_service(self) -> None:
+        self.assertEqual(
+            start_historical_simulation._kafka_host_candidates(
+                'kafka-pool-b-5.kafka-kafka-brokers.kafka.svc'
+            ),
+            [
+                'kafka-pool-b-5.kafka-kafka-brokers.kafka.svc',
+                'kafka-pool-b-5.kafka-kafka-brokers.kafka.svc.cluster.local',
+            ],
+        )
+
     def test_normalize_run_token(self) -> None:
         self.assertEqual(_normalize_run_token('Sim-2026/02/27#Run-01'), 'sim_2026_02_27_run_01')
 

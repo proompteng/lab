@@ -274,12 +274,23 @@ KAFKA_HOST_SUFFIX_FALLBACKS = (
 _ORIGINAL_GETADDRINFO = socket.getaddrinfo
 
 
-def _kafka_host_candidates(host: str) -> list[str]:
+def _cluster_service_host_candidates(host: str) -> list[str]:
     host = host.strip()
     if not host:
         return []
 
     candidates = [host]
+    host_parts = host.split('.')
+    if len(host_parts) == 2:
+        candidates.append(f'{host}.svc')
+        candidates.append(f'{host}.svc.cluster.local')
+    if host.endswith('.svc') and not host.endswith('.svc.cluster.local'):
+        candidates.append(f'{host}.cluster.local')
+    return candidates
+
+
+def _kafka_host_candidates(host: str) -> list[str]:
+    candidates = _cluster_service_host_candidates(host)
     if '.' not in host:
         for suffix in KAFKA_HOST_SUFFIX_FALLBACKS:
             candidates.append(f'{host}{suffix}')
@@ -2368,15 +2379,23 @@ def _http_request(
         target_path = f'{target_path.rstrip("/")}/{path.lstrip("/")}'
     request_headers = dict(headers or {})
     connection_class = HTTPSConnection if scheme == 'https' else HTTPConnection
-    connection = connection_class(parsed.hostname, parsed.port)
-    try:
-        payload = body.encode('utf-8') if body is not None else None
-        connection.request(method.upper(), target_path, body=payload, headers=request_headers)
-        response = connection.getresponse()
-        response_body = response.read().decode('utf-8', errors='replace')
-        return response.status, response_body
-    finally:
-        connection.close()
+    payload = body.encode('utf-8') if body is not None else None
+    last_error: OSError | None = None
+    for hostname in _cluster_service_host_candidates(parsed.hostname):
+        connection = connection_class(hostname, parsed.port)
+        try:
+            connection.request(method.upper(), target_path, body=payload, headers=request_headers)
+            response = connection.getresponse()
+            response_body = response.read().decode('utf-8', errors='replace')
+            return response.status, response_body
+        except OSError as exc:
+            last_error = exc
+            continue
+        finally:
+            connection.close()
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError('http_request_failed_without_attempts')
 
 
 def _clickhouse_query_configs(config: ClickHouseRuntimeConfig) -> list[ClickHouseRuntimeConfig]:

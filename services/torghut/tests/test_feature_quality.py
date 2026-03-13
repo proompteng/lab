@@ -109,6 +109,11 @@ class TestFeatureQuality(TestCase):
         self.assertFalse(report.accepted)
         self.assertGreater(report.null_rate_by_field['macd'], 0)
         self.assertIn('required_feature_null_rate_exceeds_threshold', report.reasons)
+        self.assertEqual(report.blocking_reasons, [])
+        self.assertEqual(
+            report.warning_only_reasons,
+            ['required_feature_null_rate_exceeds_threshold'],
+        )
 
     def test_batch_fails_on_non_monotonic_progression(self) -> None:
         ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
