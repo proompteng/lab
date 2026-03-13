@@ -1285,7 +1285,7 @@ class TestStartHistoricalSimulation(TestCase):
 
         configure_ta.assert_called_once()
         restart_ta.assert_called_once()
-        configure_service.assert_not_called()
+        configure_service.assert_called_once()
         self.assertTrue(report['warm_lane_enabled'])
         self.assertEqual(report['seeded_cursor_at'], '2026-02-27T14:30:00+00:00')
 
@@ -3386,7 +3386,7 @@ class TestStartHistoricalSimulation(TestCase):
                 )
 
         restore_ta.assert_called_once_with(resources, {'ta_job_state': 'running'})
-        restore_env.assert_not_called()
+        restore_env.assert_called_once_with(resources, {'ta_job_state': 'running'})
         restart_ta.assert_called_once_with(resources, desired_state='running')
         release_lock.assert_called_once_with(resources=resources)
         self.assertTrue(report['warm_lane_enabled'])
