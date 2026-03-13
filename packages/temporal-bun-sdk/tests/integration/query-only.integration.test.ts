@@ -16,7 +16,12 @@ import {
   type TemporalDevServerConfig,
   type WorkflowExecutionHandle,
 } from './harness'
-import { integrationActivities, integrationWorkflows, queryOnlyWorkflow } from './workflows'
+import {
+  integrationActivities,
+  integrationWorkflows,
+  queryOnlyWorkflow,
+  queryOnlyWorkflowBlockedTimerMs,
+} from './workflows'
 
 const shouldRunIntegration = process.env.TEMPORAL_INTEGRATION_TESTS === '1'
 const describeIntegration = shouldRunIntegration ? describe : describe.skip
@@ -24,6 +29,7 @@ const scenarioTimeoutMs = 60_000
 const hookTimeoutMs = 60_000
 const temporalCliCommandMaxAttempts = normalizeRetryConfig(process.env.TEMPORAL_CLI_COMMAND_MAX_ATTEMPTS, 3)
 const temporalCliCommandRetryMs = normalizeRetryConfig(process.env.TEMPORAL_CLI_COMMAND_RETRY_MS, 500)
+const queryOnlyResponseBudgetMs = Math.floor(queryOnlyWorkflowBlockedTimerMs / 2)
 
 const CLI_CONFIG: TemporalDevServerConfig = {
   address: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
@@ -249,7 +255,7 @@ describeIntegration('Query-only workflow tasks', () => {
       const elapsed = Date.now() - start
 
       expect(result.status).toBe('blocked-on-timer')
-      expect(elapsed).toBeLessThan(5_000)
+      expect(elapsed).toBeLessThan(queryOnlyResponseBudgetMs)
 
       const history = await fetchWorkflowHistory(handle)
       const completed = history.find((event) => event.eventType === EventType.WORKFLOW_EXECUTION_COMPLETED)
