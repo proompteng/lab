@@ -198,6 +198,26 @@ class TestExecutionAdapters(TestCase):
                 }
             ],
         )
+        adapter.submit_order(
+            symbol='AAPL',
+            side='sell',
+            qty=2.0,
+            order_type='market',
+            time_in_force='day',
+            extra_params={'client_order_id': 'decision-short'},
+        )
+        positions = adapter.list_positions()
+        self.assertEqual(
+            positions,
+            [
+                {
+                    'symbol': 'AAPL',
+                    'qty': '0.5',
+                    'side': 'short',
+                    'alpaca_account_label': 'paper',
+                }
+            ],
+        )
 
     def test_simulation_adapter_seeds_initial_positions_once(self) -> None:
         adapter = SimulationExecutionAdapter(
@@ -276,27 +296,6 @@ class TestExecutionAdapters(TestCase):
                 {
                     'symbol': 'AAPL',
                     'qty': '10',
-                    'side': 'long',
-                    'alpaca_account_label': 'paper',
-                }
-            ],
-        )
-
-        adapter.submit_order(
-            symbol='AAPL',
-            side='sell',
-            qty=2.0,
-            order_type='market',
-            time_in_force='day',
-            extra_params={'client_order_id': 'decision-short'},
-        )
-        positions = adapter.list_positions()
-        self.assertEqual(
-            positions,
-            [
-                {
-                    'symbol': 'AAPL',
-                    'qty': '8',
                     'side': 'long',
                     'alpaca_account_label': 'paper',
                 }

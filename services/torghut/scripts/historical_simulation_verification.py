@@ -489,7 +489,11 @@ def _classify_restore_state_error(message: str | None) -> str | None:
     return None
 
 
-def _kservice_env(service: Mapping[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+def _kservice_env(
+    service: Mapping[str, Any],
+    *,
+    namespace: str | None = None,
+) -> tuple[str, list[dict[str, Any]]]:
     spec = _as_mapping(service.get('spec'))
     template = _as_mapping(spec.get('template'))
     template_spec = _as_mapping(template.get('spec'))
@@ -501,8 +505,20 @@ def _kservice_env(service: Mapping[str, Any]) -> tuple[str, list[dict[str, Any]]
         raise RuntimeError('kservice container spec invalid')
     container = _as_mapping(first)
     container_name = _as_text(container.get('name')) or 'user-container'
-    env_raw = container.get('env')
     env: list[dict[str, Any]] = []
+    env_from_raw = container.get('envFrom')
+    if namespace and isinstance(env_from_raw, list):
+        for item in env_from_raw:
+            if not isinstance(item, Mapping):
+                continue
+            config_map_ref = _as_mapping(cast(Mapping[str, Any], item).get('configMapRef'))
+            config_map_name = _as_text(config_map_ref.get('name'))
+            if config_map_name is None:
+                continue
+            config_map = _kubectl_json(namespace, ['get', 'configmap', config_map_name, '-o', 'json'])
+            for key, value in _as_mapping(config_map.get('data')).items():
+                env.append({'name': key, 'value': str(value)})
+    env_raw = container.get('env')
     if isinstance(env_raw, list):
         for item in env_raw:
             if isinstance(item, Mapping):
@@ -638,7 +654,7 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
     service_status = _as_mapping(service.get('status'))
     latest_ready_revision = _as_text(service_status.get('latestReadyRevisionName'))
     ready = _condition_status(service_status, condition_type='Ready') == 'True'
-    _, env_entries = _kservice_env(service)
+    _, env_entries = _kservice_env(service, namespace=namespace)
     env_by_name = {
         _as_text(entry.get('name')): entry
         for entry in env_entries
@@ -652,9 +668,16 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
         _as_mapping(_resource_attr(resources, 'simulation_topic_by_role')).get('order_updates')
     )
     expected_topics = _as_mapping(_resource_attr(resources, 'simulation_topic_by_role'))
+    runtime_mode = _env_value('TRADING_STRATEGY_RUNTIME_MODE')
+    scheduler_enabled = _env_value('TRADING_STRATEGY_SCHEDULER_ENABLED') == 'true'
+    strategy_runtime_active = runtime_mode == 'plugin_v3' or (
+        runtime_mode == 'scheduler_v3' and scheduler_enabled
+    )
     trading_config = {
         'trading_enabled': _env_value('TRADING_ENABLED') == 'true',
         'simulation_enabled': _env_value('TRADING_SIMULATION_ENABLED') == 'true',
+        'strategy_runtime_mode': runtime_mode in {'plugin_v3', 'scheduler_v3'},
+        'strategy_runtime_active': strategy_runtime_active,
         'signal_table': _env_value('TRADING_SIGNAL_TABLE')
         == _as_text(_resource_attr(resources, 'clickhouse_signal_table')),
         'price_table': _env_value('TRADING_PRICE_TABLE')
@@ -853,7 +876,6 @@ def _analysis_image_freshness(
         'analysis_images': analysis_images,
         'mismatched_templates': mismatched,
     }
-
 
 def _analysis_template_names(manifest: Mapping[str, Any]) -> tuple[str, str]:
     rollouts = _as_mapping(manifest.get('rollouts'))
