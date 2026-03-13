@@ -8,10 +8,9 @@ metadata:
     app.kubernetes.io/component: autonomy-runtime
     app.kubernetes.io/part-of: lab
 data:
-  # Migration defaults: keep scheduler-integrated runtime disabled until explicitly enabled.
+  # TSMOM cutover defaults: keep the scheduler-integrated runtime active and fail closed.
   TRADING_STRATEGY_RUNTIME_MODE: scheduler_v3
-  TRADING_STRATEGY_SCHEDULER_ENABLED: "false"
-  TRADING_STRATEGY_RUNTIME_FALLBACK_LEGACY: "true"
+  TRADING_STRATEGY_SCHEDULER_ENABLED: "true"
   TRADING_STRATEGY_RUNTIME_CIRCUIT_ERRORS: "3"
   TRADING_STRATEGY_RUNTIME_CIRCUIT_COOLDOWN_SECONDS: "300"
   TRADING_FEATURE_SCHEMA_VERSION: v3

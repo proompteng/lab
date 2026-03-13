@@ -270,6 +270,57 @@ class TestExecutionAdapters(TestCase):
             ],
         )
 
+    def test_simulation_adapter_seeds_initial_positions_once(self) -> None:
+        adapter = SimulationExecutionAdapter(
+            bootstrap_servers=None,
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+            topic='torghut.sim.trade-updates.v1',
+            account_label='paper',
+            simulation_run_id='sim-2026-02-27-01',
+            dataset_id='dataset-1',
+        )
+        adapter.seed_positions_snapshot(
+            [
+                {'symbol': 'AAPL', 'qty': '2.5', 'side': 'long'},
+                {'symbol': 'MSFT', 'qty': '1', 'side': 'short'},
+            ]
+        )
+        adapter.seed_positions_snapshot(
+            [
+                {'symbol': 'AAPL', 'qty': '9', 'side': 'long'},
+            ]
+        )
+
+        adapter.submit_order(
+            symbol='AAPL',
+            side='sell',
+            qty=0.5,
+            order_type='market',
+            time_in_force='day',
+            extra_params={'client_order_id': 'decision-seeded-sell'},
+        )
+
+        self.assertEqual(
+            adapter.list_positions(),
+            [
+                {
+                    'symbol': 'AAPL',
+                    'qty': '2',
+                    'side': 'long',
+                    'alpaca_account_label': 'paper',
+                },
+                {
+                    'symbol': 'MSFT',
+                    'qty': '1',
+                    'side': 'short',
+                    'alpaca_account_label': 'paper',
+                },
+            ],
+        )
+
     def test_simulation_adapter_preserves_integer_magnitude_in_positions(self) -> None:
         adapter = SimulationExecutionAdapter(
             bootstrap_servers=None,

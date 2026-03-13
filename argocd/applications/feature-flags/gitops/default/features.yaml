@@ -69,7 +69,7 @@ flags:
     name: Torghut Strategy Scheduler Enabled
     description: Enables scheduler-integrated strategy runtime path.
     type: BOOLEAN_FLAG_TYPE
-    enabled: false
+    enabled: true
   - key: torghut_trading_feature_quality_enabled
     name: Torghut Trading Feature Quality Enabled
     description: Enables strict feature quality gate enforcement.
