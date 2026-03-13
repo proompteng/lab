@@ -883,12 +883,6 @@ def _analysis_template_names(manifest: Mapping[str, Any]) -> tuple[str, str]:
     activity_template = _as_text(rollouts.get('activity_template')) or 'torghut-simulation-activity'
     return runtime_template, activity_template
 
-def _analysis_template_names(manifest: Mapping[str, Any]) -> tuple[str, str]:
-    rollouts = _as_mapping(manifest.get('rollouts'))
-    runtime_template = _as_text(rollouts.get('runtime_template')) or 'torghut-simulation-runtime-ready'
-    activity_template = _as_text(rollouts.get('activity_template')) or 'torghut-simulation-activity'
-    return runtime_template, activity_template
-
 
 def _analysis_template_image(template_payload: Mapping[str, Any]) -> str | None:
     spec = _as_mapping(template_payload.get('spec'))
