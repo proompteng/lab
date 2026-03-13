@@ -19,7 +19,7 @@ import socket
 import time
 import uuid
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -2049,6 +2049,129 @@ def _kservice_container_with_env(
     updated = dict(container)
     updated['env'] = list(env_entries)
     return updated
+
+
+def _read_secret_key_ref(
+    *,
+    namespace: str,
+    name: str,
+    key: str,
+) -> str:
+    secret = _kubectl_json(namespace, ['get', 'secret', name, '-o', 'json'])
+    data = _as_mapping(secret.get('data'))
+    encoded = _as_text(data.get(key))
+    if encoded is None:
+        raise RuntimeError(f'secret_key_missing:{namespace}:{name}:{key}')
+    try:
+        decoded = _b64_to_bytes(encoded)
+        if decoded is None:
+            raise RuntimeError('empty_secret_value')
+        return decoded.decode('utf-8')
+    except Exception as exc:  # pragma: no cover - defensive decode guard
+        raise RuntimeError(f'secret_key_decode_failed:{namespace}:{name}:{key}') from exc
+
+
+def _read_configmap_key_ref(
+    *,
+    namespace: str,
+    name: str,
+    key: str,
+) -> str:
+    configmap = _kubectl_json(namespace, ['get', 'configmap', name, '-o', 'json'])
+    data = _as_mapping(configmap.get('data'))
+    value = _as_text(data.get(key))
+    if value is None:
+        raise RuntimeError(f'configmap_key_missing:{namespace}:{name}:{key}')
+    return value
+
+
+def _expand_env_value_refs(value: str, resolved: Mapping[str, str]) -> str:
+    def _sub(match: re.Match[str]) -> str:
+        key = match.group(1)
+        return resolved.get(key, match.group(0))
+
+    return re.sub(r'\$\(([A-Za-z_][A-Za-z0-9_]*)\)', _sub, value)
+
+
+def _resolve_kservice_env_values(
+    *,
+    namespace: str,
+    env_entries: Sequence[Mapping[str, Any]],
+) -> dict[str, str]:
+    resolved: dict[str, str] = {}
+    deferred: dict[str, str] = {}
+    for entry in env_entries:
+        name = _as_text(entry.get('name'))
+        if not name:
+            continue
+        raw_value = entry.get('value')
+        if raw_value is not None:
+            deferred[name] = str(raw_value)
+            continue
+        value_from = _as_mapping(entry.get('valueFrom'))
+        secret_key_ref = _as_mapping(value_from.get('secretKeyRef'))
+        if secret_key_ref:
+            secret_name = _as_text(secret_key_ref.get('name'))
+            secret_key = _as_text(secret_key_ref.get('key'))
+            if not secret_name or not secret_key:
+                raise RuntimeError(f'kservice_env_secret_key_ref_invalid:{name}')
+            resolved[name] = _read_secret_key_ref(
+                namespace=namespace,
+                name=secret_name,
+                key=secret_key,
+            )
+            continue
+        configmap_key_ref = _as_mapping(value_from.get('configMapKeyRef'))
+        if configmap_key_ref:
+            configmap_name = _as_text(configmap_key_ref.get('name'))
+            configmap_key = _as_text(configmap_key_ref.get('key'))
+            if not configmap_name or not configmap_key:
+                raise RuntimeError(f'kservice_env_configmap_key_ref_invalid:{name}')
+            resolved[name] = _read_configmap_key_ref(
+                namespace=namespace,
+                name=configmap_name,
+                key=configmap_key,
+            )
+    if deferred:
+        for _ in range(len(deferred) + len(resolved) + 1):
+            changed = False
+            for key, value in deferred.items():
+                expanded = _expand_env_value_refs(value, resolved)
+                if key not in resolved or resolved[key] != expanded:
+                    resolved[key] = expanded
+                    changed = True
+            if not changed:
+                break
+    return resolved
+
+
+def _resolve_warm_lane_runtime_postgres_config(
+    *,
+    resources: SimulationResources,
+    postgres_config: PostgresRuntimeConfig,
+) -> PostgresRuntimeConfig:
+    if postgres_config.runtime_simulation_dsn:
+        return postgres_config
+    service = _kubectl_json(
+        resources.namespace,
+        ['get', 'kservice', resources.torghut_service, '-o', 'json'],
+    )
+    _, env_entries = _kservice_env(service)
+    resolved_env = _resolve_kservice_env_values(
+        namespace=resources.namespace,
+        env_entries=env_entries,
+    )
+    current_runtime_dsn = _as_text(resolved_env.get('DB_DSN'))
+    if not current_runtime_dsn:
+        raise RuntimeError(
+            f'warm_lane_runtime_dsn_unavailable:{resources.namespace}:{resources.torghut_service}'
+        )
+    runtime_dsn = _replace_database_in_dsn(
+        current_runtime_dsn,
+        database=postgres_config.simulation_db,
+        label=f'{resources.torghut_service}.env.DB_DSN',
+    )
+    return replace(postgres_config, runtime_simulation_dsn=runtime_dsn)
 
 
 def _merge_env_entries(
@@ -6209,10 +6332,16 @@ def main() -> None:
         manifest,
         simulation_db=_default_simulation_postgres_db(resources),
     )
+    if resources.warm_lane_enabled:
+        postgres_config = _resolve_warm_lane_runtime_postgres_config(
+            resources=resources,
+            postgres_config=postgres_config,
+        )
     _log_script_event(
         'postgres_config_ready',
         admin_dsn=_redact_dsn_credentials(postgres_config.admin_dsn),
         simulation_dsn=_redact_dsn_credentials(postgres_config.simulation_dsn),
+        runtime_simulation_dsn=_redact_dsn_credentials(postgres_config.torghut_runtime_dsn),
         simulation_db=postgres_config.simulation_db,
         migration_command=postgres_config.migrations_command,
     )

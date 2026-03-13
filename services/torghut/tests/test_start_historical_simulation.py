@@ -56,6 +56,7 @@ from scripts.start_historical_simulation import (
     _restore_argocd_after_run,
     _restore_torghut_env,
     _replay_dump,
+    _resolve_warm_lane_runtime_postgres_config,
     _run_full_lifecycle,
     _run_rollouts_analysis,
     _load_schema_registry_schema_literal,
@@ -1284,6 +1285,188 @@ class TestStartHistoricalSimulation(TestCase):
         configure_service.assert_not_called()
         self.assertTrue(report['warm_lane_enabled'])
         self.assertEqual(report['seeded_cursor_at'], '2026-02-27T14:30:00+00:00')
+
+    def test_resolve_warm_lane_runtime_postgres_config_uses_current_kservice_dsn(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+                'runtime': {'use_warm_lane': True},
+            },
+        )
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://postgres:admin-secret@db.example:5432/postgres',
+            simulation_dsn='postgresql://postgres:admin-secret@db.example:5432/torghut_sim_default',
+            simulation_db='torghut_sim_default',
+            migrations_command='true',
+        )
+
+        def _kubectl_json_side_effect(namespace: str, args: list[str]) -> dict[str, Any]:
+            self.assertEqual(namespace, 'torghut')
+            if args[:3] == ['get', 'kservice', 'torghut-sim']:
+                return {
+                    'spec': {
+                        'template': {
+                            'spec': {
+                                'containers': [
+                                    {
+                                        'env': [
+                                            {
+                                                'name': 'TORGHUT_SIM_DB_HOST',
+                                                'valueFrom': {
+                                                    'secretKeyRef': {
+                                                        'name': 'torghut-db-app',
+                                                        'key': 'host',
+                                                    }
+                                                },
+                                            },
+                                            {
+                                                'name': 'TORGHUT_SIM_DB_PORT',
+                                                'valueFrom': {
+                                                    'secretKeyRef': {
+                                                        'name': 'torghut-db-app',
+                                                        'key': 'port',
+                                                    }
+                                                },
+                                            },
+                                            {
+                                                'name': 'TORGHUT_SIM_DB_USER',
+                                                'valueFrom': {
+                                                    'secretKeyRef': {
+                                                        'name': 'torghut-db-app',
+                                                        'key': 'username',
+                                                    }
+                                                },
+                                            },
+                                            {
+                                                'name': 'TORGHUT_SIM_DB_PASSWORD',
+                                                'valueFrom': {
+                                                    'secretKeyRef': {
+                                                        'name': 'torghut-db-app',
+                                                        'key': 'password',
+                                                    }
+                                                },
+                                            },
+                                            {
+                                                'name': 'DB_DSN',
+                                                'value': 'postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default',
+                                            },
+                                        ]
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                }
+            if args[:3] == ['get', 'secret', 'torghut-db-app']:
+                encoded = {
+                    'host': 'ZGIuZXhhbXBsZQ==',
+                    'port': 'NTQzMg==',
+                    'username': 'dG9yZ2h1dF9hcHA=',
+                    'password': 'YXBwLXNlY3JldA==',
+                }
+                return {'data': encoded}
+            raise AssertionError(f'unexpected kubectl args: {args}')
+
+        with patch('scripts.start_historical_simulation._kubectl_json', side_effect=_kubectl_json_side_effect):
+            resolved = _resolve_warm_lane_runtime_postgres_config(
+                resources=resources,
+                postgres_config=postgres_config,
+            )
+
+        self.assertEqual(
+            resolved.torghut_runtime_dsn,
+            'postgresql://torghut_app:app-secret@db.example:5432/torghut_sim_default',
+        )
+
+    def test_apply_uses_resolved_warm_lane_runtime_dsn_for_permissions_and_migrations(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+                'runtime': {'use_warm_lane': True},
+            },
+        )
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+        clickhouse_config = ClickHouseRuntimeConfig(
+            http_url='http://clickhouse:8123',
+            username='torghut',
+            password='secret',
+        )
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://postgres:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://postgres:secret@localhost:5432/torghut_sim_default',
+            simulation_db='torghut_sim_default',
+            migrations_command='true',
+        )
+        runtime_config = replace(
+            postgres_config,
+            runtime_simulation_dsn='postgresql://torghut_app:secret@localhost:5432/torghut_sim_default',
+        )
+        manifest = {
+            'dataset_id': 'dataset-a',
+            'runtime': {'use_warm_lane': True},
+            'clickhouse': {'database_precreated': True},
+            'postgres': {'database_precreated': True},
+            'window': {
+                'start': '2026-02-27T14:30:00Z',
+                'end': '2026-02-27T15:30:00Z',
+            },
+        }
+
+        with TemporaryDirectory() as tmpdir:
+            resources = replace(resources, output_root=Path(tmpdir))
+            with (
+                patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
+                patch('scripts.start_historical_simulation._ensure_lz4_codec_available', return_value=None),
+                patch(
+                    'scripts.start_historical_simulation._acquire_simulation_runtime_lock',
+                    return_value={'status': 'acquired', 'run_id': resources.run_id},
+                ),
+                patch(
+                    'scripts.start_historical_simulation._capture_cluster_state',
+                    return_value={'ta_data': {'TA_GROUP_ID': 'torghut-ta-sim-default'}},
+                ),
+                patch('scripts.start_historical_simulation._ensure_topics', return_value={'status': 'ok'}),
+                patch('scripts.start_historical_simulation._ensure_clickhouse_runtime_tables', return_value=None),
+                patch(
+                    'scripts.start_historical_simulation._ensure_postgres_runtime_permissions',
+                    return_value={'grants_applied': True},
+                ) as ensure_permissions,
+                patch('scripts.start_historical_simulation._run_migrations', return_value=None) as run_migrations,
+                patch('scripts.start_historical_simulation._reset_postgres_runtime_state', return_value=None) as reset_runtime_state,
+                patch(
+                    'scripts.start_historical_simulation._seed_simulation_trade_cursor',
+                    return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
+                ),
+                patch(
+                    'scripts.start_historical_simulation._dump_topics',
+                    return_value={'records': 1, 'sha256': 'abc'},
+                ),
+                patch(
+                    'scripts.start_historical_simulation._validate_dump_coverage',
+                    return_value={'coverage_ratio': 1.0},
+                ),
+            ):
+                start_historical_simulation._apply(
+                    resources=resources,
+                    manifest=manifest,
+                    kafka_config=kafka_config,
+                    clickhouse_config=clickhouse_config,
+                    postgres_config=runtime_config,
+                    force_dump=False,
+                    force_replay=False,
+                )
+
+        ensure_permissions.assert_called_once_with(runtime_config)
+        run_migrations.assert_called_once_with(runtime_config)
+        reset_runtime_state.assert_called_once_with(runtime_config)
 
     def test_apply_uses_stateless_ta_restart_when_manifest_requests_it(self) -> None:
         resources = _build_resources('sim-1', {'dataset_id': 'dataset-a'})
