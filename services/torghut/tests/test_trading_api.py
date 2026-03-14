@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -16,8 +17,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.db import get_session
 from app.main import (
+    _ALPACA_HEALTH_STATE,
     _TRADING_DEPENDENCY_HEALTH_CACHE,
     _assert_dspy_cutover_migration_guard,
+    _check_alpaca,
     _readiness_dependency_cache_key,
     app,
 )
@@ -66,6 +69,7 @@ def _truthful_empirical_payload(
 class TestTradingApi(TestCase):
     def setUp(self) -> None:
         _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
+        _ALPACA_HEALTH_STATE.clear()
         engine = create_engine(
             "sqlite+pysqlite:///:memory:",
             future=True,
@@ -176,6 +180,7 @@ class TestTradingApi(TestCase):
 
     def tearDown(self) -> None:
         _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
+        _ALPACA_HEALTH_STATE.clear()
         app.dependency_overrides.clear()
 
     def test_trading_decisions_endpoint(self) -> None:
@@ -920,6 +925,59 @@ class TestTradingApi(TestCase):
         finally:
             settings.trading_enabled = original
             settings.trading_universe_source = original_source
+
+    @patch(
+        "app.main._alpaca_probe_account",
+        side_effect=[
+            {
+                "ok": True,
+                "status": "broker_ok",
+                "detail": "ok",
+                "account": {
+                    "account_number": "PA3SX7FYNUTF",
+                    "status": "ACTIVE",
+                },
+            },
+            {
+                "ok": False,
+                "status": "broker_slow",
+                "detail": "alpaca account probe timed out after 2.00s",
+            },
+        ],
+    )
+    @patch("app.main.TorghutAlpacaClient")
+    def test_check_alpaca_uses_cached_last_known_good_for_slow_probe(
+        self,
+        mock_client: Any,
+        _mock_probe: object,
+    ) -> None:
+        original_key = settings.apca_api_key_id
+        original_secret = settings.apca_api_secret_key
+        original_ttl = settings.trading_alpaca_healthcheck_last_good_ttl_seconds
+        original_retries = settings.trading_alpaca_healthcheck_retries
+        try:
+            settings.apca_api_key_id = "demo-key"
+            settings.apca_api_secret_key = "demo-secret"
+            settings.trading_alpaca_healthcheck_last_good_ttl_seconds = 120
+            settings.trading_alpaca_healthcheck_retries = 1
+            mock_client.return_value.endpoint_class = "live"
+
+            first = _check_alpaca()
+            second = _check_alpaca()
+        finally:
+            settings.apca_api_key_id = original_key
+            settings.apca_api_secret_key = original_secret
+            settings.trading_alpaca_healthcheck_last_good_ttl_seconds = original_ttl
+            settings.trading_alpaca_healthcheck_retries = original_retries
+
+        self.assertTrue(first["ok"])
+        self.assertEqual(first["broker_status"], "broker_ok")
+        self.assertFalse(first["cache_used"])
+        self.assertTrue(second["ok"])
+        self.assertTrue(second["cache_used"])
+        self.assertEqual(second["broker_status"], "broker_slow")
+        self.assertEqual(second["endpoint_class"], "live")
+        self.assertEqual(second["account_label"], "PA3SX7FYNUTF")
 
     @patch(
         "app.main._evaluate_database_contract",

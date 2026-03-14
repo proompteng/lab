@@ -3259,7 +3259,36 @@ def _remove_appledouble_sidecars(directory: Path) -> None:
         candidate.unlink(missing_ok=True)
 
 
+def _supersede_stale_simulation_progress_rows(config: PostgresRuntimeConfig) -> None:
+    def _supersede() -> None:
+        with psycopg.connect(config.torghut_runtime_dsn, autocommit=True) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE simulation_run_progress
+                    SET status = 'superseded',
+                        terminal_state = COALESCE(terminal_state, 'superseded'),
+                        last_error_code = COALESCE(last_error_code, 'superseded_by_runtime_reset'),
+                        last_error_message = COALESCE(
+                            last_error_message,
+                            'historical simulation runtime reset superseded stale non-terminal progress rows'
+                        ),
+                        payload_json = COALESCE(payload_json, '{}'::jsonb) ||
+                          '{"superseded_reason":"runtime_reset"}'::jsonb,
+                        updated_at = NOW()
+                    WHERE terminal_state IS NULL
+                    """
+                )
+
+    _run_with_transient_postgres_retry(
+        label='supersede_stale_simulation_progress_rows',
+        operation=_supersede,
+    )
+
+
 def _reset_postgres_runtime_state(config: PostgresRuntimeConfig) -> None:
+    _supersede_stale_simulation_progress_rows(config)
+
     def _reset() -> None:
         with psycopg.connect(config.torghut_runtime_dsn, autocommit=True) as conn:
             with conn.cursor() as cursor:

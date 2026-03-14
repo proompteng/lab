@@ -704,8 +704,9 @@ class TestStartHistoricalSimulation(TestCase):
             start_historical_simulation._reset_postgres_runtime_state(config)
 
         rendered = [(str(statement), params) for statement, params in statements]
+        self.assertIn('UPDATE simulation_run_progress', rendered[0][0])
         self.assertEqual(
-            rendered,
+            rendered[1:],
             [
                 ('SELECT to_regclass(%s)', ('trade_cursor',)),
                 ('Composed([SQL(\'TRUNCATE TABLE \'), Identifier(\'trade_cursor\'), SQL(\' RESTART IDENTITY CASCADE\')])', None),
