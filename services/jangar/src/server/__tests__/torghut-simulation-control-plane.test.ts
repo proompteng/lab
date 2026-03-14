@@ -117,6 +117,43 @@ describe('torghut simulation control plane', () => {
     })
   })
 
+  it('rewrites stale run-scoped databases when warm lanes are enabled', () => {
+    const manifest = __private.normalizeSimulationManifest(
+      {
+        dataset_id: 'dataset-a',
+        window: {
+          start: '2026-03-06T14:30:00Z',
+          end: '2026-03-06T14:45:00Z',
+        },
+        runtime: {
+          target_mode: 'dedicated_service',
+          use_warm_lane: true,
+        },
+        clickhouse: {
+          simulation_database: 'torghut_sim_old_run',
+        },
+        postgres: {
+          simulation_dsn: 'postgresql://torghut_app@torghut-db-rw.torghut.svc.cluster.local:5432/torghut_sim_old_run',
+          runtime_simulation_dsn:
+            'postgresql://torghut_app@torghut-db-rw.torghut.svc.cluster.local:5432/torghut_sim_old_run',
+        },
+      },
+      {
+        runId: 'sim-warm-proof',
+        profile: 'compact',
+      },
+    )
+
+    expect(manifest.clickhouse).toMatchObject({
+      simulation_database: 'torghut_sim_default',
+    })
+    expect(manifest.postgres).toMatchObject({
+      simulation_dsn: 'postgresql://torghut_app@torghut-db-rw.torghut.svc.cluster.local:5432/torghut_sim_default',
+      runtime_simulation_dsn:
+        'postgresql://torghut_app@torghut-db-rw.torghut.svc.cluster.local:5432/torghut_sim_default',
+    })
+  })
+
   it('resolves a writable workflow output root for relative artifact paths', () => {
     expect(__private.resolveWorkflowOutputRoot('artifacts/torghut/simulations')).toBe(
       '/tmp/torghut-simulations/artifacts/torghut/simulations',
