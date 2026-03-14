@@ -5924,6 +5924,139 @@ class TestStartHistoricalSimulation(TestCase):
         kubectl_calls = [call.args[1][2] for call in kubectl_json.call_args_list[2:]]
         self.assertEqual(kubectl_calls, ['torghut-runtime-ready-v1', 'torghut-sim-activity-v1'])
 
+    def test_teardown_clean_accepts_restored_warm_lane_baseline(self) -> None:
+        resources = _build_resources(
+            'sim-teardown-clean-warm-lane',
+            {
+                'dataset_id': 'dataset-a',
+                'runtime': {'use_warm_lane': True},
+            },
+        )
+        kservice_payload = {
+            'spec': {
+                'template': {
+                    'spec': {
+                        'containers': [
+                            {
+                                'name': 'user-container',
+                                'env': [
+                                    {'name': 'TRADING_SIMULATION_ENABLED', 'value': 'true'},
+                                    {'name': 'TRADING_SIGNAL_TABLE', 'value': resources.clickhouse_signal_table},
+                                    {'name': 'TRADING_PRICE_TABLE', 'value': resources.clickhouse_price_table},
+                                    {'name': 'TRADING_ORDER_FEED_TOPIC', 'value': 'torghut.sim.trade-updates.v1'},
+                                    {'name': 'TRADING_ORDER_FEED_GROUP_ID', 'value': resources.order_feed_group_id},
+                                    {'name': 'TRADING_SIMULATION_ORDER_UPDATES_TOPIC', 'value': 'torghut.sim.trade-updates.v1'},
+                                ],
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        ta_configmap_payload = {
+            'data': {
+                'TA_GROUP_ID': resources.ta_group_id,
+                'TA_CLICKHOUSE_URL': f'jdbc:clickhouse://clickhouse/{resources.clickhouse_db}',
+            }
+        }
+
+        with (
+            patch(
+                'scripts.historical_simulation_verification._kubectl_json',
+                side_effect=[kservice_payload, ta_configmap_payload],
+            ),
+            patch(
+                'scripts.historical_simulation_verification._flink_runtime_health',
+                return_value={
+                    'name': 'torghut-ta-sim',
+                    'desired_state': 'running',
+                    'lifecycle_state': 'RUNNING',
+                    'job_manager_status': 'DEPLOYED',
+                },
+            ),
+        ):
+            report = historical_simulation_verification._teardown_clean(
+                resources=resources,
+                postgres_config=SimpleNamespace(torghut_runtime_dsn='postgresql://torghut@db/torghut_sim_default'),
+            )
+
+        self.assertEqual(report['status'], 'ok')
+        self.assertEqual(report['activity_classification'], 'success')
+        self.assertTrue(report['restored'])
+        self.assertTrue(report['warm_lane_enabled'])
+        self.assertFalse(any(report['run_scoped_markers_present'].values()))
+        self.assertTrue(all(report['warm_lane_baseline'].values()))
+
+    def test_teardown_clean_rejects_run_scoped_markers_on_warm_lane(self) -> None:
+        resources = _build_resources(
+            'sim-teardown-clean-warm-lane-dirty',
+            {
+                'dataset_id': 'dataset-a',
+                'runtime': {'use_warm_lane': True},
+            },
+        )
+        kservice_payload = {
+            'spec': {
+                'template': {
+                    'spec': {
+                        'containers': [
+                            {
+                                'name': 'user-container',
+                                'env': [
+                                    {'name': 'TRADING_SIMULATION_ENABLED', 'value': 'true'},
+                                    {'name': 'TRADING_SIMULATION_RUN_ID', 'value': resources.run_id},
+                                    {'name': 'TRADING_SIMULATION_DATASET_ID', 'value': resources.dataset_id},
+                                    {'name': 'TRADING_SIGNAL_TABLE', 'value': resources.clickhouse_signal_table},
+                                    {'name': 'TRADING_PRICE_TABLE', 'value': resources.clickhouse_price_table},
+                                    {'name': 'TRADING_ORDER_FEED_TOPIC', 'value': resources.simulation_topic_by_role['order_updates']},
+                                    {'name': 'TRADING_ORDER_FEED_GROUP_ID', 'value': resources.order_feed_group_id},
+                                    {
+                                        'name': 'TRADING_SIMULATION_ORDER_UPDATES_TOPIC',
+                                        'value': resources.simulation_topic_by_role['order_updates'],
+                                    },
+                                ],
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        ta_configmap_payload = {
+            'data': {
+                'TA_GROUP_ID': resources.ta_group_id,
+                'TA_CLICKHOUSE_URL': f'jdbc:clickhouse://clickhouse/{resources.clickhouse_db}',
+            }
+        }
+
+        with (
+            patch(
+                'scripts.historical_simulation_verification._kubectl_json',
+                side_effect=[kservice_payload, ta_configmap_payload],
+            ),
+            patch(
+                'scripts.historical_simulation_verification._flink_runtime_health',
+                return_value={
+                    'name': 'torghut-ta-sim',
+                    'desired_state': 'running',
+                    'lifecycle_state': 'RUNNING',
+                    'job_manager_status': 'DEPLOYED',
+                },
+            ),
+        ):
+            report = historical_simulation_verification._teardown_clean(
+                resources=resources,
+                postgres_config=SimpleNamespace(torghut_runtime_dsn='postgresql://torghut@db/torghut_sim_default'),
+            )
+
+        self.assertEqual(report['status'], 'degraded')
+        self.assertEqual(report['activity_classification'], 'environment_incomplete')
+        self.assertFalse(report['restored'])
+        self.assertTrue(report['warm_lane_enabled'])
+        self.assertTrue(report['run_scoped_markers_present']['trading_simulation_run_id'])
+        self.assertTrue(report['run_scoped_markers_present']['trading_simulation_dataset_id'])
+        self.assertTrue(report['run_scoped_markers_present']['order_feed_topic'])
+        self.assertTrue(report['run_scoped_markers_present']['simulation_order_updates_topic'])
+
     def test_build_argocd_automation_config_defaults(self) -> None:
         config = _build_argocd_automation_config({})
         self.assertFalse(config.manage_automation)

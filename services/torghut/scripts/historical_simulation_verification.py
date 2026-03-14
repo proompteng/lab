@@ -1417,18 +1417,23 @@ def _teardown_clean(
     ta_configmap = _as_text(resource_payload.get('ta_configmap'))
     ta_deployment = _as_text(resource_payload.get('ta_deployment'))
     run_id = _as_text(resource_payload.get('run_id')) or ''
+    dataset_id = _as_text(resource_payload.get('dataset_id')) or ''
     simulation_clickhouse_db = _as_text(resource_payload.get('clickhouse_db')) or ''
     clickhouse_signal_table = _as_text(resource_payload.get('clickhouse_signal_table')) or ''
     clickhouse_price_table = _as_text(resource_payload.get('clickhouse_price_table')) or ''
     order_feed_group_id = _as_text(resource_payload.get('order_feed_group_id')) or ''
     ta_group_id = _as_text(resource_payload.get('ta_group_id')) or ''
+    warm_lane_enabled = bool(_resource_attr(resources, 'warm_lane_enabled', default=False))
     runtime_dsn = _as_text(_resource_attr(postgres_config, 'torghut_runtime_dsn')) or ''
+    simulation_topics = _as_mapping(resource_payload.get('simulation_topic_by_role'))
+    run_scoped_order_updates_topic = _as_text(simulation_topics.get('order_updates')) or ''
+    lane_default_order_updates_topic = _as_text(lane_contract.simulation_topic_by_role.get('order_updates')) or ''
 
     if torghut_service is None or ta_configmap is None or ta_deployment is None:
         raise RuntimeError('simulation resources are incomplete for teardown validation')
 
     service = _kubectl_json(namespace, ['get', 'kservice', torghut_service, '-o', 'json'])
-    _, env_entries = _kservice_env(service)
+    _, env_entries = _kservice_env(service, namespace=namespace)
     env_by_name = {
         _as_text(entry.get('name')): entry
         for entry in env_entries
@@ -1438,12 +1443,27 @@ def _teardown_clean(
     ta_data = _as_mapping(ta_config.get('data'))
     ta_health = _flink_runtime_health(namespace, ta_deployment)
 
+    def env_value(key: str) -> str | None:
+        return _as_text(_as_mapping(env_by_name.get(key)).get('value'))
+
+    run_scoped_markers_present = {
+        'trading_simulation_run_id': env_value('TRADING_SIMULATION_RUN_ID') == run_id,
+        'trading_simulation_dataset_id': env_value('TRADING_SIMULATION_DATASET_ID') == dataset_id,
+        'order_feed_topic': env_value('TRADING_ORDER_FEED_TOPIC') == run_scoped_order_updates_topic,
+        'simulation_order_updates_topic': (
+            env_value('TRADING_SIMULATION_ORDER_UPDATES_TOPIC') == run_scoped_order_updates_topic
+        ),
+    }
+
     simulation_markers_present = {
         'trading_simulation_enabled': _as_text(_as_mapping(env_by_name.get('TRADING_SIMULATION_ENABLED')).get('value')) == 'true',
-        'trading_simulation_run_id': _as_text(_as_mapping(env_by_name.get('TRADING_SIMULATION_RUN_ID')).get('value')) == run_id,
+        'trading_simulation_run_id': run_scoped_markers_present['trading_simulation_run_id'],
+        'trading_simulation_dataset_id': run_scoped_markers_present['trading_simulation_dataset_id'],
         'db_dsn': _as_text(_as_mapping(env_by_name.get('DB_DSN')).get('value')) == runtime_dsn,
         'signal_table': _as_text(_as_mapping(env_by_name.get('TRADING_SIGNAL_TABLE')).get('value')) == clickhouse_signal_table,
         'price_table': _as_text(_as_mapping(env_by_name.get('TRADING_PRICE_TABLE')).get('value')) == clickhouse_price_table,
+        'order_feed_topic': run_scoped_markers_present['order_feed_topic'],
+        'simulation_order_updates_topic': run_scoped_markers_present['simulation_order_updates_topic'],
         'order_feed_group_id': _as_text(_as_mapping(env_by_name.get('TRADING_ORDER_FEED_GROUP_ID')).get('value')) == order_feed_group_id,
         'ta_group_id': _as_text(ta_data.get(lane_contract.ta_group_id_key)) == ta_group_id,
         'ta_clickhouse_database': _clickhouse_database_from_jdbc_url(
@@ -1451,13 +1471,39 @@ def _teardown_clean(
         )
         == simulation_clickhouse_db,
     }
-    restored = not any(simulation_markers_present.values())
+
+    if warm_lane_enabled:
+        warm_lane_baseline = {
+            'trading_simulation_enabled': env_value('TRADING_SIMULATION_ENABLED') == 'true',
+            'trading_simulation_run_id_cleared': not env_value('TRADING_SIMULATION_RUN_ID'),
+            'trading_simulation_dataset_id_cleared': not env_value('TRADING_SIMULATION_DATASET_ID'),
+            'signal_table': env_value('TRADING_SIGNAL_TABLE') == clickhouse_signal_table,
+            'price_table': env_value('TRADING_PRICE_TABLE') == clickhouse_price_table,
+            'order_feed_topic': env_value('TRADING_ORDER_FEED_TOPIC') == lane_default_order_updates_topic,
+            'simulation_order_updates_topic': (
+                env_value('TRADING_SIMULATION_ORDER_UPDATES_TOPIC') == lane_default_order_updates_topic
+            ),
+            'order_feed_group_id': env_value('TRADING_ORDER_FEED_GROUP_ID') == order_feed_group_id,
+            'ta_group_id': _as_text(ta_data.get(lane_contract.ta_group_id_key)) == ta_group_id,
+            'ta_clickhouse_database': _clickhouse_database_from_jdbc_url(
+                _as_text(ta_data.get(lane_contract.ta_clickhouse_url_key))
+            )
+            == simulation_clickhouse_db,
+        }
+        restored = all(warm_lane_baseline.values()) and not any(run_scoped_markers_present.values())
+    else:
+        warm_lane_baseline = {}
+        restored = not any(simulation_markers_present.values())
+
     return {
         'status': 'ok' if restored else 'degraded',
         'activity_classification': 'success' if restored else 'environment_incomplete',
         'restored': restored,
+        'warm_lane_enabled': warm_lane_enabled,
         'ta_runtime': ta_health,
+        'run_scoped_markers_present': run_scoped_markers_present,
         'simulation_markers_present': simulation_markers_present,
+        'warm_lane_baseline': warm_lane_baseline,
     }
 
 
