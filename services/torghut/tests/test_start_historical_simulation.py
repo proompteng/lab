@@ -1173,6 +1173,14 @@ class TestStartHistoricalSimulation(TestCase):
                     'scripts.start_historical_simulation._validate_dump_coverage',
                     return_value={'coverage_ratio': 1.0},
                 ),
+                patch(
+                    'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
+                    return_value=True,
+                ),
+                patch(
+                    'scripts.start_historical_simulation._torghut_service_reconfigure_required',
+                    return_value=True,
+                ),
                 patch('scripts.start_historical_simulation._configure_ta_for_simulation', return_value=None),
                 patch('scripts.start_historical_simulation._restart_ta_deployment', return_value='nonce'),
                 patch(
@@ -1467,6 +1475,14 @@ class TestStartHistoricalSimulation(TestCase):
                     return_value={'coverage_ratio': 1.0},
                 ),
                 patch(
+                    'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
+                    return_value=False,
+                ),
+                patch(
+                    'scripts.start_historical_simulation._torghut_service_reconfigure_required',
+                    return_value=False,
+                ),
+                patch(
                     'scripts.start_historical_simulation._configure_ta_for_simulation',
                     return_value=None,
                 ),
@@ -1566,6 +1582,14 @@ class TestStartHistoricalSimulation(TestCase):
                 patch(
                     'scripts.start_historical_simulation._validate_dump_coverage',
                     return_value={'coverage_ratio': 1.0},
+                ),
+                patch(
+                    'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
+                    return_value=True,
+                ),
+                patch(
+                    'scripts.start_historical_simulation._torghut_service_reconfigure_required',
+                    return_value=True,
                 ),
                 patch('scripts.start_historical_simulation._configure_ta_for_simulation', return_value=None),
                 patch(
@@ -1729,6 +1753,14 @@ class TestStartHistoricalSimulation(TestCase):
                     'scripts.start_historical_simulation._validate_dump_coverage',
                     return_value={'coverage_ratio': 1.0},
                 ),
+                patch(
+                    'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
+                    return_value=True,
+                ),
+                patch(
+                    'scripts.start_historical_simulation._torghut_service_reconfigure_required',
+                    return_value=True,
+                ),
                 patch('scripts.start_historical_simulation._configure_ta_for_simulation', return_value=None),
                 patch(
                     'scripts.start_historical_simulation._restart_ta_deployment',
@@ -1822,6 +1854,14 @@ class TestStartHistoricalSimulation(TestCase):
                 patch(
                     'scripts.start_historical_simulation._validate_dump_coverage',
                     return_value={'coverage_ratio': 1.0},
+                ),
+                patch(
+                    'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
+                    return_value=True,
+                ),
+                patch(
+                    'scripts.start_historical_simulation._torghut_service_reconfigure_required',
+                    return_value=True,
                 ),
                 patch('scripts.start_historical_simulation._configure_ta_for_simulation', return_value=None),
                 patch(
@@ -3398,6 +3438,14 @@ class TestStartHistoricalSimulation(TestCase):
                     'scripts.start_historical_simulation._release_simulation_runtime_lock',
                     return_value={'status': 'released', 'run_id': resources.run_id},
                 ) as release_lock,
+                patch(
+                    'scripts.start_historical_simulation._restore_ta_configuration_required',
+                    return_value=True,
+                ),
+                patch(
+                    'scripts.start_historical_simulation._restore_torghut_env_required',
+                    return_value=True,
+                ),
                 patch('scripts.start_historical_simulation._restore_ta_configuration') as restore_ta,
                 patch('scripts.start_historical_simulation._restore_torghut_env') as restore_env,
                 patch(
