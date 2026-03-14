@@ -9,6 +9,13 @@ spec:
   routes:
     - kind: Rule
       match: Host(`headlamp.k8s.proompteng.ai`) && PathPrefix(`/auth`)
+      priority: 20
+      services:
+        - name: headlamp-auth-bridge
+          port: 8080
+    - kind: Rule
+      match: Host(`headlamp.k8s.proompteng.ai`) && PathPrefix(`/clusters`)
+      priority: 19
       services:
         - name: headlamp-auth-bridge
           port: 8080

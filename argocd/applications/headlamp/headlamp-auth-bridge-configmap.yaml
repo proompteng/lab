@@ -117,50 +117,381 @@ data:
       </body>
     </html>
   server.py: |
+    import base64
+    import hashlib
+    import http.client
+    import os
+    import socket
+    import ssl
+    import struct
+    import threading
+    from http.cookies import SimpleCookie
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from pathlib import Path
-    from urllib.parse import urlparse
+    from urllib.parse import parse_qs, urlparse
 
     AUTH_HTML = Path('/app/auth.html').read_bytes()
+    HEADLAMP_UPSTREAM_HOST = os.environ.get('HEADLAMP_UPSTREAM_HOST', 'headlamp')
+    HEADLAMP_UPSTREAM_PORT = int(os.environ.get('HEADLAMP_UPSTREAM_PORT', '80'))
+    HEADLAMP_WATCH_CLUSTER_NAME = os.environ.get('HEADLAMP_WATCH_CLUSTER_NAME', 'main')
+    HEADLAMP_PROXY_TIMEOUT_SECONDS = float(os.environ.get('HEADLAMP_PROXY_TIMEOUT_SECONDS', '30'))
+    HEADLAMP_WATCH_TIMEOUT_SECONDS = float(os.environ.get('HEADLAMP_WATCH_TIMEOUT_SECONDS', '3600'))
+    APISERVER_HOST = os.environ.get('KUBERNETES_SERVICE_HOST', 'kubernetes.default.svc')
+    APISERVER_PORT = int(os.environ.get('KUBERNETES_SERVICE_PORT', '443'))
+    APISERVER_CA_FILE = os.environ.get(
+      'KUBERNETES_SERVICE_CA_FILE',
+      '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt',
+    )
+    HOP_BY_HOP_HEADERS = {
+      'connection',
+      'keep-alive',
+      'proxy-authenticate',
+      'proxy-authorization',
+      'te',
+      'trailer',
+      'transfer-encoding',
+      'upgrade',
+    }
+    WEBSOCKET_MAGIC = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
+
+
+    def build_body(status, text):
+      return text.encode('utf-8')
+
+
+    def send_bytes(handler, status, body, content_type='text/plain; charset=utf-8', include_body=True):
+      handler.send_response(status)
+      handler.send_header('Content-Type', content_type)
+      handler.send_header('Cache-Control', 'no-store')
+      handler.send_header('Content-Length', str(len(body)))
+      handler.end_headers()
+      if include_body and body:
+        handler.wfile.write(body)
+
+
+    def parse_cluster_path(path):
+      parts = path.lstrip('/').split('/', 2)
+      if len(parts) < 2 or parts[0] != 'clusters':
+        return None, None
+
+      cluster = parts[1]
+      api_path = '/' + parts[2] if len(parts) == 3 else '/'
+      return cluster, api_path
+
+
+    def sanitize_cluster_name(cluster):
+      allowed = [char for char in cluster if char.isalnum() or char in '-_']
+      return ''.join(allowed)[:50]
+
+
+    def get_token_from_cookie(headers, cluster):
+      cookie_header = headers.get('Cookie')
+      if not cookie_header:
+        return None
+
+      jar = SimpleCookie()
+      try:
+        jar.load(cookie_header)
+      except Exception:
+        return None
+
+      prefix = f'headlamp-auth-{sanitize_cluster_name(cluster)}.'
+      chunks = []
+      for name, morsel in jar.items():
+        if not name.startswith(prefix):
+          continue
+
+        suffix = name[len(prefix):]
+        if suffix.isdigit():
+          chunks.append((int(suffix), morsel.value))
+
+      if not chunks:
+        return None
+
+      chunks.sort()
+      return ''.join(value for _, value in chunks)
+
+
+    def is_websocket_upgrade(headers):
+      connection = headers.get('Connection', '')
+      upgrade = headers.get('Upgrade', '')
+      return 'upgrade' in connection.lower() and upgrade.lower() == 'websocket'
+
+
+    def is_watch_request(parsed):
+      watch_values = parse_qs(parsed.query, keep_blank_values=True).get('watch', [])
+      return any(value.lower() in {'1', 'true'} for value in watch_values)
+
+
+    def choose_websocket_protocol(header_value):
+      if not header_value:
+        return None
+
+      protocols = [item.strip() for item in header_value.split(',') if item.strip()]
+      for protocol in protocols:
+        if protocol == 'base64.binary.k8s.io':
+          return protocol
+
+      for protocol in protocols:
+        if not protocol.startswith('base64url.headlamp.authorization.k8s.io.'):
+          return protocol
+
+      return None
+
+
+    def websocket_accept(key):
+      digest = hashlib.sha1((key + WEBSOCKET_MAGIC).encode('utf-8')).digest()
+      return base64.b64encode(digest).decode('utf-8')
+
+
+    def send_websocket_frame(connection, opcode, payload=b''):
+      frame = bytearray()
+      frame.append(0x80 | (opcode & 0x0F))
+
+      payload_length = len(payload)
+      if payload_length < 126:
+        frame.append(payload_length)
+      elif payload_length < 65536:
+        frame.append(126)
+        frame.extend(struct.pack('!H', payload_length))
+      else:
+        frame.append(127)
+        frame.extend(struct.pack('!Q', payload_length))
+
+      connection.sendall(frame + payload)
+
+
+    def read_request_body(handler):
+      length = int(handler.headers.get('Content-Length', '0') or '0')
+      if length <= 0:
+        return None
+      return handler.rfile.read(length)
+
+
+    def upstream_headers(handler):
+      headers = {}
+      for name, value in handler.headers.items():
+        if name.lower() in HOP_BY_HOP_HEADERS:
+          continue
+        headers[name] = value
+      return headers
+
+
+    def proxy_http_request(handler, include_body):
+      connection = http.client.HTTPConnection(
+        HEADLAMP_UPSTREAM_HOST,
+        HEADLAMP_UPSTREAM_PORT,
+        timeout=HEADLAMP_PROXY_TIMEOUT_SECONDS,
+      )
+
+      body = read_request_body(handler)
+      headers = upstream_headers(handler)
+      headers['Host'] = f'{HEADLAMP_UPSTREAM_HOST}:{HEADLAMP_UPSTREAM_PORT}'
+
+      connection.request(handler.command, handler.path, body=body, headers=headers)
+      response = connection.getresponse()
+
+      response_body = b''
+      if include_body and handler.command != 'HEAD':
+        response_body = response.read()
+
+      handler.send_response(response.status, response.reason)
+      for name, value in response.getheaders():
+        lower_name = name.lower()
+        if lower_name in HOP_BY_HOP_HEADERS or lower_name == 'content-length':
+          continue
+        handler.send_header(name, value)
+      handler.send_header('Content-Length', str(len(response_body)))
+      handler.end_headers()
+      if include_body and response_body:
+        handler.wfile.write(response_body)
+
+      connection.close()
+
+
+    def copy_bytes(source, destination):
+      try:
+        while True:
+          chunk = source.recv(65536)
+          if not chunk:
+            break
+          destination.sendall(chunk)
+      except OSError:
+        pass
+      finally:
+        try:
+          destination.shutdown(socket.SHUT_WR)
+        except OSError:
+          pass
+
+
+    def tunnel_websocket_request(handler):
+      body = read_request_body(handler)
+      upstream = socket.create_connection(
+        (HEADLAMP_UPSTREAM_HOST, HEADLAMP_UPSTREAM_PORT),
+        timeout=HEADLAMP_PROXY_TIMEOUT_SECONDS,
+      )
+
+      request_lines = [f'{handler.command} {handler.path} {handler.request_version}']
+      for name, value in handler.headers.items():
+        if name.lower() == 'host':
+          value = f'{HEADLAMP_UPSTREAM_HOST}:{HEADLAMP_UPSTREAM_PORT}'
+        request_lines.append(f'{name}: {value}')
+
+      upstream.sendall(('\r\n'.join(request_lines) + '\r\n\r\n').encode('utf-8'))
+      if body:
+        upstream.sendall(body)
+
+      handler.close_connection = True
+
+      client_to_upstream = threading.Thread(
+        target=copy_bytes,
+        args=(handler.connection, upstream),
+        daemon=True,
+      )
+      upstream_to_client = threading.Thread(
+        target=copy_bytes,
+        args=(upstream, handler.connection),
+        daemon=True,
+      )
+      client_to_upstream.start()
+      upstream_to_client.start()
+      client_to_upstream.join()
+      upstream_to_client.join()
+      upstream.close()
+
+
+    def bridge_watch_websocket(handler, parsed, cluster, api_path):
+      token = get_token_from_cookie(handler.headers, cluster)
+      if not token:
+        send_bytes(handler, 401, build_body(401, 'missing auth cookie'))
+        return
+
+      ssl_context = ssl.create_default_context(cafile=APISERVER_CA_FILE)
+      connection = http.client.HTTPSConnection(
+        APISERVER_HOST,
+        APISERVER_PORT,
+        timeout=HEADLAMP_WATCH_TIMEOUT_SECONDS,
+        context=ssl_context,
+      )
+      watch_path = api_path
+      if parsed.query:
+        watch_path = f'{watch_path}?{parsed.query}'
+
+      connection.request(
+        'GET',
+        watch_path,
+        headers={
+          'Authorization': f'Bearer {token}',
+          'Accept': 'application/json',
+        },
+      )
+      response = connection.getresponse()
+
+      if response.status != 200:
+        error_body = response.read() or build_body(response.status, response.reason)
+        send_bytes(
+          handler,
+          response.status,
+          error_body,
+          response.getheader('Content-Type', 'text/plain; charset=utf-8'),
+        )
+        connection.close()
+        return
+
+      key = handler.headers.get('Sec-WebSocket-Key')
+      if not key:
+        send_bytes(handler, 400, build_body(400, 'missing websocket key'))
+        connection.close()
+        return
+
+      handler.send_response(101, 'Switching Protocols')
+      handler.send_header('Upgrade', 'websocket')
+      handler.send_header('Connection', 'Upgrade')
+      handler.send_header('Sec-WebSocket-Accept', websocket_accept(key))
+
+      protocol = choose_websocket_protocol(handler.headers.get('Sec-WebSocket-Protocol'))
+      if protocol:
+        handler.send_header('Sec-WebSocket-Protocol', protocol)
+
+      handler.end_headers()
+      handler.close_connection = True
+
+      try:
+        while True:
+          line = response.readline()
+          if not line:
+            break
+
+          payload = line.strip()
+          if not payload:
+            continue
+
+          send_websocket_frame(handler.connection, 0x1, payload)
+      except (BrokenPipeError, ConnectionResetError, OSError, ssl.SSLError):
+        return
+      finally:
+        try:
+          send_websocket_frame(handler.connection, 0x8)
+        except OSError:
+          pass
+        connection.close()
 
 
     class Handler(BaseHTTPRequestHandler):
+      protocol_version = 'HTTP/1.1'
+
       def _handle(self, include_body):
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
 
         if path == '/healthz':
           body = b'ok'
-          self.send_response(200)
-          self.send_header('Content-Type', 'text/plain; charset=utf-8')
-          self.send_header('Cache-Control', 'no-store')
-          self.send_header('Content-Length', str(len(body)))
-          self.end_headers()
-          if include_body:
-            self.wfile.write(body)
+          send_bytes(self, 200, body, include_body=include_body)
           return
 
         if path.startswith('/auth'):
-          self.send_response(200)
-          self.send_header('Content-Type', 'text/html; charset=utf-8')
-          self.send_header('Cache-Control', 'no-store')
-          self.send_header('Content-Length', str(len(AUTH_HTML)))
-          self.end_headers()
-          if include_body:
-            self.wfile.write(AUTH_HTML)
+          send_bytes(self, 200, AUTH_HTML, 'text/html; charset=utf-8', include_body)
+          return
+
+        if path.startswith('/clusters/'):
+          cluster, api_path = parse_cluster_path(path)
+          if cluster is None or api_path is None:
+            send_bytes(self, 400, build_body(400, 'invalid cluster path'), include_body=include_body)
+            return
+
+          if is_websocket_upgrade(self.headers):
+            if cluster == HEADLAMP_WATCH_CLUSTER_NAME and is_watch_request(parsed):
+              bridge_watch_websocket(self, parsed, cluster, api_path)
+            else:
+              tunnel_websocket_request(self)
+            return
+
+          proxy_http_request(self, include_body)
           return
 
         body = b'not found'
-        self.send_response(404)
-        self.send_header('Content-Type', 'text/plain; charset=utf-8')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        if include_body:
-          self.wfile.write(body)
+        send_bytes(self, 404, body, include_body=include_body)
 
       def do_GET(self):
         self._handle(True)
 
       def do_HEAD(self):
+        self._handle(False)
+
+      def do_POST(self):
+        self._handle(True)
+
+      def do_PUT(self):
+        self._handle(True)
+
+      def do_PATCH(self):
+        self._handle(True)
+
+      def do_DELETE(self):
+        self._handle(True)
+
+      def do_OPTIONS(self):
         self._handle(False)
 
       def log_message(self, format, *args):

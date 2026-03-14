@@ -15,6 +15,13 @@ spec:
                 name: headlamp-auth-bridge
                 port:
                   number: 8080
+          - path: /clusters
+            pathType: Prefix
+            backend:
+              service:
+                name: headlamp-auth-bridge
+                port:
+                  number: 8080
           - path: /
             pathType: Prefix
             backend:

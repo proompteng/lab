@@ -14,7 +14,9 @@ This runbook covers Headlamp deployment, OIDC wiring with Keycloak, control-plan
 ## Operations model
 
 - Headlamp application config is GitOps-managed from `argocd/applications/headlamp`.
-- The `/auth` popup callback is fronted by a tiny auth bridge service so successful OIDC redirects can always hand control back to the main Headlamp window.
+- The `headlamp-auth-bridge` service now fronts both `/auth` and `/clusters`.
+- `/auth` completes the popup handoff back to the main Headlamp window.
+- `/clusters` keeps ordinary cluster API requests flowing to Headlamp, but bridges watch websocket requests to plain HTTP watches against the kube-apiserver. This avoids the websocket handshake failures seen with Headlamp `0.40.1` against Kubernetes `v1.35.0`.
 - Keycloak client bootstrap for Headlamp is GitOps-managed from `argocd/applications/keycloak/headlamp-client-bootstrap-job.yaml`.
 - Kube-apiserver OIDC settings have an Ansible playbook only for `k3s` clusters: `ansible/playbooks/k3s-oidc.yml`.
 - The current `galactic` cluster is Talos-based, so the control-plane OIDC path here is Talos machine config patches, not the `k3s` Ansible playbook.
@@ -52,7 +54,7 @@ Login settings:
 OIDC values:
 
 - Issuer: `https://auth.proompteng.ai/realms/master`
-- Scopes: `openid profile email`
+- Scopes: `openid profile email offline_access`
   - For longer-lived Headlamp sessions, include `offline_access` and ensure it is assigned to the client (Default or Optional + requested).
 
 Optional (recommended) group mapper:
@@ -72,7 +74,7 @@ kubectl -n headlamp create secret generic headlamp-oidc \
   --from-literal=OIDC_CLIENT_ID=kubernetes \
   --from-literal=OIDC_CLIENT_SECRET='<client-secret>' \
   --from-literal=OIDC_ISSUER_URL='https://auth.proompteng.ai/realms/master' \
-  --from-literal=OIDC_SCOPES='openid profile email' \
+  --from-literal=OIDC_SCOPES='openid,profile,email,offline_access' \
   --dry-run=client -o yaml \
   | kubeseal --controller-name sealed-secrets \
   --controller-namespace sealed-secrets -o yaml \
@@ -105,6 +107,7 @@ Headlamp relies on refresh tokens to avoid frequent logouts. Set realm and clien
 Balanced profile (recommended for Headlamp):
 
 - Realm settings → Sessions
+  - Access Token Lifespan: 5 minutes
   - SSO Session Idle: 8 hours
   - SSO Session Max: 1 day
   - Client Session Idle: 8 hours
@@ -114,6 +117,9 @@ Balanced profile (recommended for Headlamp):
   - Offline Session Max Limited: Enabled
   - Offline Session Max: 30 days
   - Client Offline Session Max: 30 days
+
+The GitOps bootstrap job now enforces these realm session defaults for the `master` realm so Headlamp
+does not churn access tokens every 60 seconds.
 
 Also ensure the client has the `offline_access` scope assigned (Clients → <client> → Client scopes).
 Log out/in to Headlamp after changes so it receives a new refresh token.
