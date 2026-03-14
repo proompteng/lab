@@ -3,6 +3,7 @@ import { posix as pathPosix } from 'node:path'
 
 import { sql } from 'kysely'
 
+import { stableJsonStringifyForHash } from '~/server/agents-controller/template-hash'
 import { getDb } from '~/server/db'
 import { ensureMigrations } from '~/server/kysely-migrations'
 import { createKubernetesClient } from '~/server/primitives-kube'
@@ -266,7 +267,7 @@ const resolveSimulationWorkflowNamespace = (manifest: JsonRecord) => {
 const buildSimulationCacheKey = (manifest: JsonRecord, profile: string) =>
   createHash('sha256')
     .update(
-      JSON.stringify({
+      stableJsonStringifyForHash({
         lane: asString(manifest.lane) ?? 'equity',
         dataset_id: asString(manifest.dataset_id),
         window: asRecord(manifest.window),
@@ -841,7 +842,8 @@ const snapshotFromRow = (row: Record<string, unknown>): TorghutSimulationRunSnap
   updatedAt: String(row.updated_at),
 })
 
-const manifestDigest = (manifest: JsonRecord) => createHash('sha256').update(JSON.stringify(manifest)).digest('hex')
+const manifestDigest = (manifest: JsonRecord) =>
+  createHash('sha256').update(stableJsonStringifyForHash(manifest)).digest('hex')
 
 const expectedArtifactsForRun = (runId: string, outputRoot: string, dumpFormat: string) => {
   const runToken = normalizeRunToken(runId)
@@ -1648,8 +1650,10 @@ export const cancelTorghutSimulationRun = async (runId: string) => {
 
 export const __private = {
   buildRobustnessScorecard,
+  buildSimulationCacheKey,
   expectedArtifactsForRun,
   buildCampaignRunId,
+  manifestDigest,
   normalizeCampaignRequest,
   normalizeRunToken,
   normalizeSimulationManifest,

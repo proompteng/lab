@@ -5052,6 +5052,8 @@ def _apply(
             auto_offset_reset=auto_offset_reset,
             manifest=manifest,
         )
+        ta_restart_required = warm_lane_enabled or ta_reconfigured
+        ta_restart_forced = warm_lane_enabled and not ta_reconfigured
         if ta_reconfigured:
             _configure_ta_for_simulation(
                 resources=resources,
@@ -5060,6 +5062,7 @@ def _apply(
                 auto_offset_reset=auto_offset_reset,
                 manifest=manifest,
             )
+        if ta_restart_required:
             ta_restart_nonce = _restart_ta_deployment(
                 resources,
                 desired_state='running',
@@ -5101,6 +5104,7 @@ def _apply(
         'topics': topics_report,
         'schema_registry': schema_registry_report,
         'ta_restart_nonce': ta_restart_nonce,
+        'ta_restart_forced': ta_restart_forced,
         'ta_reconfigured': ta_reconfigured,
         'torghut_reconfigured': torghut_reconfigured,
         'warm_lane_enabled': warm_lane_enabled,
