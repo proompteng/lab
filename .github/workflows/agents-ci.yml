@@ -459,10 +459,10 @@ jobs:
 
           # Use docker.io for Bun base image in CI builds to avoid mirror image metadata drift.
           # Local image rebuilds are best-effort in CI; fall back to the public image on timeout.
-          # ARC arm64 runners occasionally need materially longer than 12 minutes for the
-          # control-plane bundle graph; keep CI-specific build work lean and give the remaining
-          # build a realistic timeout instead of failing healthy progress mid-build.
-          BUILD_TIMEOUT_MINUTES=18
+          # ARC arm64 runners can spend well over 18 minutes in the pruned control-plane docker
+          # build while still making forward progress, so give the local image build enough headroom
+          # to complete instead of terminating a healthy build.
+          BUILD_TIMEOUT_MINUTES=30
           KIND_LOAD_TIMEOUT_MINUTES=20
 
           if run_with_progress "Docker build" "${BUILD_TIMEOUT_MINUTES}" env DOCKER_BUILDKIT=1 docker build \
