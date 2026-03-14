@@ -154,6 +154,42 @@ describe('torghut simulation control plane', () => {
     })
   })
 
+  it('builds stable cache keys and manifest digests regardless of object key order', () => {
+    const manifestA = {
+      dataset_id: 'dataset-a',
+      lane: 'equity',
+      candidate_id: 'candidate-a',
+      baseline_candidate_id: 'baseline-a',
+      strategy_spec_ref: 'strategy-specs/intraday_tsmom_v1@1.1.0.json',
+      performance: {
+        dumpFormat: 'jsonl.zst',
+      },
+      window: {
+        start: '2026-03-06T14:30:00Z',
+        end: '2026-03-06T15:30:00Z',
+      },
+    }
+    const manifestB = {
+      window: {
+        end: '2026-03-06T15:30:00Z',
+        start: '2026-03-06T14:30:00Z',
+      },
+      performance: {
+        dumpFormat: 'jsonl.zst',
+      },
+      strategy_spec_ref: 'strategy-specs/intraday_tsmom_v1@1.1.0.json',
+      baseline_candidate_id: 'baseline-a',
+      candidate_id: 'candidate-a',
+      lane: 'equity',
+      dataset_id: 'dataset-a',
+    }
+
+    expect(__private.buildSimulationCacheKey(manifestA, 'compact')).toBe(
+      __private.buildSimulationCacheKey(manifestB, 'compact'),
+    )
+    expect(__private.manifestDigest(manifestA)).toBe(__private.manifestDigest(manifestB))
+  })
+
   it('resolves a writable workflow output root for relative artifact paths', () => {
     expect(__private.resolveWorkflowOutputRoot('artifacts/torghut/simulations')).toBe(
       '/tmp/torghut-simulations/artifacts/torghut/simulations',

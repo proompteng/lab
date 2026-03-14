@@ -1262,7 +1262,7 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertTrue(report['postgres']['database_precreated'])
         self.assertEqual(report['simulation_lock']['status'], 'acquired')
 
-    def test_apply_skips_reconfigure_when_warm_lane_baseline_is_already_ready(self) -> None:
+    def test_apply_restarts_ta_when_warm_lane_baseline_is_already_ready(self) -> None:
         resources = _build_resources(
             'sim-1',
             {
@@ -1358,10 +1358,16 @@ class TestStartHistoricalSimulation(TestCase):
                 )
 
         configure_ta.assert_not_called()
-        restart_ta.assert_not_called()
+        restart_ta.assert_called_once_with(
+            resources,
+            desired_state='running',
+            upgrade_mode='stateless',
+        )
         configure_service.assert_not_called()
         self.assertTrue(report['warm_lane_enabled'])
         self.assertFalse(report['ta_reconfigured'])
+        self.assertTrue(report['ta_restart_forced'])
+        self.assertEqual(report['ta_restart_nonce'], 7)
         self.assertFalse(report['torghut_reconfigured'])
         self.assertEqual(report['seeded_cursor_at'], '2026-02-27T14:30:00+00:00')
 
