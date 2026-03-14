@@ -293,7 +293,7 @@ class TestStartHistoricalSimulation(TestCase):
             'torghut.sim.trades.v1.sim_2026_02_27_01',
         )
 
-    def test_build_resources_uses_run_scoped_topics_when_warm_lane_enabled(self) -> None:
+    def test_build_resources_uses_lane_stable_topics_when_warm_lane_enabled(self) -> None:
         resources = _build_resources(
             'sim-2026-02-27-01',
             {
@@ -304,16 +304,16 @@ class TestStartHistoricalSimulation(TestCase):
             },
         )
         self.assertTrue(resources.warm_lane_enabled)
-        self.assertEqual(resources.ta_group_id, 'torghut-ta-sim-sim_2026_02_27_01')
+        self.assertEqual(resources.ta_group_id, 'torghut-ta-sim-default')
         self.assertEqual(resources.order_feed_group_id, 'torghut-order-feed-sim-default')
         self.assertEqual(resources.clickhouse_signal_table, 'torghut_sim_default.ta_signals')
         self.assertEqual(
             resources.simulation_topic_by_role['order_updates'],
-            'torghut.sim.trade-updates.v1.sim_2026_02_27_01',
+            'torghut.sim.trade-updates.v1',
         )
         self.assertEqual(
             resources.replay_topic_by_source_topic['torghut.trades.v1'],
-            'torghut.sim.trades.v1.sim_2026_02_27_01',
+            'torghut.sim.trades.v1',
         )
 
     def test_build_resources_derives_options_lane_isolation_names(self) -> None:
@@ -1173,6 +1173,14 @@ class TestStartHistoricalSimulation(TestCase):
                     'scripts.start_historical_simulation._validate_dump_coverage',
                     return_value={'coverage_ratio': 1.0},
                 ),
+                patch(
+                    'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
+                    return_value=True,
+                ),
+                patch(
+                    'scripts.start_historical_simulation._torghut_service_reconfigure_required',
+                    return_value=True,
+                ),
                 patch('scripts.start_historical_simulation._configure_ta_for_simulation', return_value=None),
                 patch('scripts.start_historical_simulation._restart_ta_deployment', return_value='nonce'),
                 patch(
@@ -1196,7 +1204,7 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertTrue(report['postgres']['database_precreated'])
         self.assertEqual(report['simulation_lock']['status'], 'acquired')
 
-    def test_apply_reconfigures_ta_for_warm_lane(self) -> None:
+    def test_apply_skips_reconfigure_when_warm_lane_baseline_is_already_ready(self) -> None:
         resources = _build_resources(
             'sim-1',
             {
@@ -1266,6 +1274,14 @@ class TestStartHistoricalSimulation(TestCase):
                     'scripts.start_historical_simulation._validate_dump_coverage',
                     return_value={'coverage_ratio': 1.0},
                 ),
+                patch(
+                    'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
+                    return_value=False,
+                ),
+                patch(
+                    'scripts.start_historical_simulation._torghut_service_reconfigure_required',
+                    return_value=False,
+                ),
                 patch('scripts.start_historical_simulation._configure_ta_for_simulation') as configure_ta,
                 patch(
                     'scripts.start_historical_simulation._restart_ta_deployment',
@@ -1283,10 +1299,12 @@ class TestStartHistoricalSimulation(TestCase):
                     force_replay=False,
                 )
 
-        configure_ta.assert_called_once()
-        restart_ta.assert_called_once()
-        configure_service.assert_called_once()
+        configure_ta.assert_not_called()
+        restart_ta.assert_not_called()
+        configure_service.assert_not_called()
         self.assertTrue(report['warm_lane_enabled'])
+        self.assertFalse(report['ta_reconfigured'])
+        self.assertFalse(report['torghut_reconfigured'])
         self.assertEqual(report['seeded_cursor_at'], '2026-02-27T14:30:00+00:00')
 
     def test_resolve_warm_lane_runtime_postgres_config_uses_current_kservice_dsn(self) -> None:
@@ -1457,6 +1475,14 @@ class TestStartHistoricalSimulation(TestCase):
                     return_value={'coverage_ratio': 1.0},
                 ),
                 patch(
+                    'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
+                    return_value=False,
+                ),
+                patch(
+                    'scripts.start_historical_simulation._torghut_service_reconfigure_required',
+                    return_value=False,
+                ),
+                patch(
                     'scripts.start_historical_simulation._configure_ta_for_simulation',
                     return_value=None,
                 ),
@@ -1556,6 +1582,14 @@ class TestStartHistoricalSimulation(TestCase):
                 patch(
                     'scripts.start_historical_simulation._validate_dump_coverage',
                     return_value={'coverage_ratio': 1.0},
+                ),
+                patch(
+                    'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
+                    return_value=True,
+                ),
+                patch(
+                    'scripts.start_historical_simulation._torghut_service_reconfigure_required',
+                    return_value=True,
                 ),
                 patch('scripts.start_historical_simulation._configure_ta_for_simulation', return_value=None),
                 patch(
@@ -1719,6 +1753,14 @@ class TestStartHistoricalSimulation(TestCase):
                     'scripts.start_historical_simulation._validate_dump_coverage',
                     return_value={'coverage_ratio': 1.0},
                 ),
+                patch(
+                    'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
+                    return_value=True,
+                ),
+                patch(
+                    'scripts.start_historical_simulation._torghut_service_reconfigure_required',
+                    return_value=True,
+                ),
                 patch('scripts.start_historical_simulation._configure_ta_for_simulation', return_value=None),
                 patch(
                     'scripts.start_historical_simulation._restart_ta_deployment',
@@ -1812,6 +1854,14 @@ class TestStartHistoricalSimulation(TestCase):
                 patch(
                     'scripts.start_historical_simulation._validate_dump_coverage',
                     return_value={'coverage_ratio': 1.0},
+                ),
+                patch(
+                    'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
+                    return_value=True,
+                ),
+                patch(
+                    'scripts.start_historical_simulation._torghut_service_reconfigure_required',
+                    return_value=True,
                 ),
                 patch('scripts.start_historical_simulation._configure_ta_for_simulation', return_value=None),
                 patch(
@@ -3388,6 +3438,14 @@ class TestStartHistoricalSimulation(TestCase):
                     'scripts.start_historical_simulation._release_simulation_runtime_lock',
                     return_value={'status': 'released', 'run_id': resources.run_id},
                 ) as release_lock,
+                patch(
+                    'scripts.start_historical_simulation._restore_ta_configuration_required',
+                    return_value=True,
+                ),
+                patch(
+                    'scripts.start_historical_simulation._restore_torghut_env_required',
+                    return_value=True,
+                ),
                 patch('scripts.start_historical_simulation._restore_ta_configuration') as restore_ta,
                 patch('scripts.start_historical_simulation._restore_torghut_env') as restore_env,
                 patch(
@@ -5995,6 +6053,7 @@ class TestStartHistoricalSimulation(TestCase):
                 'runtime': {'use_warm_lane': True},
             },
         )
+        dirty_order_updates_topic = f'torghut.sim.trade-updates.v1.{resources.run_token}'
         kservice_payload = {
             'spec': {
                 'template': {
@@ -6008,11 +6067,11 @@ class TestStartHistoricalSimulation(TestCase):
                                     {'name': 'TRADING_SIMULATION_DATASET_ID', 'value': resources.dataset_id},
                                     {'name': 'TRADING_SIGNAL_TABLE', 'value': resources.clickhouse_signal_table},
                                     {'name': 'TRADING_PRICE_TABLE', 'value': resources.clickhouse_price_table},
-                                    {'name': 'TRADING_ORDER_FEED_TOPIC', 'value': resources.simulation_topic_by_role['order_updates']},
+                                    {'name': 'TRADING_ORDER_FEED_TOPIC', 'value': dirty_order_updates_topic},
                                     {'name': 'TRADING_ORDER_FEED_GROUP_ID', 'value': resources.order_feed_group_id},
                                     {
                                         'name': 'TRADING_SIMULATION_ORDER_UPDATES_TOPIC',
-                                        'value': resources.simulation_topic_by_role['order_updates'],
+                                        'value': dirty_order_updates_topic,
                                     },
                                 ],
                             }

@@ -65,7 +65,7 @@ from .trading.hypotheses import (
 from .trading.lean_lanes import LeanLaneManager
 from .trading.llm.evaluation import build_llm_evaluation_metrics
 from .trading.tca import build_tca_gate_inputs
-from .trading.simulation_progress import simulation_progress_snapshot
+from .trading.simulation_progress import active_simulation_runtime_context, simulation_progress_snapshot
 from .trading.time_source import trading_time_status
 from .whitepapers import (
     WhitepaperKafkaWorker,
@@ -1557,6 +1557,7 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
     )
     shorting_metadata_status = scheduler.shorting_metadata_status()
     rejection_alert_status = scheduler.rejection_alert_status()
+    active_simulation_context = active_simulation_runtime_context()
     return {
         "enabled": settings.trading_enabled,
         "autonomy_enabled": settings.trading_autonomy_enabled,
@@ -1680,10 +1681,13 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
         "empirical_jobs": _empirical_jobs_status(),
         "simulation": {
             "enabled": settings.trading_simulation_enabled,
-            "run_id": settings.trading_simulation_run_id,
-            "dataset_id": settings.trading_simulation_dataset_id,
-            "window_start": settings.trading_simulation_window_start,
-            "window_end": settings.trading_simulation_window_end,
+            "run_id": (active_simulation_context or {}).get("run_id") or settings.trading_simulation_run_id,
+            "dataset_id": (active_simulation_context or {}).get("dataset_id")
+            or settings.trading_simulation_dataset_id,
+            "window_start": (active_simulation_context or {}).get("window_start")
+            or settings.trading_simulation_window_start,
+            "window_end": (active_simulation_context or {}).get("window_end")
+            or settings.trading_simulation_window_end,
             "time_source": trading_time_status(account_label=settings.trading_account_label),
         },
         "control_plane_contract": control_plane_contract,
@@ -1739,8 +1743,9 @@ def trading_simulation_progress(
     """Expose durable simulation progress for the current or requested run."""
 
     snapshot = simulation_progress_snapshot(session, run_id=run_id)
+    active_runtime_context = active_simulation_runtime_context(session)
     snapshot["requested_run_id"] = run_id
-    snapshot["active_run_id"] = settings.trading_simulation_run_id
+    snapshot["active_run_id"] = (active_runtime_context or {}).get("run_id") or settings.trading_simulation_run_id
     snapshot["simulation_enabled"] = settings.trading_simulation_enabled
     return cast(dict[str, object], snapshot)
 
@@ -1834,6 +1839,7 @@ def trading_autonomy() -> dict[str, object]:
         scheduler = TradingScheduler()
         app.state.trading_scheduler = scheduler
     state = scheduler.state
+    active_simulation_context = active_simulation_runtime_context()
     return {
         "enabled": settings.trading_autonomy_enabled,
         "gate_policy_path": settings.trading_autonomy_gate_policy_path,
@@ -1863,10 +1869,13 @@ def trading_autonomy() -> dict[str, object]:
         "empirical_jobs": _empirical_jobs_status(),
         "simulation": {
             "enabled": settings.trading_simulation_enabled,
-            "run_id": settings.trading_simulation_run_id,
-            "dataset_id": settings.trading_simulation_dataset_id,
-            "window_start": settings.trading_simulation_window_start,
-            "window_end": settings.trading_simulation_window_end,
+            "run_id": (active_simulation_context or {}).get("run_id") or settings.trading_simulation_run_id,
+            "dataset_id": (active_simulation_context or {}).get("dataset_id")
+            or settings.trading_simulation_dataset_id,
+            "window_start": (active_simulation_context or {}).get("window_start")
+            or settings.trading_simulation_window_start,
+            "window_end": (active_simulation_context or {}).get("window_end")
+            or settings.trading_simulation_window_end,
             "time_source": trading_time_status(account_label=settings.trading_account_label),
         },
         "bridge_status": _build_autonomy_bridge_status(scheduler),

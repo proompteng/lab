@@ -17,6 +17,7 @@ from uuid import uuid4
 from ..alpaca_client import TorghutAlpacaClient
 from ..config import settings
 from .firewall import OrderFirewall
+from .simulation_progress import active_simulation_runtime_context
 from .time_source import trading_now
 
 logger = logging.getLogger(__name__)
@@ -164,9 +165,25 @@ class SimulationExecutionAdapter:
         if bootstrap_servers and bootstrap_servers.strip():
             self._producer = self._build_producer(bootstrap_servers.strip())
 
+    def _sync_runtime_context(self) -> None:
+        runtime_context = active_simulation_runtime_context()
+        run_id = (runtime_context or {}).get('run_id') or self._simulation_run_id
+        dataset_id = (runtime_context or {}).get('dataset_id') or self._dataset_id
+        if run_id == self._simulation_run_id and dataset_id == self._dataset_id:
+            return
+        self._simulation_run_id = run_id
+        self._dataset_id = dataset_id
+        self._seq = 0
+        self._orders_by_id = {}
+        self._order_id_by_client_id = {}
+        self._positions_by_symbol = {}
+        self._position_market_value_by_symbol = {}
+        self._seeded_from_snapshot = False
+
     def seed_positions_snapshot(self, positions: list[dict[str, Any]] | None) -> None:
         """Seed the adapter once from the broker snapshot used by decisioning."""
 
+        self._sync_runtime_context()
         if self._seeded_from_snapshot:
             return
         seeded_positions: dict[str, Decimal] = {}
@@ -210,6 +227,7 @@ class SimulationExecutionAdapter:
         stop_price: Optional[float] = None,
         extra_params: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
+        self._sync_runtime_context()
         payload = dict(extra_params or {})
         requested_client_order_id = payload.get('client_order_id')
         client_order_id = str(requested_client_order_id).strip() if requested_client_order_id else ''
@@ -274,6 +292,7 @@ class SimulationExecutionAdapter:
         return dict(order)
 
     def cancel_order(self, order_id: str) -> bool:
+        self._sync_runtime_context()
         order = self._orders_by_id.get(order_id)
         if order is None:
             return False
@@ -290,6 +309,7 @@ class SimulationExecutionAdapter:
         return True
 
     def cancel_all_orders(self) -> list[dict[str, Any]]:
+        self._sync_runtime_context()
         canceled: list[dict[str, Any]] = []
         for order_id in list(self._orders_by_id):
             if self.cancel_order(order_id):
@@ -298,6 +318,7 @@ class SimulationExecutionAdapter:
         return canceled
 
     def get_order(self, order_id: str) -> dict[str, Any]:
+        self._sync_runtime_context()
         self.last_route = self.name
         existing = self._orders_by_id.get(order_id)
         if existing is None:
@@ -305,6 +326,7 @@ class SimulationExecutionAdapter:
         return dict(existing)
 
     def get_order_by_client_order_id(self, client_order_id: str) -> dict[str, Any] | None:
+        self._sync_runtime_context()
         self.last_route = self.name
         order_id = self._order_id_by_client_id.get(client_order_id)
         if order_id is None:
@@ -315,6 +337,7 @@ class SimulationExecutionAdapter:
         return dict(existing)
 
     def list_orders(self, status: str = 'all') -> list[dict[str, Any]]:
+        self._sync_runtime_context()
         self.last_route = self.name
         normalized = status.strip().lower()
         values = list(self._orders_by_id.values())
@@ -323,6 +346,7 @@ class SimulationExecutionAdapter:
         return [dict(value) for value in values if str(value.get('status', '')).strip().lower() == normalized]
 
     def list_positions(self) -> list[dict[str, Any]]:
+        self._sync_runtime_context()
         self.last_route = self.name
         positions: list[dict[str, Any]] = []
         for symbol, net_qty in sorted(self._positions_by_symbol.items()):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -222,6 +223,14 @@ def _resolve_window_bounds(manifest: Mapping[str, Any]) -> tuple[datetime, datet
     if end <= start:
         raise RuntimeError('window.end must be after window.start')
     return start, end
+
+
+def _run_scoped_simulation_topic(topic: str, run_id: str) -> str:
+    token = re.sub(r'[^a-zA-Z0-9]+', '_', run_id.strip().lower()).strip('_')
+    token = re.sub(r'_+', '_', token)
+    if not token:
+        return topic
+    return f'{topic}.{token}'
 
 
 def _window_min_coverage_minutes(window: Mapping[str, Any], *, profile: str | None) -> int | None:
@@ -1428,6 +1437,15 @@ def _teardown_clean(
     simulation_topics = _as_mapping(resource_payload.get('simulation_topic_by_role'))
     run_scoped_order_updates_topic = _as_text(simulation_topics.get('order_updates')) or ''
     lane_default_order_updates_topic = _as_text(lane_contract.simulation_topic_by_role.get('order_updates')) or ''
+    if not run_scoped_order_updates_topic or run_scoped_order_updates_topic == lane_default_order_updates_topic:
+        run_scoped_order_updates_topic = _run_scoped_simulation_topic(
+            lane_default_order_updates_topic,
+            run_id,
+        )
+    run_scoped_order_updates_topic_is_distinct = bool(
+        run_scoped_order_updates_topic
+        and run_scoped_order_updates_topic != lane_default_order_updates_topic
+    )
 
     if torghut_service is None or ta_configmap is None or ta_deployment is None:
         raise RuntimeError('simulation resources are incomplete for teardown validation')
@@ -1449,8 +1467,11 @@ def _teardown_clean(
     run_scoped_markers_present = {
         'trading_simulation_run_id': env_value('TRADING_SIMULATION_RUN_ID') == run_id,
         'trading_simulation_dataset_id': env_value('TRADING_SIMULATION_DATASET_ID') == dataset_id,
-        'order_feed_topic': env_value('TRADING_ORDER_FEED_TOPIC') == run_scoped_order_updates_topic,
+        'order_feed_topic': run_scoped_order_updates_topic_is_distinct
+        and env_value('TRADING_ORDER_FEED_TOPIC') == run_scoped_order_updates_topic,
         'simulation_order_updates_topic': (
+            run_scoped_order_updates_topic_is_distinct
+            and
             env_value('TRADING_SIMULATION_ORDER_UPDATES_TOPIC') == run_scoped_order_updates_topic
         ),
     }

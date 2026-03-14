@@ -29,7 +29,7 @@ class TestRunSimulationAnalysis(TestCase):
         )
         self.assertEqual(resources.clickhouse_db, 'torghut_sim_2026_03_06_open_30m')
 
-    def test_runtime_ready_warm_lane_resources_keep_run_scoped_order_updates_topic(self) -> None:
+    def test_runtime_ready_warm_lane_resources_use_lane_stable_order_updates_topic(self) -> None:
         class _Args:
             run_id = 'sim-platform-proof-compact-20260313-r23'
             dataset_id = 'torghut-tsmom-compact-20260311'
@@ -47,7 +47,7 @@ class TestRunSimulationAnalysis(TestCase):
         self.assertEqual(resources.ta_group_id, 'torghut-ta-sim-default')
         self.assertEqual(
             resources.simulation_topic_by_role['order_updates'],
-            'torghut.sim.trade-updates.v1.sim_platform_proof_compact_20260313_r23',
+            'torghut.sim.trade-updates.v1',
         )
 
     def test_runtime_ready_resources_derive_clickhouse_db_from_price_table_when_signal_table_missing(self) -> None:
