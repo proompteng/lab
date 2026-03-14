@@ -1319,8 +1319,12 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
 
     clickhouse_cfg = _as_mapping(manifest.get('clickhouse'))
     clickhouse_db = (
-        _as_text(clickhouse_cfg.get('simulation_database'))
-        or (DEFAULT_WARM_LANE_SIMULATION_DATABASE if warm_lane else f'torghut_sim_{run_token}')
+        DEFAULT_WARM_LANE_SIMULATION_DATABASE
+        if warm_lane
+        else (
+            _as_text(clickhouse_cfg.get('simulation_database'))
+            or f'torghut_sim_{run_token}'
+        )
     )
     clickhouse_table_by_role = simulation_clickhouse_table_names(
         lane=lane_contract.lane,
@@ -1379,6 +1383,39 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
         clickhouse_price_table=clickhouse_price_table,
         warm_lane_enabled=warm_lane,
     )
+
+
+def _canonicalize_warm_lane_manifest(
+    manifest: Mapping[str, Any],
+    *,
+    resources: SimulationResources,
+) -> dict[str, Any]:
+    if not resources.warm_lane_enabled:
+        return _as_mapping(manifest)
+
+    normalized = cast(dict[str, Any], json.loads(json.dumps(dict(manifest))))
+    clickhouse = _as_mapping(normalized.get('clickhouse'))
+    clickhouse['simulation_database'] = resources.clickhouse_db
+    normalized['clickhouse'] = clickhouse
+
+    postgres = _as_mapping(normalized.get('postgres'))
+    simulation_db = _default_simulation_postgres_db(resources)
+    simulation_dsn = _as_text(postgres.get('simulation_dsn'))
+    if simulation_dsn:
+        postgres['simulation_dsn'] = _replace_database_in_dsn(
+            simulation_dsn,
+            database=simulation_db,
+            label='manifest.postgres.simulation_dsn',
+        )
+    runtime_simulation_dsn = _as_text(postgres.get('runtime_simulation_dsn'))
+    if runtime_simulation_dsn:
+        postgres['runtime_simulation_dsn'] = _replace_database_in_dsn(
+            runtime_simulation_dsn,
+            database=simulation_db,
+            label='manifest.postgres.runtime_simulation_dsn',
+        )
+    normalized['postgres'] = postgres
+    return normalized
 
 
 def _build_argocd_automation_config(manifest: Mapping[str, Any]) -> ArgocdAutomationConfig:
@@ -6532,6 +6569,7 @@ def main() -> None:
         strict_coverage_ratio=window.get('strict_coverage_ratio'),
     )
     resources = _build_resources(args.run_id, manifest)
+    manifest = _canonicalize_warm_lane_manifest(manifest, resources=resources)
     _log_script_event(
         'resources_built',
         run_token=resources.run_token,
