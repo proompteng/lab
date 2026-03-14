@@ -519,6 +519,12 @@ const defaultSimulationDatabaseName = (runIdSeed: string, useWarmLane: boolean) 
 const defaultSimulationPostgresDsn = (database: string) =>
   `postgresql://${DEFAULT_SIMULATION_POSTGRES_RUNTIME_USER}@${DEFAULT_SIMULATION_POSTGRES_HOST}/${database}`
 
+const replaceDatabaseInDsn = (dsn: string, database: string) => {
+  const parsed = new URL(dsn)
+  parsed.pathname = `/${database}`
+  return parsed.toString()
+}
+
 const parseTimestamp = (value: unknown) => {
   const text = asString(value)
   if (!text) return null
@@ -584,7 +590,9 @@ const normalizeSimulationManifest = (
   if (!asString(clickhouse.http_url)) clickhouse.http_url = DEFAULT_SIMULATION_CLICKHOUSE_HTTP_URL
   if (!asString(clickhouse.username)) clickhouse.username = DEFAULT_SIMULATION_CLICKHOUSE_USERNAME
   if (!asString(clickhouse.password_env)) clickhouse.password_env = DEFAULT_SIMULATION_CLICKHOUSE_PASSWORD_ENV
-  if (!asString(clickhouse.simulation_database)) clickhouse.simulation_database = simulationDatabase
+  if (useWarmLane || !asString(clickhouse.simulation_database)) {
+    clickhouse.simulation_database = simulationDatabase
+  }
   manifest.clickhouse = clickhouse
 
   const postgres = asRecord(manifest.postgres)
@@ -594,9 +602,13 @@ const normalizeSimulationManifest = (
   }
   if (!asString(postgres.simulation_dsn)) {
     postgres.simulation_dsn = defaultSimulationPostgresDsn(simulationDatabase)
+  } else if (useWarmLane) {
+    postgres.simulation_dsn = replaceDatabaseInDsn(String(postgres.simulation_dsn), simulationDatabase)
   }
   if (!asString(postgres.runtime_simulation_dsn)) {
     postgres.runtime_simulation_dsn = defaultSimulationPostgresDsn(simulationDatabase)
+  } else if (useWarmLane) {
+    postgres.runtime_simulation_dsn = replaceDatabaseInDsn(String(postgres.runtime_simulation_dsn), simulationDatabase)
   }
   if (!asString(postgres.migrations_command)) {
     postgres.migrations_command = DEFAULT_SIMULATION_POSTGRES_MIGRATIONS_COMMAND

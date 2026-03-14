@@ -316,6 +316,63 @@ class TestStartHistoricalSimulation(TestCase):
             'torghut.sim.trades.v1',
         )
 
+    def test_build_resources_ignores_run_scoped_clickhouse_database_when_warm_lane_enabled(self) -> None:
+        resources = _build_resources(
+            'sim-2026-03-14-warm',
+            {
+                'dataset_id': 'torghut-trades-2025q4',
+                'runtime': {
+                    'use_warm_lane': True,
+                },
+                'clickhouse': {
+                    'simulation_database': 'torghut_sim_stale_run',
+                },
+            },
+        )
+
+        self.assertTrue(resources.warm_lane_enabled)
+        self.assertEqual(resources.clickhouse_db, 'torghut_sim_default')
+        self.assertEqual(resources.clickhouse_signal_table, 'torghut_sim_default.ta_signals')
+
+    def test_canonicalize_warm_lane_manifest_rewrites_explicit_storage_targets(self) -> None:
+        resources = _build_resources(
+            'sim-2026-03-14-warm',
+            {
+                'dataset_id': 'torghut-trades-2025q4',
+                'runtime': {
+                    'use_warm_lane': True,
+                },
+            },
+        )
+        manifest = {
+            'dataset_id': 'torghut-trades-2025q4',
+            'runtime': {
+                'use_warm_lane': True,
+            },
+            'clickhouse': {
+                'simulation_database': 'torghut_sim_stale_run',
+            },
+            'postgres': {
+                'simulation_dsn': 'postgresql://torghut:secret@localhost:5432/torghut_sim_stale_run',
+                'runtime_simulation_dsn': 'postgresql://torghut_app:secret@localhost:5432/torghut_sim_stale_run',
+            },
+        }
+
+        normalized = start_historical_simulation._canonicalize_warm_lane_manifest(
+            manifest,
+            resources=resources,
+        )
+
+        self.assertEqual(normalized['clickhouse']['simulation_database'], 'torghut_sim_default')
+        self.assertEqual(
+            normalized['postgres']['simulation_dsn'],
+            'postgresql://torghut:secret@localhost:5432/torghut_sim_default',
+        )
+        self.assertEqual(
+            normalized['postgres']['runtime_simulation_dsn'],
+            'postgresql://torghut_app:secret@localhost:5432/torghut_sim_default',
+        )
+
     def test_build_resources_derives_options_lane_isolation_names(self) -> None:
         resources = _build_resources(
             'options-sim-2026-03-06-open',
