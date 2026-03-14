@@ -3473,7 +3473,7 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertFalse(report['state_found'])
         self.assertEqual(report['simulation_lock']['status'], 'released')
 
-    def test_teardown_restores_ta_configuration_for_warm_lane(self) -> None:
+    def test_teardown_keeps_warm_lane_baseline(self) -> None:
         resources = _build_resources(
             'sim-1',
             {
@@ -3496,14 +3496,6 @@ class TestStartHistoricalSimulation(TestCase):
                     'scripts.start_historical_simulation._release_simulation_runtime_lock',
                     return_value={'status': 'released', 'run_id': resources.run_id},
                 ) as release_lock,
-                patch(
-                    'scripts.start_historical_simulation._restore_ta_configuration_required',
-                    return_value=True,
-                ),
-                patch(
-                    'scripts.start_historical_simulation._restore_torghut_env_required',
-                    return_value=True,
-                ),
                 patch('scripts.start_historical_simulation._restore_ta_configuration') as restore_ta,
                 patch('scripts.start_historical_simulation._restore_torghut_env') as restore_env,
                 patch(
@@ -3517,13 +3509,14 @@ class TestStartHistoricalSimulation(TestCase):
                     allow_missing_state=False,
                 )
 
-        restore_ta.assert_called_once_with(resources, {'ta_job_state': 'running'})
-        restore_env.assert_called_once_with(resources, {'ta_job_state': 'running'})
-        restart_ta.assert_called_once_with(resources, desired_state='running')
+        restore_ta.assert_not_called()
+        restore_env.assert_not_called()
+        restart_ta.assert_not_called()
         release_lock.assert_called_once_with(resources=resources)
         self.assertTrue(report['warm_lane_enabled'])
-        self.assertFalse(report['skipped_restore'])
-        self.assertEqual(report['ta_restart_nonce'], 11)
+        self.assertTrue(report['skipped_restore'])
+        self.assertTrue(report['retained_warm_lane_baseline'])
+        self.assertIsNone(report['ta_restart_nonce'])
 
     def test_build_simulation_completion_trace_marks_smoke_gate_satisfied(self) -> None:
         resources = _build_resources(
