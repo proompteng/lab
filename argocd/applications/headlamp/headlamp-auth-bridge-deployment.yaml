@@ -35,12 +35,8 @@ spec:
               value: headlamp
             - name: HEADLAMP_UPSTREAM_PORT
               value: '80'
-            - name: HEADLAMP_WATCH_CLUSTER_NAME
-              value: main
             - name: HEADLAMP_PROXY_TIMEOUT_SECONDS
               value: '30'
-            - name: HEADLAMP_WATCH_TIMEOUT_SECONDS
-              value: '3600'
           livenessProbe:
             httpGet:
               path: /healthz
