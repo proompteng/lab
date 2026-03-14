@@ -63,19 +63,6 @@ const IssueNodeSchema = Schema.Struct({
               }),
               { nullable: true },
             ),
-            sourceIssue: Schema.optionalWith(
-              Schema.Struct({
-                id: NullableStringSchema,
-                identifier: NullableStringSchema,
-                state: Schema.optionalWith(
-                  Schema.Struct({
-                    name: NullableStringSchema,
-                  }),
-                  { nullable: true },
-                ),
-              }),
-              { nullable: true },
-            ),
           }),
         ),
         { nullable: true },
@@ -127,7 +114,7 @@ const normalizeBlockedBy = (node: IssueNode) =>
   (node.inverseRelations?.nodes ?? [])
     .filter((entry) => normalizeState(entry.type) === 'blocks')
     .map((entry) => {
-      const blocker = entry.issue ?? entry.sourceIssue ?? null
+      const blocker = entry.issue ?? null
       return {
         id: blocker?.id ?? null,
         identifier: blocker?.identifier ?? null,
@@ -257,11 +244,6 @@ const issueSelection = `
     nodes {
       type
       issue {
-        id
-        identifier
-        state { name }
-      }
-      sourceIssue {
         id
         identifier
         state { name }
