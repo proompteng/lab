@@ -22,7 +22,7 @@ spec:
       serviceAccountName: torghut-runtime
       containers:
         - name: forecast
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:34f923ebf2de0e91e101db153c99c99abaab15a1bdf25279afaf909beceebd43
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:fd490d5860a385341fbed84de5fe43fd46db803dcf36193d6a5d02d0f6df4f2e
           imagePullPolicy: IfNotPresent
           command:
             - uvicorn
