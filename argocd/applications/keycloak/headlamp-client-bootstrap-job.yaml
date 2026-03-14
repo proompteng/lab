@@ -56,6 +56,14 @@ spec:
                 sleep 5
               done
 
+              /opt/keycloak/bin/kcadm.sh update "realms/$KEYCLOAK_REALM" \
+                --config "$KCADM_CONFIG" \
+                -s "accessTokenLifespan=${KEYCLOAK_REALM_ACCESS_TOKEN_LIFESPAN_SECONDS}" \
+                -s "ssoSessionIdleTimeout=${KEYCLOAK_REALM_SSO_SESSION_IDLE_SECONDS}" \
+                -s "ssoSessionMaxLifespan=${KEYCLOAK_REALM_SSO_SESSION_MAX_SECONDS}" \
+                -s "clientSessionIdleTimeout=${KEYCLOAK_REALM_CLIENT_SESSION_IDLE_SECONDS}" \
+                -s "clientSessionMaxLifespan=${KEYCLOAK_REALM_CLIENT_SESSION_MAX_SECONDS}"
+
               cat > /tmp/headlamp-client.json <<EOF
               {
                 "clientId": "${HEADLAMP_OIDC_CLIENT_ID}",
@@ -198,6 +206,16 @@ spec:
               value: https://headlamp.k8s.proompteng.ai
             - name: HEADLAMP_PRIVATE_CALLBACK_URL
               value: https://headlamp.k8s.proompteng.ai/oidc-callback
+            - name: KEYCLOAK_REALM_ACCESS_TOKEN_LIFESPAN_SECONDS
+              value: '300'
+            - name: KEYCLOAK_REALM_SSO_SESSION_IDLE_SECONDS
+              value: '28800'
+            - name: KEYCLOAK_REALM_SSO_SESSION_MAX_SECONDS
+              value: '86400'
+            - name: KEYCLOAK_REALM_CLIENT_SESSION_IDLE_SECONDS
+              value: '28800'
+            - name: KEYCLOAK_REALM_CLIENT_SESSION_MAX_SECONDS
+              value: '86400'
             - name: KEYCLOAK_ADMIN_USERNAME
               valueFrom:
                 secretKeyRef:

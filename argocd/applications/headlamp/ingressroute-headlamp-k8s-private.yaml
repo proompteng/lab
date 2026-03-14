@@ -9,6 +9,7 @@ spec:
   routes:
     - kind: Rule
       match: Host(`headlamp.k8s.proompteng.ai`)
+      priority: 1
       services:
         - name: headlamp
           port: 80

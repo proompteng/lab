@@ -30,6 +30,17 @@ spec:
           ports:
             - containerPort: 8080
               name: http
+          env:
+            - name: HEADLAMP_UPSTREAM_HOST
+              value: headlamp
+            - name: HEADLAMP_UPSTREAM_PORT
+              value: '80'
+            - name: HEADLAMP_WATCH_CLUSTER_NAME
+              value: main
+            - name: HEADLAMP_PROXY_TIMEOUT_SECONDS
+              value: '30'
+            - name: HEADLAMP_WATCH_TIMEOUT_SECONDS
+              value: '3600'
           livenessProbe:
             httpGet:
               path: /healthz
@@ -40,11 +51,11 @@ spec:
               port: http
           resources:
             requests:
-              cpu: 10m
-              memory: 24Mi
+              cpu: 25m
+              memory: 32Mi
             limits:
-              cpu: 100m
-              memory: 64Mi
+              cpu: 250m
+              memory: 128Mi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

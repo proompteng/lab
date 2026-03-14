@@ -20,6 +20,12 @@ For Headlamp-specific wiring (OIDC secret, RBAC, control-plane OIDC args), see `
 - The `kubernetes` OIDC client used by Headlamp and the kube-apiserver is GitOps-managed by:
   - `argocd/applications/keycloak/headlamp-client-sealedsecret.yaml`
   - `argocd/applications/keycloak/headlamp-client-bootstrap-job.yaml`
+- That bootstrap job also enforces the realm session defaults Headlamp depends on:
+  - Access token lifespan `300`
+  - SSO session idle `28800`
+  - SSO session max `86400`
+  - Client session idle `28800`
+  - Client session max `86400`
 - There is no Ansible playbook in this repo for Keycloak realm or client management.
 - The only OIDC-related Ansible playbook in this repo is `ansible/playbooks/k3s-oidc.yml`, and that is for `k3s` API server flags, not for Keycloak application state.
 
@@ -72,7 +78,7 @@ Login settings (Headlamp):
 Issuer and scopes:
 
 - Issuer: Realm → **Realm settings** → **Endpoints** → **OpenID Endpoint Configuration** (`issuer`)
-- Scopes: `openid profile email`
+- Scopes: `openid profile email offline_access`
 - The kube-apiserver on `galactic` binds Kubernetes usernames from the OIDC `preferred_username` claim with the `oidc:` prefix, so RBAC subjects should look like `oidc:<preferred_username>`.
 - The GitOps bootstrap job also enforces a `kubernetes-audience` protocol mapper so access tokens
   include audience `kubernetes`, which Headlamp needs when it uses the OIDC access token for
