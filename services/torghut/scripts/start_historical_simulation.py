@@ -5185,17 +5185,26 @@ def _teardown(
 
     state = _load_json(state_path)
     original_state = _as_text(state.get('ta_job_state')) or 'running'
-    ta_reconfigured = _restore_ta_configuration_required(resources, state)
-    torghut_reconfigured = _restore_torghut_env_required(resources, state)
-    if ta_reconfigured:
-        _restore_ta_configuration(resources, state)
-    if torghut_reconfigured:
-        _restore_torghut_env(resources, state)
-    ta_restart_nonce = (
-        _restart_ta_deployment(resources, desired_state=original_state)
-        if ta_reconfigured
-        else None
-    )
+    if warm_lane_enabled:
+        ta_reconfigured = False
+        torghut_reconfigured = False
+        ta_restart_nonce = None
+        skipped_restore = True
+        retained_warm_lane_baseline = True
+    else:
+        ta_reconfigured = _restore_ta_configuration_required(resources, state)
+        torghut_reconfigured = _restore_torghut_env_required(resources, state)
+        if ta_reconfigured:
+            _restore_ta_configuration(resources, state)
+        if torghut_reconfigured:
+            _restore_torghut_env(resources, state)
+        ta_restart_nonce = (
+            _restart_ta_deployment(resources, desired_state=original_state)
+            if ta_reconfigured
+            else None
+        )
+        skipped_restore = False
+        retained_warm_lane_baseline = False
     lock_report = _release_simulation_runtime_lock(resources=resources)
     report = {
         'status': 'ok',
@@ -5210,7 +5219,8 @@ def _teardown(
         'torghut_reconfigured': torghut_reconfigured,
         'restored_ta_state': original_state,
         'warm_lane_enabled': warm_lane_enabled,
-        'skipped_restore': False,
+        'skipped_restore': skipped_restore,
+        'retained_warm_lane_baseline': retained_warm_lane_baseline,
         'simulation_lock': lock_report,
     }
     _save_json(run_manifest_path.with_name('teardown-manifest.json'), report)
