@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import time
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import asynccontextmanager
@@ -94,6 +95,8 @@ LEAN_LANE_MANAGER = LeanLaneManager()
 WHITEPAPER_WORKFLOW = WhitepaperWorkflowService()
 _TRADING_DEPENDENCY_HEALTH_CACHE_LOCK = Lock()
 _TRADING_DEPENDENCY_HEALTH_CACHE: dict[str, dict[str, object]] = {}
+_ALPACA_HEALTH_CACHE_LOCK = Lock()
+_ALPACA_HEALTH_STATE: dict[str, object] = {}
 
 
 def _extract_bearer_token(authorization_header: str | None) -> str | None:
@@ -2743,19 +2746,221 @@ def _empirical_jobs_status() -> dict[str, object]:
         }
 
 
+def _alpaca_endpoint_class(*, paper: bool | None = None) -> str:
+    use_paper = settings.trading_mode != "live" if paper is None else paper
+    return "paper" if use_paper else "live"
+
+
+def _alpaca_failure_status(detail: str) -> str:
+    message = detail.strip().lower()
+    if "keys missing" in message:
+        return "credentials_missing"
+    if any(
+        token in message
+        for token in (
+            "unauthorized",
+            "forbidden",
+            "invalid api",
+            "authentication",
+            "not authorized",
+            "insufficient scope",
+            "access key",
+            "secret key",
+            "credentials",
+        )
+    ):
+        return "credentials_invalid"
+    if any(
+        token in message
+        for token in (
+            "timeout",
+            "timed out",
+            "deadline exceeded",
+            "read timed out",
+        )
+    ):
+        return "broker_slow"
+    if any(
+        token in message
+        for token in (
+            "connection refused",
+            "connection reset",
+            "name or service not known",
+            "temporary failure in name resolution",
+            "nodename nor servname",
+            "network is unreachable",
+            "no route to host",
+            "failed to establish a new connection",
+            "max retries exceeded",
+            "dns",
+        )
+    ):
+        return "network_unreachable"
+    return "broker_error"
+
+
+def _alpaca_probe_account(
+    client: TorghutAlpacaClient,
+    *,
+    timeout_seconds: float,
+) -> dict[str, object]:
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = None
+    try:
+        future = executor.submit(client.get_account)
+        account = future.result(timeout=timeout_seconds)
+    except TimeoutError:
+        if future is not None:
+            future.cancel()
+        return {
+            "ok": False,
+            "status": "broker_slow",
+            "detail": f"alpaca account probe timed out after {timeout_seconds:.2f}s",
+        }
+    except Exception as exc:  # pragma: no cover - depends on network
+        detail = str(exc).strip() or type(exc).__name__
+        return {
+            "ok": False,
+            "status": _alpaca_failure_status(detail),
+            "detail": detail,
+        }
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+    return {
+        "ok": True,
+        "status": "broker_ok",
+        "detail": "ok",
+        "account": account,
+    }
+
+
+def _remember_alpaca_success(
+    *,
+    account: Mapping[str, Any],
+    endpoint_class: str,
+) -> None:
+    with _ALPACA_HEALTH_CACHE_LOCK:
+        _ALPACA_HEALTH_STATE.clear()
+        _ALPACA_HEALTH_STATE.update(
+            {
+                "last_ok_at": datetime.now(timezone.utc),
+                "account_label": str(
+                    account.get("account_number")
+                    or settings.trading_account_label
+                    or ""
+                ).strip()
+                or None,
+                "account_status": str(account.get("status") or "").strip() or None,
+                "endpoint_class": endpoint_class,
+            }
+        )
+
+
+def _alpaca_cached_last_good(
+    *,
+    failure_status: str,
+    failure_detail: str,
+    endpoint_class: str,
+) -> dict[str, object] | None:
+    if failure_status not in {"broker_slow", "network_unreachable"}:
+        return None
+    ttl_seconds = max(0, settings.trading_alpaca_healthcheck_last_good_ttl_seconds)
+    if ttl_seconds <= 0:
+        return None
+    with _ALPACA_HEALTH_CACHE_LOCK:
+        last_ok_at = cast(datetime | None, _ALPACA_HEALTH_STATE.get("last_ok_at"))
+        account_label = cast(str | None, _ALPACA_HEALTH_STATE.get("account_label"))
+        account_status = cast(str | None, _ALPACA_HEALTH_STATE.get("account_status"))
+        cached_endpoint_class = cast(
+            str | None,
+            _ALPACA_HEALTH_STATE.get("endpoint_class"),
+        )
+    if last_ok_at is None:
+        return None
+    age_seconds = max(
+        0.0,
+        round((datetime.now(timezone.utc) - last_ok_at).total_seconds(), 3),
+    )
+    if age_seconds > ttl_seconds:
+        return None
+    return {
+        "ok": True,
+        "detail": (
+            f"{failure_detail}; using cached last known good Alpaca probe from "
+            f"{last_ok_at.isoformat()}"
+        ),
+        "broker_status": failure_status,
+        "endpoint_class": cached_endpoint_class or endpoint_class,
+        "cache_used": True,
+        "last_ok_at": last_ok_at.isoformat(),
+        "cache_age_seconds": age_seconds,
+        "account_label": account_label,
+        "account_status": account_status,
+    }
+
+
 def _check_alpaca() -> dict[str, object]:
     if not settings.apca_api_key_id or not settings.apca_api_secret_key:
-        return {"ok": False, "detail": "alpaca keys missing"}
+        return {
+            "ok": False,
+            "detail": "alpaca keys missing",
+            "broker_status": "credentials_missing",
+            "endpoint_class": _alpaca_endpoint_class(),
+            "cache_used": False,
+        }
     client = TorghutAlpacaClient()
-    try:
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(client.get_account)
-            future.result(timeout=2)
-    except TimeoutError:
-        return {"ok": False, "detail": "alpaca timeout"}
-    except Exception as exc:  # pragma: no cover - depends on network
-        return {"ok": False, "detail": f"alpaca error: {exc}"}
-    return {"ok": True, "detail": "ok"}
+    timeout_seconds = max(0.1, settings.trading_alpaca_healthcheck_timeout_seconds)
+    retries = max(1, settings.trading_alpaca_healthcheck_retries)
+    backoff_seconds = max(0.0, settings.trading_alpaca_healthcheck_backoff_seconds)
+    endpoint_class = str(
+        getattr(client, "endpoint_class", _alpaca_endpoint_class())
+    ).strip() or _alpaca_endpoint_class()
+
+    last_failure: dict[str, object] | None = None
+    for attempt in range(retries):
+        probe = _alpaca_probe_account(client, timeout_seconds=timeout_seconds)
+        if bool(probe.get("ok")):
+            account = cast(Mapping[str, Any], probe.get("account") or {})
+            _remember_alpaca_success(
+                account=account,
+                endpoint_class=endpoint_class,
+            )
+            return {
+                "ok": True,
+                "detail": "ok",
+                "broker_status": "broker_ok",
+                "endpoint_class": endpoint_class,
+                "cache_used": False,
+                "account_label": str(
+                    account.get("account_number")
+                    or settings.trading_account_label
+                    or ""
+                ).strip()
+                or None,
+                "account_status": str(account.get("status") or "").strip() or None,
+            }
+        last_failure = probe
+        if probe.get("status") == "credentials_invalid":
+            break
+        if attempt < retries - 1 and backoff_seconds > 0:
+            time.sleep(backoff_seconds * float(attempt + 1))
+
+    failure_status = str(last_failure.get("status") if last_failure else "broker_error")
+    failure_detail = str(last_failure.get("detail") if last_failure else "alpaca probe failed")
+    cached = _alpaca_cached_last_good(
+        failure_status=failure_status,
+        failure_detail=failure_detail,
+        endpoint_class=endpoint_class,
+    )
+    if cached is not None:
+        return cached
+    return {
+        "ok": False,
+        "detail": failure_detail,
+        "broker_status": failure_status,
+        "endpoint_class": endpoint_class,
+        "cache_used": False,
+    }
 
 
 def _tca_row_payload(row: ExecutionTCAMetric | None) -> dict[str, object] | None:

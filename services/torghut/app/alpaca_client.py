@@ -62,19 +62,21 @@ class TorghutAlpacaClient:
         base_url: Optional[str] = None,
         trading_client: Optional[TradingClient] = None,
         data_client: Optional[StockHistoricalDataClient] = None,
+        paper: Optional[bool] = None,
     ) -> None:
         key = api_key or settings.apca_api_key_id
         secret = secret_key or settings.apca_api_secret_key
         base = _normalize_alpaca_base_url(base_url or settings.apca_api_base_url)
         data_base = _normalize_alpaca_base_url(settings.apca_data_api_base_url)
 
-        is_live = settings.trading_mode == "live"
+        use_paper = paper if paper is not None else settings.trading_mode != "live"
+        self.endpoint_class = "paper" if use_paper else "live"
 
         # Default to paper trading; override URL if provided.
         raw_trading_client = trading_client or TradingClient(
             api_key=key,
             secret_key=secret,
-            paper=not is_live,
+            paper=use_paper,
             url_override=base,
         )
         self._trading = raw_trading_client
@@ -85,7 +87,7 @@ class TorghutAlpacaClient:
             api_key=key,
             secret_key=secret,
             url_override=data_base,
-            sandbox=not is_live,
+            sandbox=use_paper,
         )
 
     # ------------------- Trading helpers -------------------

@@ -208,6 +208,33 @@ class TestAlpacaClient(TestCase):
         finally:
             config.settings.trading_mode = original
 
+    def test_explicit_paper_override_beats_live_runtime_mode(self) -> None:
+        from app import config
+
+        original = config.settings.trading_mode
+        config.settings.trading_mode = "live"
+
+        try:
+            with (
+                patch("app.alpaca_client.TradingClient") as mock_trading_client,
+                patch("app.alpaca_client.StockHistoricalDataClient") as mock_data_client,
+            ):
+                client = TorghutAlpacaClient(
+                    api_key="k",
+                    secret_key="s",
+                    base_url="https://paper-api.alpaca.markets",
+                    paper=True,
+                )
+
+                trading_kwargs = mock_trading_client.call_args.kwargs
+                data_kwargs = mock_data_client.call_args.kwargs
+
+                self.assertTrue(trading_kwargs.get("paper"))
+                self.assertTrue(data_kwargs.get("sandbox"))
+                self.assertEqual(client.endpoint_class, "paper")
+        finally:
+            config.settings.trading_mode = original
+
     def test_alpaca_base_url_strips_v2_suffix(self) -> None:
         with patch("app.alpaca_client.TradingClient") as mock_trading_client:
             TorghutAlpacaClient(

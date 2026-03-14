@@ -30,6 +30,7 @@ type WatchStreamState = {
 
 const DEFAULT_WINDOW_MINUTES = 15
 const DEFAULT_STREAM_LIMIT = 20
+const DEFAULT_RESTART_DEGRADE_THRESHOLD = 2
 const MAX_RECORDED_STREAMS = 200
 const TOP_STREAM_LIMIT = 10
 const MINUTE_MS = 60_000
@@ -51,6 +52,13 @@ const resolveStreamLimit = () => {
   const parsed = Number(raw)
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_STREAM_LIMIT
   return Math.min(Math.max(Math.floor(parsed), 1), MAX_RECORDED_STREAMS)
+}
+
+const resolveRestartDegradeThreshold = () => {
+  const raw = process.env.JANGAR_CONTROL_PLANE_WATCH_HEALTH_RESTART_DEGRADE_THRESHOLD?.trim()
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_RESTART_DEGRADE_THRESHOLD
+  return Math.max(1, Math.floor(parsed))
 }
 
 const windowStartMs = (now: number, windowMinutes: number) => now - windowMinutes * MINUTE_MS
@@ -161,8 +169,14 @@ export const getWatchReliabilitySummary = (): ControlPlaneWatchReliabilitySummar
     return b.events - a.events
   })
   const topStreams = observedStreams.slice(0, Math.min(streamLimit, TOP_STREAM_LIMIT))
+  const restartDegradeThreshold = resolveRestartDegradeThreshold()
 
-  const status = totalErrors > 0 || totalRestarts > 0 ? 'degraded' : observedStreams.length > 0 ? 'healthy' : 'unknown'
+  const status =
+    totalErrors > 0 || totalRestarts >= restartDegradeThreshold
+      ? 'degraded'
+      : observedStreams.length > 0
+        ? 'healthy'
+        : 'unknown'
 
   return {
     status,
