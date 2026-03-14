@@ -223,6 +223,61 @@ class TestExecutionAdapters(TestCase):
             ],
         )
 
+    def test_simulation_adapter_resets_state_when_active_run_changes(self) -> None:
+        adapter = SimulationExecutionAdapter(
+            bootstrap_servers=None,
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+            topic='torghut.sim.trade-updates.v1',
+            account_label='paper',
+            simulation_run_id='sim-2026-02-27-01',
+            dataset_id='dataset-1',
+        )
+        with patch(
+            'app.trading.execution_adapters.active_simulation_runtime_context',
+            side_effect=[
+                {'run_id': 'sim-2026-02-27-01', 'dataset_id': 'dataset-1'},
+                {'run_id': 'sim-2026-02-27-01', 'dataset_id': 'dataset-1'},
+                {'run_id': 'sim-2026-02-28-01', 'dataset_id': 'dataset-2'},
+            ],
+        ):
+            adapter.submit_order(
+                symbol='AAPL',
+                side='buy',
+                qty=1.0,
+                order_type='market',
+                time_in_force='day',
+                extra_params={'client_order_id': 'decision-a'},
+            )
+            self.assertEqual(len(adapter.list_orders()), 1)
+            adapter.submit_order(
+                symbol='MSFT',
+                side='buy',
+                qty=2.0,
+                order_type='market',
+                time_in_force='day',
+                extra_params={'client_order_id': 'decision-b'},
+            )
+
+        orders = adapter.list_orders()
+        self.assertEqual(len(orders), 1)
+        self.assertEqual(orders[0].get('client_order_id'), 'decision-b')
+        positions = adapter.list_positions()
+        self.assertEqual(
+            positions,
+            [
+                {
+                    'symbol': 'MSFT',
+                    'qty': '2',
+                    'side': 'long',
+                    'market_value': '2',
+                    'alpaca_account_label': 'paper',
+                }
+            ],
+        )
+
     def test_simulation_adapter_seeds_initial_positions_once(self) -> None:
         adapter = SimulationExecutionAdapter(
             bootstrap_servers=None,

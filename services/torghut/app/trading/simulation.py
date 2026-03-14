@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, cast
 
 from ..config import settings
+from .simulation_progress import active_simulation_runtime_context
 from .time_source import trading_now
 
 
@@ -76,11 +77,12 @@ def resolve_simulation_context(
         if seq is not None and context.get("signal_seq") is None:
             context["signal_seq"] = int(seq)
 
-    run_id = settings.trading_simulation_run_id
+    runtime_context = active_simulation_runtime_context()
+    run_id = (runtime_context or {}).get('run_id') or settings.trading_simulation_run_id
     if run_id and context.get("simulation_run_id") in (None, ""):
         context["simulation_run_id"] = run_id
 
-    dataset_id = settings.trading_simulation_dataset_id
+    dataset_id = (runtime_context or {}).get('dataset_id') or settings.trading_simulation_dataset_id
     if dataset_id and context.get("dataset_id") in (None, ""):
         context["dataset_id"] = dataset_id
 

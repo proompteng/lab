@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any, Optional, cast
 
-from sqlalchemy import Table, event, select, text
+from sqlalchemy import Table, case, event, select, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
@@ -34,6 +34,22 @@ SIMULATION_PROGRESS_COMPONENTS = (
     COMPONENT_TA,
     COMPONENT_TORGHUT,
     COMPONENT_ARTIFACTS,
+)
+_ACTIVE_RUNTIME_COMPONENT_PRIORITY = case(
+    (SimulationRunProgress.component == COMPONENT_TORGHUT, 0),
+    (SimulationRunProgress.component == COMPONENT_ARTIFACTS, 1),
+    (SimulationRunProgress.component == COMPONENT_TA, 2),
+    else_=3,
+)
+_ACTIVE_RUNTIME_STATUSES = frozenset(
+    {
+        'pending',
+        'running',
+        'ready',
+        'replayed',
+        'activity_verified',
+        'reported',
+    }
 )
 _PROGRESS_UPSERT = text(
     """
@@ -121,17 +137,93 @@ def _resolve_lane() -> str:
     return 'equity'
 
 
-def simulation_progress_context() -> dict[str, str] | None:
+def _static_simulation_runtime_context() -> dict[str, str] | None:
     if not settings.trading_simulation_enabled:
         return None
     run_id = (settings.trading_simulation_run_id or '').strip()
-    if not run_id:
+    dataset_id = (settings.trading_simulation_dataset_id or '').strip()
+    window_start = (settings.trading_simulation_window_start or '').strip()
+    window_end = (settings.trading_simulation_window_end or '').strip()
+    if not any((run_id, dataset_id, window_start, window_end)):
         return None
-    dataset_id = (settings.trading_simulation_dataset_id or '').strip() or None
-    return {
+    payload = {
         'run_id': run_id,
-        'dataset_id': dataset_id or '',
+        'dataset_id': dataset_id,
         'lane': _resolve_lane(),
+        'window_start': window_start,
+        'window_end': window_end,
+    }
+    return payload
+
+
+def _active_simulation_runtime_context_via_session(
+    session: Session,
+) -> dict[str, str] | None:
+    row = (
+        session.execute(
+            select(SimulationRunProgress)
+            .where(
+                SimulationRunProgress.lane == _resolve_lane(),
+                SimulationRunProgress.status.in_(tuple(sorted(_ACTIVE_RUNTIME_STATUSES))),
+                SimulationRunProgress.terminal_state.is_(None),
+            )
+            .order_by(
+                _ACTIVE_RUNTIME_COMPONENT_PRIORITY,
+                SimulationRunProgress.updated_at.desc(),
+            )
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+    if row is None:
+        return None
+    payload = _coerce_payload_mapping(row.payload_json)
+    window_start = str(payload.get('window_start') or '').strip()
+    window_end = str(payload.get('window_end') or '').strip()
+    return {
+        'run_id': str(row.run_id).strip(),
+        'dataset_id': str(row.dataset_id or '').strip(),
+        'lane': str(row.lane or '').strip() or _resolve_lane(),
+        'window_start': window_start,
+        'window_end': window_end,
+    }
+
+
+def active_simulation_runtime_context(
+    connection_or_session: Connection | Session | None = None,
+) -> dict[str, str] | None:
+    static_context = _static_simulation_runtime_context()
+    if static_context is not None:
+        return static_context
+    if not settings.trading_simulation_enabled:
+        return None
+
+    try:
+        if isinstance(connection_or_session, Session):
+            return _active_simulation_runtime_context_via_session(connection_or_session)
+        if isinstance(connection_or_session, Connection):
+            with Session(bind=connection_or_session) as session:
+                return _active_simulation_runtime_context_via_session(session)
+        from ..db import SessionLocal
+
+        with SessionLocal() as session:
+            return _active_simulation_runtime_context_via_session(session)
+    except Exception:
+        logger.exception('Failed to resolve active simulation runtime context')
+        return None
+
+
+def simulation_progress_context(
+    connection_or_session: Connection | Session | None = None,
+) -> dict[str, str] | None:
+    context = active_simulation_runtime_context(connection_or_session)
+    if context is None or not context.get('run_id'):
+        return None
+    return {
+        'run_id': context['run_id'],
+        'dataset_id': context['dataset_id'],
+        'lane': context['lane'],
     }
 
 
@@ -177,7 +269,7 @@ def upsert_simulation_progress(
     last_error_message: str | None = None,
     payload: Mapping[str, Any] | None = None,
 ) -> None:
-    context = simulation_progress_context()
+    context = simulation_progress_context(connection)
     if context is None:
         return
     payload_json = dict(payload or {})
@@ -484,6 +576,7 @@ __all__ = [
     'COMPONENT_TA',
     'COMPONENT_TORGHUT',
     'SIMULATION_PROGRESS_COMPONENTS',
+    'active_simulation_runtime_context',
     'simulation_progress_context',
     'simulation_progress_snapshot',
     'upsert_simulation_progress',

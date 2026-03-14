@@ -46,6 +46,7 @@ from app.trading.evaluation import build_fill_price_error_budget_report_v1
 from app.trading.simulation_progress import (
     COMPONENT_ARTIFACTS,
     COMPONENT_REPLAY,
+    SIMULATION_PROGRESS_COMPONENTS,
     COMPONENT_TA,
     COMPONENT_TORGHUT,
 )
@@ -1309,7 +1310,7 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
     for role, topic in list(simulation_topics.items()):
         if role in simulation_topic_overrides:
             continue
-        simulation_topics[role] = f'{topic}.{run_token}'
+        simulation_topics[role] = topic if warm_lane else f'{topic}.{run_token}'
 
     replay_topic_by_source_topic = {
         source_topics[role]: simulation_topics[role]
@@ -1342,9 +1343,11 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
         if lane_contract.lane == 'options'
         else 'torghut-order-feed-sim'
     )
-    # Warm lanes reuse infrastructure, not consumer offsets. Each replay still needs
-    # a fresh TA consumer group so the source stream is re-read deterministically.
-    ta_group_id = f'{ta_group_prefix}-{run_token}'
+    ta_group_id = (
+        f'{ta_group_prefix}-default'
+        if warm_lane
+        else f'{ta_group_prefix}-{run_token}'
+    )
     order_feed_group_id = (
         f'{order_feed_group_prefix}-default'
         if warm_lane
@@ -3392,6 +3395,29 @@ def _configure_ta_for_simulation(
     auto_offset_reset: str,
     manifest: Mapping[str, Any],
 ) -> None:
+    updates = _desired_ta_simulation_config(
+        resources=resources,
+        clickhouse_config=clickhouse_config,
+        clickhouse_database=clickhouse_database,
+        auto_offset_reset=auto_offset_reset,
+        manifest=manifest,
+    )
+    _kubectl_patch(
+        resources.namespace,
+        'configmap',
+        resources.ta_configmap,
+        {'data': updates},
+    )
+
+
+def _desired_ta_simulation_config(
+    *,
+    resources: SimulationResources,
+    clickhouse_config: ClickHouseRuntimeConfig,
+    clickhouse_database: str,
+    auto_offset_reset: str,
+    manifest: Mapping[str, Any],
+) -> dict[str, str]:
     updates: dict[str, str] = {
         _ta_group_id_key(lane=resources.lane, manifest=manifest): resources.ta_group_id,
         _ta_auto_offset_reset_key(lane=resources.lane, manifest=manifest): auto_offset_reset,
@@ -3407,13 +3433,30 @@ def _configure_ta_for_simulation(
         clickhouse_config.http_url,
         clickhouse_database,
     )
+    return updates
 
-    _kubectl_patch(
+
+def _ta_runtime_reconfigure_required(
+    *,
+    resources: SimulationResources,
+    clickhouse_config: ClickHouseRuntimeConfig,
+    clickhouse_database: str,
+    auto_offset_reset: str,
+    manifest: Mapping[str, Any],
+) -> bool:
+    current = _kubectl_json(
         resources.namespace,
-        'configmap',
-        resources.ta_configmap,
-        {'data': updates},
+        ['get', 'configmap', resources.ta_configmap, '-o', 'json'],
     )
+    current_data = _as_mapping(current.get('data'))
+    expected = _desired_ta_simulation_config(
+        resources=resources,
+        clickhouse_config=clickhouse_config,
+        clickhouse_database=clickhouse_database,
+        auto_offset_reset=auto_offset_reset,
+        manifest=manifest,
+    )
+    return any(_as_text(current_data.get(key)) != value for key, value in expected.items())
 
 
 def _restart_ta_deployment(
@@ -3465,11 +3508,48 @@ def _configure_torghut_service_for_simulation(
         resources.namespace,
         ['get', 'kservice', resources.torghut_service, '-o', 'json'],
     )
+    merged_env = _torghut_service_env_for_simulation(
+        service=service,
+        resources=resources,
+        manifest=manifest,
+        postgres_config=postgres_config,
+        clickhouse_config=clickhouse_config,
+        kafka_config=kafka_config,
+        torghut_env_overrides=torghut_env_overrides,
+    )
+    patched_container = _kservice_container_with_env(service, merged_env)
+    _kubectl_patch(
+        resources.namespace,
+        'kservice',
+        resources.torghut_service,
+        {
+            'spec': {
+                'template': {
+                    'spec': {
+                        'containers': [patched_container]
+                    }
+                }
+            }
+        },
+    )
+
+
+def _torghut_service_env_for_simulation(
+    *,
+    service: Mapping[str, Any],
+    resources: SimulationResources,
+    manifest: Mapping[str, Any],
+    postgres_config: PostgresRuntimeConfig,
+    clickhouse_config: ClickHouseRuntimeConfig,
+    kafka_config: KafkaRuntimeConfig,
+    torghut_env_overrides: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     _, current_env = _kservice_env(service)
     window_start, window_end = _resolve_window_bounds(manifest)
     forecast_base_url = (
         f'http://{resources.torghut_forecast_service}.{resources.namespace}.svc.cluster.local:8089'
     )
+    warm_lane_enabled = resources.warm_lane_enabled
 
     updates = {
         'DB_DSN': postgres_config.torghut_runtime_dsn,
@@ -3494,11 +3574,15 @@ def _configure_torghut_service_for_simulation(
         'TRADING_EXECUTION_ADAPTER': 'simulation',
         'TRADING_EXECUTION_FALLBACK_ADAPTER': 'none',
         'TRADING_SIMULATION_ENABLED': 'true',
-        'TRADING_SIMULATION_RUN_ID': resources.run_id,
-        'TRADING_SIMULATION_DATASET_ID': resources.dataset_id,
+        'TRADING_SIMULATION_RUN_ID': '' if warm_lane_enabled else resources.run_id,
+        'TRADING_SIMULATION_DATASET_ID': '' if warm_lane_enabled else resources.dataset_id,
         'TRADING_SIMULATION_CLOCK_MODE': 'cursor',
-        'TRADING_SIMULATION_WINDOW_START': window_start.astimezone(timezone.utc).isoformat(),
-        'TRADING_SIMULATION_WINDOW_END': window_end.astimezone(timezone.utc).isoformat(),
+        'TRADING_SIMULATION_WINDOW_START': (
+            '' if warm_lane_enabled else window_start.astimezone(timezone.utc).isoformat()
+        ),
+        'TRADING_SIMULATION_WINDOW_END': (
+            '' if warm_lane_enabled else window_end.astimezone(timezone.utc).isoformat()
+        ),
         'TRADING_SIMULATION_ORDER_UPDATES_TOPIC': resources.simulation_topic_by_role['order_updates'],
         'TRADING_SIMULATION_ORDER_UPDATES_BOOTSTRAP_SERVERS': kafka_config.runtime_bootstrap,
         'TRADING_SIMULATION_ORDER_UPDATES_SECURITY_PROTOCOL': kafka_config.runtime_security,
@@ -3512,22 +3596,43 @@ def _configure_torghut_service_for_simulation(
     if torghut_env_overrides:
         for key, value in torghut_env_overrides.items():
             updates[str(key)] = str(value)
-    merged_env = _merge_env_entries(current_env, updates)
-    patched_container = _kservice_container_with_env(service, merged_env)
-    _kubectl_patch(
+    return _merge_env_entries(current_env, updates)
+
+
+def _torghut_service_reconfigure_required(
+    *,
+    resources: SimulationResources,
+    manifest: Mapping[str, Any],
+    postgres_config: PostgresRuntimeConfig,
+    clickhouse_config: ClickHouseRuntimeConfig,
+    kafka_config: KafkaRuntimeConfig,
+    torghut_env_overrides: Mapping[str, Any] | None = None,
+) -> bool:
+    service = _kubectl_json(
         resources.namespace,
-        'kservice',
-        resources.torghut_service,
-        {
-            'spec': {
-                'template': {
-                    'spec': {
-                        'containers': [patched_container]
-                    }
-                }
-            }
-        },
+        ['get', 'kservice', resources.torghut_service, '-o', 'json'],
     )
+    _, current_env = _kservice_env(service)
+    expected_env = _torghut_service_env_for_simulation(
+        service=service,
+        resources=resources,
+        manifest=manifest,
+        postgres_config=postgres_config,
+        clickhouse_config=clickhouse_config,
+        kafka_config=kafka_config,
+        torghut_env_overrides=torghut_env_overrides,
+    )
+    expected_by_name = {
+        _as_text(entry.get('name')): _as_mapping(entry)
+        for entry in expected_env
+        if _as_text(entry.get('name'))
+    }
+    current_by_name = {
+        _as_text(entry.get('name')): _as_mapping(entry)
+        for entry in current_env
+        if _as_text(entry.get('name'))
+    }
+    return any(current_by_name.get(name) != entry for name, entry in expected_by_name.items())
 
 
 def _restore_ta_configuration(resources: SimulationResources, state: Mapping[str, Any]) -> None:
@@ -3547,6 +3652,27 @@ def _restore_ta_configuration(resources: SimulationResources, state: Mapping[str
         resources.ta_configmap,
         {'data': patch_data},
     )
+
+
+def _restore_ta_configuration_required(resources: SimulationResources, state: Mapping[str, Any]) -> bool:
+    ta_data = _as_mapping(state.get('ta_data'))
+    existing = _kubectl_json(
+        resources.namespace,
+        ['get', 'configmap', resources.ta_configmap, '-o', 'json'],
+    )
+    existing_data = _as_mapping(existing.get('data'))
+    patch_data: dict[str, Any] = dict(ta_data)
+    for key in existing_data:
+        if key not in ta_data:
+            patch_data[key] = None
+    for key, value in patch_data.items():
+        if value is None:
+            if key in existing_data:
+                return True
+            continue
+        if _as_text(existing_data.get(key)) != _as_text(value):
+            return True
+    return False
 
 
 def _restore_torghut_env(resources: SimulationResources, state: Mapping[str, Any]) -> None:
@@ -3581,6 +3707,31 @@ def _restore_torghut_env(resources: SimulationResources, state: Mapping[str, Any
             }
         },
     )
+
+
+def _restore_torghut_env_required(resources: SimulationResources, state: Mapping[str, Any]) -> bool:
+    service = _kubectl_json(
+        resources.namespace,
+        ['get', 'kservice', resources.torghut_service, '-o', 'json'],
+    )
+    _, current_env = _kservice_env(service)
+    current_env_by_name = {
+        _as_text(entry.get('name')): _as_mapping(entry)
+        for entry in current_env
+        if _as_text(entry.get('name'))
+    }
+    snapshot = _as_mapping(state.get('torghut_env_snapshot'))
+    for key in TORGHUT_ENV_KEYS:
+        snapshot_entry = snapshot.get(key)
+        if snapshot_entry is None:
+            if current_env_by_name.get(key) is not None:
+                return True
+            continue
+        entry_map = _as_mapping(snapshot_entry)
+        expected_entry = {'name': key, **{k: v for k, v in entry_map.items() if k != 'name'}}
+        if current_env_by_name.get(key) != expected_entry:
+            return True
+    return False
 
 
 def _condition_status(payload: Mapping[str, Any], *, condition_type: str) -> str | None:
@@ -4678,7 +4829,8 @@ def _verify_isolation_guards(
         'simulation_topics_isolated_from_sources': simulation_topics.isdisjoint(source_topics),
         'replay_targets_isolated_from_replay_sources': replay_target_topics.isdisjoint(replay_source_topics),
         'simulation_topics_not_production_defaults': simulation_topics.isdisjoint(production_topics),
-        'ta_group_isolated': resources.ta_group_id != _as_text(ta_data.get('TA_GROUP_ID')),
+        'ta_group_isolated': resources.warm_lane_enabled
+        or resources.ta_group_id != _as_text(ta_data.get('TA_GROUP_ID')),
     }
     if not all(checks.values()):
         failed = [key for key, passed in checks.items() if not passed]
@@ -4698,9 +4850,13 @@ def _apply(
 ) -> dict[str, Any]:
     _ensure_supported_binary('kubectl')
     _ensure_lz4_codec_available()
+    window_start, window_end = _resolve_window_bounds(manifest)
     window_policy = _validate_window_policy(manifest)
     torghut_env_overrides = _torghut_env_overrides_from_manifest(manifest)
     warm_lane_enabled = resources.warm_lane_enabled
+    ta_reconfigured = False
+    torghut_reconfigured = False
+    ta_restart_nonce: int | None = None
 
     state_path, run_manifest_path, dump_path = _state_paths(resources, manifest)
     _ensure_directory(state_path)
@@ -4765,21 +4921,48 @@ def _apply(
             resources=resources,
             component=COMPONENT_REPLAY,
             status='pending',
-            payload={'phase': 'apply'},
+            payload={
+                'phase': 'apply',
+                'window_start': window_start.astimezone(timezone.utc).isoformat(),
+                'window_end': window_end.astimezone(timezone.utc).isoformat(),
+                'warm_lane_enabled': warm_lane_enabled,
+            },
         )
         _upsert_simulation_progress_row(
             postgres_config=postgres_config,
             resources=resources,
             component=COMPONENT_TA,
             status='pending',
-            payload={'phase': 'runtime_verify'},
+            payload={
+                'phase': 'runtime_verify',
+                'window_start': window_start.astimezone(timezone.utc).isoformat(),
+                'window_end': window_end.astimezone(timezone.utc).isoformat(),
+                'warm_lane_enabled': warm_lane_enabled,
+            },
+        )
+        _upsert_simulation_progress_row(
+            postgres_config=postgres_config,
+            resources=resources,
+            component=COMPONENT_TORGHUT,
+            status='pending',
+            payload={
+                'phase': 'runtime_verify',
+                'window_start': window_start.astimezone(timezone.utc).isoformat(),
+                'window_end': window_end.astimezone(timezone.utc).isoformat(),
+                'warm_lane_enabled': warm_lane_enabled,
+            },
         )
         _upsert_simulation_progress_row(
             postgres_config=postgres_config,
             resources=resources,
             component=COMPONENT_ARTIFACTS,
             status='pending',
-            payload={'phase': 'report'},
+            payload={
+                'phase': 'report',
+                'window_start': window_start.astimezone(timezone.utc).isoformat(),
+                'window_end': window_end.astimezone(timezone.utc).isoformat(),
+                'warm_lane_enabled': warm_lane_enabled,
+            },
         )
 
         dump_report = _dump_topics(
@@ -4796,20 +4979,30 @@ def _apply(
         )
         replay_cfg = _as_mapping(manifest.get('replay'))
         auto_offset_reset = (_as_text(replay_cfg.get('auto_offset_reset')) or 'earliest').lower()
-        _configure_ta_for_simulation(
+        ta_reconfigured = _ta_runtime_reconfigure_required(
             resources=resources,
             clickhouse_config=clickhouse_config,
             clickhouse_database=resources.clickhouse_db,
             auto_offset_reset=auto_offset_reset,
             manifest=manifest,
         )
-        ta_restart_nonce = _restart_ta_deployment(
-            resources,
-            desired_state='running',
-            upgrade_mode=str(ta_restore.get('effective_upgrade_mode') or 'last-state'),
-        )
+        if ta_reconfigured:
+            _configure_ta_for_simulation(
+                resources=resources,
+                clickhouse_config=clickhouse_config,
+                clickhouse_database=resources.clickhouse_db,
+                auto_offset_reset=auto_offset_reset,
+                manifest=manifest,
+            )
+            ta_restart_nonce = _restart_ta_deployment(
+                resources,
+                desired_state='running',
+                upgrade_mode=str(ta_restore.get('effective_upgrade_mode') or 'last-state'),
+            )
+        else:
+            ta_restart_nonce = None
 
-        _configure_torghut_service_for_simulation(
+        torghut_reconfigured = _torghut_service_reconfigure_required(
             resources=resources,
             manifest=manifest,
             postgres_config=postgres_config,
@@ -4817,6 +5010,15 @@ def _apply(
             kafka_config=kafka_config,
             torghut_env_overrides=torghut_env_overrides,
         )
+        if torghut_reconfigured:
+            _configure_torghut_service_for_simulation(
+                resources=resources,
+                manifest=manifest,
+                postgres_config=postgres_config,
+                clickhouse_config=clickhouse_config,
+                kafka_config=kafka_config,
+                torghut_env_overrides=torghut_env_overrides,
+            )
     except Exception:
         _release_simulation_runtime_lock(resources=resources)
         raise
@@ -4833,6 +5035,8 @@ def _apply(
         'topics': topics_report,
         'schema_registry': schema_registry_report,
         'ta_restart_nonce': ta_restart_nonce,
+        'ta_reconfigured': ta_reconfigured,
+        'torghut_reconfigured': torghut_reconfigured,
         'warm_lane_enabled': warm_lane_enabled,
         'seeded_cursor_at': seeded_cursor_at.isoformat(),
         'resources': asdict(resources)
@@ -4914,10 +5118,18 @@ def _teardown(
         }
 
     state = _load_json(state_path)
-    _restore_ta_configuration(resources, state)
-    _restore_torghut_env(resources, state)
     original_state = _as_text(state.get('ta_job_state')) or 'running'
-    ta_restart_nonce = _restart_ta_deployment(resources, desired_state=original_state)
+    ta_reconfigured = _restore_ta_configuration_required(resources, state)
+    torghut_reconfigured = _restore_torghut_env_required(resources, state)
+    if ta_reconfigured:
+        _restore_ta_configuration(resources, state)
+    if torghut_reconfigured:
+        _restore_torghut_env(resources, state)
+    ta_restart_nonce = (
+        _restart_ta_deployment(resources, desired_state=original_state)
+        if ta_reconfigured
+        else None
+    )
     lock_report = _release_simulation_runtime_lock(resources=resources)
     report = {
         'status': 'ok',
@@ -4928,6 +5140,8 @@ def _teardown(
         'run_manifest_path': str(run_manifest_path),
         'dump_path': str(dump_path),
         'ta_restart_nonce': ta_restart_nonce,
+        'ta_reconfigured': ta_reconfigured,
+        'torghut_reconfigured': torghut_reconfigured,
         'restored_ta_state': original_state,
         'warm_lane_enabled': warm_lane_enabled,
         'skipped_restore': False,
@@ -6228,6 +6442,22 @@ def _run_full_lifecycle(
     updated_db_refs['completion_gate_row_ids'] = gate_row_ids
     completion_trace['db_row_refs'] = updated_db_refs
     _save_json(completion_trace_path, completion_trace)
+    if errors:
+        error_payload = {
+            'errors': errors,
+            'completion_trace_path': str(completion_trace_path),
+        }
+        for component in SIMULATION_PROGRESS_COMPONENTS:
+            _upsert_simulation_progress_row(
+                postgres_config=postgres_config,
+                resources=resources,
+                component=component,
+                status='failed',
+                terminal_state='complete',
+                last_error_code='simulation_run_failed',
+                last_error_message='; '.join(errors),
+                payload=error_payload,
+            )
     if errors:
         raise RuntimeError('simulation_run_failed:' + '; '.join(errors))
     return report

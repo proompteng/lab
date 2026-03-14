@@ -5,16 +5,20 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
+from sqlalchemy.orm import Session
+
 from app.trading.simulation_progress import (
     COMPONENT_ARTIFACTS,
     COMPONENT_REPLAY,
     COMPONENT_TORGHUT,
+    active_simulation_runtime_context,
     simulation_progress_snapshot,
 )
 
 
 def _row(**values: object) -> SimpleNamespace:
     defaults = {
+        'run_id': 'sim-proof',
         'component': COMPONENT_REPLAY,
         'dataset_id': 'dataset-a',
         'lane': 'equity',
@@ -44,6 +48,42 @@ def _row(**values: object) -> SimpleNamespace:
 
 
 class TestSimulationProgress(TestCase):
+    def test_active_runtime_context_prefers_latest_nonterminal_row(self) -> None:
+        active_row = _row(
+            run_id='sim-proof-active',
+            component=COMPONENT_TORGHUT,
+            status='pending',
+            updated_at=datetime(2026, 3, 13, 9, 0, tzinfo=timezone.utc),
+            payload_json={
+                'window_start': '2026-03-11T13:25:00+00:00',
+                'window_end': '2026-03-11T13:35:00+00:00',
+            },
+        )
+
+        with patch(
+            'app.trading.simulation_progress._static_simulation_runtime_context',
+            return_value=None,
+        ), patch(
+            'app.trading.simulation_progress.settings.trading_simulation_enabled',
+            True,
+        ), patch(
+            'app.trading.simulation_progress._active_simulation_runtime_context_via_session',
+            return_value={
+                'run_id': str(active_row.run_id),
+                'dataset_id': str(active_row.dataset_id),
+                'lane': str(active_row.lane),
+                'window_start': '2026-03-11T13:25:00+00:00',
+                'window_end': '2026-03-11T13:35:00+00:00',
+            },
+        ):
+            context = active_simulation_runtime_context(Session())
+
+        assert context is not None
+        self.assertEqual(context['run_id'], 'sim-proof-active')
+        self.assertEqual(context['dataset_id'], 'dataset-a')
+        self.assertEqual(context['window_start'], '2026-03-11T13:25:00+00:00')
+        self.assertEqual(context['window_end'], '2026-03-11T13:35:00+00:00')
+
     def test_snapshot_prefers_top_level_activity_classification(self) -> None:
         session = MagicMock()
         session.execute.return_value.scalars.return_value.all.return_value = [

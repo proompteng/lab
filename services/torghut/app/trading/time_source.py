@@ -12,6 +12,7 @@ from sqlalchemy import select
 from ..config import settings
 from ..db import SessionLocal
 from ..models import TradeCursor
+from .simulation_progress import active_simulation_runtime_context
 from .simulation_window import normalize_simulation_cursor, simulation_window_bounds
 
 _SIMULATION_CURSOR_BASELINE = datetime(1970, 1, 1, tzinfo=timezone.utc)
@@ -38,6 +39,7 @@ class TradingTimeSource:
 
     def __init__(self) -> None:
         self._cache_by_account: dict[str, tuple[TradingTimeSnapshot, float]] = {}
+        self._active_run_id: str | None = None
 
     def now(self, *, account_label: str | None = None) -> datetime:
         return self.snapshot(account_label=account_label).now
@@ -53,6 +55,12 @@ class TradingTimeSource:
         if not settings.trading_simulation_enabled or mode == "live":
             now = datetime.now(timezone.utc)
             return TradingTimeSnapshot(mode="live", now=now, source="wall_clock")
+
+        runtime_context = active_simulation_runtime_context()
+        active_run_id = (runtime_context or {}).get('run_id')
+        if active_run_id != self._active_run_id:
+            self._cache_by_account.clear()
+            self._active_run_id = active_run_id
 
         effective_account_label = self._effective_account_label(account_label=account_label)
         cache_ttl = max(settings.trading_simulation_clock_cache_seconds, 0)
