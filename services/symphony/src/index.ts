@@ -1,8 +1,10 @@
-import { access } from 'node:fs/promises'
 import process from 'node:process'
 
+import { Deferred, Effect } from 'effect'
+
+import { OrchestratorService } from './orchestrator'
 import { createLogger } from './logger'
-import { SymphonyOrchestrator } from './orchestrator'
+import { makeSymphonyRuntime } from './runtime'
 import { SymphonyHttpServer } from './http-server'
 import { toError } from './errors'
 
@@ -40,29 +42,54 @@ const parseArgs = (argv: string[]) => {
 const main = async () => {
   const logger = createLogger({ service: 'symphony' })
   const { workflowPath, host: cliHost, port: cliPort } = parseArgs(process.argv.slice(2))
-  await access(workflowPath)
+  const runtime = makeSymphonyRuntime(workflowPath, logger)
 
-  const orchestrator = new SymphonyOrchestrator(workflowPath, logger)
-  await orchestrator.start()
+  try {
+    await runtime.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const orchestrator = yield* OrchestratorService
+          yield* orchestrator.start
 
-  let httpServer: SymphonyHttpServer | null = null
-  const workflowServer = (await orchestrator.getCurrentConfig()).server
-  const hostToUse = cliHost ?? workflowServer.host
-  const workflowPort = workflowServer.port
-  const portToUse = cliPort ?? workflowPort
-  if (portToUse !== null && Number.isFinite(portToUse)) {
-    httpServer = new SymphonyHttpServer(orchestrator, logger)
-    httpServer.start(portToUse, hostToUse)
+          const workflowServer = yield* orchestrator.getCurrentConfig.pipe(Effect.map((config) => config.server))
+          const hostToUse = cliHost ?? workflowServer.host
+          const portToUse = cliPort ?? workflowServer.port
+
+          let httpServer: SymphonyHttpServer<never, never> | null = null
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              httpServer?.stop()
+            }),
+          )
+
+          if (portToUse !== null && Number.isFinite(portToUse)) {
+            httpServer = new SymphonyHttpServer(runtime as never, logger)
+            httpServer.start(portToUse, hostToUse)
+          }
+
+          const shutdownSignal = yield* Deferred.make<void, never>()
+          const onSignal = () => {
+            void runtime.runPromise(Deferred.succeed(shutdownSignal, undefined))
+          }
+
+          process.on('SIGINT', onSignal)
+          process.on('SIGTERM', onSignal)
+
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              process.off('SIGINT', onSignal)
+              process.off('SIGTERM', onSignal)
+            }),
+          )
+
+          yield* Deferred.await(shutdownSignal)
+          yield* orchestrator.stop
+        }),
+      ),
+    )
+  } finally {
+    await runtime.dispose()
   }
-
-  const shutdown = async () => {
-    httpServer?.stop()
-    await orchestrator.stop()
-    process.exit(0)
-  }
-
-  process.on('SIGINT', () => void shutdown())
-  process.on('SIGTERM', () => void shutdown())
 }
 
 main().catch((error) => {

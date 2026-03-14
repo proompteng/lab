@@ -1,4 +1,14 @@
-import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+
+import * as Schema from '@effect/schema/Schema'
+import { Context, Effect, Layer, Runtime } from 'effect'
+import * as Deferred from 'effect/Deferred'
+import * as Fiber from 'effect/Fiber'
+import * as Ref from 'effect/Ref'
+import * as Scope from 'effect/Scope'
+import * as Stream from 'effect/Stream'
+import * as SynchronizedRef from 'effect/SynchronizedRef'
 
 import type {
   AskForApproval,
@@ -13,23 +23,19 @@ import type {
   TurnStartResponse,
 } from '@proompteng/codex'
 
-import { SymphonyError, toError } from './errors'
+import { CodexProtocolError, toLogError } from './errors'
 import type { Logger } from './logger'
 import type { TokenUsageTotals } from './types'
 
 type PendingRequest = {
   method: string
-  resolve: (value: unknown) => void
-  reject: (reason: unknown) => void
-  timer: Timer
+  deferred: Deferred.Deferred<unknown, CodexProtocolError>
 }
 
 type ActiveTurn = {
   threadId: string
   turnId: string
-  resolve: (value: TurnOutcome) => void
-  reject: (reason: unknown) => void
-  timer: Timer
+  deferred: Deferred.Deferred<TurnOutcome, CodexProtocolError>
 }
 
 export type CodexEvent = {
@@ -50,7 +56,7 @@ export type TurnOutcome = {
   turnId: string
 }
 
-type CodexAppSessionOptions = {
+export type CodexSessionOptions = {
   command: string
   cwd: string
   approvalPolicy: AskForApproval | null
@@ -61,9 +67,36 @@ type CodexAppSessionOptions = {
   title: string
   dynamicTools: DynamicToolSpec[]
   logger: Logger
-  onEvent: (event: CodexEvent) => void
-  onToolCall: (tool: string, args: unknown) => Promise<DynamicToolCallResponse>
+  onEvent: (event: CodexEvent) => Effect.Effect<void, never>
+  onToolCall: (tool: string, args: unknown) => Effect.Effect<DynamicToolCallResponse, never>
 }
+
+export type CodexSessionHandle = {
+  readonly runTurn: (prompt: string) => Effect.Effect<TurnOutcome, CodexProtocolError>
+}
+
+export interface CodexSessionServiceDefinition {
+  readonly createSession: (
+    options: CodexSessionOptions,
+  ) => Effect.Effect<CodexSessionHandle, CodexProtocolError, Scope.Scope>
+}
+
+export class CodexSessionService extends Context.Tag('symphony/CodexSessionService')<
+  CodexSessionService,
+  CodexSessionServiceDefinition
+>() {}
+
+const JsonRpcResponseSchema = Schema.Struct({
+  id: Schema.Number,
+  result: Schema.optional(Schema.Unknown),
+  error: Schema.optional(Schema.Unknown),
+})
+
+const JsonRpcMethodSchema = Schema.Struct({
+  method: Schema.String,
+  params: Schema.optional(Schema.Unknown),
+  id: Schema.optional(Schema.Number),
+})
 
 const toSandboxPolicy = (sandbox: SandboxMode | null, override: SandboxPolicy | null): SandboxPolicy => {
   if (override) return override
@@ -139,408 +172,474 @@ const extractTurnId = (value: unknown): string | null => {
   return null
 }
 
-export class CodexAppSession {
-  private readonly options: CodexAppSessionOptions
-  private readonly child: ChildProcessWithoutNullStreams
-  private readonly pending = new Map<number, PendingRequest>()
-  private readonly logger: Logger
-  private buffer = ''
-  private nextRequestId = 1
-  private ready = false
-  private threadId: string | null = null
-  private activeTurn: ActiveTurn | null = null
-  private exitError: Error | null = null
-  private stopped = false
-
-  constructor(options: CodexAppSessionOptions) {
-    this.options = options
-    this.logger = options.logger.child({ component: 'codex-app-session', workspace_path: options.cwd })
-    this.child = spawn('bash', ['-lc', options.command], {
-      cwd: options.cwd,
-      env: process.env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    })
-
-    this.child.stdout.on('data', (chunk: Buffer) => {
-      this.buffer += chunk.toString('utf8')
-      const lines = this.buffer.split('\n')
-      this.buffer = lines.pop() ?? ''
-      for (const line of lines) {
-        this.handleStdoutLine(line)
-      }
-    })
-    this.child.stderr.on('data', (chunk: Buffer) => {
-      const text = chunk.toString('utf8').trim()
-      if (text.length > 0) {
-        this.logger.log('info', 'codex_stderr', { message: text })
-      }
-    })
-    this.child.on('exit', (code, signal) => {
-      const error = new SymphonyError(
-        'port_exit',
-        `codex app-server exited code=${code ?? 'unknown'} signal=${signal ?? 'unknown'}`,
-      )
-      this.exitError = error
-      for (const [id, pending] of this.pending) {
-        clearTimeout(pending.timer)
-        pending.reject(error)
-        this.pending.delete(id)
-      }
-      if (this.activeTurn) {
-        clearTimeout(this.activeTurn.timer)
-        this.activeTurn.reject(error)
-        this.activeTurn = null
-      }
-    })
-  }
-
-  async initialize(): Promise<void> {
-    if (this.ready) return
-    await this.request('initialize', { clientInfo: { name: 'symphony', version: '0.1.0' }, capabilities: {} })
-    this.write({ method: 'initialized', params: {} })
-    this.ready = true
-    this.options.onEvent({
-      event: 'session_started',
-      timestamp: new Date().toISOString(),
-      codexAppServerPid: String(this.child.pid ?? ''),
-      message: 'codex app-server initialized',
-    })
-  }
-
-  async runTurn(prompt: string): Promise<TurnOutcome> {
-    await this.initialize()
-    const threadId = this.threadId ?? (await this.startThread())
-    const turnId = await this.startTurn(threadId, prompt)
-    return new Promise<TurnOutcome>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.activeTurn = null
-        reject(new SymphonyError('turn_timeout', `turn ${turnId} exceeded ${this.options.turnTimeoutMs}ms`))
-      }, this.options.turnTimeoutMs)
-
-      this.activeTurn = {
-        threadId,
-        turnId,
-        resolve,
-        reject,
-        timer,
-      }
-    })
-  }
-
-  stop(): void {
-    if (this.stopped) return
-    this.stopped = true
-    if (!this.child.killed) {
-      this.child.kill('SIGKILL')
-    }
-  }
-
-  private async startThread(): Promise<string> {
-    const params: ThreadStartParams = {
-      model: null,
-      modelProvider: null,
-      cwd: this.options.cwd,
-      approvalPolicy: this.options.approvalPolicy,
-      sandbox: this.options.threadSandbox,
-      config: { mcp_servers: {}, web_search: 'live' },
-      serviceName: 'symphony',
-      baseInstructions: null,
-      developerInstructions: null,
-      personality: null,
-      ephemeral: false,
-      dynamicTools: this.options.dynamicTools,
-      experimentalRawEvents: false,
-      persistExtendedHistory: false,
-    }
-    const response = (await this.request('thread/start', params)) as ThreadStartResponse
-    this.threadId = response.thread.id
-    return response.thread.id
-  }
-
-  private async startTurn(threadId: string, prompt: string): Promise<string> {
-    const params: TurnStartParams = {
-      threadId,
-      input: [{ type: 'text', text: prompt, text_elements: [] }],
-      cwd: this.options.cwd,
-      approvalPolicy: this.options.approvalPolicy,
-      sandboxPolicy: toSandboxPolicy(this.options.threadSandbox, this.options.turnSandboxPolicy),
-      model: null,
-      serviceTier: null,
-      effort: null,
-      summary: null,
-      personality: null,
-      outputSchema: null,
-      collaborationMode: null,
-    }
-    const response = (await this.request('turn/start', params)) as TurnStartResponse
-    const turnId = response.turn.id
-    const sessionId = `${threadId}-${turnId}`
-    this.options.onEvent({
-      event: 'turn_started',
-      timestamp: new Date().toISOString(),
-      codexAppServerPid: String(this.child.pid ?? ''),
-      threadId,
-      turnId,
-      sessionId,
-      message: this.options.title,
-    })
-    return turnId
-  }
-
-  private handleStdoutLine(rawLine: string): void {
-    const trimmed = rawLine.trim()
-    if (trimmed.length === 0) return
-
-    let message: Record<string, unknown>
-    try {
-      message = JSON.parse(trimmed) as Record<string, unknown>
-    } catch (error) {
-      this.options.onEvent({
-        event: 'malformed',
-        timestamp: new Date().toISOString(),
-        codexAppServerPid: String(this.child.pid ?? ''),
-        message: trimmed.slice(0, 400),
-      })
-      this.logger.log('warn', 'codex_stdout_malformed', { error: toError(error).message, line: trimmed.slice(0, 400) })
-      return
-    }
-
-    if (typeof message.id === 'number' && ('result' in message || 'error' in message)) {
-      const pending = this.pending.get(message.id)
-      if (!pending) return
-      clearTimeout(pending.timer)
-      this.pending.delete(message.id)
-      if ('error' in message && message.error !== undefined) {
-        pending.reject(new SymphonyError('response_error', `${pending.method} failed`, message.error))
-      } else {
-        pending.resolve(message.result)
-      }
-      return
-    }
-
-    if (typeof message.id === 'number' && typeof message.method === 'string') {
-      void this.handleServerRequest(message.id, message.method, message.params)
-      return
-    }
-
-    if (typeof message.method === 'string') {
-      this.handleNotification(message.method, message.params)
-    }
-  }
-
-  private async handleServerRequest(id: number, method: string, params: unknown): Promise<void> {
-    if (method === 'item/commandExecution/requestApproval') {
-      this.write({ id, result: { decision: 'acceptForSession' } })
-      this.emitEvent('approval_auto_approved', params, 'auto-approved command execution')
-      return
-    }
-    if (method === 'item/fileChange/requestApproval') {
-      this.write({ id, result: { decision: 'acceptForSession' } })
-      this.emitEvent('approval_auto_approved', params, 'auto-approved file change')
-      return
-    }
-    if (method === 'applyPatchApproval' || method === 'execCommandApproval') {
-      this.write({ id, result: { decision: 'approved_for_session' } })
-      this.emitEvent('approval_auto_approved', params, 'auto-approved legacy approval request')
-      return
-    }
-    if (method === 'mcpServer/elicitation/request') {
-      this.write({ id, result: { action: 'decline', content: null } })
-      this.emitEvent('notification', params, 'declined mcp elicitation request')
-      return
-    }
-    if (method === 'item/tool/requestUserInput') {
-      this.write({ id, error: { code: -32000, message: 'turn_input_required' } })
-      const error = new SymphonyError('turn_input_required', 'agent requested user input')
-      this.emitEvent('turn_input_required', params, 'agent requested user input')
-      if (this.activeTurn) {
-        clearTimeout(this.activeTurn.timer)
-        this.activeTurn.reject(error)
-        this.activeTurn = null
-      }
-      return
-    }
-    if (method === 'item/tool/call') {
-      const raw = params as { tool?: unknown; arguments?: unknown } | null
-      const toolName = typeof raw?.tool === 'string' ? raw.tool : ''
-      try {
-        const result = await this.options.onToolCall(toolName, raw?.arguments)
-        this.write({ id, result })
-        if (!result.success) {
-          this.emitEvent('unsupported_tool_call', params, `tool ${toolName} returned failure`)
-        }
-      } catch (error) {
-        const payload: DynamicToolCallResponse = {
-          success: false,
-          contentItems: [{ type: 'inputText', text: JSON.stringify({ error: toError(error).message }) }],
-        }
-        this.write({ id, result: payload })
-        this.emitEvent('unsupported_tool_call', params, `tool ${toolName} failed`)
-      }
-      return
-    }
-
-    this.write({ id, result: { acknowledged: true } })
-    this.emitEvent('notification', params, `acknowledged ${method}`)
-  }
-
-  private handleNotification(method: string, params: unknown): void {
-    if (method === 'turn/completed') {
-      const threadId = extractThreadId(params) ?? this.activeTurn?.threadId ?? this.threadId
-      const turnId = extractTurnId(params) ?? this.activeTurn?.turnId
-      const status = (params as { turn?: { status?: unknown } } | null | undefined)?.turn?.status
-      const sessionId = threadId && turnId ? `${threadId}-${turnId}` : null
-      if (this.activeTurn && turnId === this.activeTurn.turnId) {
-        clearTimeout(this.activeTurn.timer)
-        const resolver = this.activeTurn
-        this.activeTurn = null
-        if (status === 'completed') {
-          resolver.resolve({ status: 'completed', threadId: resolver.threadId, turnId: resolver.turnId })
-          this.options.onEvent({
-            event: 'turn_completed',
-            timestamp: new Date().toISOString(),
-            codexAppServerPid: String(this.child.pid ?? ''),
-            sessionId,
-            threadId: resolver.threadId,
-            turnId: resolver.turnId,
-            message: this.options.title,
-          })
-          return
-        }
-        if (status === 'interrupted') {
-          resolver.reject(new SymphonyError('turn_cancelled', `turn ${resolver.turnId} was interrupted`))
-          this.options.onEvent({
-            event: 'turn_cancelled',
-            timestamp: new Date().toISOString(),
-            codexAppServerPid: String(this.child.pid ?? ''),
-            sessionId,
-            threadId: resolver.threadId,
-            turnId: resolver.turnId,
-            message: this.options.title,
-          })
-          return
-        }
-        resolver.reject(new SymphonyError('turn_failed', `turn ${resolver.turnId} failed`, params))
-        this.options.onEvent({
-          event: 'turn_failed',
-          timestamp: new Date().toISOString(),
-          codexAppServerPid: String(this.child.pid ?? ''),
-          sessionId,
-          threadId: resolver.threadId,
-          turnId: resolver.turnId,
-          message: this.options.title,
+const writeMessage = (
+  child: ChildProcessWithoutNullStreams,
+  payload: Record<string, unknown>,
+): Effect.Effect<void, CodexProtocolError, never> =>
+  Effect.tryPromise({
+    try: () =>
+      new Promise<void>((resolve, reject) => {
+        child.stdin.write(`${JSON.stringify(payload)}\n`, 'utf8', (error) => {
+          if (error) {
+            reject(error)
+            return
+          }
+          resolve()
         })
-      }
-      return
-    }
+      }),
+    catch: (error) => new CodexProtocolError('response_error', 'failed to write to codex app-server stdin', error),
+  })
 
-    if (method === 'item/agentMessage/delta') {
-      const delta =
-        typeof (params as { delta?: unknown } | null | undefined)?.delta === 'string'
-          ? (params as { delta: string }).delta
-          : null
-      if (delta) {
-        this.emitEvent('notification', params, delta)
-      }
-      return
-    }
+const decodeResponse = Schema.decodeUnknownEither(JsonRpcResponseSchema)
+const decodeMethod = Schema.decodeUnknownEither(JsonRpcMethodSchema)
 
-    if (method === 'thread/tokenUsage/updated') {
-      const usage = extractTokenUsage(
-        (params as { tokenUsage?: unknown; usage?: unknown } | null | undefined)?.tokenUsage ??
-          (params as { usage?: unknown } | null | undefined)?.usage,
-      )
-      if (usage) {
-        this.options.onEvent({
-          event: 'notification',
-          timestamp: new Date().toISOString(),
-          codexAppServerPid: String(this.child.pid ?? ''),
-          threadId: extractThreadId(params) ?? this.threadId,
-          turnId: extractTurnId(params),
-          usage,
-        })
-      }
-      return
-    }
-
-    if (method === 'account/rateLimits/updated') {
-      const rateLimits = ((params as { rateLimits?: unknown } | null | undefined)?.rateLimits ??
-        null) as RateLimitSnapshot | null
-      this.options.onEvent({
-        event: 'notification',
-        timestamp: new Date().toISOString(),
-        codexAppServerPid: String(this.child.pid ?? ''),
-        threadId: extractThreadId(params) ?? this.threadId,
-        turnId: extractTurnId(params),
-        rateLimits,
-      })
-      return
-    }
-
-    if (method === 'error') {
-      if (this.activeTurn) {
-        clearTimeout(this.activeTurn.timer)
-        const resolver = this.activeTurn
-        this.activeTurn = null
-        resolver.reject(new SymphonyError('turn_failed', 'codex app-server reported a stream error', params))
-      }
-      this.emitEvent('turn_ended_with_error', params, JSON.stringify(params))
-      return
-    }
-
-    this.emitEvent('other_message', params, method)
+export const decodeProtocolMessage = (rawLine: string): Record<string, unknown> | null => {
+  const trimmed = rawLine.trim()
+  if (trimmed.length === 0) return null
+  const parsed = JSON.parse(trimmed) as unknown
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new CodexProtocolError('response_error', 'codex protocol line was not an object', parsed)
   }
-
-  private emitEvent(event: string, params: unknown, message: string | null): void {
-    const threadId = extractThreadId(params) ?? this.threadId
-    const turnId = extractTurnId(params)
-    const sessionId = threadId && turnId ? `${threadId}-${turnId}` : null
-    this.options.onEvent({
-      event,
-      timestamp: new Date().toISOString(),
-      codexAppServerPid: String(this.child.pid ?? ''),
-      sessionId,
-      threadId,
-      turnId,
-      message,
-    })
-  }
-
-  private async request(method: string, params: unknown): Promise<unknown> {
-    if (this.exitError) throw this.exitError
-    const id = this.nextRequestId
-    this.nextRequestId += 1
-
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id)
-        reject(
-          new SymphonyError('response_timeout', `${method} did not complete within ${this.options.readTimeoutMs}ms`),
-        )
-      }, this.options.readTimeoutMs)
-
-      this.pending.set(id, {
-        method,
-        resolve,
-        reject,
-        timer,
-      })
-
-      try {
-        this.write({ id, method, params })
-      } catch (error) {
-        clearTimeout(timer)
-        this.pending.delete(id)
-        reject(error)
-      }
-    })
-  }
-
-  private write(payload: unknown): void {
-    const serialized = `${JSON.stringify(payload)}\n`
-    const ok = this.child.stdin.write(serialized)
-    if (!ok) {
-      this.logger.log('warn', 'codex_stdin_backpressure', {})
-    }
-  }
+  return parsed as Record<string, unknown>
 }
+
+export const makeCodexSessionLayer = (logger: Logger) =>
+  Layer.succeed(CodexSessionService, {
+    createSession: (options) =>
+      Effect.gen(function* () {
+        yield* Scope.Scope
+        const runtime = yield* Effect.runtime<never>()
+        const sessionLogger = options.logger.child({
+          component: 'codex-app-session',
+          workspace_path: options.cwd,
+        })
+        const pending = new Map<number, PendingRequest>()
+        const nextRequestId = yield* Ref.make(1)
+        const threadIdRef = yield* Ref.make<string | null>(null)
+        const activeTurnRef = yield* SynchronizedRef.make<ActiveTurn | null>(null)
+        const readyRef = yield* Ref.make(false)
+
+        const failAllPending = (error: CodexProtocolError) =>
+          Effect.gen(function* () {
+            for (const [id, entry] of pending) {
+              pending.delete(id)
+              yield* Deferred.fail(entry.deferred, error)
+            }
+            const activeTurn = yield* SynchronizedRef.get(activeTurnRef)
+            if (activeTurn) {
+              yield* Deferred.fail(activeTurn.deferred, error)
+              yield* SynchronizedRef.set(activeTurnRef, null)
+            }
+          })
+
+        const child = yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            spawn('bash', ['-lc', options.command], {
+              cwd: options.cwd,
+              env: process.env,
+              stdio: ['pipe', 'pipe', 'pipe'],
+            }),
+          ),
+          (resource) =>
+            Effect.sync(() => {
+              if (!resource.killed) {
+                resource.kill('SIGKILL')
+              }
+            }),
+        )
+
+        yield* Effect.sync(() => {
+          child.once('exit', (code, signal) => {
+            const error = new CodexProtocolError(
+              'port_exit',
+              `codex app-server exited code=${code ?? 'unknown'} signal=${signal ?? 'unknown'}`,
+            )
+            Runtime.runFork(runtime)(failAllPending(error))
+          })
+        })
+
+        const handleServerRequest = (id: number, method: string, params: unknown) =>
+          Effect.gen(function* () {
+            if (method === 'item/commandExecution/requestApproval') {
+              yield* writeMessage(child, { id, result: { decision: 'acceptForSession' } })
+              yield* options.onEvent({
+                event: 'approval_auto_approved',
+                timestamp: new Date().toISOString(),
+                codexAppServerPid: String(child.pid ?? ''),
+                message: 'auto-approved command execution',
+              })
+              return
+            }
+
+            if (method === 'item/fileChange/requestApproval') {
+              yield* writeMessage(child, { id, result: { decision: 'acceptForSession' } })
+              yield* options.onEvent({
+                event: 'approval_auto_approved',
+                timestamp: new Date().toISOString(),
+                codexAppServerPid: String(child.pid ?? ''),
+                message: 'auto-approved file change',
+              })
+              return
+            }
+
+            if (method === 'applyPatchApproval' || method === 'execCommandApproval') {
+              yield* writeMessage(child, { id, result: { decision: 'approved_for_session' } })
+              yield* options.onEvent({
+                event: 'approval_auto_approved',
+                timestamp: new Date().toISOString(),
+                codexAppServerPid: String(child.pid ?? ''),
+                message: 'auto-approved legacy approval request',
+              })
+              return
+            }
+
+            if (method === 'mcpServer/elicitation/request') {
+              yield* writeMessage(child, { id, result: { action: 'decline', content: null } })
+              yield* options.onEvent({
+                event: 'notification',
+                timestamp: new Date().toISOString(),
+                codexAppServerPid: String(child.pid ?? ''),
+                message: 'declined mcp elicitation request',
+              })
+              return
+            }
+
+            if (method === 'item/tool/requestUserInput') {
+              yield* writeMessage(child, { id, error: { code: -32000, message: 'turn_input_required' } })
+              const activeTurn = yield* SynchronizedRef.get(activeTurnRef)
+              if (activeTurn) {
+                yield* Deferred.fail(
+                  activeTurn.deferred,
+                  new CodexProtocolError('turn_input_required', 'agent requested user input'),
+                )
+                yield* SynchronizedRef.set(activeTurnRef, null)
+              }
+              yield* options.onEvent({
+                event: 'turn_input_required',
+                timestamp: new Date().toISOString(),
+                codexAppServerPid: String(child.pid ?? ''),
+                message: 'agent requested user input',
+              })
+              return
+            }
+
+            if (method === 'item/tool/call') {
+              const raw = params && typeof params === 'object' ? (params as Record<string, unknown>) : {}
+              const toolCallId =
+                typeof raw.callId === 'string' ? raw.callId : typeof raw.id === 'string' ? raw.id : null
+              const toolName = typeof raw.name === 'string' ? raw.name : 'unknown'
+              const args = 'input' in raw ? raw.input : raw.arguments
+              const result = yield* options.onToolCall(toolName, args)
+              yield* writeMessage(child, { id, result: { ...result, callId: toolCallId } })
+              return
+            }
+
+            yield* writeMessage(child, {
+              id,
+              result: {
+                success: false,
+                error: 'unsupported_tool_call',
+              },
+            })
+          }).pipe(
+            Effect.catchAll((error) =>
+              Effect.sync(() => {
+                sessionLogger.log('warn', 'codex_request_handling_failed', {
+                  method,
+                  ...toLogError(error),
+                })
+              }),
+            ),
+          )
+
+        const emitTurnOutcome = (
+          status: TurnOutcome['status'],
+          turnId: string,
+          threadId: string,
+          message?: string | null,
+        ) =>
+          Effect.gen(function* () {
+            const activeTurn = yield* SynchronizedRef.get(activeTurnRef)
+            if (!activeTurn || activeTurn.turnId !== turnId) return
+
+            yield* Deferred.succeed(activeTurn.deferred, { status, turnId, threadId })
+            yield* SynchronizedRef.set(activeTurnRef, null)
+            yield* options.onEvent({
+              event: `turn_${status}`,
+              timestamp: new Date().toISOString(),
+              codexAppServerPid: String(child.pid ?? ''),
+              sessionId: `${threadId}-${turnId}`,
+              threadId,
+              turnId,
+              message: message ?? null,
+            })
+          })
+
+        const handleNotification = (method: string, params: unknown) =>
+          Effect.gen(function* () {
+            const timestamp = new Date().toISOString()
+            const usage = extractTokenUsage(params)
+            const rateLimits =
+              params && typeof params === 'object' && 'rateLimits' in params
+                ? ((params as { rateLimits?: RateLimitSnapshot | null }).rateLimits ?? null)
+                : null
+
+            if (method === 'turn/completed') {
+              const activeTurn = yield* SynchronizedRef.get(activeTurnRef)
+              if (activeTurn) {
+                yield* emitTurnOutcome('completed', activeTurn.turnId, activeTurn.threadId)
+              }
+              return
+            }
+
+            if (method === 'turn/failed') {
+              const activeTurn = yield* SynchronizedRef.get(activeTurnRef)
+              if (activeTurn) {
+                yield* emitTurnOutcome('failed', activeTurn.turnId, activeTurn.threadId)
+              }
+              return
+            }
+
+            if (method === 'turn/cancelled') {
+              const activeTurn = yield* SynchronizedRef.get(activeTurnRef)
+              if (activeTurn) {
+                yield* emitTurnOutcome('cancelled', activeTurn.turnId, activeTurn.threadId)
+              }
+              return
+            }
+
+            yield* options.onEvent({
+              event: method.replaceAll('/', '_'),
+              timestamp,
+              codexAppServerPid: String(child.pid ?? ''),
+              threadId: extractThreadId(params),
+              turnId: extractTurnId(params),
+              sessionId:
+                extractThreadId(params) && extractTurnId(params)
+                  ? `${extractThreadId(params)}-${extractTurnId(params)}`
+                  : null,
+              message:
+                params && typeof params === 'object' && 'message' in params && typeof params.message === 'string'
+                  ? params.message
+                  : null,
+              usage,
+              rateLimits,
+            })
+          })
+
+        const handleProtocolLine = (line: string) =>
+          Effect.gen(function* () {
+            let message: Record<string, unknown> | null = null
+            try {
+              message = decodeProtocolMessage(line)
+            } catch (error) {
+              yield* options.onEvent({
+                event: 'malformed',
+                timestamp: new Date().toISOString(),
+                codexAppServerPid: String(child.pid ?? ''),
+                message: line.trim().slice(0, 400),
+              })
+              yield* Effect.sync(() => {
+                sessionLogger.log('warn', 'codex_stdout_malformed', {
+                  line: line.trim().slice(0, 400),
+                  ...toLogError(error),
+                })
+              })
+              return
+            }
+
+            if (!message) return
+
+            const responseDecoded = decodeResponse(message)
+            if (responseDecoded._tag === 'Right' && ('result' in message || 'error' in message)) {
+              const response = responseDecoded.right
+              const request = pending.get(response.id)
+              if (!request) return
+              pending.delete(response.id)
+
+              if (response.error !== undefined) {
+                yield* Deferred.fail(
+                  request.deferred,
+                  new CodexProtocolError('response_error', `${request.method} failed`, response.error),
+                )
+              } else {
+                yield* Deferred.succeed(request.deferred, response.result)
+              }
+              return
+            }
+
+            const methodDecoded = decodeMethod(message)
+            if (methodDecoded._tag === 'Right') {
+              const request = methodDecoded.right
+              if (typeof request.id === 'number') {
+                yield* handleServerRequest(request.id, request.method, request.params)
+                return
+              }
+              yield* handleNotification(request.method, request.params)
+            }
+          }).pipe(
+            Effect.catchAll((error) =>
+              Effect.sync(() => {
+                sessionLogger.log('warn', 'codex_protocol_error', toLogError(error))
+              }),
+            ),
+          )
+
+        const stdoutFiber = yield* Stream.fromAsyncIterable(
+          child.stdout,
+          (error) => new CodexProtocolError('port_exit', 'codex stdout stream failed', error),
+        ).pipe(Stream.decodeText(), Stream.splitLines, Stream.runForEach(handleProtocolLine), Effect.forkScoped)
+
+        const stderrFiber = yield* Stream.fromAsyncIterable(
+          child.stderr,
+          (error) => new CodexProtocolError('port_exit', 'codex stderr stream failed', error),
+        ).pipe(
+          Stream.decodeText(),
+          Stream.splitLines,
+          Stream.runForEach((line) =>
+            Effect.sync(() => {
+              if (line.trim().length === 0) return
+              sessionLogger.log('info', 'codex_stderr', { message: line.trim() })
+            }),
+          ),
+          Effect.forkScoped,
+        )
+
+        yield* Effect.addFinalizer(() =>
+          Fiber.interruptFork(stdoutFiber).pipe(Effect.zipRight(Fiber.interruptFork(stderrFiber))),
+        )
+
+        const request = (method: string, params: unknown) =>
+          Effect.gen(function* () {
+            const id = yield* Ref.modify(nextRequestId, (current) => [current, current + 1] as const)
+            const deferred = yield* Deferred.make<unknown, CodexProtocolError>()
+            pending.set(id, { method, deferred })
+            yield* writeMessage(child, { id, method, params })
+            return yield* Deferred.await(deferred).pipe(
+              Effect.timeoutFail({
+                duration: options.readTimeoutMs,
+                onTimeout: () =>
+                  new CodexProtocolError('response_timeout', `${method} timed out after ${options.readTimeoutMs}ms`),
+              }),
+              Effect.ensuring(Effect.sync(() => pending.delete(id))),
+            )
+          })
+
+        const initialize = Ref.get(readyRef).pipe(
+          Effect.flatMap((ready) =>
+            ready
+              ? Effect.void
+              : request('initialize', {
+                  clientInfo: { name: 'symphony', version: '0.1.0' },
+                  capabilities: {},
+                }).pipe(
+                  Effect.zipRight(writeMessage(child, { method: 'initialized', params: {} })),
+                  Effect.zipRight(Ref.set(readyRef, true)),
+                  Effect.zipRight(
+                    options.onEvent({
+                      event: 'session_started',
+                      timestamp: new Date().toISOString(),
+                      codexAppServerPid: String(child.pid ?? ''),
+                      message: 'codex app-server initialized',
+                    }),
+                  ),
+                ),
+          ),
+        )
+
+        const startThread = Effect.gen(function* () {
+          const existing = yield* Ref.get(threadIdRef)
+          if (existing) return existing
+
+          const params: ThreadStartParams = {
+            model: null,
+            modelProvider: null,
+            cwd: options.cwd,
+            approvalPolicy: options.approvalPolicy,
+            sandbox: options.threadSandbox,
+            config: { mcp_servers: {}, web_search: 'live' },
+            serviceName: 'symphony',
+            baseInstructions: null,
+            developerInstructions: null,
+            personality: null,
+            ephemeral: false,
+            dynamicTools: options.dynamicTools,
+            experimentalRawEvents: false,
+            persistExtendedHistory: false,
+          }
+
+          const response = (yield* request('thread/start', params)) as ThreadStartResponse
+          yield* Ref.set(threadIdRef, response.thread.id)
+          return response.thread.id
+        })
+
+        const startTurn = (threadId: string, prompt: string) =>
+          Effect.gen(function* () {
+            const params: TurnStartParams = {
+              threadId,
+              input: [{ type: 'text', text: prompt, text_elements: [] }],
+              cwd: options.cwd,
+              approvalPolicy: options.approvalPolicy,
+              sandboxPolicy: toSandboxPolicy(options.threadSandbox, options.turnSandboxPolicy),
+              model: null,
+              serviceTier: null,
+              effort: null,
+              summary: null,
+              personality: null,
+              outputSchema: null,
+              collaborationMode: null,
+            }
+
+            const response = (yield* request('turn/start', params)) as TurnStartResponse
+            const turnId = response.turn.id
+            const deferred = yield* Deferred.make<TurnOutcome, CodexProtocolError>()
+            yield* SynchronizedRef.set(activeTurnRef, { threadId, turnId, deferred })
+            yield* options.onEvent({
+              event: 'turn_started',
+              timestamp: new Date().toISOString(),
+              codexAppServerPid: String(child.pid ?? ''),
+              threadId,
+              turnId,
+              sessionId: `${threadId}-${turnId}`,
+              message: options.title,
+            })
+            return {
+              turnId,
+              deferred,
+            }
+          })
+
+        const handle: CodexSessionHandle = {
+          runTurn: (prompt) =>
+            Effect.gen(function* () {
+              yield* initialize
+              const threadId = yield* startThread
+              const { turnId, deferred } = yield* startTurn(threadId, prompt)
+              return yield* Deferred.await(deferred).pipe(
+                Effect.timeoutFail({
+                  duration: options.turnTimeoutMs,
+                  onTimeout: () =>
+                    new CodexProtocolError('turn_timeout', `turn ${turnId} exceeded ${options.turnTimeoutMs}ms`),
+                }),
+                Effect.catchAll((error) =>
+                  error.code === 'turn_input_required'
+                    ? Effect.fail(error)
+                    : Effect.fail(
+                        error.code === 'turn_timeout'
+                          ? error
+                          : new CodexProtocolError('turn_failed', error.message, error.causeValue),
+                      ),
+                ),
+              )
+            }),
+        }
+
+        return handle
+      }).pipe(
+        Effect.tapError((error) =>
+          Effect.sync(() => {
+            logger.log('warn', 'codex_session_create_failed', toLogError(error))
+          }),
+        ),
+      ),
+  })

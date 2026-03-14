@@ -1,11 +1,15 @@
+import { spawn } from 'node:child_process'
 import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
-import { spawn } from 'node:child_process'
 
-import { SymphonyError } from './errors'
-import type { Logger } from './logger'
-import type { SymphonyConfig, WorkspaceInfo } from './types'
+import { Context, Effect, Layer } from 'effect'
+import * as Duration from 'effect/Duration'
+
+import { ConfigError, WorkspaceError, WorkflowError, toLogError } from './errors'
+import type { WorkspaceInfo } from './types'
 import { ensurePathInsideRoot, sanitizeWorkspaceKey, toAbsolutePath } from './utils'
+import { WorkflowService } from './workflow'
+import type { Logger } from './logger'
 
 const PREP_GARBAGE = ['tmp', '.elixir_ls']
 const MAX_HOOK_LOG_BYTES = 4_096
@@ -13,186 +17,314 @@ const MAX_HOOK_LOG_BYTES = 4_096
 const truncateOutput = (value: string): string =>
   value.length > MAX_HOOK_LOG_BYTES ? `${value.slice(0, MAX_HOOK_LOG_BYTES)}…` : value
 
-export class WorkspaceManager {
-  private readonly configProvider: () => Promise<SymphonyConfig>
-  private readonly logger: Logger
+export type ShellResult = {
+  stdout: string
+  stderr: string
+}
 
-  constructor(configProvider: () => Promise<SymphonyConfig>, logger: Logger) {
-    this.configProvider = configProvider
-    this.logger = logger.child({ component: 'workspace-manager' })
-  }
+export interface ShellServiceDefinition {
+  readonly run: (
+    script: string,
+    options: {
+      cwd: string
+      timeoutMs: number
+      hookName: 'after_create' | 'before_run' | 'after_run' | 'before_remove'
+    },
+  ) => Effect.Effect<ShellResult, WorkspaceError>
+}
 
-  async createForIssue(identifier: string): Promise<WorkspaceInfo> {
-    const config = await this.configProvider()
-    const workspaceKey = sanitizeWorkspaceKey(identifier)
-    const root = toAbsolutePath(config.workspaceRoot)
-    const workspacePath = toAbsolutePath(path.join(root, workspaceKey))
+export class ShellService extends Context.Tag('symphony/ShellService')<ShellService, ShellServiceDefinition>() {}
 
-    if (!ensurePathInsideRoot(root, workspacePath)) {
-      throw new SymphonyError('invalid_workspace_cwd', `workspace path ${workspacePath} escapes root ${root}`)
-    }
+export interface WorkspaceServiceDefinition {
+  readonly createForIssue: (
+    identifier: string,
+  ) => Effect.Effect<WorkspaceInfo, WorkflowError | ConfigError | WorkspaceError>
+  readonly runBeforeRun: (workspacePath: string) => Effect.Effect<void, WorkflowError | ConfigError | WorkspaceError>
+  readonly runAfterRun: (workspacePath: string) => Effect.Effect<void, WorkflowError | ConfigError | WorkspaceError>
+  readonly removeWorkspace: (identifier: string) => Effect.Effect<void, WorkflowError | ConfigError | WorkspaceError>
+}
 
-    await mkdir(root, { recursive: true })
+export class WorkspaceService extends Context.Tag('symphony/WorkspaceService')<
+  WorkspaceService,
+  WorkspaceServiceDefinition
+>() {}
 
-    let createdNow = false
-    try {
-      const metadata = await stat(workspacePath)
-      if (!metadata.isDirectory()) {
-        throw new SymphonyError('workspace_path_not_directory', `workspace path ${workspacePath} is not a directory`)
-      }
-    } catch (error) {
-      if (error instanceof SymphonyError) throw error
-      const nodeError = error as NodeJS.ErrnoException
-      if (nodeError?.code && nodeError.code !== 'ENOENT') {
-        throw new SymphonyError('workspace_create_failed', `failed to inspect workspace ${workspacePath}`, error)
-      }
-      await mkdir(workspacePath, { recursive: true })
-      createdNow = true
-    }
-
-    await this.cleanupEphemeralArtifacts(workspacePath)
-
-    if (createdNow && config.hooks.afterCreate) {
-      await this.runHook('after_create', config.hooks.afterCreate, workspacePath, config.hooks.timeoutMs, true)
-    }
-
-    return {
-      path: workspacePath,
-      workspaceKey,
-      createdNow,
-    }
-  }
-
-  async runBeforeRun(workspacePath: string): Promise<void> {
-    const config = await this.configProvider()
-    if (!config.hooks.beforeRun) return
-    await this.runHook('before_run', config.hooks.beforeRun, workspacePath, config.hooks.timeoutMs, true)
-  }
-
-  async runAfterRun(workspacePath: string): Promise<void> {
-    const config = await this.configProvider()
-    if (!config.hooks.afterRun) return
-    await this.runHook('after_run', config.hooks.afterRun, workspacePath, config.hooks.timeoutMs, false)
-  }
-
-  async removeWorkspace(identifier: string): Promise<void> {
-    const config = await this.configProvider()
-    const workspaceKey = sanitizeWorkspaceKey(identifier)
-    const root = toAbsolutePath(config.workspaceRoot)
-    const workspacePath = toAbsolutePath(path.join(root, workspaceKey))
-    if (!ensurePathInsideRoot(root, workspacePath)) {
-      throw new SymphonyError('invalid_workspace_cwd', `workspace path ${workspacePath} escapes root ${root}`)
-    }
-
-    try {
-      const metadata = await stat(workspacePath)
-      if (!metadata.isDirectory()) {
-        throw new SymphonyError('workspace_path_not_directory', `workspace path ${workspacePath} is not a directory`)
-      }
-    } catch {
-      return
-    }
-
-    if (config.hooks.beforeRemove) {
-      await this.runHook('before_remove', config.hooks.beforeRemove, workspacePath, config.hooks.timeoutMs, false)
-    }
-    await rm(workspacePath, { recursive: true, force: true })
-    this.logger.log('info', 'workspace_removed', { workspace_path: workspacePath })
-  }
-
-  private async cleanupEphemeralArtifacts(workspacePath: string): Promise<void> {
-    try {
+const cleanupEphemeralArtifacts = (workspacePath: string): Effect.Effect<void, never, never> =>
+  Effect.tryPromise({
+    try: async () => {
       const entries = await readdir(workspacePath)
       await Promise.all(
         entries
           .filter((entry) => PREP_GARBAGE.includes(entry))
           .map((entry) => rm(path.join(workspacePath, entry), { recursive: true, force: true })),
       )
-    } catch {
-      return
-    }
-  }
+    },
+    catch: () => undefined,
+  }).pipe(
+    Effect.asVoid,
+    Effect.catchAll(() => Effect.void),
+  )
 
-  private async runHook(
-    hookName: 'after_create' | 'before_run' | 'after_run' | 'before_remove',
-    script: string,
-    workspacePath: string,
-    timeoutMs: number,
-    failOnError: boolean,
-  ): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn('bash', ['-lc', script], {
-        cwd: workspacePath,
-        env: process.env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
+export const makeShellLayer = (logger: Logger) =>
+  Layer.succeed(ShellService, {
+    run: (script, options) =>
+      Effect.scoped(
+        Effect.acquireRelease(
+          Effect.sync(() =>
+            spawn('bash', ['-lc', script], {
+              cwd: options.cwd,
+              env: process.env,
+              stdio: ['ignore', 'pipe', 'pipe'],
+            }),
+          ),
+          (child) =>
+            Effect.sync(() => {
+              if (!child.killed) {
+                child.kill('SIGKILL')
+              }
+            }),
+        ).pipe(
+          Effect.flatMap((child) =>
+            Effect.async<ShellResult, WorkspaceError>((resume) => {
+              let stdout = ''
+              let stderr = ''
 
-      let stdout = ''
-      let stderr = ''
+              child.stdout.on('data', (chunk: Buffer) => {
+                stdout += chunk.toString('utf8')
+              })
+              child.stderr.on('data', (chunk: Buffer) => {
+                stderr += chunk.toString('utf8')
+              })
 
-      const timer = setTimeout(() => {
-        child.kill('SIGKILL')
-        const error = new SymphonyError('workspace_hook_timeout', `hook ${hookName} timed out after ${timeoutMs}ms`)
-        this.logger.log(failOnError ? 'error' : 'warn', 'workspace_hook_timeout', {
-          hook: hookName,
-          workspace_path: workspacePath,
-          timeout_ms: timeoutMs,
-        })
-        if (failOnError) {
-          reject(error)
-        } else {
-          resolve()
-        }
-      }, timeoutMs)
+              child.once('error', (error) => {
+                resume(
+                  Effect.fail(
+                    new WorkspaceError('workspace_hook_error', `hook ${options.hookName} failed to start`, error),
+                  ),
+                )
+              })
 
-      child.stdout.on('data', (chunk: Buffer) => {
-        stdout += chunk.toString('utf8')
-      })
-      child.stderr.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString('utf8')
-      })
+              child.once('exit', (code, signal) => {
+                if (code === 0) {
+                  resume(Effect.succeed({ stdout, stderr }))
+                  return
+                }
 
-      child.on('error', (error) => {
-        clearTimeout(timer)
-        const wrapped = new SymphonyError('workspace_hook_error', `hook ${hookName} failed to start`, error)
-        this.logger.log(failOnError ? 'error' : 'warn', 'workspace_hook_error', {
-          hook: hookName,
-          workspace_path: workspacePath,
-          error: error.message,
-        })
-        if (failOnError) {
-          reject(wrapped)
-        } else {
-          resolve()
-        }
-      })
+                resume(
+                  Effect.fail(
+                    new WorkspaceError(
+                      'workspace_hook_error',
+                      `hook ${options.hookName} failed with code ${code ?? 'unknown'} signal ${signal ?? 'unknown'}`,
+                      {
+                        stdout: truncateOutput(stdout),
+                        stderr: truncateOutput(stderr),
+                        exitCode: code,
+                        signal,
+                      },
+                    ),
+                  ),
+                )
+              })
 
-      child.on('exit', (code, signal) => {
-        clearTimeout(timer)
-        if (code === 0) {
-          this.logger.log('info', 'workspace_hook_completed', {
-            hook: hookName,
-            workspace_path: workspacePath,
-          })
-          resolve()
-          return
-        }
+              return Effect.void
+            }).pipe(
+              Effect.timeoutFail({
+                duration: Duration.millis(options.timeoutMs),
+                onTimeout: () =>
+                  new WorkspaceError(
+                    'workspace_hook_timeout',
+                    `hook ${options.hookName} timed out after ${options.timeoutMs}ms`,
+                  ),
+              }),
+            ),
+          ),
+          Effect.tapError((error) =>
+            Effect.sync(() => {
+              logger.log('warn', 'workspace_shell_failed', {
+                hook: options.hookName,
+                workspace_path: options.cwd,
+                ...toLogError(error),
+              })
+            }),
+          ),
+        ),
+      ),
+  })
 
-        const message = `hook ${hookName} failed with code ${code ?? 'unknown'} signal ${signal ?? 'unknown'}`
-        this.logger.log(failOnError ? 'error' : 'warn', 'workspace_hook_failed', {
-          hook: hookName,
-          workspace_path: workspacePath,
-          exit_code: code,
-          signal,
-          stdout: truncateOutput(stdout),
-          stderr: truncateOutput(stderr),
-        })
-        if (failOnError) {
-          reject(new SymphonyError('workspace_hook_error', message))
-        } else {
-          resolve()
-        }
-      })
-    })
-  }
-}
+export const makeWorkspaceLayer = (logger: Logger) =>
+  Layer.effect(
+    WorkspaceService,
+    Effect.gen(function* () {
+      const workflow = yield* WorkflowService
+      const shell = yield* ShellService
+      const workspaceLogger = logger.child({ component: 'workspace-service' })
+
+      const runHook = (
+        hookName: 'after_create' | 'before_run' | 'after_run' | 'before_remove',
+        script: string,
+        workspacePath: string,
+        timeoutMs: number,
+        failOnError: boolean,
+      ) =>
+        shell.run(script, { cwd: workspacePath, timeoutMs, hookName }).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              workspaceLogger.log('info', 'workspace_hook_completed', {
+                hook: hookName,
+                workspace_path: workspacePath,
+              })
+            }),
+          ),
+          Effect.catchAll((error) => {
+            const logLevel = failOnError ? 'error' : 'warn'
+            const logEffect = Effect.sync(() => {
+              workspaceLogger.log(logLevel, 'workspace_hook_failed', {
+                hook: hookName,
+                workspace_path: workspacePath,
+                ...toLogError(error),
+                ...(error.causeValue && typeof error.causeValue === 'object'
+                  ? (error.causeValue as Record<string, unknown>)
+                  : {}),
+              })
+            })
+
+            return failOnError ? logEffect.pipe(Effect.zipRight(Effect.fail(error))) : logEffect.pipe(Effect.asVoid)
+          }),
+        )
+
+      const service: WorkspaceServiceDefinition = {
+        createForIssue: (identifier) =>
+          Effect.gen(function* () {
+            const config = yield* workflow.config
+            const workspaceKey = sanitizeWorkspaceKey(identifier)
+            const root = toAbsolutePath(config.workspaceRoot)
+            const workspacePath = toAbsolutePath(path.join(root, workspaceKey))
+
+            if (!ensurePathInsideRoot(root, workspacePath)) {
+              return yield* Effect.fail(
+                new WorkspaceError('invalid_workspace_cwd', `workspace path ${workspacePath} escapes root ${root}`),
+              )
+            }
+
+            yield* Effect.tryPromise({
+              try: () => mkdir(root, { recursive: true }),
+              catch: (error) =>
+                new WorkspaceError('workspace_create_failed', `failed to ensure workspace root ${root}`, error),
+            })
+
+            let createdNow = false
+
+            const metadataResult = yield* Effect.either(
+              Effect.tryPromise({
+                try: () => stat(workspacePath),
+                catch: (error) =>
+                  new WorkspaceError('workspace_create_failed', `failed to inspect workspace ${workspacePath}`, error),
+              }),
+            )
+
+            if (metadataResult._tag === 'Left') {
+              const nodeError = metadataResult.left.causeValue as NodeJS.ErrnoException | undefined
+              if (nodeError?.code && nodeError.code !== 'ENOENT') {
+                return yield* Effect.fail(metadataResult.left)
+              }
+
+              yield* Effect.tryPromise({
+                try: () => mkdir(workspacePath, { recursive: true }),
+                catch: (error) =>
+                  new WorkspaceError('workspace_create_failed', `failed to create workspace ${workspacePath}`, error),
+              })
+              createdNow = true
+            } else if (!metadataResult.right.isDirectory()) {
+              return yield* Effect.fail(
+                new WorkspaceError(
+                  'workspace_path_not_directory',
+                  `workspace path ${workspacePath} is not a directory`,
+                ),
+              )
+            }
+
+            yield* cleanupEphemeralArtifacts(workspacePath)
+
+            if (createdNow && config.hooks.afterCreate) {
+              yield* runHook('after_create', config.hooks.afterCreate, workspacePath, config.hooks.timeoutMs, true)
+            }
+
+            return {
+              path: workspacePath,
+              workspaceKey,
+              createdNow,
+            }
+          }),
+        runBeforeRun: (workspacePath) =>
+          workflow.config.pipe(
+            Effect.flatMap((config) =>
+              config.hooks.beforeRun
+                ? runHook('before_run', config.hooks.beforeRun, workspacePath, config.hooks.timeoutMs, true)
+                : Effect.void,
+            ),
+          ),
+        runAfterRun: (workspacePath) =>
+          workflow.config.pipe(
+            Effect.flatMap((config) =>
+              config.hooks.afterRun
+                ? runHook('after_run', config.hooks.afterRun, workspacePath, config.hooks.timeoutMs, false)
+                : Effect.void,
+            ),
+          ),
+        removeWorkspace: (identifier) =>
+          Effect.gen(function* () {
+            const config = yield* workflow.config
+            const workspaceKey = sanitizeWorkspaceKey(identifier)
+            const root = toAbsolutePath(config.workspaceRoot)
+            const workspacePath = toAbsolutePath(path.join(root, workspaceKey))
+
+            if (!ensurePathInsideRoot(root, workspacePath)) {
+              return yield* Effect.fail(
+                new WorkspaceError('invalid_workspace_cwd', `workspace path ${workspacePath} escapes root ${root}`),
+              )
+            }
+
+            const metadataResult = yield* Effect.either(
+              Effect.tryPromise({
+                try: () => stat(workspacePath),
+                catch: (error) =>
+                  new WorkspaceError('workspace_create_failed', `failed to inspect workspace ${workspacePath}`, error),
+              }),
+            )
+
+            if (metadataResult._tag === 'Left') {
+              const nodeError = metadataResult.left.causeValue as NodeJS.ErrnoException | undefined
+              if (nodeError?.code === 'ENOENT') {
+                return
+              }
+              return yield* Effect.fail(metadataResult.left)
+            }
+
+            if (!metadataResult.right.isDirectory()) {
+              return yield* Effect.fail(
+                new WorkspaceError(
+                  'workspace_path_not_directory',
+                  `workspace path ${workspacePath} is not a directory`,
+                ),
+              )
+            }
+
+            if (config.hooks.beforeRemove) {
+              yield* runHook('before_remove', config.hooks.beforeRemove, workspacePath, config.hooks.timeoutMs, false)
+            }
+
+            yield* Effect.tryPromise({
+              try: () => rm(workspacePath, { recursive: true, force: true }),
+              catch: (error) =>
+                new WorkspaceError('workspace_create_failed', `failed to remove workspace ${workspacePath}`, error),
+            })
+
+            yield* Effect.sync(() => {
+              workspaceLogger.log('info', 'workspace_removed', { workspace_path: workspacePath })
+            })
+          }),
+      }
+
+      return service
+    }),
+  )

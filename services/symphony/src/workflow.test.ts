@@ -3,8 +3,10 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
+import { Effect, ManagedRuntime } from 'effect'
+
 import { createLogger } from './logger'
-import { loadWorkflowFile, WorkflowStore } from './workflow'
+import { loadWorkflowFile, makeWorkflowLayer, WorkflowService } from './workflow'
 
 describe('workflow loader', () => {
   let tempDir = ''
@@ -39,7 +41,7 @@ describe('workflow loader', () => {
     expect(workflow.promptTemplate).toBe('Work on {{issue.identifier}}.')
   })
 
-  test('WorkflowStore keeps the last known good workflow on invalid reload', async () => {
+  test('WorkflowService keeps the last known good workflow on invalid reload', async () => {
     const workflowPath = path.join(tempDir, 'WORKFLOW.md')
     writeFileSync(
       workflowPath,
@@ -47,15 +49,31 @@ describe('workflow loader', () => {
       'utf8',
     )
 
-    const store = new WorkflowStore(workflowPath, createLogger({ test: 'workflow' }))
-    await store.initialize()
+    const runtime = ManagedRuntime.make(makeWorkflowLayer(workflowPath, createLogger({ test: 'workflow' })))
+    try {
+      const initial = await runtime.runPromise(
+        Effect.gen(function* () {
+          const service = yield* WorkflowService
+          return yield* service.current
+        }),
+      )
+      expect(initial.definition.promptTemplate).toBe('Initial prompt')
 
-    await Bun.sleep(20)
-    writeFileSync(workflowPath, ['---', '- invalid', '---', 'Broken'].join('\n'), 'utf8')
+      await Bun.sleep(20)
+      writeFileSync(workflowPath, ['---', '- invalid', '---', 'Broken'].join('\n'), 'utf8')
+      await Bun.sleep(20)
 
-    const current = await store.getCurrent()
-    expect(current.definition.promptTemplate).toBe('Initial prompt')
-    expect(current.config.tracker.projectSlug).toBe('symphony')
-    store.close()
+      const current = await runtime.runPromise(
+        Effect.gen(function* () {
+          const service = yield* WorkflowService
+          return yield* service.current
+        }),
+      )
+
+      expect(current.definition.promptTemplate).toBe('Initial prompt')
+      expect(current.config.tracker.projectSlug).toBe('symphony')
+    } finally {
+      await runtime.dispose()
+    }
   })
 })

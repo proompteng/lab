@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 
-import { createLinearTrackerClient } from './linear-client'
+import { Effect, Layer, ManagedRuntime } from 'effect'
+import * as Stream from 'effect/Stream'
+
+import { createLogger } from './logger'
+import { makeTrackerLayer, TrackerService } from './linear-client'
 import type { SymphonyConfig } from './types'
+import { WorkflowService } from './workflow'
 
 const baseConfig: SymphonyConfig = {
   workflowPath: '/tmp/WORKFLOW.md',
@@ -53,6 +58,20 @@ afterEach(() => {
   globalThis.fetch = originalFetch
 })
 
+const makeRuntime = () =>
+  ManagedRuntime.make(
+    makeTrackerLayer(createLogger({ test: 'linear' })).pipe(
+      Layer.provide(
+        Layer.succeed(WorkflowService, {
+          current: Effect.succeed({ definition: { config: {}, promptTemplate: '' }, config: baseConfig }),
+          config: Effect.succeed(baseConfig),
+          reload: Effect.succeed({ definition: { config: {}, promptTemplate: '' }, config: baseConfig }),
+          changes: Stream.empty,
+        }),
+      ),
+    ),
+  )
+
 describe('linear tracker client', () => {
   test('fetchIssuesByStates skips API calls for empty inputs', async () => {
     let called = false
@@ -61,11 +80,20 @@ describe('linear tracker client', () => {
       throw new Error('should not be called')
     }) as unknown as typeof fetch
 
-    const client = await createLinearTrackerClient(async () => baseConfig)
-    const issues = await client.fetchIssuesByStates([])
+    const runtime = makeRuntime()
+    try {
+      const issues = await runtime.runPromise(
+        Effect.gen(function* () {
+          const tracker = yield* TrackerService
+          return yield* tracker.fetchIssuesByStates([])
+        }),
+      )
 
-    expect(issues).toEqual([])
-    expect(called).toBe(false)
+      expect(issues).toEqual([])
+      expect(called).toBe(false)
+    } finally {
+      await runtime.dispose()
+    }
   })
 
   test('fetchCandidateIssues normalizes labels and blockers', async () => {
@@ -113,15 +141,24 @@ describe('linear tracker client', () => {
       )
     }) as unknown as typeof fetch
 
-    const client = await createLinearTrackerClient(async () => baseConfig)
-    const issues = await client.fetchCandidateIssues()
+    const runtime = makeRuntime()
+    try {
+      const issues = await runtime.runPromise(
+        Effect.gen(function* () {
+          const tracker = yield* TrackerService
+          return yield* tracker.fetchCandidateIssues
+        }),
+      )
 
-    expect(requests).toHaveLength(1)
-    expect(requests[0]?.query).toContain('slugId')
-    expect(requests[0]?.query).not.toContain('inverseRelations(filter:')
-    expect(requests[0]?.variables.projectSlug).toBe('symphony')
-    expect(issues).toHaveLength(1)
-    expect(issues[0]?.labels).toEqual(['bug', 'high'])
-    expect(issues[0]?.blockedBy).toEqual([{ id: 'issue-0', identifier: 'ABC-122', state: 'In Progress' }])
+      expect(requests).toHaveLength(1)
+      expect(requests[0]?.query).toContain('slugId')
+      expect(requests[0]?.query).not.toContain('inverseRelations(filter:')
+      expect(requests[0]?.variables.projectSlug).toBe('symphony')
+      expect(issues).toHaveLength(1)
+      expect(issues[0]?.labels).toEqual(['bug', 'high'])
+      expect(issues[0]?.blockedBy).toEqual([{ id: 'issue-0', identifier: 'ABC-122', state: 'In Progress' }])
+    } finally {
+      await runtime.dispose()
+    }
   })
 })

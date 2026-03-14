@@ -82,6 +82,12 @@ export type SymphonyConfig = {
   server: ServerConfig
 }
 
+export type LoadedWorkflow = {
+  definition: WorkflowDefinition
+  config: SymphonyConfig
+  mtimeMs: number
+}
+
 export type WorkspaceInfo = {
   path: string
   workspaceKey: string
@@ -117,32 +123,6 @@ export type RecentEvent = {
   message: string | null
 }
 
-export type RetryEntry = {
-  issueId: string
-  identifier: string
-  attempt: number
-  dueAtMs: number
-  timerHandle: Timer
-  error: string | null
-}
-
-export type RunningEntry = {
-  issue: Issue
-  issueId: string
-  identifier: string
-  retryAttempt: number | null
-  workspacePath: string
-  startedAt: string
-  startedAtMs: number
-  session: LiveSession
-  lastError: string | null
-  recentEvents: RecentEvent[]
-  workerHandle: Promise<void>
-  abortController: AbortController
-  stopReason: 'running' | 'stalled' | 'terminal' | 'inactive'
-  terminalCleanupRequested: boolean
-}
-
 export type CodexTotals = TokenUsageTotals & {
   endedRuntimeSeconds: number
 }
@@ -176,4 +156,38 @@ export type RuntimeSnapshot = {
     secondsRunning: number
   }
   rateLimits: RateLimitSnapshot | null
+}
+
+export type IssueDetails = {
+  issueIdentifier: string
+  issueId: string
+  status: 'running' | 'retrying'
+  workspace: {
+    path: string | null
+  }
+  attempts: {
+    restartCount: number
+    currentRetryAttempt: number
+  }
+  running: {
+    sessionId: string | null
+    turnCount: number
+    state: string
+    startedAt: string
+    lastEvent: string | null
+    lastMessage: string | null
+    lastEventAt: string | null
+    tokens: TokenUsageTotals
+  } | null
+  retry: {
+    attempt: number
+    dueAt: string
+    error: string | null
+  } | null
+  logs: {
+    codex_session_logs: unknown[]
+  }
+  recentEvents: RecentEvent[]
+  lastError: string | null
+  tracked: Record<string, unknown>
 }

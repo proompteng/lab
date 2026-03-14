@@ -1,25 +1,107 @@
 import path from 'node:path'
 
-import type { AskForApproval, SandboxMode, SandboxPolicy } from '@proompteng/codex'
+import type * as ParseResult from '@effect/schema/ParseResult'
+import * as Schema from '@effect/schema/Schema'
+import * as TreeFormatter from '@effect/schema/TreeFormatter'
+import { Effect } from 'effect'
 
-import { SymphonyError } from './errors'
+import { ConfigError } from './errors'
 import type { SymphonyConfig } from './types'
 import {
   DEFAULT_WORKSPACE_ROOT,
   expandPathValue,
   hasPathSeparator,
+  normalizeState,
   normalizeStringList,
   readNumber,
   readPositiveNumber,
-  normalizeState,
 } from './utils'
 
 const DEFAULT_LINEAR_ENDPOINT = 'https://api.linear.app/graphql'
 const DEFAULT_ACTIVE_STATES = ['Todo', 'In Progress']
 const DEFAULT_TERMINAL_STATES = ['Closed', 'Cancelled', 'Canceled', 'Duplicate', 'Done']
 
-const readMap = (value: unknown): Record<string, unknown> =>
-  value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+const RawSectionSchema = Schema.Struct({
+  tracker: Schema.optionalWith(
+    Schema.Struct({
+      kind: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      endpoint: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      api_key: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      project_slug: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      active_states: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      terminal_states: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
+  polling: Schema.optionalWith(
+    Schema.Struct({
+      interval_ms: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
+  workspace: Schema.optionalWith(
+    Schema.Struct({
+      root: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
+  hooks: Schema.optionalWith(
+    Schema.Struct({
+      after_create: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      before_run: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      after_run: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      before_remove: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      timeout_ms: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
+  worker: Schema.optionalWith(
+    Schema.Struct({
+      ssh_hosts: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      max_concurrent_agents_per_host: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
+  agent: Schema.optionalWith(
+    Schema.Struct({
+      max_concurrent_agents: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      max_concurrent_agents_by_state: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      max_retry_backoff_ms: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      max_turns: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
+  codex: Schema.optionalWith(
+    Schema.Struct({
+      command: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      approval_policy: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      thread_sandbox: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      turn_sandbox_policy: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      turn_timeout_ms: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      read_timeout_ms: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      stall_timeout_ms: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
+  server: Schema.optionalWith(
+    Schema.Struct({
+      host: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      port: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
+})
+
+type RawConfigSections = typeof RawSectionSchema.Type
+
+const decodeRawSections = Schema.decodeUnknown(RawSectionSchema)
+
+const formatSchemaError = (error: ParseResult.ParseError): string => TreeFormatter.formatErrorSync(error)
+
+const mapSchemaError = <A>(
+  effect: Effect.Effect<A, ParseResult.ParseError, never>,
+): Effect.Effect<A, ConfigError, never> =>
+  effect.pipe(Effect.mapError((error) => new ConfigError('workflow_parse_error', formatSchemaError(error), error)))
 
 const resolveMaybeEnvToken = (
   value: unknown,
@@ -36,39 +118,44 @@ const normalizeWorkspaceRoot = (value: unknown, env: NodeJS.ProcessEnv): string 
   if (typeof value !== 'string' || value.trim().length === 0) {
     return DEFAULT_WORKSPACE_ROOT
   }
+
   const expanded = expandPathValue(value.trim(), env)
   if (expanded.length === 0) return DEFAULT_WORKSPACE_ROOT
   if (expanded.startsWith('http://') || expanded.startsWith('https://')) return expanded
+
   if (hasPathSeparator(expanded) || expanded.startsWith('~') || expanded.startsWith('$') || path.isAbsolute(expanded)) {
     return path.resolve(expanded)
   }
+
   return expanded
 }
 
 const normalizeConcurrencyMap = (value: unknown): Record<string, number> => {
-  const raw = readMap(value)
-  const entries = Object.entries(raw)
-    .map(([key, rawValue]) => {
-      const parsed = readPositiveNumber(rawValue, Number.NaN)
-      return [normalizeState(key), parsed] as const
-    })
-    .filter(([, parsed]) => Number.isFinite(parsed) && parsed > 0)
-  return Object.fromEntries(entries)
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([key, rawValue]) => {
+        const parsed = readPositiveNumber(rawValue, Number.NaN)
+        return [normalizeState(key), parsed] as const
+      })
+      .filter(([, parsed]) => Number.isFinite(parsed) && parsed > 0),
+  )
 }
 
-export const toSymphonyConfig = (
+const normalizeConfig = (
   workflowPath: string,
-  rawConfig: Record<string, unknown>,
-  env: NodeJS.ProcessEnv = process.env,
+  rawConfig: RawConfigSections,
+  env: NodeJS.ProcessEnv,
 ): SymphonyConfig => {
-  const tracker = readMap(rawConfig.tracker)
-  const polling = readMap(rawConfig.polling)
-  const workspace = readMap(rawConfig.workspace)
-  const hooks = readMap(rawConfig.hooks)
-  const worker = readMap(rawConfig.worker)
-  const agent = readMap(rawConfig.agent)
-  const codex = readMap(rawConfig.codex)
-  const server = readMap(rawConfig.server)
+  const tracker = rawConfig.tracker ?? {}
+  const polling = rawConfig.polling ?? {}
+  const workspace = rawConfig.workspace ?? {}
+  const hooks = rawConfig.hooks ?? {}
+  const worker = rawConfig.worker ?? {}
+  const agent = rawConfig.agent ?? {}
+  const codex = rawConfig.codex ?? {}
+  const server = rawConfig.server ?? {}
 
   return {
     workflowPath: path.resolve(workflowPath),
@@ -115,9 +202,12 @@ export const toSymphonyConfig = (
         typeof codex.command === 'string' && codex.command.trim().length > 0
           ? codex.command.trim()
           : 'codex app-server',
-      approvalPolicy: (codex.approval_policy ?? null) as AskForApproval | null,
-      threadSandbox: (codex.thread_sandbox ?? null) as SandboxMode | null,
-      turnSandboxPolicy: (codex.turn_sandbox_policy ?? null) as SandboxPolicy | null,
+      approvalPolicy: typeof codex.approval_policy === 'string' ? (codex.approval_policy as never) : null,
+      threadSandbox: typeof codex.thread_sandbox === 'string' ? (codex.thread_sandbox as never) : null,
+      turnSandboxPolicy:
+        codex.turn_sandbox_policy && typeof codex.turn_sandbox_policy === 'object'
+          ? (codex.turn_sandbox_policy as never)
+          : null,
       turnTimeoutMs: readPositiveNumber(codex.turn_timeout_ms, 3_600_000),
       readTimeoutMs: readPositiveNumber(codex.read_timeout_ms, 5_000),
       stallTimeoutMs: readNumber(codex.stall_timeout_ms, 300_000),
@@ -129,20 +219,45 @@ export const toSymphonyConfig = (
   }
 }
 
+export const toSymphonyConfigEffect = (
+  workflowPath: string,
+  rawConfig: Record<string, unknown>,
+  env: NodeJS.ProcessEnv = process.env,
+): Effect.Effect<SymphonyConfig, ConfigError, never> =>
+  mapSchemaError(decodeRawSections(rawConfig)).pipe(
+    Effect.map((decoded) => normalizeConfig(workflowPath, decoded, env)),
+  )
+
+export const toSymphonyConfig = (
+  workflowPath: string,
+  rawConfig: Record<string, unknown>,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<SymphonyConfig> => Effect.runPromise(toSymphonyConfigEffect(workflowPath, rawConfig, env))
+
+export const validateDispatchConfigEffect = (config: SymphonyConfig): Effect.Effect<void, ConfigError, never> =>
+  Effect.gen(function* () {
+    if (!config.tracker.kind) {
+      return yield* Effect.fail(new ConfigError('unsupported_tracker_kind', 'tracker.kind is required'))
+    }
+    if (config.tracker.kind !== 'linear') {
+      return yield* Effect.fail(
+        new ConfigError('unsupported_tracker_kind', `tracker.kind ${config.tracker.kind} is not supported`),
+      )
+    }
+    if (!config.tracker.apiKey) {
+      return yield* Effect.fail(new ConfigError('missing_tracker_api_key', 'tracker.api_key is required'))
+    }
+    if (!config.tracker.projectSlug) {
+      return yield* Effect.fail(new ConfigError('missing_tracker_project_slug', 'tracker.project_slug is required'))
+    }
+    if (!config.codex.command || config.codex.command.trim().length === 0) {
+      return yield* Effect.fail(new ConfigError('invalid_codex_command', 'codex.command must be set'))
+    }
+  })
+
 export const validateDispatchConfig = (config: SymphonyConfig): void => {
-  if (!config.tracker.kind) {
-    throw new SymphonyError('unsupported_tracker_kind', 'tracker.kind is required')
-  }
-  if (config.tracker.kind !== 'linear') {
-    throw new SymphonyError('unsupported_tracker_kind', `tracker.kind ${config.tracker.kind} is not supported`)
-  }
-  if (!config.tracker.apiKey) {
-    throw new SymphonyError('missing_tracker_api_key', 'tracker.api_key is required')
-  }
-  if (!config.tracker.projectSlug) {
-    throw new SymphonyError('missing_tracker_project_slug', 'tracker.project_slug is required')
-  }
-  if (!config.codex.command || config.codex.command.trim().length === 0) {
-    throw new SymphonyError('invalid_codex_command', 'codex.command must be set')
+  const result = Effect.runSync(Effect.either(validateDispatchConfigEffect(config)))
+  if (result._tag === 'Left') {
+    throw result.left
   }
 }

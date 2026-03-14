@@ -1,6 +1,6 @@
 import Handlebars from 'handlebars'
 
-import { SymphonyError } from './errors'
+import { WorkflowError } from './errors'
 import type { Issue } from './types'
 
 export type PromptTemplateInput = {
@@ -20,7 +20,7 @@ const createTemplateEngine = () => {
 
   engine.registerHelper('helperMissing', function helperMissing(this: unknown, ...args: unknown[]) {
     const helperName = typeof args.at(-1) === 'object' ? (args.at(-1) as { name?: string }).name : 'unknown'
-    throw new SymphonyError('template_render_error', `unknown helper ${helperName ?? 'unknown'}`)
+    throw new WorkflowError('template_render_error', `unknown helper ${helperName ?? 'unknown'}`)
   })
 
   engine.registerHelper('json', (value: unknown) => JSON.stringify(value))
@@ -45,12 +45,12 @@ export const renderPromptTemplate = (template: string, input: PromptTemplateInpu
   try {
     compiled = engine.compile(template, { strict: true, noEscape: true })
   } catch (error) {
-    throw new SymphonyError('template_parse_error', 'failed to parse workflow prompt template', error)
+    throw new WorkflowError('template_parse_error', 'failed to parse workflow prompt template', error)
   }
 
   try {
     return compiled(input).trim()
   } catch (error) {
-    throw new SymphonyError('template_render_error', 'failed to render workflow prompt template', error)
+    throw new WorkflowError('template_render_error', 'failed to render workflow prompt template', error)
   }
 }
