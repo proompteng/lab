@@ -157,6 +157,7 @@ For env and gRPC source-of-truth changes in this branch:
 - [designs/jangar-control-plane-capability-admission-failure-budgets-and-rollout-rings-2026-03-06.md](designs/jangar-control-plane-capability-admission-failure-budgets-and-rollout-rings-2026-03-06.md)
 - [designs/jangar-authoritative-controller-heartbeat-and-dependency-quorum-2026-03-08.md](designs/jangar-authoritative-controller-heartbeat-and-dependency-quorum-2026-03-08.md)
 - [designs/jangar-control-plane-admission-quorum-and-rollout-circuit-breaker-2026-03-06.md](designs/jangar-control-plane-admission-quorum-and-rollout-circuit-breaker-2026-03-06.md)
+- [designs/jangar-control-plane-provider-capacity-arbitration-and-template-run-truth-2026-03-14.md](designs/jangar-control-plane-provider-capacity-arbitration-and-template-run-truth-2026-03-14.md)
 - [designs/controller-finalizer-conventions.md](designs/controller-finalizer-conventions.md)
 - [designs/controller-kubectl-version-compat.md](designs/controller-kubectl-version-compat.md)
 - [designs/controller-namespace-scope-parse-validate.md](designs/controller-namespace-scope-parse-validate.md)
