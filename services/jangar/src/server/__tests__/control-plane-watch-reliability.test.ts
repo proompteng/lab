@@ -49,6 +49,28 @@ describe('control-plane watch reliability', () => {
     expect(summary.total_restarts).toBe(2)
   })
 
+  it('keeps independent single-stream restarts observable without degrading status', () => {
+    vi.stubEnv('JANGAR_CONTROL_PLANE_WATCH_HEALTH_RESTART_DEGRADE_THRESHOLD', '2')
+    recordWatchReliabilityRestart({
+      resource: 'toolruns.tools.proompteng.ai',
+      namespace: 'agents',
+    })
+    recordWatchReliabilityRestart({
+      resource: 'agentruns.agents.proompteng.ai',
+      namespace: 'agents',
+    })
+    recordWatchReliabilityRestart({
+      resource: 'orchestrations.orchestration.proompteng.ai',
+      namespace: 'agents',
+    })
+
+    const summary = getWatchReliabilitySummary()
+
+    expect(summary.status).toBe('healthy')
+    expect(summary.total_restarts).toBe(3)
+    expect(summary.observed_streams).toBe(3)
+  })
+
   it('degrades immediately when watch errors are observed', () => {
     recordWatchReliabilityEvent({
       resource: 'toolruns.tools.proompteng.ai',

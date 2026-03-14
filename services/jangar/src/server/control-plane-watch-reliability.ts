@@ -170,9 +170,10 @@ export const getWatchReliabilitySummary = (): ControlPlaneWatchReliabilitySummar
   })
   const topStreams = observedStreams.slice(0, Math.min(streamLimit, TOP_STREAM_LIMIT))
   const restartDegradeThreshold = resolveRestartDegradeThreshold()
+  const maxStreamRestarts = observedStreams.reduce((currentMax, stream) => Math.max(currentMax, stream.restarts), 0)
 
   const status =
-    totalErrors > 0 || totalRestarts >= restartDegradeThreshold
+    totalErrors > 0 || maxStreamRestarts >= restartDegradeThreshold
       ? 'degraded'
       : observedStreams.length > 0
         ? 'healthy'
