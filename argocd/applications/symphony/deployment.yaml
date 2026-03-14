@@ -22,7 +22,7 @@ spec:
         app.kubernetes.io/name: symphony
         app.kubernetes.io/part-of: lab
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-03-13T20:52:07.078Z"
+        kubectl.kubernetes.io/restartedAt: "2026-03-14T08:46:14.333Z"
     spec:
       containers:
         - name: symphony

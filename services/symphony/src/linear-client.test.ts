@@ -153,6 +153,7 @@ describe('linear tracker client', () => {
       expect(requests).toHaveLength(1)
       expect(requests[0]?.query).toContain('slugId')
       expect(requests[0]?.query).not.toContain('inverseRelations(filter:')
+      expect(requests[0]?.query).not.toContain('sourceIssue')
       expect(requests[0]?.variables.projectSlug).toBe('symphony')
       expect(issues).toHaveLength(1)
       expect(issues[0]?.labels).toEqual(['bug', 'high'])
