@@ -56,8 +56,12 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
    - `kubectl cnpg psql -n torghut torghut-db -- -d torghut -c "select alpaca_account_label, status, count(*) from trade_decisions where created_at >= now() - interval '1 day' group by alpaca_account_label, status order by alpaca_account_label, status;"`
    - Treat account lanes independently; stale legacy lanes can hide active-lane degradation.
    - If `schema_graph_lineage_errors` is non-empty, treat as migration-lineage divergence and pause rollout promotion until migration governance review is complete.
-   - If `hypotheses.dependency_quorum.decision != "allow"`, treat Jangar control-plane instability as a promotion blocker even if core Torghut HTTP health is still green.
+   - If `dependency_quorum.decision == "block"` or (`dependency_quorum.decision == "delay"` with `dependency_quorum.degradation_scope` that blocks capital progress), treat the affected control-plane segment as the active blocker and verify impact before disabling promotion.
+   - If `dependency_quorum.degradation_scope` is set to `single_capability`, pause affected capital movement paths only and confirm other lanes remain evaluable before broad actions.
    - If a single hypothesis is `blocked` or `shadow`, do not disable the whole service by default; verify the specific blocker reasons and keep unaffected lanes observable.
+   - Per-lane blockers are now scoped via each hypothesis manifest dependency capabilities, so a degraded dependency (for example
+     `jangar_dependency_delay`) should only affect hypotheses that explicitly require that capability.
+   - Read segment output from `dependency_quorum.segments` to confirm impact: check each `segment`, `status`, `scope`, and `reasons` before rerouting incident response.
    - If rollout must tolerate the current branched graph, verify the PR also updated `scripts/check_migration_graph.py`
      allowlist evidence for the new signature; temporary GitOps overrides are not sufficient for CI.
    - After merge migrations reduce the graph back within tolerance, remove

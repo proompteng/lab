@@ -69,6 +69,12 @@ const formatFailureReasons = (reasons: Array<{ reason: string; count: number }>)
   return reasons.map((entry) => `${entry.reason} (${entry.count})`).join(', ')
 }
 
+const formatScopeLabel = (value: string) =>
+  value
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+
 const formatAuthority = (authority: {
   mode: string
   source_deployment: string
@@ -206,6 +212,41 @@ export const ControlPlaneStatusPanel = ({
                 ? '—'
                 : `${status.agentrun_ingestion.oldest_untouched_age_seconds}s`}
             </div>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Dependency quorum
+          </div>
+          <div className="rounded-none border p-2 border-border/60 bg-muted/30 space-y-1">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-medium text-foreground">Decision</span>
+              <StatusBadge label={status.dependency_quorum.decision} />
+            </div>
+            <div className="text-muted-foreground">{status.dependency_quorum.message || 'OK'}</div>
+            <div className="text-muted-foreground">
+              Degradation scope:{' '}
+              {status.dependency_quorum.degradation_scope
+                ? formatScopeLabel(status.dependency_quorum.degradation_scope)
+                : '—'}
+            </div>
+            <div className="text-muted-foreground">
+              Reasons: {status.dependency_quorum.reasons.length > 0 ? status.dependency_quorum.reasons.join(', ') : '—'}
+            </div>
+            {status.dependency_quorum.segments && status.dependency_quorum.segments.length > 0 ? (
+              <ul className="space-y-1 pt-1 text-muted-foreground">
+                {status.dependency_quorum.segments.map((segment) => (
+                  <li key={segment.segment} className="text-[11px]">
+                    <span className="font-medium text-foreground">{segment.segment}</span> · {segment.status} · scope{' '}
+                    {formatScopeLabel(segment.scope)} · confidence {segment.confidence}
+                    {segment.reasons.length > 0 ? ` (${segment.reasons.join(', ')})` : ''}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="text-xs text-muted-foreground">No segment detail available.</div>
+            )}
           </div>
         </div>
 

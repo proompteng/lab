@@ -43,6 +43,44 @@ def _state(
     )
 
 
+def _hypothesis_manifest_payload(
+    *,
+    hypothesis_id: str,
+    lane_id: str,
+    strategy_family: str,
+    required_dependency_capabilities: list[str],
+    initial_state: str = 'shadow',
+    required_feature_rows: bool = True,
+    require_drift_checks: bool = True,
+    require_evidence_continuity: bool = True,
+    max_market_context_freshness_seconds: int | None = None,
+) -> dict[str, object]:
+    return {
+        'schema_version': 'torghut.hypothesis-manifest.v1',
+        'hypothesis_id': hypothesis_id,
+        'lane_id': lane_id,
+        'strategy_family': strategy_family,
+        'initial_state': initial_state,
+        'required_feature_sets': ['signal_feed', 'tca'],
+        'required_dependency_capabilities': required_dependency_capabilities,
+        'expected_gross_edge_bps': '6',
+        'max_allowed_slippage_bps': '12',
+        'min_sample_count_for_live_canary': 40,
+        'min_sample_count_for_scale_up': 80,
+        'max_rolling_drawdown_bps': '150',
+        'entry_requirements': {
+            'max_signal_lag_seconds': 90,
+            'max_market_context_freshness_seconds': max_market_context_freshness_seconds,
+            'max_evidence_age_minutes': 30,
+            'min_feature_batch_rows': 1,
+            'require_feature_rows': required_feature_rows,
+            'require_drift_checks': require_drift_checks,
+            'require_evidence_continuity': require_evidence_continuity,
+            'required_dependency_quorum': 'allow',
+        },
+    }
+
+
 class _FakeHttpResponse:
     def __init__(self, payload: dict[str, object], status: int = 200) -> None:
         self.status = status
@@ -132,9 +170,10 @@ class TestHypothesisReadiness(TestCase):
         cont = next(item for item in statuses if item['hypothesis_id'] == 'H-CONT-01')
         micro = next(item for item in statuses if item['hypothesis_id'] == 'H-MICRO-01')
         self.assertEqual(cont['state'], 'shadow')
-        self.assertIn('feature_rows_missing', cont['reasons'])
-        self.assertIn('evidence_continuity_missing', cont['reasons'])
-        self.assertIn('drift_checks_missing', cont['reasons'])
+        self.assertIn('signal_lag_exceeded', cont['reasons'])
+        self.assertNotIn('feature_rows_missing', cont['reasons'])
+        self.assertNotIn('evidence_continuity_missing', cont['reasons'])
+        self.assertNotIn('drift_checks_missing', cont['reasons'])
         self.assertEqual(micro['state'], 'blocked')
         self.assertIn('required_feature_set_unavailable', micro['reasons'])
 
@@ -174,6 +213,83 @@ class TestHypothesisReadiness(TestCase):
         self.assertEqual(cont['capital_multiplier'], '0.25')
         self.assertTrue(cont['promotion_eligible'])
         self.assertEqual(rev['state'], 'canary_live')
+
+    def test_compile_hypothesis_runtime_statuses_isolates_dependency_capabilities_between_hypotheses(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / 'h-a.json').write_text(
+                json.dumps(
+                    _hypothesis_manifest_payload(
+                        hypothesis_id='H-A-01',
+                        lane_id='lane-a',
+                        strategy_family='lanes-scope-a',
+                        required_dependency_capabilities=['jangar_dependency_quorum', 'signal_continuity'],
+                        required_feature_rows=True,
+                    ),
+                ),
+                encoding='utf-8',
+            )
+            (root / 'h-b.json').write_text(
+                json.dumps(
+                    _hypothesis_manifest_payload(
+                        hypothesis_id='H-B-01',
+                        lane_id='lane-b',
+                        strategy_family='lanes-scope-b',
+                        required_dependency_capabilities=['feature_coverage'],
+                        required_feature_rows=True,
+                        initial_state='blocked',
+                    ),
+                ),
+                encoding='utf-8',
+            )
+            settings.trading_hypothesis_registry_path = str(root)
+
+            registry = load_hypothesis_registry()
+            self.assertTrue(registry.loaded)
+            self.assertEqual(len(registry.items), 2)
+            self.assertEqual(len(registry.errors), 0)
+
+            statuses = compile_hypothesis_runtime_statuses(
+                registry=registry,
+                state=_state(
+                    feature_rows=5,
+                    drift_checks=3,
+                    evidence_checks=2,
+                    signal_lag_seconds=15,
+                    signal_continuity_alert_active=True,
+                    evidence_report={
+                        'ok': True,
+                        'checked_at': '2026-03-06T15:45:00+00:00',
+                    },
+                ),
+                tca_summary={
+                    'order_count': 45,
+                    'avg_abs_slippage_bps': 4,
+                    'avg_realized_shortfall_bps': -8,
+                },
+                market_context_status={'last_freshness_seconds': 60},
+                jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                    decision='delay',
+                    reasons=['workflow_backoff_warning'],
+                    message='degraded',
+                ),
+                now=datetime(2026, 3, 6, 16, 0, tzinfo=timezone.utc),
+            )
+
+        status_a = next(item for item in statuses if item['hypothesis_id'] == 'H-A-01')
+        status_b = next(item for item in statuses if item['hypothesis_id'] == 'H-B-01')
+        self.assertIn('jangar_dependency_delay', status_a['reasons'])
+        self.assertIn('signal_continuity_alert_active', status_a['reasons'])
+        self.assertNotIn('jangar_dependency_delay', status_b['reasons'])
+        self.assertNotIn('signal_continuity_alert_active', status_b['reasons'])
+        self.assertIn('dependency_capabilities', status_a)
+        self.assertIn('required', status_a['dependency_capabilities'])
+        self.assertEqual(
+            status_a['dependency_capabilities']['required'],
+            ['jangar_dependency_quorum', 'signal_continuity'],
+        )
 
     def test_summarize_hypothesis_runtime_statuses_reports_state_totals(self) -> None:
         registry = load_hypothesis_registry()

@@ -172,5 +172,38 @@ describe('ControlPlaneStatusPanel', () => {
     expect(normalizedHtml).toContain('Authority: local')
     expect(normalizedHtml).toContain('Scope: agents')
     expect(normalizedHtml).not.toContain('Top failure reasons: [object Object], [object Object]')
+    expect(normalizedHtml).toContain('No segment detail available.')
+  })
+
+  it('renders scoped dependency quorum segments when present', () => {
+    const status: ControlPlaneStatus = {
+      ...baseStatus,
+      dependency_quorum: {
+        ...baseStatus.dependency_quorum,
+        decision: 'delay',
+        reasons: ['watch_reliability_degraded'],
+        message: 'Control-plane dependency quorum is degraded; delay capital promotion.',
+        degradation_scope: 'single_capability',
+        segments: [
+          {
+            segment: 'watch_stream',
+            status: 'degraded',
+            scope: 'single_capability',
+            confidence: 'medium',
+            reasons: ['watch_reliability_degraded'],
+            as_of: '2026-01-20T00:20:00.000Z',
+          },
+        ],
+      },
+    }
+
+    const html = renderToString(<ControlPlaneStatusPanel status={status} error={null} isLoading={false} />)
+    const normalizedHtml = html.replace(/<!-- -->/g, '')
+
+    expect(normalizedHtml).toContain('Degradation scope: Single Capability')
+    expect(normalizedHtml).toContain('watch_stream')
+    expect(normalizedHtml).toContain('degraded')
+    expect(normalizedHtml).toContain('scope Single Capability')
+    expect(normalizedHtml).toContain('confidence medium')
   })
 })

@@ -174,10 +174,35 @@ export type WorkflowsReliabilityStatus = {
 
 export type DependencyQuorumDecision = 'allow' | 'delay' | 'block' | 'unknown'
 
+export type DependencyQuorumSegmentStatus = 'healthy' | 'degraded' | 'blocked'
+
+export type DependencyQuorumSegmentScope = 'global' | 'capital_family' | 'hypothesis_scoped' | 'single_capability'
+
+export type DependencyQuorumSegmentName =
+  | 'control_runtime'
+  | 'dependency_quorum'
+  | 'freshness_authority'
+  | 'evidence_authority'
+  | 'market_data_context'
+  | 'watch_stream'
+
+export type DependencyQuorumConfidence = 'high' | 'medium' | 'low'
+
+export type DependencyQuorumSegment = {
+  segment: DependencyQuorumSegmentName
+  status: DependencyQuorumSegmentStatus
+  scope: DependencyQuorumSegmentScope
+  confidence: DependencyQuorumConfidence
+  reasons: string[]
+  as_of: string
+}
+
 export type DependencyQuorumStatus = {
   decision: DependencyQuorumDecision
   reasons: string[]
   message: string
+  segments?: DependencyQuorumSegment[]
+  degradation_scope?: DependencyQuorumSegmentScope
 }
 
 export type DeploymentRolloutStatus = {
