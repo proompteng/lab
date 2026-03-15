@@ -14,9 +14,11 @@ This runbook covers Headlamp deployment, OIDC wiring with Keycloak, control-plan
 ## Operations model
 
 - Headlamp application config is GitOps-managed from `argocd/applications/headlamp`.
+- Headlamp now runs from the repo-owned image built by `services/headlamp/Dockerfile`, pinned to upstream `kubernetes-sigs/headlamp` `v0.40.1`.
 - The `headlamp-auth-bridge` service now fronts both `/auth` and `/clusters`.
 - `/auth` completes the popup handoff back to the main Headlamp window.
-- `/clusters` keeps ordinary cluster API requests flowing to Headlamp, but bridges watch websocket requests to plain HTTP watches against the kube-apiserver. This avoids the websocket handshake failures seen with Headlamp `0.40.1` against Kubernetes `v1.35.0`.
+- `/clusters` keeps ordinary cluster API requests flowing to Headlamp.
+- Live list/watch updates now use Headlamp's websocket multiplexer endpoint `/wsMultiplexer`, enabled at frontend build time in the custom image. This replaces the legacy direct `/clusters/...?...watch=1` browser websocket path that was failing on the private hostname.
 - Keycloak client bootstrap for Headlamp is GitOps-managed from `argocd/applications/keycloak/headlamp-client-bootstrap-job.yaml`.
 - Kube-apiserver OIDC settings have an Ansible playbook only for `k3s` clusters: `ansible/playbooks/k3s-oidc.yml`.
 - The current `galactic` cluster is Talos-based, so the control-plane OIDC path here is Talos machine config patches, not the `k3s` Ansible playbook.
@@ -91,6 +93,11 @@ requests may work while websocket watches fail with `1006` and repeated `401` he
 That mode also requires the Keycloak `kubernetes` client to emit the access token with audience
 `kubernetes`, which the GitOps bootstrap job now enforces via the `kubernetes-audience`
 protocol mapper.
+
+For private-host websocket reliability, keep using the repo-owned `headlamp` image from
+`services/headlamp`. It enables `REACT_APP_ENABLE_WEBSOCKET_MULTIPLEXER=true` at frontend
+build time so the UI opens a single `wss://<host>/wsMultiplexer` connection instead of many
+legacy direct `wss://<host>/clusters/...?...watch=1` sockets.
 
 Commit and sync the Keycloak and Headlamp Argo CD apps.
 
@@ -185,6 +192,7 @@ Make sure the Keycloak groups mapper is configured so the `groups` claim is pres
 - **401 Unauthorized**: kube-apiserver OIDC config missing or mismatched (issuer/client-id/CA).
 - **WebSocket watches fail (`1006`) or `/clusters/<name>/healthz` loops on 401**: make sure Headlamp is started with `OIDC_USE_ACCESS_TOKEN=true` so it can authenticate websocket upgrades for OIDC-backed clusters.
 - **WebSocket watches still fail after enabling `OIDC_USE_ACCESS_TOKEN=true`**: confirm the Keycloak `kubernetes` client access token includes audience `kubernetes`. Without that mapper, Headlamp can log in but kube-apiserver rejects the bearer token on watch and health endpoints.
+- **Browser still opens direct `/clusters/...?...watch=1` sockets instead of `/wsMultiplexer`**: the deployment is still on the stock upstream image. Sync the `headlamp` Argo CD app so it picks up the custom digest from `argocd/applications/headlamp/values.yaml`.
 - **403 Forbidden**: RBAC missing. Add/update `headlamp-oidc-rbac.yaml` and sync Argo CD.
 - **Redirect always goes to the Tailscale hostname**: the running Headlamp deployment still has a fixed `-oidc-callback-url`. Sync the updated Headlamp manifests so it can derive the callback from the request host.
 - **Sign-in gets stuck on `/auth?cluster=...`**: sync the `headlamp-auth-bridge` resources and the patched Tailscale Ingress. The bridge page forces the popup flow to hand control back to the main Headlamp window even if Headlamp misses the original storage-event handoff.

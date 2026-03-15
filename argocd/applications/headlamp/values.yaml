@@ -3,7 +3,9 @@ service:
 deploymentAnnotations:
   headlamp.proompteng.ai/oidc-sealedsecret-sha: '4f3e015931e2b98851f3f9b8ad28fad04177fba38bfcf5ff7b50605726ccf8fd'
 image:
-  tag: v0.40.1
+  registry: registry.ide-newton.ts.net
+  repository: lab/headlamp@sha256
+  tag: 7e6af1a1e3283ac09cbfe8f6ad3bfb264da27ce713e543fad95adac0939ebc39
 persistentVolumeClaim:
   enabled: false
 podSecurityContext:

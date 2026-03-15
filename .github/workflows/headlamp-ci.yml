@@ -1,0 +1,76 @@
+name: headlamp
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    paths:
+      - 'services/headlamp/**'
+      - 'argocd/applications/headlamp/**'
+      - 'docs/headlamp-setup.md'
+      - '.github/workflows/headlamp-ci.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/headlamp/**'
+      - '.github/workflows/headlamp-ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: arc-arm64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+
+      - name: Install kustomize
+        run: |
+          KUSTOMIZE_VERSION="5.8.0"
+          OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          ARCH="$(uname -m)"
+          case "${ARCH}" in
+            x86_64|amd64) ARCH="amd64" ;;
+            aarch64|arm64) ARCH="arm64" ;;
+            *)
+              echo "Unsupported architecture: ${ARCH}" >&2
+              exit 1
+              ;;
+          esac
+          TARBALL="kustomize_v${KUSTOMIZE_VERSION}_${OS}_${ARCH}.tar.gz"
+          URL="https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v${KUSTOMIZE_VERSION}/${TARBALL}"
+          curl -fsSL -o kustomize.tar.gz "${URL}"
+          tar -xzf kustomize.tar.gz kustomize
+          chmod +x kustomize
+          sudo mv kustomize /usr/local/bin/
+          kustomize version
+
+      - name: Render Headlamp manifests
+        run: kustomize build --enable-helm argocd/applications/headlamp >/dev/null
+
+      - name: Build Headlamp image
+        run: docker buildx build --platform linux/arm64 --load -t headlamp:test services/headlamp
+
+      - name: Verify multiplexer bundle is present
+        run: docker run --rm --entrypoint sh headlamp:test -lc "grep -R -n 'wsMultiplexer' /headlamp/frontend/assets >/dev/null"
+
+  deploy-main:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: headlamp
+      dockerfile: ./services/headlamp/Dockerfile
+      context: ./services/headlamp
+      new_tag: ${{ github.sha }}
+    secrets: inherit
