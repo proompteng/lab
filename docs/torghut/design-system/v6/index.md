@@ -9,7 +9,10 @@
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on `2026-03-09`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority): `39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md`
+- Evidence (current next-work priority):
+  - `40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md`
+  - `41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md`
+  - `39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md`
 - Evidence sync: `14-legacy-gap-disposition-map-2026-03-03.md` (signed v4/v5 disposition completeness)
 - Rollout status: v6 pack controls are represented by merged runtime/control-plane closure phases in `main` (`#3921` through `#3960`).
 
@@ -51,6 +54,10 @@ Current source-state priority is narrower:
 - `39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md` now replaces query-derived freshness and aggregate
   zero-heavy readiness with a producer-authored control-plane ledger plus hypothesis-scoped proof bundles, grounded in
   the March 14 live state where Jangar freshness queries were memory-bound and Torghut empirical jobs remained absent.
+- `40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md` now defines segment-local
+  control-plane authority and scoped rollout semantics to prevent watch noise from becoming global rollout blockers.
+- `41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md` now defines multi-horizon profitability
+  lanes, capital-budget-aware progression, and demotion guardrails to move from static safety to measurable profit growth.
 - `33-alpaca-options-market-data-and-technical-analysis-lane-2026-03-08.md` now records the production design for a
   separate Alpaca options ingest and TA lane, grounded in the current equity-only Torghut runtime and cluster state.
 - `34-alpaca-options-lane-implementation-contract-set-2026-03-08.md` now turns that architecture into explicit event,
@@ -122,6 +129,8 @@ This pack is positioned as the next architecture layer above:
 37. `37-options-trading-runtime-execution-and-risk-integration-2026-03-08.md`
 38. `38-authoritative-empirical-promotion-evidence-contract-2026-03-09.md`
 39. `39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md`
+40. `40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md`
+41. `41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md`
 
 ## Recommended Build Order
 
@@ -164,6 +173,8 @@ This pack is positioned as the next architecture layer above:
 37. `36-options-simulation-replay-and-profitability-proof-lane-2026-03-08.md`
 38. `37-options-trading-runtime-execution-and-risk-integration-2026-03-08.md`
 39. `39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md`
+40. `40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md`
+41. `41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md`
 
 ## Why This Sequence
 
@@ -191,6 +202,10 @@ This pack is positioned as the next architecture layer above:
 - The freshness-ledger and proof-mesh contract follows that boundary because the next operational problem is no longer
   "what counts as truthful empirical evidence?" but "how do control-plane freshness and per-hypothesis proof stay
   truthful under live load without depending on heavy scans and process-local counters?"
+- The control-plane resilience contract now follows the freshness proof mesh because rollout failure modes must become scoped
+  and observable before safe capital transitions can accelerate.
+- The profitability guardrail architecture follows that resilience contract because safe capital growth is impossible if
+  rollout scope is still a single global state channel.
 - The Alpaca options implementation contract set follows the architecture doc because options ingest is only safe to
   build once the concrete topic, storage, rate-limit, and identity contracts are fixed.
 - Options hardening and `opra` promotion follow the implementation contract set because the lane now exists in
