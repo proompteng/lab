@@ -1146,6 +1146,28 @@ def _replace_alembic_upgrade_target(command: str, target: str) -> str | None:
     return ' '.join(shlex.quote(item) for item in tokens)
 
 
+def _resolve_command_args(command: str) -> list[str]:
+    try:
+        tokens = shlex.split(command)
+    except Exception as exc:
+        raise RuntimeError(f'command_parse_failed:{command}') from exc
+    if not tokens:
+        raise RuntimeError('command_parse_failed:empty')
+    binary = tokens[0]
+    if os.path.isabs(binary) and not Path(binary).exists():
+        fallback_binary = shutil.which(Path(binary).name)
+        if fallback_binary:
+            _log_script_event(
+                'command_binary_resolved',
+                original_binary=binary,
+                resolved_binary=fallback_binary,
+            )
+            tokens[0] = fallback_binary
+        else:
+            raise RuntimeError(f'command_binary_not_found:{binary}')
+    return tokens
+
+
 def _run_alembic_upgrade(
     *,
     command: str,
@@ -1156,7 +1178,7 @@ def _run_alembic_upgrade(
     _run_with_transient_postgres_retry(
         label=label,
         operation=lambda: _run_command(
-            shlex.split(command),
+            _resolve_command_args(command),
             cwd=cwd,
             env=env,
         ),
@@ -1540,6 +1562,8 @@ def _run_command(
             env=dict(env) if env is not None else None,
             input=input_text,
         )
+    except FileNotFoundError as exc:
+        raise RuntimeError(f'command_missing: {" ".join(args)}: {exc.filename}') from exc
     except subprocess.CalledProcessError as exc:
         stdout = (exc.stdout or '').strip()
         stderr = (exc.stderr or '').strip()
@@ -3462,6 +3486,7 @@ def _ensure_postgres_database(config: PostgresRuntimeConfig) -> None:
 
 def _ensure_postgres_runtime_permissions(config: PostgresRuntimeConfig) -> dict[str, Any]:
     simulation_role = _username_from_dsn(config.torghut_runtime_dsn) or _username_from_dsn(config.simulation_dsn)
+    admin_role = _username_from_dsn(config.admin_dsn)
     admin_simulation_dsn = _replace_database_in_dsn(
         config.admin_dsn,
         database=config.simulation_db,
@@ -3470,6 +3495,7 @@ def _ensure_postgres_runtime_permissions(config: PostgresRuntimeConfig) -> dict[
 
     def _ensure() -> dict[str, Any]:
         grants_applied = False
+        default_privileges_applied = False
         with psycopg.connect(config.admin_dsn, autocommit=True) as conn:
             with conn.cursor() as cursor:
                 if simulation_role:
@@ -3516,10 +3542,70 @@ def _ensure_postgres_runtime_permissions(config: PostgresRuntimeConfig) -> dict[
                             sql.Identifier(simulation_role),
                         )
                     )
+                    cursor.execute(
+                        sql.SQL('GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO {}').format(
+                            sql.Identifier(simulation_role),
+                        )
+                    )
+                    if admin_role:
+                        cursor.execute(
+                            sql.SQL(
+                                'ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public '
+                                'GRANT ALL PRIVILEGES ON TABLES TO {}'
+                            ).format(
+                                sql.Identifier(admin_role),
+                                sql.Identifier(simulation_role),
+                            )
+                        )
+                        cursor.execute(
+                            sql.SQL(
+                                'ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public '
+                                'GRANT ALL PRIVILEGES ON SEQUENCES TO {}'
+                            ).format(
+                                sql.Identifier(admin_role),
+                                sql.Identifier(simulation_role),
+                            )
+                        )
+                        cursor.execute(
+                            sql.SQL(
+                                'ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public '
+                                'GRANT EXECUTE ON FUNCTIONS TO {}'
+                            ).format(
+                                sql.Identifier(admin_role),
+                                sql.Identifier(simulation_role),
+                            )
+                        )
+                    else:
+                        cursor.execute(
+                            sql.SQL(
+                                'ALTER DEFAULT PRIVILEGES IN SCHEMA public '
+                                'GRANT ALL PRIVILEGES ON TABLES TO {}'
+                            ).format(
+                                sql.Identifier(simulation_role),
+                            )
+                        )
+                        cursor.execute(
+                            sql.SQL(
+                                'ALTER DEFAULT PRIVILEGES IN SCHEMA public '
+                                'GRANT ALL PRIVILEGES ON SEQUENCES TO {}'
+                            ).format(
+                                sql.Identifier(simulation_role),
+                            )
+                        )
+                        cursor.execute(
+                            sql.SQL(
+                                'ALTER DEFAULT PRIVILEGES IN SCHEMA public '
+                                'GRANT EXECUTE ON FUNCTIONS TO {}'
+                            ).format(
+                                sql.Identifier(simulation_role),
+                            )
+                        )
                     grants_applied = True
+                    default_privileges_applied = True
         return {
             'simulation_role': simulation_role,
             'grants_applied': grants_applied,
+            'default_privileges_applied': default_privileges_applied,
             'vector_extension_checked': has_vector_extension,
         }
 
@@ -3538,19 +3624,14 @@ def _run_migrations(config: PostgresRuntimeConfig) -> None:
     env['DB_DSN'] = config.admin_simulation_dsn
     _remove_appledouble_sidecars(repo_root / 'migrations' / 'versions')
 
-    def _run(command: str) -> None:
-        _run_command(
-            shlex.split(command),
-            cwd=repo_root,
-            env=env,
-        )
-
     migration_error: Exception | None = None
 
     try:
-        _run_with_transient_postgres_retry(
+        _run_alembic_upgrade(
+            command=config.migrations_command,
+            env=env,
+            cwd=repo_root,
             label='run_migrations',
-            operation=lambda: _run(config.migrations_command),
         )
         _assert_required_simulation_metadata_tables(config)
         return
@@ -3575,9 +3656,33 @@ def _run_migrations(config: PostgresRuntimeConfig) -> None:
             f'run_migrations_fallback_target_parse_failed: command={config.migrations_command} target={fallback_revision}'
         ) from migration_error
 
-    _run_with_transient_postgres_retry(
+    _run_alembic_upgrade(
+        command=fallback_command,
+        env=env,
+        cwd=repo_root,
         label='run_migrations_fallback_pre_vector',
-        operation=lambda: _run(fallback_command),
+    )
+    _assert_required_simulation_metadata_tables(config)
+
+
+def _assert_required_simulation_metadata_tables(config: PostgresRuntimeConfig) -> None:
+    def _validate() -> None:
+        with psycopg.connect(config.admin_simulation_dsn, autocommit=True) as conn:
+            with conn.cursor() as cursor:
+                missing_tables: list[str] = []
+                for table in SIMULATION_POSTGRES_REQUIRED_METADATA_TABLES:
+                    cursor.execute('SELECT to_regclass(%s)', (f'public.{table}',))
+                    row = cursor.fetchone()
+                    if row is None or row[0] is None:
+                        missing_tables.append(table)
+                if missing_tables:
+                    raise RuntimeError(
+                        'required_simulation_metadata_tables_missing:' + ','.join(sorted(missing_tables))
+                    )
+
+    _run_with_transient_postgres_retry(
+        label='assert_required_simulation_metadata_tables',
+        operation=_validate,
     )
     _assert_required_simulation_metadata_tables(config)
 
@@ -4024,6 +4129,8 @@ def _torghut_service_env_for_simulation(
         'TRADING_MODE': 'paper',
         'TRADING_ACCOUNT_LABEL': account_label,
         'TRADING_FEATURE_FLAGS_ENABLED': 'false',
+        'TRADING_STRATEGY_RUNTIME_MODE': 'scheduler_v3',
+        'TRADING_STRATEGY_SCHEDULER_ENABLED': 'true',
         'TA_CLICKHOUSE_URL': clickhouse_config.http_url,
         'TA_CLICKHOUSE_USERNAME': clickhouse_config.username or '',
         'TA_CLICKHOUSE_PASSWORD': clickhouse_config.password or '',
@@ -5410,8 +5517,10 @@ def _apply(
         postgres_database_precreated = _postgres_database_precreated(manifest)
         if not postgres_database_precreated:
             _ensure_postgres_database(postgres_config)
-        postgres_permissions_report = _ensure_postgres_runtime_permissions(postgres_config)
+        _ensure_postgres_runtime_permissions(postgres_config)
         _run_migrations(postgres_config)
+        # Alembic runs under the admin role, so newly created objects must be re-granted to the runtime role.
+        postgres_permissions_report = _ensure_postgres_runtime_permissions(postgres_config)
         _reset_postgres_runtime_state(postgres_config)
         seeded_cursor_at = _seed_simulation_trade_cursor(
             config=postgres_config,
@@ -6950,20 +7059,25 @@ def _run_full_lifecycle(
     )
     completion_trace_path = _artifact_path(resources, 'completion-trace.json')
     _save_json(completion_trace_path, completion_trace)
+    gate_row_ids: dict[str, Any] = {}
+    completion_trace_db_refs = _as_mapping(completion_trace.get('db_row_refs'))
     runtime_session_factory, runtime_engine = _runtime_sessionmaker(postgres_config)
     try:
-        with runtime_session_factory() as session:
-            gate_row_ids = persist_completion_trace(
-                session=session,
-                trace_payload=completion_trace,
-                default_artifact_ref=str(completion_trace_path),
-            )
-            session.commit()
+        try:
+            with runtime_session_factory() as session:
+                gate_row_ids = persist_completion_trace(
+                    session=session,
+                    trace_payload=completion_trace,
+                    default_artifact_ref=str(completion_trace_path),
+                )
+                session.commit()
+        except Exception as exc:
+            completion_trace_db_refs['completion_gate_persist_error'] = str(exc)
+            errors.append(f'completion_trace_persist:{exc}')
     finally:
         runtime_engine.dispose()
-    updated_db_refs = _as_mapping(completion_trace.get('db_row_refs'))
-    updated_db_refs['completion_gate_row_ids'] = gate_row_ids
-    completion_trace['db_row_refs'] = updated_db_refs
+    completion_trace_db_refs['completion_gate_row_ids'] = gate_row_ids
+    completion_trace['db_row_refs'] = completion_trace_db_refs
     _save_json(completion_trace_path, completion_trace)
     if errors:
         error_payload = {

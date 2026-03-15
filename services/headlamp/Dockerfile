@@ -12,12 +12,10 @@ ARG HEADLAMP_SHA
 
 WORKDIR /src
 
-RUN apk add --no-cache ca-certificates git \
-    && git init . \
-    && git remote add origin https://github.com/kubernetes-sigs/headlamp.git \
-    && git fetch --depth 1 origin "${HEADLAMP_REF}" \
-    && git checkout --detach FETCH_HEAD \
-    && test "$(git rev-parse HEAD)" = "${HEADLAMP_SHA}"
+COPY .upstream /src
+
+RUN test -f /src/.codex-upstream-sha \
+    && test "$(cat /src/.codex-upstream-sha)" = "${HEADLAMP_SHA}"
 
 FROM ${IMAGE_BASE} AS image-base
 
@@ -35,11 +33,17 @@ ENV GOPATH=/go \
     GOARCH=${TARGETARCH}
 
 COPY --from=source /src/backend/go.* /headlamp/backend/
+COPY scripts /tools
+COPY patches /tools/patches
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     cd ./backend && go mod download
 
 COPY --from=source /src/backend /headlamp/backend
+COPY --from=source /src/frontend /headlamp/frontend
+
+RUN sh /tools/apply-upstream-patches.sh /headlamp \
+    && grep -q 'handleHTTPWatchStream' /headlamp/backend/cmd/multiplexer.go
 
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
@@ -52,6 +56,8 @@ WORKDIR /headlamp
 COPY --from=source /src/.git /headlamp/.git
 COPY --from=source /src/app/package.json /headlamp/app/package.json
 COPY --from=source /src/frontend/package*.json /headlamp/frontend/
+COPY scripts /tools
+COPY patches /tools/patches
 
 RUN cd ./frontend && npm ci --only=prod
 
@@ -59,7 +65,10 @@ FROM frontend-build AS frontend
 
 ENV REACT_APP_ENABLE_WEBSOCKET_MULTIPLEXER=true
 
+COPY --from=source /src/backend /headlamp/backend
 COPY --from=source /src/frontend /headlamp/frontend
+
+RUN sh /tools/apply-upstream-patches.sh /headlamp
 
 RUN cd ./frontend && npm run build
 

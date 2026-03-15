@@ -322,6 +322,8 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
         )
         self._stop_event.clear()
         self.state.startup_started_at = datetime.now(timezone.utc)
+        self.state.signal_bootstrap_started_at = self.state.startup_started_at
+        self.state.signal_bootstrap_completed_at = None
         self.state.running = False
         self._task = asyncio.create_task(self._run_loop())
 
@@ -341,6 +343,8 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
             pass
         self._task = None
         self.state.startup_started_at = None
+        self.state.signal_bootstrap_started_at = None
+        self.state.signal_bootstrap_completed_at = None
         self.state.running = False
         active_pipelines = self._pipelines or (
             [self._pipeline] if self._pipeline is not None else []
@@ -430,6 +434,8 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
         self.state.signal_continuity_alert_started_at = None
         self.state.signal_continuity_alert_last_seen_at = None
         self.state.signal_continuity_recovery_streak = 0
+        self.state.signal_bootstrap_started_at = datetime.now(timezone.utc)
+        self.state.signal_bootstrap_completed_at = None
         self.state.autonomy_no_signal_streak = 0
         self.state.last_evidence_continuity_report = None
         self.state.autonomy_failure_streak = 0

@@ -8,15 +8,15 @@ configMapGenerator:
     options:
       disableNameSuffixHash: true
 resources:
+  - ../symphony-base
   - linear-api-key-sealedsecret.yaml
-  - serviceaccount.yaml
-  - role.yaml
-  - rolebinding.yaml
-  - pvc-rwo.yaml
-  - deployment.yaml
-  - service.yaml
+  - target-argocd-role.yaml
+  - target-argocd-rolebinding.yaml
+patches:
+  - path: deployment.patch.yaml
+  - path: pvc.patch.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/symphony
     newName: registry.ide-newton.ts.net/lab/symphony
-    newTag: "sha-b3511a1"
-    digest: sha256:53218facc729108e2ca8d515d08f9c364886487c5335f2771d9fabfa2b3df590
+    newTag: "0e89c49f"
+    digest: sha256:64ce115e9a4c24bb0ec7a7d16a1850857f35acb61843ff07c0adcd29029a7595

@@ -6,7 +6,7 @@ import * as TreeFormatter from '@effect/schema/TreeFormatter'
 import { Effect } from 'effect'
 
 import { ConfigError } from './errors'
-import type { SymphonyConfig } from './types'
+import type { HealthCheckConfig, ReleaseDeployableConfig, SymphonyConfig } from './types'
 import {
   DEFAULT_WORKSPACE_ROOT,
   expandPathValue,
@@ -20,6 +20,7 @@ import {
 const DEFAULT_LINEAR_ENDPOINT = 'https://api.linear.app/graphql'
 const DEFAULT_ACTIVE_STATES = ['Todo', 'In Progress']
 const DEFAULT_TERMINAL_STATES = ['Closed', 'Cancelled', 'Canceled', 'Duplicate', 'Done']
+const DEFAULT_BLOCKED_LABELS = ['manual-only', 'secret-rotation', 'cluster-recovery', 'cross-repo', 'db-migration']
 
 const RawSectionSchema = Schema.Struct({
   tracker: Schema.optionalWith(
@@ -30,6 +31,7 @@ const RawSectionSchema = Schema.Struct({
       project_slug: Schema.optionalWith(Schema.Unknown, { nullable: true }),
       active_states: Schema.optionalWith(Schema.Unknown, { nullable: true }),
       terminal_states: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      handoff_state: Schema.optionalWith(Schema.Unknown, { nullable: true }),
     }),
     { nullable: true },
   ),
@@ -90,6 +92,41 @@ const RawSectionSchema = Schema.Struct({
     }),
     { nullable: true },
   ),
+  instance: Schema.optionalWith(
+    Schema.Struct({
+      name: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      namespace: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      argocd_application: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
+  target: Schema.optionalWith(
+    Schema.Struct({
+      name: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      namespace: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      argocd_application: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      repo: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      default_branch: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
+  release: Schema.optionalWith(
+    Schema.Struct({
+      mode: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      required_checks_source: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      promotion_branch_prefix: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      blocked_labels: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      deployables: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
+  health: Schema.optionalWith(
+    Schema.Struct({
+      pre_dispatch: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+      post_deploy: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
 })
 
 type RawConfigSections = typeof RawSectionSchema.Type
@@ -143,6 +180,94 @@ const normalizeConcurrencyMap = (value: unknown): Record<string, number> => {
   )
 }
 
+const readString = (value: unknown, fallback: string): string =>
+  typeof value === 'string' && value.trim().length > 0 ? value.trim() : fallback
+
+const normalizeManifestPaths = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value
+        .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+        .map((item) => item.trim())
+    : []
+
+const normalizeDeployables = (value: unknown): ReleaseDeployableConfig[] => {
+  if (!Array.isArray(value)) return []
+
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return []
+
+    const raw = entry as Record<string, unknown>
+    const name = readString(raw.name, '')
+    const image = readString(raw.image, '')
+    if (!name || !image) return []
+
+    return [
+      {
+        name,
+        image,
+        manifestPaths: normalizeManifestPaths(raw.manifest_paths),
+        buildWorkflow:
+          typeof raw.build_workflow === 'string' && raw.build_workflow.trim().length > 0
+            ? raw.build_workflow.trim()
+            : null,
+        releaseWorkflow:
+          typeof raw.release_workflow === 'string' && raw.release_workflow.trim().length > 0
+            ? raw.release_workflow.trim()
+            : null,
+        postDeployWorkflow:
+          typeof raw.post_deploy_workflow === 'string' && raw.post_deploy_workflow.trim().length > 0
+            ? raw.post_deploy_workflow.trim()
+            : null,
+      } satisfies ReleaseDeployableConfig,
+    ]
+  })
+}
+
+const normalizeHealthChecks = (value: unknown): HealthCheckConfig[] => {
+  if (!Array.isArray(value)) return []
+
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return []
+
+    const raw = entry as Record<string, unknown>
+    const name = readString(raw.name, '')
+    const type = readString(raw.type, '') as HealthCheckConfig['type'] | ''
+    if (!name || !type) return []
+
+    if (!['argocd_application', 'http', 'knative_service', 'kubernetes_resource'].includes(type)) return []
+
+    return [
+      {
+        name,
+        type,
+        namespace: typeof raw.namespace === 'string' && raw.namespace.trim().length > 0 ? raw.namespace.trim() : null,
+        application:
+          typeof raw.application === 'string' && raw.application.trim().length > 0 ? raw.application.trim() : null,
+        url: typeof raw.url === 'string' && raw.url.trim().length > 0 ? raw.url.trim() : null,
+        expectedStatus:
+          readNumber(raw.expected_status, Number.NaN) >= 0 ? readNumber(raw.expected_status, Number.NaN) : null,
+        expectedSync:
+          typeof raw.expected_sync === 'string' && raw.expected_sync.trim().length > 0
+            ? raw.expected_sync.trim()
+            : null,
+        expectedHealth:
+          typeof raw.expected_health === 'string' && raw.expected_health.trim().length > 0
+            ? raw.expected_health.trim()
+            : null,
+        resourceKind:
+          typeof raw.resource_kind === 'string' && raw.resource_kind.trim().length > 0
+            ? raw.resource_kind.trim()
+            : null,
+        resourceName:
+          typeof raw.resource_name === 'string' && raw.resource_name.trim().length > 0
+            ? raw.resource_name.trim()
+            : null,
+        path: typeof raw.path === 'string' && raw.path.trim().length > 0 ? raw.path.trim() : null,
+      } satisfies HealthCheckConfig,
+    ]
+  })
+}
+
 const normalizeConfig = (
   workflowPath: string,
   rawConfig: RawConfigSections,
@@ -156,6 +281,20 @@ const normalizeConfig = (
   const agent = rawConfig.agent ?? {}
   const codex = rawConfig.codex ?? {}
   const server = rawConfig.server ?? {}
+  const instance = rawConfig.instance ?? {}
+  const target = rawConfig.target ?? {}
+  const release = rawConfig.release ?? {}
+  const health = rawConfig.health ?? {}
+
+  const targetName = readString(target.name, 'symphony')
+  const targetNamespace = readString(target.namespace, 'jangar')
+  const argocdApplication = readString(target.argocd_application, targetName)
+  const instanceName = readString(instance.name, argocdApplication)
+  const instanceNamespace = readString(instance.namespace, targetNamespace)
+  const instanceArgocdApplication = readString(instance.argocd_application, instanceName)
+  const repo = readString(target.repo, 'proompteng/lab')
+  const defaultBranch = readString(target.default_branch, 'main')
+  const promotionBranchPrefix = readString(release.promotion_branch_prefix, `codex/${targetName}-release-`)
 
   return {
     workflowPath: path.resolve(workflowPath),
@@ -172,6 +311,7 @@ const normalizeConfig = (
           : null,
       activeStates: normalizeStringList(tracker.active_states, DEFAULT_ACTIVE_STATES),
       terminalStates: normalizeStringList(tracker.terminal_states, DEFAULT_TERMINAL_STATES),
+      handoffState: readString(tracker.handoff_state, 'Backlog'),
     },
     pollingIntervalMs: readPositiveNumber(polling.interval_ms, 30_000),
     workspaceRoot: normalizeWorkspaceRoot(workspace.root, env),
@@ -215,6 +355,31 @@ const normalizeConfig = (
     server: {
       host: typeof server.host === 'string' && server.host.trim().length > 0 ? server.host.trim() : '127.0.0.1',
       port: readNumber(server.port, Number.NaN) >= 0 ? readNumber(server.port, Number.NaN) : null,
+    },
+    instance: {
+      name: instanceName,
+      namespace: instanceNamespace,
+      argocdApplication: instanceArgocdApplication,
+    },
+    target: {
+      name: targetName,
+      namespace: targetNamespace,
+      argocdApplication,
+      repo,
+      defaultBranch,
+    },
+    release: {
+      mode: readString(release.mode, 'gitops_pr_on_main'),
+      requiredChecksSource: readString(release.required_checks_source, 'branch_protection'),
+      promotionBranchPrefix,
+      blockedLabels: normalizeStringList(release.blocked_labels, DEFAULT_BLOCKED_LABELS).map((label) =>
+        normalizeState(label),
+      ),
+      deployables: normalizeDeployables(release.deployables),
+    },
+    health: {
+      preDispatch: normalizeHealthChecks(health.pre_dispatch),
+      postDeploy: normalizeHealthChecks(health.post_deploy),
     },
   }
 }

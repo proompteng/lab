@@ -762,6 +762,166 @@ class TestTradingPipeline(TestCase):
                 "trading_feature_max_staleness_ms"
             ]
 
+    def test_pipeline_accepts_replayed_batch_in_simulation_mode(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "trading_feature_quality_enabled": config.settings.trading_feature_quality_enabled,
+            "trading_feature_max_staleness_ms": config.settings.trading_feature_max_staleness_ms,
+            "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.trading_feature_quality_enabled = True
+        config.settings.trading_feature_max_staleness_ms = 1_000
+        config.settings.trading_kill_switch_enabled = False
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="simulation replay staleness regression",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            replayed_signal = SignalEnvelope(
+                event_ts=datetime(2026, 3, 13, 13, 30, tzinfo=timezone.utc),
+                ingest_ts=datetime(2026, 3, 15, 4, 2, 24, 236000, tzinfo=timezone.utc),
+                symbol="AAPL",
+                timeframe="1Min",
+                seq=1,
+                payload={
+                    "feature_schema_version": "3.0.0",
+                    "macd": {"macd": 1.2, "signal": 0.5},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+            )
+
+            alpaca_client = FakeAlpacaClient()
+            execution_adapter = FakeAlpacaClient()
+            ingestor = FakeIngestor([replayed_signal])
+            state = TradingState()
+            pipeline = TradingPipeline(
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
+                ingestor=ingestor,
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=execution_adapter,
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=state,
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+            pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+            with patch(
+                "app.trading.features.simulation_context_enabled",
+                return_value=True,
+            ):
+                pipeline.run_once()
+
+            self.assertEqual(ingestor.committed_batches, 1)
+            self.assertEqual(state.metrics.feature_quality_rejections_total, 0)
+            self.assertEqual(state.metrics.feature_staleness_ms_p95, 0)
+            self.assertEqual(len(alpaca_client.submitted), 1)
+            self.assertEqual(alpaca_client.submitted[0]["symbol"], "AAPL")
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_autonomy_allow_live_promotion = original[
+                "trading_autonomy_allow_live_promotion"
+            ]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+            config.settings.trading_feature_quality_enabled = original[
+                "trading_feature_quality_enabled"
+            ]
+            config.settings.trading_feature_max_staleness_ms = original[
+                "trading_feature_max_staleness_ms"
+            ]
+            config.settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
+
+    def test_pipeline_suppresses_no_signal_alert_during_bootstrap_grace(self) -> None:
+        from app import config
+
+        original = {
+            "trading_signal_no_signal_streak_alert_threshold": config.settings.trading_signal_no_signal_streak_alert_threshold,
+            "trading_signal_bootstrap_grace_seconds": config.settings.trading_signal_bootstrap_grace_seconds,
+        }
+        config.settings.trading_signal_no_signal_streak_alert_threshold = 1
+        config.settings.trading_signal_bootstrap_grace_seconds = 180
+
+        try:
+            state = TradingState()
+            state.signal_bootstrap_started_at = datetime.now(timezone.utc)
+            state.signal_bootstrap_completed_at = None
+            pipeline = TradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=state,
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+            pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+            pipeline.record_no_signal_batch(
+                SignalBatch(
+                    signals=[],
+                    cursor_at=datetime(2026, 3, 13, 13, 30, tzinfo=timezone.utc),
+                    cursor_seq=1,
+                    cursor_symbol="AAPL",
+                    no_signal_reason="no_signals_in_window",
+                )
+            )
+
+            self.assertFalse(state.last_signal_continuity_actionable)
+            self.assertFalse(state.signal_continuity_alert_active)
+            self.assertEqual(state.metrics.signal_continuity_actionable, 0)
+            self.assertEqual(
+                state.metrics.signal_expected_staleness_total.get("no_signals_in_window"),
+                1,
+            )
+        finally:
+            config.settings.trading_signal_no_signal_streak_alert_threshold = original[
+                "trading_signal_no_signal_streak_alert_threshold"
+            ]
+            config.settings.trading_signal_bootstrap_grace_seconds = original[
+                "trading_signal_bootstrap_grace_seconds"
+            ]
+
     def test_pipeline_quality_gate_uses_allowed_symbol_subset(self) -> None:
         from app import config
 

@@ -2,7 +2,6 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: symphony-workspace
-  namespace: jangar
   labels:
     app.kubernetes.io/name: symphony
     app.kubernetes.io/part-of: lab
@@ -11,5 +10,4 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 50Gi
-  storageClassName: rook-ceph-block
+      storage: 20Gi

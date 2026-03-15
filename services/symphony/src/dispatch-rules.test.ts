@@ -1,51 +1,19 @@
 import { describe, expect, test } from 'bun:test'
 
 import { evaluateDispatchIssue, shouldDispatchIssue, sortIssuesForDispatch } from './dispatch-rules'
+import { makeTestConfig } from './test-fixtures'
 import type { Issue, SymphonyConfig } from './types'
 
-const baseConfig: SymphonyConfig = {
+const baseConfig: SymphonyConfig = makeTestConfig({
   workflowPath: '/tmp/WORKFLOW.md',
-  tracker: {
-    kind: 'linear',
-    endpoint: 'https://api.linear.app/graphql',
-    apiKey: 'token',
-    projectSlug: 'symphony',
-    activeStates: ['Todo', 'In Progress'],
-    terminalStates: ['Done', 'Closed'],
-  },
-  pollingIntervalMs: 30_000,
   workspaceRoot: '/tmp/symphony',
-  hooks: {
-    afterCreate: null,
-    beforeRun: null,
-    afterRun: null,
-    beforeRemove: null,
-    timeoutMs: 60_000,
-  },
-  worker: {
-    sshHosts: [],
-    maxConcurrentAgentsPerHost: null,
-  },
   agent: {
     maxConcurrentAgents: 2,
     maxConcurrentAgentsByState: { 'in progress': 1 },
     maxRetryBackoffMs: 300_000,
     maxTurns: 20,
   },
-  codex: {
-    command: 'codex app-server',
-    approvalPolicy: 'never',
-    threadSandbox: 'workspace-write',
-    turnSandboxPolicy: null,
-    turnTimeoutMs: 3_600_000,
-    readTimeoutMs: 5_000,
-    stallTimeoutMs: 300_000,
-  },
-  server: {
-    host: '127.0.0.1',
-    port: null,
-  },
-}
+})
 
 const issue = (overrides: Partial<Issue>): Issue => ({
   id: overrides.id ?? '1',
@@ -132,5 +100,15 @@ describe('dispatch rules', () => {
         context,
       ),
     ).toBe(false)
+  })
+
+  test('manual-only labels block dispatch', () => {
+    const decision = evaluateDispatchIssue(issue({ labels: ['manual-only'] }), {
+      config: baseConfig,
+      runningIssues: [],
+      claimedIssueIds: new Set(),
+    })
+
+    expect(decision).toEqual({ eligible: false, reason: 'manual_work_required' })
   })
 })

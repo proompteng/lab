@@ -7,53 +7,26 @@ import { Effect, Layer, ManagedRuntime } from 'effect'
 import * as Stream from 'effect/Stream'
 
 import { createLogger } from './logger'
+import { makeTestConfig } from './test-fixtures'
 import type { SymphonyConfig } from './types'
 import { WorkflowService } from './workflow'
 import { makeShellLayer, makeWorkspaceLayer, WorkspaceService } from './workspace-manager'
 
-const makeConfig = (workspaceRoot: string): SymphonyConfig => ({
-  workflowPath: path.join(workspaceRoot, 'WORKFLOW.md'),
-  tracker: {
-    kind: 'linear',
-    endpoint: 'https://api.linear.app/graphql',
-    apiKey: 'token',
-    projectSlug: 'symphony',
-    activeStates: ['Todo', 'In Progress'],
-    terminalStates: ['Done'],
-  },
-  pollingIntervalMs: 30_000,
-  workspaceRoot,
-  hooks: {
-    afterCreate: 'echo after_create >> ../hooks.log',
-    beforeRun: 'echo before_run >> ../hooks.log',
-    afterRun: 'echo after_run >> ../hooks.log',
-    beforeRemove: 'echo before_remove >> ../hooks.log',
-    timeoutMs: 5_000,
-  },
-  worker: {
-    sshHosts: [],
-    maxConcurrentAgentsPerHost: null,
-  },
-  agent: {
-    maxConcurrentAgents: 10,
-    maxConcurrentAgentsByState: {},
-    maxRetryBackoffMs: 300_000,
-    maxTurns: 20,
-  },
-  codex: {
-    command: 'codex app-server',
-    approvalPolicy: 'never',
-    threadSandbox: 'workspace-write',
-    turnSandboxPolicy: null,
-    turnTimeoutMs: 3_600_000,
-    readTimeoutMs: 5_000,
-    stallTimeoutMs: 300_000,
-  },
-  server: {
-    host: '127.0.0.1',
-    port: null,
-  },
-})
+const makeConfig = (workspaceRoot: string): SymphonyConfig =>
+  makeTestConfig({
+    workflowPath: path.join(workspaceRoot, 'WORKFLOW.md'),
+    workspaceRoot,
+    tracker: {
+      terminalStates: ['Done'],
+    },
+    hooks: {
+      afterCreate: 'echo after_create >> ../hooks.log',
+      beforeRun: 'echo before_run >> ../hooks.log',
+      afterRun: 'echo after_run >> ../hooks.log',
+      beforeRemove: 'echo before_remove >> ../hooks.log',
+      timeoutMs: 5_000,
+    },
+  })
 
 describe('workspace manager', () => {
   let tempDir = ''

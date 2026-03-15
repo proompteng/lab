@@ -994,6 +994,8 @@ class TradingState:
     signal_continuity_alert_started_at: Optional[datetime] = None
     signal_continuity_alert_last_seen_at: Optional[datetime] = None
     signal_continuity_recovery_streak: int = 0
+    signal_bootstrap_started_at: Optional[datetime] = None
+    signal_bootstrap_completed_at: Optional[datetime] = None
     last_market_context_symbol: Optional[str] = None
     last_market_context_checked_at: Optional[datetime] = None
     last_market_context_as_of: Optional[datetime] = None

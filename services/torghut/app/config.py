@@ -372,6 +372,14 @@ class Settings(BaseSettings):
             "signal continuity alert."
         ),
     )
+    trading_signal_bootstrap_grace_seconds: int = Field(
+        default=180,
+        alias="TRADING_SIGNAL_BOOTSTRAP_GRACE_SECONDS",
+        description=(
+            "Grace period after scheduler start or simulation run reset before "
+            "no-signal continuity reasons become actionable."
+        ),
+    )
     trading_signal_staleness_alert_critical_reasons_raw: Optional[str] = Field(
         default="cursor_ahead_of_stream,no_signals_in_window,universe_source_unavailable",
         alias="TRADING_SIGNAL_STALENESS_ALERT_CRITICAL_REASONS",

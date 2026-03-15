@@ -11,6 +11,7 @@ from typing import Any, Iterable, Optional, cast
 
 from .models import SignalEnvelope
 from .regime_hmm import resolve_hmm_context, resolve_regime_route_label
+from .simulation import simulation_context_enabled
 
 FEATURE_SCHEMA_VERSION_V3 = '3.0.0'
 FEATURE_VECTOR_V3_REQUIRED_FIELDS = ('price', 'macd', 'macd_signal', 'rsi14')
@@ -332,8 +333,16 @@ def _optional_int(value: Any) -> int | None:
 
 
 def _staleness_ms(event_ts: datetime, ingest_ts: datetime | None) -> int:
-    # Use event/ingest timestamps only so replayed inputs remain deterministic.
-    reference = ingest_ts.astimezone(timezone.utc) if ingest_ts is not None else event_ts.astimezone(timezone.utc)
+    # Historical replay writes ingest_ts at replay wall-clock time, so simulation
+    # freshness must remain anchored to the historical event timestamp.
+    if simulation_context_enabled():
+        reference = event_ts.astimezone(timezone.utc)
+    else:
+        reference = (
+            ingest_ts.astimezone(timezone.utc)
+            if ingest_ts is not None
+            else event_ts.astimezone(timezone.utc)
+        )
     delta = reference - event_ts.astimezone(timezone.utc)
     return max(0, int(delta.total_seconds() * 1000))
 

@@ -1,0 +1,204 @@
+name: torghut-post-deploy-verify
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'argocd/applications/torghut/**'
+      - 'argocd/applications/torghut-forecast/**'
+  workflow_dispatch:
+    inputs:
+      expected_revision:
+        description: Optional full commit SHA expected in Argo sync revision
+        required: false
+        type: string
+
+concurrency:
+  group: torghut-post-deploy-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: arc-arm64
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.2
+
+      - name: Configure in-cluster kubeconfig when context is missing
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if kubectl config current-context >/dev/null 2>&1; then
+            echo "Kubectl context already configured"
+            exit 0
+          fi
+
+          if [ -z "${KUBERNETES_SERVICE_HOST:-}" ] || [ -z "${KUBERNETES_SERVICE_PORT:-}" ]; then
+            echo "KUBERNETES_SERVICE_HOST/PORT are not set and no kubectl context exists"
+            exit 1
+          fi
+          if [ ! -f /var/run/secrets/kubernetes.io/serviceaccount/token ]; then
+            echo "Service account token is missing"
+            exit 1
+          fi
+          if [ ! -f /var/run/secrets/kubernetes.io/serviceaccount/ca.crt ]; then
+            echo "Service account CA cert is missing"
+            exit 1
+          fi
+
+          KUBECONFIG_PATH="${RUNNER_TEMP}/kubeconfig"
+          echo "KUBECONFIG=${KUBECONFIG_PATH}" >> "${GITHUB_ENV}"
+
+          kubectl config set-cluster in-cluster \
+            --server="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}" \
+            --certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+            --embed-certs=true \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config set-credentials gha-runner \
+            --token="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config set-context in-cluster \
+            --cluster=in-cluster \
+            --user=gha-runner \
+            --namespace=torghut \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config use-context in-cluster --kubeconfig="${KUBECONFIG_PATH}"
+
+      - name: Validate kubectl context
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl config current-context
+
+      - name: Verify Argo applications, workloads, and health endpoints
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_REVISION_INPUT: ${{ inputs.expected_revision || '' }}
+        run: |
+          set -euo pipefail
+
+          EXPECTED_REVISION=''
+          if [ "${EVENT_NAME}" = "push" ]; then
+            EXPECTED_REVISION="${GITHUB_SHA}"
+          elif [ -n "${EXPECTED_REVISION_INPUT}" ]; then
+            EXPECTED_REVISION="${EXPECTED_REVISION_INPUT}"
+          fi
+
+          for app in torghut torghut-forecast; do
+            for attempt in $(seq 1 90); do
+              STATUS="$(kubectl get application "${app}" -n argocd -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision}')"
+              SYNC_STATUS="$(echo "${STATUS}" | awk '{print $1}')"
+              HEALTH_STATUS="$(echo "${STATUS}" | awk '{print $2}')"
+              REVISION="$(echo "${STATUS}" | awk '{print $3}')"
+
+              REVISION_OK='true'
+              if [ -n "${EXPECTED_REVISION}" ]; then
+                if [ "${REVISION}" = "${EXPECTED_REVISION}" ]; then
+                  REVISION_OK='true'
+                elif git merge-base --is-ancestor "${EXPECTED_REVISION}" "${REVISION}" >/dev/null 2>&1; then
+                  REVISION_OK='true'
+                else
+                  REVISION_OK='false'
+                fi
+              fi
+
+              if [ "${SYNC_STATUS}" = 'Synced' ] && [ "${HEALTH_STATUS}" = 'Healthy' ] && [ "${REVISION_OK}" = 'true' ]; then
+                break
+              fi
+
+              if [ "${attempt}" -eq 90 ]; then
+                echo "Argo application ${app} did not become Synced/Healthy with expected revision"
+                exit 1
+              fi
+              sleep 10
+            done
+          done
+
+          kubectl rollout status deployment/torghut-ws -n torghut --timeout=10m
+          kubectl rollout status deployment/torghut-forecast -n torghut --timeout=10m
+
+          KNSVC_READY="$(kubectl get ksvc torghut -n torghut -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')"
+          if [ "${KNSVC_READY}" != 'True' ]; then
+            echo "Knative Service torghut is not Ready"
+            exit 1
+          fi
+
+          curl -fsS http://torghut.torghut.svc.cluster.local/trading/status >/tmp/torghut-status.json
+          curl -fsS http://torghut-ws.torghut.svc.cluster.local/readyz >/tmp/torghut-ws-ready.json
+          curl -fsS http://torghut-forecast.torghut.svc.cluster.local:8089/readyz >/tmp/torghut-forecast-ready.json
+
+      - name: Prepare rollback manifests
+        if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          HEAD_MESSAGE="$(git log -1 --pretty=%s)"
+          if [[ "${HEAD_MESSAGE}" == rollback\(torghut\):* ]]; then
+            echo "Skipping rollback PR because current commit is already a rollback"
+            echo "should_rollback=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            echo "No parent commit available for rollback"
+            echo "should_rollback=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git checkout --quiet HEAD^ -- \
+            argocd/applications/torghut \
+            argocd/applications/torghut-forecast
+
+          if git diff --quiet -- \
+            argocd/applications/torghut \
+            argocd/applications/torghut-forecast; then
+            echo "No rollback diff detected"
+            echo "should_rollback=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "should_rollback=true" >> "$GITHUB_OUTPUT"
+
+      - name: Open rollback pull request
+        if: failure() && steps.rollback.outputs.should_rollback == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
+          branch: codex/torghut-rollback-${{ github.run_id }}-${{ github.run_attempt }}
+          base: main
+          title: 'rollback(torghut): revert failed promotion ${{ github.sha }}'
+          commit-message: 'rollback(torghut): revert failed promotion ${{ github.sha }}'
+          delete-branch: true
+          add-paths: |
+            argocd/applications/torghut
+            argocd/applications/torghut-forecast
+          body: |
+            ## Summary
+            Automatic rollback created because `torghut-post-deploy-verify` failed on `main`.
+
+            - Failed commit: `${{ github.sha }}`
+            - Workflow run: `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
+            - Rollback source: `HEAD^` manifests from the failed run checkout

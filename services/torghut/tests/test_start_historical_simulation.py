@@ -705,11 +705,13 @@ class TestStartHistoricalSimulation(TestCase):
             migrations_command='/opt/venv/bin/alembic upgrade heads',
         )
         captured_envs: list[str] = []
+        captured_args: list[list[str]] = []
 
         def _fake_run_command(args, *, cwd=None, env=None, input_text=None) -> None:
-            _ = (args, cwd, input_text)
+            _ = (cwd, input_text)
             if env is None:
                 raise AssertionError('expected DB_DSN env to be provided')
+            captured_args.append(list(args))
             captured_envs.append(str(env['DB_DSN']))
             return None
 
@@ -723,6 +725,7 @@ class TestStartHistoricalSimulation(TestCase):
                 'scripts.start_historical_simulation._run_with_transient_postgres_retry',
                 side_effect=_fake_retry,
             ),
+            patch('scripts.start_historical_simulation.shutil.which', return_value='/usr/bin/alembic'),
             patch(
                 'scripts.start_historical_simulation._assert_required_simulation_metadata_tables',
                 return_value=None,
@@ -731,8 +734,106 @@ class TestStartHistoricalSimulation(TestCase):
             _run_migrations(config)
 
         self.assertEqual(
+            captured_args,
+            [['/usr/bin/alembic', 'upgrade', 'heads']],
+        )
+        self.assertEqual(
             captured_envs,
             ['postgresql://postgres:admin-secret@localhost:5432/torghut_sim_sim_1'],
+        )
+
+    def test_ensure_postgres_runtime_permissions_sets_default_privileges_for_migrated_objects(self) -> None:
+        config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://postgres:admin-secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut_app:secret@localhost:5432/torghut_sim_sim_1',
+            simulation_db='torghut_sim_sim_1',
+            migrations_command='/opt/venv/bin/alembic upgrade heads',
+        )
+        admin_statements: list[object] = []
+        simulation_statements: list[object] = []
+
+        class _FakeCursor:
+            def __init__(self, statements: list[object]) -> None:
+                self._statements = statements
+
+            def execute(self, statement: object, params: object | None = None) -> None:
+                _ = params
+                self._statements.append(statement)
+
+            def __enter__(self) -> _FakeCursor:
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                _ = (exc_type, exc, tb)
+                return False
+
+        class _FakeConnection:
+            def __init__(self, statements: list[object]) -> None:
+                self._statements = statements
+
+            def cursor(self) -> _FakeCursor:
+                return _FakeCursor(self._statements)
+
+            def __enter__(self) -> _FakeConnection:
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                _ = (exc_type, exc, tb)
+                return False
+
+        def _fake_connect(dsn: str, autocommit: bool = False) -> _FakeConnection:
+            self.assertTrue(autocommit)
+            if dsn == config.admin_dsn:
+                return _FakeConnection(admin_statements)
+            if dsn == config.admin_simulation_dsn:
+                return _FakeConnection(simulation_statements)
+            raise AssertionError(f'unexpected dsn: {dsn}')
+
+        def _fake_retry(*, label: str, operation: object, attempts: int = 8, sleep_seconds: float = 0.5) -> Any:
+            _ = (label, attempts, sleep_seconds)
+            return operation()
+
+        with (
+            patch('scripts.start_historical_simulation.psycopg.connect', side_effect=_fake_connect),
+            patch(
+                'scripts.start_historical_simulation._run_with_transient_postgres_retry',
+                side_effect=_fake_retry,
+            ),
+            patch(
+                'scripts.start_historical_simulation._postgres_extension_exists',
+                return_value=True,
+            ),
+        ):
+            report = start_historical_simulation._ensure_postgres_runtime_permissions(config)
+
+        rendered_admin = [repr(statement) for statement in admin_statements]
+        rendered_simulation = [repr(statement) for statement in simulation_statements]
+
+        self.assertEqual(report['simulation_role'], 'torghut_app')
+        self.assertTrue(report['grants_applied'])
+        self.assertTrue(report['default_privileges_applied'])
+        self.assertTrue(
+            any(
+                'GRANT ALL PRIVILEGES ON DATABASE ' in statement
+                and "Identifier('torghut_sim_sim_1')" in statement
+                and "Identifier('torghut_app')" in statement
+                for statement in rendered_admin
+            ),
+            rendered_admin,
+        )
+        self.assertTrue(
+            any('GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ' in statement for statement in rendered_simulation),
+            rendered_simulation,
+        )
+        self.assertTrue(
+            any(
+                'ALTER DEFAULT PRIVILEGES FOR ROLE ' in statement
+                and 'GRANT ALL PRIVILEGES ON TABLES TO ' in statement
+                and "Identifier('postgres')" in statement
+                and "Identifier('torghut_app')" in statement
+                for statement in rendered_simulation
+            ),
+            rendered_simulation,
         )
 
     def test_assert_required_simulation_metadata_tables_raises_when_missing(self) -> None:
@@ -1177,6 +1278,64 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(headers.get('Content-Type'), 'text/plain')
         self.assertEqual(headers.get('X-ClickHouse-User'), 'torghut')
         self.assertEqual(headers.get('X-ClickHouse-Key'), 'secret')
+
+    def test_verification_http_clickhouse_query_retries_kubernetes_service_endpoints(self) -> None:
+        attempted_hosts: list[str] = []
+
+        class _FakeResponse:
+            status = 200
+
+            def read(self) -> bytes:
+                return b'1'
+
+        class _FakeConnection:
+            def __init__(self, host: str, port: int | None) -> None:
+                attempted_hosts.append(host)
+                self._host = host
+
+            def request(
+                self,
+                method: str,
+                path: str,
+                body: bytes | None = None,
+                headers: dict[str, str] | None = None,
+            ) -> None:
+                if self._host == 'torghut-clickhouse.torghut.svc.cluster.local':
+                    raise OSError('[Errno 8] nodename nor servname provided, or not known')
+
+            def getresponse(self) -> _FakeResponse:
+                return _FakeResponse()
+
+            def close(self) -> None:
+                return None
+
+        def _fake_kubectl_json(namespace: str, args: tuple[str, ...]) -> dict[str, object]:
+            self.assertEqual(namespace, 'torghut')
+            if list(args[:3]) == ['get', 'service', 'torghut-clickhouse']:
+                return {'spec': {'clusterIP': '10.104.171.228'}}
+            if list(args[:3]) == ['get', 'endpoints', 'torghut-clickhouse']:
+                return {'subsets': []}
+            self.fail(f'unexpected kubectl args: {args!r}')
+
+        with (
+            patch('scripts.historical_simulation_verification.HTTPConnection', _FakeConnection),
+            patch('scripts.historical_simulation_verification._kubectl_json', side_effect=_fake_kubectl_json),
+        ):
+            status, body = historical_simulation_verification._http_clickhouse_query(
+                config=ClickHouseRuntimeConfig(
+                    http_url='http://torghut-clickhouse.torghut.svc.cluster.local:8123',
+                    username='torghut',
+                    password='secret',
+                ),
+                query='SELECT 1',
+            )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body, '1')
+        self.assertEqual(
+            attempted_hosts,
+            ['torghut-clickhouse.torghut.svc.cluster.local', '10.104.171.228'],
+        )
 
     def test_clickhouse_query_configs_resolves_service_endpoints(self) -> None:
         config = ClickHouseRuntimeConfig(
@@ -1797,7 +1956,7 @@ class TestStartHistoricalSimulation(TestCase):
                     force_replay=False,
                 )
 
-        ensure_permissions.assert_called_once_with(runtime_config)
+        self.assertEqual(ensure_permissions.call_args_list, [call(runtime_config), call(runtime_config)])
         run_migrations.assert_called_once_with(runtime_config)
         reset_runtime_state.assert_called_once_with(runtime_config)
 
@@ -2930,6 +3089,14 @@ class TestStartHistoricalSimulation(TestCase):
             'true',
         )
         self.assertEqual(
+            env_by_name['TRADING_STRATEGY_RUNTIME_MODE'].get('value'),
+            'scheduler_v3',
+        )
+        self.assertEqual(
+            env_by_name['TRADING_STRATEGY_SCHEDULER_ENABLED'].get('value'),
+            'true',
+        )
+        self.assertEqual(
             env_by_name['TA_CLICKHOUSE_URL'].get('value'),
             'http://chi-torghut-clickhouse-default-0-0.torghut.svc.cluster.local:8123',
         )
@@ -3044,6 +3211,112 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(
             env_by_name['TRADING_FEATURE_QUALITY_ENABLED'].get('value'),
             'true',
+        )
+        self.assertEqual(
+            env_by_name['TRADING_STRATEGY_RUNTIME_MODE'].get('value'),
+            'scheduler_v3',
+        )
+        self.assertEqual(
+            env_by_name['TRADING_STRATEGY_SCHEDULER_ENABLED'].get('value'),
+            'true',
+        )
+
+    def test_configure_torghut_service_allows_explicit_runtime_override(self) -> None:
+        resources = _build_resources(
+            'sim-runtime-override',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_sim_runtime_override',
+            simulation_db='torghut_sim_sim_runtime_override',
+            migrations_command='true',
+        )
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol='SASL_PLAINTEXT',
+            sasl_mechanism='SCRAM-SHA-512',
+            sasl_username='user',
+            sasl_password='secret',
+        )
+        service_payload = {
+            'spec': {
+                'template': {
+                    'spec': {
+                        'containers': [
+                            {
+                                'name': 'user-container',
+                                'image': 'registry.example/lab/torghut@sha256:abc',
+                                'env': [],
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        captured_patch: dict[str, object] = {}
+
+        with (
+            patch(
+                'scripts.start_historical_simulation._kubectl_json',
+                return_value=service_payload,
+            ),
+            patch(
+                'scripts.start_historical_simulation._kubectl_patch',
+                side_effect=lambda namespace, kind, name, patch: captured_patch.update(
+                    {'namespace': namespace, 'kind': kind, 'name': name, 'patch': patch}
+                ),
+            ),
+        ):
+            _configure_torghut_service_for_simulation(
+                resources=resources,
+                manifest={
+                    'window': {
+                        'start': '2026-02-27T14:30:00Z',
+                        'end': '2026-02-27T21:00:00Z',
+                    }
+                },
+                postgres_config=postgres_config,
+                clickhouse_config=ClickHouseRuntimeConfig(
+                    http_url='http://clickhouse:8123',
+                    username='torghut',
+                    password='secret',
+                ),
+                kafka_config=kafka_config,
+                torghut_env_overrides={
+                    'TRADING_STRATEGY_RUNTIME_MODE': 'plugin_v3',
+                    'TRADING_STRATEGY_SCHEDULER_ENABLED': 'false',
+                },
+            )
+
+        patch_payload = captured_patch.get('patch')
+        self.assertIsInstance(patch_payload, dict)
+        assert isinstance(patch_payload, dict)
+        containers = (
+            patch_payload.get('spec', {})
+            .get('template', {})
+            .get('spec', {})
+            .get('containers', [])
+        )
+        self.assertIsInstance(containers, list)
+        assert isinstance(containers, list)
+        env_entries = containers[0].get('env') if containers else []
+        self.assertIsInstance(env_entries, list)
+        assert isinstance(env_entries, list)
+        env_by_name = {
+            str(item.get('name')): item
+            for item in env_entries
+            if isinstance(item, dict)
+        }
+        self.assertEqual(
+            env_by_name['TRADING_STRATEGY_RUNTIME_MODE'].get('value'),
+            'plugin_v3',
+        )
+        self.assertEqual(
+            env_by_name['TRADING_STRATEGY_SCHEDULER_ENABLED'].get('value'),
+            'false',
         )
 
     def test_offset_for_time_lookup_falls_back_for_missing_or_invalid_offset(self) -> None:
@@ -4411,6 +4684,110 @@ class TestStartHistoricalSimulation(TestCase):
         ):
             mock_session_local.return_value.__enter__.return_value = SimpleNamespace(commit=lambda: None)
             with self.assertRaisesRegex(RuntimeError, 'simulation_run_failed:activity:decisions_absent'):
+                _run_full_lifecycle(
+                    resources=resources,
+                    manifest=manifest,
+                    manifest_path=Path('/tmp/manifest.json'),
+                    kafka_config=kafka_config,
+                    clickhouse_config=clickhouse_config,
+                    postgres_config=postgres_config,
+                    argocd_config=argocd_config,
+                    rollouts_config=rollouts_config,
+                    force_dump=False,
+                    force_replay=False,
+                    skip_teardown=True,
+                    report_only=False,
+                )
+
+    def test_run_full_lifecycle_reports_completion_trace_persist_failure_without_masking_root_cause(self) -> None:
+        resources = _build_resources(
+            'sim-persist-failure',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        manifest = {
+            'dataset_id': 'dataset-a',
+            'window': {
+                'start': '2026-02-27T14:30:00Z',
+                'end': '2026-02-27T21:00:00Z',
+            },
+        }
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+        clickhouse_config = ClickHouseRuntimeConfig(
+            http_url='http://clickhouse:8123',
+            username='torghut',
+            password=None,
+        )
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_persist_failure',
+            simulation_db='torghut_sim_persist_failure',
+            migrations_command='true',
+        )
+        argocd_config = ArgocdAutomationConfig(
+            manage_automation=False,
+            applicationset_name='product',
+            applicationset_namespace='argocd',
+            app_name='torghut',
+            root_app_name='root',
+            desired_mode_during_run='manual',
+            restore_mode_after_run='previous',
+            verify_timeout_seconds=600,
+        )
+        rollouts_config = RolloutsAnalysisConfig(
+            enabled=False,
+            namespace='agents',
+            runtime_template='torghut-runtime-ready-v1',
+            activity_template='torghut-sim-activity-v1',
+            teardown_template='torghut-teardown-v1',
+            artifact_template='torghut-artifact-v1',
+            verify_timeout_seconds=900,
+            verify_poll_seconds=5,
+        )
+
+        class _FakeSession:
+            def __enter__(self) -> SimpleNamespace:
+                return SimpleNamespace(commit=lambda: None)
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                _ = (exc_type, exc, tb)
+                return False
+
+        fake_engine = SimpleNamespace(dispose=lambda: None)
+
+        with (
+            patch('scripts.start_historical_simulation._update_run_state', return_value=None),
+            patch('scripts.start_historical_simulation._save_json', return_value=None),
+            patch('scripts.start_historical_simulation._prepare_argocd_for_run', return_value={'managed': False}),
+            patch('scripts.start_historical_simulation._restore_argocd_after_run', return_value={'managed': False}),
+            patch(
+                'scripts.start_historical_simulation._apply',
+                side_effect=RuntimeError('command_binary_not_found:/opt/venv/bin/alembic'),
+            ),
+            patch('scripts.start_historical_simulation._upsert_simulation_progress_row', return_value=None),
+            patch(
+                'scripts.start_historical_simulation._runtime_sessionmaker',
+                return_value=(lambda: _FakeSession(), fake_engine),
+            ),
+            patch(
+                'scripts.start_historical_simulation.persist_completion_trace',
+                side_effect=RuntimeError('relation "vnext_completion_gate_results" does not exist'),
+            ),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                (
+                    'simulation_run_failed:command_binary_not_found:/opt/venv/bin/alembic; '
+                    'completion_trace_persist:relation "vnext_completion_gate_results" does not exist'
+                ),
+            ):
                 _run_full_lifecycle(
                     resources=resources,
                     manifest=manifest,

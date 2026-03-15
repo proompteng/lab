@@ -16,6 +16,7 @@ export type DispatchDecision =
         | 'non_active_state'
         | 'claimed'
         | 'already_running'
+        | 'manual_work_required'
         | 'blocked_issue'
         | 'no_slots'
         | 'state_slots_exhausted'
@@ -48,6 +49,11 @@ export const evaluateDispatchIssue = (issue: Issue, context: DispatchContext): D
   }
   if (context.runningIssues.some((runningIssue) => runningIssue.id === issue.id)) {
     return { eligible: false, reason: 'already_running' }
+  }
+
+  const blockedLabels = new Set(context.config.release.blockedLabels.map((label) => normalizeState(label)))
+  if (issue.labels.some((label) => blockedLabels.has(normalizeState(label)))) {
+    return { eligible: false, reason: 'manual_work_required' }
   }
 
   if (normalizedState === 'todo') {
