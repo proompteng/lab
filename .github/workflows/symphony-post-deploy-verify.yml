@@ -1,0 +1,202 @@
+name: symphony-post-deploy-verify
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'argocd/applications/symphony/**'
+      - 'argocd/applications/symphony-jangar/**'
+      - 'argocd/applications/symphony-torghut/**'
+  workflow_dispatch:
+    inputs:
+      expected_revision:
+        description: Optional full commit SHA expected in Argo sync revision
+        required: false
+        type: string
+
+concurrency:
+  group: symphony-post-deploy-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: arc-arm64
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.2
+
+      - name: Configure in-cluster kubeconfig when context is missing
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if kubectl config current-context >/dev/null 2>&1; then
+            echo "Kubectl context already configured"
+            exit 0
+          fi
+
+          if [ -z "${KUBERNETES_SERVICE_HOST:-}" ] || [ -z "${KUBERNETES_SERVICE_PORT:-}" ]; then
+            echo "KUBERNETES_SERVICE_HOST/PORT are not set and no kubectl context exists"
+            exit 1
+          fi
+          if [ ! -f /var/run/secrets/kubernetes.io/serviceaccount/token ]; then
+            echo "Service account token is missing"
+            exit 1
+          fi
+          if [ ! -f /var/run/secrets/kubernetes.io/serviceaccount/ca.crt ]; then
+            echo "Service account CA cert is missing"
+            exit 1
+          fi
+
+          KUBECONFIG_PATH="${RUNNER_TEMP}/kubeconfig"
+          echo "KUBECONFIG=${KUBECONFIG_PATH}" >> "${GITHUB_ENV}"
+
+          kubectl config set-cluster in-cluster \
+            --server="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}" \
+            --certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+            --embed-certs=true \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config set-credentials gha-runner \
+            --token="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config set-context in-cluster \
+            --cluster=in-cluster \
+            --user=gha-runner \
+            --namespace=jangar \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config use-context in-cluster --kubeconfig="${KUBECONFIG_PATH}"
+
+      - name: Validate kubectl context
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl config current-context
+
+      - name: Verify Symphony fleet deployment health and digest
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_REVISION_INPUT: ${{ inputs.expected_revision || '' }}
+        run: |
+          set -euo pipefail
+          ARGS=(
+            --require-synced
+            --health-attempts 90
+            --health-interval-seconds 10
+          )
+
+          if [ "${EVENT_NAME}" = "push" ]; then
+            ARGS+=(--expected-revision "${GITHUB_SHA}" --expected-revision-mode ancestor)
+          elif [ -n "${EXPECTED_REVISION_INPUT}" ]; then
+            ARGS+=(--expected-revision "${EXPECTED_REVISION_INPUT}")
+          fi
+
+          bun run packages/scripts/src/symphony/verify-deployment.ts \
+            "${ARGS[@]}" \
+            --namespace jangar \
+            --deployment symphony \
+            --kustomization-path argocd/applications/symphony/kustomization.yaml \
+            --argo-application symphony \
+            --service-base-url http://symphony.jangar.svc.cluster.local:8080
+
+          bun run packages/scripts/src/symphony/verify-deployment.ts \
+            "${ARGS[@]}" \
+            --namespace jangar \
+            --deployment symphony-jangar \
+            --kustomization-path argocd/applications/symphony-jangar/kustomization.yaml \
+            --argo-application symphony-jangar \
+            --service-base-url http://symphony-jangar.jangar.svc.cluster.local:8080
+
+          bun run packages/scripts/src/symphony/verify-deployment.ts \
+            "${ARGS[@]}" \
+            --namespace torghut \
+            --deployment symphony-torghut \
+            --kustomization-path argocd/applications/symphony-torghut/kustomization.yaml \
+            --argo-application symphony-torghut \
+            --service-base-url http://symphony-torghut.torghut.svc.cluster.local:8080
+
+      - name: Prepare rollback manifests
+        if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          HEAD_MESSAGE="$(git log -1 --pretty=%s)"
+          if [[ "${HEAD_MESSAGE}" == rollback\(symphony\):* ]]; then
+            echo "Skipping rollback PR because current commit is already a rollback"
+            echo "should_rollback=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            echo "No parent commit available for rollback"
+            echo "should_rollback=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git checkout --quiet HEAD^ -- \
+            argocd/applications/symphony/kustomization.yaml \
+            argocd/applications/symphony/deployment.patch.yaml \
+            argocd/applications/symphony-jangar/kustomization.yaml \
+            argocd/applications/symphony-jangar/deployment.patch.yaml \
+            argocd/applications/symphony-torghut/kustomization.yaml \
+            argocd/applications/symphony-torghut/deployment.patch.yaml
+
+          if git diff --quiet -- \
+            argocd/applications/symphony/kustomization.yaml \
+            argocd/applications/symphony/deployment.patch.yaml \
+            argocd/applications/symphony-jangar/kustomization.yaml \
+            argocd/applications/symphony-jangar/deployment.patch.yaml \
+            argocd/applications/symphony-torghut/kustomization.yaml \
+            argocd/applications/symphony-torghut/deployment.patch.yaml; then
+            echo "No rollback diff detected"
+            echo "should_rollback=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "should_rollback=true" >> "$GITHUB_OUTPUT"
+
+      - name: Open rollback pull request
+        if: failure() && steps.rollback.outputs.should_rollback == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
+          branch: codex/symphony-rollback-${{ github.run_id }}-${{ github.run_attempt }}
+          base: main
+          title: 'rollback(symphony): revert failed promotion ${{ github.sha }}'
+          commit-message: 'rollback(symphony): revert failed promotion ${{ github.sha }}'
+          delete-branch: true
+          add-paths: |
+            argocd/applications/symphony/kustomization.yaml
+            argocd/applications/symphony/deployment.patch.yaml
+            argocd/applications/symphony-jangar/kustomization.yaml
+            argocd/applications/symphony-jangar/deployment.patch.yaml
+            argocd/applications/symphony-torghut/kustomization.yaml
+            argocd/applications/symphony-torghut/deployment.patch.yaml
+          body: |
+            ## Summary
+            Automatic rollback created because `symphony-post-deploy-verify` failed on `main`.
+
+            - Failed commit: `${{ github.sha }}`
+            - Workflow run: `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
+            - Rollback source: `HEAD^` manifests from the failed run checkout

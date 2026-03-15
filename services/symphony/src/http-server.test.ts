@@ -5,6 +5,7 @@ import { Effect, Layer, ManagedRuntime } from 'effect'
 import { SymphonyHttpServer, parseIssueIdentifierPath } from './http-server'
 import { createLogger } from './logger'
 import { OrchestratorService } from './orchestrator'
+import { makeTestConfig, makeTestSnapshot } from './test-fixtures'
 import type { IssueDetails, RuntimeSnapshot, SymphonyConfig } from './types'
 
 let server: SymphonyHttpServer<OrchestratorService, never> | null = null
@@ -14,105 +15,7 @@ afterEach(() => {
   server = null
 })
 
-const snapshot: RuntimeSnapshot = {
-  generatedAt: '2026-03-14T12:00:00.000Z',
-  counts: {
-    running: 1,
-    retrying: 1,
-  },
-  running: [
-    {
-      issueId: 'issue-1',
-      issueIdentifier: 'ABC-1',
-      state: 'In Progress',
-      sessionId: 'thread-1-turn-1',
-      turnCount: 3,
-      lastEvent: 'turn_completed',
-      lastMessage: 'Working on tests',
-      startedAt: '2026-03-14T11:59:00.000Z',
-      lastEventAt: '2026-03-14T11:59:30.000Z',
-      tokens: {
-        inputTokens: 100,
-        outputTokens: 80,
-        totalTokens: 180,
-      },
-    },
-  ],
-  retrying: [
-    {
-      issueId: 'issue-2',
-      issueIdentifier: 'ABC-2',
-      attempt: 2,
-      dueAt: '2026-03-14T12:02:00.000Z',
-      error: 'no available orchestrator slots',
-    },
-  ],
-  codexTotals: {
-    inputTokens: 400,
-    outputTokens: 250,
-    totalTokens: 650,
-    secondsRunning: 123.4,
-  },
-  rateLimits: null,
-  policy: {
-    approvalPolicy: 'never',
-    threadSandbox: 'workspace-write',
-    turnSandboxPolicy: null,
-    allowedTools: ['linear_graphql'],
-    workspaceRoot: '/workspace/symphony',
-    pollIntervalMs: 30_000,
-    maxConcurrentAgents: 10,
-    activeStates: ['Todo', 'In Progress'],
-    terminalStates: ['Done', 'Closed'],
-  },
-  workflow: {
-    workflowPath: '/etc/symphony/WORKFLOW.md',
-    trackerKind: 'linear',
-    projectSlug: 'symphony',
-    promptTemplateEmpty: false,
-  },
-  leader: {
-    enabled: true,
-    required: true,
-    isLeader: true,
-    leaseName: 'symphony-leader',
-    leaseNamespace: 'jangar',
-    identity: 'symphony-0_abc',
-    lastTransitionAt: '2026-03-14T11:58:00.000Z',
-    lastAttemptAt: '2026-03-14T11:59:59.000Z',
-    lastSuccessAt: '2026-03-14T11:59:59.000Z',
-    lastError: null,
-  },
-  recentEvents: [
-    {
-      at: '2026-03-14T12:00:00.000Z',
-      event: 'dispatch_skipped',
-      message: 'issue ABC-2 not dispatched: no_slots',
-      issueId: 'issue-2',
-      issueIdentifier: 'ABC-2',
-      level: 'warn',
-      reason: 'no_slots',
-    },
-  ],
-  recentErrors: [
-    {
-      at: '2026-03-14T11:58:45.000Z',
-      code: 'worker_aborted',
-      message: 'worker exited unexpectedly',
-      issueId: 'issue-3',
-      issueIdentifier: 'ABC-3',
-      context: 'worker_exit',
-    },
-  ],
-  capacity: {
-    maxConcurrentAgents: 10,
-    running: 1,
-    retrying: 1,
-    availableSlots: 9,
-    saturated: false,
-    byState: [{ state: 'in progress', running: 1, limit: 10, saturated: false }],
-  },
-}
+const snapshot: RuntimeSnapshot = makeTestSnapshot()
 
 const issueDetails: IssueDetails = {
   issueIdentifier: 'ABC-1',
@@ -145,49 +48,10 @@ const issueDetails: IssueDetails = {
   runHistory: [],
 }
 
-const baseConfig: SymphonyConfig = {
+const baseConfig: SymphonyConfig = makeTestConfig({
   workflowPath: '/etc/symphony/WORKFLOW.md',
-  tracker: {
-    kind: 'linear',
-    endpoint: 'https://api.linear.app/graphql',
-    apiKey: 'token',
-    projectSlug: 'symphony',
-    activeStates: ['Todo', 'In Progress'],
-    terminalStates: ['Done', 'Closed'],
-  },
-  pollingIntervalMs: 30_000,
   workspaceRoot: '/workspace/symphony',
-  hooks: {
-    afterCreate: null,
-    beforeRun: null,
-    afterRun: null,
-    beforeRemove: null,
-    timeoutMs: 60_000,
-  },
-  worker: {
-    sshHosts: [],
-    maxConcurrentAgentsPerHost: null,
-  },
-  agent: {
-    maxConcurrentAgents: 10,
-    maxConcurrentAgentsByState: {},
-    maxRetryBackoffMs: 300_000,
-    maxTurns: 20,
-  },
-  codex: {
-    command: 'codex app-server',
-    approvalPolicy: 'never',
-    threadSandbox: 'workspace-write',
-    turnSandboxPolicy: null,
-    turnTimeoutMs: 3_600_000,
-    readTimeoutMs: 5_000,
-    stallTimeoutMs: 300_000,
-  },
-  server: {
-    host: '127.0.0.1',
-    port: null,
-  },
-}
+})
 
 const makeRuntime = () =>
   ManagedRuntime.make(
@@ -222,6 +86,10 @@ describe('http request parsing', () => {
       expect(stateBody.policy.allowedTools).toEqual(['linear_graphql'])
       expect(stateBody.leader.isLeader).toBe(true)
       expect(stateBody.recentErrors).toHaveLength(1)
+      expect(stateBody.instance.name).toBe('symphony')
+      expect(stateBody.target.name).toBe('Symphony')
+      expect(stateBody.release.mode).toBe('gitops_pr_on_main')
+      expect(stateBody.targetHealth.readyForDispatch).toBe(true)
 
       const issueResponse = await fetch(`http://127.0.0.1:${port}/api/v1/ABC-1`)
       expect(issueResponse.status).toBe(200)
@@ -234,6 +102,7 @@ describe('http request parsing', () => {
       expect(dashboardResponse.status).toBe(200)
       expect(dashboardText).toContain('Leader Status')
       expect(dashboardText).toContain('Recent Errors')
+      expect(dashboardText).toContain('Target Health')
       expect(dashboardText).toContain('/api/v1/ABC-1')
     } finally {
       server.stop()

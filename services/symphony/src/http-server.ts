@@ -150,7 +150,7 @@ const renderDashboard = (snapshot: RuntimeSnapshot) => {
       <div class="hero">
         <div>
           <h1>Symphony</h1>
-          <div class="hero-meta">generated ${escapeHtml(snapshot.generatedAt)} · <a class="json-link" href="/api/v1/state">raw JSON</a></div>
+          <div class="hero-meta">instance ${escapeHtml(snapshot.instance.name)} · generated ${escapeHtml(snapshot.generatedAt)} · <a class="json-link" href="/api/v1/state">raw JSON</a></div>
         </div>
         <div class="status ${snapshot.leader.isLeader ? 'leader' : 'follower'}">
           <strong>${snapshot.leader.isLeader ? 'Leader' : 'Follower'}</strong>
@@ -166,6 +166,16 @@ const renderDashboard = (snapshot: RuntimeSnapshot) => {
       </div>
 
       <div class="three-up">
+        <div class="card">
+          <h3>Instance</h3>
+          <table>
+            <tbody>${renderKeyValueRows([
+              { key: 'name', value: snapshot.instance.name },
+              { key: 'namespace', value: snapshot.instance.namespace },
+              { key: 'argocdApplication', value: snapshot.instance.argocdApplication },
+            ])}</tbody>
+          </table>
+        </div>
         <div class="card">
           <h3>Leader Status</h3>
           <table>
@@ -186,13 +196,14 @@ const renderDashboard = (snapshot: RuntimeSnapshot) => {
           </table>
         </div>
         <div class="card">
-          <h3>Workflow</h3>
+          <h3>Target</h3>
           <table>
             <tbody>${renderKeyValueRows([
-              { key: 'workflowPath', value: snapshot.workflow.workflowPath },
-              { key: 'trackerKind', value: snapshot.workflow.trackerKind },
-              { key: 'projectSlug', value: snapshot.workflow.projectSlug },
-              { key: 'promptTemplateEmpty', value: String(snapshot.workflow.promptTemplateEmpty) },
+              { key: 'name', value: snapshot.target.name },
+              { key: 'namespace', value: snapshot.target.namespace },
+              { key: 'argocdApplication', value: snapshot.target.argocdApplication },
+              { key: 'repo', value: snapshot.target.repo },
+              { key: 'defaultBranch', value: snapshot.target.defaultBranch },
             ])}</tbody>
           </table>
         </div>
@@ -214,11 +225,36 @@ const renderDashboard = (snapshot: RuntimeSnapshot) => {
 
       <div class="two-up">
         <div class="card">
-          <h3>Active States</h3>
-          <div>${snapshot.policy.activeStates.map(escapeHtml).join(', ') || 'none'}</div>
-          <h3 style="margin-top: 16px;">Terminal States</h3>
-          <div>${snapshot.policy.terminalStates.map(escapeHtml).join(', ') || 'none'}</div>
+          <h3>Release</h3>
+          <table>
+            <tbody>${renderKeyValueRows([
+              { key: 'mode', value: snapshot.release.mode },
+              { key: 'requiredChecksSource', value: snapshot.release.requiredChecksSource },
+              { key: 'promotionBranchPrefix', value: snapshot.release.promotionBranchPrefix },
+              { key: 'blockedLabels', value: snapshot.release.blockedLabels.join(', ') || 'none' },
+              {
+                key: 'deployables',
+                value: snapshot.release.deployables.map((deployable) => deployable.name).join(', ') || 'none',
+              },
+            ])}</tbody>
+          </table>
         </div>
+        <div class="card">
+          <h3>Workflow</h3>
+          <table>
+            <tbody>${renderKeyValueRows([
+              { key: 'workflowPath', value: snapshot.workflow.workflowPath },
+              { key: 'trackerKind', value: snapshot.workflow.trackerKind },
+              { key: 'projectSlug', value: snapshot.workflow.projectSlug },
+              { key: 'promptTemplateEmpty', value: String(snapshot.workflow.promptTemplateEmpty) },
+              { key: 'activeStates', value: snapshot.policy.activeStates.join(', ') || 'none' },
+              { key: 'terminalStates', value: snapshot.policy.terminalStates.join(', ') || 'none' },
+            ])}</tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="two-up">
         <div class="card">
           <h3>Capacity</h3>
           <table>
@@ -231,6 +267,20 @@ const renderDashboard = (snapshot: RuntimeSnapshot) => {
           </table>
           <div class="subtle">Per-state caps</div>
           <ul>${snapshot.capacity.byState.map((entry) => `<li>${escapeHtml(entry.state)}: ${escapeHtml(entry.running)}/${escapeHtml(entry.limit)}${entry.saturated ? ' (saturated)' : ''}</li>`).join('') || '<li>none</li>'}</ul>
+        </div>
+        <div class="card">
+          <h3>Target Health</h3>
+          <table>
+            <tbody>${renderKeyValueRows([
+              { key: 'readyForDispatch', value: String(snapshot.targetHealth.readyForDispatch) },
+              { key: 'openPromotionPr', value: String(snapshot.targetHealth.openPromotionPr) },
+              { key: 'promotionPrCount', value: snapshot.targetHealth.promotionPrCount },
+              { key: 'checkedAt', value: snapshot.targetHealth.checkedAt },
+              { key: 'lastError', value: snapshot.targetHealth.lastError },
+            ])}</tbody>
+          </table>
+          <div class="subtle">Checks</div>
+          <ul>${snapshot.targetHealth.checks.map((check) => `<li>${escapeHtml(check.name)}: ${escapeHtml(check.ok ? 'ok' : 'failing')} (${escapeHtml(check.message)})</li>`).join('') || '<li>none</li>'}</ul>
         </div>
       </div>
 

@@ -13,6 +13,7 @@ import {
   makeStateStoreLayer,
   StateStoreService,
 } from './state-store'
+import { makeTestConfig } from './test-fixtures'
 import type { PersistedSchedulerState, SymphonyConfig } from './types'
 import { WorkflowService } from './workflow'
 
@@ -23,49 +24,7 @@ afterEach(async () => {
   workspaceRoots.length = 0
 })
 
-const makeConfig = (workspaceRoot: string): SymphonyConfig => ({
-  workflowPath: '/tmp/WORKFLOW.md',
-  tracker: {
-    kind: 'linear',
-    endpoint: 'https://api.linear.app/graphql',
-    apiKey: 'token',
-    projectSlug: 'symphony',
-    activeStates: ['Todo', 'In Progress'],
-    terminalStates: ['Done', 'Closed'],
-  },
-  pollingIntervalMs: 30_000,
-  workspaceRoot,
-  hooks: {
-    afterCreate: null,
-    beforeRun: null,
-    afterRun: null,
-    beforeRemove: null,
-    timeoutMs: 60_000,
-  },
-  worker: {
-    sshHosts: [],
-    maxConcurrentAgentsPerHost: null,
-  },
-  agent: {
-    maxConcurrentAgents: 10,
-    maxConcurrentAgentsByState: {},
-    maxRetryBackoffMs: 300_000,
-    maxTurns: 20,
-  },
-  codex: {
-    command: 'codex app-server',
-    approvalPolicy: 'never',
-    threadSandbox: 'workspace-write',
-    turnSandboxPolicy: null,
-    turnTimeoutMs: 3_600_000,
-    readTimeoutMs: 5_000,
-    stallTimeoutMs: 300_000,
-  },
-  server: {
-    host: '127.0.0.1',
-    port: null,
-  },
-})
+const makeConfig = (workspaceRoot: string): SymphonyConfig => makeTestConfig({ workspaceRoot })
 
 const makeRuntime = (workspaceRoot: string) => {
   const config = makeConfig(workspaceRoot)

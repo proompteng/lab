@@ -2,7 +2,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: symphony
-  namespace: jangar
   labels:
     app.kubernetes.io/name: symphony
     app.kubernetes.io/part-of: lab
@@ -21,8 +20,6 @@ spec:
       labels:
         app.kubernetes.io/name: symphony
         app.kubernetes.io/part-of: lab
-      annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-03-15T00:22:33.983Z"
     spec:
       serviceAccountName: symphony
       containers:
@@ -43,6 +40,12 @@ spec:
                   name: symphony-linear-api-key
                   key: LINEAR_API_KEY
             - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token
+                  key: token
+                  optional: true
+            - name: GH_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: github-token

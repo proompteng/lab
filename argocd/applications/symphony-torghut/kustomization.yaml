@@ -1,6 +1,13 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: jangar
+namespace: torghut
+nameSuffix: -torghut
+labels:
+  - includeSelectors: true
+    includeTemplates: true
+    pairs:
+      app.kubernetes.io/name: symphony-torghut
+      app.kubernetes.io/part-of: lab
 configMapGenerator:
   - name: symphony-workflow
     files:
@@ -9,6 +16,8 @@ configMapGenerator:
       disableNameSuffixHash: true
 resources:
   - ../symphony-base
+  - codex-auth-sealedsecret.yaml
+  - github-token-sealedsecret.yaml
   - linear-api-key-sealedsecret.yaml
   - target-argocd-role.yaml
   - target-argocd-rolebinding.yaml

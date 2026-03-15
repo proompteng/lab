@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: symphony
+spec:
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "2026-03-14T22:00:00.000Z"
+    spec:
+      serviceAccountName: symphony-torghut
+      containers:
+        - name: symphony
+          env:
+            - name: LINEAR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: symphony-linear-api-key-torghut
+                  key: LINEAR_API_KEY
+            - name: SYMPHONY_LEADER_ELECTION_LEASE_NAME
+              value: symphony-torghut-leader
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: symphony-workspace-torghut
+        - name: workflow
+          configMap:
+            name: symphony-workflow-torghut
