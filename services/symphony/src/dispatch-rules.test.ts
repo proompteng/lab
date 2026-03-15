@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { shouldDispatchIssue, sortIssuesForDispatch } from './dispatch-rules'
+import { evaluateDispatchIssue, shouldDispatchIssue, sortIssuesForDispatch } from './dispatch-rules'
 import type { Issue, SymphonyConfig } from './types'
 
 const baseConfig: SymphonyConfig = {
@@ -74,14 +74,14 @@ describe('dispatch rules', () => {
   })
 
   test('Todo issue with non-terminal blockers is ineligible', () => {
-    const eligible = shouldDispatchIssue(
+    const decision = evaluateDispatchIssue(
       issue({
         blockedBy: [{ id: 'b1', identifier: 'ABC-0', state: 'In Progress' }],
       }),
       { config: baseConfig, runningIssues: [], claimedIssueIds: new Set() },
     )
 
-    expect(eligible).toBe(false)
+    expect(decision).toEqual({ eligible: false, reason: 'blocked_issue' })
   })
 
   test('Todo issue with terminal blockers is eligible', () => {
@@ -96,12 +96,41 @@ describe('dispatch rules', () => {
   })
 
   test('per-state concurrency caps additional in-progress work', () => {
-    const eligible = shouldDispatchIssue(issue({ id: '2', identifier: 'ABC-2', state: 'In Progress' }), {
+    const decision = evaluateDispatchIssue(issue({ id: '2', identifier: 'ABC-2', state: 'In Progress' }), {
       config: baseConfig,
       runningIssues: [issue({ id: '1', identifier: 'ABC-1', state: 'In Progress' })],
       claimedIssueIds: new Set(),
     })
 
-    expect(eligible).toBe(false)
+    expect(decision).toEqual({ eligible: false, reason: 'state_slots_exhausted' })
+  })
+
+  test('global concurrency exhaustion reports no_slots', () => {
+    const decision = evaluateDispatchIssue(issue({ id: '3', identifier: 'ABC-3', state: 'Todo' }), {
+      config: baseConfig,
+      runningIssues: [
+        issue({ id: '1', identifier: 'ABC-1', state: 'Todo' }),
+        issue({ id: '2', identifier: 'ABC-2', state: 'In Progress' }),
+      ],
+      claimedIssueIds: new Set(),
+    })
+
+    expect(decision).toEqual({ eligible: false, reason: 'no_slots' })
+  })
+
+  test('shouldDispatchIssue stays compatible with evaluateDispatchIssue', () => {
+    const context = { config: baseConfig, runningIssues: [], claimedIssueIds: new Set<string>() }
+    expect(shouldDispatchIssue(issue({ id: '4', identifier: 'ABC-4', state: 'Todo' }), context)).toBe(true)
+    expect(
+      shouldDispatchIssue(
+        issue({
+          id: '5',
+          identifier: 'ABC-5',
+          state: 'Todo',
+          blockedBy: [{ id: 'blocked', identifier: 'ABC-0', state: 'In Progress' }],
+        }),
+        context,
+      ),
+    ).toBe(false)
   })
 })

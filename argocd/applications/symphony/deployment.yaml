@@ -24,6 +24,7 @@ spec:
       annotations:
         kubectl.kubernetes.io/restartedAt: "2026-03-14T08:46:14.333Z"
     spec:
+      serviceAccountName: symphony
       containers:
         - name: symphony
           image: registry.ide-newton.ts.net/lab/symphony
@@ -47,6 +48,10 @@ spec:
                   name: github-token
                   key: token
                   optional: true
+            - name: SYMPHONY_LEADER_ELECTION_ENABLED
+              value: "true"
+            - name: SYMPHONY_LEADER_ELECTION_LEASE_NAME
+              value: symphony-leader
           readinessProbe:
             httpGet:
               path: /readyz

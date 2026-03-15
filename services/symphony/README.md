@@ -35,6 +35,12 @@ bun run --cwd services/symphony lint:oxlint:type
 - Strict `WORKFLOW.md` loading with typed config/defaults and last-known-good reload behavior
 - Linear polling and issue normalization
 - Per-issue workspace creation, hook execution, and terminal cleanup
-- In-memory orchestrator with reconciliation, retries, continuation re-dispatch, and token accounting
+- Durable scheduler metadata under `${workspace.root}/_symphony/` for retry/session recovery across restarts
+- Lease-based leader election for single-cluster scheduler ownership
 - Codex app-server session runner with dynamic `linear_graphql` tool support
-- Optional HTTP dashboard and JSON status API when a port is configured
+- Expanded HTTP dashboard and JSON status API with policy, leader, capacity, recent events, and issue drilldowns
+
+## Operational docs
+
+- [Safety model](/Users/gregkonush/.codex/worktrees/88a8/lab/docs/symphony/safety-model.md)
+- [Workflow authoring guide](/Users/gregkonush/.codex/worktrees/88a8/lab/docs/symphony/workflow-authoring.md)

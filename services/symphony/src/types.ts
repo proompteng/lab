@@ -121,10 +121,94 @@ export type RecentEvent = {
   at: string
   event: string
   message: string | null
+  issueId?: string | null
+  issueIdentifier?: string | null
+  level?: 'info' | 'warn' | 'error'
+  reason?: string | null
 }
 
 export type CodexTotals = TokenUsageTotals & {
   endedRuntimeSeconds: number
+}
+
+export type RecentError = {
+  at: string
+  code: string
+  message: string
+  issueId: string | null
+  issueIdentifier: string | null
+  context: string
+}
+
+export type PolicySummary = {
+  approvalPolicy: AskForApproval | null
+  threadSandbox: string | null
+  turnSandboxPolicy: SandboxPolicy | null
+  allowedTools: string[]
+  workspaceRoot: string
+  pollIntervalMs: number
+  maxConcurrentAgents: number
+  activeStates: string[]
+  terminalStates: string[]
+}
+
+export type WorkflowSummary = {
+  workflowPath: string
+  trackerKind: string | null
+  projectSlug: string | null
+  promptTemplateEmpty: boolean
+}
+
+export type LeaderSnapshot = {
+  enabled: boolean
+  required: boolean
+  isLeader: boolean
+  leaseName: string | null
+  leaseNamespace: string | null
+  identity: string
+  lastTransitionAt: string | null
+  lastAttemptAt: string | null
+  lastSuccessAt: string | null
+  lastError: string | null
+}
+
+export type CapacitySnapshot = {
+  maxConcurrentAgents: number
+  running: number
+  retrying: number
+  availableSlots: number
+  saturated: boolean
+  byState: Array<{
+    state: string
+    running: number
+    limit: number
+    saturated: boolean
+  }>
+}
+
+export type RunHistoryEntry = {
+  at: string
+  status:
+    | 'started'
+    | 'workspace_ready'
+    | 'retry_scheduled'
+    | 'succeeded'
+    | 'failed'
+    | 'stalled'
+    | 'terminal'
+    | 'inactive'
+    | 'leadership_lost'
+    | 'restored'
+  attempt: number | null
+  message: string | null
+  workspacePath: string | null
+  sessionId: string | null
+}
+
+export type SessionLogRef = {
+  label: string
+  path: string | null
+  url: string | null
 }
 
 export type RuntimeSnapshot = {
@@ -156,12 +240,18 @@ export type RuntimeSnapshot = {
     secondsRunning: number
   }
   rateLimits: RateLimitSnapshot | null
+  policy: PolicySummary
+  workflow: WorkflowSummary
+  leader: LeaderSnapshot
+  recentEvents: RecentEvent[]
+  recentErrors: RecentError[]
+  capacity: CapacitySnapshot
 }
 
 export type IssueDetails = {
   issueIdentifier: string
   issueId: string
-  status: 'running' | 'retrying'
+  status: 'running' | 'retrying' | 'tracked'
   workspace: {
     path: string | null
   }
@@ -185,9 +275,45 @@ export type IssueDetails = {
     error: string | null
   } | null
   logs: {
-    codex_session_logs: unknown[]
+    codex_session_logs: SessionLogRef[]
   }
   recentEvents: RecentEvent[]
   lastError: string | null
   tracked: Record<string, unknown>
+  runHistory: RunHistoryEntry[]
+}
+
+export type IssueRecord = {
+  issueIdentifier: string
+  issueId: string
+  status: IssueDetails['status']
+  workspacePath: string | null
+  attempts: IssueDetails['attempts']
+  running: IssueDetails['running']
+  retry: IssueDetails['retry']
+  logs: IssueDetails['logs']
+  recentEvents: RecentEvent[]
+  lastError: string | null
+  tracked: Record<string, unknown>
+  runHistory: RunHistoryEntry[]
+  updatedAt: string
+}
+
+export type PersistedRetryEntry = {
+  issueId: string
+  identifier: string
+  attempt: number
+  dueAt: string
+  error: string | null
+}
+
+export type PersistedSchedulerState = {
+  version: 1
+  updatedAt: string
+  codexTotals: CodexTotals
+  rateLimits: RateLimitSnapshot | null
+  recentEvents: RecentEvent[]
+  recentErrors: RecentError[]
+  retrying: PersistedRetryEntry[]
+  issues: IssueRecord[]
 }
