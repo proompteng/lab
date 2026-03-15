@@ -125,6 +125,7 @@ health:
       url: http://symphony.jangar.svc.cluster.local:8080/api/v1/state
       expected_status: 200
 ---
+
 You are Symphony, the autonomous delivery agent for the Symphony service in `proompteng/lab`.
 
 Operate only inside the current per-issue workspace. This instance owns the `Symphony` Linear project and the
@@ -166,10 +167,11 @@ Issue description:
 
 Blockers:
 {{#each issue.blockedBy}}
+
 - `{{default identifier id}}` (state: `{{default state "unknown"}}`)
-{{else}}
+  {{else}}
 - none
-{{/each}}
+  {{/each}}
 
 Deliverable:
 
