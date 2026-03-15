@@ -5,6 +5,7 @@ import app.trading.features as feature_values
 from unittest import TestCase
 from unittest.mock import patch
 
+from app import config
 from app.trading.feature_quality import FeatureQualityThresholds, evaluate_feature_batch_quality
 from app.trading.models import SignalEnvelope
 
@@ -71,6 +72,31 @@ class TestFeatureQuality(TestCase):
         self.assertGreater(report.staleness_ms_p95, 2_000)
         self.assertIn('duplicate_ratio_exceeds_threshold', report.reasons)
         self.assertIn('feature_staleness_exceeds_budget', report.reasons)
+
+    def test_batch_uses_event_time_for_staleness_in_simulation_mode(self) -> None:
+        original = config.settings.trading_simulation_enabled
+        config.settings.trading_simulation_enabled = True
+        try:
+            ts = datetime(2026, 3, 13, 13, 30, tzinfo=timezone.utc)
+            signals = [
+                _signal(ts=ts, seq=1, ingest_lag_ms=138_744_236),
+                _signal(ts=ts + timedelta(minutes=1), seq=2, ingest_lag_ms=138_744_236),
+            ]
+
+            report = evaluate_feature_batch_quality(
+                signals,
+                thresholds=FeatureQualityThresholds(
+                    max_required_null_rate=0.01,
+                    max_duplicate_ratio=0.10,
+                    max_staleness_ms=1_000,
+                ),
+            )
+
+            self.assertTrue(report.accepted)
+            self.assertEqual(report.staleness_ms_p95, 0)
+            self.assertNotIn('feature_staleness_exceeds_budget', report.reasons)
+        finally:
+            config.settings.trading_simulation_enabled = original
 
     def test_batch_fails_closed_on_malformed_staleness_ms(self) -> None:
         signals = [

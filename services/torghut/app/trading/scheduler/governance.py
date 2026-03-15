@@ -37,6 +37,7 @@ from .safety import (
     _latch_signal_continuity_alert_state,
     _merge_emergency_stop_reasons,
     _record_signal_continuity_recovery_cycle,
+    _signal_bootstrap_grace_active,
     _split_emergency_stop_reasons,
 )
 from .state import TradingState
@@ -438,6 +439,16 @@ class TradingSchedulerGovernanceMixin:
         for reason in sorted(critical_reasons):
             streak = self.state.metrics.no_signal_reason_streak.get(reason, 0)
             if streak >= critical_staleness_limit:
+                if reason == "no_signals_in_window" and _signal_bootstrap_grace_active(
+                    self.state,
+                    grace_seconds=settings.trading_signal_bootstrap_grace_seconds,
+                ):
+                    logger.info(
+                        "Suppressing emergency-stop staleness streak during bootstrap grace reason=%s streak=%s",
+                        reason,
+                        streak,
+                    )
+                    continue
                 if (
                     not market_session_open
                 ) and reason in market_closed_expected_reasons:

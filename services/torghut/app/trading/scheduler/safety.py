@@ -108,6 +108,23 @@ def _record_signal_continuity_recovery_cycle(
     )
 
 
+def _signal_bootstrap_grace_active(
+    state: Any,
+    *,
+    grace_seconds: int,
+    now: datetime | None = None,
+) -> bool:
+    if max(0, int(grace_seconds)) <= 0:
+        return False
+    if getattr(state, "signal_bootstrap_completed_at", None) is not None:
+        return False
+    started_at = getattr(state, "signal_bootstrap_started_at", None)
+    if not isinstance(started_at, datetime):
+        return False
+    reference = now or datetime.now(timezone.utc)
+    return (reference - started_at).total_seconds() < max(0, int(grace_seconds))
+
+
 __all__ = [
     "_coerce_recovery_reason_sequence",
     "_is_market_session_open",
@@ -115,5 +132,6 @@ __all__ = [
     "_latch_signal_continuity_alert_state",
     "_merge_emergency_stop_reasons",
     "_record_signal_continuity_recovery_cycle",
+    "_signal_bootstrap_grace_active",
     "_split_emergency_stop_reasons",
 ]

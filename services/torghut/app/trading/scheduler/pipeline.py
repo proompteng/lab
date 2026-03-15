@@ -96,7 +96,12 @@ from .pipeline_helpers import (
     _select_strictest_runtime_uncertainty_gate,
     _uncertainty_gate_staleness_reason,
 )
-from .safety import _is_market_session_open, _latch_signal_continuity_alert_state, _record_signal_continuity_recovery_cycle
+from .safety import (
+    _is_market_session_open,
+    _latch_signal_continuity_alert_state,
+    _record_signal_continuity_recovery_cycle,
+    _signal_bootstrap_grace_active,
+)
 from .state import (
     RuntimeUncertaintyGate,
     RuntimeUncertaintyGateAction,
@@ -225,6 +230,9 @@ class TradingPipeline:
             self.record_no_signal_batch(batch)
             self.ingestor.commit_cursor(session, batch)
             return False
+
+        if self.state.signal_bootstrap_completed_at is None:
+            self.state.signal_bootstrap_completed_at = datetime.now(timezone.utc)
 
         if settings.trading_feature_quality_enabled:
             quality_thresholds = FeatureQualityThresholds(
@@ -768,6 +776,11 @@ class TradingPipeline:
     ) -> bool:
         if reason == "cursor_ahead_of_stream":
             return True
+        if reason == "no_signals_in_window" and _signal_bootstrap_grace_active(
+            self.state,
+            grace_seconds=settings.trading_signal_bootstrap_grace_seconds,
+        ):
+            return False
         if market_session_open:
             return True
         expected_market_closed_reasons = (
