@@ -6,6 +6,13 @@ Use this runbook for alerts tied to the Jangar quant control-plane (near-real-ti
 upstream Torghut trading signals. This covers data freshness, decision activity, execution quality proxies, and
 control-plane stream health.
 
+This runbook is aligned with the discover-stage architecture merge contract:
+
+- `docs/torghut/design-system/v6/42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md`
+
+When running under scoped service accounts, treat unavailable cluster capabilities (`kubectl exec`, `kubectl logs` with target
+containers, or DB pod exec) as a controlled evidence gap and prioritize control-plane status surface checks instead.
+
 ## Alert thresholds
 
 Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.yaml` under
