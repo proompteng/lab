@@ -9,6 +9,9 @@ configMapGenerator:
       disableNameSuffixHash: true
 resources:
   - linear-api-key-sealedsecret.yaml
+  - serviceaccount.yaml
+  - role.yaml
+  - rolebinding.yaml
   - pvc-rwo.yaml
   - deployment.yaml
   - service.yaml

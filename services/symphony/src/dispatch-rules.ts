@@ -7,6 +7,20 @@ type DispatchContext = {
   claimedIssueIds: Set<string>
 }
 
+export type DispatchDecision =
+  | { eligible: true; reason: null }
+  | {
+      eligible: false
+      reason:
+        | 'missing_fields'
+        | 'non_active_state'
+        | 'claimed'
+        | 'already_running'
+        | 'blocked_issue'
+        | 'no_slots'
+        | 'state_slots_exhausted'
+    }
+
 export const sortIssuesForDispatch = (issues: Issue[]): Issue[] =>
   [...issues].sort((left, right) => {
     const leftPriority = left.priority ?? Number.MAX_SAFE_INTEGER
@@ -18,27 +32,46 @@ export const sortIssuesForDispatch = (issues: Issue[]): Issue[] =>
     return left.identifier.localeCompare(right.identifier)
   })
 
-export const shouldDispatchIssue = (issue: Issue, context: DispatchContext): boolean => {
-  if (!issue.id || !issue.identifier || !issue.title || !issue.state) return false
+export const evaluateDispatchIssue = (issue: Issue, context: DispatchContext): DispatchDecision => {
+  if (!issue.id || !issue.identifier || !issue.title || !issue.state) {
+    return { eligible: false, reason: 'missing_fields' }
+  }
 
   const activeStates = new Set(context.config.tracker.activeStates.map((state) => normalizeState(state)))
   const terminalStates = new Set(context.config.tracker.terminalStates.map((state) => normalizeState(state)))
   const normalizedState = normalizeState(issue.state)
-  if (!activeStates.has(normalizedState) || terminalStates.has(normalizedState)) return false
-  if (context.claimedIssueIds.has(issue.id)) return false
-  if (context.runningIssues.some((runningIssue) => runningIssue.id === issue.id)) return false
+  if (!activeStates.has(normalizedState) || terminalStates.has(normalizedState)) {
+    return { eligible: false, reason: 'non_active_state' }
+  }
+  if (context.claimedIssueIds.has(issue.id)) {
+    return { eligible: false, reason: 'claimed' }
+  }
+  if (context.runningIssues.some((runningIssue) => runningIssue.id === issue.id)) {
+    return { eligible: false, reason: 'already_running' }
+  }
 
   if (normalizedState === 'todo') {
     const hasActiveBlocker = issue.blockedBy.some((blocker) => !terminalStates.has(normalizeState(blocker.state)))
-    if (hasActiveBlocker) return false
+    if (hasActiveBlocker) {
+      return { eligible: false, reason: 'blocked_issue' }
+    }
   }
 
-  if (context.runningIssues.length >= context.config.agent.maxConcurrentAgents) return false
+  if (context.runningIssues.length >= context.config.agent.maxConcurrentAgents) {
+    return { eligible: false, reason: 'no_slots' }
+  }
 
   const currentStateCount = context.runningIssues.filter(
     (runningIssue) => normalizeState(runningIssue.state) === normalizedState,
   ).length
   const stateLimit =
     context.config.agent.maxConcurrentAgentsByState[normalizedState] ?? context.config.agent.maxConcurrentAgents
-  return currentStateCount < stateLimit
+  if (currentStateCount >= stateLimit) {
+    return { eligible: false, reason: 'state_slots_exhausted' }
+  }
+
+  return { eligible: true, reason: null }
 }
+
+export const shouldDispatchIssue = (issue: Issue, context: DispatchContext): boolean =>
+  evaluateDispatchIssue(issue, context).eligible

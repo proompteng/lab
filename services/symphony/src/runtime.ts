@@ -2,8 +2,10 @@ import { Layer, ManagedRuntime } from 'effect'
 
 import { makeCodexSessionLayer } from './codex-app-session'
 import { makeIssueRunnerLayer } from './issue-runner'
+import { makeLeaderElectionLayer } from './leader-election'
 import { makeTrackerLayer } from './linear-client'
 import { makeOrchestratorLayer } from './orchestrator'
+import { makeStateStoreLayer } from './state-store'
 import { makeWorkflowLayer } from './workflow'
 import { makeShellLayer, makeWorkspaceLayer } from './workspace-manager'
 import type { Logger } from './logger'
@@ -14,6 +16,8 @@ export const makeSymphonyLayer = (workflowPath: string, logger: Logger) => {
   const trackerLayer = makeTrackerLayer(logger).pipe(Layer.provide(workflowLayer))
   const workspaceLayer = makeWorkspaceLayer(logger).pipe(Layer.provide(shellLayer), Layer.provide(workflowLayer))
   const codexSessionLayer = makeCodexSessionLayer(logger)
+  const leaderElectionLayer = makeLeaderElectionLayer(logger)
+  const stateStoreLayer = makeStateStoreLayer(logger).pipe(Layer.provide(workflowLayer))
   const issueRunnerLayer = makeIssueRunnerLayer(logger)
     .pipe(Layer.provide(codexSessionLayer))
     .pipe(Layer.provide(workspaceLayer))
@@ -24,6 +28,8 @@ export const makeSymphonyLayer = (workflowPath: string, logger: Logger) => {
     .pipe(Layer.provide(issueRunnerLayer))
     .pipe(Layer.provide(workspaceLayer))
     .pipe(Layer.provide(trackerLayer))
+    .pipe(Layer.provide(leaderElectionLayer))
+    .pipe(Layer.provide(stateStoreLayer))
     .pipe(Layer.provide(workflowLayer))
 }
 
