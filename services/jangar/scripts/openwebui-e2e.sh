@@ -58,7 +58,6 @@ export JANGAR_PORT="${JANGAR_PORT:-$(pick_free_port)}"
 export PORT="$JANGAR_PORT"
 export HOST="${HOST:-0.0.0.0}"
 export OPENWEBUI_PORT="${OPENWEBUI_PORT:-$(pick_free_port)}"
-<<<<<<< HEAD
 export OPENWEBUI_IMAGE="${OPENWEBUI_IMAGE:-ghcr.io/open-webui/open-webui:v0.8.10}"
 if [[ "$use_mock_codex" == "1" ]]; then
   export JANGAR_MOCK_CODEX=1
