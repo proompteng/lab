@@ -23,6 +23,7 @@ import { parseNamespaceScopeEnv } from '~/server/namespace-scope'
 import { createKubernetesClient, type KubernetesClient } from '~/server/primitives-kube'
 import { parseEnvStringList, parseOptionalNumber } from '~/server/agents-controller/env-config'
 import type {
+  DependencyQuorumConfidence,
   DependencyQuorumSegment,
   DependencyQuorumSegmentName,
   DependencyQuorumSegmentScope,
@@ -769,6 +770,41 @@ const uniqueStrings = <T extends string>(values: readonly T[]) => {
   return unique
 }
 
+const DEPENDENCY_QUORUM_SCOPE_PRIORITY: Record<DependencyQuorumSegmentScope, number> = {
+  single_capability: 0,
+  hypothesis_scoped: 1,
+  capital_family: 2,
+  global: 3,
+}
+
+const DEPENDENCY_QUORUM_CONFIDENCE_PRIORITY: Record<DependencyQuorumConfidence, number> = {
+  high: 0,
+  medium: 1,
+  low: 2,
+}
+
+const pickBroaderDependencyScope = (
+  current: DependencyQuorumSegmentScope | undefined,
+  next: DependencyQuorumSegmentScope,
+) => {
+  if (current == null) {
+    return next
+  }
+
+  return DEPENDENCY_QUORUM_SCOPE_PRIORITY[next] > DEPENDENCY_QUORUM_SCOPE_PRIORITY[current] ? next : current
+}
+
+const pickLowerDependencyConfidence = (
+  current: DependencyQuorumConfidence | undefined,
+  next: DependencyQuorumConfidence,
+) => {
+  if (current == null) {
+    return next
+  }
+
+  return DEPENDENCY_QUORUM_CONFIDENCE_PRIORITY[next] > DEPENDENCY_QUORUM_CONFIDENCE_PRIORITY[current] ? next : current
+}
+
 const toSafeInt = (value: unknown, fallback: number, min: number, max: number) => {
   const parsed = parseOptionalNumber(value)
   if (parsed === undefined) return fallback
@@ -1283,40 +1319,23 @@ const buildDependencyQuorum = (input: {
     .filter((reason) => reason.length > 0)
   const segmentReasons = new Map<DependencyQuorumSegmentName, string[]>()
   const segmentScopes = new Map<DependencyQuorumSegmentName, DependencyQuorumSegmentScope>()
-  const segmentConfidences = new Map<DependencyQuorumSegmentName, 'high' | 'medium' | 'low'>()
+  const segmentConfidences = new Map<DependencyQuorumSegmentName, DependencyQuorumConfidence>()
 
   const setSegmentScope = (segment: DependencyQuorumSegmentName, scope: DependencyQuorumSegmentScope) => {
-    const currentScope = segmentScopes.get(segment)
-    if (currentScope == null) {
-      segmentScopes.set(segment, scope)
-      return
-    }
-
-    if (currentScope === scope) {
-      return
-    }
-
-    if (scope === 'global') {
-      segmentScopes.set(segment, scope)
-      return
-    }
-
-    if (scope === 'capital_family' && currentScope === 'single_capability') {
-      segmentScopes.set(segment, scope)
-    }
+    segmentScopes.set(segment, pickBroaderDependencyScope(segmentScopes.get(segment), scope))
   }
 
   const appendSegmentReason = (
     segment: DependencyQuorumSegmentName,
     reason: string,
     scope: DependencyQuorumSegmentScope,
-    confidence: 'high' | 'medium' | 'low',
+    confidence: DependencyQuorumConfidence,
   ) => {
     const list = segmentReasons.get(segment) ?? []
     list.push(reason)
     segmentReasons.set(segment, list)
     setSegmentScope(segment, scope)
-    segmentConfidences.set(segment, confidence)
+    segmentConfidences.set(segment, pickLowerDependencyConfidence(segmentConfidences.get(segment), confidence))
   }
 
   const addControlRuntimeReason = (reason: string, status: 'blocked' | 'degraded') => {
@@ -1438,14 +1457,16 @@ const buildDependencyQuorum = (input: {
   })
   const delayedSegments = segments.filter((segment) => segment.status === 'degraded')
   const blockedSegments = segments.filter((segment) => segment.status === 'blocked')
-  const segmentScopesForDelay = uniqueStrings(
-    delayedSegments.map((segment) => segment.scope).filter((scope) => scope !== 'global'),
-  )
+  const resolveSegmentScope = (items: DependencyQuorumSegment[]) =>
+    items.reduce<DependencyQuorumSegmentScope | undefined>(
+      (scope, segment) => pickBroaderDependencyScope(scope, segment.scope),
+      undefined,
+    )
   const degradationScope =
     decision === 'block'
-      ? (uniqueStrings(blockedSegments.map((segment) => segment.scope))[0] ?? 'global')
+      ? (resolveSegmentScope(blockedSegments) ?? 'global')
       : decision === 'delay'
-        ? (segmentScopesForDelay[0] ?? 'single_capability')
+        ? (resolveSegmentScope(delayedSegments) ?? 'single_capability')
         : undefined
   const message =
     decision === 'allow'
