@@ -25,7 +25,7 @@ spec:
           imagePullPolicy: IfNotPresent
           image: registry.ide-newton.ts.net/lab/torghut@sha256:129ad8f8ab120f83d2dd94649c34b6a79862c11e587204015a784358472b7237
           command:
-            - alembic
+            - /opt/venv/bin/alembic
           args:
             - -c
             - /app/alembic.ini
