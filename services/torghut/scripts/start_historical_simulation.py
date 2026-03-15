@@ -3462,6 +3462,7 @@ def _ensure_postgres_database(config: PostgresRuntimeConfig) -> None:
 
 def _ensure_postgres_runtime_permissions(config: PostgresRuntimeConfig) -> dict[str, Any]:
     simulation_role = _username_from_dsn(config.torghut_runtime_dsn) or _username_from_dsn(config.simulation_dsn)
+    admin_role = _username_from_dsn(config.admin_dsn)
     admin_simulation_dsn = _replace_database_in_dsn(
         config.admin_dsn,
         database=config.simulation_db,
@@ -3470,6 +3471,7 @@ def _ensure_postgres_runtime_permissions(config: PostgresRuntimeConfig) -> dict[
 
     def _ensure() -> dict[str, Any]:
         grants_applied = False
+        default_privileges_applied = False
         with psycopg.connect(config.admin_dsn, autocommit=True) as conn:
             with conn.cursor() as cursor:
                 if simulation_role:
@@ -3516,10 +3518,70 @@ def _ensure_postgres_runtime_permissions(config: PostgresRuntimeConfig) -> dict[
                             sql.Identifier(simulation_role),
                         )
                     )
+                    cursor.execute(
+                        sql.SQL('GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO {}').format(
+                            sql.Identifier(simulation_role),
+                        )
+                    )
+                    if admin_role:
+                        cursor.execute(
+                            sql.SQL(
+                                'ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public '
+                                'GRANT ALL PRIVILEGES ON TABLES TO {}'
+                            ).format(
+                                sql.Identifier(admin_role),
+                                sql.Identifier(simulation_role),
+                            )
+                        )
+                        cursor.execute(
+                            sql.SQL(
+                                'ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public '
+                                'GRANT ALL PRIVILEGES ON SEQUENCES TO {}'
+                            ).format(
+                                sql.Identifier(admin_role),
+                                sql.Identifier(simulation_role),
+                            )
+                        )
+                        cursor.execute(
+                            sql.SQL(
+                                'ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public '
+                                'GRANT EXECUTE ON FUNCTIONS TO {}'
+                            ).format(
+                                sql.Identifier(admin_role),
+                                sql.Identifier(simulation_role),
+                            )
+                        )
+                    else:
+                        cursor.execute(
+                            sql.SQL(
+                                'ALTER DEFAULT PRIVILEGES IN SCHEMA public '
+                                'GRANT ALL PRIVILEGES ON TABLES TO {}'
+                            ).format(
+                                sql.Identifier(simulation_role),
+                            )
+                        )
+                        cursor.execute(
+                            sql.SQL(
+                                'ALTER DEFAULT PRIVILEGES IN SCHEMA public '
+                                'GRANT ALL PRIVILEGES ON SEQUENCES TO {}'
+                            ).format(
+                                sql.Identifier(simulation_role),
+                            )
+                        )
+                        cursor.execute(
+                            sql.SQL(
+                                'ALTER DEFAULT PRIVILEGES IN SCHEMA public '
+                                'GRANT EXECUTE ON FUNCTIONS TO {}'
+                            ).format(
+                                sql.Identifier(simulation_role),
+                            )
+                        )
                     grants_applied = True
+                    default_privileges_applied = True
         return {
             'simulation_role': simulation_role,
             'grants_applied': grants_applied,
+            'default_privileges_applied': default_privileges_applied,
             'vector_extension_checked': has_vector_extension,
         }
 
@@ -5410,8 +5472,10 @@ def _apply(
         postgres_database_precreated = _postgres_database_precreated(manifest)
         if not postgres_database_precreated:
             _ensure_postgres_database(postgres_config)
-        postgres_permissions_report = _ensure_postgres_runtime_permissions(postgres_config)
+        _ensure_postgres_runtime_permissions(postgres_config)
         _run_migrations(postgres_config)
+        # Alembic runs under the admin role, so newly created objects must be re-granted to the runtime role.
+        postgres_permissions_report = _ensure_postgres_runtime_permissions(postgres_config)
         _reset_postgres_runtime_state(postgres_config)
         seeded_cursor_at = _seed_simulation_trade_cursor(
             config=postgres_config,

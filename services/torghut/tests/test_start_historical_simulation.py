@@ -735,6 +735,100 @@ class TestStartHistoricalSimulation(TestCase):
             ['postgresql://postgres:admin-secret@localhost:5432/torghut_sim_sim_1'],
         )
 
+    def test_ensure_postgres_runtime_permissions_sets_default_privileges_for_migrated_objects(self) -> None:
+        config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://postgres:admin-secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut_app:secret@localhost:5432/torghut_sim_sim_1',
+            simulation_db='torghut_sim_sim_1',
+            migrations_command='/opt/venv/bin/alembic upgrade heads',
+        )
+        admin_statements: list[object] = []
+        simulation_statements: list[object] = []
+
+        class _FakeCursor:
+            def __init__(self, statements: list[object]) -> None:
+                self._statements = statements
+
+            def execute(self, statement: object, params: object | None = None) -> None:
+                _ = params
+                self._statements.append(statement)
+
+            def __enter__(self) -> _FakeCursor:
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                _ = (exc_type, exc, tb)
+                return False
+
+        class _FakeConnection:
+            def __init__(self, statements: list[object]) -> None:
+                self._statements = statements
+
+            def cursor(self) -> _FakeCursor:
+                return _FakeCursor(self._statements)
+
+            def __enter__(self) -> _FakeConnection:
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                _ = (exc_type, exc, tb)
+                return False
+
+        def _fake_connect(dsn: str, autocommit: bool = False) -> _FakeConnection:
+            self.assertTrue(autocommit)
+            if dsn == config.admin_dsn:
+                return _FakeConnection(admin_statements)
+            if dsn == config.admin_simulation_dsn:
+                return _FakeConnection(simulation_statements)
+            raise AssertionError(f'unexpected dsn: {dsn}')
+
+        def _fake_retry(*, label: str, operation: object, attempts: int = 8, sleep_seconds: float = 0.5) -> Any:
+            _ = (label, attempts, sleep_seconds)
+            return operation()
+
+        with (
+            patch('scripts.start_historical_simulation.psycopg.connect', side_effect=_fake_connect),
+            patch(
+                'scripts.start_historical_simulation._run_with_transient_postgres_retry',
+                side_effect=_fake_retry,
+            ),
+            patch(
+                'scripts.start_historical_simulation._postgres_extension_exists',
+                return_value=True,
+            ),
+        ):
+            report = start_historical_simulation._ensure_postgres_runtime_permissions(config)
+
+        rendered_admin = [repr(statement) for statement in admin_statements]
+        rendered_simulation = [repr(statement) for statement in simulation_statements]
+
+        self.assertEqual(report['simulation_role'], 'torghut_app')
+        self.assertTrue(report['grants_applied'])
+        self.assertTrue(report['default_privileges_applied'])
+        self.assertTrue(
+            any(
+                'GRANT ALL PRIVILEGES ON DATABASE ' in statement
+                and "Identifier('torghut_sim_sim_1')" in statement
+                and "Identifier('torghut_app')" in statement
+                for statement in rendered_admin
+            ),
+            rendered_admin,
+        )
+        self.assertTrue(
+            any('GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ' in statement for statement in rendered_simulation),
+            rendered_simulation,
+        )
+        self.assertTrue(
+            any(
+                'ALTER DEFAULT PRIVILEGES FOR ROLE ' in statement
+                and 'GRANT ALL PRIVILEGES ON TABLES TO ' in statement
+                and "Identifier('postgres')" in statement
+                and "Identifier('torghut_app')" in statement
+                for statement in rendered_simulation
+            ),
+            rendered_simulation,
+        )
+
     def test_assert_required_simulation_metadata_tables_raises_when_missing(self) -> None:
         config = PostgresRuntimeConfig(
             admin_dsn='postgresql://postgres:admin-secret@localhost:5432/postgres',
@@ -1797,7 +1891,7 @@ class TestStartHistoricalSimulation(TestCase):
                     force_replay=False,
                 )
 
-        ensure_permissions.assert_called_once_with(runtime_config)
+        self.assertEqual(ensure_permissions.call_args_list, [call(runtime_config), call(runtime_config)])
         run_migrations.assert_called_once_with(runtime_config)
         reset_runtime_state.assert_called_once_with(runtime_config)
 
