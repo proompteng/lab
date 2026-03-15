@@ -1279,6 +1279,64 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(headers.get('X-ClickHouse-User'), 'torghut')
         self.assertEqual(headers.get('X-ClickHouse-Key'), 'secret')
 
+    def test_verification_http_clickhouse_query_retries_kubernetes_service_endpoints(self) -> None:
+        attempted_hosts: list[str] = []
+
+        class _FakeResponse:
+            status = 200
+
+            def read(self) -> bytes:
+                return b'1'
+
+        class _FakeConnection:
+            def __init__(self, host: str, port: int | None) -> None:
+                attempted_hosts.append(host)
+                self._host = host
+
+            def request(
+                self,
+                method: str,
+                path: str,
+                body: bytes | None = None,
+                headers: dict[str, str] | None = None,
+            ) -> None:
+                if self._host == 'torghut-clickhouse.torghut.svc.cluster.local':
+                    raise OSError('[Errno 8] nodename nor servname provided, or not known')
+
+            def getresponse(self) -> _FakeResponse:
+                return _FakeResponse()
+
+            def close(self) -> None:
+                return None
+
+        def _fake_kubectl_json(namespace: str, args: tuple[str, ...]) -> dict[str, object]:
+            self.assertEqual(namespace, 'torghut')
+            if list(args[:3]) == ['get', 'service', 'torghut-clickhouse']:
+                return {'spec': {'clusterIP': '10.104.171.228'}}
+            if list(args[:3]) == ['get', 'endpoints', 'torghut-clickhouse']:
+                return {'subsets': []}
+            self.fail(f'unexpected kubectl args: {args!r}')
+
+        with (
+            patch('scripts.historical_simulation_verification.HTTPConnection', _FakeConnection),
+            patch('scripts.historical_simulation_verification._kubectl_json', side_effect=_fake_kubectl_json),
+        ):
+            status, body = historical_simulation_verification._http_clickhouse_query(
+                config=ClickHouseRuntimeConfig(
+                    http_url='http://torghut-clickhouse.torghut.svc.cluster.local:8123',
+                    username='torghut',
+                    password='secret',
+                ),
+                query='SELECT 1',
+            )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body, '1')
+        self.assertEqual(
+            attempted_hosts,
+            ['torghut-clickhouse.torghut.svc.cluster.local', '10.104.171.228'],
+        )
+
     def test_clickhouse_query_configs_resolves_service_endpoints(self) -> None:
         config = ClickHouseRuntimeConfig(
             http_url='http://torghut-clickhouse.torghut.svc.cluster.local:8123',
@@ -3031,6 +3089,14 @@ class TestStartHistoricalSimulation(TestCase):
             'true',
         )
         self.assertEqual(
+            env_by_name['TRADING_STRATEGY_RUNTIME_MODE'].get('value'),
+            'scheduler_v3',
+        )
+        self.assertEqual(
+            env_by_name['TRADING_STRATEGY_SCHEDULER_ENABLED'].get('value'),
+            'true',
+        )
+        self.assertEqual(
             env_by_name['TA_CLICKHOUSE_URL'].get('value'),
             'http://chi-torghut-clickhouse-default-0-0.torghut.svc.cluster.local:8123',
         )
@@ -3145,6 +3211,112 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(
             env_by_name['TRADING_FEATURE_QUALITY_ENABLED'].get('value'),
             'true',
+        )
+        self.assertEqual(
+            env_by_name['TRADING_STRATEGY_RUNTIME_MODE'].get('value'),
+            'scheduler_v3',
+        )
+        self.assertEqual(
+            env_by_name['TRADING_STRATEGY_SCHEDULER_ENABLED'].get('value'),
+            'true',
+        )
+
+    def test_configure_torghut_service_allows_explicit_runtime_override(self) -> None:
+        resources = _build_resources(
+            'sim-runtime-override',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_sim_runtime_override',
+            simulation_db='torghut_sim_sim_runtime_override',
+            migrations_command='true',
+        )
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol='SASL_PLAINTEXT',
+            sasl_mechanism='SCRAM-SHA-512',
+            sasl_username='user',
+            sasl_password='secret',
+        )
+        service_payload = {
+            'spec': {
+                'template': {
+                    'spec': {
+                        'containers': [
+                            {
+                                'name': 'user-container',
+                                'image': 'registry.example/lab/torghut@sha256:abc',
+                                'env': [],
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        captured_patch: dict[str, object] = {}
+
+        with (
+            patch(
+                'scripts.start_historical_simulation._kubectl_json',
+                return_value=service_payload,
+            ),
+            patch(
+                'scripts.start_historical_simulation._kubectl_patch',
+                side_effect=lambda namespace, kind, name, patch: captured_patch.update(
+                    {'namespace': namespace, 'kind': kind, 'name': name, 'patch': patch}
+                ),
+            ),
+        ):
+            _configure_torghut_service_for_simulation(
+                resources=resources,
+                manifest={
+                    'window': {
+                        'start': '2026-02-27T14:30:00Z',
+                        'end': '2026-02-27T21:00:00Z',
+                    }
+                },
+                postgres_config=postgres_config,
+                clickhouse_config=ClickHouseRuntimeConfig(
+                    http_url='http://clickhouse:8123',
+                    username='torghut',
+                    password='secret',
+                ),
+                kafka_config=kafka_config,
+                torghut_env_overrides={
+                    'TRADING_STRATEGY_RUNTIME_MODE': 'plugin_v3',
+                    'TRADING_STRATEGY_SCHEDULER_ENABLED': 'false',
+                },
+            )
+
+        patch_payload = captured_patch.get('patch')
+        self.assertIsInstance(patch_payload, dict)
+        assert isinstance(patch_payload, dict)
+        containers = (
+            patch_payload.get('spec', {})
+            .get('template', {})
+            .get('spec', {})
+            .get('containers', [])
+        )
+        self.assertIsInstance(containers, list)
+        assert isinstance(containers, list)
+        env_entries = containers[0].get('env') if containers else []
+        self.assertIsInstance(env_entries, list)
+        assert isinstance(env_entries, list)
+        env_by_name = {
+            str(item.get('name')): item
+            for item in env_entries
+            if isinstance(item, dict)
+        }
+        self.assertEqual(
+            env_by_name['TRADING_STRATEGY_RUNTIME_MODE'].get('value'),
+            'plugin_v3',
+        )
+        self.assertEqual(
+            env_by_name['TRADING_STRATEGY_SCHEDULER_ENABLED'].get('value'),
+            'false',
         )
 
     def test_offset_for_time_lookup_falls_back_for_missing_or_invalid_offset(self) -> None:
