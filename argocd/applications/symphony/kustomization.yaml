@@ -14,6 +14,7 @@ resources:
   - target-argocd-rolebinding.yaml
 patches:
   - path: deployment.patch.yaml
+  - path: pvc.patch.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/symphony
     newName: registry.ide-newton.ts.net/lab/symphony
