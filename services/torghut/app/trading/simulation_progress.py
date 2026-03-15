@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any, Optional, cast
 
-from sqlalchemy import Table, case, event, select, text
+from sqlalchemy import Table, event, select, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
@@ -18,6 +18,7 @@ from ..models.entities import (
     Execution,
     ExecutionOrderEvent,
     ExecutionTCAMetric,
+    SimulationRuntimeContext,
     SimulationRunProgress,
     TradeCursor,
     TradeDecision,
@@ -34,22 +35,6 @@ SIMULATION_PROGRESS_COMPONENTS = (
     COMPONENT_TA,
     COMPONENT_TORGHUT,
     COMPONENT_ARTIFACTS,
-)
-_ACTIVE_RUNTIME_COMPONENT_PRIORITY = case(
-    (SimulationRunProgress.component == COMPONENT_TORGHUT, 0),
-    (SimulationRunProgress.component == COMPONENT_ARTIFACTS, 1),
-    (SimulationRunProgress.component == COMPONENT_TA, 2),
-    else_=3,
-)
-_ACTIVE_RUNTIME_STATUSES = frozenset(
-    {
-        'pending',
-        'running',
-        'ready',
-        'replayed',
-        'activity_verified',
-        'reported',
-    }
 )
 _PROGRESS_UPSERT = text(
     """
@@ -137,6 +122,11 @@ def _resolve_lane() -> str:
     return 'equity'
 
 
+def _resolve_account_label() -> str:
+    account_label = (settings.trading_account_label or '').strip()
+    return account_label or 'paper'
+
+
 def _static_simulation_runtime_context() -> dict[str, str] | None:
     if not settings.trading_simulation_enabled:
         return None
@@ -161,15 +151,10 @@ def _active_simulation_runtime_context_via_session(
 ) -> dict[str, str] | None:
     row = (
         session.execute(
-            select(SimulationRunProgress)
+            select(SimulationRuntimeContext)
             .where(
-                SimulationRunProgress.lane == _resolve_lane(),
-                SimulationRunProgress.status.in_(tuple(sorted(_ACTIVE_RUNTIME_STATUSES))),
-                SimulationRunProgress.terminal_state.is_(None),
-            )
-            .order_by(
-                _ACTIVE_RUNTIME_COMPONENT_PRIORITY,
-                SimulationRunProgress.updated_at.desc(),
+                SimulationRuntimeContext.lane == _resolve_lane(),
+                SimulationRuntimeContext.account_label == _resolve_account_label(),
             )
             .limit(1)
         )
@@ -178,15 +163,16 @@ def _active_simulation_runtime_context_via_session(
     )
     if row is None:
         return None
-    payload = _coerce_payload_mapping(row.payload_json)
-    window_start = str(payload.get('window_start') or '').strip()
-    window_end = str(payload.get('window_end') or '').strip()
+    payload = _coerce_payload_mapping(row.metadata_json)
+    window_start = row.window_start.isoformat() if row.window_start is not None else ''
+    window_end = row.window_end.isoformat() if row.window_end is not None else ''
     return {
         'run_id': str(row.run_id).strip(),
         'dataset_id': str(row.dataset_id or '').strip(),
-        'lane': str(row.lane or '').strip() or _resolve_lane(),
-        'window_start': window_start,
-        'window_end': window_end,
+        'lane': str(row.lane).strip() or _resolve_lane(),
+        'window_start': window_start or str(payload.get('window_start') or '').strip(),
+        'window_end': window_end or str(payload.get('window_end') or '').strip(),
+        'account_label': str(row.account_label).strip() or _resolve_account_label(),
     }
 
 

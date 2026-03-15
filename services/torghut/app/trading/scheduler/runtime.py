@@ -396,10 +396,6 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
             logger.info("Trading scheduler loop exited")
 
     def _sync_simulation_run_context(self) -> None:
-        if not settings.trading_simulation_enabled:
-            self._active_simulation_run_id = None
-            return
-
         runtime_context = active_simulation_runtime_context()
         active_run_id = str((runtime_context or {}).get("run_id") or "").strip() or None
         if active_run_id == self._active_simulation_run_id:

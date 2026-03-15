@@ -832,6 +832,7 @@ class TestStartHistoricalSimulation(TestCase):
             seeded_at = start_historical_simulation._seed_simulation_trade_cursor(
                 config=config,
                 manifest=manifest,
+                account_label='TORGHUT_SIM',
             )
 
         self.assertEqual(seeded_at, datetime(2026, 3, 11, 13, 30, tzinfo=timezone.utc))
@@ -1224,6 +1225,10 @@ class TestStartHistoricalSimulation(TestCase):
                     return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
                 ),
                 patch(
+                    'scripts.start_historical_simulation._upsert_simulation_runtime_context',
+                    return_value=None,
+                ),
+                patch(
                     'scripts.start_historical_simulation._dump_topics',
                     return_value={'records': 1, 'sha256': 'abc'},
                 ),
@@ -1323,6 +1328,10 @@ class TestStartHistoricalSimulation(TestCase):
                 patch(
                     'scripts.start_historical_simulation._seed_simulation_trade_cursor',
                     return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
+                ),
+                patch(
+                    'scripts.start_historical_simulation._upsert_simulation_runtime_context',
+                    return_value=None,
                 ),
                 patch(
                     'scripts.start_historical_simulation._dump_topics',
@@ -1531,6 +1540,10 @@ class TestStartHistoricalSimulation(TestCase):
                     return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
                 ),
                 patch(
+                    'scripts.start_historical_simulation._upsert_simulation_runtime_context',
+                    return_value=None,
+                ),
+                patch(
                     'scripts.start_historical_simulation._dump_topics',
                     return_value={'records': 1, 'sha256': 'abc'},
                 ),
@@ -1638,6 +1651,10 @@ class TestStartHistoricalSimulation(TestCase):
                 patch(
                     'scripts.start_historical_simulation._seed_simulation_trade_cursor',
                     return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
+                ),
+                patch(
+                    'scripts.start_historical_simulation._upsert_simulation_runtime_context',
+                    return_value=None,
                 ),
                 patch(
                     'scripts.start_historical_simulation._dump_topics',
@@ -1810,6 +1827,10 @@ class TestStartHistoricalSimulation(TestCase):
                     return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
                 ),
                 patch(
+                    'scripts.start_historical_simulation._upsert_simulation_runtime_context',
+                    return_value=None,
+                ),
+                patch(
                     'scripts.start_historical_simulation._dump_topics',
                     return_value={'records': 1, 'sha256': 'abc'},
                 ),
@@ -1910,6 +1931,10 @@ class TestStartHistoricalSimulation(TestCase):
                 patch(
                     'scripts.start_historical_simulation._seed_simulation_trade_cursor',
                     return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
+                ),
+                patch(
+                    'scripts.start_historical_simulation._upsert_simulation_runtime_context',
+                    return_value=None,
                 ),
                 patch(
                     'scripts.start_historical_simulation._dump_topics',
@@ -2806,6 +2831,104 @@ class TestStartHistoricalSimulation(TestCase):
                     dump_path=dump_path,
                     force=False,
                 )
+
+    def test_dump_topics_restores_durable_cache_hit_without_repolling_kafka(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+        dump_line = json.dumps(
+            {
+                'source_topic': resources.source_topic_by_role['trades'],
+                'replay_topic': resources.simulation_topic_by_role['trades'],
+                'source_timestamp_ms': 1704067200000,
+                'key_b64': None,
+                'value_b64': None,
+                'headers': [],
+            }
+        )
+        dump_bytes = f'{dump_line}\n'.encode('utf-8')
+        dump_sha256 = start_historical_simulation.hashlib.sha256(dump_bytes).hexdigest()
+        cache_artifact_path = 's3://argo-workflows/torghut-simulation-cache/cache-key/source-dump.ndjson'
+        cache_manifest_path = f'{cache_artifact_path}.manifest.json'
+        artifact_manifest = {
+            'dataset_id': resources.dataset_id,
+            'run_id': 'prior-run',
+            'dump_format': 'ndjson',
+            'cache_policy': 'prefer_cache',
+            'replay_profile': 'compact',
+            'chunk_count': 1,
+            'chunks': [
+                {
+                    'path': cache_artifact_path,
+                    'records': 1,
+                    'sha256': dump_sha256,
+                    'payload_sha256': dump_sha256,
+                    'min_source_timestamp_ms': 1704067200000,
+                    'max_source_timestamp_ms': 1704067200000,
+                }
+            ],
+        }
+
+        class _FakeCephClient:
+            def get_object(self, *, bucket: str, key: str) -> bytes:
+                if bucket != 'argo-workflows':
+                    raise AssertionError(f'unexpected bucket: {bucket}')
+                if key.endswith('.manifest.json'):
+                    return json.dumps(artifact_manifest).encode('utf-8')
+                return dump_bytes
+
+        with TemporaryDirectory() as tmp_dir:
+            dump_path = Path(tmp_dir) / 'source-dump.ndjson'
+            manifest = {
+                'cachePolicy': 'prefer_cache',
+                'metadata': {
+                    'cacheKey': 'cache-key',
+                    'cacheDecision': 'hit',
+                    'cacheArtifactPath': cache_artifact_path,
+                    'cacheChunkManifestPath': cache_manifest_path,
+                },
+                'performance': {
+                    'dumpFormat': 'ndjson',
+                    'replayProfile': 'compact',
+                },
+                'window': {'start': '2026-01-01T00:00:00Z', 'end': '2026-01-01T01:00:00Z'},
+            }
+
+            with (
+                patch(
+                    'scripts.start_historical_simulation._consumer_for_dump',
+                    side_effect=AssertionError('expected durable cache restore; consumer should not be constructed'),
+                ),
+                patch(
+                    'scripts.start_historical_simulation._simulation_cache_client_from_env',
+                    return_value=(_FakeCephClient(), 'argo-workflows'),
+                ),
+            ):
+                report = _dump_topics(
+                    resources=resources,
+                    kafka_config=kafka_config,
+                    manifest=manifest,
+                    dump_path=dump_path,
+                    force=False,
+                )
+
+            self.assertTrue(report['restored_from_cache'])
+            self.assertEqual(report['records'], 1)
+            self.assertEqual(report['cache_artifact_path'], cache_artifact_path)
+            self.assertTrue(dump_path.exists())
+            marker = json.loads(dump_path.with_suffix('.dump-marker.json').read_text(encoding='utf-8'))
+            self.assertEqual(marker['dump_sha256'], dump_sha256)
+            self.assertEqual(marker['records'], 1)
 
     def test_dump_topics_completes_when_last_record_reaches_stop_offset(self) -> None:
         resources = _build_resources(

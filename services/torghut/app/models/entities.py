@@ -1966,6 +1966,39 @@ class TradeCursor(Base, TimestampMixin):
     )
 
 
+class SimulationRuntimeContext(Base, TimestampMixin):
+    """Explicit simulation runtime context keyed by lane + account label."""
+
+    __tablename__ = "simulation_runtime_context"
+
+    lane: Mapped[str] = mapped_column(String(length=32), primary_key=True)
+    account_label: Mapped[str] = mapped_column(String(length=64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    dataset_id: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    window_start: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    window_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    cache_key: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    cache_artifact_path: Mapped[Optional[str]] = mapped_column(String(length=512), nullable=True)
+    cache_manifest_path: Mapped[Optional[str]] = mapped_column(String(length=512), nullable=True)
+    warm_lane_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    metadata_json: Mapped[Any] = mapped_column(
+        JSONType,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'"),
+    )
+
+    __table_args__ = (
+        Index("ix_simulation_runtime_context_run", "run_id"),
+        Index("ix_simulation_runtime_context_updated_at", "updated_at"),
+    )
+
+
 class SimulationRunProgress(Base, TimestampMixin):
     """Durable runtime progress ledger for historical simulation runs."""
 
@@ -2157,6 +2190,7 @@ __all__ = [
     "PositionSnapshot",
     "ToolRunLog",
     "TradeCursor",
+    "SimulationRuntimeContext",
     "SimulationRunProgress",
     "ResearchRun",
     "ResearchCandidate",
