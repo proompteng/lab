@@ -28,6 +28,15 @@ CapitalStage = Literal[
 ]
 DependencyQuorumDecision = Literal['allow', 'delay', 'block', 'unknown']
 
+_KNOWN_DEPENDENCY_CAPABILITIES = {
+    'jangar_dependency_quorum',
+    'signal_continuity',
+    'drift_governance',
+    'feature_coverage',
+    'market_context_freshness',
+    'evidence_continuity',
+}
+
 _JANGAR_QUORUM_CACHE_LOCK = Lock()
 _JANGAR_QUORUM_CACHE: dict[str, object] = {}
 
@@ -83,6 +92,40 @@ def _decimal_to_string(value: Decimal) -> str:
     normalized = value.normalize()
     rendered = format(normalized, 'f')
     return rendered.rstrip('0').rstrip('.') if '.' in rendered else rendered
+
+
+def _normalize_dependency_capability(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower().replace('-', '_')
+    return normalized if normalized else None
+
+
+def _resolve_required_dependency_capabilities(manifest: HypothesisManifest) -> tuple[set[str], set[str]]:
+    explicit = {
+        item
+        for item in (
+            _normalize_dependency_capability(item)
+            for item in manifest.required_dependency_capabilities
+        )
+        if item is not None
+    }
+    if explicit:
+        unknown = explicit - _KNOWN_DEPENDENCY_CAPABILITIES
+        return explicit, unknown
+
+    return {
+        'jangar_dependency_quorum',
+        'signal_continuity',
+        'drift_governance',
+        'feature_coverage',
+        'evidence_continuity',
+        'market_context_freshness',
+    }, set()
+
+
+def _is_dependency_required(required: set[str], capability: str) -> bool:
+    return capability in required
 
 
 class HypothesisEntryRequirements(BaseModel):
@@ -442,16 +485,31 @@ def compile_hypothesis_runtime_statuses(
 
     statuses: list[dict[str, object]] = []
     for manifest in registry.items:
+        required_dependency_capabilities, unknown_dependency_capabilities = _resolve_required_dependency_capabilities(
+            manifest
+        )
         reasons: list[str] = []
         requirements = manifest.entry_requirements
 
-        if requirements.require_feature_rows and feature_batch_rows_total < max(
-            1, requirements.min_feature_batch_rows
+        if (
+            _is_dependency_required(required_dependency_capabilities, 'feature_coverage')
+            and requirements.require_feature_rows
+            and feature_batch_rows_total < max(
+                1,
+                requirements.min_feature_batch_rows,
+            )
         ):
             reasons.append('feature_rows_missing')
-        if requirements.require_drift_checks and drift_detection_checks_total <= 0:
+        if (
+            _is_dependency_required(required_dependency_capabilities, 'drift_governance')
+            and requirements.require_drift_checks
+            and drift_detection_checks_total <= 0
+        ):
             reasons.append('drift_checks_missing')
-        if requirements.require_evidence_continuity:
+        if (
+            _is_dependency_required(required_dependency_capabilities, 'evidence_continuity')
+            and requirements.require_evidence_continuity
+        ):
             if evidence_continuity_checks_total <= 0:
                 reasons.append('evidence_continuity_missing')
             elif not evidence_ok:
@@ -472,21 +530,39 @@ def compile_hypothesis_runtime_statuses(
             and no_signal_streak > requirements.max_no_signal_streak
         ):
             reasons.append('no_signal_streak_exceeded')
-        if signal_continuity_alert_active:
+        if (
+            _is_dependency_required(required_dependency_capabilities, 'signal_continuity')
+            and signal_continuity_alert_active
+        ):
             reasons.append('signal_continuity_alert_active')
-        if requirements.max_market_context_freshness_seconds is not None:
-            if (
+        if (
+            _is_dependency_required(required_dependency_capabilities, 'market_context_freshness')
+            and requirements.max_market_context_freshness_seconds is not None
+            and (
                 market_context_freshness_seconds is None
                 or market_context_freshness_seconds > requirements.max_market_context_freshness_seconds
-            ):
-                reasons.append('market_context_stale')
-        if requirements.required_dependency_quorum == 'allow':
+            )
+        ):
+            reasons.append('market_context_stale')
+        if (
+            _is_dependency_required(required_dependency_capabilities, 'jangar_dependency_quorum')
+            and requirements.required_dependency_quorum == 'allow'
+        ):
             if jangar_dependency_quorum.decision == 'delay':
                 reasons.append('jangar_dependency_delay')
             elif jangar_dependency_quorum.decision in {'block', 'unknown'}:
                 reasons.append('jangar_dependency_block')
-        elif jangar_dependency_quorum.decision == 'block':
+        elif (
+            _is_dependency_required(required_dependency_capabilities, 'jangar_dependency_quorum')
+            and jangar_dependency_quorum.decision == 'block'
+        ):
             reasons.append('jangar_dependency_block')
+
+        if unknown_dependency_capabilities:
+            reasons.extend(
+                f'dependency_capability_unknown:{capability}'
+                for capability in sorted(unknown_dependency_capabilities)
+            )
 
         if (
             manifest.initial_state == 'blocked'
@@ -576,6 +652,10 @@ def compile_hypothesis_runtime_statuses(
                     'post_cost_expectancy_bps_proxy': _decimal_to_string(
                         post_cost_expectancy_bps_proxy
                     ),
+                },
+                'dependency_capabilities': {
+                    'required': sorted(required_dependency_capabilities),
+                    'unknown': sorted(unknown_dependency_capabilities),
                 },
                 'entry_contract': {
                     'max_signal_lag_seconds': requirements.max_signal_lag_seconds,
