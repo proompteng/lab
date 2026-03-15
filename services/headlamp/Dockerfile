@@ -12,12 +12,10 @@ ARG HEADLAMP_SHA
 
 WORKDIR /src
 
-RUN apk add --no-cache ca-certificates git \
-    && git init . \
-    && git remote add origin https://github.com/kubernetes-sigs/headlamp.git \
-    && git fetch --depth 1 origin "${HEADLAMP_REF}" \
-    && git checkout --detach FETCH_HEAD \
-    && test "$(git rev-parse HEAD)" = "${HEADLAMP_SHA}"
+COPY .upstream /src
+
+RUN test -f /src/.codex-upstream-sha \
+    && test "$(cat /src/.codex-upstream-sha)" = "${HEADLAMP_SHA}"
 
 FROM ${IMAGE_BASE} AS image-base
 
@@ -35,11 +33,15 @@ ENV GOPATH=/go \
     GOARCH=${TARGETARCH}
 
 COPY --from=source /src/backend/go.* /headlamp/backend/
+COPY scripts /tools
+COPY patches /patches
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     cd ./backend && go mod download
 
 COPY --from=source /src/backend /headlamp/backend
+
+RUN sh /tools/apply-upstream-patches.sh /headlamp
 
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \

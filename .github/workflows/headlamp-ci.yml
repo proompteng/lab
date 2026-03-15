@@ -59,6 +59,17 @@ jobs:
       - name: Render Headlamp manifests
         run: kustomize build --enable-helm argocd/applications/headlamp >/dev/null
 
+      - name: Run Upstream Multiplexer Regression Tests
+        run: |
+          docker run --rm \
+            -v "$PWD":/workspace \
+            -w /workspace \
+            golang:1.24.13@sha256:d2d2bc1c84f7e60d7d2438a3836ae7d0c847f4888464e7ec9ba3a1339a1ee804 \
+            sh services/headlamp/scripts/test-upstream.sh
+
+      - name: Fetch pinned Headlamp upstream source
+        run: sh services/headlamp/scripts/fetch-upstream.sh services/headlamp/.upstream
+
       - name: Build Headlamp image
         run: docker buildx build --platform linux/arm64 --load -t headlamp:test services/headlamp
 
@@ -67,10 +78,45 @@ jobs:
 
   deploy-main:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/docker-build-common.yaml
-    with:
-      image_name: headlamp
-      dockerfile: ./services/headlamp/Dockerfile
-      context: ./services/headlamp
-      new_tag: ${{ github.sha }}
-    secrets: inherit
+    runs-on: arc-arm64
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Fetch pinned Headlamp upstream source
+        run: sh services/headlamp/scripts/fetch-upstream.sh services/headlamp/.upstream
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            registry.ide-newton.ts.net/lab/headlamp
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}},value=${{ github.sha }}
+            type=sha
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          platforms: linux/arm64
+          context: ./services/headlamp
+          file: ./services/headlamp/Dockerfile
+          build-args: |
+            LAB_GIT_SHA=${{ github.sha }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          push: true
+          cache-from: |
+            type=registry,ref=registry.ide-newton.ts.net/lab/headlamp:latest
+            type=registry,ref=registry.ide-newton.ts.net/lab/headlamp:cache
+          cache-to: |
+            type=registry,ref=registry.ide-newton.ts.net/lab/headlamp:cache,mode=max
+            type=inline
