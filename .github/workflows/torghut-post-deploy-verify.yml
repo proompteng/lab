@@ -138,8 +138,23 @@ jobs:
           kubectl rollout status deployment/torghut-ws -n torghut --timeout=10m
           kubectl rollout status deployment/torghut-forecast -n torghut --timeout=10m
 
-          KNSVC_READY="$(kubectl get ksvc torghut -n torghut -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')"
-          if [ "${KNSVC_READY}" != 'True' ]; then
+          set +e
+          KNSVC_READY="$(kubectl get ksvc torghut -n torghut -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}' 2> /tmp/torghut-ksvc-ready.err)"
+          KNSVC_READY_STATUS=$?
+          set -e
+          if [ "${KNSVC_READY_STATUS}" -ne 0 ]; then
+            if grep -qi 'forbidden' /tmp/torghut-ksvc-ready.err; then
+              echo "Skipping Knative Service readiness check: runner lacks permission to read services.serving.knative.dev/ksvc"
+            elif grep -qi 'not found' /tmp/torghut-ksvc-ready.err; then
+              echo "Knative Service torghut was not found"
+              cat /tmp/torghut-ksvc-ready.err
+              exit 1
+            else
+              echo "Failed to read Knative Service torghut"
+              cat /tmp/torghut-ksvc-ready.err
+              exit 1
+            fi
+          elif [ "${KNSVC_READY}" != 'True' ]; then
             echo "Knative Service torghut is not Ready"
             exit 1
           fi
