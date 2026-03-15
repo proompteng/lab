@@ -73,6 +73,17 @@ const parseIntegerEnv = (value: string | undefined, fallback: number, min: numbe
 
 const nowIso = () => new Date().toISOString()
 
+export const formatKubernetesMicroTime = (date: Date): string => {
+  const iso = date.toISOString()
+  const [secondsPart, fractionalPartWithSuffix] = iso.split('.')
+  if (!secondsPart || !fractionalPartWithSuffix) return iso
+
+  const milliseconds = fractionalPartWithSuffix.replace('Z', '')
+  return `${secondsPart}.${milliseconds.padEnd(6, '0')}Z`
+}
+
+const nowKubernetesMicroTime = () => formatKubernetesMicroTime(new Date())
+
 const safeString = (value: unknown): string => {
   if (value === null || value === undefined) return ''
   if (typeof value === 'string') return value
@@ -111,8 +122,8 @@ const buildLease = (config: LeaderElectionConfig, identity: string): KubernetesL
   spec: {
     holderIdentity: identity,
     leaseDurationSeconds: config.leaseDurationSeconds,
-    acquireTime: nowIso(),
-    renewTime: nowIso(),
+    acquireTime: nowKubernetesMicroTime(),
+    renewTime: nowKubernetesMicroTime(),
     leaseTransitions: 0,
   },
 })
@@ -134,8 +145,8 @@ const updateLease = (current: KubernetesLease, config: LeaderElectionConfig, ide
       ...current.spec,
       holderIdentity: identity,
       leaseDurationSeconds: config.leaseDurationSeconds,
-      acquireTime: current.spec?.acquireTime ?? nowIso(),
-      renewTime: nowIso(),
+      acquireTime: current.spec?.acquireTime ?? nowKubernetesMicroTime(),
+      renewTime: nowKubernetesMicroTime(),
       leaseTransitions:
         previousHolder.length === 0 || previousHolder === identity ? currentTransitions : currentTransitions + 1,
     },
@@ -153,7 +164,7 @@ const clearLeaseHolder = (current: KubernetesLease, config: LeaderElectionConfig
     ...current.spec,
     holderIdentity: '',
     leaseDurationSeconds: config.leaseDurationSeconds,
-    renewTime: nowIso(),
+    renewTime: nowKubernetesMicroTime(),
   },
 })
 
