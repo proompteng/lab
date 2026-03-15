@@ -56,16 +56,16 @@ jobs:
           sudo mv kustomize /usr/local/bin/
           kustomize version
 
-      - name: Install Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: '1.24.13'
-
       - name: Render Headlamp manifests
         run: kustomize build --enable-helm argocd/applications/headlamp >/dev/null
 
       - name: Run Upstream Multiplexer Regression Tests
-        run: sh services/headlamp/scripts/test-upstream.sh
+        run: |
+          docker run --rm \
+            -v "$PWD":/workspace \
+            -w /workspace \
+            golang:1.24.13@sha256:d2d2bc1c84f7e60d7d2438a3836ae7d0c847f4888464e7ec9ba3a1339a1ee804 \
+            sh services/headlamp/scripts/test-upstream.sh
 
       - name: Build Headlamp image
         run: docker buildx build --platform linux/arm64 --load -t headlamp:test services/headlamp
