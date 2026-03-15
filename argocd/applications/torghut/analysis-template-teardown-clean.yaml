@@ -30,7 +30,7 @@ spec:
                 restartPolicy: Never
                 containers:
                   - name: analysis
-                    image: registry.ide-newton.ts.net/lab/torghut@sha256:ae64f2c5fb30273abfb4b1a8f8e1b89d9ceeb2c8c14f0522fd017cf2e6661850
+                    image: registry.ide-newton.ts.net/lab/torghut@sha256:e0d565cca3781d9fd239a92c57e15289c2b4cb87cef0b073628a41d086ba3c25
                     imagePullPolicy: IfNotPresent
                     env:
                       - name: DB_DSN
