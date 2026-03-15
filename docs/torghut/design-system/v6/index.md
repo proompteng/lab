@@ -15,6 +15,7 @@
   - `39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md`
 - Discover stage merge anchor:
   - `42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md`
+  - `42-torghut-quant-control-plane-and-profitability-program-2026-03-15.md`
 - Evidence sync: `14-legacy-gap-disposition-map-2026-03-03.md` (signed v4/v5 disposition completeness)
 - Rollout status: v6 pack controls are represented by merged runtime/control-plane closure phases in `main` (`#3921` through `#3960`).
 
@@ -60,6 +61,8 @@ Current source-state priority is narrower:
   control-plane authority and scoped rollout semantics to prevent watch noise from becoming global rollout blockers.
 - `41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md` now defines multi-horizon profitability
   lanes, capital-budget-aware progression, and demotion guardrails to move from static safety to measurable profit growth.
+- `42-torghut-quant-control-plane-and-profitability-program-2026-03-15.md` defines the full architecture merge program that
+  binds segment-aware control-plane operations with hypothesis profitability lane governance.
 - `42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md` now records the
   discover-stage merge contract with evidence and explicit engineer/deployer acceptance gates.
 - `33-alpaca-options-market-data-and-technical-analysis-lane-2026-03-08.md` now records the production design for a
@@ -136,6 +139,7 @@ This pack is positioned as the next architecture layer above:
 40. `40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md`
 41. `41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md`
 42. `42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md`
+43. `42-torghut-quant-control-plane-and-profitability-program-2026-03-15.md`
 
 ## Recommended Build Order
 
@@ -181,6 +185,7 @@ This pack is positioned as the next architecture layer above:
 40. `40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md`
 41. `41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md`
 42. `42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md`
+43. `42-torghut-quant-control-plane-and-profitability-program-2026-03-15.md`
 
 ## Why This Sequence
 
@@ -212,6 +217,8 @@ This pack is positioned as the next architecture layer above:
   and observable before safe capital transitions can accelerate.
 - The profitability guardrail architecture follows that resilience contract because safe capital growth is impossible if
   rollout scope is still a single global state channel.
+- `42-torghut-quant-control-plane-and-profitability-program-2026-03-15.md` introduces explicit mixed-failure decision trees and
+  engineer/deployer handoff criteria to complete the joint architecture lane.
 - The Alpaca options implementation contract set follows the architecture doc because options ingest is only safe to
   build once the concrete topic, storage, rate-limit, and identity contracts are fixed.
 - Options hardening and `opra` promotion follow the implementation contract set because the lane now exists in
