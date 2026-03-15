@@ -560,7 +560,6 @@ export const buildExecutionTrust = async ({
 
     const metadata = asRecord(rawResource.metadata) ?? {}
     const status = asRecord(rawResource.status) ?? {}
-    const spec = asRecord(rawResource.spec) ?? {}
     const stageStates = asRecord(status.stageStates) ?? {}
 
     const lastDiscoveredAt = asString(status[SWARM_STAGE_LAST_RUN_KEY.discover])
@@ -580,8 +579,8 @@ export const buildExecutionTrust = async ({
     const freezeActive = freezeUntilMs !== null && freezeUntilMs > nowMs
     const freezeReason = asString(freezeRaw.reason) ?? null
     const ready = phase.toLowerCase() !== 'frozen' && !freezeActive && phase.toLowerCase() !== 'disabled'
-    const observedGeneration = Number.isFinite(Number(spec.observedGeneration ?? metadata.generation ?? null))
-      ? Math.max(0, Number(spec.observedGeneration ?? metadata.generation ?? 0))
+    const observedGeneration = Number.isFinite(Number(status.observedGeneration ?? metadata.generation ?? null))
+      ? Math.max(0, Number(status.observedGeneration ?? metadata.generation ?? 0))
       : null
 
     const requirementsRaw = asRecord(status.requirements) ?? {}

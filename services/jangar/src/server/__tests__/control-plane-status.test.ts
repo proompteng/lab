@@ -293,6 +293,8 @@ describe('control-plane status', () => {
 
   const buildExecutionTrustSwarmResource = (
     options: {
+      metadataGeneration?: number
+      observedGeneration?: number | null
       phase?: string
       freezeReason?: string | null
       freezeUntil?: string | null
@@ -304,12 +306,10 @@ describe('control-plane status', () => {
     metadata: {
       name: 'jangar-control-plane',
       namespace: 'agents',
-      generation: 1,
-    },
-    spec: {
-      observedGeneration: 4,
+      generation: options.metadataGeneration ?? 1,
     },
     status: {
+      observedGeneration: options.observedGeneration ?? 4,
       phase: options.phase ?? 'Active',
       freeze: {
         reason: options.freezeReason ?? null,
@@ -351,7 +351,7 @@ describe('control-plane status', () => {
           lastRunTime: options.requirementsLastSeen ?? '2026-01-20T00:00:00Z',
           consecutiveFailures: 0,
         },
-        ...(options.stageStates ?? {}),
+        ...options.stageStates,
       },
     },
   })
@@ -1532,6 +1532,28 @@ describe('control-plane status', () => {
     expect(snapshot.executionTrust.blocking_windows.some((window) => window.class === 'blocked')).toBe(false)
     expect(snapshot.swarms).toHaveLength(1)
     expect(snapshot.stages).toHaveLength(4)
+  })
+
+  it('buildExecutionTrust prefers status observed generation over metadata generation', async () => {
+    kubeClientMocks.createKubernetesClient.mockReturnValue({
+      list: vi.fn(async () => ({
+        items: [
+          buildExecutionTrustSwarmResource({
+            metadataGeneration: 9,
+            observedGeneration: 4,
+          }),
+        ],
+      })),
+    })
+
+    const snapshot = await buildExecutionTrust({
+      namespace: 'agents',
+      now: new Date('2026-01-20T00:20:00Z'),
+      swarms: ['jangar-control-plane'],
+      summaryLimit: 20,
+    })
+
+    expect(snapshot.swarms[0]?.observed_generation).toBe(4)
   })
 
   it('omits execution trust fields from status when flag is disabled', async () => {
