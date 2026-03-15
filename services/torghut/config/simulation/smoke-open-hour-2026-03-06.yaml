@@ -1,13 +1,16 @@
 dataset_id: torghut-smoke-open-hour-20260306
 dataset_snapshot_ref: torghut-smoke-open-hour-20260306
-candidate_id: legacy_macd_rsi@prod
-baseline_candidate_id: legacy_macd_rsi@baseline
-strategy_spec_ref: strategy-specs/legacy_macd_rsi@1.0.0.json
+candidate_id: intraday_tsmom_v1@prod
+baseline_candidate_id: intraday_tsmom_v1@baseline
+strategy_spec_ref: strategy-specs/intraday_tsmom_v1@1.1.0.json
 model_refs:
-  - rules/legacy_macd_rsi
+  - rules/intraday_tsmom_v1
 runtime_version_refs:
   - services/torghut@simulation
   - services/torghut-forecast@simulation
+
+ta_restore:
+  mode: stateless
 
 window:
   trading_day: '2026-03-06'
@@ -41,10 +44,12 @@ clickhouse:
   simulation_database: torghut_sim_2026_03_06_open_1h
 
 postgres:
-  admin_dsn: postgresql://torghut_app@torghut-db-rw.torghut.svc.cluster.local:5432/postgres
-  admin_dsn_password_env: TORGHUT_POSTGRES_PASSWORD
+  admin_dsn: postgresql://postgres@torghut-db-rw.torghut.svc.cluster.local:5432/postgres
+  admin_dsn_password_env: TORGHUT_POSTGRES_ADMIN_PASSWORD
   simulation_dsn: postgresql://torghut_app@torghut-db-rw.torghut.svc.cluster.local:5432/torghut_sim_sim_2026_03_06_open_1h
+  simulation_dsn_password_env: TORGHUT_POSTGRES_PASSWORD
   runtime_simulation_dsn: postgresql://torghut_app@torghut-db-rw.torghut.svc.cluster.local:5432/torghut_sim_sim_2026_03_06_open_1h
+  runtime_simulation_dsn_password_env: TORGHUT_POSTGRES_PASSWORD
   migrations_command: /opt/venv/bin/alembic upgrade heads
 
 runtime:

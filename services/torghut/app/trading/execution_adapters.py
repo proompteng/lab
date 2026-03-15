@@ -7,6 +7,7 @@ import logging
 import time
 from datetime import datetime, timezone
 from collections.abc import Mapping
+from decimal import Decimal
 from http.client import HTTPConnection, HTTPSConnection
 from typing import Any, Optional, Protocol, cast
 from urllib.parse import quote, urlencode
@@ -16,6 +17,7 @@ from uuid import uuid4
 from ..alpaca_client import TorghutAlpacaClient
 from ..config import settings
 from .firewall import OrderFirewall
+from .simulation_progress import active_simulation_runtime_context
 from .time_source import trading_now
 
 logger = logging.getLogger(__name__)
@@ -146,6 +148,9 @@ class SimulationExecutionAdapter:
         self._seq = 0
         self._orders_by_id: dict[str, dict[str, Any]] = {}
         self._order_id_by_client_id: dict[str, str] = {}
+        self._positions_by_symbol: dict[str, Decimal] = {}
+        self._position_market_value_by_symbol: dict[str, Decimal] = {}
+        self._seeded_from_snapshot = False
         self._producer: Any | None = None
         self._producer_init_error: str | None = None
         self._kafka_security_kwargs: dict[str, str] = {}
@@ -160,6 +165,57 @@ class SimulationExecutionAdapter:
         if bootstrap_servers and bootstrap_servers.strip():
             self._producer = self._build_producer(bootstrap_servers.strip())
 
+    def _sync_runtime_context(self) -> None:
+        runtime_context = active_simulation_runtime_context()
+        run_id = (runtime_context or {}).get('run_id') or self._simulation_run_id
+        dataset_id = (runtime_context or {}).get('dataset_id') or self._dataset_id
+        if run_id == self._simulation_run_id and dataset_id == self._dataset_id:
+            return
+        self._simulation_run_id = run_id
+        self._dataset_id = dataset_id
+        self._seq = 0
+        self._orders_by_id = {}
+        self._order_id_by_client_id = {}
+        self._positions_by_symbol = {}
+        self._position_market_value_by_symbol = {}
+        self._seeded_from_snapshot = False
+
+    def seed_positions_snapshot(self, positions: list[dict[str, Any]] | None) -> None:
+        """Seed the adapter once from the broker snapshot used by decisioning."""
+
+        self._sync_runtime_context()
+        if self._seeded_from_snapshot:
+            return
+        seeded_positions: dict[str, Decimal] = {}
+        seeded_market_values: dict[str, Decimal] = {}
+        for raw_position in positions or []:
+            symbol = str(raw_position.get('symbol') or '').strip().upper()
+            if not symbol:
+                continue
+            raw_qty = raw_position.get('qty') or raw_position.get('quantity')
+            if raw_qty is None:
+                continue
+            try:
+                qty = Decimal(str(raw_qty))
+            except Exception:
+                continue
+            if qty == 0:
+                continue
+            side = str(raw_position.get('side') or '').strip().lower()
+            signed_qty = -abs(qty) if side == 'short' else qty
+            net_qty = seeded_positions.get(symbol, Decimal('0')) + signed_qty
+            if net_qty == 0:
+                seeded_positions.pop(symbol, None)
+                seeded_market_values.pop(symbol, None)
+                continue
+            seeded_positions[symbol] = net_qty
+            signed_market_value = _signed_position_market_value(raw_position, side=side)
+            if signed_market_value is not None:
+                seeded_market_values[symbol] = seeded_market_values.get(symbol, Decimal('0')) + signed_market_value
+        self._positions_by_symbol = seeded_positions
+        self._position_market_value_by_symbol = seeded_market_values
+        self._seeded_from_snapshot = True
+
     def submit_order(
         self,
         symbol: str,
@@ -171,6 +227,7 @@ class SimulationExecutionAdapter:
         stop_price: Optional[float] = None,
         extra_params: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
+        self._sync_runtime_context()
         payload = dict(extra_params or {})
         requested_client_order_id = payload.get('client_order_id')
         client_order_id = str(requested_client_order_id).strip() if requested_client_order_id else ''
@@ -230,10 +287,12 @@ class SimulationExecutionAdapter:
         self.last_idempotency_key = idempotency_key
         self._orders_by_id[order_id] = dict(order)
         self._order_id_by_client_id[client_order_id] = order_id
+        self._apply_fill_to_positions(order)
         self._publish_trade_update(order, event_type='fill', event_ts=now)
         return dict(order)
 
     def cancel_order(self, order_id: str) -> bool:
+        self._sync_runtime_context()
         order = self._orders_by_id.get(order_id)
         if order is None:
             return False
@@ -250,6 +309,7 @@ class SimulationExecutionAdapter:
         return True
 
     def cancel_all_orders(self) -> list[dict[str, Any]]:
+        self._sync_runtime_context()
         canceled: list[dict[str, Any]] = []
         for order_id in list(self._orders_by_id):
             if self.cancel_order(order_id):
@@ -258,6 +318,7 @@ class SimulationExecutionAdapter:
         return canceled
 
     def get_order(self, order_id: str) -> dict[str, Any]:
+        self._sync_runtime_context()
         self.last_route = self.name
         existing = self._orders_by_id.get(order_id)
         if existing is None:
@@ -265,6 +326,7 @@ class SimulationExecutionAdapter:
         return dict(existing)
 
     def get_order_by_client_order_id(self, client_order_id: str) -> dict[str, Any] | None:
+        self._sync_runtime_context()
         self.last_route = self.name
         order_id = self._order_id_by_client_id.get(client_order_id)
         if order_id is None:
@@ -275,6 +337,7 @@ class SimulationExecutionAdapter:
         return dict(existing)
 
     def list_orders(self, status: str = 'all') -> list[dict[str, Any]]:
+        self._sync_runtime_context()
         self.last_route = self.name
         normalized = status.strip().lower()
         values = list(self._orders_by_id.values())
@@ -283,8 +346,59 @@ class SimulationExecutionAdapter:
         return [dict(value) for value in values if str(value.get('status', '')).strip().lower() == normalized]
 
     def list_positions(self) -> list[dict[str, Any]]:
+        self._sync_runtime_context()
         self.last_route = self.name
-        return []
+        positions: list[dict[str, Any]] = []
+        for symbol, net_qty in sorted(self._positions_by_symbol.items()):
+            if net_qty == 0:
+                continue
+            side = 'long' if net_qty > 0 else 'short'
+            position = {
+                'symbol': symbol,
+                'qty': _decimal_to_order_text(abs(net_qty)),
+                'side': side,
+                'alpaca_account_label': self._account_label,
+            }
+            market_value = self._position_market_value_by_symbol.get(symbol)
+            if market_value is not None:
+                position['market_value'] = _signed_decimal_to_text(market_value)
+            positions.append(position)
+        return positions
+
+    def _apply_fill_to_positions(self, order: Mapping[str, Any]) -> None:
+        symbol = str(order.get('symbol') or '').strip().upper()
+        if not symbol:
+            return
+        raw_qty = order.get('filled_qty') or order.get('qty')
+        try:
+            qty = Decimal(str(raw_qty or '0'))
+        except Exception:
+            return
+        if qty <= 0:
+            return
+        side = str(order.get('side') or '').strip().lower()
+        delta = qty if side == 'buy' else -qty
+        current_qty = self._positions_by_symbol.get(symbol, Decimal('0'))
+        updated = current_qty + delta
+        if updated == 0:
+            self._positions_by_symbol.pop(symbol, None)
+            self._position_market_value_by_symbol.pop(symbol, None)
+            return
+        self._positions_by_symbol[symbol] = updated
+
+        fill_price = _optional_decimal(order.get('filled_avg_price'))
+        if fill_price is None:
+            return
+        market_value_delta = delta * fill_price
+        current_market_value = self._position_market_value_by_symbol.get(symbol)
+        if current_market_value is not None:
+            self._position_market_value_by_symbol[symbol] = current_market_value + market_value_delta
+            return
+        if current_qty == 0:
+            self._position_market_value_by_symbol[symbol] = market_value_delta
+            return
+        if current_qty > 0 > updated or current_qty < 0 < updated:
+            self._position_market_value_by_symbol[symbol] = updated * fill_price
 
     def _build_producer(self, bootstrap_servers: str) -> Any | None:
         try:
@@ -1009,6 +1123,46 @@ def _float_to_order_text(value: float) -> str:
     if not rendered:
         return '0'
     return rendered
+
+
+def _decimal_to_order_text(value: Decimal) -> str:
+    normalized = abs(value)
+    rendered = format(normalized, 'f')
+    if '.' in rendered:
+        rendered = rendered.rstrip('0').rstrip('.')
+    if not rendered:
+        return '0'
+    return rendered
+
+
+def _signed_decimal_to_text(value: Decimal) -> str:
+    rendered = format(value, 'f')
+    if '.' in rendered:
+        rendered = rendered.rstrip('0').rstrip('.')
+    if rendered in {'', '-0'}:
+        return '0'
+    return rendered
+
+
+def _optional_decimal(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return None
+
+
+def _signed_position_market_value(position: Mapping[str, Any], *, side: str) -> Decimal | None:
+    market_value = _optional_decimal(position.get('market_value'))
+    if market_value is None:
+        return None
+    normalized_side = side.strip().lower()
+    if normalized_side == 'short':
+        return -abs(market_value)
+    if normalized_side == 'long':
+        return abs(market_value)
+    return market_value
 
 
 def _resolve_simulation_context_payload(

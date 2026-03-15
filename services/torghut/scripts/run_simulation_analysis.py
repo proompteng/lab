@@ -11,7 +11,7 @@ from typing import Any
 
 from scripts.historical_simulation_verification import (
     _artifact_bundle,
-    _monitor_run_completion,
+    _current_activity_report,
     _replace_database_in_dsn,
     _runtime_verify,
     _teardown_clean,
@@ -31,9 +31,11 @@ class _Resources:
     torghut_forecast_service: str
     clickhouse_signal_table: str
     clickhouse_price_table: str
+    clickhouse_db: str
     simulation_topic_by_role: dict[str, str]
     order_feed_group_id: str
     ta_group_id: str
+    warm_lane_enabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,14 @@ def _normalize_run_token(run_id: str) -> str:
     if not token:
         raise SystemExit('run-id must contain at least one alphanumeric character')
     return token
+
+
+def _clickhouse_database_from_table_name(table_name: str) -> str:
+    table_name = table_name.strip()
+    if not table_name:
+        return ''
+    database, separator, _table = table_name.partition('.')
+    return database.strip() if separator else ''
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -141,6 +151,11 @@ def _emit(payload: Mapping[str, Any], *, json_only: bool) -> None:
 
 def _resources_from_args(args: argparse.Namespace) -> _Resources:
     run_token = _normalize_run_token(args.run_id)
+    signal_table = getattr(args, 'signal_table', '')
+    price_table = getattr(args, 'price_table', '')
+    clickhouse_db = _clickhouse_database_from_table_name(signal_table) or _clickhouse_database_from_table_name(price_table)
+    warm_lane_enabled = clickhouse_db == 'torghut_sim_default'
+    default_order_updates_topic = 'torghut.sim.trade-updates.v1'
     return _Resources(
         run_id=args.run_id,
         run_token=run_token,
@@ -151,23 +166,27 @@ def _resources_from_args(args: argparse.Namespace) -> _Resources:
         ta_deployment=args.ta_deployment,
         torghut_service=args.torghut_service,
         torghut_forecast_service=args.forecast_service,
-        clickhouse_signal_table=getattr(args, 'signal_table', ''),
-        clickhouse_price_table=getattr(args, 'price_table', ''),
+        clickhouse_signal_table=signal_table,
+        clickhouse_price_table=price_table,
+        clickhouse_db=clickhouse_db,
         simulation_topic_by_role={
-            'order_updates': f'torghut.sim.trade-updates.v1.{run_token}',
+            'order_updates': default_order_updates_topic if warm_lane_enabled else f'{default_order_updates_topic}.{run_token}',
         },
-        order_feed_group_id=f'torghut-order-feed-sim-{run_token}',
-        ta_group_id=f'torghut-ta-sim-{run_token}',
+        order_feed_group_id='torghut-order-feed-sim-default' if warm_lane_enabled else f'torghut-order-feed-sim-{run_token}',
+        ta_group_id='torghut-ta-sim-default' if warm_lane_enabled else f'torghut-ta-sim-{run_token}',
+        warm_lane_enabled=warm_lane_enabled,
     )
 
 
 def _manifest_from_args(args: argparse.Namespace) -> dict[str, Any]:
-    manifest = {
-        'window': {
-            'start': args.window_start,
-            'end': args.window_end,
+    manifest: dict[str, Any] = {}
+    window_start = getattr(args, 'window_start', '')
+    window_end = getattr(args, 'window_end', '')
+    if window_start and window_end:
+        manifest['window'] = {
+            'start': window_start,
+            'end': window_end,
         }
-    }
     if hasattr(args, 'monitor_timeout_seconds'):
         manifest['monitor'] = {
             'timeout_seconds': args.monitor_timeout_seconds,
@@ -263,7 +282,7 @@ def main() -> None:
 
     clickhouse_config = _clickhouse_config(args)
     runtime_verify = _runtime_verify(resources=resources, manifest=manifest)
-    report = _monitor_run_completion(
+    report = _current_activity_report(
         resources=resources,
         manifest=manifest,
         postgres_config=postgres_config,

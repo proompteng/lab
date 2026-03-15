@@ -90,3 +90,9 @@ Override defaults if needed:
 ansible-playbook -i inventory/hosts.ini playbooks/k3s-oidc.yml \\
   --extra-vars 'k3s_oidc_client_id=kubernetes k3s_oidc_issuer_url=https://auth.proompteng.ai/realms/master'
 ```
+
+Important scope note:
+
+- `playbooks/k3s-oidc.yml` is only for `k3s` clusters.
+- It does not manage Keycloak clients, Headlamp manifests, or Talos control-plane configuration.
+- For the current Talos-based `galactic` cluster, use the Talos patch flow in `docs/headlamp-setup.md` for kube-apiserver OIDC settings, and use Argo CD manifests under `argocd/applications/keycloak` and `argocd/applications/headlamp` for the Keycloak and Headlamp side.

@@ -78,6 +78,7 @@ class TradingMetrics:
     planned_decisions_with_execution_total: int = 0
     planned_decisions_stale_total: int = 0
     planned_decisions_timeout_rejected_total: int = 0
+    planned_decision_age_seconds: int = 0
     reconcile_updates_total: int = 0
     llm_requests_total: int = 0
     llm_approve_total: int = 0
@@ -243,6 +244,13 @@ class TradingMetrics:
     feature_duplicate_ratio: float = 0
     feature_schema_mismatch_total: int = 0
     feature_quality_rejections_total: int = 0
+    feature_quality_reject_reason_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    feature_quality_cursor_commit_blocked_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    signal_batch_order_violation_total: int = 0
     feature_parity_drift_total: int = 0
     drift_detection_checks_total: int = 0
     drift_incidents_total: int = 0
@@ -348,6 +356,34 @@ class TradingMetrics:
         default_factory=lambda: cast(dict[str, int], {})
     )
     decision_reject_reason_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    submission_block_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    decision_state_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    qty_resolution_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    sell_inventory_context_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    execution_local_reject_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    execution_submit_attempt_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    execution_submit_result_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    execution_validation_mismatch_total: int = 0
+    simulation_position_state_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+    simulation_preflight_failure_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
 
@@ -544,6 +580,116 @@ class TradingMetrics:
                 self.decision_reject_reason_total[normalized] = (
                     self.decision_reject_reason_total.get(normalized, 0) + 1
                 )
+
+    def record_submission_block(self, reasons: Sequence[str] | str) -> None:
+        raw_reasons = [reasons] if isinstance(reasons, str) else list(reasons)
+        for reason in raw_reasons:
+            reason_parts = _split_reason_codes(reason)
+            if not reason_parts:
+                reason_parts = [_normalize_reason_metric(reason)]
+            for reason_part in reason_parts:
+                normalized = _normalize_reason_metric(reason_part)
+                self.submission_block_total[normalized] = (
+                    self.submission_block_total.get(normalized, 0) + 1
+                )
+
+    def record_decision_state(self, status: str | None) -> None:
+        normalized = _normalize_reason_metric(status)
+        self.decision_state_total[normalized] = (
+            self.decision_state_total.get(normalized, 0) + 1
+        )
+
+    def observe_planned_decision_age(self, age_seconds: int | float) -> None:
+        self.planned_decision_age_seconds = max(0, int(age_seconds))
+
+    def record_feature_quality_rejection(self, reasons: Sequence[str]) -> None:
+        for reason in reasons:
+            normalized = _normalize_reason_metric(reason)
+            self.feature_quality_reject_reason_total[normalized] = (
+                self.feature_quality_reject_reason_total.get(normalized, 0) + 1
+            )
+            if normalized == "non_monotonic_progression":
+                self.signal_batch_order_violation_total += 1
+
+    def record_feature_quality_cursor_commit_blocked(
+        self, reasons: Sequence[str]
+    ) -> None:
+        for reason in reasons:
+            normalized = _normalize_reason_metric(reason)
+            self.feature_quality_cursor_commit_blocked_total[normalized] = (
+                self.feature_quality_cursor_commit_blocked_total.get(normalized, 0) + 1
+            )
+
+    def record_qty_resolution(
+        self,
+        *,
+        stage: str,
+        outcome: str,
+        reason: str | None,
+    ) -> None:
+        normalized_stage = _normalize_reason_metric(stage)
+        normalized_outcome = _normalize_reason_metric(outcome)
+        normalized_reason = _normalize_reason_metric(reason)
+        key = f"{normalized_stage}|{normalized_outcome}|{normalized_reason}"
+        self.qty_resolution_total[key] = self.qty_resolution_total.get(key, 0) + 1
+
+    def record_sell_inventory_context(self, *, stage: str, context: str) -> None:
+        normalized_stage = _normalize_reason_metric(stage)
+        normalized_context = _normalize_reason_metric(context)
+        key = f"{normalized_stage}|{normalized_context}"
+        self.sell_inventory_context_total[key] = (
+            self.sell_inventory_context_total.get(key, 0) + 1
+        )
+
+    def record_execution_local_reject(
+        self, *, code: str | None, reason: str | None
+    ) -> None:
+        normalized_code = _normalize_reason_metric(code)
+        normalized_reason = _normalize_reason_metric(reason)
+        key = f"{normalized_code}|{normalized_reason}"
+        self.execution_local_reject_total[key] = (
+            self.execution_local_reject_total.get(key, 0) + 1
+        )
+
+    def record_execution_submit_attempt(
+        self,
+        *,
+        adapter: str | None,
+        side: str | None,
+        asset_class: str | None,
+    ) -> None:
+        normalized_adapter = _normalize_reason_metric(adapter)
+        normalized_side = _normalize_reason_metric(side)
+        normalized_asset_class = _normalize_reason_metric(asset_class)
+        key = f"{normalized_adapter}|{normalized_side}|{normalized_asset_class}"
+        self.execution_submit_attempt_total[key] = (
+            self.execution_submit_attempt_total.get(key, 0) + 1
+        )
+
+    def record_execution_submit_result(
+        self,
+        *,
+        status: str | None,
+        adapter: str | None,
+    ) -> None:
+        normalized_status = _normalize_reason_metric(status)
+        normalized_adapter = _normalize_reason_metric(adapter)
+        key = f"{normalized_status}|{normalized_adapter}"
+        self.execution_submit_result_total[key] = (
+            self.execution_submit_result_total.get(key, 0) + 1
+        )
+
+    def record_simulation_position_state(self, state: str | None) -> None:
+        normalized = _normalize_reason_metric(state)
+        self.simulation_position_state_total[normalized] = (
+            self.simulation_position_state_total.get(normalized, 0) + 1
+        )
+
+    def record_simulation_preflight_failure(self, reason: str | None) -> None:
+        normalized = _normalize_reason_metric(reason)
+        self.simulation_preflight_failure_total[normalized] = (
+            self.simulation_preflight_failure_total.get(normalized, 0) + 1
+        )
 
     def record_llm_policy_resolution(self, classification: str | None) -> None:
         normalized = classification.strip() if isinstance(classification, str) else ""
@@ -848,6 +994,8 @@ class TradingState:
     signal_continuity_alert_started_at: Optional[datetime] = None
     signal_continuity_alert_last_seen_at: Optional[datetime] = None
     signal_continuity_recovery_streak: int = 0
+    signal_bootstrap_started_at: Optional[datetime] = None
+    signal_bootstrap_completed_at: Optional[datetime] = None
     last_market_context_symbol: Optional[str] = None
     last_market_context_checked_at: Optional[datetime] = None
     last_market_context_as_of: Optional[datetime] = None

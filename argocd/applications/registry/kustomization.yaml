@@ -9,3 +9,4 @@ resources:
   - registry-gc-rbac.yaml
   - registry-gc-cronjob.yaml
   - tailscale-ingress.yaml
+  - ingressroute-registry-k8s-private.yaml

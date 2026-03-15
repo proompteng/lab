@@ -9,7 +9,7 @@
 - Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on `2026-03-09`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
-- Evidence (current next-work priority): `38-authoritative-empirical-promotion-evidence-contract-2026-03-09.md`
+- Evidence (current next-work priority): `39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md`
 - Evidence sync: `14-legacy-gap-disposition-map-2026-03-03.md` (signed v4/v5 disposition completeness)
 - Rollout status: v6 pack controls are represented by merged runtime/control-plane closure phases in `main` (`#3921` through `#3960`).
 
@@ -25,9 +25,9 @@ The March 3 completion record remains useful as a dated closure milestone, but i
 
 Current source-state priority is narrower:
 
-- control-plane closure is materially landed;
-- authoritative empirical evidence generation is not;
-- recurring prove-and-promote automation remains the active next operating gap.
+- deterministic runtime closure is materially landed;
+- freshness discovery and proof persistence are still too brittle;
+- recurring empirical prove-and-promote automation remains blocked on those truth surfaces.
 
 ## Recent Updates
 
@@ -48,6 +48,9 @@ Current source-state priority is narrower:
 - `38-authoritative-empirical-promotion-evidence-contract-2026-03-09.md` now turns that priority into a standalone
   implementation contract that reuses the existing empirical manifest/persistence/status surfaces and makes scaffold
   parity/Janus outputs non-authoritative by design.
+- `39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md` now replaces query-derived freshness and aggregate
+  zero-heavy readiness with a producer-authored control-plane ledger plus hypothesis-scoped proof bundles, grounded in
+  the March 14 live state where Jangar freshness queries were memory-bound and Torghut empirical jobs remained absent.
 - `33-alpaca-options-market-data-and-technical-analysis-lane-2026-03-08.md` now records the production design for a
   separate Alpaca options ingest and TA lane, grounded in the current equity-only Torghut runtime and cluster state.
 - `34-alpaca-options-lane-implementation-contract-set-2026-03-08.md` now turns that architecture into explicit event,
@@ -118,6 +121,7 @@ This pack is positioned as the next architecture layer above:
 36. `36-options-simulation-replay-and-profitability-proof-lane-2026-03-08.md`
 37. `37-options-trading-runtime-execution-and-risk-integration-2026-03-08.md`
 38. `38-authoritative-empirical-promotion-evidence-contract-2026-03-09.md`
+39. `39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md`
 
 ## Recommended Build Order
 
@@ -159,6 +163,7 @@ This pack is positioned as the next architecture layer above:
 36. `35-alpaca-options-production-hardening-and-opra-promotion-2026-03-08.md`
 37. `36-options-simulation-replay-and-profitability-proof-lane-2026-03-08.md`
 38. `37-options-trading-runtime-execution-and-risk-integration-2026-03-08.md`
+39. `39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md`
 
 ## Why This Sequence
 
@@ -183,6 +188,9 @@ This pack is positioned as the next architecture layer above:
 - The authoritative empirical promotion evidence contract follows the closeout rationale because it translates the
   March 8 recommendation into an implementation-ready boundary around existing empirical manifest, persistence, and
   operator surfaces.
+- The freshness-ledger and proof-mesh contract follows that boundary because the next operational problem is no longer
+  "what counts as truthful empirical evidence?" but "how do control-plane freshness and per-hypothesis proof stay
+  truthful under live load without depending on heavy scans and process-local counters?"
 - The Alpaca options implementation contract set follows the architecture doc because options ingest is only safe to
   build once the concrete topic, storage, rate-limit, and identity contracts are fixed.
 - Options hardening and `opra` promotion follow the implementation contract set because the lane now exists in

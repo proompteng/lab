@@ -372,6 +372,14 @@ class Settings(BaseSettings):
             "signal continuity alert."
         ),
     )
+    trading_signal_bootstrap_grace_seconds: int = Field(
+        default=180,
+        alias="TRADING_SIGNAL_BOOTSTRAP_GRACE_SECONDS",
+        description=(
+            "Grace period after scheduler start or simulation run reset before "
+            "no-signal continuity reasons become actionable."
+        ),
+    )
     trading_signal_staleness_alert_critical_reasons_raw: Optional[str] = Field(
         default="cursor_ahead_of_stream,no_signals_in_window,universe_source_unavailable",
         alias="TRADING_SIGNAL_STALENESS_ALERT_CRITICAL_REASONS",
@@ -959,6 +967,11 @@ class Settings(BaseSettings):
         alias="TRADING_SIMULATION_CLOCK_CACHE_SECONDS",
         description="Cache TTL for replay clock lookups against the simulation cursor store.",
     )
+    trading_simulation_fetch_window_seconds: int = Field(
+        default=10,
+        alias="TRADING_SIMULATION_FETCH_WINDOW_SECONDS",
+        description="Maximum simulation signal window drained per ingest fetch.",
+    )
     trading_simulation_universe_symbols_path: Optional[str] = Field(
         default=None,
         alias="TRADING_SIMULATION_UNIVERSE_SYMBOLS_PATH",
@@ -1501,6 +1514,37 @@ class Settings(BaseSettings):
         description=(
             "Additional seconds allowed to reuse stale readiness dependency cache "
             "on /readyz requests before a hard refresh is forced."
+        ),
+    )
+    trading_alpaca_healthcheck_timeout_seconds: float = Field(
+        default=2.0,
+        alias="TRADING_ALPACA_HEALTHCHECK_TIMEOUT_SECONDS",
+        description=(
+            "Timeout in seconds for a single Alpaca account probe used by readiness "
+            "checks."
+        ),
+    )
+    trading_alpaca_healthcheck_retries: int = Field(
+        default=2,
+        alias="TRADING_ALPACA_HEALTHCHECK_RETRIES",
+        description=(
+            "Number of Alpaca account-probe attempts before readiness marks the "
+            "broker unavailable."
+        ),
+    )
+    trading_alpaca_healthcheck_backoff_seconds: float = Field(
+        default=0.25,
+        alias="TRADING_ALPACA_HEALTHCHECK_BACKOFF_SECONDS",
+        description=(
+            "Base backoff in seconds between Alpaca readiness retries."
+        ),
+    )
+    trading_alpaca_healthcheck_last_good_ttl_seconds: int = Field(
+        default=90,
+        alias="TRADING_ALPACA_HEALTHCHECK_LAST_GOOD_TTL_SECONDS",
+        description=(
+            "How long readiness may trust the last successful Alpaca probe when the "
+            "broker is only slow or transiently unreachable."
         ),
     )
     trading_db_schema_graph_branch_tolerance: int = Field(

@@ -25,7 +25,9 @@ from ..order_feed import OrderFeedIngestor
 from ..prices import ClickHousePriceFetcher
 from ..reconcile import Reconciler
 from ..risk import RiskEngine
-from ..time_source import trading_now, trading_time_status
+from ..simulation_progress import active_simulation_runtime_context
+from ..simulation import resolve_market_context_as_of
+from ..time_source import trading_time_status
 from ..universe import UniverseResolver
 from .governance import TradingSchedulerGovernanceMixin
 from .pipeline import TradingPipeline
@@ -41,6 +43,7 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
         self._stop_event = asyncio.Event()
         self._pipeline: Optional[TradingPipeline] = None
         self._pipelines: list[TradingPipeline] = []
+        self._active_simulation_run_id: str | None = None
 
     def _emit_autonomy_domain_telemetry(
         self,
@@ -166,7 +169,7 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
         )
         if not isinstance(market_context_client, MarketContextClient):
             market_context_client = MarketContextClient()
-        as_of = trading_now() if settings.trading_simulation_enabled else None
+        as_of = resolve_market_context_as_of()
         if self.state.last_market_context_symbol:
             try:
                 health = market_context_client.fetch_health(
@@ -319,6 +322,8 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
         )
         self._stop_event.clear()
         self.state.startup_started_at = datetime.now(timezone.utc)
+        self.state.signal_bootstrap_started_at = self.state.startup_started_at
+        self.state.signal_bootstrap_completed_at = None
         self.state.running = False
         self._task = asyncio.create_task(self._run_loop())
 
@@ -338,6 +343,8 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
             pass
         self._task = None
         self.state.startup_started_at = None
+        self.state.signal_bootstrap_started_at = None
+        self.state.signal_bootstrap_completed_at = None
         self.state.running = False
         active_pipelines = self._pipelines or (
             [self._pipeline] if self._pipeline is not None else []
@@ -368,6 +375,7 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
         )
         try:
             while not self._stop_event.is_set():
+                self._sync_simulation_run_context()
                 await self._run_trading_iteration()
                 now = datetime.now(timezone.utc)
                 if self._interval_elapsed(last_reconcile, reconcile_interval, now=now):
@@ -390,6 +398,68 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
         finally:
             self.state.running = False
             logger.info("Trading scheduler loop exited")
+
+    def _sync_simulation_run_context(self) -> None:
+        runtime_context = active_simulation_runtime_context()
+        active_run_id = str((runtime_context or {}).get("run_id") or "").strip() or None
+        if active_run_id == self._active_simulation_run_id:
+            return
+
+        previous_run_id = self._active_simulation_run_id
+        self._active_simulation_run_id = active_run_id
+        if active_run_id is None:
+            return
+
+        self._reset_simulation_run_state(
+            previous_run_id=previous_run_id,
+            active_run_id=active_run_id,
+        )
+
+    def _reset_simulation_run_state(
+        self,
+        *,
+        previous_run_id: str | None,
+        active_run_id: str,
+    ) -> None:
+        self.state.last_error = None
+        self.state.last_ingest_signals_total = 0
+        self.state.last_ingest_window_start = None
+        self.state.last_ingest_window_end = None
+        self.state.last_ingest_reason = None
+        self.state.last_signal_continuity_state = None
+        self.state.last_signal_continuity_reason = None
+        self.state.last_signal_continuity_actionable = None
+        self.state.signal_continuity_alert_active = False
+        self.state.signal_continuity_alert_reason = None
+        self.state.signal_continuity_alert_started_at = None
+        self.state.signal_continuity_alert_last_seen_at = None
+        self.state.signal_continuity_recovery_streak = 0
+        self.state.signal_bootstrap_started_at = datetime.now(timezone.utc)
+        self.state.signal_bootstrap_completed_at = None
+        self.state.autonomy_no_signal_streak = 0
+        self.state.last_evidence_continuity_report = None
+        self.state.autonomy_failure_streak = 0
+        self.state.universe_fail_safe_blocked = False
+        self.state.universe_fail_safe_block_reason = None
+        self.state.emergency_stop_active = False
+        self.state.emergency_stop_reason = None
+        self.state.emergency_stop_triggered_at = None
+        self.state.emergency_stop_resolved_at = None
+        self.state.emergency_stop_recovery_streak = 0
+        self.state.rollback_incident_evidence_path = None
+        self.state.metrics.no_signal_streak = 0
+        self.state.metrics.no_signal_reason_streak = {}
+        self.state.metrics.signal_lag_seconds = None
+        self.state.metrics.signal_continuity_actionable = 0
+        self.state.metrics.record_signal_continuity_alert_state(
+            active=False,
+            recovery_streak=0,
+        )
+        logger.info(
+            "Trading scheduler reset simulation run state previous_run_id=%s active_run_id=%s",
+            previous_run_id or "none",
+            active_run_id,
+        )
 
     @staticmethod
     def _interval_elapsed(

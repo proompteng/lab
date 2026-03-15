@@ -1,0 +1,120 @@
+[dns]
+upstreams = [
+  '1.1.1.1',
+  '1.0.0.1',
+  '2606:4700:4700::1111',
+  '2606:4700:4700::1001',
+  '8.8.8.8',
+  '8.8.4.4',
+  '208.67.220.220',
+  '208.67.222.222',
+  '2001:4860:4860:0:0:0:0:8844',
+  '2001:4860:4860:0:0:0:0:8888',
+  '2620:119:35::35',
+  '2620:119:53::53',
+]
+domainNeeded = true
+expandHosts = true
+dnssec = true
+interface = 'eno1'
+listeningMode = 'ALL'
+hosts = [
+  '192.168.1.130 nuc.lan',
+  '192.168.1.130 pihole.lan',
+  '192.168.1.130 nginx.lan',
+  '192.168.1.130 nas.lan',
+  '192.168.1.130 harvester.lan',
+  '192.168.1.130 git.kalmyk.us',
+  '192.168.1.130 kalmyk.synology.me',
+  '192.168.1.130 xleb.duckdns.org',
+  '192.168.1.100 kube.lan',
+  '192.168.1.130 graf.lan',
+]
+cnameRecords = [
+  'sealed-secrets.lan,kube.lan',
+  'temporal.lan,kube.lan',
+  'airbyte.lan,kube.lan',
+  'gitea.lan,kube.lan',
+  'reviseur.lan,kube.lan',
+  'longhorn.lan,kube.lan',
+  'frontend.temporal.lan,kube.lan',
+  'registry.lan,kube.lan',
+  'npm.lan,kube.lan',
+  'argocd.lan,kube.lan',
+  'grafana.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'argocd.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'ceph.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'jangar.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'workflows.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'feature-flags.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'flink.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'headlamp.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'kafka-ui.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'sealed-secrets.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'temporal.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'pgadmin.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'inngest.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'forgejo.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'coder.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'registry.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+  'openwebui.k8s.proompteng.ai,traefik.traefik.svc.cluster.local',
+]
+localise = true
+
+[dns.domain]
+name = 'pihole.lan'
+local = true
+
+[dns.rateLimit]
+count = 100000
+interval = 60
+
+[dhcp]
+active = true
+start = '192.168.1.1'
+end = '192.168.1.253'
+router = '192.168.1.254'
+leaseTime = '15m'
+rapidCommit = true
+multiDNS = true
+hosts = [
+  '00:30:64:74:08:19,192.168.1.85',
+  '84:47:09:74:d5:55,192.168.1.194',
+  '48:21:0b:80:b4:ae,192.168.1.224',
+  '0c:ef:15:05:e1:26,192.168.1.150',
+  '48:21:0b:80:b6:08,192.168.1.203',
+]
+
+[ntp.ipv4]
+active = false
+
+[ntp.ipv6]
+active = false
+
+[ntp.sync]
+active = false
+server = 'time.cloudflare.com'
+interval = 3600
+count = 8
+
+[ntp.sync.rtc]
+set = false
+device = ''
+utc = false
+
+[misc]
+etc_dnsmasq_d = true
+
+[webserver]
+port = '8080o,8443os,[::]:8080o,[::]:84'
+headers = [
+  "Content-Security-Policy: default-src 'self' 'unsafe-inline';",
+  'X-Frame-Options: DENY',
+  'X-XSS-Protection: 0',
+  'X-Content-Type-Options: nosniff',
+  'Referrer-Policy: strict-origin-when-cross-origin',
+]
+
+[webserver.interface]
+boxed = true
+theme = 'lcars'

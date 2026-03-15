@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import time
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import asynccontextmanager
@@ -65,6 +66,7 @@ from .trading.hypotheses import (
 from .trading.lean_lanes import LeanLaneManager
 from .trading.llm.evaluation import build_llm_evaluation_metrics
 from .trading.tca import build_tca_gate_inputs
+from .trading.simulation_progress import active_simulation_runtime_context, simulation_progress_snapshot
 from .trading.time_source import trading_time_status
 from .whitepapers import (
     WhitepaperKafkaWorker,
@@ -80,12 +82,21 @@ logger = logging.getLogger(__name__)
 BUILD_VERSION = os.getenv("TORGHUT_VERSION", "dev")
 BUILD_COMMIT = os.getenv("TORGHUT_COMMIT", "unknown")
 BUILD_IMAGE_DIGEST = os.getenv("TORGHUT_IMAGE_DIGEST", "").strip() or None
+_CAPITAL_STAGE_ORDER = (
+    "shadow",
+    "0.10x canary",
+    "0.25x canary",
+    "0.50x live",
+    "1.00x live",
+)
 RUNTIME_PROFITABILITY_LOOKBACK_HOURS = 72
 RUNTIME_PROFITABILITY_SCHEMA_VERSION = "torghut.runtime-profitability.v1"
 LEAN_LANE_MANAGER = LeanLaneManager()
 WHITEPAPER_WORKFLOW = WhitepaperWorkflowService()
 _TRADING_DEPENDENCY_HEALTH_CACHE_LOCK = Lock()
 _TRADING_DEPENDENCY_HEALTH_CACHE: dict[str, dict[str, object]] = {}
+_ALPACA_HEALTH_CACHE_LOCK = Lock()
+_ALPACA_HEALTH_STATE: dict[str, object] = {}
 
 
 def _extract_bearer_token(authorization_header: str | None) -> str | None:
@@ -1538,6 +1549,10 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
             market_context_status=market_context_status,
         )
     )
+    shadow_first_runtime = _build_shadow_first_runtime_payload(
+        state=state,
+        hypothesis_summary=hypothesis_summary,
+    )
     control_plane_contract = _build_control_plane_contract(
         state,
         hypothesis_summary=hypothesis_summary,
@@ -1545,11 +1560,19 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
     )
     shorting_metadata_status = scheduler.shorting_metadata_status()
     rejection_alert_status = scheduler.rejection_alert_status()
+    active_simulation_context = active_simulation_runtime_context()
     return {
         "enabled": settings.trading_enabled,
         "autonomy_enabled": settings.trading_autonomy_enabled,
         "mode": settings.trading_mode,
         "kill_switch_enabled": settings.trading_kill_switch_enabled,
+        "build": {
+            "version": BUILD_VERSION,
+            "commit": BUILD_COMMIT,
+            "image_digest": BUILD_IMAGE_DIGEST,
+            "active_revision": shadow_first_runtime["active_revision"],
+        },
+        "shadow_first": shadow_first_runtime,
         "execution_advisor": {
             "enabled": settings.trading_execution_advisor_enabled,
             "live_apply_enabled": settings.trading_execution_advisor_live_apply_enabled,
@@ -1661,10 +1684,13 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
         "empirical_jobs": _empirical_jobs_status(),
         "simulation": {
             "enabled": settings.trading_simulation_enabled,
-            "run_id": settings.trading_simulation_run_id,
-            "dataset_id": settings.trading_simulation_dataset_id,
-            "window_start": settings.trading_simulation_window_start,
-            "window_end": settings.trading_simulation_window_end,
+            "run_id": (active_simulation_context or {}).get("run_id") or settings.trading_simulation_run_id,
+            "dataset_id": (active_simulation_context or {}).get("dataset_id")
+            or settings.trading_simulation_dataset_id,
+            "window_start": (active_simulation_context or {}).get("window_start")
+            or settings.trading_simulation_window_start,
+            "window_end": (active_simulation_context or {}).get("window_end")
+            or settings.trading_simulation_window_end,
             "time_source": trading_time_status(account_label=settings.trading_account_label),
         },
         "control_plane_contract": control_plane_contract,
@@ -1690,8 +1716,19 @@ def trading_metrics(session: Session = Depends(get_session)) -> dict[str, object
             market_context_status=market_context_status,
         )
     )
+    shadow_first_runtime = _build_shadow_first_runtime_payload(
+        state=scheduler.state,
+        hypothesis_summary=hypothesis_summary,
+    )
     return {
         "metrics": metrics.__dict__,
+        "build": {
+            "version": BUILD_VERSION,
+            "commit": BUILD_COMMIT,
+            "image_digest": BUILD_IMAGE_DIGEST,
+            "active_revision": shadow_first_runtime["active_revision"],
+        },
+        "shadow_first": shadow_first_runtime,
         "tca": tca_summary,
         "control_plane_contract": _build_control_plane_contract(
             scheduler.state,
@@ -1699,6 +1736,21 @@ def trading_metrics(session: Session = Depends(get_session)) -> dict[str, object
             dependency_quorum=hypothesis_dependency_quorum,
         ),
     }
+
+
+@app.get("/trading/simulation/progress")
+def trading_simulation_progress(
+    run_id: str | None = Query(default=None),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    """Expose durable simulation progress for the current or requested run."""
+
+    snapshot = simulation_progress_snapshot(session, run_id=run_id)
+    active_runtime_context = active_simulation_runtime_context(session)
+    snapshot["requested_run_id"] = run_id
+    snapshot["active_run_id"] = (active_runtime_context or {}).get("run_id") or settings.trading_simulation_run_id
+    snapshot["simulation_enabled"] = settings.trading_simulation_enabled
+    return cast(dict[str, object], snapshot)
 
 
 @app.post("/trading/lean/backtests")
@@ -1790,6 +1842,7 @@ def trading_autonomy() -> dict[str, object]:
         scheduler = TradingScheduler()
         app.state.trading_scheduler = scheduler
     state = scheduler.state
+    active_simulation_context = active_simulation_runtime_context()
     return {
         "enabled": settings.trading_autonomy_enabled,
         "gate_policy_path": settings.trading_autonomy_gate_policy_path,
@@ -1819,10 +1872,13 @@ def trading_autonomy() -> dict[str, object]:
         "empirical_jobs": _empirical_jobs_status(),
         "simulation": {
             "enabled": settings.trading_simulation_enabled,
-            "run_id": settings.trading_simulation_run_id,
-            "dataset_id": settings.trading_simulation_dataset_id,
-            "window_start": settings.trading_simulation_window_start,
-            "window_end": settings.trading_simulation_window_end,
+            "run_id": (active_simulation_context or {}).get("run_id") or settings.trading_simulation_run_id,
+            "dataset_id": (active_simulation_context or {}).get("dataset_id")
+            or settings.trading_simulation_dataset_id,
+            "window_start": (active_simulation_context or {}).get("window_start")
+            or settings.trading_simulation_window_start,
+            "window_end": (active_simulation_context or {}).get("window_end")
+            or settings.trading_simulation_window_end,
             "time_source": trading_time_status(account_label=settings.trading_account_label),
         },
         "bridge_status": _build_autonomy_bridge_status(scheduler),
@@ -2270,8 +2326,14 @@ def _build_control_plane_contract(
         if isinstance(raw_state_totals, Mapping)
         else {}
     )
+    capital_stage_totals = (
+        dict(cast(Mapping[str, Any], summary.get("capital_stage_totals", {})))
+        if isinstance(summary.get("capital_stage_totals"), Mapping)
+        else {}
+    )
     return {
         "contract_version": "torghut.quant-producer.v1",
+        "active_revision": _active_runtime_revision(),
         "signal_lag_seconds": signal_lag_seconds,
         "signal_continuity_state": getattr(state, "last_signal_continuity_state", None),
         "signal_continuity_reason": getattr(
@@ -2320,6 +2382,11 @@ def _build_control_plane_contract(
         "running": bool(getattr(state, "running", False)),
         "last_run_at": last_run_at,
         "last_reconcile_at": last_reconcile_at,
+        "submission_block_total": getattr(metrics, "submission_block_total", None),
+        "decision_state_total": getattr(metrics, "decision_state_total", None),
+        "planned_decision_age_seconds": getattr(
+            metrics, "planned_decision_age_seconds", None
+        ),
         "last_autonomy_recommendation_trace_id": getattr(
             state, "last_autonomy_recommendation_trace_id", None
         ),
@@ -2334,6 +2401,8 @@ def _build_control_plane_contract(
         "alpha_readiness_shadow_total": state_totals.get("shadow", 0),
         "alpha_readiness_canary_live_total": state_totals.get("canary_live", 0),
         "alpha_readiness_scaled_live_total": state_totals.get("scaled_live", 0),
+        "capital_stage_totals": capital_stage_totals,
+        "active_capital_stage": _resolve_active_capital_stage(summary),
         "alpha_readiness_promotion_eligible_total": summary.get(
             "promotion_eligible_total", 0
         ),
@@ -2343,8 +2412,94 @@ def _build_control_plane_contract(
         "alpha_readiness_dependency_quorum_decision": (
             dependency_quorum.decision if dependency_quorum is not None else "unknown"
         ),
+        "critical_toggle_parity": _build_shadow_first_toggle_parity(),
         "market_context_required": settings.trading_market_context_required,
         "market_context_max_staleness_seconds": settings.trading_market_context_max_staleness_seconds,
+    }
+
+
+def _active_runtime_revision() -> str | None:
+    revision = os.getenv("K_REVISION", "").strip()
+    return revision or None
+
+
+def _critical_trading_toggle_snapshot() -> dict[str, object]:
+    return {
+        "TRADING_ENABLED": settings.trading_enabled,
+        "TRADING_AUTONOMY_ENABLED": settings.trading_autonomy_enabled,
+        "TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION": settings.trading_autonomy_allow_live_promotion,
+        "TRADING_KILL_SWITCH_ENABLED": settings.trading_kill_switch_enabled,
+        "TRADING_MODE": settings.trading_mode,
+        "TRADING_EXECUTION_ADAPTER_POLICY": settings.trading_execution_adapter_policy,
+    }
+
+
+def _build_shadow_first_toggle_parity() -> dict[str, object]:
+    expected = {
+        "TRADING_ENABLED": True,
+        "TRADING_AUTONOMY_ENABLED": False,
+        "TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION": False,
+        "TRADING_KILL_SWITCH_ENABLED": False,
+        "TRADING_MODE": "live",
+    }
+    effective = _critical_trading_toggle_snapshot()
+    mismatches = [
+        key
+        for key, expected_value in expected.items()
+        if effective.get(key) != expected_value
+    ]
+    return {
+        "status": "aligned" if not mismatches else "diverged",
+        "mismatches": mismatches,
+        "expected": expected,
+        "effective": effective,
+    }
+
+
+def _resolve_active_capital_stage(
+    hypothesis_summary: Mapping[str, Any] | None,
+) -> str | None:
+    if not isinstance(hypothesis_summary, Mapping):
+        return None
+    totals_raw = hypothesis_summary.get("capital_stage_totals")
+    if not isinstance(totals_raw, Mapping):
+        return None
+    totals = cast(Mapping[str, Any], totals_raw)
+    for stage in reversed(_CAPITAL_STAGE_ORDER):
+        count = totals.get(stage)
+        if isinstance(count, int) and count > 0:
+            return stage
+    return "shadow" if totals else None
+
+
+def _build_shadow_first_runtime_payload(
+    *,
+    state: object,
+    hypothesis_summary: Mapping[str, Any] | None,
+) -> dict[str, object]:
+    metrics = getattr(state, "metrics", None)
+    return {
+        "active_revision": _active_runtime_revision(),
+        "capital_stage": _resolve_active_capital_stage(hypothesis_summary),
+        "capital_stage_totals": (
+            dict(cast(Mapping[str, Any], hypothesis_summary.get("capital_stage_totals", {})))
+            if isinstance(hypothesis_summary, Mapping)
+            and isinstance(hypothesis_summary.get("capital_stage_totals"), Mapping)
+            else {}
+        ),
+        "submission_block_total": dict(
+            cast(
+                Mapping[str, int],
+                getattr(metrics, "submission_block_total", {}) or {},
+            )
+        ),
+        "decision_state_total": dict(
+            cast(Mapping[str, int], getattr(metrics, "decision_state_total", {}) or {})
+        ),
+        "planned_decision_age_seconds": getattr(
+            metrics, "planned_decision_age_seconds", 0
+        ),
+        "critical_toggle_parity": _build_shadow_first_toggle_parity(),
     }
 
 
@@ -2591,19 +2746,221 @@ def _empirical_jobs_status() -> dict[str, object]:
         }
 
 
+def _alpaca_endpoint_class(*, paper: bool | None = None) -> str:
+    use_paper = settings.trading_mode != "live" if paper is None else paper
+    return "paper" if use_paper else "live"
+
+
+def _alpaca_failure_status(detail: str) -> str:
+    message = detail.strip().lower()
+    if "keys missing" in message:
+        return "credentials_missing"
+    if any(
+        token in message
+        for token in (
+            "unauthorized",
+            "forbidden",
+            "invalid api",
+            "authentication",
+            "not authorized",
+            "insufficient scope",
+            "access key",
+            "secret key",
+            "credentials",
+        )
+    ):
+        return "credentials_invalid"
+    if any(
+        token in message
+        for token in (
+            "timeout",
+            "timed out",
+            "deadline exceeded",
+            "read timed out",
+        )
+    ):
+        return "broker_slow"
+    if any(
+        token in message
+        for token in (
+            "connection refused",
+            "connection reset",
+            "name or service not known",
+            "temporary failure in name resolution",
+            "nodename nor servname",
+            "network is unreachable",
+            "no route to host",
+            "failed to establish a new connection",
+            "max retries exceeded",
+            "dns",
+        )
+    ):
+        return "network_unreachable"
+    return "broker_error"
+
+
+def _alpaca_probe_account(
+    client: TorghutAlpacaClient,
+    *,
+    timeout_seconds: float,
+) -> dict[str, object]:
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = None
+    try:
+        future = executor.submit(client.get_account)
+        account = future.result(timeout=timeout_seconds)
+    except TimeoutError:
+        if future is not None:
+            future.cancel()
+        return {
+            "ok": False,
+            "status": "broker_slow",
+            "detail": f"alpaca account probe timed out after {timeout_seconds:.2f}s",
+        }
+    except Exception as exc:  # pragma: no cover - depends on network
+        detail = str(exc).strip() or type(exc).__name__
+        return {
+            "ok": False,
+            "status": _alpaca_failure_status(detail),
+            "detail": detail,
+        }
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+    return {
+        "ok": True,
+        "status": "broker_ok",
+        "detail": "ok",
+        "account": account,
+    }
+
+
+def _remember_alpaca_success(
+    *,
+    account: Mapping[str, Any],
+    endpoint_class: str,
+) -> None:
+    with _ALPACA_HEALTH_CACHE_LOCK:
+        _ALPACA_HEALTH_STATE.clear()
+        _ALPACA_HEALTH_STATE.update(
+            {
+                "last_ok_at": datetime.now(timezone.utc),
+                "account_label": str(
+                    account.get("account_number")
+                    or settings.trading_account_label
+                    or ""
+                ).strip()
+                or None,
+                "account_status": str(account.get("status") or "").strip() or None,
+                "endpoint_class": endpoint_class,
+            }
+        )
+
+
+def _alpaca_cached_last_good(
+    *,
+    failure_status: str,
+    failure_detail: str,
+    endpoint_class: str,
+) -> dict[str, object] | None:
+    if failure_status not in {"broker_slow", "network_unreachable"}:
+        return None
+    ttl_seconds = max(0, settings.trading_alpaca_healthcheck_last_good_ttl_seconds)
+    if ttl_seconds <= 0:
+        return None
+    with _ALPACA_HEALTH_CACHE_LOCK:
+        last_ok_at = cast(datetime | None, _ALPACA_HEALTH_STATE.get("last_ok_at"))
+        account_label = cast(str | None, _ALPACA_HEALTH_STATE.get("account_label"))
+        account_status = cast(str | None, _ALPACA_HEALTH_STATE.get("account_status"))
+        cached_endpoint_class = cast(
+            str | None,
+            _ALPACA_HEALTH_STATE.get("endpoint_class"),
+        )
+    if last_ok_at is None:
+        return None
+    age_seconds = max(
+        0.0,
+        round((datetime.now(timezone.utc) - last_ok_at).total_seconds(), 3),
+    )
+    if age_seconds > ttl_seconds:
+        return None
+    return {
+        "ok": True,
+        "detail": (
+            f"{failure_detail}; using cached last known good Alpaca probe from "
+            f"{last_ok_at.isoformat()}"
+        ),
+        "broker_status": failure_status,
+        "endpoint_class": cached_endpoint_class or endpoint_class,
+        "cache_used": True,
+        "last_ok_at": last_ok_at.isoformat(),
+        "cache_age_seconds": age_seconds,
+        "account_label": account_label,
+        "account_status": account_status,
+    }
+
+
 def _check_alpaca() -> dict[str, object]:
     if not settings.apca_api_key_id or not settings.apca_api_secret_key:
-        return {"ok": False, "detail": "alpaca keys missing"}
+        return {
+            "ok": False,
+            "detail": "alpaca keys missing",
+            "broker_status": "credentials_missing",
+            "endpoint_class": _alpaca_endpoint_class(),
+            "cache_used": False,
+        }
     client = TorghutAlpacaClient()
-    try:
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(client.get_account)
-            future.result(timeout=2)
-    except TimeoutError:
-        return {"ok": False, "detail": "alpaca timeout"}
-    except Exception as exc:  # pragma: no cover - depends on network
-        return {"ok": False, "detail": f"alpaca error: {exc}"}
-    return {"ok": True, "detail": "ok"}
+    timeout_seconds = max(0.1, settings.trading_alpaca_healthcheck_timeout_seconds)
+    retries = max(1, settings.trading_alpaca_healthcheck_retries)
+    backoff_seconds = max(0.0, settings.trading_alpaca_healthcheck_backoff_seconds)
+    endpoint_class = str(
+        getattr(client, "endpoint_class", _alpaca_endpoint_class())
+    ).strip() or _alpaca_endpoint_class()
+
+    last_failure: dict[str, object] | None = None
+    for attempt in range(retries):
+        probe = _alpaca_probe_account(client, timeout_seconds=timeout_seconds)
+        if bool(probe.get("ok")):
+            account = cast(Mapping[str, Any], probe.get("account") or {})
+            _remember_alpaca_success(
+                account=account,
+                endpoint_class=endpoint_class,
+            )
+            return {
+                "ok": True,
+                "detail": "ok",
+                "broker_status": "broker_ok",
+                "endpoint_class": endpoint_class,
+                "cache_used": False,
+                "account_label": str(
+                    account.get("account_number")
+                    or settings.trading_account_label
+                    or ""
+                ).strip()
+                or None,
+                "account_status": str(account.get("status") or "").strip() or None,
+            }
+        last_failure = probe
+        if probe.get("status") == "credentials_invalid":
+            break
+        if attempt < retries - 1 and backoff_seconds > 0:
+            time.sleep(backoff_seconds * float(attempt + 1))
+
+    failure_status = str(last_failure.get("status") if last_failure else "broker_error")
+    failure_detail = str(last_failure.get("detail") if last_failure else "alpaca probe failed")
+    cached = _alpaca_cached_last_good(
+        failure_status=failure_status,
+        failure_detail=failure_detail,
+        endpoint_class=endpoint_class,
+    )
+    if cached is not None:
+        return cached
+    return {
+        "ok": False,
+        "detail": failure_detail,
+        "broker_status": failure_status,
+        "endpoint_class": endpoint_class,
+        "cache_used": False,
+    }
 
 
 def _tca_row_payload(row: ExecutionTCAMetric | None) -> dict[str, object] | None:

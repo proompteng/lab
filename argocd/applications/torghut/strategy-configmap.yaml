@@ -10,13 +10,6 @@ metadata:
 data:
   strategies.yaml: |
     strategies:
-      - name: macd-rsi-default
-        description: MACD/RSI demo strategy
-        enabled: false
-        base_timeframe: "1Sec"
-        universe_type: static
-        max_notional_per_trade: 500
-        max_position_pct_equity: 0.05
       - name: intraday-tsmom-profit-v2
         description: Intraday momentum strategy tuned for higher selectivity, version=1.1.0
         enabled: true

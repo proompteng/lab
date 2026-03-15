@@ -32,10 +32,12 @@ clickhouse:
   simulation_database: torghut_sim_sim_2026_02_27_01
 
 postgres:
-  admin_dsn: postgresql://torghut_app@torghut-db-rw.torghut.svc.cluster.local:5432/postgres
-  admin_dsn_password_env: TORGHUT_POSTGRES_PASSWORD
+  admin_dsn: postgresql://postgres@torghut-db-rw.torghut.svc.cluster.local:5432/postgres
+  admin_dsn_password_env: TORGHUT_POSTGRES_ADMIN_PASSWORD
   simulation_dsn_template: postgresql://torghut_app@torghut-db-rw.torghut.svc.cluster.local:5432/{db}
+  simulation_dsn_password_env: TORGHUT_POSTGRES_PASSWORD
   runtime_simulation_dsn_template: postgresql://torghut_app@torghut-db-rw.torghut.svc.cluster.local:5432/{db}
+  runtime_simulation_dsn_password_env: TORGHUT_POSTGRES_PASSWORD
   migrations_command: /opt/venv/bin/alembic upgrade heads
 
 runtime:

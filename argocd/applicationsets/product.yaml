@@ -156,6 +156,27 @@ spec:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: auto
                 enabled: "true"
+              - name: symphony
+                path: argocd/applications/symphony
+                namespace: jangar
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: auto
+                enabled: "true"
+              - name: symphony-jangar
+                path: argocd/applications/symphony-jangar
+                namespace: jangar
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: auto
+                enabled: "true"
+              - name: symphony-torghut
+                path: argocd/applications/symphony-torghut
+                namespace: torghut
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: auto
+                enabled: "true"
               - name: oirat
                 path: argocd/applications/oirat
                 namespace: oirat

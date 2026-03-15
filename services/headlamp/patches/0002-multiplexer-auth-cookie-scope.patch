@@ -1,0 +1,341 @@
+diff --git a/backend/pkg/auth/cookies.go b/backend/pkg/auth/cookies.go
+index 2cc9bff..bab079a 100644
+--- a/backend/pkg/auth/cookies.go
++++ b/backend/pkg/auth/cookies.go
+@@ -27,6 +27,8 @@ import (
+ const (
+ 	// chunkSize is the size of each token chunk, less than 4KB because of the size limit.
+ 	chunkSize = 3800
++	// clearCookieChunkCount bounds cleanup for stale chunked cookies across auth paths.
++	clearCookieChunkCount = 8
+ )
+ 
+ // GetCookiePath returns the full cookie path including baseURL.
+@@ -39,6 +41,16 @@ func GetCookiePath(baseURL, cluster string) string {
+ 	return "/clusters/" + cluster
+ }
+ 
++// GetWebSocketCookiePath returns the websocket multiplexer cookie path including baseURL.
++func GetWebSocketCookiePath(baseURL string) string {
++	if baseURL != "" {
++		baseURL = "/" + strings.Trim(baseURL, "/")
++		return baseURL + "/wsMultiplexer"
++	}
++
++	return "/wsMultiplexer"
++}
++
+ // SanitizeClusterName ensures cluster names are safe for use in cookie names.
+ func SanitizeClusterName(cluster string) string {
+ 	// Only allow alphanumeric characters, hyphens, and underscores
+@@ -93,18 +105,21 @@ func SetTokenCookie(w http.ResponseWriter, r *http.Request, cluster, token, base
+ 
+ 	// if token is larger than maxCookieSize, split it into multiple cookies
+ 	chunks := splitToken(token, chunkSize)
+-	for i, chunk := range chunks {
+-		cookie := &http.Cookie{
+-			Name:     fmt.Sprintf("headlamp-auth-%s.%d", sanitizedCluster, i),
+-			Value:    chunk,
+-			HttpOnly: true,
+-			Secure:   secure,
+-			SameSite: http.SameSiteStrictMode,
+-			Path:     GetCookiePath(baseURL, cluster),
+-			MaxAge:   86400, // 24 hours
+-		}
+ 
+-		http.SetCookie(w, cookie)
++	for _, path := range []string{GetCookiePath(baseURL, cluster), GetWebSocketCookiePath(baseURL)} {
++		for i, chunk := range chunks {
++			cookie := &http.Cookie{
++				Name:     fmt.Sprintf("headlamp-auth-%s.%d", sanitizedCluster, i),
++				Value:    chunk,
++				HttpOnly: true,
++				Secure:   secure,
++				SameSite: http.SameSiteStrictMode,
++				Path:     path,
++				MaxAge:   86400, // 24 hours
++			}
++
++			http.SetCookie(w, cookie)
++		}
+ 	}
+ }
+ 
+@@ -143,26 +158,20 @@ func ClearTokenCookie(w http.ResponseWriter, r *http.Request, cluster, baseURL s
+ 
+ 	secure := IsSecureContext(r)
+ 
+-	// clear chunked cookies
+-	for i := 0; ; i++ {
+-		cookieName := fmt.Sprintf("headlamp-auth-%s.%d", sanitizedCluster, i)
+-
+-		_, err := r.Cookie(cookieName)
+-		if err != nil {
+-			// No more cookies for this cluster
+-			break
+-		}
+-
+-		cookie := &http.Cookie{
+-			Name:     cookieName,
+-			Value:    "",
+-			HttpOnly: true,
+-			Secure:   secure,
+-			SameSite: http.SameSiteStrictMode,
+-			Path:     GetCookiePath(baseURL, cluster),
+-			MaxAge:   -1,
++	paths := []string{GetCookiePath(baseURL, cluster), GetWebSocketCookiePath(baseURL)}
++	for _, path := range paths {
++		for i := 0; i < clearCookieChunkCount; i++ {
++			cookie := &http.Cookie{
++				Name:     fmt.Sprintf("headlamp-auth-%s.%d", sanitizedCluster, i),
++				Value:    "",
++				HttpOnly: true,
++				Secure:   secure,
++				SameSite: http.SameSiteStrictMode,
++				Path:     path,
++				MaxAge:   -1,
++			}
++			http.SetCookie(w, cookie)
+ 		}
+-		http.SetCookie(w, cookie)
+ 	}
+ }
+ 
+diff --git a/backend/pkg/auth/cookies_test.go b/backend/pkg/auth/cookies_test.go
+index 97330ce..d44f1b7 100644
+--- a/backend/pkg/auth/cookies_test.go
++++ b/backend/pkg/auth/cookies_test.go
+@@ -160,6 +160,44 @@ func TestGetCookiePath(t *testing.T) {
+ 	}
+ }
+ 
++func TestGetWebSocketCookiePath(t *testing.T) {
++	tests := []struct {
++		name    string
++		baseURL string
++		want    string
++	}{
++		{
++			name:    "empty base URL",
++			baseURL: "",
++			want:    "/wsMultiplexer",
++		},
++		{
++			name:    "base URL without leading slash",
++			baseURL: "headlamp",
++			want:    "/headlamp/wsMultiplexer",
++		},
++		{
++			name:    "base URL with leading slash",
++			baseURL: "/headlamp",
++			want:    "/headlamp/wsMultiplexer",
++		},
++		{
++			name:    "base URL with trailing slash",
++			baseURL: "/headlamp/",
++			want:    "/headlamp/wsMultiplexer",
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			got := auth.GetWebSocketCookiePath(tt.baseURL)
++			if got != tt.want {
++				t.Errorf("GetWebSocketCookiePath() = %q, want %q", got, tt.want)
++			}
++		})
++	}
++}
++
+ func TestSetAndGetAuthCookie(t *testing.T) {
+ 	req := httptest.NewRequest("GET", localhost, nil)
+ 	req.Host = localhost
+@@ -170,31 +208,51 @@ func TestSetAndGetAuthCookie(t *testing.T) {
+ 
+ 	// Check if cookie was set
+ 	cookies := w.Result().Cookies()
+-	if len(cookies) != 1 {
+-		t.Fatalf("Expected 1 cookie, got %d", len(cookies))
++	if len(cookies) != 18 {
++		t.Fatalf("Expected 18 cookies, got %d", len(cookies))
++	}
++
++	var clusterCookie *http.Cookie
++	var websocketCookie *http.Cookie
++
++	for _, cookie := range cookies {
++		if cookie.Name != "headlamp-auth-test-cluster.0" || cookie.MaxAge == -1 {
++			continue
++		}
++
++		switch cookie.Path {
++		case "/clusters/test-cluster":
++			clusterCookie = cookie
++		case "/wsMultiplexer":
++			websocketCookie = cookie
++		}
++	}
++
++	if clusterCookie == nil {
++		t.Fatal("Expected cluster-scoped auth cookie to be set")
+ 	}
+ 
+-	cookie := cookies[0]
+-	if cookie.Name != "headlamp-auth-test-cluster.0" {
+-		t.Errorf("Expected cookie name 'headlamp-auth-test-cluster.0', got %q", cookie.Name)
++	if websocketCookie == nil {
++		t.Fatal("Expected websocket-scoped auth cookie to be set")
+ 	}
+ 
+-	if cookie.Value != "test-token" {
+-		t.Errorf("Expected cookie value 'test-token', got %q", cookie.Value)
++	if clusterCookie.Value != "test-token" {
++		t.Errorf("Expected cookie value 'test-token', got %q", clusterCookie.Value)
+ 	}
+ 
+-	if !cookie.HttpOnly {
++	if !clusterCookie.HttpOnly {
+ 		t.Error("Expected HttpOnly to be true")
+ 	}
+ 
+-	if cookie.SameSite != http.SameSiteStrictMode {
++	if clusterCookie.SameSite != http.SameSiteStrictMode {
+ 		t.Error("Expected SameSite to be SameSiteStrictMode")
+ 	}
+ 
+-	// Test getting the cookie
+-	req.AddCookie(cookie)
++	clusterReq := httptest.NewRequest("GET", localhostOrigin+"/clusters/test-cluster/version", nil)
++	clusterReq.Host = localhost
++	clusterReq.AddCookie(clusterCookie)
+ 
+-	token, err := auth.GetTokenFromCookie(req, "test-cluster")
++	token, err := auth.GetTokenFromCookie(clusterReq, "test-cluster")
+ 	if err != nil {
+ 		t.Fatalf("GetAuthCookie failed: %v", err)
+ 	}
+@@ -202,6 +260,19 @@ func TestSetAndGetAuthCookie(t *testing.T) {
+ 	if token != "test-token" {
+ 		t.Errorf("Expected token 'test-token', got %q", token)
+ 	}
++
++	websocketReq := httptest.NewRequest("GET", localhostOrigin+"/wsMultiplexer", nil)
++	websocketReq.Host = localhost
++	websocketReq.AddCookie(websocketCookie)
++
++	token, err = auth.GetTokenFromCookie(websocketReq, "test-cluster")
++	if err != nil {
++		t.Fatalf("GetAuthCookie websocket lookup failed: %v", err)
++	}
++
++	if token != "test-token" {
++		t.Errorf("Expected websocket token 'test-token', got %q", token)
++	}
+ }
+ 
+ func TestGetAuthCookieChunked(t *testing.T) {
+@@ -217,16 +288,29 @@ func TestGetAuthCookieChunked(t *testing.T) {
+ 
+ 	// Check if cookie was set
+ 	cookies := w.Result().Cookies()
+-	if len(cookies) < 2 {
+-		t.Fatalf("Expected at least 2 cookies for a chunked token, got %d", len(cookies))
++	if len(cookies) < 20 {
++		t.Fatalf("Expected at least 20 cookies for a chunked token, got %d", len(cookies))
+ 	}
+ 
+-	// Test getting the cookie
++	clusterReq := httptest.NewRequest("GET", localhostOrigin+"/clusters/test-cluster/version", nil)
++	clusterReq.Host = localhost
++	websocketReq := httptest.NewRequest("GET", localhostOrigin+"/wsMultiplexer", nil)
++	websocketReq.Host = localhost
++
+ 	for _, cookie := range cookies {
+-		req.AddCookie(cookie)
++		if cookie.MaxAge == -1 {
++			continue
++		}
++
++		switch cookie.Path {
++		case "/clusters/test-cluster":
++			clusterReq.AddCookie(cookie)
++		case "/wsMultiplexer":
++			websocketReq.AddCookie(cookie)
++		}
+ 	}
+ 
+-	token, err := auth.GetTokenFromCookie(req, "test-cluster")
++	token, err := auth.GetTokenFromCookie(clusterReq, "test-cluster")
+ 	if err != nil {
+ 		t.Fatalf("GetAuthCookie failed: %v", err)
+ 	}
+@@ -234,6 +318,15 @@ func TestGetAuthCookieChunked(t *testing.T) {
+ 	if token != longToken {
+ 		t.Errorf("Expected token to be %q, got %q", longToken, token)
+ 	}
++
++	websocketToken, err := auth.GetTokenFromCookie(websocketReq, "test-cluster")
++	if err != nil {
++		t.Fatalf("GetAuthCookie websocket failed: %v", err)
++	}
++
++	if websocketToken != longToken {
++		t.Errorf("Expected websocket token to be %q, got %q", longToken, websocketToken)
++	}
+ }
+ 
+ func TestClearAuthCookie(t *testing.T) {
+@@ -256,29 +349,36 @@ func TestClearAuthCookie(t *testing.T) {
+ 
+ 	// Check if cookie was set
+ 	cookies := w.Result().Cookies()
+-	if len(cookies) != 1 {
+-		t.Fatalf("Expected 1 cookie, got %d", len(cookies))
++	if len(cookies) != 16 {
++		t.Fatalf("Expected 16 cookies, got %d", len(cookies))
+ 	}
+ 
+-	// Test clearing the cookie
+-	auth.ClearTokenCookie(w, req, "test-cluster", "")
+-
+-	// Check if cookie was cleared
+-	clearedCookies := w.Result().Cookies()
+-	if len(clearedCookies) != 1 {
+-		t.Fatalf("Expected 1 cookie, got %d", len(clearedCookies))
++	paths := map[string]bool{
++		"/clusters/test-cluster": false,
++		"/wsMultiplexer":         false,
+ 	}
+ 
+-	cookie := clearedCookies[0]
+-	if cookie.Name != "headlamp-auth-test-cluster.0" {
+-		t.Errorf("Expected cookie name 'headlamp-auth-test-cluster.0', got %q", cookie.Name)
+-	}
++	for _, cookie := range cookies {
++		if cookie.Name != "headlamp-auth-test-cluster.0" {
++			continue
++		}
+ 
+-	if cookie.Value != "" {
+-		t.Errorf("Expected cookie value to be empty, got %q", cookie.Value)
++		if cookie.Value != "" {
++			t.Errorf("Expected cookie value to be empty, got %q", cookie.Value)
++		}
++
++		if cookie.MaxAge != -1 {
++			t.Errorf("Expected MaxAge to be -1, got %d", cookie.MaxAge)
++		}
++
++		if _, ok := paths[cookie.Path]; ok {
++			paths[cookie.Path] = true
++		}
+ 	}
+ 
+-	if cookie.MaxAge != -1 {
+-		t.Errorf("Expected MaxAge to be -1, got %d", cookie.MaxAge)
++	for path, seen := range paths {
++		if !seen {
++			t.Errorf("Expected cleared cookie for path %q", path)
++		}
+ 	}
+ }

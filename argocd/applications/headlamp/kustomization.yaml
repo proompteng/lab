@@ -2,12 +2,44 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: headlamp
 resources:
+  - headlamp-auth-bridge-configmap.yaml
+  - headlamp-auth-bridge-deployment.yaml
+  - headlamp-auth-bridge-service.yaml
   - headlamp-oidc-rbac.yaml
   - headlamp-oidc-sealedsecret.yaml
+  - ingressroute-headlamp-auth-bridge-k8s-private.yaml
+  - ingressroute-headlamp-k8s-private.yaml
+patches:
+  - target:
+      kind: Deployment
+      name: headlamp
+      namespace: headlamp
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: headlamp
+        namespace: headlamp
+      spec:
+        template:
+          spec:
+            containers:
+              - name: headlamp
+                args:
+                  - -in-cluster
+                  - -in-cluster-context-name=main
+                  - -plugins-dir=/headlamp/plugins
+                  - -oidc-client-id=$(OIDC_CLIENT_ID)
+                  - -oidc-client-secret=$(OIDC_CLIENT_SECRET)
+                  - -oidc-idp-issuer-url=$(OIDC_ISSUER_URL)
+                  - -oidc-scopes=$(OIDC_SCOPES)
+                  - -oidc-ca-file=/etc/ssl/certs/ca-certificates.crt
+                  - -oidc-use-access-token=$(OIDC_USE_ACCESS_TOKEN)
+  - path: patch-headlamp-tailscale-ingress-auth-bridge.yaml
 helmCharts:
   - name: headlamp
     repo: https://kubernetes-sigs.github.io/headlamp
-    version: 0.40.0
+    version: 0.40.1
     releaseName: headlamp
     namespace: headlamp
     valuesFile: values.yaml

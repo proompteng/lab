@@ -15,36 +15,60 @@ provider "tailscale" {
 locals {
   // Rendered ACL policy managed by this stack.
   tailnet_acl = templatefile("${path.module}/templates/policy.hujson.tmpl", {})
+
+  global_dns_nameservers = toset(var.dns_nameservers)
+  split_dns_nameservers = {
+    for domain, nameservers in var.dns_split_nameservers :
+    domain => toset(nameservers)
+  }
 }
 
 resource "tailscale_acl" "tailnet" {
   acl = local.tailnet_acl
 }
 
-resource "tailscale_dns_preferences" "tailnet" {
-  magic_dns = true
-}
+resource "tailscale_dns_configuration" "tailnet" {
+  magic_dns          = true
+  override_local_dns = var.override_local_dns
 
-resource "tailscale_dns_nameservers" "tailnet" {
-  nameservers = var.dns_nameservers
+  dynamic "nameservers" {
+    for_each = local.global_dns_nameservers
+
+    content {
+      address = nameservers.value
+    }
+  }
+
+  dynamic "split_dns" {
+    for_each = local.split_dns_nameservers
+
+    content {
+      domain = split_dns.key
+
+      dynamic "nameservers" {
+        for_each = split_dns.value
+
+        content {
+          address = nameservers.value
+        }
+      }
+    }
+  }
 }
 
 data "tailscale_devices" "all" {}
 
 locals {
-  kube_devices = {
+  subnet_router_devices = {
     for device in data.tailscale_devices.all.devices :
     device.hostname => device.id
-    if length(device.hostname) > 0 && contains(coalesce(device.tags, []), "tag:kube-node")
+    if length(device.hostname) > 0 && contains(coalesce(device.tags, []), "tag:k8s-subnet-router")
   }
 }
 
-resource "tailscale_device_subnet_routes" "kube_nodes" {
-  for_each = local.kube_devices
+resource "tailscale_device_subnet_routes" "subnet_routers" {
+  for_each = local.subnet_router_devices
 
   device_id = each.value
-  routes = [
-    "10.42.0.0/16",
-    "10.43.0.0/16"
-  ]
+  routes    = var.kubernetes_routes
 }

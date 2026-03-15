@@ -1,9 +1,10 @@
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: Kafka
 metadata:
   name: kafka
   namespace: kafka
   annotations:
+    argocd.argoproj.io/sync-options: Replace=true
     strimzi.io/node-pools: enabled
     strimzi.io/kraft: enabled
 spec:
@@ -42,7 +43,7 @@ spec:
     topicOperator: {}
     userOperator: {}
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaNodePool
 metadata:
   name: pool-a
@@ -53,7 +54,26 @@ spec:
   replicas: 3
   roles:
     - controller
-    - broker
+  template:
+    pod:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  strimzi.io/cluster: kafka
+                  strimzi.io/name: kafka-kafka
+                  strimzi.io/pool-name: pool-a
+              topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              strimzi.io/cluster: kafka
+              strimzi.io/name: kafka-kafka
+              strimzi.io/pool-name: pool-a
   resources:
     requests:
       cpu: '2000m'
@@ -64,7 +84,48 @@ spec:
     deleteClaim: false
     class: rook-ceph-block
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaNodePool
+metadata:
+  name: pool-b
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  replicas: 3
+  roles:
+    - broker
+  template:
+    pod:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  strimzi.io/cluster: kafka
+                  strimzi.io/name: kafka-kafka
+                  strimzi.io/pool-name: pool-b
+              topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              strimzi.io/cluster: kafka
+              strimzi.io/name: kafka-kafka
+              strimzi.io/pool-name: pool-b
+  resources:
+    requests:
+      cpu: '2000m'
+      memory: 4Gi
+  storage:
+    type: persistent-claim
+    size: 30Gi
+    deleteClaim: false
+    class: rook-ceph-block
+---
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaUser
 metadata:
   name: user1
@@ -75,7 +136,7 @@ spec:
   authentication:
     type: scram-sha-512
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaUser
 metadata:
   name: karapace
@@ -86,7 +147,7 @@ spec:
   authentication:
     type: scram-sha-512
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaUser
 metadata:
   name: facteur
@@ -107,7 +168,7 @@ spec:
           reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
           reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "facteur"
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaUser
 metadata:
   name: kafka-codex-credentials
@@ -128,7 +189,7 @@ spec:
           reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
           reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "argo-workflows,jangar"
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaUser
 metadata:
   name: froussard
@@ -149,7 +210,7 @@ spec:
           reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
           reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "froussard"
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaUser
 metadata:
   name: flink

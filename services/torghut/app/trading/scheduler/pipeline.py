@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import inspect
 import logging
+import os
 from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -18,7 +20,13 @@ from sqlalchemy.orm import Session
 from ...alpaca_client import TorghutAlpacaClient
 from ...config import settings
 from ...db import SessionLocal
-from ...models import LLMDecisionReview, Strategy, TradeDecision, coerce_json_payload
+from ...models import (
+    Execution,
+    LLMDecisionReview,
+    Strategy,
+    TradeDecision,
+    coerce_json_payload,
+)
 from ...observability import capture_posthog_event
 from ...snapshots import snapshot_account_and_positions
 from ...strategies import StrategyCatalog
@@ -45,7 +53,11 @@ from ..models import SignalEnvelope, StrategyDecision
 from ..order_feed import OrderFeedIngestor
 from ..portfolio import AllocationResult, PortfolioSizingResult, allocator_from_settings, sizer_from_settings
 from ..prices import ClickHousePriceFetcher, MarketSnapshot, PriceFetcher
-from ..quantity_rules import fractional_equities_enabled_for_trade, min_qty_for_symbol, quantize_qty_for_symbol
+from ..quantity_rules import (
+    min_qty_for_symbol,
+    quantize_qty_for_symbol,
+    resolve_quantity_resolution,
+)
 from ..reconcile import Reconciler
 from ..regime_hmm import HMMRegimeContext, resolve_hmm_context, resolve_regime_context_authority_reason
 from ..risk import RiskEngine
@@ -84,7 +96,12 @@ from .pipeline_helpers import (
     _select_strictest_runtime_uncertainty_gate,
     _uncertainty_gate_staleness_reason,
 )
-from .safety import _is_market_session_open, _latch_signal_continuity_alert_state, _record_signal_continuity_recovery_cycle
+from .safety import (
+    _is_market_session_open,
+    _latch_signal_continuity_alert_state,
+    _record_signal_continuity_recovery_cycle,
+    _signal_bootstrap_grace_active,
+)
 from .state import (
     RuntimeUncertaintyGate,
     RuntimeUncertaintyGateAction,
@@ -146,6 +163,7 @@ class TradingPipeline:
 
     def run_once(self) -> None:
         with self.session_factory() as session:
+            self.state.metrics.planned_decision_age_seconds = 0
             strategies = self._prepare_run_once(session)
             if not strategies:
                 return
@@ -213,6 +231,9 @@ class TradingPipeline:
             self.ingestor.commit_cursor(session, batch)
             return False
 
+        if self.state.signal_bootstrap_completed_at is None:
+            self.state.signal_bootstrap_completed_at = datetime.now(timezone.utc)
+
         if settings.trading_feature_quality_enabled:
             quality_thresholds = FeatureQualityThresholds(
                 max_required_null_rate=settings.trading_feature_max_required_null_rate,
@@ -233,15 +254,50 @@ class TradingPipeline:
             )
             if not quality_report.accepted:
                 self.state.metrics.feature_quality_rejections_total += 1
-                logger.error(
-                    "Feature quality gate failed rows=%s reasons=%s staleness_ms_p95=%s duplicate_ratio=%s",
+                self.state.metrics.record_feature_quality_rejection(
+                    quality_report.reasons
+                )
+                failure_payload = self._feature_quality_failure_payload(
+                    batch=batch,
+                    quality_signals=quality_signals,
+                    quality_report=quality_report,
+                )
+                if quality_report.blocking_reasons:
+                    self.state.metrics.record_feature_quality_cursor_commit_blocked(
+                        quality_report.blocking_reasons
+                    )
+                    logger.error(
+                        "Feature quality gate failed component=%s account_label=%s rows=%s reasons=%s "
+                        "cursor_at=%s cursor_symbol=%s cursor_seq=%s staleness_ms_p95=%s duplicate_ratio=%s "
+                        "sample=%s",
+                        failure_payload["component"],
+                        failure_payload["account_label"],
+                        quality_report.rows_total,
+                        quality_report.reasons,
+                        failure_payload["cursor_at"],
+                        failure_payload["cursor_symbol"],
+                        failure_payload["cursor_seq"],
+                        quality_report.staleness_ms_p95,
+                        quality_report.duplicate_ratio,
+                        failure_payload["sample_rows"],
+                    )
+                    return False
+
+                logger.warning(
+                    "Feature quality degradation observed component=%s account_label=%s rows=%s reasons=%s "
+                    "cursor_at=%s cursor_symbol=%s cursor_seq=%s staleness_ms_p95=%s duplicate_ratio=%s "
+                    "sample=%s",
+                    failure_payload["component"],
+                    failure_payload["account_label"],
                     quality_report.rows_total,
                     quality_report.reasons,
+                    failure_payload["cursor_at"],
+                    failure_payload["cursor_symbol"],
+                    failure_payload["cursor_seq"],
                     quality_report.staleness_ms_p95,
                     quality_report.duplicate_ratio,
+                    failure_payload["sample_rows"],
                 )
-                self.ingestor.commit_cursor(session, batch)
-                return False
 
         self.state.metrics.no_signal_reason_streak = {}
         self.state.metrics.no_signal_streak = 0
@@ -288,7 +344,8 @@ class TradingPipeline:
             "cash": str(account_snapshot.cash),
             "buying_power": str(account_snapshot.buying_power),
         }
-        positions = _clone_positions(account_snapshot.positions)
+        snapshot_positions = _clone_positions(account_snapshot.positions)
+        positions = self._resolve_execution_context_positions(snapshot_positions)
 
         universe_resolution = self.universe_resolver.get_resolution()
         self.state.universe_source_status = universe_resolution.status
@@ -342,6 +399,50 @@ class TradingPipeline:
 
         return account_snapshot, account, positions, allowed_symbols
 
+    def _resolve_execution_context_positions(
+        self,
+        snapshot_positions: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        seed_snapshot = getattr(self.execution_adapter, "seed_positions_snapshot", None)
+        if not callable(seed_snapshot):
+            return _clone_positions(snapshot_positions)
+        try:
+            seed_snapshot(_clone_positions(snapshot_positions))
+        except Exception as exc:
+            logger.warning(
+                "Failed to seed simulation execution positions account=%s error=%s",
+                self.account_label,
+                exc,
+            )
+            return _clone_positions(snapshot_positions)
+
+        list_positions = getattr(self.execution_adapter, "list_positions", None)
+        if not callable(list_positions):
+            return _clone_positions(snapshot_positions)
+        try:
+            seeded_positions = list_positions()
+        except Exception as exc:
+            logger.warning(
+                "Failed to read simulation execution positions account=%s error=%s",
+                self.account_label,
+                exc,
+            )
+            return _clone_positions(snapshot_positions)
+        if not isinstance(seeded_positions, list):
+            return _clone_positions(snapshot_positions)
+
+        normalized_positions: list[dict[str, Any]] = []
+        for raw_position in cast(list[Any], seeded_positions):
+            if not isinstance(raw_position, Mapping):
+                continue
+            normalized_positions.append(
+                {
+                    str(key): value
+                    for key, value in cast(Mapping[object, Any], raw_position).items()
+                }
+            )
+        return normalized_positions
+
     def _process_batch_signals(
         self,
         *,
@@ -359,6 +460,7 @@ class TradingPipeline:
                 signal,
                 strategies,
                 equity=account_snapshot.equity,
+                positions=positions,
             )
             if not decisions:
                 continue
@@ -383,14 +485,25 @@ class TradingPipeline:
         strategies: list[Strategy],
         *,
         equity: Decimal,
+        positions: list[dict[str, Any]],
     ) -> list[StrategyDecision]:
         try:
-            decisions = self.decision_engine.evaluate(signal, strategies, equity=equity)
+            evaluate_kwargs: dict[str, Any] = {"equity": equity}
+            evaluate_signature = inspect.signature(self.decision_engine.evaluate)
+            if "positions" in evaluate_signature.parameters:
+                evaluate_kwargs["positions"] = positions
+            decisions = self.decision_engine.evaluate(signal, strategies, **evaluate_kwargs)
             self.state.metrics.record_strategy_runtime(
                 self.decision_engine.consume_runtime_telemetry()
             )
             for telemetry in self.decision_engine.consume_forecast_telemetry():
                 self.state.metrics.record_forecast_telemetry(telemetry.to_payload())
+            for decision in decisions:
+                self._record_quantity_resolution_metrics(
+                    stage="decision",
+                    decision=decision,
+                    positions=positions,
+                )
             return decisions
         except Exception:
             logger.exception(
@@ -399,6 +512,122 @@ class TradingPipeline:
                 signal.timeframe,
             )
             return []
+
+    def _feature_quality_failure_payload(
+        self,
+        *,
+        batch: SignalBatch,
+        quality_signals: list[SignalEnvelope],
+        quality_report: Any,
+    ) -> dict[str, Any]:
+        sample_rows: list[dict[str, Any]] = []
+        for signal in quality_signals[:3]:
+            sample_rows.append(
+                {
+                    "event_ts": signal.event_ts.isoformat(),
+                    "symbol": signal.symbol,
+                    "seq": signal.seq,
+                    "source": signal.source,
+                }
+            )
+        return {
+            "component": "trading.feature_quality",
+            "account_label": self.account_label,
+            "reason_codes": list(getattr(quality_report, "reasons", [])),
+            "rows_total": int(getattr(quality_report, "rows_total", 0)),
+            "cursor_at": (
+                batch.cursor_at.isoformat() if batch.cursor_at is not None else None
+            ),
+            "cursor_symbol": batch.cursor_symbol,
+            "cursor_seq": batch.cursor_seq,
+            "sample_rows": sample_rows,
+        }
+
+    def _record_quantity_resolution_metrics(
+        self,
+        *,
+        stage: str,
+        decision: StrategyDecision,
+        positions: list[dict[str, Any]],
+    ) -> None:
+        sizing = decision.params.get("sizing")
+        sizing_map = cast(Mapping[str, Any], sizing) if isinstance(sizing, Mapping) else None
+        resolution_payload = (
+            dict(cast(Mapping[str, Any], sizing_map.get("quantity_resolution")))
+            if sizing_map is not None
+            and isinstance(sizing_map.get("quantity_resolution"), Mapping)
+            else None
+        )
+        if resolution_payload is None:
+            position_qty = self._position_qty_for_symbol(positions, decision.symbol)
+            resolution = resolve_quantity_resolution(
+                decision.symbol,
+                action=decision.action,
+                global_enabled=settings.trading_fractional_equities_enabled,
+                allow_shorts=settings.trading_allow_shorts,
+                position_qty=position_qty,
+                requested_qty=decision.qty,
+            )
+            resolution_payload = resolution.to_payload()
+        context = self._sell_inventory_context(
+            decision=decision,
+            positions=positions,
+            projected=False,
+        )
+        if decision.action == "sell":
+            self.state.metrics.record_sell_inventory_context(
+                stage=stage,
+                context=context,
+            )
+        outcome = (
+            "fractional"
+            if bool(resolution_payload.get("fractional_allowed"))
+            else "integer"
+        )
+        self.state.metrics.record_qty_resolution(
+            stage=stage,
+            outcome=outcome,
+            reason=cast(str | None, resolution_payload.get("reason")),
+        )
+
+    def _position_qty_for_symbol(
+        self,
+        positions: list[dict[str, Any]],
+        symbol: str,
+    ) -> Decimal:
+        current_qty = Decimal("0")
+        normalized_symbol = symbol.strip().upper()
+        for position in positions:
+            if str(position.get("symbol") or "").strip().upper() != normalized_symbol:
+                continue
+            raw_qty = position.get("qty") or position.get("quantity")
+            if raw_qty is None:
+                continue
+            try:
+                qty = Decimal(str(raw_qty))
+            except (ArithmeticError, ValueError):
+                continue
+            side = str(position.get("side") or "").strip().lower()
+            if side == "short":
+                qty = -abs(qty)
+            current_qty += qty
+        return current_qty
+
+    def _sell_inventory_context(
+        self,
+        *,
+        decision: StrategyDecision,
+        positions: list[dict[str, Any]],
+        projected: bool,
+    ) -> str:
+        if decision.action != "sell":
+            return "n_a"
+        position_qty = self._position_qty_for_symbol(positions, decision.symbol)
+        if projected:
+            return "projected"
+        if position_qty > 0:
+            return "known"
+        return "known"
 
     def _apply_allocation_results(
         self,
@@ -547,6 +776,11 @@ class TradingPipeline:
     ) -> bool:
         if reason == "cursor_ahead_of_stream":
             return True
+        if reason == "no_signals_in_window" and _signal_bootstrap_grace_active(
+            self.state,
+            grace_seconds=settings.trading_signal_bootstrap_grace_seconds,
+        ):
+            return False
         if market_session_open:
             return True
         expected_market_closed_reasons = (
@@ -656,10 +890,14 @@ class TradingPipeline:
                 self.state.metrics.orders_rejected_total += 1
                 reason_code = f"decision_handler_error_{type(exc).__name__}"
                 self.state.metrics.record_decision_rejection_reasons([reason_code])
+                self.state.metrics.record_decision_state("rejected")
                 self.executor.mark_rejected(
                     session,
                     decision_row,
                     reason_code,
+                    metadata_update=self._decision_lifecycle_metadata(
+                        submission_stage="rejected_handler_error"
+                    ),
                 )
             return None
 
@@ -683,6 +921,93 @@ class TradingPipeline:
             return strategy, strategy_symbols
         return strategy, allowed_symbols
 
+    def _decision_row_age_seconds(self, decision_row: TradeDecision) -> int:
+        created_at = decision_row.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        return max(
+            0,
+            int(
+                (
+                    trading_now(account_label=self.account_label) - created_at
+                ).total_seconds()
+            ),
+        )
+
+    def _submission_capital_stage(self) -> str:
+        if settings.trading_mode != "live":
+            return settings.trading_mode
+        if not settings.trading_autonomy_allow_live_promotion:
+            return "shadow"
+        return "0.10x canary"
+
+    def _submission_control_plane_snapshot(
+        self,
+        *,
+        capital_stage: str | None = None,
+    ) -> dict[str, object]:
+        return {
+            "active_revision": os.getenv("K_REVISION", "").strip() or None,
+            "trading_enabled": settings.trading_enabled,
+            "trading_mode": settings.trading_mode,
+            "trading_autonomy_enabled": settings.trading_autonomy_enabled,
+            "trading_autonomy_allow_live_promotion": settings.trading_autonomy_allow_live_promotion,
+            "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
+            "trading_execution_adapter_policy": settings.trading_execution_adapter_policy,
+            "capital_stage": capital_stage or self._submission_capital_stage(),
+        }
+
+    def _decision_lifecycle_metadata(
+        self,
+        *,
+        submission_stage: str,
+        capital_stage: str | None = None,
+        extra: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        metadata: dict[str, Any] = {
+            "submission_stage": submission_stage,
+            "control_plane_snapshot": self._submission_control_plane_snapshot(
+                capital_stage=capital_stage
+            ),
+        }
+        if extra:
+            metadata.update({str(key): value for key, value in extra.items()})
+        return metadata
+
+    def _block_decision_submission(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+        reason: str,
+        submission_stage: str,
+        capital_stage: str | None = None,
+        extra_metadata: Mapping[str, Any] | None = None,
+        severity: str = "warning",
+    ) -> None:
+        metadata = self._decision_lifecycle_metadata(
+            submission_stage=submission_stage,
+            capital_stage=capital_stage,
+            extra=extra_metadata,
+        )
+        self.state.metrics.record_submission_block(reason)
+        self.state.metrics.record_decision_state("blocked")
+        self.executor.mark_blocked(
+            session,
+            decision_row,
+            reason,
+            metadata_update=metadata,
+        )
+        self._emit_domain_telemetry(
+            event_name="torghut.decision.blocked",
+            severity=severity,
+            decision=decision,
+            decision_row=decision_row,
+            reason_codes=[reason],
+            extra_properties={"decision_status": "blocked"},
+        )
+
     def _ensure_pending_decision_row(
         self,
         *,
@@ -695,13 +1020,34 @@ class TradingPipeline:
         )
         if decision_row.status != "planned":
             return None
+        self.state.metrics.record_decision_state("planned")
+        age_seconds = self._decision_row_age_seconds(decision_row)
+        self.state.metrics.observe_planned_decision_age(age_seconds)
         if self.executor.execution_exists(session, decision_row):
             self.state.metrics.planned_decisions_with_execution_total += 1
+            execution_status = session.execute(
+                select(Execution.status)
+                .where(Execution.trade_decision_id == decision_row.id)
+                .order_by(Execution.created_at.desc())
+                .limit(1)
+            ).scalars().first()
+            resolved_status = str(execution_status or "submitted").strip() or "submitted"
+            decision_json = _coerce_json(decision_row.decision_json)
+            decision_json["submission_stage"] = "execution_backfilled"
+            decision_json["control_plane_snapshot"] = coerce_json_payload(
+                self._submission_control_plane_snapshot()
+            )
+            decision_row.status = resolved_status
+            decision_row.decision_json = decision_json
+            session.add(decision_row)
+            session.commit()
+            self.state.metrics.record_decision_state(resolved_status)
             logger.warning(
-                "Decision remained planned while execution already exists decision_id=%s strategy_id=%s symbol=%s",
+                "Resolved planned decision with existing execution decision_id=%s strategy_id=%s symbol=%s resolved_status=%s",
                 decision_row.id,
                 decision.strategy_id,
                 decision.symbol,
+                resolved_status,
             )
             return None
         if self._expire_stale_planned_decision(
@@ -720,22 +1066,25 @@ class TradingPipeline:
         timeout_seconds = settings.trading_planned_decision_timeout_seconds
         if timeout_seconds <= 0:
             return False
-        created_at = decision_row.created_at
-        if created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=timezone.utc)
-        age_seconds = int(
-            (trading_now(account_label=self.account_label) - created_at).total_seconds()
-        )
+        age_seconds = self._decision_row_age_seconds(decision_row)
+        self.state.metrics.observe_planned_decision_age(age_seconds)
         if age_seconds < timeout_seconds:
             return False
         self.state.metrics.planned_decisions_stale_total += 1
-        self.state.metrics.planned_decisions_timeout_rejected_total += 1
-        self.state.metrics.orders_rejected_total += 1
-        reason = f"decision_timeout_unsubmitted:{age_seconds}s"
-        self.state.metrics.record_decision_rejection_reasons([reason])
-        self.executor.mark_rejected(session, decision_row, reason)
+        self._block_decision_submission(
+            session=session,
+            decision=decision,
+            decision_row=decision_row,
+            reason="stale_planned_cleanup",
+            submission_stage="blocked_stale_planned_cleanup",
+            extra_metadata={
+                "stale_planned_age_seconds": age_seconds,
+                "planned_decision_timeout_seconds": timeout_seconds,
+            },
+            severity="error",
+        )
         logger.error(
-            "Rejected stale planned decision decision_id=%s strategy_id=%s symbol=%s age_seconds=%s timeout_seconds=%s",
+            "Recovered stale planned decision decision_id=%s strategy_id=%s symbol=%s age_seconds=%s timeout_seconds=%s",
             decision_row.id,
             decision.strategy_id,
             decision.symbol,
@@ -1114,9 +1463,17 @@ class TradingPipeline:
             return
         self.state.metrics.orders_rejected_total += 1
         self.state.metrics.record_decision_rejection_reasons(reasons)
+        self.state.metrics.record_decision_state("rejected")
         for reason in reasons:
             logger.info(log_template, decision.strategy_id, decision.symbol, reason)
-        self.executor.mark_rejected(session, decision_row, ";".join(reasons))
+        self.executor.mark_rejected(
+            session,
+            decision_row,
+            ";".join(reasons),
+            metadata_update=self._decision_lifecycle_metadata(
+                submission_stage="rejected_pre_submit"
+            ),
+        )
         self._emit_domain_telemetry(
             event_name="torghut.decision.blocked",
             severity="warning",
@@ -1283,15 +1640,51 @@ class TradingPipeline:
         decision_row: TradeDecision,
     ) -> bool:
         if not settings.trading_enabled:
+            self._block_decision_submission(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+                reason="trading_disabled",
+                submission_stage="blocked_trading_disabled",
+            )
+            logger.warning(
+                "Decision blocked because trading is disabled strategy_id=%s decision_id=%s symbol=%s",
+                decision.strategy_id,
+                decision_row.id,
+                decision.symbol,
+            )
+            return False
+        if (
+            settings.trading_mode == "live"
+            and not settings.trading_autonomy_allow_live_promotion
+        ):
+            self._block_decision_submission(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+                reason="capital_stage_shadow",
+                submission_stage="blocked_capital_stage_shadow",
+                capital_stage="shadow",
+            )
+            logger.info(
+                "Decision held in shadow stage strategy_id=%s decision_id=%s symbol=%s",
+                decision.strategy_id,
+                decision_row.id,
+                decision.symbol,
+            )
             return False
         if not (
             settings.trading_emergency_stop_enabled and self.state.emergency_stop_active
         ):
             return True
-        self.state.metrics.orders_rejected_total += 1
         reason = self.state.emergency_stop_reason or "emergency_stop_active"
-        self.state.metrics.record_decision_rejection_reasons([reason])
-        self.executor.mark_rejected(session, decision_row, reason)
+        self._block_decision_submission(
+            session=session,
+            decision=decision,
+            decision_row=decision_row,
+            reason=reason,
+            submission_stage="blocked_emergency_stop",
+        )
         logger.error(
             "Decision blocked by emergency stop strategy_id=%s decision_id=%s symbol=%s reason=%s",
             decision.strategy_id,
@@ -1322,6 +1715,11 @@ class TradingPipeline:
             selected_adapter_name=selected_adapter_name,
         )
         self.state.metrics.record_execution_request(selected_adapter_name)
+        self.executor.update_decision_json(
+            session,
+            decision_row,
+            self._decision_lifecycle_metadata(submission_stage="submit_requested"),
+        )
         self.executor.update_decision_params(
             session,
             decision_row,
@@ -1332,6 +1730,11 @@ class TradingPipeline:
                     "symbol": decision.symbol,
                 }
             },
+        )
+        self.state.metrics.record_execution_submit_attempt(
+            adapter=selected_adapter_name,
+            side=decision.action,
+            asset_class="crypto" if "/" in decision.symbol else "equity",
         )
 
         execution, rejected = self._submit_order_with_handling(
@@ -1355,7 +1758,21 @@ class TradingPipeline:
         )
         if execution is None:
             self._sync_lean_observability(execution_client)
+            self._record_simulation_position_state(
+                execution_client=execution_client,
+                symbol=decision.symbol,
+            )
             self.state.metrics.orders_submitted_total += 1
+            self.state.metrics.record_decision_state("submitted")
+            self.state.metrics.record_execution_submit_result(
+                status="accepted",
+                adapter=selected_adapter_name,
+            )
+            self.executor.update_decision_json(
+                session,
+                decision_row,
+                self._decision_lifecycle_metadata(submission_stage="submitted"),
+            )
             self._emit_domain_telemetry(
                 event_name="torghut.execution.submitted",
                 severity="info",
@@ -1383,7 +1800,16 @@ class TradingPipeline:
         )
         self._record_lean_shadow_from_execution(execution)
         self._sync_lean_observability(execution_client)
+        self._record_simulation_position_state(
+            execution_client=execution_client,
+            symbol=decision.symbol,
+        )
         self.state.metrics.orders_submitted_total += 1
+        self.state.metrics.record_decision_state("submitted")
+        self.state.metrics.record_execution_submit_result(
+            status="accepted",
+            adapter=actual_adapter_name,
+        )
         self._emit_domain_telemetry(
             event_name="torghut.execution.submitted",
             severity="info",
@@ -1483,8 +1909,20 @@ class TradingPipeline:
             return execution, False
         except OrderFirewallBlocked as exc:
             self.state.metrics.orders_rejected_total += 1
+            self.state.metrics.record_decision_state("rejected")
+            self.state.metrics.record_execution_submit_result(
+                status="rejected",
+                adapter=selected_adapter_name,
+            )
             self.state.metrics.record_decision_rejection_reasons([str(exc)])
-            self.executor.mark_rejected(session, decision_row, str(exc))
+            self.executor.mark_rejected(
+                session,
+                decision_row,
+                str(exc),
+                metadata_update=self._decision_lifecycle_metadata(
+                    submission_stage="rejected_submit"
+                ),
+            )
             self._emit_domain_telemetry(
                 event_name="torghut.execution.rejected",
                 severity="warning",
@@ -1503,10 +1941,61 @@ class TradingPipeline:
             return None, True
         except Exception as exc:
             self.state.metrics.orders_rejected_total += 1
+            self.state.metrics.record_decision_state("rejected")
             self.state.metrics.record_decision_rejection_reasons(
                 [f"order_submit_error_{type(exc).__name__}"]
             )
             payload = _extract_json_error_payload(exc) or {}
+            source = str(payload.get("source") or "").strip().lower()
+            if source == "local_pre_submit":
+                self.state.metrics.record_execution_local_reject(
+                    code=cast(str | None, payload.get("code")),
+                    reason=cast(str | None, payload.get("reject_reason")),
+                )
+                quantity_resolution = payload.get("quantity_resolution")
+                if isinstance(quantity_resolution, Mapping):
+                    resolution_map = cast(Mapping[str, Any], quantity_resolution)
+                    self.state.metrics.record_qty_resolution(
+                        stage="execution",
+                        outcome=(
+                            "fractional"
+                            if bool(resolution_map.get("fractional_allowed"))
+                            else "integer"
+                        ),
+                        reason=cast(str | None, resolution_map.get("reason")),
+                    )
+                    self.state.metrics.record_sell_inventory_context(
+                        stage="execution",
+                        context=(
+                            "unknown"
+                            if resolution_map.get("position_qty") in (None, "")
+                            else "known"
+                        ),
+                    )
+                    decision_sizing = decision.params.get("sizing")
+                    decision_sizing_map = (
+                        cast(Mapping[str, Any], decision_sizing)
+                        if isinstance(decision_sizing, Mapping)
+                        else None
+                    )
+                    decision_resolution = (
+                        cast(
+                            Mapping[str, Any],
+                            decision_sizing_map.get("quantity_resolution"),
+                        )
+                        if decision_sizing_map is not None
+                        and isinstance(
+                            decision_sizing_map.get("quantity_resolution"), Mapping
+                        )
+                        else None
+                    )
+                    if decision_resolution is not None and (
+                        bool(decision_resolution.get("fractional_allowed"))
+                        != bool(resolution_map.get("fractional_allowed"))
+                        or str(decision_resolution.get("reason") or "").strip()
+                        != str(resolution_map.get("reason") or "").strip()
+                    ):
+                        self.state.metrics.execution_validation_mismatch_total += 1
             existing_order_id = payload.get("existing_order_id")
             existing_order_code = str(payload.get("code") or "").strip().lower()
             existing_order_reason = str(payload.get("reject_reason") or "").strip().lower()
@@ -1533,7 +2022,14 @@ class TradingPipeline:
                 session,
                 decision_row,
                 reason,
-                metadata_update=metadata_update,
+                metadata_update=self._decision_lifecycle_metadata(
+                    submission_stage="rejected_submit",
+                    extra=metadata_update,
+                ),
+            )
+            self.state.metrics.record_execution_submit_result(
+                status="rejected",
+                adapter=selected_adapter_name,
             )
             self._emit_domain_telemetry(
                 event_name="torghut.execution.rejected",
@@ -1544,13 +2040,43 @@ class TradingPipeline:
                 extra_properties={"rejection_type": "submit_failed"},
             )
             logger.warning(
-                "Order submission failed strategy_id=%s decision_id=%s symbol=%s error=%s",
+                "Order submission failed strategy_id=%s decision_id=%s symbol=%s error=%s payload=%s",
                 decision.strategy_id,
                 decision_row.id,
                 decision.symbol,
                 exc,
+                payload,
             )
             return None, True
+
+    def _record_simulation_position_state(
+        self,
+        *,
+        execution_client: Any,
+        symbol: str,
+    ) -> None:
+        if self._execution_client_name(execution_client) != "simulation":
+            return
+        try:
+            positions = execution_client.list_positions()
+        except Exception:
+            return
+        state = "flat"
+        normalized_symbol = symbol.strip().upper()
+        if isinstance(positions, list):
+            for raw_position in cast(list[Any], positions):
+                if not isinstance(raw_position, Mapping):
+                    continue
+                position = cast(Mapping[str, Any], raw_position)
+                if str(position.get("symbol") or "").strip().upper() != normalized_symbol:
+                    continue
+                side = str(position.get("side") or "").strip().lower()
+                if side == "short":
+                    state = "short"
+                elif side == "long":
+                    state = "long"
+                break
+        self.state.metrics.record_simulation_position_state(state)
 
     def _handle_execution_fallback(
         self,
@@ -2476,8 +3002,8 @@ class TradingPipeline:
             policy_resolution=policy_resolution,
         )
 
-    @staticmethod
     def _bounded_degraded_qty(
+        self,
         *,
         decision: StrategyDecision,
         positions: list[dict[str, Any]],
@@ -2503,20 +3029,35 @@ class TradingPipeline:
             current_qty += qty
 
         scaled_qty = decision.qty * multiplier
-        fractional_equities_enabled = fractional_equities_enabled_for_trade(
+        resolution = resolve_quantity_resolution(
+            decision.symbol,
             action=decision.action,
             global_enabled=settings.trading_fractional_equities_enabled,
             allow_shorts=settings.trading_allow_shorts,
             position_qty=current_qty,
             requested_qty=scaled_qty,
         )
+        if decision.action == "sell":
+            self.state.metrics.record_sell_inventory_context(
+                stage="pipeline",
+                context=self._sell_inventory_context(
+                    decision=decision,
+                    positions=positions,
+                    projected=True,
+                ),
+            )
+        self.state.metrics.record_qty_resolution(
+            stage="pipeline",
+            outcome="fractional" if resolution.fractional_allowed else "integer",
+            reason=resolution.reason,
+        )
         quantized_qty = quantize_qty_for_symbol(
             decision.symbol,
             scaled_qty,
-            fractional_equities_enabled=fractional_equities_enabled,
+            fractional_equities_enabled=resolution.fractional_allowed,
         )
         min_qty = min_qty_for_symbol(
-            decision.symbol, fractional_equities_enabled=fractional_equities_enabled
+            decision.symbol, fractional_equities_enabled=resolution.fractional_allowed
         )
         if quantized_qty < min_qty:
             if decision.qty >= min_qty:

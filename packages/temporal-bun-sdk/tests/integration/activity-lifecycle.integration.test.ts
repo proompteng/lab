@@ -8,6 +8,7 @@ import { WorkerRuntime } from '../../src/worker/runtime'
 import { EventType } from '../../src/proto/temporal/api/enums/v1/event_type_pb'
 import {
   findTemporalCliUnavailableError,
+  runHarnessEffect,
   TemporalCliCommandError,
   TemporalCliUnavailableError,
   createIntegrationHarness,
@@ -19,11 +20,12 @@ const shouldRunIntegration = process.env.TEMPORAL_INTEGRATION_TESTS === '1'
 const describeIntegration = shouldRunIntegration ? describe : describe.skip
 const scenarioTimeoutMs = 60_000
 const hookTimeoutMs = 60_000
+const defaultTaskQueue = `temporal-bun-integration-lifecycle-${crypto.randomUUID()}`
 
 const CLI_CONFIG = {
   address: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
   namespace: process.env.TEMPORAL_NAMESPACE ?? 'default',
-  taskQueue: process.env.TEMPORAL_TASK_QUEUE ?? 'temporal-bun-integration',
+  taskQueue: process.env.TEMPORAL_TASK_QUEUE ?? defaultTaskQueue,
 }
 
 describeIntegration('Activity lifecycle integration', () => {
@@ -154,7 +156,7 @@ describeIntegration('Activity lifecycle integration', () => {
       throw new Error('Integration harness not initialised')
     }
     try {
-      return await Effect.runPromise(
+      return await runHarnessEffect(
         harness.executeWorkflow({
           workflowType,
           workflowId: `lifecycle-${crypto.randomUUID()}`,
@@ -175,6 +177,6 @@ describeIntegration('Activity lifecycle integration', () => {
     if (!harness) {
       throw new Error('Integration harness not initialised')
     }
-    return await Effect.runPromise(harness.fetchWorkflowHistory(handle))
+    return await runHarnessEffect(harness.fetchWorkflowHistory(handle))
   }
 })

@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: symphony
+spec:
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "2026-03-15T01:37:56Z"
+    spec:
+      serviceAccountName: symphony-jangar
+      containers:
+        - name: symphony
+          env:
+            - name: LINEAR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: symphony-linear-api-key-jangar
+                  key: LINEAR_API_KEY
+            - name: SYMPHONY_LEADER_ELECTION_LEASE_NAME
+              value: symphony-jangar-leader
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: symphony-workspace-jangar
+        - name: workflow
+          configMap:
+            name: symphony-workflow-jangar

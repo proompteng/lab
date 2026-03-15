@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: torghut
+nameSuffix: -torghut
+labels:
+  - includeSelectors: true
+    includeTemplates: true
+    pairs:
+      app.kubernetes.io/name: symphony-torghut
+      app.kubernetes.io/part-of: lab
+configMapGenerator:
+  - name: symphony-workflow
+    files:
+      - WORKFLOW.md
+    options:
+      disableNameSuffixHash: true
+resources:
+  - ../symphony-base
+  - codex-auth-sealedsecret.yaml
+  - github-token-sealedsecret.yaml
+  - linear-api-key-sealedsecret.yaml
+  - target-argocd-role.yaml
+  - target-argocd-rolebinding.yaml
+patches:
+  - path: deployment.patch.yaml
+images:
+  - name: registry.ide-newton.ts.net/lab/symphony
+    newName: registry.ide-newton.ts.net/lab/symphony
+    newTag: "0e89c49f"
+    digest: sha256:64ce115e9a4c24bb0ec7a7d16a1850857f35acb61843ff07c0adcd29029a7595

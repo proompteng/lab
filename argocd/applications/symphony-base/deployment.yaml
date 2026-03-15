@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: symphony
+  labels:
+    app.kubernetes.io/name: symphony
+    app.kubernetes.io/part-of: lab
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: symphony
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: symphony
+        app.kubernetes.io/part-of: lab
+    spec:
+      serviceAccountName: symphony
+      containers:
+        - name: symphony
+          image: registry.ide-newton.ts.net/lab/symphony
+          imagePullPolicy: Always
+          command: ['bun', 'src/index.ts', '/etc/symphony/WORKFLOW.md']
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: LINEAR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: symphony-linear-api-key
+                  key: LINEAR_API_KEY
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token
+                  key: token
+                  optional: true
+            - name: GH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token
+                  key: token
+                  optional: true
+            - name: SYMPHONY_LEADER_ELECTION_ENABLED
+              value: "true"
+            - name: SYMPHONY_LEADER_ELECTION_LEASE_NAME
+              value: symphony-leader
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: workflow
+              mountPath: /etc/symphony/WORKFLOW.md
+              subPath: WORKFLOW.md
+              readOnly: true
+            - name: codex-auth
+              mountPath: /root/.codex/auth.json
+              subPath: auth.json
+              readOnly: true
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: symphony-workspace
+        - name: workflow
+          configMap:
+            name: symphony-workflow
+        - name: codex-auth
+          secret:
+            secretName: codex-auth

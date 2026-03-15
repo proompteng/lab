@@ -12,4 +12,6 @@ roleRef:
   name: cluster-admin
 subjects:
   - kind: User
+    name: oidc:admin
+  - kind: User
     name: oidc:gregkonush

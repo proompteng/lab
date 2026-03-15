@@ -28,9 +28,9 @@ from .regime_hmm import (
 )
 from .prices import MarketSnapshot, PriceFetcher
 from .quantity_rules import (
-    fractional_equities_enabled_for_trade,
     min_qty_for_symbol,
     quantize_qty_for_symbol,
+    resolve_quantity_resolution,
 )
 from .simulation import resolve_simulation_context
 from .strategy_runtime import (
@@ -84,6 +84,7 @@ class DecisionEngine:
         strategies: Iterable[Strategy],
         *,
         equity: Optional[Decimal] = None,
+        positions: Optional[list[dict[str, Any]]] = None,
     ) -> list[StrategyDecision]:
         filtered = [strategy for strategy in strategies if strategy.enabled]
         timeframe = _resolve_signal_timeframe(signal)
@@ -99,23 +100,20 @@ class DecisionEngine:
 
         runtime_enabled = _runtime_enabled()
         if runtime_enabled:
-            decisions = self._evaluate_with_runtime(signal, filtered, equity=equity)
-            if decisions:
-                return decisions
-            runtime_telemetry = self._last_runtime_telemetry
-            legacy_decisions = self._evaluate_legacy(
-                signal, filtered, equity=equity
+            decisions = self._evaluate_with_runtime(
+                signal,
+                filtered,
+                equity=equity,
+                positions=positions,
             )
-            self._last_runtime_telemetry = DecisionRuntimeTelemetry(
-                mode=settings.trading_strategy_runtime_mode,
-                runtime_enabled=True,
-                fallback_to_legacy=True,
-                errors=runtime_telemetry.errors,
-                observation=runtime_telemetry.observation,
-            )
-            return legacy_decisions
+            return decisions
 
-        return self._evaluate_legacy(signal, filtered, equity=equity)
+        return self._evaluate_legacy(
+            signal,
+            filtered,
+            equity=equity,
+            positions=positions,
+        )
 
     def consume_runtime_telemetry(self) -> DecisionRuntimeTelemetry:
         telemetry = self._last_runtime_telemetry
@@ -137,6 +135,7 @@ class DecisionEngine:
         strategies: list[Strategy],
         *,
         equity: Optional[Decimal],
+        positions: Optional[list[dict[str, Any]]],
     ) -> list[StrategyDecision]:
         timeframe = signal.timeframe
         if timeframe is None:
@@ -216,6 +215,7 @@ class DecisionEngine:
                 action=intent.direction,
                 price=price,
                 equity=equity,
+                positions=positions,
             )
             forecast_contract: dict[str, Any] | None = None
             forecast_audit: dict[str, Any] | None = None
@@ -301,6 +301,7 @@ class DecisionEngine:
         strategies: list[Strategy],
         *,
         equity: Optional[Decimal],
+        positions: Optional[list[dict[str, Any]]],
     ) -> list[StrategyDecision]:
         decisions: list[StrategyDecision] = []
         self._last_forecast_telemetry = []
@@ -317,7 +318,12 @@ class DecisionEngine:
                     strategy.base_timeframe,
                 )
                 continue
-            decision = self._evaluate_legacy_strategy(signal, strategy, equity=equity)
+            decision = self._evaluate_legacy_strategy(
+                signal,
+                strategy,
+                equity=equity,
+                positions=positions,
+            )
             if decision is not None:
                 decisions.append(decision)
 
@@ -334,6 +340,7 @@ class DecisionEngine:
         strategy: Strategy,
         *,
         equity: Optional[Decimal],
+        positions: Optional[list[dict[str, Any]]],
     ) -> Optional[StrategyDecision]:
         timeframe = signal.timeframe
         if timeframe is None:
@@ -363,6 +370,7 @@ class DecisionEngine:
             action=action,
             price=price,
             equity=equity,
+            positions=positions,
         )
 
         return StrategyDecision(
@@ -692,6 +700,7 @@ def _resolve_qty(
     action: str,
     price: Optional[Decimal],
     equity: Optional[Decimal],
+    positions: Optional[list[dict[str, Any]]],
 ) -> tuple[Decimal, dict[str, Any]]:
     """Resolve an asset-class-aware quantity from strategy settings.
 
@@ -736,18 +745,23 @@ def _resolve_qty(
     if notional_budget is None or notional_budget <= 0:
         return default_qty, {"method": "default_qty", "reason": "missing_budget"}
 
-    fractional_equities_enabled = fractional_equities_enabled_for_trade(
+    requested_qty = notional_budget / price
+    position_qty = _position_qty_for_symbol(positions, symbol)
+    resolution = resolve_quantity_resolution(
         action=action,
+        symbol=symbol,
         global_enabled=settings.trading_fractional_equities_enabled,
         allow_shorts=settings.trading_allow_shorts,
+        position_qty=position_qty,
+        requested_qty=requested_qty,
     )
     qty = quantize_qty_for_symbol(
         symbol,
-        notional_budget / price,
-        fractional_equities_enabled=fractional_equities_enabled,
+        requested_qty,
+        fractional_equities_enabled=resolution.fractional_allowed,
     )
     min_qty = min_qty_for_symbol(
-        symbol, fractional_equities_enabled=fractional_equities_enabled
+        symbol, fractional_equities_enabled=resolution.fractional_allowed
     )
     if qty < min_qty:
         qty = min_qty
@@ -756,6 +770,7 @@ def _resolve_qty(
         "method": method,
         "notional_budget": str(notional_budget),
         "price": str(price),
+        "quantity_resolution": resolution.to_payload(),
     }
 
 
@@ -766,6 +781,7 @@ def _resolve_qty_for_aggregated(
     action: str,
     price: Optional[Decimal],
     equity: Optional[Decimal],
+    positions: Optional[list[dict[str, Any]]],
 ) -> tuple[Decimal, dict[str, Any]]:
     default_qty = Decimal(str(settings.trading_default_qty))
     if price is None or price <= 0:
@@ -777,18 +793,23 @@ def _resolve_qty_for_aggregated(
     if total_budget <= 0:
         return default_qty, {"method": "default_qty", "reason": "missing_budget"}
 
-    fractional_equities_enabled = fractional_equities_enabled_for_trade(
+    requested_qty = total_budget / price
+    position_qty = _position_qty_for_symbol(positions, symbol)
+    resolution = resolve_quantity_resolution(
         action=action,
+        symbol=symbol,
         global_enabled=settings.trading_fractional_equities_enabled,
         allow_shorts=settings.trading_allow_shorts,
+        position_qty=position_qty,
+        requested_qty=requested_qty,
     )
     qty = quantize_qty_for_symbol(
         symbol,
-        total_budget / price,
-        fractional_equities_enabled=fractional_equities_enabled,
+        requested_qty,
+        fractional_equities_enabled=resolution.fractional_allowed,
     )
     min_qty = min_qty_for_symbol(
-        symbol, fractional_equities_enabled=fractional_equities_enabled
+        symbol, fractional_equities_enabled=resolution.fractional_allowed
     )
     if qty < min_qty:
         qty = min_qty
@@ -796,7 +817,37 @@ def _resolve_qty_for_aggregated(
         "method": "aggregated_notional_budget",
         "notional_budget": str(total_budget),
         "price": str(price),
+        "quantity_resolution": resolution.to_payload(),
     }
+
+
+def _position_qty_for_symbol(
+    positions: Optional[list[dict[str, Any]]],
+    symbol: str,
+) -> Optional[Decimal]:
+    if positions is None:
+        return None
+    normalized_symbol = symbol.strip().upper()
+    current_qty = Decimal("0")
+    matched = False
+    for position in positions:
+        if str(position.get("symbol") or "").strip().upper() != normalized_symbol:
+            continue
+        raw_qty = position.get("qty") or position.get("quantity")
+        if raw_qty is None:
+            continue
+        try:
+            qty = Decimal(str(raw_qty))
+        except (ArithmeticError, ValueError):
+            continue
+        side = str(position.get("side") or "").strip().lower()
+        if side == "short":
+            qty = -abs(qty)
+        matched = True
+        current_qty += qty
+    if not matched:
+        return Decimal("0")
+    return current_qty
 
 
 def _has_legacy_indicator_inputs(features: SignalFeatures) -> bool:

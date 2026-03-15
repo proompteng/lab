@@ -15,6 +15,9 @@ const isAgentRunIngestionReady = (health: ReturnType<typeof getAgentsControllerH
   return namespaces.every((namespace) => assessAgentRunIngestion(namespace, health).status !== 'degraded')
 }
 
+const isStandbyLeaderElectionReady = (leaderElection: ReturnType<typeof getLeaderElectionStatus>) =>
+  leaderElection.lastAttemptAt !== null && leaderElection.lastError === null
+
 export const Route = createFileRoute('/ready')({
   server: {
     handlers: {
@@ -33,8 +36,12 @@ export const getReadyHandler = async () => {
     isControllerHealthReady(agentsController) &&
     isControllerHealthReady(orchestrationController) &&
     isControllerHealthReady(supportingController)
-  const agentsControllerReady =
-    (!leaderElection.required || leaderElection.isLeader) && isAgentRunIngestionReady(agentsController)
+  const leaderRequired = leaderElection.required
+  const activeControllerReplica = !leaderRequired || leaderElection.isLeader
+  const leaderElectionReady = activeControllerReplica || isStandbyLeaderElectionReady(leaderElection)
+  const agentsControllerReady = activeControllerReplica
+    ? isAgentRunIngestionReady(agentsController)
+    : leaderElectionReady
   const ready = controllersOk && agentsControllerReady
 
   const body = JSON.stringify({

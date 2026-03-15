@@ -14,6 +14,26 @@ This runbook covers the in-cluster Keycloak deployment used for OIDC, plus the i
 
 For Headlamp-specific wiring (OIDC secret, RBAC, control-plane OIDC args), see `docs/headlamp-setup.md`.
 
+## Operations model
+
+- Keycloak itself is GitOps-managed from `argocd/applications/keycloak`.
+- The `kubernetes` OIDC client used by Headlamp and the kube-apiserver is GitOps-managed by:
+  - `argocd/applications/keycloak/headlamp-client-sealedsecret.yaml`
+  - `argocd/applications/keycloak/headlamp-client-bootstrap-job.yaml`
+- That bootstrap job also enforces the realm session defaults Headlamp depends on:
+  - Access token lifespan `300`
+  - SSO session idle `28800`
+  - SSO session max `86400`
+  - Client session idle `28800`
+  - Client session max `86400`
+- There is no Ansible playbook in this repo for Keycloak realm or client management.
+- The only OIDC-related Ansible playbook in this repo is `ansible/playbooks/k3s-oidc.yml`, and that is for `k3s` API server flags, not for Keycloak application state.
+
+For the current `galactic` environment:
+
+- Keycloak and Headlamp changes should be made in GitOps manifests and synced with Argo CD.
+- Kube-apiserver OIDC changes should be applied through the Talos machine config patch flow documented in `docs/headlamp-setup.md`.
+
 ## Admin UI
 
 - Admin console URL: `https://auth.proompteng.ai/admin/`
@@ -35,6 +55,7 @@ Note: In this Keycloak build, the realm-level admin role is named **admin** unde
 ## OIDC client for Kubernetes/Headlamp
 
 Use a single confidential OIDC client for both the kube-apiserver and Headlamp (example client ID: `kubernetes`).
+This repo now bootstraps that client from `argocd/applications/keycloak/headlamp-client-bootstrap-job.yaml`.
 
 Capabilities:
 
@@ -47,16 +68,21 @@ Capabilities:
 
 Login settings (Headlamp):
 
-- Root URL: `https://headlamp.ide-newton.ts.net`
-- Home URL: `https://headlamp.ide-newton.ts.net`
-- Valid redirect URIs: `https://headlamp.ide-newton.ts.net/oidc-callback`
-- Web origins: `https://headlamp.ide-newton.ts.net`
-- Valid post logout redirect URIs: `https://headlamp.ide-newton.ts.net`
+- Valid redirect URIs:
+  - `https://headlamp.ide-newton.ts.net/oidc-callback`
+  - `https://headlamp.k8s.proompteng.ai/oidc-callback`
+- Web origins:
+  - `https://headlamp.ide-newton.ts.net`
+  - `https://headlamp.k8s.proompteng.ai`
 
 Issuer and scopes:
 
 - Issuer: Realm → **Realm settings** → **Endpoints** → **OpenID Endpoint Configuration** (`issuer`)
-- Scopes: `openid profile email`
+- Scopes: `openid profile email offline_access`
+- The kube-apiserver on `galactic` binds Kubernetes usernames from the OIDC `preferred_username` claim with the `oidc:` prefix, so RBAC subjects should look like `oidc:<preferred_username>`.
+- The GitOps bootstrap job also enforces a `kubernetes-audience` protocol mapper so access tokens
+  include audience `kubernetes`, which Headlamp needs when it uses the OIDC access token for
+  websocket watches, logs, exec, and port-forward traffic.
 
 Optional (recommended) group mapper:
 
@@ -118,10 +144,17 @@ kubectl create secret generic keycloak-admin \
 This app uses plain YAML manifests (no Helm). To apply directly:
 
 ```bash
+kubectl apply -f argocd/applications/keycloak/headlamp-client-sealedsecret.yaml
 kubectl apply -f argocd/applications/keycloak/keycloak-admin-sealedsecret.yaml
 kubectl apply -f argocd/applications/keycloak/postgres-cluster.yaml
 kubectl apply -f argocd/applications/keycloak/keycloak.yaml
 kubectl apply -f argocd/applications/keycloak/ingressroute.yaml
+```
+
+To run the OIDC client bootstrap without waiting for Argo CD, apply the job after the secret:
+
+```bash
+kubectl apply -f argocd/applications/keycloak/headlamp-client-bootstrap-job.yaml
 ```
 
 ## Quick checks

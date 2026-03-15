@@ -63,6 +63,21 @@ const healthyAgentsControllersRolloutDeployment = {
   },
 }
 
+const availableButDegradedAgentsControllersRolloutDeployment = {
+  metadata: { name: 'agents-controllers' },
+  spec: { replicas: 2 },
+  status: {
+    readyReplicas: 2,
+    availableReplicas: 2,
+    updatedReplicas: 1,
+    unavailableReplicas: 1,
+    conditions: [
+      { type: 'Available', status: 'True' },
+      { type: 'Progressing', status: 'True' },
+    ],
+  },
+}
+
 const healthyController = {
   enabled: true,
   started: true,
@@ -468,8 +483,73 @@ describe('control-plane status', () => {
     expect(status.agentrun_ingestion.status).toBe('degraded')
     expect(status.agentrun_ingestion.untouched_run_count).toBe(3)
     expect(status.agentrun_ingestion.oldest_untouched_age_seconds).toBe(180)
-    expect(status.dependency_quorum.reasons).toContain('forecast_service_unhealthy')
     expect(status.empirical_services.jobs.status).toBe('degraded')
+  })
+
+  it('keeps empirical degradations observable without delaying dependency quorum', async () => {
+    setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
+
+    const status = await buildControlPlaneStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:00:00Z'),
+        getHeartbeat: createHeartbeatResolver(),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => buildTemporalAdapter(),
+        checkDatabase: async () => buildDatabaseStatus(),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+        resolveEmpiricalServices: async () => ({
+          forecast: {
+            status: 'degraded',
+            endpoint: 'http://torghut-forecast/readyz',
+            message: 'forecast service readiness failed',
+            authoritative: false,
+          },
+          lean: {
+            status: 'healthy',
+            endpoint: 'http://torghut-lean-runner/readyz',
+            message: 'LEAN runner ready',
+            authoritative: false,
+            authoritative_modes: [],
+          },
+          jobs: {
+            status: 'degraded',
+            endpoint: 'http://torghut/trading/empirical-jobs',
+            message: 'stale empirical jobs: benchmark_parity',
+            authoritative: false,
+            eligible_jobs: ['foundation_router_parity'],
+            stale_jobs: ['benchmark_parity'],
+          },
+        }),
+      },
+    )
+
+    expect(status.dependency_quorum).toEqual({
+      decision: 'allow',
+      reasons: [],
+      message: 'Control-plane admission dependencies are healthy.',
+    })
+    expect(status.namespaces[0]?.status).toBe('degraded')
+    expect(status.namespaces[0]?.degraded_components ?? []).toContain('empirical:forecast')
+    expect(status.namespaces[0]?.degraded_components ?? []).toContain('empirical:jobs')
+    expect(status.namespaces[0]?.degraded_components ?? []).not.toContain('empirical:lean')
+    expect(status.empirical_services.forecast.status).toBe('degraded')
+    expect(status.empirical_services.lean.authoritative).toBe(false)
+    expect(status.empirical_services.jobs).toMatchObject({
+      status: 'degraded',
+      stale_jobs: ['benchmark_parity'],
+    })
   })
 
   it('marks workflows as degraded when backoff count crosses warning threshold', async () => {
@@ -712,6 +792,179 @@ describe('control-plane status', () => {
     expect(status.controllers.every((controller) => controller.authority.mode === 'heartbeat')).toBe(true)
     expect(status.controllers[0]?.authority.source_deployment).toBe('agents-controllers')
     expect(status.runtime_adapters.find((adapter) => adapter.name === 'workflow')?.authority.mode).toBe('heartbeat')
+    expect(status.dependency_quorum).toEqual({
+      decision: 'allow',
+      reasons: [],
+      message: 'Control-plane admission dependencies are healthy.',
+    })
+  })
+
+  it('uses healthy agents-controllers rollout when split-topology heartbeats report disabled controllers', async () => {
+    setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
+
+    const locallyDisabledController = {
+      enabled: false,
+      started: false,
+      namespaces: ['agents'],
+      crdsReady: null,
+      missingCrds: [],
+      lastCheckedAt: '2026-01-20T00:00:00Z',
+      agentRunIngestion: [],
+    }
+
+    const splitTopologyRows = buildHeartbeatRows({
+      'agents-controller': {
+        pod_name: 'jangar-web-0',
+        deployment_name: 'jangar-web',
+        enabled: false,
+        status: 'disabled',
+        message: 'agents controller disabled',
+      },
+      'supporting-controller': {
+        pod_name: 'jangar-web-0',
+        deployment_name: 'jangar-web',
+        enabled: false,
+        status: 'disabled',
+        message: 'supporting controller disabled',
+      },
+      'orchestration-controller': {
+        pod_name: 'jangar-web-0',
+        deployment_name: 'jangar-web',
+        enabled: false,
+        status: 'disabled',
+        message: 'orchestration controller disabled',
+      },
+      'workflow-runtime': {
+        pod_name: 'jangar-web-0',
+        deployment_name: 'jangar-web',
+        enabled: false,
+        status: 'disabled',
+        message: 'workflow runtime disabled',
+      },
+    })
+
+    const status = await buildControlPlaneStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:00:00Z'),
+        getHeartbeat: createHeartbeatResolver(splitTopologyRows),
+        getAgentsControllerHealth: () => locallyDisabledController,
+        getSupportingControllerHealth: () => locallyDisabledController,
+        getOrchestrationControllerHealth: () => locallyDisabledController,
+        resolveTemporalAdapter: async () => buildTemporalAdapter(),
+        checkDatabase: async () => buildDatabaseStatus(),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+      },
+    )
+
+    expect(status.controllers.every((controller) => controller.status === 'healthy')).toBe(true)
+    expect(status.controllers.every((controller) => controller.authority.mode === 'rollout')).toBe(true)
+    expect(status.controllers[0]?.authority.source_deployment).toBe('agents-controllers')
+    expect(status.runtime_adapters.find((adapter) => adapter.name === 'workflow')).toMatchObject({
+      available: true,
+      status: 'configured',
+      authority: {
+        mode: 'rollout',
+        source_deployment: 'agents-controllers',
+      },
+    })
+    expect(status.runtime_adapters.find((adapter) => adapter.name === 'job')).toMatchObject({
+      available: true,
+      status: 'configured',
+      authority: {
+        mode: 'rollout',
+        source_deployment: 'agents-controllers',
+      },
+    })
+    expect(status.dependency_quorum).toEqual({
+      decision: 'allow',
+      reasons: [],
+      message: 'Control-plane admission dependencies are healthy.',
+    })
+  })
+
+  it('uses available agents-controllers rollout when split-topology rollout is degraded mid-update', async () => {
+    setRolloutDeploymentList([healthyRolloutDeployment, availableButDegradedAgentsControllersRolloutDeployment])
+
+    const locallyDisabledController = {
+      enabled: false,
+      started: false,
+      namespaces: ['agents'],
+      crdsReady: null,
+      missingCrds: [],
+      lastCheckedAt: '2026-01-20T00:00:00Z',
+      agentRunIngestion: [],
+    }
+
+    const splitTopologyRows = buildHeartbeatRows({
+      'agents-controller': {
+        pod_name: 'jangar-web-0',
+        deployment_name: 'jangar-web',
+        enabled: false,
+        status: 'disabled',
+        message: 'agents controller disabled',
+      },
+      'supporting-controller': {
+        pod_name: 'jangar-web-0',
+        deployment_name: 'jangar-web',
+        enabled: false,
+        status: 'disabled',
+        message: 'supporting controller disabled',
+      },
+      'orchestration-controller': {
+        pod_name: 'jangar-web-0',
+        deployment_name: 'jangar-web',
+        enabled: false,
+        status: 'disabled',
+        message: 'orchestration controller disabled',
+      },
+      'workflow-runtime': {
+        pod_name: 'jangar-web-0',
+        deployment_name: 'jangar-web',
+        enabled: false,
+        status: 'disabled',
+        message: 'workflow runtime disabled',
+      },
+    })
+
+    const status = await buildControlPlaneStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:00:00Z'),
+        getHeartbeat: createHeartbeatResolver(splitTopologyRows),
+        getAgentsControllerHealth: () => locallyDisabledController,
+        getSupportingControllerHealth: () => locallyDisabledController,
+        getOrchestrationControllerHealth: () => locallyDisabledController,
+        resolveTemporalAdapter: async () => buildTemporalAdapter(),
+        checkDatabase: async () => buildDatabaseStatus(),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+      },
+    )
+
+    expect(status.controllers.every((controller) => controller.status === 'healthy')).toBe(true)
+    expect(status.controllers.every((controller) => controller.authority.mode === 'rollout')).toBe(true)
+    expect(status.controllers[0]?.message).toBe('derived from available agents-controllers rollout')
+    expect(status.runtime_adapters.find((adapter) => adapter.name === 'workflow')?.message).toBe(
+      'workflow runtime derived from available agents-controllers rollout',
+    )
     expect(status.dependency_quorum).toEqual({
       decision: 'allow',
       reasons: [],

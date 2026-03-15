@@ -9,6 +9,7 @@
   "tagOwners": {
     "tag:k8s-operator": ["autogroup:admin"],
     "tag:k8s": ["tag:k8s-operator"],
+    "tag:k8s-subnet-router": ["tag:k8s-operator"],
     "tag:kube-node": ["tag:k8s-operator"]
   },
 
@@ -46,12 +47,12 @@
     }
   ],
 
-  // Auto-approve subnet routes for tagged Kubernetes nodes so no manual
-  // intervention is required when k3s nodes rejoin or scale out.
+  // Auto-approve subnet routes for the dedicated Kubernetes subnet router
+  // devices managed through the Tailscale Kubernetes operator.
   "autoApprovers": {
     "routes": {
-      "10.42.0.0/16": ["tag:kube-node"],
-      "10.43.0.0/16": ["tag:kube-node"]
+      "10.244.0.0/16": ["tag:k8s-subnet-router"],
+      "10.96.0.0/12": ["tag:k8s-subnet-router"]
     }
   }
 }

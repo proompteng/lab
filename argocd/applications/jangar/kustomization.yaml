@@ -5,7 +5,6 @@ resources:
   - torghut-db-ca-sealedsecret.yaml
   - rook-ceph-rgw-jangar-sealedsecret.yaml
   - cnpg-jangar-db-objectbucketclaim.yaml
-  - cnpg-jangar-db-bucket-migration-job.yaml
   - market-context-providers-secret.yaml
   - deployment.yaml
   - jangar-worker-deployment.yaml
@@ -18,6 +17,8 @@ resources:
   - codex-github-events-kafkasource.yaml
   - app-tailscale-service.yaml
   - tailscale-service.yaml
+  - ingressroute-jangar-k8s-private.yaml
+  - ingressroute-openwebui-k8s-private.yaml
   - postgres-cluster.yaml
   - postgres-scheduled-backup.yaml
   - openwebui-redis.yaml
@@ -54,12 +55,12 @@ resources:
 helmCharts:
   - name: open-webui
     repo: https://helm.openwebui.com
-    version: 12.8.1
+    version: 12.10.0
     releaseName: jangar-openwebui
     namespace: jangar
     valuesFile: openwebui-values.yaml
 
 images:
   - name: registry.ide-newton.ts.net/lab/jangar
-    newTag: "222eafb9"
-    digest: sha256:b72547d1a19cb1118039dacbd36bab9060ad419bfef29fd0d8c9d8574906a38b
+    newTag: "8d38a2ef"
+    digest: sha256:01644ae7e385d68c70c5636bbaa34207cf07baa3e1d420d584185c5971820688

@@ -28,6 +28,7 @@ from ..autonomy.phase_manifest_contract import build_phase_manifest_payload_with
 from ..feature_quality import FeatureQualityThresholds, evaluate_feature_batch_quality
 from ..ingest import SignalBatch
 from ..models import SignalEnvelope
+from ..time_source import trading_now
 from .pipeline import TradingPipeline
 from .safety import (
     _coerce_recovery_reason_sequence,
@@ -36,6 +37,7 @@ from .safety import (
     _latch_signal_continuity_alert_state,
     _merge_emergency_stop_reasons,
     _record_signal_continuity_recovery_cycle,
+    _signal_bootstrap_grace_active,
     _split_emergency_stop_reasons,
 )
 from .state import TradingState
@@ -437,6 +439,16 @@ class TradingSchedulerGovernanceMixin:
         for reason in sorted(critical_reasons):
             streak = self.state.metrics.no_signal_reason_streak.get(reason, 0)
             if streak >= critical_staleness_limit:
+                if reason == "no_signals_in_window" and _signal_bootstrap_grace_active(
+                    self.state,
+                    grace_seconds=settings.trading_signal_bootstrap_grace_seconds,
+                ):
+                    logger.info(
+                        "Suppressing emergency-stop staleness streak during bootstrap grace reason=%s streak=%s",
+                        reason,
+                        streak,
+                    )
+                    continue
                 if (
                     not market_session_open
                 ) and reason in market_closed_expected_reasons:
@@ -551,7 +563,7 @@ class TradingSchedulerGovernanceMixin:
             self.state.emergency_stop_recovery_streak = 0
             self.state.rollback_incident_evidence_path = None
             return
-        now = datetime.now(timezone.utc)
+        now = self._governance_now()
         self.state.emergency_stop_active = False
         self.state.emergency_stop_reason = None
         self.state.emergency_stop_triggered_at = None
@@ -589,6 +601,9 @@ class TradingSchedulerGovernanceMixin:
         except (TypeError, ValueError):
             return None
 
+    def _governance_now(self) -> datetime:
+        return trading_now(account_label=getattr(self._pipeline, "account_label", None))
+
     def _trigger_emergency_stop(
         self,
         *,
@@ -598,7 +613,7 @@ class TradingSchedulerGovernanceMixin:
     ) -> None:
         if self._pipeline is None:
             return
-        now = datetime.now(timezone.utc)
+        now = self._governance_now()
         self.state.emergency_stop_active = True
         self.state.rollback_incidents_total += 1
         self.state.emergency_stop_triggered_at = now
@@ -805,7 +820,7 @@ class TradingSchedulerGovernanceMixin:
         )
         self.state.last_autonomy_iteration = autonomy_iteration
         self.state.last_autonomy_iteration_notes_path = str(notes_path)
-        now = datetime.now(timezone.utc)
+        now = self._governance_now()
         lookback_minutes = max(
             1, int(settings.trading_autonomy_signal_lookback_minutes)
         )

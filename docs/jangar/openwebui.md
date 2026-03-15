@@ -1,6 +1,6 @@
 # OpenWebUI deployment (separate host)
 
-OpenWebUI is installed via the upstream Helm chart (`open-webui` v12.8.1, chart app version v0.8.8) with an explicit image override to `ghcr.io/open-webui/open-webui:v0.8.9` in the `jangar` namespace. The chart creates a StatefulSet and `open-webui` ClusterIP Service; a dedicated Tailscale LoadBalancer `openwebui-tailscale` (hostname `openwebui`) fronts it. Websocket support is enabled and backed by a Redis instance `jangar-openwebui-redis` managed by the OTCK Redis operator. Postgres comes from the existing CNPG cluster `jangar-db` (`jangar-db-app` + `jangar-db-ca`). Jangar no longer proxies or iframes OpenWebUI; users open the Tailscale host directly.
+OpenWebUI is installed via the upstream Helm chart (`open-webui` v12.10.0, chart app version `0.8.10`) with an explicit image override to `ghcr.io/open-webui/open-webui:v0.8.10` in the `jangar` namespace. The chart creates a StatefulSet and `open-webui` ClusterIP Service; a dedicated Tailscale LoadBalancer `openwebui-tailscale` (hostname `openwebui`) fronts it. Websocket support is enabled and backed by a Redis instance `jangar-openwebui-redis` managed by the OTCK Redis operator. Postgres comes from the existing CNPG cluster `jangar-db` (`jangar-db-app` + `jangar-db-ca`). Jangar no longer proxies or iframes OpenWebUI; users open the Tailscale host directly.
 
 OpenWebUI forwards the chat identifier in the `x-openwebui-chat-id` header (enabled via the chart values). Jangar consumes this header to map conversations to Codex thread ids and to increment turn numbers, persisting the mapping in Redis (`redis://jangar-openwebui-redis:6379/1`) with a 7-day TTL so subsequent turns stay on the same thread. The same 7-day retention window is used for staged OpenWebUI rich-detail blobs and their signed render links.
 
@@ -44,7 +44,7 @@ The request header `x-jangar-openwebui-render-mode: rich-ui-v1` is optional and 
 
 ## Image pin
 
-- `ghcr.io/open-webui/open-webui:v0.8.9` (managed by the Helm chart image override)
+- `ghcr.io/open-webui/open-webui:v0.8.10` (managed by the Helm chart image override)
 
 ## Dev notes
 

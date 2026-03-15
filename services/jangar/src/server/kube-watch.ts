@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { recordKubeWatchError, recordKubeWatchEvent, recordKubeWatchRestart } from '~/server/metrics'
 import {
   recordWatchReliabilityError,
@@ -29,6 +29,30 @@ type WatchHandle = {
 }
 
 const DEFAULT_RESTART_DELAY_MS = 2_000
+let kubectlGetSupportsResourceVersionFlag: boolean | null = null
+
+const detectKubectlGetSupportsResourceVersionFlag = (): boolean => {
+  if (kubectlGetSupportsResourceVersionFlag !== null) {
+    return kubectlGetSupportsResourceVersionFlag
+  }
+
+  try {
+    const result = spawnSync('kubectl', ['get', '--help'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`
+    kubectlGetSupportsResourceVersionFlag = output.includes('--resource-version')
+  } catch {
+    kubectlGetSupportsResourceVersionFlag = false
+  }
+
+  return kubectlGetSupportsResourceVersionFlag
+}
+
+export const resetKubectlWatchCompatibilityCacheForTests = () => {
+  kubectlGetSupportsResourceVersionFlag = null
+}
 
 const parseJsonStream = (onJson: (jsonText: string) => void) => {
   let buffer = ''
@@ -148,7 +172,7 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
       'json',
       '--request-timeout=0',
     ]
-    if (currentResourceVersion) {
+    if (currentResourceVersion && detectKubectlGetSupportsResourceVersionFlag()) {
       args.push(`--resource-version=${currentResourceVersion}`)
     }
     if (labelSelector) {

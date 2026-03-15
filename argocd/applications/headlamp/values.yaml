@@ -3,7 +3,9 @@ service:
 deploymentAnnotations:
   headlamp.proompteng.ai/oidc-sealedsecret-sha: '4f3e015931e2b98851f3f9b8ad28fad04177fba38bfcf5ff7b50605726ccf8fd'
 image:
-  tag: v0.40.1
+  registry: registry.ide-newton.ts.net
+  repository: lab/headlamp@sha256
+  tag: e0ae7eab580410ad5b189b1fde26fd9d2cdc038269c3ed85cadfbbc7e365bb55
 persistentVolumeClaim:
   enabled: false
 podSecurityContext:
@@ -15,10 +17,11 @@ config:
     externalSecret:
       enabled: true
       name: headlamp-oidc
-    callbackURL: https://headlamp.ide-newton.ts.net/oidc-callback
 env:
   - name: OIDC_SCOPES
-    value: 'openid profile email offline_access'
+    value: 'openid,profile,email,offline_access'
+  - name: OIDC_USE_ACCESS_TOKEN
+    value: 'true'
 ingress:
   enabled: true
   ingressClassName: tailscale

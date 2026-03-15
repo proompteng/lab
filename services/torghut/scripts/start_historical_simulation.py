@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import gzip
 import hashlib
 import importlib
 import json
@@ -16,7 +17,9 @@ import subprocess
 import sys
 import socket
 import time
-from dataclasses import asdict, dataclass
+import uuid
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -40,12 +43,21 @@ from app.trading.completion import (
     persist_completion_trace,
 )
 from app.trading.evaluation import build_fill_price_error_budget_report_v1
+from app.trading.simulation_progress import (
+    COMPONENT_ARTIFACTS,
+    COMPONENT_REPLAY,
+    SIMULATION_PROGRESS_COMPONENTS,
+    COMPONENT_TA,
+    COMPONENT_TORGHUT,
+)
+from app.whitepapers.workflow import CephS3Client
 from scripts import historical_simulation_verification as simulation_verification
 from scripts.simulation_lane_contracts import (
     EQUITY_SIMULATION_LANE,
     simulation_clickhouse_table_names,
     simulation_lane_contract,
     simulation_lane_contract_for_manifest,
+    simulation_schema_registry_subject_roles,
 )
 
 APPLY_CONFIRMATION_PHRASE = 'START_HISTORICAL_SIMULATION'
@@ -58,6 +70,9 @@ DEFAULT_SIM_TA_DEPLOYMENT = 'torghut-ta-sim'
 DEFAULT_SIM_TORGHUT_SERVICE = 'torghut-sim'
 DEFAULT_SIM_FORECAST_SERVICE = 'torghut-forecast-sim'
 DEFAULT_OUTPUT_ROOT = Path('artifacts/torghut/simulations')
+DEFAULT_SIMULATION_CACHE_BUCKET = 'argo-workflows'
+DEFAULT_SIMULATION_CACHE_ENDPOINT = 'http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80'
+DEFAULT_SIMULATION_CACHE_PREFIX = 'torghut-simulation-cache'
 
 PRODUCTION_TOPIC_BY_ROLE = dict(EQUITY_SIMULATION_LANE.source_topic_by_role)
 SIMULATION_TOPIC_BY_ROLE = dict(EQUITY_SIMULATION_LANE.simulation_topic_by_role)
@@ -106,6 +121,7 @@ TORGHUT_ENV_KEYS = [
 
 SIMULATION_TORGHUT_ENV_OVERRIDE_ALLOWLIST = frozenset(
     {
+        'TRADING_ACCOUNT_LABEL',
         'TRADING_FEATURE_QUALITY_ENABLED',
         'TRADING_FEATURE_MAX_REQUIRED_NULL_RATE',
         'TRADING_FEATURE_MAX_STALENESS_MS',
@@ -128,6 +144,61 @@ DEFAULT_RUN_MONITOR_MIN_EXECUTIONS = 1
 DEFAULT_RUN_MONITOR_MIN_TCA = 1
 DEFAULT_RUN_MONITOR_MIN_ORDER_EVENTS = 0
 DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS = 120
+DEFAULT_WARM_LANE_SIMULATION_DATABASE = 'torghut_sim_default'
+DEFAULT_SIMULATION_DUMP_FORMAT = 'jsonl.zst'
+SUPPORTED_SIMULATION_DUMP_FORMATS = {
+    'ndjson': '.ndjson',
+    'jsonl.gz': '.jsonl.gz',
+    'jsonl.zst': '.jsonl.zst',
+}
+DEFAULT_SIMULATION_REPLAY_PROFILE = 'smoke'
+REPLAY_PROFILE_DEFAULTS: dict[str, dict[str, float | int | str]] = {
+    'compact': {
+        'producer_linger_ms': 5,
+        'producer_batch_size': 524_288,
+        'producer_buffer_memory': 67_108_864,
+        'producer_compression_type': 'gzip',
+        'status_update_every_records': 5_000,
+        'status_update_every_seconds': 5.0,
+        'flush_every_records': 5_000,
+        'flush_timeout_seconds': 15.0,
+        'final_flush_timeout_seconds': 60.0,
+    },
+    'smoke': {
+        'producer_linger_ms': 5,
+        'producer_batch_size': 1_048_576,
+        'producer_buffer_memory': 134_217_728,
+        'producer_compression_type': 'gzip',
+        'status_update_every_records': 10_000,
+        'status_update_every_seconds': 10.0,
+        'flush_every_records': 10_000,
+        'flush_timeout_seconds': 20.0,
+        'final_flush_timeout_seconds': 90.0,
+    },
+    'hourly': {
+        'producer_linger_ms': 10,
+        'producer_batch_size': 1_048_576,
+        'producer_buffer_memory': 268_435_456,
+        'producer_compression_type': 'gzip',
+        'status_update_every_records': 25_000,
+        'status_update_every_seconds': 15.0,
+        'flush_every_records': 25_000,
+        'flush_timeout_seconds': 30.0,
+        'final_flush_timeout_seconds': 120.0,
+    },
+    'full_day': {
+        'producer_linger_ms': 20,
+        'producer_batch_size': 2_097_152,
+        'producer_buffer_memory': 536_870_912,
+        'producer_compression_type': 'gzip',
+        'status_update_every_records': 50_000,
+        'status_update_every_seconds': 30.0,
+        'flush_every_records': 50_000,
+        'flush_timeout_seconds': 45.0,
+        'final_flush_timeout_seconds': 180.0,
+    },
+}
+LEGACY_SIMULATION_STRATEGY_TOKENS = ('legacy_macd_rsi',)
 DEFAULT_ARGOCD_APPSET_NAME = 'product'
 DEFAULT_ARGOCD_NAMESPACE = 'argocd'
 DEFAULT_ARGOCD_APP_NAME = 'torghut'
@@ -153,6 +224,14 @@ TRANSIENT_POSTGRES_ERROR_PATTERNS = (
     'terminating connection due to administrator command',
     'timeout expired',
 )
+NON_TRANSIENT_POSTGRES_ERROR_PATTERNS = (
+    'password authentication failed',
+    'no pg_hba.conf entry',
+    'role "',
+    'database "',
+    'permission denied',
+    'must be superuser',
+)
 VECTOR_EXTENSION_NAME = 'vector'
 POSTGRES_VECTOR_EXTENSION_PERMISSION_ERROR_MARKERS = (
     'permission denied to create extension',
@@ -167,7 +246,106 @@ SIMULATION_POSTGRES_RUNTIME_RESET_TABLES = (
     'execution_tca_metrics',
     'execution_order_events',
 )
+SIMULATION_POSTGRES_REQUIRED_METADATA_TABLES = (
+    'simulation_run_progress',
+    'simulation_runtime_context',
+    'vnext_completion_gate_results',
+)
 KAFKA_API_VERSION = (4, 1, 1)
+SCHEMA_REGISTRY_CONTENT_TYPE = 'application/vnd.schemaregistry.v1+json'
+EMBEDDED_SCHEMA_REGISTRY_SCHEMA_BY_SUFFIX = {
+    'docs/torghut/schemas/ta-bars-1s.avsc': (
+        '{"type":"record","name":"TaBar1s","namespace":"torghut.ta","fields":['
+        '{"name":"ingest_ts","type":"string"},'
+        '{"name":"event_ts","type":"string"},'
+        '{"name":"symbol","type":"string"},'
+        '{"name":"seq","type":"long"},'
+        '{"name":"is_final","type":["null","boolean"],"default":null},'
+        '{"name":"source","type":["null","string"],"default":null},'
+        '{"name":"window","type":["null",{"type":"record","name":"WindowBar1s","fields":['
+        '{"name":"size","type":"string"},'
+        '{"name":"step","type":["null","string"],"default":null},'
+        '{"name":"start","type":["null","string"],"default":null},'
+        '{"name":"end","type":["null","string"],"default":null}'
+        ']}],"default":null},'
+        '{"name":"o","type":"double"},'
+        '{"name":"h","type":"double"},'
+        '{"name":"l","type":"double"},'
+        '{"name":"c","type":"double"},'
+        '{"name":"v","type":"double"},'
+        '{"name":"vwap","type":["null","double"],"default":null},'
+        '{"name":"count","type":"long"},'
+        '{"name":"version","type":["int","null"],"default":1}'
+        ']}'
+    ),
+    'docs/torghut/schemas/ta-signals.avsc': (
+        '{"type":"record","name":"TaSignal","namespace":"torghut.ta","fields":['
+        '{"name":"ingest_ts","type":"string"},'
+        '{"name":"event_ts","type":"string"},'
+        '{"name":"symbol","type":"string"},'
+        '{"name":"seq","type":"long"},'
+        '{"name":"feature_schema_version","type":["null","string"],"default":null},'
+        '{"name":"is_final","type":["null","boolean"],"default":null},'
+        '{"name":"signal_quality_flag","type":["null","string"],"default":null},'
+        '{"name":"source","type":["null","string"],"default":null},'
+        '{"name":"window","type":["null",{"type":"record","name":"WindowSignal","fields":['
+        '{"name":"size","type":"string"},'
+        '{"name":"step","type":["null","string"],"default":null},'
+        '{"name":"start","type":["null","string"],"default":null},'
+        '{"name":"end","type":["null","string"],"default":null}'
+        ']}],"default":null},'
+        '{"name":"macd","type":["null",{"type":"record","name":"Macd","fields":['
+        '{"name":"macd","type":"double"},'
+        '{"name":"signal","type":"double"},'
+        '{"name":"hist","type":"double"}'
+        ']}],"default":null},'
+        '{"name":"ema","type":["null",{"type":"record","name":"Ema","fields":['
+        '{"name":"ema12","type":"double"},'
+        '{"name":"ema26","type":"double"}'
+        ']}],"default":null},'
+        '{"name":"rsi14","type":["null","double"],"default":null},'
+        '{"name":"boll","type":["null",{"type":"record","name":"Bollinger","fields":['
+        '{"name":"mid","type":"double"},'
+        '{"name":"upper","type":"double"},'
+        '{"name":"lower","type":"double"}'
+        ']}],"default":null},'
+        '{"name":"vwap","type":["null",{"type":"record","name":"Vwap","fields":['
+        '{"name":"session","type":"double"},'
+        '{"name":"w5m","type":["null","double"],"default":null}'
+        ']}],"default":null},'
+        '{"name":"imbalance","type":["null",{"type":"record","name":"Imbalance","fields":['
+        '{"name":"spread","type":"double"},'
+        '{"name":"bid_px","type":"double"},'
+        '{"name":"ask_px","type":"double"},'
+        '{"name":"bid_sz","type":"double"},'
+        '{"name":"ask_sz","type":"double"}'
+        ']}],"default":null},'
+        '{"name":"vol_realized","type":["null",{"type":"record","name":"RealizedVol","fields":['
+        '{"name":"w60s","type":"double"}'
+        ']}],"default":null},'
+        '{"name":"microstructure_signal_v1","type":["null",{"type":"record","name":"MicrostructureSignalV1","fields":['
+        '{"name":"schema_version","type":"string"},'
+        '{"name":"symbol","type":"string"},'
+        '{"name":"horizon","type":"string"},'
+        '{"name":"direction_probabilities","type":{"type":"record","name":"DirectionProbabilities","fields":['
+        '{"name":"up","type":"double"},'
+        '{"name":"flat","type":"double"},'
+        '{"name":"down","type":"double"}'
+        ']}},'
+        '{"name":"uncertainty_band","type":"string"},'
+        '{"name":"expected_spread_impact_bps","type":"double"},'
+        '{"name":"expected_slippage_bps","type":"double"},'
+        '{"name":"feature_quality_status","type":"string"},'
+        '{"name":"artifact","type":{"type":"record","name":"MicrostructureSignalArtifact","fields":['
+        '{"name":"model_id","type":"string"},'
+        '{"name":"feature_schema_version","type":"string"},'
+        '{"name":"training_run_id","type":"string"}'
+        ']}}'
+        ']}],"default":null},'
+        '{"name":"version","type":["int","null"],"default":1}'
+        ']}'
+    ),
+}
 KAFKA_HOST_SUFFIX_FALLBACKS = (
     '.kafka-kafka-brokers.kafka.svc.cluster.local',
     '.kafka-kafka-brokers.kafka.svc',
@@ -179,12 +357,23 @@ KAFKA_HOST_SUFFIX_FALLBACKS = (
 _ORIGINAL_GETADDRINFO = socket.getaddrinfo
 
 
-def _kafka_host_candidates(host: str) -> list[str]:
+def _cluster_service_host_candidates(host: str) -> list[str]:
     host = host.strip()
     if not host:
         return []
 
     candidates = [host]
+    host_parts = host.split('.')
+    if len(host_parts) == 2:
+        candidates.append(f'{host}.svc')
+        candidates.append(f'{host}.svc.cluster.local')
+    if host.endswith('.svc') and not host.endswith('.svc.cluster.local'):
+        candidates.append(f'{host}.cluster.local')
+    return candidates
+
+
+def _kafka_host_candidates(host: str) -> list[str]:
+    candidates = _cluster_service_host_candidates(host)
     if '.' not in host:
         for suffix in KAFKA_HOST_SUFFIX_FALLBACKS:
             candidates.append(f'{host}{suffix}')
@@ -308,6 +497,14 @@ class PostgresRuntimeConfig:
     def torghut_runtime_dsn(self) -> str:
         return self.runtime_simulation_dsn or self.simulation_dsn
 
+    @property
+    def admin_simulation_dsn(self) -> str:
+        return _replace_database_in_dsn(
+            self.admin_dsn,
+            database=self.simulation_db,
+            label='manifest.postgres.admin_dsn',
+        )
+
 
 @dataclass(frozen=True)
 class SimulationResources:
@@ -331,6 +528,7 @@ class SimulationResources:
     clickhouse_table_by_role: dict[str, str]
     clickhouse_signal_table: str
     clickhouse_price_table: str
+    warm_lane_enabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -448,6 +646,36 @@ def _simulation_evidence_lineage(manifest: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _experimental_allow_legacy_strategy(manifest: Mapping[str, Any]) -> bool:
+    experimental = _as_mapping(manifest.get('experimental'))
+    value = experimental.get('allowLegacyStrategy')
+    if value is None:
+        value = experimental.get('allow_legacy_strategy')
+    normalized = (_as_text(value) or '').strip().lower()
+    return normalized in {'1', 'true', 'yes', 'on'}
+
+
+def _contains_legacy_strategy_reference(manifest: Mapping[str, Any]) -> bool:
+    model_refs = _as_string_list(manifest.get('model_refs'))
+    candidate_id = _as_text(manifest.get('candidate_id')) or ''
+    baseline_candidate_id = _as_text(manifest.get('baseline_candidate_id')) or ''
+    strategy_spec_ref = _as_text(manifest.get('strategy_spec_ref')) or ''
+    values = [candidate_id, baseline_candidate_id, strategy_spec_ref, *model_refs]
+    normalized_values = [value.strip().lower() for value in values if value.strip()]
+    return any(
+        token in value
+        for token in LEGACY_SIMULATION_STRATEGY_TOKENS
+        for value in normalized_values
+    )
+
+
+def _validate_simulation_strategy_policy(manifest: Mapping[str, Any]) -> None:
+    if _contains_legacy_strategy_reference(manifest) and not _experimental_allow_legacy_strategy(manifest):
+        raise RuntimeError(
+            'legacy_strategy_not_allowed: set experimental.allowLegacyStrategy=true for non-promotable legacy replays'
+        )
+
+
 def _parse_rfc3339_timestamp(value: str | None, *, label: str) -> datetime:
     if value is None:
         raise SystemExit(f'{label} is required in manifest')
@@ -459,6 +687,15 @@ def _parse_rfc3339_timestamp(value: str | None, *, label: str) -> datetime:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _parse_optional_rfc3339_timestamp(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        return _parse_rfc3339_timestamp(value, label='timestamp')
+    except Exception:
+        return None
 
 
 def _safe_int(value: Any, *, default: int = 0) -> int:
@@ -909,6 +1146,28 @@ def _replace_alembic_upgrade_target(command: str, target: str) -> str | None:
     return ' '.join(shlex.quote(item) for item in tokens)
 
 
+def _resolve_command_args(command: str) -> list[str]:
+    try:
+        tokens = shlex.split(command)
+    except Exception as exc:
+        raise RuntimeError(f'command_parse_failed:{command}') from exc
+    if not tokens:
+        raise RuntimeError('command_parse_failed:empty')
+    binary = tokens[0]
+    if os.path.isabs(binary) and not Path(binary).exists():
+        fallback_binary = shutil.which(Path(binary).name)
+        if fallback_binary:
+            _log_script_event(
+                'command_binary_resolved',
+                original_binary=binary,
+                resolved_binary=fallback_binary,
+            )
+            tokens[0] = fallback_binary
+        else:
+            raise RuntimeError(f'command_binary_not_found:{binary}')
+    return tokens
+
+
 def _run_alembic_upgrade(
     *,
     command: str,
@@ -919,7 +1178,7 @@ def _run_alembic_upgrade(
     _run_with_transient_postgres_retry(
         label=label,
         operation=lambda: _run_command(
-            shlex.split(command),
+            _resolve_command_args(command),
             cwd=cwd,
             env=env,
         ),
@@ -949,6 +1208,12 @@ def _build_postgres_runtime_config(
             password=admin_password,
             label='manifest.postgres.admin_dsn',
         )
+    simulation_password = _as_text(postgres.get('simulation_dsn_password'))
+    if simulation_password is None:
+        simulation_password_env = _as_text(postgres.get('simulation_dsn_password_env'))
+        if simulation_password_env:
+            simulation_password = _as_text(os.environ.get(simulation_password_env))
+    effective_simulation_password = simulation_password or admin_password
 
     simulation_dsn = _as_text(postgres.get('simulation_dsn'))
     simulation_template = _as_text(postgres.get('simulation_dsn_template'))
@@ -958,13 +1223,19 @@ def _build_postgres_runtime_config(
         simulation_dsn = _derive_simulation_dsn(admin_dsn, simulation_db)
     simulation_dsn = _ensure_dsn_password(
         simulation_dsn,
-        password=admin_password,
+        password=effective_simulation_password,
         label='manifest.postgres.simulation_dsn',
     )
     simulation_db = _database_name_from_dsn(
         simulation_dsn,
         label='manifest.postgres.simulation_dsn',
     )
+    runtime_password = _as_text(postgres.get('runtime_simulation_dsn_password'))
+    if runtime_password is None:
+        runtime_password_env = _as_text(postgres.get('runtime_simulation_dsn_password_env'))
+        if runtime_password_env:
+            runtime_password = _as_text(os.environ.get(runtime_password_env))
+    effective_runtime_password = runtime_password or effective_simulation_password
     runtime_simulation_dsn = _as_text(postgres.get('runtime_simulation_dsn'))
     runtime_template = _as_text(postgres.get('runtime_simulation_dsn_template'))
     if runtime_simulation_dsn is None and runtime_template is not None:
@@ -972,7 +1243,7 @@ def _build_postgres_runtime_config(
     if runtime_simulation_dsn is not None:
         runtime_simulation_dsn = _ensure_dsn_password(
             runtime_simulation_dsn,
-            password=admin_password,
+            password=effective_runtime_password,
             label='manifest.postgres.runtime_simulation_dsn',
         )
         runtime_db = _database_name_from_dsn(
@@ -1040,7 +1311,22 @@ def _ta_auto_offset_reset_key(*, lane: str, manifest: Mapping[str, Any]) -> str:
     )
 
 
+def _warm_lane_enabled(*, manifest: Mapping[str, Any], lane: str, target_mode: str) -> bool:
+    runtime = _as_mapping(manifest.get('runtime'))
+    explicit = runtime.get('use_warm_lane')
+    if explicit is None:
+        explicit = runtime.get('useWarmLane')
+    return explicit is not None and str(explicit).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _default_simulation_postgres_db(resources: SimulationResources) -> str:
+    if resources.warm_lane_enabled:
+        return DEFAULT_WARM_LANE_SIMULATION_DATABASE
+    return f'torghut_sim_{resources.run_token}'
+
+
 def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationResources:
+    _validate_simulation_strategy_policy(manifest)
     lane_contract = simulation_lane_contract_for_manifest(manifest)
     run_token = _normalize_run_token(run_id)
     dataset_id = _as_text(manifest.get('dataset_id'))
@@ -1051,6 +1337,11 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
     target_mode = (_as_text(runtime.get('target_mode')) or 'dedicated_service').strip().lower()
     if target_mode not in {'dedicated_service', 'in_place'}:
         raise RuntimeError('runtime.target_mode must be one of: dedicated_service,in_place')
+    warm_lane = _warm_lane_enabled(
+        manifest=manifest,
+        lane=lane_contract.lane,
+        target_mode=target_mode,
+    )
     output_root_raw = _as_text(runtime.get('output_root'))
     if output_root_raw:
         output_root = Path(output_root_raw)
@@ -1071,7 +1362,7 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
     for role, topic in list(simulation_topics.items()):
         if role in simulation_topic_overrides:
             continue
-        simulation_topics[role] = f'{topic}.{run_token}'
+        simulation_topics[role] = topic if warm_lane else f'{topic}.{run_token}'
 
     replay_topic_by_source_topic = {
         source_topics[role]: simulation_topics[role]
@@ -1080,8 +1371,12 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
 
     clickhouse_cfg = _as_mapping(manifest.get('clickhouse'))
     clickhouse_db = (
-        _as_text(clickhouse_cfg.get('simulation_database'))
-        or f'torghut_sim_{run_token}'
+        DEFAULT_WARM_LANE_SIMULATION_DATABASE
+        if warm_lane
+        else (
+            _as_text(clickhouse_cfg.get('simulation_database'))
+            or f'torghut_sim_{run_token}'
+        )
     )
     clickhouse_table_by_role = simulation_clickhouse_table_names(
         lane=lane_contract.lane,
@@ -1104,6 +1399,16 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
         if lane_contract.lane == 'options'
         else 'torghut-order-feed-sim'
     )
+    ta_group_id = (
+        f'{ta_group_prefix}-default'
+        if warm_lane
+        else f'{ta_group_prefix}-{run_token}'
+    )
+    order_feed_group_id = (
+        f'{order_feed_group_prefix}-default'
+        if warm_lane
+        else f'{order_feed_group_prefix}-{run_token}'
+    )
 
     return SimulationResources(
         run_id=run_id,
@@ -1122,13 +1427,47 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
         source_topic_by_role=source_topics,
         simulation_topic_by_role=simulation_topics,
         replay_topic_by_source_topic=replay_topic_by_source_topic,
-        ta_group_id=f'{ta_group_prefix}-{run_token}',
-        order_feed_group_id=f'{order_feed_group_prefix}-{run_token}',
+        ta_group_id=ta_group_id,
+        order_feed_group_id=order_feed_group_id,
         clickhouse_db=clickhouse_db,
         clickhouse_table_by_role=clickhouse_table_by_role,
         clickhouse_signal_table=clickhouse_signal_table,
         clickhouse_price_table=clickhouse_price_table,
+        warm_lane_enabled=warm_lane,
     )
+
+
+def _canonicalize_warm_lane_manifest(
+    manifest: Mapping[str, Any],
+    *,
+    resources: SimulationResources,
+) -> dict[str, Any]:
+    if not resources.warm_lane_enabled:
+        return _as_mapping(manifest)
+
+    normalized = cast(dict[str, Any], json.loads(json.dumps(dict(manifest))))
+    clickhouse = _as_mapping(normalized.get('clickhouse'))
+    clickhouse['simulation_database'] = resources.clickhouse_db
+    normalized['clickhouse'] = clickhouse
+
+    postgres = _as_mapping(normalized.get('postgres'))
+    simulation_db = _default_simulation_postgres_db(resources)
+    simulation_dsn = _as_text(postgres.get('simulation_dsn'))
+    if simulation_dsn:
+        postgres['simulation_dsn'] = _replace_database_in_dsn(
+            simulation_dsn,
+            database=simulation_db,
+            label='manifest.postgres.simulation_dsn',
+        )
+    runtime_simulation_dsn = _as_text(postgres.get('runtime_simulation_dsn'))
+    if runtime_simulation_dsn:
+        postgres['runtime_simulation_dsn'] = _replace_database_in_dsn(
+            runtime_simulation_dsn,
+            database=simulation_db,
+            label='manifest.postgres.runtime_simulation_dsn',
+        )
+    normalized['postgres'] = postgres
+    return normalized
 
 
 def _build_argocd_automation_config(manifest: Mapping[str, Any]) -> ArgocdAutomationConfig:
@@ -1223,6 +1562,8 @@ def _run_command(
             env=dict(env) if env is not None else None,
             input=input_text,
         )
+    except FileNotFoundError as exc:
+        raise RuntimeError(f'command_missing: {" ".join(args)}: {exc.filename}') from exc
     except subprocess.CalledProcessError as exc:
         stdout = (exc.stdout or '').strip()
         stderr = (exc.stderr or '').strip()
@@ -1232,6 +1573,8 @@ def _run_command(
 
 def _is_transient_postgres_error(error: Exception) -> bool:
     message = str(error).lower()
+    if any(pattern in message for pattern in NON_TRANSIENT_POSTGRES_ERROR_PATTERNS):
+        return False
     return any(pattern in message for pattern in TRANSIENT_POSTGRES_ERROR_PATTERNS)
 
 
@@ -1799,6 +2142,129 @@ def _kservice_container_with_env(
     return updated
 
 
+def _read_secret_key_ref(
+    *,
+    namespace: str,
+    name: str,
+    key: str,
+) -> str:
+    secret = _kubectl_json(namespace, ['get', 'secret', name, '-o', 'json'])
+    data = _as_mapping(secret.get('data'))
+    encoded = _as_text(data.get(key))
+    if encoded is None:
+        raise RuntimeError(f'secret_key_missing:{namespace}:{name}:{key}')
+    try:
+        decoded = _b64_to_bytes(encoded)
+        if decoded is None:
+            raise RuntimeError('empty_secret_value')
+        return decoded.decode('utf-8')
+    except Exception as exc:  # pragma: no cover - defensive decode guard
+        raise RuntimeError(f'secret_key_decode_failed:{namespace}:{name}:{key}') from exc
+
+
+def _read_configmap_key_ref(
+    *,
+    namespace: str,
+    name: str,
+    key: str,
+) -> str:
+    configmap = _kubectl_json(namespace, ['get', 'configmap', name, '-o', 'json'])
+    data = _as_mapping(configmap.get('data'))
+    value = _as_text(data.get(key))
+    if value is None:
+        raise RuntimeError(f'configmap_key_missing:{namespace}:{name}:{key}')
+    return value
+
+
+def _expand_env_value_refs(value: str, resolved: Mapping[str, str]) -> str:
+    def _sub(match: re.Match[str]) -> str:
+        key = match.group(1)
+        return resolved.get(key, match.group(0))
+
+    return re.sub(r'\$\(([A-Za-z_][A-Za-z0-9_]*)\)', _sub, value)
+
+
+def _resolve_kservice_env_values(
+    *,
+    namespace: str,
+    env_entries: Sequence[Mapping[str, Any]],
+) -> dict[str, str]:
+    resolved: dict[str, str] = {}
+    deferred: dict[str, str] = {}
+    for entry in env_entries:
+        name = _as_text(entry.get('name'))
+        if not name:
+            continue
+        raw_value = entry.get('value')
+        if raw_value is not None:
+            deferred[name] = str(raw_value)
+            continue
+        value_from = _as_mapping(entry.get('valueFrom'))
+        secret_key_ref = _as_mapping(value_from.get('secretKeyRef'))
+        if secret_key_ref:
+            secret_name = _as_text(secret_key_ref.get('name'))
+            secret_key = _as_text(secret_key_ref.get('key'))
+            if not secret_name or not secret_key:
+                raise RuntimeError(f'kservice_env_secret_key_ref_invalid:{name}')
+            resolved[name] = _read_secret_key_ref(
+                namespace=namespace,
+                name=secret_name,
+                key=secret_key,
+            )
+            continue
+        configmap_key_ref = _as_mapping(value_from.get('configMapKeyRef'))
+        if configmap_key_ref:
+            configmap_name = _as_text(configmap_key_ref.get('name'))
+            configmap_key = _as_text(configmap_key_ref.get('key'))
+            if not configmap_name or not configmap_key:
+                raise RuntimeError(f'kservice_env_configmap_key_ref_invalid:{name}')
+            resolved[name] = _read_configmap_key_ref(
+                namespace=namespace,
+                name=configmap_name,
+                key=configmap_key,
+            )
+    if deferred:
+        for _ in range(len(deferred) + len(resolved) + 1):
+            changed = False
+            for key, value in deferred.items():
+                expanded = _expand_env_value_refs(value, resolved)
+                if key not in resolved or resolved[key] != expanded:
+                    resolved[key] = expanded
+                    changed = True
+            if not changed:
+                break
+    return resolved
+
+
+def _resolve_warm_lane_runtime_postgres_config(
+    *,
+    resources: SimulationResources,
+    postgres_config: PostgresRuntimeConfig,
+) -> PostgresRuntimeConfig:
+    if postgres_config.runtime_simulation_dsn:
+        return postgres_config
+    service = _kubectl_json(
+        resources.namespace,
+        ['get', 'kservice', resources.torghut_service, '-o', 'json'],
+    )
+    _, env_entries = _kservice_env(service)
+    resolved_env = _resolve_kservice_env_values(
+        namespace=resources.namespace,
+        env_entries=env_entries,
+    )
+    current_runtime_dsn = _as_text(resolved_env.get('DB_DSN'))
+    if not current_runtime_dsn:
+        raise RuntimeError(
+            f'warm_lane_runtime_dsn_unavailable:{resources.namespace}:{resources.torghut_service}'
+        )
+    runtime_dsn = _replace_database_in_dsn(
+        current_runtime_dsn,
+        database=postgres_config.simulation_db,
+        label=f'{resources.torghut_service}.env.DB_DSN',
+    )
+    return replace(postgres_config, runtime_simulation_dsn=runtime_dsn)
+
+
 def _merge_env_entries(
     env: list[dict[str, Any]],
     updates: Mapping[str, Any],
@@ -1885,12 +2351,96 @@ def _torghut_env_overrides_from_manifest(
     return overrides
 
 
-def _state_paths(resources: SimulationResources) -> tuple[Path, Path, Path]:
+def _simulation_account_label(
+    *,
+    resources: SimulationResources,
+    manifest: Mapping[str, Any],
+    torghut_env_overrides: Mapping[str, Any] | None = None,
+) -> str:
+    if torghut_env_overrides is not None:
+        override_value = _as_text(torghut_env_overrides.get('TRADING_ACCOUNT_LABEL'))
+        if override_value:
+            return override_value
+    runtime = _as_mapping(manifest.get('runtime'))
+    runtime_value = _as_text(runtime.get('account_label')) or _as_text(runtime.get('accountLabel'))
+    if runtime_value:
+        return runtime_value
+    if resources.target_mode == 'dedicated_service':
+        return 'TORGHUT_SIM'
+    return 'paper'
+
+
+def _performance_config(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    performance = _as_mapping(manifest.get('performance'))
+    replay_profile = (
+        _as_text(performance.get('replayProfile'))
+        or _as_text(performance.get('replay_profile'))
+        or ''
+    ).strip().lower()
+    if not replay_profile:
+        window = _as_mapping(manifest.get('window'))
+        if _as_text(window.get('start')) and _as_text(window.get('end')):
+            monitor_settings = simulation_verification._monitor_settings(manifest)
+            replay_profile = _as_text(monitor_settings.get('profile')) or DEFAULT_SIMULATION_REPLAY_PROFILE
+        else:
+            replay_profile = DEFAULT_SIMULATION_REPLAY_PROFILE
+    if replay_profile not in REPLAY_PROFILE_DEFAULTS:
+        raise RuntimeError(f'unsupported_replay_profile:{replay_profile}')
+
+    dump_format = (
+        _as_text(performance.get('dumpFormat'))
+        or _as_text(performance.get('dump_format'))
+        or ''
+    ).strip().lower()
+    if not dump_format:
+        if shutil.which('zstd'):
+            dump_format = 'jsonl.zst'
+        elif shutil.which('pigz'):
+            dump_format = 'jsonl.gz'
+        else:
+            dump_format = 'ndjson'
+    if dump_format not in SUPPORTED_SIMULATION_DUMP_FORMATS:
+        raise RuntimeError(
+            'performance.dumpFormat must be one of: ' + ','.join(sorted(SUPPORTED_SIMULATION_DUMP_FORMATS))
+        )
+    cache_policy = (
+        _as_text(manifest.get('cachePolicy'))
+        or _as_text(performance.get('cachePolicy'))
+        or _as_text(performance.get('cache_policy'))
+        or 'prefer_cache'
+    ).strip().lower()
+    if cache_policy not in {'prefer_cache', 'require_cache', 'refresh'}:
+        raise RuntimeError('cachePolicy must be one of: prefer_cache,require_cache,refresh')
+    return {
+        'replay_profile': replay_profile,
+        'dump_format': dump_format,
+        'cache_policy': cache_policy,
+    }
+
+
+def _dump_suffix(dump_format: str) -> str:
+    suffix = SUPPORTED_SIMULATION_DUMP_FORMATS.get(dump_format)
+    if suffix is None:
+        raise RuntimeError(f'unsupported_dump_format:{dump_format}')
+    return suffix
+
+
+def _state_paths(
+    resources: SimulationResources,
+    manifest: Mapping[str, Any] | None = None,
+) -> tuple[Path, Path, Path]:
     run_dir = resources.output_root / resources.run_token
     state_path = run_dir / 'state.json'
     run_manifest_path = run_dir / 'run-manifest.json'
-    dump_path = run_dir / 'source-dump.ndjson'
+    dump_format = DEFAULT_SIMULATION_DUMP_FORMAT
+    if manifest is not None:
+        dump_format = _as_text(_performance_config(manifest).get('dump_format')) or DEFAULT_SIMULATION_DUMP_FORMAT
+    dump_path = run_dir / f'source-dump{_dump_suffix(dump_format)}'
     return state_path, run_manifest_path, dump_path
+
+
+def _dump_artifact_manifest_path(dump_path: Path) -> Path:
+    return dump_path.with_suffix(dump_path.suffix + '.manifest.json')
 
 
 def _run_state_path(resources: SimulationResources) -> Path:
@@ -1901,6 +2451,74 @@ def _run_state_path(resources: SimulationResources) -> Path:
 def _artifact_path(resources: SimulationResources, filename: str) -> Path:
     run_dir = resources.output_root / resources.run_token
     return run_dir / filename
+
+
+def _ta_restore_policy(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    ta_restore = _as_mapping(manifest.get('ta_restore'))
+    replay_profile = _as_text(_performance_config(manifest).get('replay_profile')) or DEFAULT_SIMULATION_REPLAY_PROFILE
+    explicit_mode = (_as_text(ta_restore.get('mode')) or '').strip().lower()
+    mode = explicit_mode
+    source = 'explicit'
+    if not mode:
+        mode = 'required' if replay_profile == 'full_day' else 'stateless'
+        source = f'profile_default:{replay_profile}'
+    allowed_modes = {'required', 'stateless_if_missing', 'stateless'}
+    if mode not in allowed_modes:
+        raise RuntimeError(
+            'ta_restore.mode must be one of: required,stateless_if_missing,stateless'
+        )
+    return {
+        'mode': mode,
+        'source': source,
+        'replay_profile': replay_profile,
+        'stateless_recovery_enabled': mode in {'stateless_if_missing', 'stateless'},
+    }
+
+
+def _ta_restore_paths(ta_data: Mapping[str, Any]) -> dict[str, str | None]:
+    return {
+        'checkpoint_dir': _as_text(ta_data.get('TA_CHECKPOINT_DIR')),
+        'savepoint_dir': _as_text(ta_data.get('TA_SAVEPOINT_DIR')),
+    }
+
+
+def _resolve_ta_restore_configuration(
+    *,
+    ta_data: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    policy = _ta_restore_policy(manifest)
+    paths = _ta_restore_paths(ta_data)
+    missing = [name for name, value in paths.items() if not value]
+    if policy['mode'] == 'stateless':
+        return {
+            **policy,
+            **paths,
+            'configured': not missing,
+            'effective_upgrade_mode': 'stateless',
+            'fallback_applied': False,
+            'reason': 'profile_default_stateless' if str(policy.get('source', '')).startswith('profile_default:') else 'explicit_stateless',
+        }
+    if missing:
+        missing_reason = f'restore_state_missing:{",".join(sorted(missing))}'
+        if policy['mode'] == 'stateless_if_missing':
+            return {
+                **policy,
+                **paths,
+                'configured': False,
+                'effective_upgrade_mode': 'stateless',
+                'fallback_applied': True,
+                'reason': missing_reason,
+            }
+        raise RuntimeError(missing_reason)
+    return {
+        **policy,
+        **paths,
+        'configured': True,
+        'effective_upgrade_mode': 'last-state',
+        'fallback_applied': False,
+        'reason': 'restore_state_configured',
+    }
 
 
 def _update_run_state(
@@ -1972,6 +2590,403 @@ def _save_json(path: Path, payload: Mapping[str, Any]) -> None:
     path.write_text(json.dumps(dict(payload), indent=2, sort_keys=True), encoding='utf-8')
 
 
+def _write_dump_marker(
+    *,
+    dump_path: Path,
+    dump_sha256: str,
+    records: int,
+    dump_format: str,
+    min_source_timestamp_ms: int | None,
+    max_source_timestamp_ms: int | None,
+) -> None:
+    _save_json(
+        _dump_marker_path(dump_path),
+        {
+            'completed_at': datetime.now(timezone.utc).isoformat(),
+            'dump_sha256': dump_sha256,
+            'records': records,
+            'dump_format': dump_format,
+            'min_source_timestamp_ms': min_source_timestamp_ms,
+            'max_source_timestamp_ms': max_source_timestamp_ms,
+        },
+    )
+
+
+def _write_dump_marker_from_manifest(
+    *,
+    dump_path: Path,
+    artifact_manifest: Mapping[str, Any],
+) -> None:
+    chunks = artifact_manifest.get('chunks')
+    if not isinstance(chunks, list) or not chunks:
+        raise RuntimeError('cache_manifest_missing_chunks')
+    first_chunk = _as_mapping(chunks[0])
+    dump_sha256 = _as_text(first_chunk.get('sha256'))
+    records = _safe_int(first_chunk.get('records'), default=-1)
+    if not dump_sha256 or records < 0:
+        raise RuntimeError('cache_manifest_missing_required_chunk_fields')
+    dump_format = _as_text(artifact_manifest.get('dump_format')) or _dump_format_for_path(dump_path)
+    _write_dump_marker(
+        dump_path=dump_path,
+        dump_sha256=dump_sha256,
+        records=records,
+        dump_format=dump_format,
+        min_source_timestamp_ms=_safe_int(first_chunk.get('min_source_timestamp_ms'), default=-1)
+        if first_chunk.get('min_source_timestamp_ms') is not None
+        else None,
+        max_source_timestamp_ms=_safe_int(first_chunk.get('max_source_timestamp_ms'), default=-1)
+        if first_chunk.get('max_source_timestamp_ms') is not None
+        else None,
+    )
+
+
+def _simulation_cache_client_from_env() -> tuple[CephS3Client | None, str]:
+    access_key = (
+        os.getenv('TORGHUT_SIM_CACHE_CEPH_ACCESS_KEY', '').strip()
+        or os.getenv('AWS_ACCESS_KEY_ID', '').strip()
+    )
+    secret_key = (
+        os.getenv('TORGHUT_SIM_CACHE_CEPH_SECRET_KEY', '').strip()
+        or os.getenv('AWS_SECRET_ACCESS_KEY', '').strip()
+    )
+    bucket = (
+        os.getenv('TORGHUT_SIM_CACHE_CEPH_BUCKET', '').strip()
+        or DEFAULT_SIMULATION_CACHE_BUCKET
+    )
+    endpoint = (
+        os.getenv('TORGHUT_SIM_CACHE_CEPH_ENDPOINT', '').strip()
+        or DEFAULT_SIMULATION_CACHE_ENDPOINT
+    )
+    region = os.getenv('TORGHUT_SIM_CACHE_CEPH_REGION', 'us-east-1').strip() or 'us-east-1'
+    timeout_seconds = max(
+        1,
+        int(os.getenv('TORGHUT_SIM_CACHE_CEPH_TIMEOUT_SECONDS', '20') or '20'),
+    )
+    if not access_key or not secret_key or not endpoint:
+        return None, bucket
+    return (
+        CephS3Client(
+            endpoint=endpoint,
+            access_key=access_key,
+            secret_key=secret_key,
+            region=region,
+            timeout_seconds=timeout_seconds,
+        ),
+        bucket,
+    )
+
+
+def _cache_metadata(manifest: Mapping[str, Any]) -> dict[str, str]:
+    metadata = _as_mapping(manifest.get('metadata'))
+    return {
+        'cache_key': _as_text(metadata.get('cacheKey')) or '',
+        'cache_decision': (_as_text(metadata.get('cacheDecision')) or '').lower(),
+        'cache_artifact_path': _as_text(metadata.get('cacheArtifactPath')) or '',
+        'cache_manifest_path': _as_text(metadata.get('cacheChunkManifestPath')) or '',
+    }
+
+
+def _s3_bucket_key(uri: str) -> tuple[str, str] | None:
+    normalized = uri.strip()
+    if not normalized.startswith('s3://'):
+        return None
+    path = normalized[len('s3://') :]
+    bucket, _, key = path.partition('/')
+    bucket = bucket.strip()
+    key = key.strip('/')
+    if not bucket or not key:
+        return None
+    return bucket, key
+
+
+def _restore_cached_dump_if_available(
+    *,
+    manifest: Mapping[str, Any],
+    dump_path: Path,
+) -> dict[str, Any] | None:
+    cache = _cache_metadata(manifest)
+    cache_artifact_path = cache['cache_artifact_path']
+    cache_manifest_path = cache['cache_manifest_path']
+    cache_policy = _as_text(_performance_config(manifest).get('cache_policy')) or 'prefer_cache'
+    if not cache_artifact_path:
+        if cache_policy == 'require_cache':
+            raise RuntimeError('required_cache_artifact_path_missing')
+        return None
+
+    artifact_ref = _s3_bucket_key(cache_artifact_path)
+    manifest_ref = _s3_bucket_key(cache_manifest_path) if cache_manifest_path else None
+    if artifact_ref is None:
+        if cache_policy == 'require_cache':
+            raise RuntimeError(f'required_cache_artifact_uri_invalid:{cache_artifact_path}')
+        return None
+
+    client, default_bucket = _simulation_cache_client_from_env()
+    if client is None:
+        if cache_policy == 'require_cache':
+            raise RuntimeError('required_cache_client_unavailable')
+        return None
+
+    bucket, key = artifact_ref
+    bucket = bucket or default_bucket
+    try:
+        payload = client.get_object(bucket=bucket, key=key)
+        _ensure_directory(dump_path)
+        dump_path.write_bytes(payload)
+        if manifest_ref is not None:
+            manifest_bucket, manifest_key = manifest_ref
+            manifest_payload = client.get_object(bucket=manifest_bucket or default_bucket, key=manifest_key)
+            artifact_manifest = json.loads(manifest_payload.decode('utf-8'))
+            if not isinstance(artifact_manifest, Mapping):
+                raise RuntimeError('cache_manifest_invalid_payload')
+            _dump_artifact_manifest_path(dump_path).write_text(
+                json.dumps(dict(artifact_manifest), indent=2, sort_keys=True),
+                encoding='utf-8',
+            )
+            _write_dump_marker_from_manifest(
+                dump_path=dump_path,
+                artifact_manifest=artifact_manifest,
+            )
+        else:
+            _write_dump_marker(
+                dump_path=dump_path,
+                dump_sha256=_file_sha256(dump_path),
+                records=_count_lines(dump_path),
+                dump_format=_dump_format_for_path(dump_path),
+                min_source_timestamp_ms=None,
+                max_source_timestamp_ms=None,
+            )
+        report = _reusable_dump_report(dump_path)
+        if report is None:
+            raise RuntimeError('downloaded_cache_dump_validation_failed')
+        report['restored_from_cache'] = True
+        report['cache_artifact_path'] = cache_artifact_path
+        report['cache_manifest_path'] = cache_manifest_path or None
+        _log_script_event(
+            'Restored simulation dump from durable cache',
+            cache_key=cache['cache_key'] or 'unknown',
+            cache_artifact_path=cache_artifact_path,
+        )
+        return report
+    except Exception as exc:
+        dump_path.unlink(missing_ok=True)
+        _dump_artifact_manifest_path(dump_path).unlink(missing_ok=True)
+        if cache_policy == 'require_cache':
+            raise
+        _log_script_event(
+            'Failed to restore simulation dump from durable cache',
+            cache_key=cache['cache_key'] or 'unknown',
+            cache_artifact_path=cache_artifact_path,
+            error=str(exc),
+        )
+        return None
+
+
+def _upload_dump_to_cache(
+    *,
+    manifest: Mapping[str, Any],
+    dump_path: Path,
+) -> dict[str, Any] | None:
+    cache = _cache_metadata(manifest)
+    cache_key = cache['cache_key']
+    if not cache_key:
+        return None
+
+    artifact_ref = _s3_bucket_key(cache['cache_artifact_path'])
+    manifest_ref = _s3_bucket_key(cache['cache_manifest_path'])
+    if artifact_ref is None or manifest_ref is None:
+        return None
+
+    client, default_bucket = _simulation_cache_client_from_env()
+    if client is None:
+        return None
+
+    bucket, key = artifact_ref
+    manifest_bucket, manifest_key = manifest_ref
+    bucket = bucket or default_bucket
+    manifest_bucket = manifest_bucket or default_bucket
+
+    dump_content_type = {
+        'ndjson': 'application/x-ndjson',
+        'jsonl.gz': 'application/gzip',
+        'jsonl.zst': 'application/zstd',
+    }[_dump_format_for_path(dump_path)]
+    dump_result = client.put_object(
+        bucket=bucket,
+        key=key,
+        body=dump_path.read_bytes(),
+        content_type=dump_content_type,
+    )
+    manifest_path = _dump_artifact_manifest_path(dump_path)
+    manifest_result = client.put_object(
+        bucket=manifest_bucket,
+        key=manifest_key,
+        body=manifest_path.read_bytes(),
+        content_type='application/json',
+    )
+    return {
+        'cache_key': cache_key,
+        'artifact_path': f's3://{bucket}/{key}',
+        'artifact_etag': dump_result.get('etag'),
+        'manifest_path': f's3://{manifest_bucket}/{manifest_key}',
+        'manifest_etag': manifest_result.get('etag'),
+    }
+
+
+def _utc_from_millis(value: int | None) -> datetime | None:
+    if value is None:
+        return None
+    return datetime.fromtimestamp(value / 1000.0, tz=timezone.utc)
+
+
+def _upsert_simulation_progress_row(
+    *,
+    postgres_config: PostgresRuntimeConfig | None,
+    resources: SimulationResources,
+    component: str,
+    status: str,
+    workflow_name: str | None = None,
+    last_source_ts: datetime | None = None,
+    last_signal_ts: datetime | None = None,
+    last_price_ts: datetime | None = None,
+    cursor_at: datetime | None = None,
+    records_dumped: int = 0,
+    records_replayed: int = 0,
+    trade_decisions: int = 0,
+    executions: int = 0,
+    execution_tca_metrics: int = 0,
+    execution_order_events: int = 0,
+    strategy_type: str | None = None,
+    legacy_path_count: int = 0,
+    fallback_count: int = 0,
+    terminal_state: str | None = None,
+    last_error_code: str | None = None,
+    last_error_message: str | None = None,
+    payload: Mapping[str, Any] | None = None,
+) -> None:
+    if postgres_config is None:
+        return
+    dsn = postgres_config.torghut_runtime_dsn
+
+    def _write() -> None:
+        with psycopg.connect(dsn) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO simulation_run_progress (
+                      run_id,
+                      component,
+                      dataset_id,
+                      lane,
+                      workflow_name,
+                      status,
+                      last_source_ts,
+                      last_signal_ts,
+                      last_price_ts,
+                      cursor_at,
+                      records_dumped,
+                      records_replayed,
+                      trade_decisions,
+                      executions,
+                      execution_tca_metrics,
+                      execution_order_events,
+                      strategy_type,
+                      legacy_path_count,
+                      fallback_count,
+                      terminal_state,
+                      last_error_code,
+                      last_error_message,
+                      payload_json
+                    ) VALUES (
+                      %(run_id)s,
+                      %(component)s,
+                      %(dataset_id)s,
+                      %(lane)s,
+                      %(workflow_name)s,
+                      %(status)s,
+                      %(last_source_ts)s,
+                      %(last_signal_ts)s,
+                      %(last_price_ts)s,
+                      %(cursor_at)s,
+                      %(records_dumped)s,
+                      %(records_replayed)s,
+                      %(trade_decisions)s,
+                      %(executions)s,
+                      %(execution_tca_metrics)s,
+                      %(execution_order_events)s,
+                      %(strategy_type)s,
+                      %(legacy_path_count)s,
+                      %(fallback_count)s,
+                      %(terminal_state)s,
+                      %(last_error_code)s,
+                      %(last_error_message)s,
+                      %(payload_json)s::jsonb
+                    )
+                    ON CONFLICT (run_id, component) DO UPDATE SET
+                      dataset_id = EXCLUDED.dataset_id,
+                      lane = EXCLUDED.lane,
+                      workflow_name = COALESCE(EXCLUDED.workflow_name, simulation_run_progress.workflow_name),
+                      status = EXCLUDED.status,
+                      last_source_ts = COALESCE(EXCLUDED.last_source_ts, simulation_run_progress.last_source_ts),
+                      last_signal_ts = COALESCE(EXCLUDED.last_signal_ts, simulation_run_progress.last_signal_ts),
+                      last_price_ts = COALESCE(EXCLUDED.last_price_ts, simulation_run_progress.last_price_ts),
+                      cursor_at = COALESCE(EXCLUDED.cursor_at, simulation_run_progress.cursor_at),
+                      records_dumped = EXCLUDED.records_dumped,
+                      records_replayed = EXCLUDED.records_replayed,
+                      trade_decisions = EXCLUDED.trade_decisions,
+                      executions = EXCLUDED.executions,
+                      execution_tca_metrics = EXCLUDED.execution_tca_metrics,
+                      execution_order_events = EXCLUDED.execution_order_events,
+                      strategy_type = COALESCE(EXCLUDED.strategy_type, simulation_run_progress.strategy_type),
+                      legacy_path_count = EXCLUDED.legacy_path_count,
+                      fallback_count = EXCLUDED.fallback_count,
+                      terminal_state = COALESCE(EXCLUDED.terminal_state, simulation_run_progress.terminal_state),
+                      last_error_code = COALESCE(EXCLUDED.last_error_code, simulation_run_progress.last_error_code),
+                      last_error_message = COALESCE(EXCLUDED.last_error_message, simulation_run_progress.last_error_message),
+                      payload_json = COALESCE(simulation_run_progress.payload_json, '{}'::jsonb) || COALESCE(EXCLUDED.payload_json, '{}'::jsonb),
+                      updated_at = NOW()
+                    """,
+                    {
+                        'run_id': resources.run_id,
+                        'component': component,
+                        'dataset_id': resources.dataset_id,
+                        'lane': resources.lane,
+                        'workflow_name': workflow_name,
+                        'status': status,
+                        'last_source_ts': last_source_ts,
+                        'last_signal_ts': last_signal_ts,
+                        'last_price_ts': last_price_ts,
+                        'cursor_at': cursor_at,
+                        'records_dumped': int(records_dumped),
+                        'records_replayed': int(records_replayed),
+                        'trade_decisions': int(trade_decisions),
+                        'executions': int(executions),
+                        'execution_tca_metrics': int(execution_tca_metrics),
+                        'execution_order_events': int(execution_order_events),
+                        'strategy_type': strategy_type,
+                        'legacy_path_count': int(legacy_path_count),
+                        'fallback_count': int(fallback_count),
+                        'terminal_state': terminal_state,
+                        'last_error_code': last_error_code,
+                        'last_error_message': last_error_message,
+                        'payload_json': json.dumps(dict(payload or {}), sort_keys=True),
+                    },
+                )
+            conn.commit()
+
+    try:
+        _run_with_transient_postgres_retry(
+            label=f'upsert_simulation_progress:{component}',
+            operation=_write,
+        )
+    except Exception as exc:
+        _log_script_event(
+            'Failed to write simulation progress row',
+            run_id=resources.run_id,
+            component=component,
+            error=str(exc),
+        )
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise SystemExit(f'expected file is missing: {path}')
@@ -2023,7 +3038,7 @@ def _parse_dump_timestamp_bounds(payload: Mapping[str, Any]) -> tuple[int, int] 
 def _scan_dump_timestamp_bounds(dump_path: Path) -> tuple[int | None, int | None]:
     min_ms: int | None = None
     max_ms: int | None = None
-    with dump_path.open('r', encoding='utf-8') as handle:
+    with _open_dump_reader(dump_path) as handle:
         for line in handle:
             stripped = line.strip()
             if not stripped:
@@ -2082,11 +3097,13 @@ def _reusable_dump_report(dump_path: Path) -> dict[str, Any] | None:
     max_source_timestamp_ms = timestamp_bounds[1] if timestamp_bounds is not None else None
     return {
         'path': str(dump_path),
+        'dump_format': _dump_format_for_path(dump_path),
         'records': actual_records,
         'sha256': actual_sha,
         'reused_existing_dump': True,
         'min_source_timestamp_ms': min_source_timestamp_ms,
         'max_source_timestamp_ms': max_source_timestamp_ms,
+        'artifact_manifest_path': str(_dump_artifact_manifest_path(dump_path)),
     }
 
 
@@ -2099,12 +3116,14 @@ def _build_plan_report(
     argocd_config: ArgocdAutomationConfig,
     manifest: Mapping[str, Any],
 ) -> dict[str, Any]:
-    state_path, run_manifest_path, dump_path = _state_paths(resources)
+    state_path, run_manifest_path, dump_path = _state_paths(resources, manifest)
     run_state_path = _run_state_path(resources)
     window = _as_mapping(manifest.get('window'))
     torghut_env_overrides = _torghut_env_overrides_from_manifest(manifest)
     window_policy = _validate_window_policy(manifest)
     rollouts_config = _build_rollouts_analysis_config(manifest)
+    ta_restore = _ta_restore_policy(manifest)
+    performance_cfg = _performance_config(manifest)
     return {
         'status': 'ok',
         'run_id': resources.run_id,
@@ -2148,10 +3167,13 @@ def _build_plan_report(
         },
         'argocd': asdict(argocd_config),
         'rollouts': asdict(rollouts_config),
+        'ta_restore': ta_restore,
+        'performance': performance_cfg,
         'artifacts': {
             'state_path': str(state_path),
             'run_manifest_path': str(run_manifest_path),
             'dump_path': str(dump_path),
+            'dump_manifest_path': str(_dump_artifact_manifest_path(dump_path)),
             'run_state_path': str(run_state_path),
         },
         'confirmation_phrase': APPLY_CONFIRMATION_PHRASE,
@@ -2189,6 +3211,45 @@ def _http_clickhouse_query(
         return response.status, body
     finally:
         connection.close()
+
+
+def _http_request(
+    *,
+    base_url: str,
+    path: str,
+    method: str = 'GET',
+    body: str | None = None,
+    headers: Mapping[str, str] | None = None,
+) -> tuple[int, str]:
+    parsed = urlsplit(base_url)
+    scheme = parsed.scheme.lower()
+    if scheme not in {'http', 'https'}:
+        raise RuntimeError(f'unsupported_http_scheme:{scheme or "missing"}')
+    if not parsed.hostname:
+        raise RuntimeError('invalid_http_host')
+
+    target_path = parsed.path or '/'
+    if path and path != '/':
+        target_path = f'{target_path.rstrip("/")}/{path.lstrip("/")}'
+    request_headers = dict(headers or {})
+    connection_class = HTTPSConnection if scheme == 'https' else HTTPConnection
+    payload = body.encode('utf-8') if body is not None else None
+    last_error: OSError | None = None
+    for hostname in _cluster_service_host_candidates(parsed.hostname):
+        connection = connection_class(hostname, parsed.port)
+        try:
+            connection.request(method.upper(), target_path, body=payload, headers=request_headers)
+            response = connection.getresponse()
+            response_body = response.read().decode('utf-8', errors='replace')
+            return response.status, response_body
+        except OSError as exc:
+            last_error = exc
+            continue
+        finally:
+            connection.close()
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError('http_request_failed_without_attempts')
 
 
 def _clickhouse_query_configs(config: ClickHouseRuntimeConfig) -> list[ClickHouseRuntimeConfig]:
@@ -2425,6 +3486,7 @@ def _ensure_postgres_database(config: PostgresRuntimeConfig) -> None:
 
 def _ensure_postgres_runtime_permissions(config: PostgresRuntimeConfig) -> dict[str, Any]:
     simulation_role = _username_from_dsn(config.torghut_runtime_dsn) or _username_from_dsn(config.simulation_dsn)
+    admin_role = _username_from_dsn(config.admin_dsn)
     admin_simulation_dsn = _replace_database_in_dsn(
         config.admin_dsn,
         database=config.simulation_db,
@@ -2433,6 +3495,7 @@ def _ensure_postgres_runtime_permissions(config: PostgresRuntimeConfig) -> dict[
 
     def _ensure() -> dict[str, Any]:
         grants_applied = False
+        default_privileges_applied = False
         with psycopg.connect(config.admin_dsn, autocommit=True) as conn:
             with conn.cursor() as cursor:
                 if simulation_role:
@@ -2479,10 +3542,70 @@ def _ensure_postgres_runtime_permissions(config: PostgresRuntimeConfig) -> dict[
                             sql.Identifier(simulation_role),
                         )
                     )
+                    cursor.execute(
+                        sql.SQL('GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO {}').format(
+                            sql.Identifier(simulation_role),
+                        )
+                    )
+                    if admin_role:
+                        cursor.execute(
+                            sql.SQL(
+                                'ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public '
+                                'GRANT ALL PRIVILEGES ON TABLES TO {}'
+                            ).format(
+                                sql.Identifier(admin_role),
+                                sql.Identifier(simulation_role),
+                            )
+                        )
+                        cursor.execute(
+                            sql.SQL(
+                                'ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public '
+                                'GRANT ALL PRIVILEGES ON SEQUENCES TO {}'
+                            ).format(
+                                sql.Identifier(admin_role),
+                                sql.Identifier(simulation_role),
+                            )
+                        )
+                        cursor.execute(
+                            sql.SQL(
+                                'ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public '
+                                'GRANT EXECUTE ON FUNCTIONS TO {}'
+                            ).format(
+                                sql.Identifier(admin_role),
+                                sql.Identifier(simulation_role),
+                            )
+                        )
+                    else:
+                        cursor.execute(
+                            sql.SQL(
+                                'ALTER DEFAULT PRIVILEGES IN SCHEMA public '
+                                'GRANT ALL PRIVILEGES ON TABLES TO {}'
+                            ).format(
+                                sql.Identifier(simulation_role),
+                            )
+                        )
+                        cursor.execute(
+                            sql.SQL(
+                                'ALTER DEFAULT PRIVILEGES IN SCHEMA public '
+                                'GRANT ALL PRIVILEGES ON SEQUENCES TO {}'
+                            ).format(
+                                sql.Identifier(simulation_role),
+                            )
+                        )
+                        cursor.execute(
+                            sql.SQL(
+                                'ALTER DEFAULT PRIVILEGES IN SCHEMA public '
+                                'GRANT EXECUTE ON FUNCTIONS TO {}'
+                            ).format(
+                                sql.Identifier(simulation_role),
+                            )
+                        )
                     grants_applied = True
+                    default_privileges_applied = True
         return {
             'simulation_role': simulation_role,
             'grants_applied': grants_applied,
+            'default_privileges_applied': default_privileges_applied,
             'vector_extension_checked': has_vector_extension,
         }
 
@@ -2498,23 +3621,19 @@ def _ensure_postgres_runtime_permissions(config: PostgresRuntimeConfig) -> dict[
 def _run_migrations(config: PostgresRuntimeConfig) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     env = dict(os.environ)
-    env['DB_DSN'] = config.torghut_runtime_dsn
+    env['DB_DSN'] = config.admin_simulation_dsn
     _remove_appledouble_sidecars(repo_root / 'migrations' / 'versions')
-
-    def _run(command: str) -> None:
-        _run_command(
-            shlex.split(command),
-            cwd=repo_root,
-            env=env,
-        )
 
     migration_error: Exception | None = None
 
     try:
-        _run_with_transient_postgres_retry(
+        _run_alembic_upgrade(
+            command=config.migrations_command,
+            env=env,
+            cwd=repo_root,
             label='run_migrations',
-            operation=lambda: _run(config.migrations_command),
         )
+        _assert_required_simulation_metadata_tables(config)
         return
     except RuntimeError as exc:
         if not _is_vector_extension_create_permission_error(exc):
@@ -2537,9 +3656,55 @@ def _run_migrations(config: PostgresRuntimeConfig) -> None:
             f'run_migrations_fallback_target_parse_failed: command={config.migrations_command} target={fallback_revision}'
         ) from migration_error
 
-    _run_with_transient_postgres_retry(
+    _run_alembic_upgrade(
+        command=fallback_command,
+        env=env,
+        cwd=repo_root,
         label='run_migrations_fallback_pre_vector',
-        operation=lambda: _run(fallback_command),
+    )
+    _assert_required_simulation_metadata_tables(config)
+
+
+def _assert_required_simulation_metadata_tables(config: PostgresRuntimeConfig) -> None:
+    def _validate() -> None:
+        with psycopg.connect(config.admin_simulation_dsn, autocommit=True) as conn:
+            with conn.cursor() as cursor:
+                missing_tables: list[str] = []
+                for table in SIMULATION_POSTGRES_REQUIRED_METADATA_TABLES:
+                    cursor.execute('SELECT to_regclass(%s)', (f'public.{table}',))
+                    row = cursor.fetchone()
+                    if row is None or row[0] is None:
+                        missing_tables.append(table)
+                if missing_tables:
+                    raise RuntimeError(
+                        'required_simulation_metadata_tables_missing:' + ','.join(sorted(missing_tables))
+                    )
+
+    _run_with_transient_postgres_retry(
+        label='assert_required_simulation_metadata_tables',
+        operation=_validate,
+    )
+    _assert_required_simulation_metadata_tables(config)
+
+
+def _assert_required_simulation_metadata_tables(config: PostgresRuntimeConfig) -> None:
+    def _validate() -> None:
+        with psycopg.connect(config.admin_simulation_dsn, autocommit=True) as conn:
+            with conn.cursor() as cursor:
+                missing_tables: list[str] = []
+                for table in SIMULATION_POSTGRES_REQUIRED_METADATA_TABLES:
+                    cursor.execute('SELECT to_regclass(%s)', (f'public.{table}',))
+                    row = cursor.fetchone()
+                    if row is None or row[0] is None:
+                        missing_tables.append(table)
+                if missing_tables:
+                    raise RuntimeError(
+                        'required_simulation_metadata_tables_missing:' + ','.join(sorted(missing_tables))
+                    )
+
+    _run_with_transient_postgres_retry(
+        label='assert_required_simulation_metadata_tables',
+        operation=_validate,
     )
 
 
@@ -2550,7 +3715,36 @@ def _remove_appledouble_sidecars(directory: Path) -> None:
         candidate.unlink(missing_ok=True)
 
 
+def _supersede_stale_simulation_progress_rows(config: PostgresRuntimeConfig) -> None:
+    def _supersede() -> None:
+        with psycopg.connect(config.torghut_runtime_dsn, autocommit=True) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE simulation_run_progress
+                    SET status = 'superseded',
+                        terminal_state = COALESCE(terminal_state, 'superseded'),
+                        last_error_code = COALESCE(last_error_code, 'superseded_by_runtime_reset'),
+                        last_error_message = COALESCE(
+                            last_error_message,
+                            'historical simulation runtime reset superseded stale non-terminal progress rows'
+                        ),
+                        payload_json = COALESCE(payload_json, '{}'::jsonb) ||
+                          '{"superseded_reason":"runtime_reset"}'::jsonb,
+                        updated_at = NOW()
+                    WHERE terminal_state IS NULL
+                    """
+                )
+
+    _run_with_transient_postgres_retry(
+        label='supersede_stale_simulation_progress_rows',
+        operation=_supersede,
+    )
+
+
 def _reset_postgres_runtime_state(config: PostgresRuntimeConfig) -> None:
+    _supersede_stale_simulation_progress_rows(config)
+
     def _reset() -> None:
         with psycopg.connect(config.torghut_runtime_dsn, autocommit=True) as conn:
             with conn.cursor() as cursor:
@@ -2568,6 +3762,136 @@ def _reset_postgres_runtime_state(config: PostgresRuntimeConfig) -> None:
     _run_with_transient_postgres_retry(
         label='reset_postgres_runtime_state',
         operation=_reset,
+    )
+
+
+def _seed_simulation_trade_cursor(
+    *,
+    config: PostgresRuntimeConfig,
+    manifest: Mapping[str, Any],
+    account_label: str,
+) -> datetime:
+    window_start, _window_end = _resolve_window_bounds(manifest)
+
+    def _seed() -> None:
+        with psycopg.connect(config.torghut_runtime_dsn, autocommit=True) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO trade_cursor (
+                      id,
+                      source,
+                      account_label,
+                      cursor_at,
+                      cursor_seq,
+                      cursor_symbol
+                    ) VALUES (
+                      %(id)s,
+                      'clickhouse',
+                      %(account_label)s,
+                      %(cursor_at)s,
+                      NULL,
+                      NULL
+                    )
+                    ON CONFLICT (source, account_label) DO UPDATE SET
+                      cursor_at = EXCLUDED.cursor_at,
+                      cursor_seq = NULL,
+                      cursor_symbol = NULL,
+                      updated_at = NOW()
+                    """,
+                    {
+                        'id': uuid.uuid4(),
+                        'account_label': account_label,
+                        'cursor_at': window_start,
+                    },
+                )
+
+    _run_with_transient_postgres_retry(
+        label='seed_simulation_trade_cursor',
+        operation=_seed,
+    )
+    return window_start
+
+
+def _upsert_simulation_runtime_context(
+    *,
+    config: PostgresRuntimeConfig,
+    resources: SimulationResources,
+    manifest: Mapping[str, Any],
+    account_label: str,
+) -> None:
+    window_start, window_end = _resolve_window_bounds(manifest)
+    cache_metadata = _cache_metadata(manifest)
+
+    def _write() -> None:
+        with psycopg.connect(config.torghut_runtime_dsn, autocommit=True) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO simulation_runtime_context (
+                      lane,
+                      account_label,
+                      run_id,
+                      dataset_id,
+                      window_start,
+                      window_end,
+                      cache_key,
+                      cache_artifact_path,
+                      cache_manifest_path,
+                      warm_lane_enabled,
+                      metadata_json
+                    ) VALUES (
+                      %(lane)s,
+                      %(account_label)s,
+                      %(run_id)s,
+                      %(dataset_id)s,
+                      %(window_start)s,
+                      %(window_end)s,
+                      %(cache_key)s,
+                      %(cache_artifact_path)s,
+                      %(cache_manifest_path)s,
+                      %(warm_lane_enabled)s,
+                      %(metadata_json)s::jsonb
+                    )
+                    ON CONFLICT (lane, account_label) DO UPDATE SET
+                      run_id = EXCLUDED.run_id,
+                      dataset_id = EXCLUDED.dataset_id,
+                      window_start = EXCLUDED.window_start,
+                      window_end = EXCLUDED.window_end,
+                      cache_key = EXCLUDED.cache_key,
+                      cache_artifact_path = EXCLUDED.cache_artifact_path,
+                      cache_manifest_path = EXCLUDED.cache_manifest_path,
+                      warm_lane_enabled = EXCLUDED.warm_lane_enabled,
+                      metadata_json = COALESCE(simulation_runtime_context.metadata_json, '{}'::jsonb)
+                        || COALESCE(EXCLUDED.metadata_json, '{}'::jsonb),
+                      updated_at = NOW()
+                    """,
+                    {
+                        'lane': resources.lane,
+                        'account_label': account_label,
+                        'run_id': resources.run_id,
+                        'dataset_id': resources.dataset_id,
+                        'window_start': window_start,
+                        'window_end': window_end,
+                        'cache_key': cache_metadata['cache_key'] or None,
+                        'cache_artifact_path': cache_metadata['cache_artifact_path'] or None,
+                        'cache_manifest_path': cache_metadata['cache_manifest_path'] or None,
+                        'warm_lane_enabled': resources.warm_lane_enabled,
+                        'metadata_json': json.dumps(
+                            {
+                                'run_token': resources.run_token,
+                                'cache_decision': cache_metadata['cache_decision'] or None,
+                                'window_start': window_start.astimezone(timezone.utc).isoformat(),
+                                'window_end': window_end.astimezone(timezone.utc).isoformat(),
+                            },
+                            sort_keys=True,
+                        ),
+                    },
+                )
+
+    _run_with_transient_postgres_retry(
+        label='upsert_simulation_runtime_context',
+        operation=_write,
     )
 
 
@@ -2638,6 +3962,29 @@ def _configure_ta_for_simulation(
     auto_offset_reset: str,
     manifest: Mapping[str, Any],
 ) -> None:
+    updates = _desired_ta_simulation_config(
+        resources=resources,
+        clickhouse_config=clickhouse_config,
+        clickhouse_database=clickhouse_database,
+        auto_offset_reset=auto_offset_reset,
+        manifest=manifest,
+    )
+    _kubectl_patch(
+        resources.namespace,
+        'configmap',
+        resources.ta_configmap,
+        {'data': updates},
+    )
+
+
+def _desired_ta_simulation_config(
+    *,
+    resources: SimulationResources,
+    clickhouse_config: ClickHouseRuntimeConfig,
+    clickhouse_database: str,
+    auto_offset_reset: str,
+    manifest: Mapping[str, Any],
+) -> dict[str, str]:
     updates: dict[str, str] = {
         _ta_group_id_key(lane=resources.lane, manifest=manifest): resources.ta_group_id,
         _ta_auto_offset_reset_key(lane=resources.lane, manifest=manifest): auto_offset_reset,
@@ -2653,16 +4000,38 @@ def _configure_ta_for_simulation(
         clickhouse_config.http_url,
         clickhouse_database,
     )
+    return updates
 
-    _kubectl_patch(
+
+def _ta_runtime_reconfigure_required(
+    *,
+    resources: SimulationResources,
+    clickhouse_config: ClickHouseRuntimeConfig,
+    clickhouse_database: str,
+    auto_offset_reset: str,
+    manifest: Mapping[str, Any],
+) -> bool:
+    current = _kubectl_json(
         resources.namespace,
-        'configmap',
-        resources.ta_configmap,
-        {'data': updates},
+        ['get', 'configmap', resources.ta_configmap, '-o', 'json'],
     )
+    current_data = _as_mapping(current.get('data'))
+    expected = _desired_ta_simulation_config(
+        resources=resources,
+        clickhouse_config=clickhouse_config,
+        clickhouse_database=clickhouse_database,
+        auto_offset_reset=auto_offset_reset,
+        manifest=manifest,
+    )
+    return any(_as_text(current_data.get(key)) != value for key, value in expected.items())
 
 
-def _restart_ta_deployment(resources: SimulationResources, *, desired_state: str) -> int:
+def _restart_ta_deployment(
+    resources: SimulationResources,
+    *,
+    desired_state: str,
+    upgrade_mode: str = 'last-state',
+) -> int:
     deployment = _kubectl_json(
         resources.namespace,
         ['get', 'flinkdeployment', resources.ta_deployment, '-o', 'json'],
@@ -2686,7 +4055,7 @@ def _restart_ta_deployment(resources: SimulationResources, *, desired_state: str
         {
             'spec': {
                 'restartNonce': next_nonce,
-                'job': {'state': desired_state},
+                'job': {'state': desired_state, 'upgradeMode': upgrade_mode},
             }
         },
     )
@@ -2706,17 +4075,62 @@ def _configure_torghut_service_for_simulation(
         resources.namespace,
         ['get', 'kservice', resources.torghut_service, '-o', 'json'],
     )
+    merged_env = _torghut_service_env_for_simulation(
+        service=service,
+        resources=resources,
+        manifest=manifest,
+        postgres_config=postgres_config,
+        clickhouse_config=clickhouse_config,
+        kafka_config=kafka_config,
+        torghut_env_overrides=torghut_env_overrides,
+    )
+    patched_container = _kservice_container_with_env(service, merged_env)
+    _kubectl_patch(
+        resources.namespace,
+        'kservice',
+        resources.torghut_service,
+        {
+            'spec': {
+                'template': {
+                    'spec': {
+                        'containers': [patched_container]
+                    }
+                }
+            }
+        },
+    )
+
+
+def _torghut_service_env_for_simulation(
+    *,
+    service: Mapping[str, Any],
+    resources: SimulationResources,
+    manifest: Mapping[str, Any],
+    postgres_config: PostgresRuntimeConfig,
+    clickhouse_config: ClickHouseRuntimeConfig,
+    kafka_config: KafkaRuntimeConfig,
+    torghut_env_overrides: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     _, current_env = _kservice_env(service)
     window_start, window_end = _resolve_window_bounds(manifest)
     forecast_base_url = (
         f'http://{resources.torghut_forecast_service}.{resources.namespace}.svc.cluster.local:8089'
+    )
+    warm_lane_enabled = resources.warm_lane_enabled
+    account_label = _simulation_account_label(
+        resources=resources,
+        manifest=manifest,
+        torghut_env_overrides=torghut_env_overrides,
     )
 
     updates = {
         'DB_DSN': postgres_config.torghut_runtime_dsn,
         'TRADING_ENABLED': 'true',
         'TRADING_MODE': 'paper',
+        'TRADING_ACCOUNT_LABEL': account_label,
         'TRADING_FEATURE_FLAGS_ENABLED': 'false',
+        'TRADING_STRATEGY_RUNTIME_MODE': 'scheduler_v3',
+        'TRADING_STRATEGY_SCHEDULER_ENABLED': 'true',
         'TA_CLICKHOUSE_URL': clickhouse_config.http_url,
         'TA_CLICKHOUSE_USERNAME': clickhouse_config.username or '',
         'TA_CLICKHOUSE_PASSWORD': clickhouse_config.password or '',
@@ -2735,11 +4149,15 @@ def _configure_torghut_service_for_simulation(
         'TRADING_EXECUTION_ADAPTER': 'simulation',
         'TRADING_EXECUTION_FALLBACK_ADAPTER': 'none',
         'TRADING_SIMULATION_ENABLED': 'true',
-        'TRADING_SIMULATION_RUN_ID': resources.run_id,
-        'TRADING_SIMULATION_DATASET_ID': resources.dataset_id,
+        'TRADING_SIMULATION_RUN_ID': '' if warm_lane_enabled else resources.run_id,
+        'TRADING_SIMULATION_DATASET_ID': '' if warm_lane_enabled else resources.dataset_id,
         'TRADING_SIMULATION_CLOCK_MODE': 'cursor',
-        'TRADING_SIMULATION_WINDOW_START': window_start.astimezone(timezone.utc).isoformat(),
-        'TRADING_SIMULATION_WINDOW_END': window_end.astimezone(timezone.utc).isoformat(),
+        'TRADING_SIMULATION_WINDOW_START': (
+            '' if warm_lane_enabled else window_start.astimezone(timezone.utc).isoformat()
+        ),
+        'TRADING_SIMULATION_WINDOW_END': (
+            '' if warm_lane_enabled else window_end.astimezone(timezone.utc).isoformat()
+        ),
         'TRADING_SIMULATION_ORDER_UPDATES_TOPIC': resources.simulation_topic_by_role['order_updates'],
         'TRADING_SIMULATION_ORDER_UPDATES_BOOTSTRAP_SERVERS': kafka_config.runtime_bootstrap,
         'TRADING_SIMULATION_ORDER_UPDATES_SECURITY_PROTOCOL': kafka_config.runtime_security,
@@ -2753,22 +4171,43 @@ def _configure_torghut_service_for_simulation(
     if torghut_env_overrides:
         for key, value in torghut_env_overrides.items():
             updates[str(key)] = str(value)
-    merged_env = _merge_env_entries(current_env, updates)
-    patched_container = _kservice_container_with_env(service, merged_env)
-    _kubectl_patch(
+    return _merge_env_entries(current_env, updates)
+
+
+def _torghut_service_reconfigure_required(
+    *,
+    resources: SimulationResources,
+    manifest: Mapping[str, Any],
+    postgres_config: PostgresRuntimeConfig,
+    clickhouse_config: ClickHouseRuntimeConfig,
+    kafka_config: KafkaRuntimeConfig,
+    torghut_env_overrides: Mapping[str, Any] | None = None,
+) -> bool:
+    service = _kubectl_json(
         resources.namespace,
-        'kservice',
-        resources.torghut_service,
-        {
-            'spec': {
-                'template': {
-                    'spec': {
-                        'containers': [patched_container]
-                    }
-                }
-            }
-        },
+        ['get', 'kservice', resources.torghut_service, '-o', 'json'],
     )
+    _, current_env = _kservice_env(service)
+    expected_env = _torghut_service_env_for_simulation(
+        service=service,
+        resources=resources,
+        manifest=manifest,
+        postgres_config=postgres_config,
+        clickhouse_config=clickhouse_config,
+        kafka_config=kafka_config,
+        torghut_env_overrides=torghut_env_overrides,
+    )
+    expected_by_name = {
+        _as_text(entry.get('name')): _as_mapping(entry)
+        for entry in expected_env
+        if _as_text(entry.get('name'))
+    }
+    current_by_name = {
+        _as_text(entry.get('name')): _as_mapping(entry)
+        for entry in current_env
+        if _as_text(entry.get('name'))
+    }
+    return any(current_by_name.get(name) != entry for name, entry in expected_by_name.items())
 
 
 def _restore_ta_configuration(resources: SimulationResources, state: Mapping[str, Any]) -> None:
@@ -2788,6 +4227,27 @@ def _restore_ta_configuration(resources: SimulationResources, state: Mapping[str
         resources.ta_configmap,
         {'data': patch_data},
     )
+
+
+def _restore_ta_configuration_required(resources: SimulationResources, state: Mapping[str, Any]) -> bool:
+    ta_data = _as_mapping(state.get('ta_data'))
+    existing = _kubectl_json(
+        resources.namespace,
+        ['get', 'configmap', resources.ta_configmap, '-o', 'json'],
+    )
+    existing_data = _as_mapping(existing.get('data'))
+    patch_data: dict[str, Any] = dict(ta_data)
+    for key in existing_data:
+        if key not in ta_data:
+            patch_data[key] = None
+    for key, value in patch_data.items():
+        if value is None:
+            if key in existing_data:
+                return True
+            continue
+        if _as_text(existing_data.get(key)) != _as_text(value):
+            return True
+    return False
 
 
 def _restore_torghut_env(resources: SimulationResources, state: Mapping[str, Any]) -> None:
@@ -2822,6 +4282,31 @@ def _restore_torghut_env(resources: SimulationResources, state: Mapping[str, Any
             }
         },
     )
+
+
+def _restore_torghut_env_required(resources: SimulationResources, state: Mapping[str, Any]) -> bool:
+    service = _kubectl_json(
+        resources.namespace,
+        ['get', 'kservice', resources.torghut_service, '-o', 'json'],
+    )
+    _, current_env = _kservice_env(service)
+    current_env_by_name = {
+        _as_text(entry.get('name')): _as_mapping(entry)
+        for entry in current_env
+        if _as_text(entry.get('name'))
+    }
+    snapshot = _as_mapping(state.get('torghut_env_snapshot'))
+    for key in TORGHUT_ENV_KEYS:
+        snapshot_entry = snapshot.get(key)
+        if snapshot_entry is None:
+            if current_env_by_name.get(key) is not None:
+                return True
+            continue
+        entry_map = _as_mapping(snapshot_entry)
+        expected_entry = {'name': key, **{k: v for k, v in entry_map.items() if k != 'name'}}
+        if current_env_by_name.get(key) != expected_entry:
+            return True
+    return False
 
 
 def _condition_status(payload: Mapping[str, Any], *, condition_type: str) -> str | None:
@@ -3017,6 +4502,121 @@ def _ensure_topics(
         admin.close()
 
 
+def _simulation_schema_registry_subject_specs(
+    *,
+    resources: SimulationResources,
+) -> list[dict[str, str]]:
+    lane_contract = simulation_lane_contract(resources.lane)
+    schema_files = cast(
+        Mapping[str, str],
+        lane_contract.schema_registry_schema_file_by_role,
+    )
+    specs: list[dict[str, str]] = []
+    for role in simulation_schema_registry_subject_roles(lane_contract):
+        topic = resources.simulation_topic_by_role.get(role)
+        schema_relative = _as_text(schema_files.get(role))
+        if not topic or not schema_relative:
+            continue
+        specs.append(
+            {
+                'role': role,
+                'subject': f'{topic}-value',
+                'schema_path': str(_resolve_schema_registry_schema_path(schema_relative)),
+            }
+        )
+    return specs
+
+
+def _resolve_schema_registry_schema_path(schema_relative: str) -> Path:
+    script_path = Path(__file__).resolve()
+    for candidate_root in (script_path.parent, *script_path.parents):
+        candidate_path = (candidate_root / schema_relative).resolve()
+        if candidate_path.exists():
+            return candidate_path
+    return (script_path.parents[min(3, len(script_path.parents) - 1)] / schema_relative).resolve()
+
+
+def _load_schema_registry_schema_literal(schema_path: str) -> str:
+    path = Path(schema_path)
+    if not path.exists():
+        normalized_path = schema_path.replace('\\', '/')
+        for suffix, schema_literal in EMBEDDED_SCHEMA_REGISTRY_SCHEMA_BY_SUFFIX.items():
+            if normalized_path.endswith(suffix):
+                return schema_literal
+        raise RuntimeError(f'schema_registry_schema_file_missing:{schema_path}')
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f'schema_registry_schema_invalid:{schema_path}') from exc
+    return json.dumps(payload, separators=(',', ':'))
+
+
+def _ensure_simulation_schema_subjects(
+    *,
+    resources: SimulationResources,
+    ta_data: Mapping[str, Any],
+) -> dict[str, Any]:
+    registry_url = _as_text(ta_data.get('TA_SCHEMA_REGISTRY_URL'))
+    specs = _simulation_schema_registry_subject_specs(resources=resources)
+    subjects_expected = [spec['subject'] for spec in specs]
+    if not registry_url:
+        return {
+            'ready': True,
+            'reason': 'schema_registry_url_not_declared',
+            'subjects_expected': subjects_expected,
+            'subjects_existing': [],
+            'subjects_registered': [],
+        }
+    if not specs:
+        return {
+            'ready': True,
+            'reason': 'schema_registry_subjects_not_declared',
+            'url': registry_url,
+            'subjects_expected': subjects_expected,
+            'subjects_existing': [],
+            'subjects_registered': [],
+        }
+
+    status, _ = _http_request(base_url=registry_url, path='/subjects')
+    if status != 200:
+        raise RuntimeError(f'schema_registry_not_ready:http_{status}')
+
+    existing: list[str] = []
+    registered: list[str] = []
+    for spec in specs:
+        subject = spec['subject']
+        subject_path = f"/subjects/{quote_plus(subject)}/versions/latest"
+        subject_status, _ = _http_request(base_url=registry_url, path=subject_path)
+        if subject_status == 200:
+            existing.append(subject)
+            continue
+        if subject_status != 404:
+            raise RuntimeError(f'schema_registry_subject_check_failed:{subject}:http_{subject_status}')
+        schema_literal = _load_schema_registry_schema_literal(spec['schema_path'])
+        request_body = json.dumps({'schema': schema_literal})
+        create_status, create_body = _http_request(
+            base_url=registry_url,
+            path=f"/subjects/{quote_plus(subject)}/versions",
+            method='POST',
+            body=request_body,
+            headers={'Content-Type': SCHEMA_REGISTRY_CONTENT_TYPE},
+        )
+        if create_status not in {200, 201}:
+            raise RuntimeError(
+                f'schema_registry_subject_register_failed:{subject}:http_{create_status}:{create_body.strip()}'
+            )
+        registered.append(subject)
+
+    return {
+        'ready': True,
+        'reason': 'ok',
+        'url': registry_url,
+        'subjects_expected': subjects_expected,
+        'subjects_existing': existing,
+        'subjects_registered': registered,
+    }
+
+
 def _consumer_for_dump(config: KafkaRuntimeConfig, run_token: str) -> Any:
     from kafka import KafkaConsumer  # type: ignore[import-not-found]
 
@@ -3034,16 +4634,29 @@ def _consumer_for_dump(config: KafkaRuntimeConfig, run_token: str) -> Any:
     return KafkaConsumer(**kwargs)
 
 
-def _producer_for_replay(config: KafkaRuntimeConfig, run_token: str) -> Any:
+def _producer_for_replay(
+    config: KafkaRuntimeConfig,
+    run_token: str,
+    *,
+    profile: str | None = None,
+) -> Any:
     from kafka import KafkaProducer  # type: ignore[import-not-found]
 
+    resolved_profile = (profile or DEFAULT_SIMULATION_REPLAY_PROFILE).strip().lower()
+    if resolved_profile not in REPLAY_PROFILE_DEFAULTS:
+        raise RuntimeError(f'unsupported_replay_profile:{resolved_profile}')
+    defaults = REPLAY_PROFILE_DEFAULTS[resolved_profile]
     kwargs = config.kafka_runtime_client_kwargs()
     kwargs.update(
         {
             'client_id': f'torghut-sim-replay-{run_token}',
             'acks': 'all',
             'retries': 3,
-            'linger_ms': 5,
+            'linger_ms': int(defaults['producer_linger_ms']),
+            'batch_size': int(defaults['producer_batch_size']),
+            'buffer_memory': int(defaults['producer_buffer_memory']),
+            'compression_type': str(defaults['producer_compression_type']),
+            'max_in_flight_requests_per_connection': 5,
             'value_serializer': None,
             'key_serializer': None,
         }
@@ -3117,11 +4730,52 @@ def _dump_topics(
     manifest: Mapping[str, Any],
     dump_path: Path,
     force: bool,
+    postgres_config: PostgresRuntimeConfig | None = None,
 ) -> dict[str, Any]:
+    performance_cfg = _performance_config(manifest)
     if not force:
         reusable_report = _reusable_dump_report(dump_path)
         if reusable_report is not None:
+            _upsert_simulation_progress_row(
+                postgres_config=postgres_config,
+                resources=resources,
+                component=COMPONENT_REPLAY,
+                status='dump_reused',
+                records_dumped=_safe_int(reusable_report.get('records')),
+                last_source_ts=_utc_from_millis(
+                    _safe_int(reusable_report.get('max_source_timestamp_ms'), default=0) or None
+                ),
+                payload={
+                    'dump_path': str(dump_path),
+                    'dump_format': reusable_report.get('dump_format'),
+                    'reused_existing_dump': True,
+                    'records_by_topic': reusable_report.get('records_by_topic', {}),
+                },
+            )
             return reusable_report
+        restored_report = _restore_cached_dump_if_available(
+            manifest=manifest,
+            dump_path=dump_path,
+        )
+        if restored_report is not None:
+            _upsert_simulation_progress_row(
+                postgres_config=postgres_config,
+                resources=resources,
+                component=COMPONENT_REPLAY,
+                status='dump_restored',
+                records_dumped=_safe_int(restored_report.get('records')),
+                last_source_ts=_utc_from_millis(
+                    _safe_int(restored_report.get('max_source_timestamp_ms'), default=0) or None
+                ),
+                payload={
+                    'dump_path': str(dump_path),
+                    'dump_format': restored_report.get('dump_format'),
+                    'restored_from_cache': True,
+                    'cache_artifact_path': restored_report.get('cache_artifact_path'),
+                    'cache_manifest_path': restored_report.get('cache_manifest_path'),
+                },
+            )
+            return restored_report
 
     window = _as_mapping(manifest.get('window'))
     start = _parse_rfc3339_timestamp(_as_text(window.get('start')), label='window.start')
@@ -3140,6 +4794,11 @@ def _dump_topics(
     count_by_topic: dict[str, int] = {}
     min_source_timestamp_ms: int | None = None
     max_source_timestamp_ms: int | None = None
+    dump_started_at = datetime.now(timezone.utc)
+    raw_dump_path = dump_path
+    dump_format = _as_text(performance_cfg.get('dump_format')) or DEFAULT_SIMULATION_DUMP_FORMAT
+    if _dump_format_for_path(dump_path) != 'ndjson':
+        raw_dump_path = dump_path.with_suffix(dump_path.suffix + '.tmp.ndjson')
     try:
         topic_partitions: list[Any] = []
         for topic in resources.replay_topic_by_source_topic.keys():
@@ -3182,9 +4841,9 @@ def _dump_topics(
             for tp in topic_partitions
         )
 
-        _ensure_directory(dump_path)
+        _ensure_directory(raw_dump_path)
         done: set[Any] = set()
-        with dump_path.open('w', encoding='utf-8') as handle:
+        with raw_dump_path.open('w', encoding='utf-8') as handle:
             idle_polls = 0
             while len(done) < len(topic_partitions):
                 if count >= expected_records:
@@ -3256,30 +4915,84 @@ def _dump_topics(
                         done.update(topic_partitions)
                         break
 
+        if raw_dump_path != dump_path:
+            _compress_dump_file(source_path=raw_dump_path, dump_path=dump_path)
+        file_sha256 = _file_sha256(dump_path)
+        duration_seconds = max((datetime.now(timezone.utc) - dump_started_at).total_seconds(), 0.001)
         report = {
             'path': str(dump_path),
+            'dump_format': dump_format,
             'records': count,
             'expected_records': expected_records,
-            'sha256': hasher.hexdigest(),
+            'sha256': file_sha256,
+            'payload_sha256': hasher.hexdigest(),
             'records_by_topic': count_by_topic,
             'start': start.isoformat(),
             'end': end.isoformat(),
             'reused_existing_dump': False,
             'min_source_timestamp_ms': min_source_timestamp_ms,
             'max_source_timestamp_ms': max_source_timestamp_ms,
+            'duration_seconds': duration_seconds,
+            'records_per_second': count / duration_seconds if count > 0 else 0.0,
+            'cache_policy': _as_text(performance_cfg.get('cache_policy')) or 'prefer_cache',
+            'replay_profile': _as_text(performance_cfg.get('replay_profile')) or DEFAULT_SIMULATION_REPLAY_PROFILE,
         }
-        _save_json(
-            _dump_marker_path(dump_path),
-            {
-                'completed_at': datetime.now(timezone.utc).isoformat(),
-                'dump_sha256': report['sha256'],
-                'records': report['records'],
-                'min_source_timestamp_ms': report['min_source_timestamp_ms'],
-                'max_source_timestamp_ms': report['max_source_timestamp_ms'],
+        cache_upload_report: dict[str, Any] | None = None
+        _upsert_simulation_progress_row(
+            postgres_config=postgres_config,
+            resources=resources,
+            component=COMPONENT_REPLAY,
+            status='dumped',
+            records_dumped=count,
+            last_source_ts=_utc_from_millis(max_source_timestamp_ms),
+            payload={
+                'dump_path': str(dump_path),
+                'dump_format': dump_format,
+                'records_by_topic': count_by_topic,
+                'payload_sha256': hasher.hexdigest(),
+                'dump_sha256': file_sha256,
             },
         )
+        _write_dump_marker(
+            dump_path=dump_path,
+            dump_sha256=file_sha256,
+            records=report['records'],
+            dump_format=dump_format,
+            min_source_timestamp_ms=report['min_source_timestamp_ms'],
+            max_source_timestamp_ms=report['max_source_timestamp_ms'],
+        )
+        _save_json(
+            _dump_artifact_manifest_path(dump_path),
+            {
+                'dataset_id': resources.dataset_id,
+                'run_id': resources.run_id,
+                'dump_format': dump_format,
+                'cache_policy': _as_text(performance_cfg.get('cache_policy')) or 'prefer_cache',
+                'replay_profile': _as_text(performance_cfg.get('replay_profile')) or DEFAULT_SIMULATION_REPLAY_PROFILE,
+                'chunk_count': 1,
+                'chunks': [
+                    {
+                        'path': str(dump_path),
+                        'records': count,
+                        'sha256': file_sha256,
+                        'payload_sha256': hasher.hexdigest(),
+                        'min_source_timestamp_ms': min_source_timestamp_ms,
+                        'max_source_timestamp_ms': max_source_timestamp_ms,
+                    }
+                ],
+            },
+        )
+        if _cache_metadata(manifest)['cache_decision'] != 'hit':
+            cache_upload_report = _upload_dump_to_cache(
+                manifest=manifest,
+                dump_path=dump_path,
+            )
+            if cache_upload_report is not None:
+                report['cache_upload'] = cache_upload_report
         return report
     finally:
+        if raw_dump_path != dump_path:
+            raw_dump_path.unlink(missing_ok=True)
         consumer.close()
 
 
@@ -3304,16 +5017,123 @@ def _pacing_delay_seconds(
     raise RuntimeError(f'unsupported replay pace mode: {mode}')
 
 
+def _dump_format_for_path(path: Path) -> str:
+    path_str = str(path)
+    for dump_format, suffix in sorted(
+        SUPPORTED_SIMULATION_DUMP_FORMATS.items(),
+        key=lambda item: len(item[1]),
+        reverse=True,
+    ):
+        if path_str.endswith(suffix):
+            return dump_format
+    raise RuntimeError(f'unsupported_dump_path:{path}')
+
+
+@contextmanager
+def _open_dump_reader(path: Path):
+    dump_format = _dump_format_for_path(path)
+    if dump_format == 'ndjson':
+        with path.open('r', encoding='utf-8') as handle:
+            yield handle
+        return
+    if dump_format == 'jsonl.gz':
+        if shutil.which('pigz'):
+            process = subprocess.Popen(
+                ['pigz', '-dc', str(path)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding='utf-8',
+            )
+            if process.stdout is None:
+                raise RuntimeError('pigz_reader_missing_stdout')
+            try:
+                yield process.stdout
+            finally:
+                process.stdout.close()
+                stderr = process.stderr.read().strip() if process.stderr is not None else ''
+                if process.stderr is not None:
+                    process.stderr.close()
+                return_code = process.wait()
+                if return_code != 0:
+                    raise RuntimeError(f'pigz_decompress_failed:{stderr or return_code}')
+            return
+        with gzip.open(path, 'rt', encoding='utf-8') as handle:
+            yield handle
+        return
+    if dump_format == 'jsonl.zst':
+        process = subprocess.Popen(
+            ['zstd', '-d', '-q', '-c', str(path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding='utf-8',
+        )
+        if process.stdout is None:
+            raise RuntimeError('zstd_reader_missing_stdout')
+        try:
+            yield process.stdout
+        finally:
+            process.stdout.close()
+            stderr = process.stderr.read().strip() if process.stderr is not None else ''
+            if process.stderr is not None:
+                process.stderr.close()
+            return_code = process.wait()
+            if return_code != 0:
+                raise RuntimeError(f'zstd_decompress_failed:{stderr or return_code}')
+        return
+    raise RuntimeError(f'unsupported_dump_format:{dump_format}')
+
+
+def _compress_dump_file(*, source_path: Path, dump_path: Path) -> None:
+    dump_format = _dump_format_for_path(dump_path)
+    _ensure_directory(dump_path)
+    if dump_format == 'ndjson':
+        shutil.move(str(source_path), str(dump_path))
+        return
+    if dump_format == 'jsonl.gz':
+        if shutil.which('pigz'):
+            with dump_path.open('wb') as output:
+                result = subprocess.run(
+                    ['pigz', '-c', '-6', str(source_path)],
+                    check=False,
+                    stdout=output,
+                    stderr=subprocess.PIPE,
+                )
+            if result.returncode != 0:
+                detail = (result.stderr or b'').decode('utf-8', errors='replace').strip()
+                raise RuntimeError(f'pigz_compress_failed:{detail or result.returncode}')
+        else:
+            with source_path.open('rb') as source, gzip.open(dump_path, 'wb', compresslevel=6) as output:
+                shutil.copyfileobj(source, output)
+        source_path.unlink(missing_ok=True)
+        return
+    if dump_format == 'jsonl.zst':
+        with dump_path.open('wb') as output:
+            result = subprocess.run(
+                ['zstd', '-q', '-T0', '-3', '-c', str(source_path)],
+                check=False,
+                stdout=output,
+                stderr=subprocess.PIPE,
+            )
+        if result.returncode != 0:
+            detail = (result.stderr or b'').decode('utf-8', errors='replace').strip()
+            raise RuntimeError(f'zstd_compress_failed:{detail or result.returncode}')
+        source_path.unlink(missing_ok=True)
+        return
+    raise RuntimeError(f'unsupported_dump_format:{dump_format}')
+
+
 def _count_lines(path: Path) -> int:
     if not path.exists():
         return 0
-    with path.open('r', encoding='utf-8') as handle:
+    with _open_dump_reader(path) as handle:
         return sum(1 for _ in handle)
 
 
 def _dump_sha256_for_replay(path: Path) -> str:
     hasher = hashlib.sha256()
-    with path.open('r', encoding='utf-8') as handle:
+    with _open_dump_reader(path) as handle:
         for line in handle:
             stripped = line.strip()
             if not stripped:
@@ -3348,6 +5168,7 @@ def _replay_dump(
     manifest: Mapping[str, Any],
     dump_path: Path,
     force: bool,
+    postgres_config: PostgresRuntimeConfig | None = None,
 ) -> dict[str, Any]:
     if not dump_path.exists():
         raise RuntimeError(f'dump file does not exist: {dump_path}')
@@ -3359,37 +5180,78 @@ def _replay_dump(
         current_dump_sha = _dump_sha256_for_replay(dump_path)
         if marker_dump_sha == current_dump_sha:
             marker_payload['reused_existing_replay'] = True
+            _upsert_simulation_progress_row(
+                postgres_config=postgres_config,
+                resources=resources,
+                component=COMPONENT_REPLAY,
+                status='replay_reused',
+                records_replayed=_safe_int(marker_payload.get('records')),
+                last_source_ts=_utc_from_millis(
+                    _safe_int(marker_payload.get('max_source_timestamp_ms'), default=0) or None
+                ),
+                payload={
+                    'dump_format': marker_payload.get('dump_format'),
+                    'reused_existing_replay': True,
+                    'records_by_topic': marker_payload.get('records_by_topic', {}),
+                    'replay_profile': marker_payload.get('replay_profile'),
+                },
+            )
             return marker_payload
 
+    performance_cfg = _performance_config(manifest)
+    replay_profile = _as_text(performance_cfg.get('replay_profile')) or DEFAULT_SIMULATION_REPLAY_PROFILE
+    profile_defaults = REPLAY_PROFILE_DEFAULTS[replay_profile]
     replay_cfg = _as_mapping(manifest.get('replay'))
     pace_mode = (_as_text(replay_cfg.get('pace_mode')) or 'max_throughput').lower()
     acceleration = float(replay_cfg.get('acceleration') or 60.0)
     max_sleep_seconds = float(replay_cfg.get('max_sleep_seconds') or 5.0)
     status_update_every_records = max(
         1,
-        _safe_int(replay_cfg.get('status_update_every_records'), default=25_000),
+        _safe_int(
+            replay_cfg.get('status_update_every_records'),
+            default=int(profile_defaults['status_update_every_records']),
+        ),
     )
     status_update_every_seconds = max(
         1.0,
-        _safe_float(replay_cfg.get('status_update_every_seconds'), default=30.0),
+        _safe_float(
+            replay_cfg.get('status_update_every_seconds'),
+            default=float(profile_defaults['status_update_every_seconds']),
+        ),
     )
-    flush_every_records = max(1, _safe_int(replay_cfg.get('flush_every_records'), default=10_000))
-    flush_timeout_seconds = max(1.0, _safe_float(replay_cfg.get('flush_timeout_seconds'), default=30.0))
+    flush_every_records = max(
+        1,
+        _safe_int(
+            replay_cfg.get('flush_every_records'),
+            default=int(profile_defaults['flush_every_records']),
+        ),
+    )
+    flush_timeout_seconds = max(
+        1.0,
+        _safe_float(
+            replay_cfg.get('flush_timeout_seconds'),
+            default=float(profile_defaults['flush_timeout_seconds']),
+        ),
+    )
     final_flush_timeout_seconds = max(
         flush_timeout_seconds,
-        _safe_float(replay_cfg.get('final_flush_timeout_seconds'), default=300.0),
+        _safe_float(
+            replay_cfg.get('final_flush_timeout_seconds'),
+            default=float(profile_defaults['final_flush_timeout_seconds']),
+        ),
     )
     flush_retry_attempts = max(1, _safe_int(replay_cfg.get('flush_retry_attempts'), default=6))
 
-    producer = _producer_for_replay(kafka_config, resources.run_token)
+    producer = _producer_for_replay(kafka_config, resources.run_token, profile=replay_profile)
     count = 0
     count_by_topic: dict[str, int] = {}
     previous_ts_ms: int | None = None
     checksum = hashlib.sha256()
     replay_topic_overrides = 0
     next_status_update_at = time.monotonic() + status_update_every_seconds
+    replay_started_at = datetime.now(timezone.utc)
     try:
-        with dump_path.open('r', encoding='utf-8') as handle:
+        with _open_dump_reader(dump_path) as handle:
             for line in handle:
                 stripped = line.strip()
                 if not stripped:
@@ -3456,6 +5318,19 @@ def _replay_dump(
                             'records_by_topic': count_by_topic,
                         },
                     )
+                    _upsert_simulation_progress_row(
+                        postgres_config=postgres_config,
+                        resources=resources,
+                        component=COMPONENT_REPLAY,
+                        status='replaying',
+                        records_replayed=count,
+                        last_source_ts=_utc_from_millis(current_ts_ms),
+                        payload={
+                            'records_by_topic': count_by_topic,
+                            'replay_profile': replay_profile,
+                            'pace_mode': pace_mode,
+                        },
+                    )
                     next_status_update_at = now + status_update_every_seconds
                 if count % flush_every_records == 0:
                     _producer_flush_with_retry(
@@ -3474,6 +5349,20 @@ def _replay_dump(
                 'flush_reason': 'completed',
             },
         )
+        _upsert_simulation_progress_row(
+            postgres_config=postgres_config,
+            resources=resources,
+            component=COMPONENT_REPLAY,
+            status='replay_flush',
+            records_replayed=count,
+            last_source_ts=_utc_from_millis(previous_ts_ms),
+            payload={
+                'records_by_topic': count_by_topic,
+                'flush_reason': 'completed',
+                'replay_profile': replay_profile,
+                'pace_mode': pace_mode,
+            },
+        )
         _producer_flush_with_retry(
             producer,
             timeout_seconds=final_flush_timeout_seconds,
@@ -3485,8 +5374,11 @@ def _replay_dump(
         except Exception:
             pass
 
+    duration_seconds = max((datetime.now(timezone.utc) - replay_started_at).total_seconds(), 0.001)
     marker_payload = {
         'reused_existing_replay': False,
+        'dump_format': _dump_format_for_path(dump_path),
+        'replay_profile': replay_profile,
         'records': count,
         'records_by_topic': count_by_topic,
         'pace_mode': pace_mode,
@@ -3497,8 +5389,27 @@ def _replay_dump(
         'flush_retry_attempts': flush_retry_attempts,
         'replay_topic_overrides': replay_topic_overrides,
         'dump_sha256': checksum.hexdigest(),
+        'duration_seconds': duration_seconds,
+        'records_per_second': count / duration_seconds if count > 0 else 0.0,
         'completed_at': datetime.now(timezone.utc).isoformat(),
     }
+    _upsert_simulation_progress_row(
+        postgres_config=postgres_config,
+        resources=resources,
+        component=COMPONENT_REPLAY,
+        status='replayed',
+        records_replayed=count,
+        last_source_ts=_utc_from_millis(previous_ts_ms),
+        terminal_state='complete',
+        payload={
+            'records_by_topic': count_by_topic,
+            'dump_format': _dump_format_for_path(dump_path),
+            'replay_profile': replay_profile,
+            'pace_mode': pace_mode,
+            'records_per_second': marker_payload['records_per_second'],
+            'duration_seconds': duration_seconds,
+        },
+    )
     _save_json(marker_path, marker_payload)
     return marker_payload
 
@@ -3521,7 +5432,8 @@ def _verify_isolation_guards(
         'simulation_topics_isolated_from_sources': simulation_topics.isdisjoint(source_topics),
         'replay_targets_isolated_from_replay_sources': replay_target_topics.isdisjoint(replay_source_topics),
         'simulation_topics_not_production_defaults': simulation_topics.isdisjoint(production_topics),
-        'ta_group_isolated': resources.ta_group_id != _as_text(ta_data.get('TA_GROUP_ID')),
+        'ta_group_isolated': resources.warm_lane_enabled
+        or resources.ta_group_id != _as_text(ta_data.get('TA_GROUP_ID')),
     }
     if not all(checks.values()):
         failed = [key for key, passed in checks.items() if not passed]
@@ -3541,10 +5453,20 @@ def _apply(
 ) -> dict[str, Any]:
     _ensure_supported_binary('kubectl')
     _ensure_lz4_codec_available()
+    window_start, window_end = _resolve_window_bounds(manifest)
     window_policy = _validate_window_policy(manifest)
     torghut_env_overrides = _torghut_env_overrides_from_manifest(manifest)
+    warm_lane_enabled = resources.warm_lane_enabled
+    account_label = _simulation_account_label(
+        resources=resources,
+        manifest=manifest,
+        torghut_env_overrides=torghut_env_overrides,
+    )
+    ta_reconfigured = False
+    torghut_reconfigured = False
+    ta_restart_nonce: int | None = None
 
-    state_path, run_manifest_path, dump_path = _state_paths(resources)
+    state_path, run_manifest_path, dump_path = _state_paths(resources, manifest)
     _ensure_directory(state_path)
     runtime_lock = _acquire_simulation_runtime_lock(
         resources=resources,
@@ -3559,6 +5481,16 @@ def _apply(
             _save_json(state_path, state)
 
         ta_data = _as_mapping(state.get('ta_data'))
+        ta_restore = _resolve_ta_restore_configuration(
+            ta_data=ta_data,
+            manifest=manifest,
+        )
+        if bool(ta_restore.get('fallback_applied')):
+            _log_script_event(
+                'Using stateless TA recovery for simulation run',
+                run_id=resources.run_id,
+                reason=ta_restore.get('reason'),
+            )
         _verify_isolation_guards(
             resources=resources,
             postgres_config=postgres_config,
@@ -3569,6 +5501,10 @@ def _apply(
             resources=resources,
             config=kafka_config,
             manifest=manifest,
+        )
+        schema_registry_report = _ensure_simulation_schema_subjects(
+            resources=resources,
+            ta_data=ta_data,
         )
         clickhouse_database_precreated = _clickhouse_database_precreated(manifest)
         if not clickhouse_database_precreated:
@@ -3581,9 +5517,70 @@ def _apply(
         postgres_database_precreated = _postgres_database_precreated(manifest)
         if not postgres_database_precreated:
             _ensure_postgres_database(postgres_config)
-        postgres_permissions_report = _ensure_postgres_runtime_permissions(postgres_config)
+        _ensure_postgres_runtime_permissions(postgres_config)
         _run_migrations(postgres_config)
+        # Alembic runs under the admin role, so newly created objects must be re-granted to the runtime role.
+        postgres_permissions_report = _ensure_postgres_runtime_permissions(postgres_config)
         _reset_postgres_runtime_state(postgres_config)
+        seeded_cursor_at = _seed_simulation_trade_cursor(
+            config=postgres_config,
+            manifest=manifest,
+            account_label=account_label,
+        )
+        _upsert_simulation_runtime_context(
+            config=postgres_config,
+            resources=resources,
+            manifest=manifest,
+            account_label=account_label,
+        )
+        _upsert_simulation_progress_row(
+            postgres_config=postgres_config,
+            resources=resources,
+            component=COMPONENT_REPLAY,
+            status='pending',
+            payload={
+                'phase': 'apply',
+                'window_start': window_start.astimezone(timezone.utc).isoformat(),
+                'window_end': window_end.astimezone(timezone.utc).isoformat(),
+                'warm_lane_enabled': warm_lane_enabled,
+            },
+        )
+        _upsert_simulation_progress_row(
+            postgres_config=postgres_config,
+            resources=resources,
+            component=COMPONENT_TA,
+            status='pending',
+            payload={
+                'phase': 'runtime_verify',
+                'window_start': window_start.astimezone(timezone.utc).isoformat(),
+                'window_end': window_end.astimezone(timezone.utc).isoformat(),
+                'warm_lane_enabled': warm_lane_enabled,
+            },
+        )
+        _upsert_simulation_progress_row(
+            postgres_config=postgres_config,
+            resources=resources,
+            component=COMPONENT_TORGHUT,
+            status='pending',
+            payload={
+                'phase': 'runtime_verify',
+                'window_start': window_start.astimezone(timezone.utc).isoformat(),
+                'window_end': window_end.astimezone(timezone.utc).isoformat(),
+                'warm_lane_enabled': warm_lane_enabled,
+            },
+        )
+        _upsert_simulation_progress_row(
+            postgres_config=postgres_config,
+            resources=resources,
+            component=COMPONENT_ARTIFACTS,
+            status='pending',
+            payload={
+                'phase': 'report',
+                'window_start': window_start.astimezone(timezone.utc).isoformat(),
+                'window_end': window_end.astimezone(timezone.utc).isoformat(),
+                'warm_lane_enabled': warm_lane_enabled,
+            },
+        )
 
         dump_report = _dump_topics(
             resources=resources,
@@ -3591,6 +5588,7 @@ def _apply(
             manifest=manifest,
             dump_path=dump_path,
             force=force_dump,
+            postgres_config=postgres_config,
         )
         dump_coverage = _validate_dump_coverage(
             manifest=manifest,
@@ -3598,16 +5596,33 @@ def _apply(
         )
         replay_cfg = _as_mapping(manifest.get('replay'))
         auto_offset_reset = (_as_text(replay_cfg.get('auto_offset_reset')) or 'earliest').lower()
-        _configure_ta_for_simulation(
+        ta_reconfigured = _ta_runtime_reconfigure_required(
             resources=resources,
             clickhouse_config=clickhouse_config,
             clickhouse_database=resources.clickhouse_db,
             auto_offset_reset=auto_offset_reset,
             manifest=manifest,
         )
-        ta_restart_nonce = _restart_ta_deployment(resources, desired_state='running')
+        ta_restart_required = warm_lane_enabled or ta_reconfigured
+        ta_restart_forced = warm_lane_enabled and not ta_reconfigured
+        if ta_reconfigured:
+            _configure_ta_for_simulation(
+                resources=resources,
+                clickhouse_config=clickhouse_config,
+                clickhouse_database=resources.clickhouse_db,
+                auto_offset_reset=auto_offset_reset,
+                manifest=manifest,
+            )
+        if ta_restart_required:
+            ta_restart_nonce = _restart_ta_deployment(
+                resources,
+                desired_state='running',
+                upgrade_mode=str(ta_restore.get('effective_upgrade_mode') or 'last-state'),
+            )
+        else:
+            ta_restart_nonce = None
 
-        _configure_torghut_service_for_simulation(
+        torghut_reconfigured = _torghut_service_reconfigure_required(
             resources=resources,
             manifest=manifest,
             postgres_config=postgres_config,
@@ -3615,6 +5630,15 @@ def _apply(
             kafka_config=kafka_config,
             torghut_env_overrides=torghut_env_overrides,
         )
+        if torghut_reconfigured:
+            _configure_torghut_service_for_simulation(
+                resources=resources,
+                manifest=manifest,
+                postgres_config=postgres_config,
+                clickhouse_config=clickhouse_config,
+                kafka_config=kafka_config,
+                torghut_env_overrides=torghut_env_overrides,
+            )
     except Exception:
         _release_simulation_runtime_lock(resources=resources)
         raise
@@ -3629,7 +5653,14 @@ def _apply(
         'dump': dump_report,
         'dump_coverage': dump_coverage,
         'topics': topics_report,
+        'schema_registry': schema_registry_report,
         'ta_restart_nonce': ta_restart_nonce,
+        'ta_restart_forced': ta_restart_forced,
+        'ta_reconfigured': ta_reconfigured,
+        'torghut_reconfigured': torghut_reconfigured,
+        'warm_lane_enabled': warm_lane_enabled,
+        'account_label': account_label,
+        'seeded_cursor_at': seeded_cursor_at.isoformat(),
         'resources': asdict(resources)
         | {
             'output_root': str(resources.output_root),
@@ -3648,6 +5679,7 @@ def _apply(
         'simulation_lock': runtime_lock,
         'evidence_lineage': _simulation_evidence_lineage(manifest),
         'torghut_env_overrides': torghut_env_overrides,
+        'ta_restore': ta_restore,
         'window_policy': window_policy,
     }
     _save_json(run_manifest_path, report)
@@ -3657,10 +5689,12 @@ def _apply(
 def _teardown(
     *,
     resources: SimulationResources,
+    manifest: Mapping[str, Any] | None = None,
     allow_missing_state: bool,
 ) -> dict[str, Any]:
     _ensure_supported_binary('kubectl')
-    state_path, run_manifest_path, dump_path = _state_paths(resources)
+    warm_lane_enabled = resources.warm_lane_enabled
+    state_path, run_manifest_path, dump_path = _state_paths(resources, manifest)
     if not state_path.exists():
         lock_report = _release_simulation_runtime_lock(resources=resources)
         if allow_missing_state:
@@ -3706,11 +5740,27 @@ def _teardown(
         }
 
     state = _load_json(state_path)
-    _restore_ta_configuration(resources, state)
-    _restore_torghut_env(resources, state)
-
     original_state = _as_text(state.get('ta_job_state')) or 'running'
-    ta_restart_nonce = _restart_ta_deployment(resources, desired_state=original_state)
+    if warm_lane_enabled:
+        ta_reconfigured = False
+        torghut_reconfigured = False
+        ta_restart_nonce = None
+        skipped_restore = True
+        retained_warm_lane_baseline = True
+    else:
+        ta_reconfigured = _restore_ta_configuration_required(resources, state)
+        torghut_reconfigured = _restore_torghut_env_required(resources, state)
+        if ta_reconfigured:
+            _restore_ta_configuration(resources, state)
+        if torghut_reconfigured:
+            _restore_torghut_env(resources, state)
+        ta_restart_nonce = (
+            _restart_ta_deployment(resources, desired_state=original_state)
+            if ta_reconfigured
+            else None
+        )
+        skipped_restore = False
+        retained_warm_lane_baseline = False
     lock_report = _release_simulation_runtime_lock(resources=resources)
     report = {
         'status': 'ok',
@@ -3721,215 +5771,16 @@ def _teardown(
         'run_manifest_path': str(run_manifest_path),
         'dump_path': str(dump_path),
         'ta_restart_nonce': ta_restart_nonce,
+        'ta_reconfigured': ta_reconfigured,
+        'torghut_reconfigured': torghut_reconfigured,
         'restored_ta_state': original_state,
+        'warm_lane_enabled': warm_lane_enabled,
+        'skipped_restore': skipped_restore,
+        'retained_warm_lane_baseline': retained_warm_lane_baseline,
         'simulation_lock': lock_report,
     }
     _save_json(run_manifest_path.with_name('teardown-manifest.json'), report)
     return report
-
-
-def _monitor_settings(manifest: Mapping[str, Any]) -> dict[str, int]:
-    monitor = _as_mapping(manifest.get('monitor'))
-    timeout_seconds = _safe_int(
-        monitor.get('timeout_seconds'),
-        default=DEFAULT_RUN_MONITOR_TIMEOUT_SECONDS,
-    )
-    poll_seconds = _safe_int(
-        monitor.get('poll_seconds'),
-        default=DEFAULT_RUN_MONITOR_POLL_SECONDS,
-    )
-    min_decisions = _safe_int(
-        monitor.get('min_trade_decisions'),
-        default=DEFAULT_RUN_MONITOR_MIN_DECISIONS,
-    )
-    min_executions = _safe_int(
-        monitor.get('min_executions'),
-        default=DEFAULT_RUN_MONITOR_MIN_EXECUTIONS,
-    )
-    min_tca = _safe_int(
-        monitor.get('min_execution_tca_metrics'),
-        default=DEFAULT_RUN_MONITOR_MIN_TCA,
-    )
-    min_order_events = _safe_int(
-        monitor.get('min_execution_order_events'),
-        default=DEFAULT_RUN_MONITOR_MIN_ORDER_EVENTS,
-    )
-    cursor_grace_seconds = _safe_int(
-        monitor.get('cursor_grace_seconds'),
-        default=DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS,
-    )
-    if timeout_seconds <= 0:
-        raise RuntimeError('monitor.timeout_seconds must be > 0')
-    if poll_seconds <= 0:
-        raise RuntimeError('monitor.poll_seconds must be > 0')
-    if min_decisions < 0 or min_executions < 0 or min_tca < 0 or min_order_events < 0:
-        raise RuntimeError('monitor minimum thresholds cannot be negative')
-    if cursor_grace_seconds < 0:
-        raise RuntimeError('monitor.cursor_grace_seconds cannot be negative')
-    return {
-        'timeout_seconds': timeout_seconds,
-        'poll_seconds': poll_seconds,
-        'min_trade_decisions': min_decisions,
-        'min_executions': min_executions,
-        'min_execution_tca_metrics': min_tca,
-        'min_execution_order_events': min_order_events,
-        'cursor_grace_seconds': cursor_grace_seconds,
-    }
-
-
-def _monitor_snapshot(postgres_config: PostgresRuntimeConfig) -> dict[str, Any]:
-    def _snapshot() -> dict[str, Any]:
-        with psycopg.connect(postgres_config.torghut_runtime_dsn) as conn:
-            with conn.cursor() as cursor:
-                cursor.execute('SELECT count(*) FROM trade_decisions')
-                decision_row = cursor.fetchone()
-                trade_decisions = _safe_int(decision_row[0] if decision_row else 0)
-                cursor.execute('SELECT count(*) FROM executions')
-                execution_row = cursor.fetchone()
-                executions = _safe_int(execution_row[0] if execution_row else 0)
-                cursor.execute('SELECT count(*) FROM execution_tca_metrics')
-                tca_row = cursor.fetchone()
-                execution_tca_metrics = _safe_int(tca_row[0] if tca_row else 0)
-                cursor.execute('SELECT count(*) FROM execution_order_events')
-                order_event_row = cursor.fetchone()
-                execution_order_events = _safe_int(order_event_row[0] if order_event_row else 0)
-                cursor.execute(
-                    "SELECT max(cursor_at) FROM trade_cursor WHERE source='clickhouse'"
-                )
-                row = cursor.fetchone()
-                cursor_at_raw = row[0] if row else None
-                cursor_at = (
-                    cursor_at_raw.astimezone(timezone.utc)
-                    if isinstance(cursor_at_raw, datetime)
-                    else None
-                )
-        return {
-            'trade_decisions': trade_decisions,
-            'executions': executions,
-            'execution_tca_metrics': execution_tca_metrics,
-            'execution_order_events': execution_order_events,
-            'cursor_at': cursor_at.isoformat() if cursor_at is not None else None,
-        }
-
-    return cast(
-        dict[str, Any],
-        _run_with_transient_postgres_retry(
-            label='monitor_snapshot',
-            operation=_snapshot,
-        ),
-    )
-
-
-def _signal_snapshot(
-    *,
-    resources: SimulationResources,
-    clickhouse_config: ClickHouseRuntimeConfig,
-) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for key, table in {
-        'signal_rows': resources.clickhouse_signal_table,
-        'price_rows': resources.clickhouse_price_table,
-    }.items():
-        query = f'SELECT count() FROM {table}'
-        status, body = _http_clickhouse_query(config=clickhouse_config, query=query)
-        if status < 200 or status >= 300:
-            counts[key] = 0
-            continue
-        counts[key] = _safe_int(body.strip(), default=0)
-    return counts
-
-
-def _monitor_run_completion(
-    *,
-    resources: SimulationResources,
-    manifest: Mapping[str, Any],
-    postgres_config: PostgresRuntimeConfig,
-    clickhouse_config: ClickHouseRuntimeConfig,
-    runtime_verify: Mapping[str, Any],
-) -> dict[str, Any]:
-    start, end = _resolve_window_bounds(manifest)
-    settings = _monitor_settings(manifest)
-    deadline = datetime.now(timezone.utc) + timedelta(seconds=settings['timeout_seconds'])
-    polls: list[dict[str, Any]] = []
-    cursor_reached_at: datetime | None = None
-    runtime_ready = bool(runtime_verify.get('runtime_state') == 'ready')
-    while True:
-        snapshot = _monitor_snapshot(postgres_config)
-        snapshot.update(_signal_snapshot(resources=resources, clickhouse_config=clickhouse_config))
-        polled_at = datetime.now(timezone.utc)
-        poll_payload = {
-            'polled_at': polled_at.isoformat(),
-            **snapshot,
-        }
-        polls.append(poll_payload)
-        cursor_at_raw = snapshot.get('cursor_at')
-        cursor_at = (
-            _parse_rfc3339_timestamp(cast(str | None, cursor_at_raw), label='cursor_at')
-            if isinstance(cursor_at_raw, str)
-            else None
-        )
-        cursor_reached = cursor_at is not None and cursor_at >= end
-        thresholds_met = (
-            _safe_int(snapshot.get('trade_decisions')) >= settings['min_trade_decisions']
-            and _safe_int(snapshot.get('executions')) >= settings['min_executions']
-            and _safe_int(snapshot.get('execution_tca_metrics'))
-            >= settings['min_execution_tca_metrics']
-            and _safe_int(snapshot.get('execution_order_events'))
-            >= settings['min_execution_order_events']
-        )
-        executions = _safe_int(snapshot.get('executions'))
-        order_events = _safe_int(snapshot.get('execution_order_events'))
-        order_event_contract_met = executions <= 0 or order_events > 0
-        completion_ready = thresholds_met and order_event_contract_met
-
-        if cursor_reached and cursor_reached_at is None:
-            cursor_reached_at = polled_at
-        if cursor_reached and completion_ready:
-            classification = 'success'
-            return {
-                'status': 'ok',
-                'activity_classification': classification,
-                'window_start': start.isoformat(),
-                'window_end': end.isoformat(),
-                'monitor': settings,
-                'poll_count': len(polls),
-                'final_snapshot': poll_payload,
-                'polls': polls[-20:],
-            }
-        if polled_at >= deadline or (
-            cursor_reached
-            and cursor_reached_at is not None
-            and int((polled_at - cursor_reached_at).total_seconds()) >= settings['cursor_grace_seconds']
-        ):
-            classification = 'success'
-            if not runtime_ready:
-                classification = 'infra_not_active'
-            elif cursor_at is None:
-                classification = 'cursor_not_advancing'
-            elif _safe_int(snapshot.get('signal_rows')) <= 0:
-                classification = 'signals_absent'
-            elif _safe_int(snapshot.get('trade_decisions')) <= 0:
-                classification = 'decisions_absent'
-            elif (
-                _safe_int(snapshot.get('executions')) <= 0
-                or _safe_int(snapshot.get('execution_tca_metrics')) <= 0
-                or (
-                    _safe_int(snapshot.get('executions')) > 0
-                    and _safe_int(snapshot.get('execution_order_events')) <= 0
-                )
-            ):
-                classification = 'executions_absent'
-            return {
-                'status': 'ok' if classification == 'success' else 'degraded',
-                'activity_classification': classification,
-                'window_start': start.isoformat(),
-                'window_end': end.isoformat(),
-                'monitor': settings,
-                'poll_count': len(polls),
-                'final_snapshot': poll_payload,
-                'polls': polls[-20:],
-            }
-        time.sleep(settings['poll_seconds'])
 
 
 def _prepare_argocd_for_run(
@@ -4371,6 +6222,150 @@ def _build_fill_price_error_budget_payload(
     return report.to_payload(), artifact_path
 
 
+def _build_strategy_proof_artifact(
+    *,
+    postgres_config: PostgresRuntimeConfig,
+    manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    def _query() -> dict[str, Any]:
+        with psycopg.connect(postgres_config.torghut_runtime_dsn) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT COALESCE(s.universe_type, 'unknown') AS strategy_type, count(*)::bigint
+                    FROM trade_decisions td
+                    LEFT JOIN strategies s ON s.id = td.strategy_id
+                    GROUP BY 1
+                    ORDER BY 2 DESC, 1 ASC
+                    """
+                )
+                strategy_rows = cursor.fetchall() or []
+                cursor.execute(
+                    """
+                    SELECT
+                      COALESCE(sum(CASE WHEN execution_fallback_count > 0 THEN 1 ELSE 0 END), 0)::bigint,
+                      COALESCE(sum(execution_fallback_count), 0)::bigint
+                    FROM executions
+                    """
+                )
+                fallback_row = cursor.fetchone() or (0, 0)
+        strategy_types = [
+            {
+                'strategy_type': str(row[0]),
+                'count': _safe_int(row[1]),
+            }
+            for row in strategy_rows
+        ]
+        legacy_path_count = sum(
+            item['count']
+            for item in strategy_types
+            if any(token in item['strategy_type'] for token in LEGACY_SIMULATION_STRATEGY_TOKENS)
+        )
+        return {
+            'status': 'ok',
+            'expected_candidate_id': _as_text(manifest.get('candidate_id')),
+            'expected_strategy_spec_ref': _as_text(manifest.get('strategy_spec_ref')),
+            'model_refs': _as_string_list(manifest.get('model_refs')),
+            'strategy_types': strategy_types,
+            'legacy_path_count': legacy_path_count,
+            'fallback_order_count': _safe_int(fallback_row[0]),
+            'fallback_invocation_count': _safe_int(fallback_row[1]),
+            'promotable': legacy_path_count == 0,
+        }
+
+    return cast(
+        dict[str, Any],
+        _run_with_transient_postgres_retry(
+            label='strategy_proof',
+            operation=_query,
+        ),
+    )
+
+
+def _build_performance_report(
+    *,
+    manifest: Mapping[str, Any],
+    apply_report: Mapping[str, Any] | None,
+    replay_report: Mapping[str, Any] | None,
+    monitor_report: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    performance_cfg = _performance_config(manifest)
+    monitor_payload = _as_mapping(monitor_report)
+    return {
+        'status': 'ok',
+        'cache_policy': _as_text(performance_cfg.get('cache_policy')) or 'prefer_cache',
+        'replay_profile': _as_text(performance_cfg.get('replay_profile')) or DEFAULT_SIMULATION_REPLAY_PROFILE,
+        'dump_format': _as_text(performance_cfg.get('dump_format')) or DEFAULT_SIMULATION_DUMP_FORMAT,
+        'dump': _as_mapping(_as_mapping(apply_report).get('dump')),
+        'replay': _as_mapping(replay_report),
+        'monitor_profile': _as_text(_as_mapping(monitor_payload.get('monitor')).get('profile')),
+        'monitor_poll_count': _safe_int(monitor_payload.get('poll_count')),
+        'effective_terminal_signal_ts': _as_text(monitor_payload.get('effective_terminal_signal_ts')),
+        'cursor_gap_seconds': monitor_payload.get('cursor_gap_seconds'),
+    }
+
+
+def _build_run_summary(
+    *,
+    resources: SimulationResources,
+    manifest: Mapping[str, Any],
+    runtime_verify_report: Mapping[str, Any] | None,
+    monitor_report: Mapping[str, Any] | None,
+    analytics_report: Mapping[str, Any] | None,
+    strategy_proof_report: Mapping[str, Any] | None,
+    errors: Sequence[str],
+) -> dict[str, Any]:
+    monitor_payload = _as_mapping(monitor_report)
+    final_snapshot = _as_mapping(monitor_payload.get('final_snapshot'))
+    return {
+        'status': 'ok' if not errors else 'error',
+        'run_id': resources.run_id,
+        'dataset_id': resources.dataset_id,
+        'candidate_id': _as_text(manifest.get('candidate_id')),
+        'strategy_spec_ref': _as_text(manifest.get('strategy_spec_ref')),
+        'runtime_state': _as_text(_as_mapping(runtime_verify_report).get('runtime_state')),
+        'activity_classification': _as_text(monitor_payload.get('activity_classification')),
+        'effective_terminal_signal_ts': _as_text(monitor_payload.get('effective_terminal_signal_ts')),
+        'cursor_at': _as_text(final_snapshot.get('cursor_at')),
+        'trade_decisions': _safe_int(final_snapshot.get('trade_decisions')),
+        'executions': _safe_int(final_snapshot.get('executions')),
+        'execution_tca_metrics': _safe_int(final_snapshot.get('execution_tca_metrics')),
+        'execution_order_events': _safe_int(final_snapshot.get('execution_order_events')),
+        'legacy_path_count': _safe_int(_as_mapping(strategy_proof_report).get('legacy_path_count')),
+        'fallback_order_count': _safe_int(_as_mapping(strategy_proof_report).get('fallback_order_count')),
+        'report_dir': _as_text(_as_mapping(analytics_report).get('report_dir')),
+        'errors': list(errors),
+    }
+
+
+def _build_gate_input(
+    *,
+    resources: SimulationResources,
+    manifest: Mapping[str, Any],
+    monitor_report: Mapping[str, Any] | None,
+    strategy_proof_report: Mapping[str, Any] | None,
+    fill_price_error_budget_report: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    final_snapshot = _as_mapping(_as_mapping(monitor_report).get('final_snapshot'))
+    return {
+        'run_id': resources.run_id,
+        'dataset_id': resources.dataset_id,
+        'candidate_id': _as_text(manifest.get('candidate_id')),
+        'baseline_candidate_id': _as_text(manifest.get('baseline_candidate_id')),
+        'strategy_spec_ref': _as_text(manifest.get('strategy_spec_ref')),
+        'model_refs': _as_string_list(manifest.get('model_refs')),
+        'activity_classification': _as_text(_as_mapping(monitor_report).get('activity_classification')),
+        'effective_terminal_signal_ts': _as_text(_as_mapping(monitor_report).get('effective_terminal_signal_ts')),
+        'cursor_at': _as_text(final_snapshot.get('cursor_at')),
+        'trade_decisions': _safe_int(final_snapshot.get('trade_decisions')),
+        'executions': _safe_int(final_snapshot.get('executions')),
+        'execution_tca_metrics': _safe_int(final_snapshot.get('execution_tca_metrics')),
+        'execution_order_events': _safe_int(final_snapshot.get('execution_order_events')),
+        'strategy_proof': _as_mapping(strategy_proof_report),
+        'fill_price_error_budget': _as_mapping(fill_price_error_budget_report),
+    }
+
+
 def _existing_artifact_refs(resources: SimulationResources, analytics_report: Mapping[str, Any] | None) -> list[str]:
     artifact_candidates = [
         _artifact_path(resources, 'run-manifest.json'),
@@ -4380,6 +6375,11 @@ def _existing_artifact_refs(resources: SimulationResources, analytics_report: Ma
         _artifact_path(resources, 'signal-activity.json'),
         _artifact_path(resources, 'decision-activity.json'),
         _artifact_path(resources, 'execution-activity.json'),
+        _artifact_path(resources, 'activity-debug.json'),
+        _artifact_path(resources, 'strategy-proof.json'),
+        _artifact_path(resources, 'performance.json'),
+        _artifact_path(resources, 'run-summary.json'),
+        _artifact_path(resources, 'gate-input.json'),
         _artifact_path(resources, 'gates/fill-price-error-budget-report-v1.json'),
     ]
     report_dir = _as_text(_as_mapping(analytics_report).get('report_dir'))
@@ -4547,6 +6547,10 @@ def _run_full_lifecycle(
     runtime_verify_report: dict[str, Any] | None = None
     monitor_report: dict[str, Any] | None = None
     analytics_report: dict[str, Any] | None = None
+    strategy_proof_report: dict[str, Any] | None = None
+    performance_report: dict[str, Any] | None = None
+    run_summary_report: dict[str, Any] | None = None
+    gate_input_report: dict[str, Any] | None = None
     fill_price_error_budget_report: dict[str, Any] | None = None
     teardown_report: dict[str, Any] | None = None
     rollouts_report: dict[str, Any] = {
@@ -4564,6 +6568,7 @@ def _run_full_lifecycle(
     argocd_prepare_succeeded = False
     argocd_restore_required = False
     previous_root_application_sync_policy: dict[str, Any] | None = None
+    teardown_succeeded = False
 
     try:
         if report_only:
@@ -4650,6 +6655,14 @@ def _run_full_lifecycle(
                 )
             runtime_verify_report['analysis_run'] = rollouts_report['runtime_analysis_run']
             _save_json(_artifact_path(resources, 'runtime-verify.json'), runtime_verify_report)
+            _upsert_simulation_progress_row(
+                postgres_config=postgres_config,
+                resources=resources,
+                component=COMPONENT_TA,
+                status='ready' if runtime_verify_report.get('runtime_state') == 'ready' else 'not_ready',
+                terminal_state='complete' if runtime_verify_report.get('runtime_state') == 'ready' else None,
+                payload=runtime_verify_report,
+            )
             _update_run_state(
                 resources=resources,
                 phase='runtime_verify',
@@ -4660,15 +6673,33 @@ def _run_full_lifecycle(
                 bool(rollouts_report['enabled'])
                 and _as_mapping(cast(Mapping[str, Any], rollouts_report['runtime_analysis_run'])).get('phase') != 'Successful'
             ):
-                errors.append('environment_incomplete')
+                runtime_failure = {
+                    'reason': 'environment_incomplete',
+                    'runtime_state': runtime_verify_report.get('runtime_state'),
+                    'analysis_run': rollouts_report['runtime_analysis_run'],
+                }
+                _update_run_state(
+                    resources=resources,
+                    phase='replay',
+                    status='skipped',
+                    details=runtime_failure,
+                )
+                _update_run_state(
+                    resources=resources,
+                    phase='activity_verify',
+                    status='skipped',
+                    details=runtime_failure,
+                )
+                raise RuntimeError('environment_incomplete')
 
             _update_run_state(resources=resources, phase='replay', status='running')
             replay_report = _replay_dump(
                 resources=resources,
                 kafka_config=kafka_config,
                 manifest=manifest,
-                dump_path=_state_paths(resources)[2],
+                dump_path=_state_paths(resources, manifest)[2],
                 force=force_replay,
+                postgres_config=postgres_config,
             )
             _save_json(_artifact_path(resources, 'replay-report.json'), replay_report)
             _update_run_state(
@@ -4679,33 +6710,78 @@ def _run_full_lifecycle(
             )
 
             _update_run_state(resources=resources, phase='activity_verify', status='running')
+            monitor_report = _monitor_run_completion(
+                resources=resources,
+                manifest=manifest,
+                postgres_config=postgres_config,
+                clickhouse_config=clickhouse_config,
+                runtime_verify=runtime_verify_report,
+            )
+            final_snapshot = _as_mapping(monitor_report.get('final_snapshot'))
+            _upsert_simulation_progress_row(
+                postgres_config=postgres_config,
+                resources=resources,
+                component=COMPONENT_TORGHUT,
+                status='activity_verified',
+                last_signal_ts=_parse_optional_rfc3339_timestamp(
+                    _as_text(final_snapshot.get('last_signal_ts'))
+                ),
+                last_price_ts=_parse_optional_rfc3339_timestamp(
+                    _as_text(final_snapshot.get('last_price_ts'))
+                ),
+                cursor_at=_parse_optional_rfc3339_timestamp(
+                    _as_text(final_snapshot.get('cursor_at'))
+                ),
+                trade_decisions=_safe_int(final_snapshot.get('trade_decisions')),
+                executions=_safe_int(final_snapshot.get('executions')),
+                execution_tca_metrics=_safe_int(final_snapshot.get('execution_tca_metrics')),
+                execution_order_events=_safe_int(final_snapshot.get('execution_order_events')),
+                legacy_path_count=_safe_int(final_snapshot.get('legacy_path_count')),
+                fallback_count=_safe_int(final_snapshot.get('fallback_count')),
+                terminal_state='complete'
+                if _as_text(monitor_report.get('activity_classification')) == 'success'
+                else None,
+                payload={
+                    'activity_classification': monitor_report.get('activity_classification'),
+                    'effective_terminal_signal_ts': monitor_report.get('effective_terminal_signal_ts'),
+                },
+            )
             if bool(rollouts_report['enabled']):
-                activity_analysis_run = _run_rollouts_analysis(
-                    resources=resources,
-                    manifest=manifest,
-                    postgres_config=postgres_config,
-                    clickhouse_config=clickhouse_config,
-                    rollouts_config=rollouts_config,
-                    phase='activity',
-                    template_name=rollouts_config.activity_template,
-                )
+                try:
+                    activity_analysis_run = _run_rollouts_analysis(
+                        resources=resources,
+                        manifest=manifest,
+                        postgres_config=postgres_config,
+                        clickhouse_config=clickhouse_config,
+                        rollouts_config=rollouts_config,
+                        phase='activity',
+                        template_name=rollouts_config.activity_template,
+                    )
+                except Exception as exc:
+                    activity_analysis_run = {
+                        'status': 'error',
+                        'phase': 'Error',
+                        'message': str(exc),
+                    }
                 rollouts_report['activity_analysis_run'] = activity_analysis_run
-                monitor_report = simulation_verification._current_activity_report(
-                    resources=resources,
-                    manifest=manifest,
-                    postgres_config=postgres_config,
-                    clickhouse_config=clickhouse_config,
-                    runtime_verify=runtime_verify_report,
-                )
-            else:
-                monitor_report = _monitor_run_completion(
-                    resources=resources,
-                    manifest=manifest,
-                    postgres_config=postgres_config,
-                    clickhouse_config=clickhouse_config,
-                    runtime_verify=runtime_verify_report,
-                )
             monitor_report['analysis_run'] = rollouts_report['activity_analysis_run']
+            _save_json(_artifact_path(resources, 'activity-debug.json'), monitor_report)
+            _upsert_simulation_progress_row(
+                postgres_config=postgres_config,
+                resources=resources,
+                component=COMPONENT_ARTIFACTS,
+                status='activity_verified',
+                last_signal_ts=_parse_optional_rfc3339_timestamp(
+                    _as_text(_as_mapping(monitor_report.get('final_snapshot')).get('last_signal_ts'))
+                ),
+                last_price_ts=_parse_optional_rfc3339_timestamp(
+                    _as_text(_as_mapping(monitor_report.get('final_snapshot')).get('last_price_ts'))
+                ),
+                cursor_at=_parse_optional_rfc3339_timestamp(
+                    _as_text(_as_mapping(monitor_report.get('final_snapshot')).get('cursor_at'))
+                ),
+                payload=monitor_report,
+            )
             _save_json(_artifact_path(resources, 'signal-activity.json'), {
                 'activity_classification': monitor_report.get('activity_classification'),
                 'signal_rows': _as_mapping(monitor_report.get('final_snapshot')).get('signal_rows'),
@@ -4732,13 +6808,8 @@ def _run_full_lifecycle(
                 details=monitor_report,
             )
             activity_classification = _as_text(monitor_report.get('activity_classification')) or 'unknown'
-            activity_analysis_phase = _as_text(
-                _as_mapping(cast(Mapping[str, Any], rollouts_report['activity_analysis_run'])).get('phase')
-            )
             if activity_classification != 'success':
                 errors.append(f'activity:{activity_classification}')
-            elif bool(rollouts_report['enabled']) and activity_analysis_phase != 'Successful':
-                errors.append('activity:analysis_unsuccessful')
         else:
             _update_run_state(
                 resources=resources,
@@ -4772,10 +6843,72 @@ def _run_full_lifecycle(
             postgres_config=postgres_config,
             clickhouse_config=clickhouse_config,
         )
+        strategy_proof_report = _build_strategy_proof_artifact(
+            postgres_config=postgres_config,
+            manifest=manifest,
+        )
+        _save_json(_artifact_path(resources, 'strategy-proof.json'), strategy_proof_report)
         fill_price_error_budget_report, _ = _build_fill_price_error_budget_payload(
             resources=resources,
             analytics_report=analytics_report,
             manifest=manifest,
+        )
+        performance_report = _build_performance_report(
+            manifest=manifest,
+            apply_report=apply_report,
+            replay_report=replay_report,
+            monitor_report=monitor_report,
+        )
+        _save_json(_artifact_path(resources, 'performance.json'), performance_report)
+        gate_input_report = _build_gate_input(
+            resources=resources,
+            manifest=manifest,
+            monitor_report=monitor_report,
+            strategy_proof_report=strategy_proof_report,
+            fill_price_error_budget_report=fill_price_error_budget_report,
+        )
+        _save_json(_artifact_path(resources, 'gate-input.json'), gate_input_report)
+        run_summary_report = _build_run_summary(
+            resources=resources,
+            manifest=manifest,
+            runtime_verify_report=runtime_verify_report,
+            monitor_report=monitor_report,
+            analytics_report=analytics_report,
+            strategy_proof_report=strategy_proof_report,
+            errors=errors,
+        )
+        _save_json(_artifact_path(resources, 'run-summary.json'), run_summary_report)
+        _upsert_simulation_progress_row(
+            postgres_config=postgres_config,
+            resources=resources,
+            component=COMPONENT_TORGHUT,
+            status='reported',
+            strategy_type=_as_text(strategy_proof_report.get('strategy_type')),
+            legacy_path_count=_safe_int(strategy_proof_report.get('legacy_path_count')),
+            fallback_count=_safe_int(strategy_proof_report.get('fallback_order_count')),
+            terminal_state='complete',
+            payload={
+                'strategy_type': strategy_proof_report.get('strategy_type'),
+                'legacy_path_count': strategy_proof_report.get('legacy_path_count'),
+                'fallback_order_count': strategy_proof_report.get('fallback_order_count'),
+            },
+        )
+        _upsert_simulation_progress_row(
+            postgres_config=postgres_config,
+            resources=resources,
+            component=COMPONENT_ARTIFACTS,
+            status='reported',
+            terminal_state='complete',
+            strategy_type=_as_text(strategy_proof_report.get('strategy_type')),
+            legacy_path_count=_safe_int(strategy_proof_report.get('legacy_path_count')),
+            fallback_count=_safe_int(strategy_proof_report.get('fallback_count')),
+            payload={
+                'activity_debug_path': str(_artifact_path(resources, 'activity-debug.json')),
+                'strategy_proof_path': str(_artifact_path(resources, 'strategy-proof.json')),
+                'performance_path': str(_artifact_path(resources, 'performance.json')),
+                'run_summary_path': str(_artifact_path(resources, 'run-summary.json')),
+                'gate_input_path': str(_artifact_path(resources, 'gate-input.json')),
+            },
         )
         _update_run_state(resources=resources, phase='report', status='ok')
     except Exception as exc:
@@ -4792,25 +6925,11 @@ def _run_full_lifecycle(
                 _update_run_state(resources=resources, phase='teardown', status='running')
                 teardown_report = _teardown(
                     resources=resources,
+                    manifest=manifest,
                     allow_missing_state=True,
                 )
-                if bool(rollouts_report['enabled']):
-                    teardown_analysis_run = _run_rollouts_analysis(
-                        resources=resources,
-                        manifest=manifest,
-                        postgres_config=postgres_config,
-                        clickhouse_config=clickhouse_config,
-                        rollouts_config=rollouts_config,
-                        phase='teardown-clean',
-                        template_name=rollouts_config.teardown_template,
-                    )
-                    rollouts_report['teardown_analysis_run'] = teardown_analysis_run
-                teardown_report['analysis_run'] = rollouts_report['teardown_analysis_run']
+                teardown_succeeded = True
                 _update_run_state(resources=resources, phase='teardown', status='ok')
-                if bool(rollouts_report['enabled']) and _as_mapping(
-                    cast(Mapping[str, Any], rollouts_report['teardown_analysis_run'])
-                ).get('phase') != 'Successful':
-                    errors.append('teardown:environment_incomplete')
             except Exception as exc:
                 errors.append(f'teardown:{exc}')
                 _update_run_state(
@@ -4869,6 +6988,34 @@ def _run_full_lifecycle(
                     details={'error': str(exc)},
                 )
 
+        if (
+            teardown_succeeded
+            and not report_only
+            and bool(rollouts_report['enabled'])
+            and not any(error.startswith('argocd_restore:') for error in errors)
+        ):
+            try:
+                teardown_analysis_run = _run_rollouts_analysis(
+                    resources=resources,
+                    manifest=manifest,
+                    postgres_config=postgres_config,
+                    clickhouse_config=clickhouse_config,
+                    rollouts_config=rollouts_config,
+                    phase='teardown-clean',
+                    template_name=rollouts_config.teardown_template,
+                )
+                rollouts_report['teardown_analysis_run'] = teardown_analysis_run
+                if teardown_report is None:
+                    teardown_report = {}
+                teardown_report['analysis_run'] = teardown_analysis_run
+                if _as_mapping(teardown_analysis_run).get('phase') != 'Successful':
+                    errors.append('teardown:environment_incomplete')
+            except Exception as exc:
+                errors.append(f'teardown:{exc}')
+                if teardown_report is None:
+                    teardown_report = {}
+                teardown_report['analysis_run_error'] = str(exc)
+
     report = {
         'status': 'ok' if not errors else 'error',
         'mode': 'run',
@@ -4882,12 +7029,16 @@ def _run_full_lifecycle(
         'runtime_verify': runtime_verify_report,
         'monitor': monitor_report,
         'report': analytics_report,
+        'strategy_proof': strategy_proof_report,
+        'performance': performance_report,
+        'run_summary': run_summary_report,
+        'gate_input': gate_input_report,
         'fill_price_error_budget': fill_price_error_budget_report,
         'teardown': teardown_report,
         'rollouts': rollouts_report,
         'errors': errors,
     }
-    run_manifest_path = _state_paths(resources)[1]
+    run_manifest_path = _state_paths(resources, manifest)[1]
     if apply_report is not None:
         updated_apply_report = dict(apply_report)
         updated_apply_report['replay'] = replay_report
@@ -4908,21 +7059,42 @@ def _run_full_lifecycle(
     )
     completion_trace_path = _artifact_path(resources, 'completion-trace.json')
     _save_json(completion_trace_path, completion_trace)
+    gate_row_ids: dict[str, Any] = {}
+    completion_trace_db_refs = _as_mapping(completion_trace.get('db_row_refs'))
     runtime_session_factory, runtime_engine = _runtime_sessionmaker(postgres_config)
     try:
-        with runtime_session_factory() as session:
-            gate_row_ids = persist_completion_trace(
-                session=session,
-                trace_payload=completion_trace,
-                default_artifact_ref=str(completion_trace_path),
-            )
-            session.commit()
+        try:
+            with runtime_session_factory() as session:
+                gate_row_ids = persist_completion_trace(
+                    session=session,
+                    trace_payload=completion_trace,
+                    default_artifact_ref=str(completion_trace_path),
+                )
+                session.commit()
+        except Exception as exc:
+            completion_trace_db_refs['completion_gate_persist_error'] = str(exc)
+            errors.append(f'completion_trace_persist:{exc}')
     finally:
         runtime_engine.dispose()
-    updated_db_refs = _as_mapping(completion_trace.get('db_row_refs'))
-    updated_db_refs['completion_gate_row_ids'] = gate_row_ids
-    completion_trace['db_row_refs'] = updated_db_refs
+    completion_trace_db_refs['completion_gate_row_ids'] = gate_row_ids
+    completion_trace['db_row_refs'] = completion_trace_db_refs
     _save_json(completion_trace_path, completion_trace)
+    if errors:
+        error_payload = {
+            'errors': errors,
+            'completion_trace_path': str(completion_trace_path),
+        }
+        for component in SIMULATION_PROGRESS_COMPONENTS:
+            _upsert_simulation_progress_row(
+                postgres_config=postgres_config,
+                resources=resources,
+                component=component,
+                status='failed',
+                terminal_state='complete',
+                last_error_code='simulation_run_failed',
+                last_error_message='; '.join(errors),
+                payload=error_payload,
+            )
     if errors:
         raise RuntimeError('simulation_run_failed:' + '; '.join(errors))
     return report
@@ -4968,6 +7140,7 @@ def main() -> None:
         strict_coverage_ratio=window.get('strict_coverage_ratio'),
     )
     resources = _build_resources(args.run_id, manifest)
+    manifest = _canonicalize_warm_lane_manifest(manifest, resources=resources)
     _log_script_event(
         'resources_built',
         run_token=resources.run_token,
@@ -5015,12 +7188,18 @@ def main() -> None:
     )
     postgres_config = _build_postgres_runtime_config(
         manifest,
-        simulation_db=f'torghut_sim_{resources.run_token}',
+        simulation_db=_default_simulation_postgres_db(resources),
     )
+    if resources.warm_lane_enabled:
+        postgres_config = _resolve_warm_lane_runtime_postgres_config(
+            resources=resources,
+            postgres_config=postgres_config,
+        )
     _log_script_event(
         'postgres_config_ready',
         admin_dsn=_redact_dsn_credentials(postgres_config.admin_dsn),
         simulation_dsn=_redact_dsn_credentials(postgres_config.simulation_dsn),
+        runtime_simulation_dsn=_redact_dsn_credentials(postgres_config.torghut_runtime_dsn),
         simulation_db=postgres_config.simulation_db,
         migration_command=postgres_config.migrations_command,
     )

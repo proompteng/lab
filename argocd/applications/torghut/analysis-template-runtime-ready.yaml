@@ -15,6 +15,8 @@ spec:
     - name: forecastService
     - name: windowStart
     - name: windowEnd
+    - name: signalTable
+    - name: priceTable
     - name: runtimeVerifyTimeoutSeconds
     - name: runtimeVerifyPollSeconds
   metrics:
@@ -30,7 +32,7 @@ spec:
                 restartPolicy: Never
                 containers:
                   - name: analysis
-                    image: registry.ide-newton.ts.net/lab/torghut@sha256:bb70f75a67894c73d30c28b8d8b2f24e99d86b2d530200dc659810b1c2c22694
+                    image: registry.ide-newton.ts.net/lab/torghut@sha256:ae64f2c5fb30273abfb4b1a8f8e1b89d9ceeb2c8c14f0522fd017cf2e6661850
                     imagePullPolicy: IfNotPresent
                     command:
                       - /bin/bash
@@ -48,6 +50,8 @@ spec:
                         --forecast-service "{{args.forecastService}}"
                         --window-start "{{args.windowStart}}"
                         --window-end "{{args.windowEnd}}"
+                        --signal-table "{{args.signalTable}}"
+                        --price-table "{{args.priceTable}}"
                         --runtime-timeout-seconds "{{args.runtimeVerifyTimeoutSeconds}}"
                         --runtime-poll-seconds "{{args.runtimeVerifyPollSeconds}}"
                         --json

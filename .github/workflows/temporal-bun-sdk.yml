@@ -106,6 +106,13 @@ jobs:
               ;;
           esac
 
+      - name: Verify ARC Tailscale short host
+        run: |
+          if ! getent hosts temporal-grpc >/dev/null; then
+            echo "temporal-grpc must resolve on ARC runners via Tailscale search domains."
+            exit 1
+          fi
+
       - name: Run Oxfmt check (temporal-bun-sdk)
         run: bunx oxfmt --check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests
 

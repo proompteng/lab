@@ -218,6 +218,27 @@ class TestTradingMetrics(TestCase):
         self.assertIn("torghut_trading_execution_clean_ratio 0.8", payload)
         self.assertIn("torghut_trading_execution_reject_ratio 0.2", payload)
 
+    def test_submission_block_and_decision_state_metrics_are_exported(self) -> None:
+        metrics = TradingMetrics()
+        metrics.record_submission_block("capital_stage_shadow")
+        metrics.record_decision_state("blocked")
+        metrics.observe_planned_decision_age(17)
+
+        payload = render_trading_metrics(metrics.__dict__)
+
+        self.assertIn(
+            'torghut_trading_submission_block_total{reason="capital_stage_shadow"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_decision_state_total{status="blocked"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_planned_decision_age_seconds{service="torghut"} 17',
+            payload,
+        )
+
     def test_committee_metrics_are_exported(self) -> None:
         metrics = TradingMetrics()
         metrics.record_llm_committee_member(
@@ -642,3 +663,64 @@ class TestTradingMetrics(TestCase):
             payload,
         )
         self.assertIn("# TYPE torghut_trading_shorts_enabled gauge", payload)
+
+    def test_quantity_and_execution_observability_metrics_are_exported(self) -> None:
+        metrics = TradingMetrics()
+        metrics.feature_quality_reject_reason_total["non_monotonic_progression"] = 1
+        metrics.feature_quality_cursor_commit_blocked_total[
+            "non_monotonic_progression"
+        ] = 1
+        metrics.signal_batch_order_violation_total = 1
+        metrics.qty_resolution_total[
+            "decision|integer|sell_inventory_unknown_integer_only"
+        ] = 2
+        metrics.sell_inventory_context_total["execution|unknown"] = 1
+        metrics.execution_local_reject_total[
+            "local_qty_invalid_increment|qty_increment_invalid_step_1"
+        ] = 3
+        metrics.execution_submit_attempt_total["simulation|sell|equity"] = 4
+        metrics.execution_submit_result_total["rejected|simulation"] = 2
+        metrics.execution_validation_mismatch_total = 1
+        metrics.simulation_position_state_total["short"] = 1
+        metrics.simulation_preflight_failure_total["schema_registry_not_ready"] = 1
+
+        payload = render_trading_metrics(metrics.__dict__)
+
+        self.assertIn(
+            'torghut_trading_feature_quality_reject_reason_total{reason="non_monotonic_progression"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_feature_quality_cursor_commit_blocked_total{reason="non_monotonic_progression"} 1',
+            payload,
+        )
+        self.assertIn("torghut_trading_signal_batch_order_violation_total 1", payload)
+        self.assertIn(
+            'torghut_trading_qty_resolution_total{stage="decision",outcome="integer",reason="sell_inventory_unknown_integer_only"} 2',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_sell_inventory_context_total{stage="execution",context="unknown"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_execution_local_reject_total{code="local_qty_invalid_increment",reason="qty_increment_invalid_step_1"} 3',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_execution_submit_attempt_total{adapter="simulation",side="sell",asset_class="equity"} 4',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_execution_submit_result_total{status="rejected",adapter="simulation"} 2',
+            payload,
+        )
+        self.assertIn("torghut_trading_execution_validation_mismatch_total 1", payload)
+        self.assertIn(
+            'torghut_trading_simulation_position_state_total{state="short"} 1',
+            payload,
+        )
+        self.assertIn(
+            'torghut_trading_simulation_preflight_failure_total{reason="schema_registry_not_ready"} 1',
+            payload,
+        )

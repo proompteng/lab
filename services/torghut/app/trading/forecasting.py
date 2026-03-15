@@ -524,7 +524,10 @@ def _post_forecast_request(
     api_key: str | None,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    body = json.dumps(payload, separators=(',', ':')).encode('utf-8')
+    body = json.dumps(
+        _json_safe_payload(payload),
+        separators=(',', ':'),
+    ).encode('utf-8')
     headers = {
         'accept': 'application/json',
         'content-type': 'application/json',
@@ -554,6 +557,24 @@ def _post_forecast_request(
     if not isinstance(loaded, dict):
         raise RuntimeError('forecast_provider_invalid_payload')
     return cast(dict[str, Any], loaded)
+
+
+def _json_safe_payload(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, dict):
+        value_map = cast(dict[str, Any], value)
+        normalized: dict[str, Any] = {}
+        for key in value_map:
+            normalized[str(key)] = _json_safe_payload(value_map[key])
+        return normalized
+    if isinstance(value, (list, tuple)):
+        sequence = cast(list[Any] | tuple[Any, ...], value)
+        normalized_items: list[Any] = []
+        for item in sequence:
+            normalized_items.append(_json_safe_payload(item))
+        return normalized_items
+    return value
 
 
 def _coerce_http_forecast_output(

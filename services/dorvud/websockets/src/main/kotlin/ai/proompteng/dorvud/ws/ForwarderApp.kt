@@ -34,6 +34,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
@@ -67,6 +68,8 @@ import kotlin.system.exitProcess
 
 private val logger = KotlinLogging.logger {}
 private val marketSessionZoneId: ZoneId = ZoneId.of("America/New_York")
+private const val DEFAULT_ALPACA_BARS_BACKFILL_LOOKBACK_HOURS = 12L
+private const val ALPACA_BARS_BACKFILL_LIMIT = 10_000
 
 internal fun alpacaMarketDataStreamUrl(config: ForwarderConfig): String =
   when (config.alpacaMarketType) {
@@ -86,12 +89,65 @@ internal fun alpacaBarsBackfillUrl(config: ForwarderConfig): String =
 
 internal fun alpacaBarsBackfillNeedsFeed(config: ForwarderConfig): Boolean = config.alpacaMarketType != AlpacaMarketType.CRYPTO
 
+internal fun alpacaBarsBackfillFeed(config: ForwarderConfig): String? =
+  when {
+    !alpacaBarsBackfillNeedsFeed(config) -> null
+    config.alpacaFeed.equals("overnight", ignoreCase = true) -> "boats"
+    else -> config.alpacaFeed
+  }
+
+internal data class AlpacaBarsBackfillWindow(
+  val start: Instant,
+  val end: Instant,
+)
+
+internal fun alpacaBarsBackfillWindow(
+  now: Instant,
+  lookbackHours: Long = DEFAULT_ALPACA_BARS_BACKFILL_LOOKBACK_HOURS,
+): AlpacaBarsBackfillWindow =
+  AlpacaBarsBackfillWindow(
+    start = now.minus(Duration.ofHours(lookbackHours)),
+    end = now,
+  )
+
+internal data class AlpacaBarsBackfillQuery(
+  val symbols: String,
+  val timeframe: String,
+  val start: String,
+  val end: String,
+  val limit: String,
+  val sort: String,
+  val feed: String?,
+  val pageToken: String?,
+)
+
+internal fun alpacaBarsBackfillQuery(
+  config: ForwarderConfig,
+  symbols: List<String>,
+  now: Instant,
+  pageToken: String? = null,
+): AlpacaBarsBackfillQuery {
+  val window = alpacaBarsBackfillWindow(now, config.barsBackfillLookbackHours)
+  return AlpacaBarsBackfillQuery(
+    symbols = symbols.joinToString(","),
+    timeframe = "1Min",
+    start = window.start.toString(),
+    end = window.end.toString(),
+    limit = ALPACA_BARS_BACKFILL_LIMIT.toString(),
+    sort = "asc",
+    feed = alpacaBarsBackfillFeed(config),
+    pageToken = pageToken,
+  )
+}
+
 internal fun alpacaMarketDataChannels(config: ForwarderConfig): List<String> = config.alpacaMarketDataChannels
 
 @Serializable
 internal data class AlpacaBarsResponse(
   val bars: JsonElement? = null,
   val symbol: String? = null,
+  @SerialName("next_page_token")
+  val nextPageToken: String? = null,
 )
 
 internal fun decodeAlpacaBarsResponse(
@@ -793,13 +849,21 @@ class ForwarderApp(
     if (!backfillDone.compareAndSet(false, true)) return
 
     try {
+      val requestNow = Instant.ofEpochMilli(nowMs())
+      val window = alpacaBarsBackfillWindow(requestNow, config.barsBackfillLookbackHours)
       val bars = fetchBackfillBars(symbols)
       if (bars.isEmpty()) {
-        logger.warn { "backfill returned 0 bars" }
+        logger.warn {
+          "backfill returned 0 bars lookback_hours=${config.barsBackfillLookbackHours} " +
+            "feed=${alpacaBarsBackfillFeed(config) ?: "none"} start=${window.start} end=${window.end}"
+        }
         return
       }
 
-      logger.info { "backfill sending ${bars.size} bars" }
+      logger.info {
+        "backfill sending ${bars.size} bars lookback_hours=${config.barsBackfillLookbackHours} " +
+          "feed=${alpacaBarsBackfillFeed(config) ?: "none"} start=${window.start} end=${window.end}"
+      }
       bars.forEach { bar ->
         val env =
           Envelope(
@@ -832,34 +896,46 @@ class ForwarderApp(
   private suspend fun fetchBackfillBarsChunk(symbols: List<String>): List<AlpacaBar> {
     if (symbols.isEmpty()) return emptyList()
     val url = alpacaBarsBackfillUrl(config)
+    val requestNow = Instant.ofEpochMilli(nowMs())
+    val bars = mutableListOf<AlpacaBar>()
+    var pageToken: String? = null
 
-    val response =
-      decodeAlpacaBarsResponse(
-        httpClient
-          .get(url) {
-            parameter("symbols", symbols.joinToString(","))
-            parameter("timeframe", "1Min")
-            parameter("limit", "100")
-            if (alpacaBarsBackfillNeedsFeed(config)) {
-              parameter("feed", config.alpacaFeed)
+    do {
+      val query = alpacaBarsBackfillQuery(config, symbols, requestNow, pageToken)
+      val response =
+        decodeAlpacaBarsResponse(
+          httpClient
+            .get(url) {
+              parameter("symbols", query.symbols)
+              parameter("timeframe", query.timeframe)
+              parameter("start", query.start)
+              parameter("end", query.end)
+              parameter("limit", query.limit)
+              parameter("sort", query.sort)
+              query.feed?.let { parameter("feed", it) }
+              query.pageToken?.let { parameter("page_token", it) }
+              header("APCA-API-KEY-ID", config.alpacaKeyId)
+              header("APCA-API-SECRET-KEY", config.alpacaSecretKey)
+            }.body(),
+          json,
+        )
+
+      val pageBars =
+        when (val barsElement = response.bars) {
+          null -> emptyList()
+          is JsonArray -> decodeBarsArray(barsElement, response.symbol)
+          is JsonObject ->
+            barsElement.entries.flatMap { (symbol, entry) ->
+              val arr = entry as? JsonArray ?: return@flatMap emptyList()
+              decodeBarsArray(arr, symbol)
             }
-            header("APCA-API-KEY-ID", config.alpacaKeyId)
-            header("APCA-API-SECRET-KEY", config.alpacaSecretKey)
-          }.body(),
-        json,
-      )
-
-    val barsElement = response.bars ?: return emptyList()
-
-    return when (barsElement) {
-      is JsonArray -> decodeBarsArray(barsElement, response.symbol)
-      is JsonObject ->
-        barsElement.entries.flatMap { (symbol, entry) ->
-          val arr = entry as? JsonArray ?: return@flatMap emptyList()
-          decodeBarsArray(arr, symbol)
+          else -> emptyList()
         }
-      else -> emptyList()
-    }
+      bars += pageBars
+      pageToken = response.nextPageToken
+    } while (pageToken != null)
+
+    return bars
   }
 
   private fun decodeBarsArray(

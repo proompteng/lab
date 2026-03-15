@@ -27,13 +27,13 @@ from .route_metadata import resolve_order_route_metadata
 from .execution_policy import should_retry_order_error
 from .models import ExecutionRequest, StrategyDecision, decision_hash
 from .quantity_rules import (
-    fractional_equities_enabled_for_trade,
     min_qty_for_symbol,
     quantize_qty_for_symbol,
     qty_has_valid_increment,
     qty_step_for_symbol,
+    resolve_quantity_resolution,
 )
-from .simulation import resolve_simulation_context
+from .simulation import resolve_event_persisted_at, resolve_simulation_context, simulation_context_enabled
 from .time_source import trading_now
 from .tca import upsert_execution_tca_metric
 
@@ -87,7 +87,10 @@ class OrderExecutor:
             rationale=decision.rationale,
             status="planned",
             decision_hash=digest,
-            created_at=decision.event_ts if settings.trading_simulation_enabled else trading_now(account_label=account_label),
+            created_at=resolve_event_persisted_at(
+                event_ts=decision.event_ts,
+                account_label=account_label,
+            ),
         )
         session.add(decision_row)
         try:
@@ -172,13 +175,13 @@ class OrderExecutor:
             stop_price=decision.stop_price,
             client_order_id=decision_row.decision_hash,
         )
-        fractional_equities_enabled = self._fractional_equities_enabled_for_request(
+        quantity_resolution = self._quantity_resolution_for_request(
             execution_client,
             request,
         )
         pre_submit_error = _validate_pre_submit_request(
             request,
-            fractional_equities_enabled=fractional_equities_enabled,
+            quantity_resolution=quantity_resolution,
         )
         if pre_submit_error is not None:
             raise RuntimeError(json.dumps(pre_submit_error))
@@ -212,7 +215,9 @@ class OrderExecutor:
                 self._resolve_sell_inventory_conflict(
                     request,
                     conflict=sell_inventory_conflict,
-                    fractional_equities_enabled=fractional_equities_enabled,
+                    fractional_equities_enabled=bool(
+                        quantity_resolution.fractional_allowed
+                    ),
                 )
             )
             sell_inventory_recovery: dict[str, Any] | None = None
@@ -226,7 +231,9 @@ class OrderExecutor:
                     execution_client=execution_client,
                     request=request,
                     conflict=unresolved_conflict,
-                    fractional_equities_enabled=fractional_equities_enabled,
+                    fractional_equities_enabled=bool(
+                        quantity_resolution.fractional_allowed
+                    ),
                 )
             if unresolved_conflict is not None:
                 if sell_inventory_recovery is not None:
@@ -293,7 +300,10 @@ class OrderExecutor:
             decision_row,
             execution,
             account_label,
-            submitted_at=decision.event_ts if settings.trading_simulation_enabled else trading_now(account_label=account_label),
+            submitted_at=resolve_event_persisted_at(
+                event_ts=decision.event_ts,
+                account_label=account_label,
+            ),
             status_override="submitted",
         )
         session.add(decision_row)
@@ -428,6 +438,9 @@ class OrderExecutor:
     ) -> None:
         decision_row.status = "rejected"
         decision_json = _coerce_json(decision_row.decision_json)
+        decision_json["submission_stage"] = str(
+            decision_json.get("submission_stage") or "rejected"
+        )
         existing = decision_json.get("risk_reasons")
         if isinstance(existing, list):
             risk_reasons = [str(item) for item in cast(list[Any], existing)]
@@ -453,9 +466,31 @@ class OrderExecutor:
             for atomic_reason in reject_atomic
         ):
             decision_json["sizing_debug"] = sizing_debug
-        if metadata_update:
-            for key, value in metadata_update.items():
-                decision_json[key] = coerce_json_payload(value)
+        _merge_decision_metadata(decision_json, metadata_update)
+        decision_row.decision_json = decision_json
+        session.add(decision_row)
+        session.commit()
+
+    def mark_blocked(
+        self,
+        session: Session,
+        decision_row: TradeDecision,
+        reason: str,
+        metadata_update: Mapping[str, Any] | None = None,
+    ) -> None:
+        decision_row.status = "blocked"
+        decision_json = _coerce_json(decision_row.decision_json)
+        decision_json["submission_block_reason"] = reason
+        decision_json["submission_stage"] = str(
+            decision_json.get("submission_stage") or "blocked"
+        )
+        block_atomic = _merge_unique_strings(
+            _coerce_string_list(decision_json.get("submission_block_atomic")),
+            _normalize_submission_block_reasons(reason),
+        )
+        if block_atomic:
+            decision_json["submission_block_atomic"] = block_atomic
+        _merge_decision_metadata(decision_json, metadata_update)
         decision_row.decision_json = decision_json
         session.add(decision_row)
         session.commit()
@@ -773,16 +808,17 @@ class OrderExecutor:
             return Decimal("0")
         return remaining
 
-    def _fractional_equities_enabled_for_request(
+    def _quantity_resolution_for_request(
         self,
         execution_client: Any,
         request: ExecutionRequest,
-    ) -> bool:
+    ) -> Any:
         position_qty = self._position_qty_for_symbol(
             execution_client,
             request.symbol.strip().upper(),
         )
-        return fractional_equities_enabled_for_trade(
+        return resolve_quantity_resolution(
+            request.symbol,
             action=request.side,
             global_enabled=settings.trading_fractional_equities_enabled,
             allow_shorts=settings.trading_allow_shorts,
@@ -1132,6 +1168,26 @@ def _merge_unique_strings(existing: list[str], updates: list[str]) -> list[str]:
     return merged
 
 
+def _merge_decision_metadata(
+    decision_json: dict[str, Any],
+    metadata_update: Mapping[str, Any] | None,
+) -> None:
+    if not metadata_update:
+        return
+    for key, value in metadata_update.items():
+        if key == "control_plane_snapshot" and isinstance(value, Mapping):
+            existing_snapshot = _coerce_json(decision_json.get("control_plane_snapshot"))
+            for snapshot_key, snapshot_value in cast(Mapping[object, Any], value).items():
+                existing_snapshot[str(snapshot_key)] = coerce_json_payload(
+                    snapshot_value
+                )
+            decision_json["control_plane_snapshot"] = coerce_json_payload(
+                existing_snapshot
+            )
+            continue
+        decision_json[str(key)] = coerce_json_payload(value)
+
+
 class _NormalizedRejectReason(NamedTuple):
     atomic_reason: str
     reject_class: str
@@ -1173,6 +1229,16 @@ def _normalize_reject_reasons(reason: str) -> list[_NormalizedRejectReason]:
     return [_normalize_reject_reason(part.strip()) for part in reason.split(";") if part.strip()]
 
 
+def _normalize_submission_block_reasons(reason: str) -> list[str]:
+    return [
+        normalized
+        for normalized in (
+            part.strip().replace(" ", "_").lower() for part in reason.split(";")
+        )
+        if normalized
+    ]
+
+
 def _extract_sizing_debug(decision_json: Mapping[str, Any]) -> dict[str, Any]:
     params = decision_json.get("params")
     if not isinstance(params, Mapping):
@@ -1210,7 +1276,7 @@ def _decision_state_payload(decision: StrategyDecision) -> dict[str, Any]:
 def _validate_pre_submit_request(
     request: ExecutionRequest,
     *,
-    fractional_equities_enabled: bool,
+    quantity_resolution: Any,
 ) -> dict[str, Any] | None:
     if request.qty <= 0:
         return {
@@ -1219,9 +1285,11 @@ def _validate_pre_submit_request(
             "reject_reason": "qty must be positive",
             "symbol": request.symbol,
             "qty": str(request.qty),
+            "quantity_resolution": quantity_resolution.to_payload(),
         }
     min_qty = min_qty_for_symbol(
-        request.symbol, fractional_equities_enabled=fractional_equities_enabled
+        request.symbol,
+        fractional_equities_enabled=bool(quantity_resolution.fractional_allowed),
     )
     if request.qty < min_qty:
         return {
@@ -1231,19 +1299,21 @@ def _validate_pre_submit_request(
             "symbol": request.symbol,
             "qty": str(request.qty),
             "min_qty": str(min_qty),
+            "quantity_resolution": quantity_resolution.to_payload(),
         }
     if not qty_has_valid_increment(
         request.symbol,
         request.qty,
-        fractional_equities_enabled=fractional_equities_enabled,
+        fractional_equities_enabled=bool(quantity_resolution.fractional_allowed),
     ):
         step = qty_step_for_symbol(
-            request.symbol, fractional_equities_enabled=fractional_equities_enabled
+            request.symbol,
+            fractional_equities_enabled=bool(quantity_resolution.fractional_allowed),
         )
         quantized_qty = quantize_qty_for_symbol(
             request.symbol,
             request.qty,
-            fractional_equities_enabled=fractional_equities_enabled,
+            fractional_equities_enabled=bool(quantity_resolution.fractional_allowed),
         )
         return {
             "source": "local_pre_submit",
@@ -1253,6 +1323,7 @@ def _validate_pre_submit_request(
             "qty": str(request.qty),
             "qty_step": str(step),
             "quantized_qty": str(quantized_qty),
+            "quantity_resolution": quantity_resolution.to_payload(),
         }
     return None
 
@@ -1347,7 +1418,7 @@ def _resolve_submission_simulation_context(
     decision_row: TradeDecision,
 ) -> dict[str, Any] | None:
     adapter_name = str(getattr(execution_client, "name", "") or "").strip().lower()
-    if adapter_name != "simulation" and not settings.trading_simulation_enabled:
+    if adapter_name != "simulation" and not simulation_context_enabled():
         return None
     source_context = decision.params.get("simulation_context")
     source_context_payload: dict[str, Any] | None = None
@@ -1404,8 +1475,12 @@ def _apply_execution_status(
     submitted_at: Optional[datetime] = None,
     status_override: Optional[str] = None,
 ) -> None:
-    decision_row.status = status_override or execution.status or "submitted"
+    applied_status = status_override or execution.status or "submitted"
+    decision_row.status = applied_status
     decision_row.alpaca_account_label = account_label
+    decision_json = _coerce_json(decision_row.decision_json)
+    decision_json["submission_stage"] = applied_status
+    decision_row.decision_json = decision_json
     if submitted_at is not None and decision_row.executed_at is None:
         decision_row.executed_at = submitted_at
     if execution.status == "filled" and decision_row.executed_at is None:

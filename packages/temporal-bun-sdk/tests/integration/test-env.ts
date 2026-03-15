@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import { Effect, Exit } from 'effect'
 
 import { loadTemporalConfig } from '../../src/config'
@@ -9,7 +11,6 @@ import type { IntegrationHarness } from './harness'
 import {
   createIntegrationHarness,
   findTemporalCliUnavailableError,
-  TemporalCliUnavailableError,
   TemporalCliCommandError,
 } from './harness'
 import { integrationActivities, integrationWorkflows } from './workflows'
@@ -30,7 +31,7 @@ export interface IntegrationTestEnv {
 export const CLI_CONFIG = {
   address: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
   namespace: process.env.TEMPORAL_NAMESPACE ?? 'default',
-  taskQueue: process.env.TEMPORAL_TASK_QUEUE ?? 'temporal-bun-integration',
+  taskQueue: process.env.TEMPORAL_TASK_QUEUE ?? `temporal-bun-integration-${randomUUID()}`,
 }
 
 const isLoopbackTemporalAddress = (address: string): boolean => {
@@ -145,9 +146,10 @@ const setupIntegrationTestEnv = async (): Promise<IntegrationTestEnv> => {
         harness.runScenario(name, () => Effect.tryPromise(scenario)),
       )
     } catch (error) {
-      if (error instanceof TemporalCliUnavailableError) {
+      const unavailable = findTemporalCliUnavailableError(error)
+      if (unavailable) {
         cliUnavailable = true
-        console.warn(`[temporal-bun-sdk] skipped integration scenario ${name}: ${error.message}`)
+        console.warn(`[temporal-bun-sdk] skipped integration scenario ${name}: ${unavailable.message}`)
         return undefined
       }
       console.error(

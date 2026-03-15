@@ -1966,6 +1966,106 @@ class TradeCursor(Base, TimestampMixin):
     )
 
 
+class SimulationRuntimeContext(Base, TimestampMixin):
+    """Explicit simulation runtime context keyed by lane + account label."""
+
+    __tablename__ = "simulation_runtime_context"
+
+    lane: Mapped[str] = mapped_column(String(length=32), primary_key=True)
+    account_label: Mapped[str] = mapped_column(String(length=64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    dataset_id: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    window_start: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    window_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    cache_key: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    cache_artifact_path: Mapped[Optional[str]] = mapped_column(String(length=512), nullable=True)
+    cache_manifest_path: Mapped[Optional[str]] = mapped_column(String(length=512), nullable=True)
+    warm_lane_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    metadata_json: Mapped[Any] = mapped_column(
+        JSONType,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'"),
+    )
+
+    __table_args__ = (
+        Index("ix_simulation_runtime_context_run", "run_id"),
+        Index("ix_simulation_runtime_context_updated_at", "updated_at"),
+    )
+
+
+class SimulationRunProgress(Base, TimestampMixin):
+    """Durable runtime progress ledger for historical simulation runs."""
+
+    __tablename__ = "simulation_run_progress"
+
+    run_id: Mapped[str] = mapped_column(String(length=128), primary_key=True)
+    component: Mapped[str] = mapped_column(String(length=32), primary_key=True)
+    dataset_id: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    lane: Mapped[str] = mapped_column(
+        String(length=32),
+        nullable=False,
+        default="equity",
+        server_default=text("'equity'"),
+    )
+    workflow_name: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(length=32),
+        nullable=False,
+        default="pending",
+        server_default=text("'pending'"),
+    )
+    last_source_ts: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_signal_ts: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_price_ts: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    cursor_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    records_dumped: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, default=0, server_default=text("0")
+    )
+    records_replayed: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, default=0, server_default=text("0")
+    )
+    trade_decisions: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, default=0, server_default=text("0")
+    )
+    executions: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, default=0, server_default=text("0")
+    )
+    execution_tca_metrics: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, default=0, server_default=text("0")
+    )
+    execution_order_events: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, default=0, server_default=text("0")
+    )
+    strategy_type: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    legacy_path_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, default=0, server_default=text("0")
+    )
+    fallback_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, default=0, server_default=text("0")
+    )
+    terminal_state: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    last_error_code: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    last_error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    payload_json: Mapped[Any] = mapped_column(
+        JSONType,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'"),
+    )
+
+    __table_args__ = (
+        Index("ix_simulation_run_progress_status", "status"),
+        Index("ix_simulation_run_progress_updated_at", "updated_at"),
+        Index("ix_simulation_run_progress_dataset", "dataset_id"),
+    )
+
+
 class LLMDSPyWorkflowArtifact(Base, TimestampMixin):
     """DSPy compile/eval/promotion artifact + AgentRun audit record."""
 
@@ -2090,6 +2190,8 @@ __all__ = [
     "PositionSnapshot",
     "ToolRunLog",
     "TradeCursor",
+    "SimulationRuntimeContext",
+    "SimulationRunProgress",
     "ResearchRun",
     "ResearchCandidate",
     "ResearchFoldMetrics",

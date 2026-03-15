@@ -16,7 +16,7 @@ spec:
   template:
     metadata:
       annotations:
-        client.knative.dev/updateTimestamp: "2026-03-09T04:57:54Z"
+        client.knative.dev/updateTimestamp: "2026-03-15T06:24:12Z"
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/target: "80"
@@ -26,7 +26,7 @@ spec:
       containers:
         - name: user-container
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:bb70f75a67894c73d30c28b8d8b2f24e99d86b2d530200dc659810b1c2c22694
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:ae64f2c5fb30273abfb4b1a8f8e1b89d9ceeb2c8c14f0522fd017cf2e6661850
           ports:
             - name: http1
               containerPort: 8181
@@ -101,6 +101,8 @@ spec:
               value: "true"
             - name: TRADING_MODE
               value: live
+            - name: TRADING_AUTONOMY_ENABLED
+              value: "false"
             - name: TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION
               value: "false"
             - name: TRADING_ACCOUNT_LABEL
@@ -294,6 +296,10 @@ spec:
                 secretKeyRef:
                   name: torghut-whitepapers
                   key: AWS_SECRET_ACCESS_KEY
+            - name: WHITEPAPER_CEPH_CONFIG_DIR
+              value: /etc/torghut/whitepapers-config
+            - name: WHITEPAPER_CEPH_SECRET_DIR
+              value: /etc/torghut/whitepapers-secret
             - name: WHITEPAPER_AGENTRUN_AUTO_DISPATCH
               value: "true"
             - name: WHITEPAPER_AGENTRUN_NAMESPACE
@@ -456,9 +462,9 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.563.0-51-g4512c5c4
+              value: v0.564.0-171-g70d2ad8e
             - name: TORGHUT_COMMIT
-              value: 4512c5c4be4bf30d36bc275da540e10ca6335d2b
+              value: 70d2ad8e60c79f84c23356fee9a806b5a388cd6d
           envFrom:
             - configMapRef:
                 name: torghut-autonomy-config
@@ -491,6 +497,12 @@ spec:
             - name: autonomy-gate-policy
               mountPath: /etc/torghut/autonomy
               readOnly: true
+            - name: whitepapers-config
+              mountPath: /etc/torghut/whitepapers-config
+              readOnly: true
+            - name: whitepapers-secret
+              mountPath: /etc/torghut/whitepapers-secret
+              readOnly: true
       volumes:
         - name: strategy-config
           configMap:
@@ -498,3 +510,9 @@ spec:
         - name: autonomy-gate-policy
           configMap:
             name: torghut-autonomy-gate-policy
+        - name: whitepapers-config
+          configMap:
+            name: torghut-whitepapers
+        - name: whitepapers-secret
+          secret:
+            secretName: torghut-whitepapers

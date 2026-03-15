@@ -1,0 +1,31 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: headlamp
+  namespace: headlamp
+spec:
+  rules:
+    - host: headlamp.ide-newton.ts.net
+      http:
+        paths:
+          - path: /auth
+            pathType: Prefix
+            backend:
+              service:
+                name: headlamp-auth-bridge
+                port:
+                  number: 8080
+          - path: /clusters
+            pathType: Prefix
+            backend:
+              service:
+                name: headlamp-auth-bridge
+                port:
+                  number: 8080
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: headlamp
+                port:
+                  number: 80

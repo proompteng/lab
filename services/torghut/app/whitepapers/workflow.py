@@ -43,6 +43,60 @@ from ..models import (
 
 logger = logging.getLogger(__name__)
 
+_WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR = '/etc/torghut/whitepapers-config'
+_WHITEPAPER_CEPH_DEFAULT_SECRET_DIR = '/etc/torghut/whitepapers-secret'
+
+
+def _read_text_file(path: str | None) -> str | None:
+    if path is None:
+        return None
+    normalized = path.strip()
+    if not normalized:
+        return None
+    try:
+        with open(normalized, encoding='utf-8') as handle:
+            payload = handle.read().strip()
+    except OSError:
+        return None
+    return payload or None
+
+
+def _mounted_or_env_value(
+    *,
+    env_name: str,
+    mounted_key: str,
+    dir_env_name: str,
+    default_dir: str,
+    fallback_env_names: tuple[str, ...] = (),
+) -> str | None:
+    mounted_dir = _str_env(dir_env_name, default_dir) or default_dir
+    mounted_value = _read_text_file(os.path.join(mounted_dir, mounted_key))
+    if mounted_value is not None:
+        return mounted_value
+
+    direct_value = _str_env(env_name)
+    if direct_value is not None:
+        return direct_value
+
+    for fallback_name in fallback_env_names:
+        fallback_value = _str_env(fallback_name)
+        if fallback_value is not None:
+            return fallback_value
+    return None
+
+
+def _whitepaper_ceph_bucket_name() -> str:
+    return (
+        _mounted_or_env_value(
+            env_name='WHITEPAPER_CEPH_BUCKET',
+            mounted_key='BUCKET_NAME',
+            dir_env_name='WHITEPAPER_CEPH_CONFIG_DIR',
+            default_dir=_WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR,
+            fallback_env_names=('BUCKET_NAME',),
+        )
+        or 'torghut-whitepapers'
+    )
+
 def _http_request_bytes(
     url: str,
     *,
@@ -315,6 +369,25 @@ def normalize_attachment_url(url: str) -> str:
     return normalized.geturl()
 
 
+def github_issue_number_from_url(issue_url: str, repository: str) -> int | None:
+    trimmed_url = issue_url.strip()
+    trimmed_repository = repository.strip().strip("/")
+    if not trimmed_url or not trimmed_repository:
+        return None
+    match = re.match(
+        rf"^https://github\.com/{re.escape(trimmed_repository)}/issues/(\d+)(?:[/?#].*)?$",
+        trimmed_url,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    try:
+        number = int(match.group(1))
+    except ValueError:
+        return None
+    return number if number > 0 else None
+
+
 def build_whitepaper_run_id(*, source_identifier: str, attachment_url: str) -> str:
     run_seed = f"{source_identifier}|{normalize_attachment_url(attachment_url)}"
     return f"wp-{hashlib.sha256(run_seed.encode('utf-8')).hexdigest()[:24]}"
@@ -476,19 +549,43 @@ class CephS3Client:
 
     @classmethod
     def from_env(cls) -> CephS3Client | None:
-        endpoint = _str_env("WHITEPAPER_CEPH_ENDPOINT")
-        access_key = _str_env("WHITEPAPER_CEPH_ACCESS_KEY") or _str_env("AWS_ACCESS_KEY_ID")
-        secret_key = _str_env("WHITEPAPER_CEPH_SECRET_KEY") or _str_env("AWS_SECRET_ACCESS_KEY")
-        region = _str_env("WHITEPAPER_CEPH_REGION", "us-east-1") or "us-east-1"
+        endpoint = _str_env('WHITEPAPER_CEPH_ENDPOINT')
+        access_key = _mounted_or_env_value(
+            env_name='WHITEPAPER_CEPH_ACCESS_KEY',
+            mounted_key='AWS_ACCESS_KEY_ID',
+            dir_env_name='WHITEPAPER_CEPH_SECRET_DIR',
+            default_dir=_WHITEPAPER_CEPH_DEFAULT_SECRET_DIR,
+            fallback_env_names=('AWS_ACCESS_KEY_ID',),
+        )
+        secret_key = _mounted_or_env_value(
+            env_name='WHITEPAPER_CEPH_SECRET_KEY',
+            mounted_key='AWS_SECRET_ACCESS_KEY',
+            dir_env_name='WHITEPAPER_CEPH_SECRET_DIR',
+            default_dir=_WHITEPAPER_CEPH_DEFAULT_SECRET_DIR,
+            fallback_env_names=('AWS_SECRET_ACCESS_KEY',),
+        )
+        region = _str_env('WHITEPAPER_CEPH_REGION', 'us-east-1') or 'us-east-1'
 
         if endpoint is None:
-            bucket_host = _str_env("WHITEPAPER_CEPH_BUCKET_HOST") or _str_env("BUCKET_HOST")
-            bucket_port = _str_env("WHITEPAPER_CEPH_BUCKET_PORT") or _str_env("BUCKET_PORT")
+            bucket_host = _mounted_or_env_value(
+                env_name='WHITEPAPER_CEPH_BUCKET_HOST',
+                mounted_key='BUCKET_HOST',
+                dir_env_name='WHITEPAPER_CEPH_CONFIG_DIR',
+                default_dir=_WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR,
+                fallback_env_names=('BUCKET_HOST',),
+            )
+            bucket_port = _mounted_or_env_value(
+                env_name='WHITEPAPER_CEPH_BUCKET_PORT',
+                mounted_key='BUCKET_PORT',
+                dir_env_name='WHITEPAPER_CEPH_CONFIG_DIR',
+                default_dir=_WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR,
+                fallback_env_names=('BUCKET_PORT',),
+            )
             if bucket_host:
-                scheme = "https" if _bool_env("WHITEPAPER_CEPH_USE_TLS", False) else "http"
-                endpoint = f"{scheme}://{bucket_host}"
+                scheme = 'https' if _bool_env('WHITEPAPER_CEPH_USE_TLS', False) else 'http'
+                endpoint = f'{scheme}://{bucket_host}'
                 if bucket_port:
-                    endpoint = f"{endpoint}:{bucket_port}"
+                    endpoint = f'{endpoint}:{bucket_port}'
 
         if not endpoint or not access_key or not secret_key:
             return None
@@ -585,6 +682,77 @@ class CephS3Client:
             "uri": f"s3://{bucket}/{key}",
         }
 
+    def get_object(
+        self,
+        *,
+        bucket: str,
+        key: str,
+    ) -> bytes:
+        now = datetime.now(timezone.utc)
+        amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+        datestamp = now.strftime("%Y%m%d")
+
+        parsed = urlparse(self.endpoint)
+        if not parsed.scheme or not parsed.netloc:
+            raise RuntimeError("invalid_ceph_endpoint")
+
+        canonical_uri = f"/{quote(bucket, safe='')}/{quote(key, safe='/-_.~')}"
+        payload_hash = hashlib.sha256(b"").hexdigest()
+        host = parsed.netloc
+
+        canonical_headers = (
+            f"host:{host}\n"
+            f"x-amz-content-sha256:{payload_hash}\n"
+            f"x-amz-date:{amz_date}\n"
+        )
+        signed_headers = "host;x-amz-content-sha256;x-amz-date"
+        canonical_request = "\n".join(
+            [
+                "GET",
+                canonical_uri,
+                "",
+                canonical_headers,
+                signed_headers,
+                payload_hash,
+            ]
+        )
+
+        algorithm = "AWS4-HMAC-SHA256"
+        credential_scope = f"{datestamp}/{self.region}/s3/aws4_request"
+        string_to_sign = "\n".join(
+            [
+                algorithm,
+                amz_date,
+                credential_scope,
+                hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
+            ]
+        )
+
+        signing_key = self._signing_key(datestamp)
+        signature = hmac.new(signing_key, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+        authorization = (
+            f"{algorithm} "
+            f"Credential={self.access_key}/{credential_scope}, "
+            f"SignedHeaders={signed_headers}, "
+            f"Signature={signature}"
+        )
+
+        url = f"{self.endpoint}{canonical_uri}"
+        status, _response_headers, payload = _http_request_bytes(
+            url,
+            method='GET',
+            headers={
+                'Host': host,
+                'Authorization': authorization,
+                'x-amz-date': amz_date,
+                'x-amz-content-sha256': payload_hash,
+            },
+            timeout_seconds=self.timeout_seconds,
+        )
+        if status < 200 or status >= 300:
+            raise RuntimeError(f'ceph_download_http_{status}')
+        return payload
+
     def _signing_key(self, datestamp: str) -> bytes:
         date_key = hmac.new(("AWS4" + self.secret_key).encode("utf-8"), datestamp.encode("utf-8"), hashlib.sha256)
         region_key = hmac.new(date_key.digest(), self.region.encode("utf-8"), hashlib.sha256)
@@ -624,11 +792,17 @@ class WhitepaperWorkflowService:
     """State transitions and persistence for whitepaper analysis workflow."""
 
     def __init__(self) -> None:
-        self.ceph_client = CephS3Client.from_env()
+        self.ceph_client: Any | None = CephS3Client.from_env()
         self.inngest_client: inngest.Inngest | None = None
 
     def set_inngest_client(self, client: inngest.Inngest | None) -> None:
         self.inngest_client = client
+
+    def _resolve_ceph_client(self) -> CephS3Client | Any | None:
+        if self.ceph_client is not None and not isinstance(self.ceph_client, CephS3Client):
+            return self.ceph_client
+        self.ceph_client = CephS3Client.from_env()
+        return self.ceph_client
 
     def ingest_github_issue_event(
         self,
@@ -888,16 +1062,17 @@ class WhitepaperWorkflowService:
             if pdf_bytes is not None
             else hashlib.sha256(attachment_url.encode("utf-8")).hexdigest()
         )
-        ceph_bucket = _str_env("WHITEPAPER_CEPH_BUCKET") or _str_env("BUCKET_NAME") or "torghut-whitepapers"
+        ceph_bucket = _whitepaper_ceph_bucket_name()
         ceph_key = f"raw/checksum/{checksum[:2]}/{checksum}/source.pdf"
         file_size = len(pdf_bytes) if pdf_bytes is not None else None
 
         parse_status = "pending"
         parse_error = download_error
         ceph_etag: str | None = None
-        if pdf_bytes is not None and self.ceph_client is not None:
+        ceph_client = self._resolve_ceph_client()
+        if pdf_bytes is not None and ceph_client is not None:
             try:
-                upload_result = self.ceph_client.put_object(
+                upload_result = ceph_client.put_object(
                     bucket=ceph_bucket,
                     key=ceph_key,
                     body=pdf_bytes,
@@ -1327,8 +1502,9 @@ class WhitepaperWorkflowService:
 
         context = cast(dict[str, Any], run.orchestration_context_json or {})
         repository = str(context.get("repository") or _str_env("WHITEPAPER_DEFAULT_REPOSITORY", "proompteng/lab"))
-        issue_number = str(context.get("issue_number") or "0")
         issue_url = str(context.get("issue_url") or "")
+        issue_number = str(context.get("issue_number") or "0")
+        github_issue_number = str(github_issue_number_from_url(issue_url, repository) or issue_number)
         issue_title = str((run.document.title if run.document else "") or "Whitepaper analysis")
         attachment_url = str(context.get("attachment_url") or "")
         marker = cast(dict[str, Any], context.get("marker") or {})
@@ -1383,7 +1559,10 @@ class WhitepaperWorkflowService:
             "implementation": {
                 "summary": f"Whitepaper analysis {run.run_id}",
                 "text": prompt,
-                "source": {"provider": "github", "url": issue_url or f"https://github.com/{repository}/issues/{issue_number}"},
+                "source": {
+                    "provider": "github",
+                    "url": issue_url or f"https://github.com/{repository}/issues/{github_issue_number}",
+                },
                 "vcsRef": {"name": _str_env("WHITEPAPER_AGENTRUN_VCS_REF", "github")},
                 "labels": labels,
             },
@@ -1393,7 +1572,7 @@ class WhitepaperWorkflowService:
                 "repository": repository,
                 "base": base_branch,
                 "head": head_branch,
-                "issueNumber": issue_number,
+                "issueNumber": github_issue_number,
                 "issueTitle": issue_title,
                 "issueUrl": issue_url,
                 "runId": run.run_id,

@@ -166,6 +166,100 @@ data:
           ],
           "title": "Market-Context Batch Duration p95",
           "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32},
+          "id": 9,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "sum(increase(torghut_trading_feature_quality_reject_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[15m]))",
+              "legendFormat": "quality rejected",
+              "refId": "A"
+            },
+            {
+              "expr": "increase(torghut_trading_decisions_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[15m])",
+              "legendFormat": "decisions",
+              "refId": "B"
+            },
+            {
+              "expr": "sum(increase(torghut_trading_execution_submit_attempt_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[15m]))",
+              "legendFormat": "submit attempts",
+              "refId": "C"
+            },
+            {
+              "expr": "sum(increase(torghut_trading_execution_submit_result_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\", status=\"accepted\"}[15m]))",
+              "legendFormat": "submit accepted",
+              "refId": "D"
+            },
+            {
+              "expr": "increase(torghut_trading_orders_submitted_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[15m])",
+              "legendFormat": "orders submitted",
+              "refId": "E"
+            }
+          ],
+          "title": "Trading Funnel (15m)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32},
+          "id": 10,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "sum by (stage, outcome) (increase(torghut_trading_qty_resolution_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[30m]))",
+              "legendFormat": "{{stage}} {{outcome}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Quantity Resolution Outcomes (30m)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 40},
+          "id": 11,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "sum by (stage, context) (increase(torghut_trading_sell_inventory_context_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[30m]))",
+              "legendFormat": "{{stage}} {{context}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Sell Inventory Context (30m)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 40},
+          "id": 12,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "increase(torghut_trading_signal_batch_order_violation_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[30m])",
+              "legendFormat": "order violations",
+              "refId": "A"
+            },
+            {
+              "expr": "increase(torghut_trading_execution_validation_mismatch_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[30m])",
+              "legendFormat": "validation mismatches",
+              "refId": "B"
+            },
+            {
+              "expr": "sum by (code, reason) (increase(torghut_trading_execution_local_reject_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[30m]))",
+              "legendFormat": "{{code}} {{reason}}",
+              "refId": "C"
+            }
+          ],
+          "title": "Local Rejects and Contract Violations (30m)",
+          "type": "timeseries"
         }
       ],
       "schemaVersion": 39,
@@ -176,5 +270,5 @@ data:
       "timezone": "",
       "title": "Torghut Execution Recovery",
       "uid": "torghut-execution-recovery",
-      "version": 1
+      "version": 2
     }

@@ -97,10 +97,10 @@ class MetadataLatestIngestor(ClickHouseSignalIngestor):
 
     def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
         self.queries.append(query)
-        if "FROM system.parts" in query:
-            return [{"latest_signal_ts": int(self.latest_signal_ts.timestamp())}]
-        if "SELECT max(" in query:
-            raise AssertionError("expected system.parts freshness query to avoid a full-table aggregate")
+        if "ORDER BY event_ts DESC, symbol DESC, seq DESC" in query:
+            return [{"latest_signal_ts": self.latest_signal_ts.isoformat()}]
+        if "SELECT max(" in query or "FROM system.parts" in query:
+            raise AssertionError("expected descending latest-timestamp query to avoid aggregate freshness scans")
         return []
 
 
@@ -315,6 +315,42 @@ class TestSignalIngest(TestCase):
         self.assertIsNone(cursor_seq)
         self.assertIsNone(cursor_symbol)
 
+    def test_simulation_mode_cursor_outside_window_resets_to_window_start(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+        snapshot = {
+            "enabled": settings.trading_simulation_enabled,
+            "window_start": settings.trading_simulation_window_start,
+            "window_end": settings.trading_simulation_window_end,
+        }
+        try:
+            settings.trading_simulation_enabled = True
+            settings.trading_simulation_window_start = "2026-03-06T14:30:00Z"
+            settings.trading_simulation_window_end = "2026-03-06T14:45:00Z"
+            ingestor = ClickHouseSignalIngestor(schema='envelope', url='http://example')
+            with session_local() as session:
+                session.add(
+                    TradeCursor(
+                        source="clickhouse",
+                        account_label=ingestor.account_label,
+                        cursor_at=datetime(2026, 3, 6, 20, 22, tzinfo=timezone.utc),
+                        cursor_seq=11,
+                        cursor_symbol="NVDA",
+                    )
+                )
+                session.commit()
+                cursor_at, cursor_seq, cursor_symbol = ingestor._get_cursor(session)
+        finally:
+            settings.trading_simulation_enabled = snapshot["enabled"]
+            settings.trading_simulation_window_start = snapshot["window_start"]
+            settings.trading_simulation_window_end = snapshot["window_end"]
+
+        self.assertEqual(cursor_at, datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc))
+        self.assertIsNone(cursor_seq)
+        self.assertIsNone(cursor_symbol)
+
     def test_simulation_mode_fetch_uses_simulated_now_for_cursor_tail_lag(self) -> None:
         engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
         Base.metadata.create_all(engine)
@@ -472,6 +508,44 @@ class TestSignalIngest(TestCase):
         replay_query = ingestor.queries[-1]
         self.assertIn("WHERE event_ts >=", replay_query)
         self.assertIn("AND event_ts <=", replay_query)
+
+    def test_simulation_mode_empty_poll_without_in_window_signals_holds_cursor(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+        snapshot = {
+            "enabled": settings.trading_simulation_enabled,
+            "window_start": settings.trading_simulation_window_start,
+            "window_end": settings.trading_simulation_window_end,
+        }
+        try:
+            settings.trading_simulation_enabled = True
+            settings.trading_simulation_window_start = "2026-03-06T14:30:00Z"
+            settings.trading_simulation_window_end = "2026-03-06T14:45:00Z"
+            ingestor = SimulationWindowNoLatestIngestor(
+                schema="envelope",
+                url="http://example",
+                rows=[],
+                fast_forward_stale_cursor=False,
+            )
+            with session_local() as session, patch(
+                "app.trading.ingest.trading_now",
+                return_value=datetime(2026, 3, 6, 14, 30, 0, tzinfo=timezone.utc),
+            ):
+                batch = ingestor.fetch_signals(session)
+        finally:
+            settings.trading_simulation_enabled = snapshot["enabled"]
+            settings.trading_simulation_window_start = snapshot["window_start"]
+            settings.trading_simulation_window_end = snapshot["window_end"]
+
+        self.assertEqual(batch.signals, [])
+        self.assertEqual(batch.no_signal_reason, "no_signals_in_window")
+        self.assertEqual(batch.cursor_at, datetime(2026, 3, 6, 14, 30, 0, tzinfo=timezone.utc))
+        self.assertEqual(batch.query_end, datetime(2026, 3, 6, 14, 30, 10, tzinfo=timezone.utc))
+        latest_query = next(query for query in ingestor.queries if "latest_signal_ts" in query)
+        self.assertIn("WHERE event_ts >=", latest_query)
+        self.assertIn("AND event_ts <=", latest_query)
 
     def test_build_query_flat_schema(self) -> None:
         ingestor = ClickHouseSignalIngestor(schema="flat", table="torghut.ta_signals", fast_forward_stale_cursor=False)
@@ -715,7 +789,7 @@ class TestSignalIngest(TestCase):
         self.assertEqual(first, latest)
         self.assertEqual(second, latest)
 
-    def test_latest_signal_timestamp_prefers_system_parts_metadata_for_event_ts(self) -> None:
+    def test_latest_signal_timestamp_prefers_descending_timestamp_probe_for_event_ts(self) -> None:
         latest = datetime(2026, 1, 1, tzinfo=timezone.utc)
         ingestor = MetadataLatestIngestor(
             schema="envelope",
@@ -728,7 +802,12 @@ class TestSignalIngest(TestCase):
 
         self.assertEqual(resolved, latest)
         self.assertGreaterEqual(len(ingestor.queries), 1)
-        self.assertIn("FROM system.parts", ingestor.queries[0])
+        self.assertTrue(
+            any(
+                "ORDER BY event_ts DESC, symbol DESC, seq DESC" in query
+                for query in ingestor.queries
+            )
+        )
 
     def test_latest_signal_timestamp_uses_cached_value_on_refresh_failure(self) -> None:
         latest = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -832,6 +911,58 @@ class TestSignalIngest(TestCase):
             self.assertEqual(cursor.cursor_at, datetime(2026, 1, 1, 0, 0, 0))
             self.assertEqual(cursor.cursor_seq, 1)
             self.assertEqual(cursor.cursor_symbol, "MSFT")
+
+    def test_fetch_signals_sorts_multi_symbol_batch_before_returning(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+        rows = [
+            {
+                "event_ts": "2026-01-01T00:00:00Z",
+                "symbol": "MSFT",
+                "payload": {"feature_schema_version": "3.0.0"},
+                "timeframe": "1Min",
+                "seq": 2,
+                "source": "ta",
+            },
+            {
+                "event_ts": "2026-01-01T00:00:00Z",
+                "symbol": "AAPL",
+                "payload": {"feature_schema_version": "3.0.0"},
+                "timeframe": "5Min",
+                "seq": 3,
+                "source": "ta",
+            },
+            {
+                "event_ts": "2026-01-01T00:00:00Z",
+                "symbol": "AAPL",
+                "payload": {"feature_schema_version": "3.0.0"},
+                "timeframe": "1Min",
+                "seq": 1,
+                "source": "ta",
+            },
+        ]
+
+        class SortedCursorIngestor(ClickHouseSignalIngestor):
+            def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
+                _ = query
+                return rows
+
+        ingestor = SortedCursorIngestor(
+            schema="envelope",
+            table="torghut.ta_signals",
+            url="http://example",
+            fast_forward_stale_cursor=False,
+        )
+
+        with session_local() as session:
+            batch = ingestor.fetch_signals(session)
+
+        self.assertEqual(
+            [(signal.symbol, signal.timeframe, signal.seq) for signal in batch.signals],
+            [("AAPL", "1Min", 1), ("AAPL", "5Min", 3), ("MSFT", "1Min", 2)],
+        )
 
     def test_cursor_is_account_scoped(self) -> None:
         engine = create_engine("sqlite+pysqlite:///:memory:", future=True)

@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.7.0](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.6.1...temporal-bun-sdk-v0.7.0) (2026-03-13)
+
+
+### Features
+
+* **agents:** harden huly swarm mission artifact workflow ([#3855](https://github.com/proompteng/lab/issues/3855)) ([12c7b00](https://github.com/proompteng/lab/commit/12c7b00a5ca8c2948fd8badcffb4a7533c4d4caa))
+
+
+### Bug Fixes
+
+* **ci:** use Temporal FQDN for SDK ARC workflow ([#4376](https://github.com/proompteng/lab/issues/4376)) ([57dc3bf](https://github.com/proompteng/lab/commit/57dc3bf347c01f2b78c2f36dad86cd646c0d7df3))
+* **temporal-bun-sdk:** isolate sticky integration task queues ([#4380](https://github.com/proompteng/lab/issues/4380)) ([6524f1c](https://github.com/proompteng/lab/commit/6524f1cc07fa7054f1a0cf51542ceb3900810eb5))
+
 ## [0.6.1](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.6.0...temporal-bun-sdk-v0.6.1) (2026-02-10)
 
 ### Bug Fixes

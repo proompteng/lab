@@ -186,6 +186,8 @@ const queryOnlyHandles = defineWorkflowQueries({
   },
 })
 
+export const queryOnlyWorkflowBlockedTimerMs = 30_000
+
 export const signalQueryWorkflow = defineWorkflow({
   name: 'integrationSignalQueryWorkflow',
   signals: signalHandles,
@@ -208,7 +210,7 @@ export const queryOnlyWorkflow = defineWorkflow({
     Effect.gen(function* () {
       let status = 'blocked-on-timer'
       yield* queries.register(queryOnlyHandles.status, () => Effect.sync(() => status))
-      yield* timers.start({ timeoutMs: 30_000 })
+      yield* timers.start({ timeoutMs: queryOnlyWorkflowBlockedTimerMs })
       yield* Effect.fail(new WorkflowBlockedError('waiting-for-timer'))
       return status
     }),

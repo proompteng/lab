@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 
@@ -21,6 +21,8 @@ class SimulationLaneContract:
     ta_clickhouse_url_key: str
     ta_group_id_key: str
     ta_auto_offset_reset_key: str
+    schema_registry_subject_roles: tuple[str, ...] = ()
+    schema_registry_schema_file_by_role: dict[str, str] = field(default_factory=dict)
     required_manifest_fields: tuple[str, ...] = ()
 
 
@@ -68,6 +70,11 @@ EQUITY_SIMULATION_LANE = SimulationLaneContract(
     ta_clickhouse_url_key="TA_CLICKHOUSE_URL",
     ta_group_id_key="TA_GROUP_ID",
     ta_auto_offset_reset_key="TA_AUTO_OFFSET_RESET",
+    schema_registry_subject_roles=("ta_microbars", "ta_signals"),
+    schema_registry_schema_file_by_role={
+        "ta_microbars": "docs/torghut/schemas/ta-bars-1s.avsc",
+        "ta_signals": "docs/torghut/schemas/ta-signals.avsc",
+    },
 )
 
 OPTIONS_SIMULATION_LANE = SimulationLaneContract(
@@ -134,6 +141,13 @@ OPTIONS_SIMULATION_LANE = SimulationLaneContract(
         "proof_gates",
     ),
 )
+
+
+def simulation_schema_registry_subject_roles(
+    contract: SimulationLaneContract,
+) -> tuple[str, ...]:
+    configured_roles = contract.schema_registry_subject_roles or tuple(contract.ta_topic_key_by_role.keys())
+    return tuple(role for role in configured_roles if role in contract.ta_topic_key_by_role)
 
 SIMULATION_LANE_BY_NAME = {
     EQUITY_SIMULATION_LANE.lane: EQUITY_SIMULATION_LANE,

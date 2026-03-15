@@ -4,3 +4,4 @@ resources:
   - coder-cluster.yaml
   - github-token.yaml
   - rbac.yaml
+  - ingressroute-coder-k8s-private.yaml

@@ -1,0 +1,244 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keycloak-headlamp-client-bootstrap
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    app.kubernetes.io/name: keycloak
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: keycloak
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      restartPolicy: OnFailure
+      containers:
+        - name: bootstrap
+          image: quay.io/keycloak/keycloak:26.5.1
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              set -eu
+
+              KCADM_CONFIG="$(mktemp /tmp/kcadm-config.XXXXXX)"
+              export KCADM_CONFIG
+
+              login() {
+                /opt/keycloak/bin/kcadm.sh config credentials \
+                  --config "$KCADM_CONFIG" \
+                  --server "$KEYCLOAK_ADMIN_URL" \
+                  --realm master \
+                  --user "$KEYCLOAK_ADMIN_USERNAME" \
+                  --password "$KEYCLOAK_ADMIN_PASSWORD" \
+                  >/dev/null
+              }
+
+              for i in $(seq 1 120); do
+                if login 2>/dev/null; then
+                  break
+                fi
+
+                if [ "$i" -eq 120 ]; then
+                  echo "Keycloak admin API did not become ready in time" >&2
+                  exit 1
+                fi
+
+                sleep 5
+              done
+
+              /opt/keycloak/bin/kcadm.sh update "realms/$KEYCLOAK_REALM" \
+                --config "$KCADM_CONFIG" \
+                -s "accessTokenLifespan=${KEYCLOAK_REALM_ACCESS_TOKEN_LIFESPAN_SECONDS}" \
+                -s "ssoSessionIdleTimeout=${KEYCLOAK_REALM_SSO_SESSION_IDLE_SECONDS}" \
+                -s "ssoSessionMaxLifespan=${KEYCLOAK_REALM_SSO_SESSION_MAX_SECONDS}" \
+                -s "clientSessionIdleTimeout=${KEYCLOAK_REALM_CLIENT_SESSION_IDLE_SECONDS}" \
+                -s "clientSessionMaxLifespan=${KEYCLOAK_REALM_CLIENT_SESSION_MAX_SECONDS}"
+
+              cat > /tmp/headlamp-client.json <<EOF
+              {
+                "clientId": "${HEADLAMP_OIDC_CLIENT_ID}",
+                "name": "Headlamp Kubernetes UI",
+                "description": "OIDC client for Headlamp and kube-apiserver",
+                "enabled": true,
+                "protocol": "openid-connect",
+                "publicClient": false,
+                "standardFlowEnabled": true,
+                "directAccessGrantsEnabled": false,
+                "implicitFlowEnabled": false,
+                "serviceAccountsEnabled": false,
+                "redirectUris": [
+                  "${HEADLAMP_TAILSCALE_CALLBACK_URL}",
+                  "${HEADLAMP_PRIVATE_CALLBACK_URL}"
+                ],
+                "webOrigins": [
+                  "${HEADLAMP_TAILSCALE_BASE_URL}",
+                  "${HEADLAMP_PRIVATE_BASE_URL}"
+                ],
+                "attributes": {
+                  "pkce.code.challenge.required": "false",
+                  "pkce.code.challenge.method": ""
+                }
+              }
+              EOF
+
+              cat > /tmp/kubernetes-audience-mapper.json <<EOF
+              {
+                "name": "kubernetes-audience",
+                "protocol": "openid-connect",
+                "protocolMapper": "oidc-audience-mapper",
+                "consentRequired": false,
+                "config": {
+                  "included.client.audience": "${HEADLAMP_OIDC_CLIENT_ID}",
+                  "access.token.claim": "true",
+                  "id.token.claim": "false",
+                  "userinfo.token.claim": "false",
+                  "introspection.token.claim": "true",
+                  "lightweight.claim": "false"
+                }
+              }
+              EOF
+
+              client_resource_id="$(
+                /opt/keycloak/bin/kcadm.sh get clients \
+                  --config "$KCADM_CONFIG" \
+                  -r "$KEYCLOAK_REALM" \
+                  -q clientId="$HEADLAMP_OIDC_CLIENT_ID" \
+                  --fields id \
+                  --format csv \
+                  --noquotes \
+                  | tr -d '\r' \
+                  | head -n 1
+              )"
+
+              if [ -n "$client_resource_id" ]; then
+                /opt/keycloak/bin/kcadm.sh update "clients/$client_resource_id" \
+                  --config "$KCADM_CONFIG" \
+                  -r "$KEYCLOAK_REALM" \
+                  --merge \
+                  -f /tmp/headlamp-client.json
+              else
+                /opt/keycloak/bin/kcadm.sh create clients \
+                  --config "$KCADM_CONFIG" \
+                  -r "$KEYCLOAK_REALM" \
+                  -f /tmp/headlamp-client.json \
+                  >/dev/null
+
+                client_resource_id="$(
+                  /opt/keycloak/bin/kcadm.sh get clients \
+                    --config "$KCADM_CONFIG" \
+                    -r "$KEYCLOAK_REALM" \
+                    -q clientId="$HEADLAMP_OIDC_CLIENT_ID" \
+                    --fields id \
+                    --format csv \
+                    --noquotes \
+                    | tr -d '\r' \
+                    | head -n 1
+                )"
+              fi
+
+              if [ -z "$client_resource_id" ]; then
+                echo "Failed to resolve Keycloak client resource ID for ${HEADLAMP_OIDC_CLIENT_ID}" >&2
+                exit 1
+              fi
+
+              /opt/keycloak/bin/kcadm.sh update "clients/$client_resource_id" \
+                --config "$KCADM_CONFIG" \
+                -r "$KEYCLOAK_REALM" \
+                -s "secret=${HEADLAMP_OIDC_CLIENT_SECRET}"
+
+              mapper_resource_id="$(
+                /opt/keycloak/bin/kcadm.sh get "clients/$client_resource_id/protocol-mappers/models" \
+                  --config "$KCADM_CONFIG" \
+                  -r "$KEYCLOAK_REALM" \
+                  --fields id,name \
+                  --format csv \
+                  --noquotes \
+                  | tr -d '\r' \
+                  | awk -F, '$2=="kubernetes-audience"{print $1; exit}'
+              )"
+
+              if [ -n "$mapper_resource_id" ]; then
+                /opt/keycloak/bin/kcadm.sh update "clients/$client_resource_id/protocol-mappers/models/$mapper_resource_id" \
+                  --config "$KCADM_CONFIG" \
+                  -r "$KEYCLOAK_REALM" \
+                  --merge \
+                  -f /tmp/kubernetes-audience-mapper.json
+              else
+                /opt/keycloak/bin/kcadm.sh create "clients/$client_resource_id/protocol-mappers/models" \
+                  --config "$KCADM_CONFIG" \
+                  -r "$KEYCLOAK_REALM" \
+                  -f /tmp/kubernetes-audience-mapper.json \
+                  >/dev/null
+              fi
+
+              echo "Configured Keycloak client ${HEADLAMP_OIDC_CLIENT_ID} in realm ${KEYCLOAK_REALM}"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          env:
+            - name: KEYCLOAK_ADMIN_URL
+              value: http://keycloak:8080
+            - name: KEYCLOAK_REALM
+              value: master
+            - name: HEADLAMP_TAILSCALE_BASE_URL
+              value: https://headlamp.ide-newton.ts.net
+            - name: HEADLAMP_TAILSCALE_CALLBACK_URL
+              value: https://headlamp.ide-newton.ts.net/oidc-callback
+            - name: HEADLAMP_PRIVATE_BASE_URL
+              value: https://headlamp.k8s.proompteng.ai
+            - name: HEADLAMP_PRIVATE_CALLBACK_URL
+              value: https://headlamp.k8s.proompteng.ai/oidc-callback
+            - name: KEYCLOAK_REALM_ACCESS_TOKEN_LIFESPAN_SECONDS
+              value: '300'
+            - name: KEYCLOAK_REALM_SSO_SESSION_IDLE_SECONDS
+              value: '28800'
+            - name: KEYCLOAK_REALM_SSO_SESSION_MAX_SECONDS
+              value: '86400'
+            - name: KEYCLOAK_REALM_CLIENT_SESSION_IDLE_SECONDS
+              value: '28800'
+            - name: KEYCLOAK_REALM_CLIENT_SESSION_MAX_SECONDS
+              value: '86400'
+            - name: KEYCLOAK_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin
+                  key: username
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin
+                  key: password
+            - name: HEADLAMP_OIDC_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-headlamp-client
+                  key: HEADLAMP_OIDC_CLIENT_ID
+            - name: HEADLAMP_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-headlamp-client
+                  key: HEADLAMP_OIDC_CLIENT_SECRET
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

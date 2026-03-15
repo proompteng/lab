@@ -41,15 +41,21 @@ metadata:
 spec:
   contract:
     requiredKeys:
-      - datasetSnapshotId
-      - strategyId
-      - strategyVersion
+      - candidateRef
+      - baselineCandidateRef
+      - strategyRef
+      - windowSetRef
+      - simulationProfile
       - costModelVersion
+      - artifactRoot
+      - gateConfigRef
+      - campaignMode
       - artifactPath
   text: |
-    Objective: Run walk-forward + stress tests and produce metrics artifacts.
-    Inputs: datasetSnapshotId, strategyId, strategyVersion, costModelVersion, artifactPath.
-    Output: metrics bundle + robustness report.
+    Objective: Run authoritative simulation campaigns and produce a deterministic robustness scorecard.
+    Inputs: candidateRef, baselineCandidateRef, strategyRef, windowSetRef, simulationProfile, costModelVersion,
+      artifactRoot, gateConfigRef, campaignMode, artifactPath.
+    Output: simulation campaign lineage, robustness-scorecard-v1.json, and gate-ready artifacts.
 ---
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: ImplementationSpec

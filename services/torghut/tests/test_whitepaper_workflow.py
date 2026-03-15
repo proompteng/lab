@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from dataclasses import dataclass
 from typing import Any, cast
 from unittest import TestCase
@@ -23,6 +24,7 @@ from app.models import (
     WhitepaperViabilityVerdict,
 )
 from app.whitepapers.workflow import (
+    CephS3Client,
     IssueKickoffResult,
     WhitepaperKafkaIssueIngestor,
     WhitepaperWorkflowService,
@@ -216,6 +218,85 @@ https://example.com/paper.pdf
             attachment_url="https://github.com/user-attachments/files/12345/sample-paper.pdf",
         )
         self.assertEqual(run_id_one, run_id_two)
+
+    def test_ceph_client_prefers_mounted_secret_and_config_over_stale_env(self) -> None:
+        with tempfile.TemporaryDirectory() as secret_dir, tempfile.TemporaryDirectory() as config_dir:
+            os.environ["WHITEPAPER_CEPH_SECRET_DIR"] = secret_dir
+            os.environ["WHITEPAPER_CEPH_CONFIG_DIR"] = config_dir
+            os.environ["WHITEPAPER_CEPH_ACCESS_KEY"] = "stale-access"
+            os.environ["WHITEPAPER_CEPH_SECRET_KEY"] = "stale-secret"
+            os.environ["WHITEPAPER_CEPH_BUCKET_HOST"] = "stale-host"
+            os.environ["WHITEPAPER_CEPH_BUCKET_PORT"] = "9000"
+
+            with open(os.path.join(secret_dir, "AWS_ACCESS_KEY_ID"), "w", encoding="utf-8") as handle:
+                handle.write("fresh-access\n")
+            with open(os.path.join(secret_dir, "AWS_SECRET_ACCESS_KEY"), "w", encoding="utf-8") as handle:
+                handle.write("fresh-secret\n")
+            with open(os.path.join(config_dir, "BUCKET_HOST"), "w", encoding="utf-8") as handle:
+                handle.write("rook-ceph-rgw-objectstore.rook-ceph.svc\n")
+            with open(os.path.join(config_dir, "BUCKET_PORT"), "w", encoding="utf-8") as handle:
+                handle.write("80\n")
+
+            client = CephS3Client.from_env()
+
+            self.assertIsNotNone(client)
+            assert client is not None
+            self.assertEqual(client.access_key, "fresh-access")
+            self.assertEqual(client.secret_key, "fresh-secret")
+            self.assertEqual(client.endpoint, "http://rook-ceph-rgw-objectstore.rook-ceph.svc:80")
+
+    @patch("app.whitepapers.workflow.CephS3Client.from_env")
+    def test_store_issue_pdf_refreshes_runtime_ceph_client_and_bucket_name(self, mock_from_env: Any) -> None:
+        with tempfile.TemporaryDirectory() as config_dir:
+            os.environ["WHITEPAPER_CEPH_CONFIG_DIR"] = config_dir
+            os.environ["WHITEPAPER_CEPH_BUCKET"] = "stale-bucket"
+            with open(os.path.join(config_dir, "BUCKET_NAME"), "w", encoding="utf-8") as handle:
+                handle.write("fresh-bucket\n")
+
+            fake_ceph = _FakeCephClient()
+            mock_from_env.side_effect = [None, fake_ceph]
+
+            service = WhitepaperWorkflowService()
+            service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+
+            outcome = service._store_issue_pdf(attachment_url="https://example.com/paper.pdf")
+
+            self.assertEqual(mock_from_env.call_count, 2)
+            self.assertEqual(outcome.ceph_bucket, "fresh-bucket")
+            self.assertEqual(outcome.parse_status, "stored")
+
+    def test_dispatch_uses_github_issue_number_from_issue_url_for_replay_payloads(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+
+        submitted_payloads: list[dict[str, Any]] = []
+
+        def _fake_submit(payload: dict[str, Any], *, idempotency_key: str) -> dict[str, Any]:
+            submitted_payloads.append(payload)
+            return {
+                "ok": True,
+                "resource": {
+                    "metadata": {"name": f"agentrun-{idempotency_key}", "uid": "uid-1"},
+                    "status": {"phase": "Pending"},
+                },
+            }
+
+        service._submit_jangar_agentrun = _fake_submit  # type: ignore[method-assign]
+        replay_payload = self._issue_payload(issue_number=900000004)
+        replay_issue = cast(dict[str, Any], replay_payload["issue"])
+        replay_issue["html_url"] = "https://github.com/proompteng/lab/issues/3592"
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(
+                session,
+                replay_payload,
+                source="api",
+            )
+            self.assertTrue(kickoff.accepted)
+            self.assertEqual(len(submitted_payloads), 1)
+            self.assertEqual(submitted_payloads[0]["parameters"]["issueNumber"], "3592")
+            self.assertEqual(submitted_payloads[0]["parameters"]["issueUrl"], "https://github.com/proompteng/lab/issues/3592")
 
     def test_comment_without_keyword_is_ignored(self) -> None:
         service = WhitepaperWorkflowService()

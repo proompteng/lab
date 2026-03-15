@@ -79,6 +79,7 @@ data:
         name: Argo Workflows
         redirectURIs:
           - https://workflows.proompteng.ai/oauth2/callback
+          - https://workflows.k8s.proompteng.ai/oauth2/callback
         secretEnv: ARGO_WORKFLOWS_SSO_CLIENT_SECRET
     staticPasswords:
       - email: admin@proompteng.ai

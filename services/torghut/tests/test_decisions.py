@@ -192,6 +192,91 @@ class TestDecisionEngine(TestCase):
             settings.trading_fractional_equities_enabled = original_fractional
             settings.trading_allow_shorts = original_allow_shorts
 
+    def test_legacy_sell_without_inventory_defaults_to_integer_qty(self) -> None:
+        original_fractional = settings.trading_fractional_equities_enabled
+        original_allow_shorts = settings.trading_allow_shorts
+        settings.trading_fractional_equities_enabled = True
+        settings.trading_allow_shorts = True
+        try:
+            engine = DecisionEngine(price_fetcher=None)
+            strategy = Strategy(
+                name="integer-sell",
+                description=None,
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=None,
+                max_position_pct_equity=None,
+                max_notional_per_trade=Decimal("150"),
+            )
+            signal = SignalEnvelope(
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": Decimal("0.1"), "signal": Decimal("1.0")},
+                    "rsi14": Decimal("80"),
+                    "price": Decimal("100"),
+                },
+                timeframe="1Min",
+            )
+
+            decisions = engine.evaluate(signal, [strategy], positions=None)
+
+            self.assertEqual(len(decisions), 1)
+            self.assertEqual(decisions[0].qty, Decimal("1"))
+            sizing = decisions[0].params.get("sizing")
+            assert isinstance(sizing, dict)
+            quantity_resolution = sizing.get("quantity_resolution")
+            assert isinstance(quantity_resolution, dict)
+            self.assertFalse(quantity_resolution.get("fractional_allowed"))
+            self.assertEqual(
+                quantity_resolution.get("reason"),
+                "sell_inventory_unknown_integer_only",
+            )
+        finally:
+            settings.trading_fractional_equities_enabled = original_fractional
+            settings.trading_allow_shorts = original_allow_shorts
+
+    def test_legacy_sell_reducing_long_can_remain_fractional(self) -> None:
+        original_fractional = settings.trading_fractional_equities_enabled
+        original_allow_shorts = settings.trading_allow_shorts
+        settings.trading_fractional_equities_enabled = True
+        settings.trading_allow_shorts = True
+        try:
+            engine = DecisionEngine(price_fetcher=None)
+            strategy = Strategy(
+                name="fractional-reduce-sell",
+                description=None,
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=None,
+                max_position_pct_equity=None,
+                max_notional_per_trade=Decimal("50"),
+            )
+            signal = SignalEnvelope(
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": Decimal("0.1"), "signal": Decimal("1.0")},
+                    "rsi14": Decimal("80"),
+                    "price": Decimal("100"),
+                },
+                timeframe="1Min",
+            )
+
+            decisions = engine.evaluate(
+                signal,
+                [strategy],
+                positions=[{"symbol": "AAPL", "qty": "1", "side": "long"}],
+            )
+
+            self.assertEqual(len(decisions), 1)
+            self.assertEqual(decisions[0].qty, Decimal("0.5000"))
+        finally:
+            settings.trading_fractional_equities_enabled = original_fractional
+            settings.trading_allow_shorts = original_allow_shorts
+
     def test_scheduler_runtime_mode_emits_aggregated_metadata(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
@@ -321,7 +406,55 @@ class TestDecisionEngine(TestCase):
         )
         self.assertEqual(source_runtime[0].get("compiler_source"), "legacy_runtime")
 
-    def test_scheduler_runtime_falls_back_to_legacy_when_plugin_missing(self) -> None:
+    def test_scheduler_runtime_does_not_fallback_to_legacy_when_runtime_returns_no_intents(
+        self,
+    ) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="tsmom-only",
+            description=(
+                "version=1.0.0\n[catalog_metadata]\n"
+                '{"strategy_type":"intraday_tsmom_v1","version":"1.0.0","compiler_source":"spec_v2"}'
+            ),
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="intraday_tsmom_v1",
+            universe_symbols=None,
+            max_position_pct_equity=None,
+            max_notional_per_trade=Decimal("500"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            symbol="AAPL",
+            payload={
+                "ema12": Decimal("100.0"),
+                "ema26": Decimal("101.0"),
+                "macd": {"macd": Decimal("0.01"), "signal": Decimal("0.05")},
+                "rsi14": Decimal("72"),
+                "price": 100,
+            },
+            timeframe="1Min",
+        )
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+        ):
+            decisions = engine.evaluate(signal, [strategy])
+            telemetry = engine.consume_runtime_telemetry()
+
+        self.assertEqual(decisions, [])
+        self.assertTrue(telemetry.runtime_enabled)
+        self.assertFalse(telemetry.fallback_to_legacy)
+        self.assertEqual(telemetry.errors, ())
+        self.assertIsNotNone(telemetry.observation)
+        if telemetry.observation is not None:
+            self.assertEqual(
+                telemetry.observation.strategy_intents_total.get(str(strategy.id), 0),
+                0,
+            )
+
+    def test_scheduler_runtime_fails_closed_when_plugin_missing(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(
             id=uuid.uuid4(),
@@ -351,8 +484,8 @@ class TestDecisionEngine(TestCase):
             decisions = engine.evaluate(signal, [strategy])
             telemetry = engine.consume_runtime_telemetry()
 
-        self.assertEqual(len(decisions), 1)
-        self.assertTrue(telemetry.fallback_to_legacy)
+        self.assertEqual(decisions, [])
+        self.assertFalse(telemetry.fallback_to_legacy)
         self.assertEqual(len(telemetry.errors), 1)
         self.assertEqual(telemetry.errors[0].reason, "plugin_not_found")
         self.assertIsNotNone(telemetry.observation)
@@ -361,9 +494,6 @@ class TestDecisionEngine(TestCase):
                 telemetry.observation.strategy_errors_total.get(str(strategy.id)),
                 1,
             )
-        runtime_meta = decisions[0].params.get("strategy_runtime")
-        assert isinstance(runtime_meta, dict)
-        self.assertEqual(runtime_meta.get("plugin_id"), "legacy_builtin")
 
     def test_scheduler_runtime_attaches_forecast_contract_and_telemetry(self) -> None:
         strategy = Strategy(

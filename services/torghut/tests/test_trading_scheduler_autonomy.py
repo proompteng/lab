@@ -7,7 +7,7 @@ import tempfile
 from dataclasses import dataclass
 from contextlib import contextmanager
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 from unittest import TestCase
@@ -724,6 +724,41 @@ class TestTradingSchedulerAutonomy(TestCase):
                 scheduler.state.metrics.autonomy_outcome_total.get("skipped_no_signal"),
                 1,
             )
+
+    def test_run_autonomous_cycle_uses_simulation_clock_for_no_signal_window(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, _deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+                no_signals=True,
+                no_signal_reason="cursor_ahead_of_stream",
+            )
+            simulation_now = datetime(2026, 3, 11, 14, 5, 40, tzinfo=timezone.utc)
+            lookback = timedelta(
+                minutes=max(1, int(settings.trading_autonomy_signal_lookback_minutes))
+            )
+            with (
+                patch.object(settings, "trading_simulation_enabled", True),
+                patch(
+                    "app.trading.scheduler.governance.trading_now",
+                    return_value=simulation_now,
+                ),
+                patch(
+                    "app.trading.scheduler.governance.upsert_autonomy_no_signal_run",
+                    return_value="no-signal-run-id",
+                ) as persist_no_signal,
+                patch(
+                    "app.trading.scheduler.governance.run_autonomous_lane",
+                    side_effect=RuntimeError("should_not_run"),
+                ),
+            ):
+                scheduler._run_autonomous_cycle()
+
+            args = persist_no_signal.call_args.kwargs
+            self.assertEqual(args["query_end"], simulation_now)
+            self.assertEqual(args["query_start"], simulation_now - lookback)
+            self.assertEqual(scheduler.state.last_autonomy_run_at, simulation_now)
 
     def test_run_autonomous_cycle_updates_ingest_metadata_on_signal_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -10,5 +10,5 @@
 # Example (plaintext):
 #
 # tailscale_authkey: "tskey-auth-..."
-# tailscale_advertised_routes: "10.42.0.0/16,10.43.0.0/16"
+# tailscale_advertised_routes: "10.244.0.0/16,10.96.0.0/12"
 # tailscale_advertise_tags: "tag:kube-node"

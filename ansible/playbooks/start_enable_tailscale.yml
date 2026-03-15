@@ -5,7 +5,7 @@
   become: true
   vars:
     tailscale_authkey: "{{ lookup('env', 'TAILSCALE_AUTHKEY') | default('', true) }}"
-    tailscale_advertised_routes: "{{ lookup('env', 'TAILSCALE_ROUTES') | default('10.42.0.0/16,10.43.0.0/16', true) }}"
+    tailscale_advertised_routes: "{{ lookup('env', 'TAILSCALE_ROUTES') | default('10.244.0.0/16,10.96.0.0/12', true) }}"
     tailscale_advertise_tags: "{{ lookup('env', 'TAILSCALE_TAGS') | default('tag:kube-node', true) }}"
   tasks:
     - name: Fail if TAILSCALE_AUTHKEY is not set

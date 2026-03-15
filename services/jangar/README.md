@@ -139,7 +139,7 @@ The request header `x-jangar-openwebui-render-mode: rich-ui-v1` is experimental.
 Optional overrides:
 
 - `OPENWEBUI_PORT` (default `38080`)
-- `OPENWEBUI_IMAGE` (defaults to `ghcr.io/open-webui/open-webui:v0.8.9` for the local E2E script; override to exercise another tag)
+- `OPENWEBUI_IMAGE` (defaults to `ghcr.io/open-webui/open-webui:v0.8.10` for the local E2E script; override to exercise another tag)
 - `OPENWEBUI_BASE_URL` (used by `test:e2e:openwebui:existing`; defaults to `http://127.0.0.1:8080`)
 - `OPENWEBUI_E2E_USE_MOCK_CODEX` (default `1`; set to `0` to run the browser regression against the real local Codex CLI)
 - `JANGAR_MOCK_CODEX_SCENARIO` (defaults to `openwebui-e2e`)

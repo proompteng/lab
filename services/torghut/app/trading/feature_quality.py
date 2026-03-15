@@ -21,6 +21,14 @@ REASON_SCHEMA_MISMATCH = "schema_mismatch"
 REASON_REQUIRED_NULL_RATE = "required_feature_null_rate_exceeds_threshold"
 REASON_STALENESS = "feature_staleness_exceeds_budget"
 REASON_DUPLICATE_RATIO = "duplicate_ratio_exceeds_threshold"
+BLOCKING_REASONS = frozenset(
+    {
+        REASON_NON_MONOTONIC,
+        REASON_SCHEMA_MISMATCH,
+        REASON_STALENESS,
+        REASON_DUPLICATE_RATIO,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -57,6 +65,14 @@ class FeatureQualityReport:
             "schema_mismatch_total": self.schema_mismatch_total,
             "reasons": list(self.reasons),
         }
+
+    @property
+    def blocking_reasons(self) -> list[str]:
+        return [reason for reason in self.reasons if reason in BLOCKING_REASONS]
+
+    @property
+    def warning_only_reasons(self) -> list[str]:
+        return [reason for reason in self.reasons if reason not in BLOCKING_REASONS]
 
 
 class FeatureQualityError(RuntimeError):

@@ -129,17 +129,32 @@ Primary causes:
    - `controller.quorum.election.timeout.ms: 60000`
    - `controller.quorum.fetch.timeout.ms: 180000`
 
-## Current Verified State (At End of This Session)
+## Resolution And Current Verified State
 
-- Kafka app remained `Synced` but `Degraded`.
-- Brokers were still `0/1 Ready` and continued replaying logs.
-- Broker readiness still returned `HTTP 503` with `brokerState is 1`.
-- KafkaUsers remained `NotReady`.
-- The current boot was materially more stable than the earlier failure mode:
-  - metadata loader catch-up completed successfully,
-  - immediate duplicate-registration loops were cleared,
-  - and brokers were steadily advancing through log recovery.
-- However, recovery throughput was still too slow to declare incident resolved during this session.
+The incident was resolved in follow-up work on **2026-03-11 local / 2026-03-12 UTC** when the controller/broker split
+was completed and the live cluster converged onto the new broker set.
+
+Final verified state after the cutover:
+
+- Argo CD app `kafka`: `Synced`, `Healthy`
+- `Kafka` CR condition: `Ready=True`
+- `pool-a`: controller-only on node IDs `0,1,2`
+- `pool-b`: broker-only on node IDs `3,4,5`
+- old broker IDs `0,1,2` were unregistered from the Kafka cluster
+- active brokers `3,4,5` were all `unfenced`
+- under-replicated partitions: `0`
+- all `KafkaUser` resources: `Ready`
+
+Operational steps that closed the incident:
+
+1. The GitOps topology changes were merged so `pool-a` became controller-only and `pool-b` remained broker-only.
+2. The `pool-b` broker pods were restarted so they came up cleanly on the merged topology and clean generated config.
+3. Strimzi completed broker unregistration for old broker IDs `0,1,2`.
+4. The entity operator was restarted to clear stale bootstrap/admin-client state so `KafkaUser` reconciliation recovered.
+
+The incident is therefore closed as a resolved topology and recovery-convergence failure, with remaining follow-up
+focused on physical worker-node capacity and storage-latency risk reduction rather than unfinished Kafka logical
+topology work.
 
 ## Preventive Actions
 
@@ -153,6 +168,8 @@ Primary causes:
    - controller event latency,
    - and KRaft heartbeat/request timeout frequency.
 6. Treat direct broker ConfigMap edits as emergency-only and backport any valid long-term fix to supported Strimzi fields immediately.
+7. After major topology changes, explicitly validate broker registrations, fencing state, under-replicated partitions,
+   and `KafkaUser` reconciliation; GitOps health alone is not sufficient proof of convergence.
 
 ## Lessons Learned
 
@@ -165,4 +182,5 @@ Primary causes:
 
 - [docs/incidents/2025-11-01-kafka-quorum-outage.md](2025-11-01-kafka-quorum-outage.md)
 - [docs/incidents/2025-12-20-longhorn-upgrade-kafka-failure.md](2025-12-20-longhorn-upgrade-kafka-failure.md)
+- [docs/kafka-kraft-controller-broker-separation-design-2026-03-11.md](../kafka-kraft-controller-broker-separation-design-2026-03-11.md)
 - [argocd/applications/kafka/strimzi-kafka-cluster.yaml](../../argocd/applications/kafka/strimzi-kafka-cluster.yaml)

@@ -1536,7 +1536,7 @@ class TestOrderIdempotency(TestCase):
 
             self.assertIsNotNone(execution)
 
-    def test_submit_order_precheck_allows_fractional_sell_when_position_lookup_unavailable(
+    def test_submit_order_precheck_rejects_fractional_sell_when_position_lookup_unavailable(
         self,
     ) -> None:
         settings.trading_fractional_equities_enabled = True
@@ -1566,16 +1566,16 @@ class TestOrderIdempotency(TestCase):
             executor = OrderExecutor()
             decision_row = executor.ensure_decision(session, decision, strategy, "paper")
 
-            execution = executor.submit_order(
-                session,
-                PositionLookupUnavailableClient(),
-                decision,
-                decision_row,
-                "paper",
-            )
-            self.assertIsNotNone(execution)
+            with self.assertRaisesRegex(RuntimeError, 'local_qty_below_min'):
+                executor.submit_order(
+                    session,
+                    PositionLookupUnavailableClient(),
+                    decision,
+                    decision_row,
+                    "paper",
+                )
 
-    def test_submit_order_precheck_allows_fractional_sell_when_position_lookup_returns_none(
+    def test_submit_order_precheck_rejects_fractional_sell_when_position_lookup_returns_none(
         self,
     ) -> None:
         settings.trading_fractional_equities_enabled = True
@@ -1605,14 +1605,14 @@ class TestOrderIdempotency(TestCase):
             executor = OrderExecutor()
             decision_row = executor.ensure_decision(session, decision, strategy, "paper")
 
-            execution = executor.submit_order(
-                session,
-                PositionLookupNoneClient(),
-                decision,
-                decision_row,
-                "paper",
-            )
-            self.assertIsNotNone(execution)
+            with self.assertRaisesRegex(RuntimeError, 'local_qty_below_min'):
+                executor.submit_order(
+                    session,
+                    PositionLookupNoneClient(),
+                    decision,
+                    decision_row,
+                    "paper",
+                )
 
     def test_submit_order_precheck_blocks_sell_when_inventory_held_by_open_orders(
         self,

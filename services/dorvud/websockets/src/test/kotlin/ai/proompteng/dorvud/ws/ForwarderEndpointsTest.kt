@@ -4,6 +4,7 @@ import ai.proompteng.dorvud.platform.KafkaAuth
 import ai.proompteng.dorvud.platform.KafkaProducerSettings
 import ai.proompteng.dorvud.platform.KafkaTls
 import kotlinx.serialization.json.jsonObject
+import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -32,6 +33,7 @@ class ForwarderEndpointsTest {
       enableTradeUpdates = false,
       torghutAccountLabel = null,
       enableBarsBackfill = false,
+      barsBackfillLookbackHours = 12,
       reconnectBaseMs = 500,
       reconnectMaxMs = 30_000,
       dedupTtlSeconds = 5,
@@ -106,5 +108,34 @@ class ForwarderEndpointsTest {
       )
     val bars = assertNotNull(parsed.bars)
     assertTrue(bars.jsonObject.isEmpty())
+    assertEquals(null, parsed.nextPageToken)
+  }
+
+  @Test
+  fun `equity backfill query uses bounded window pagination and historical feed normalization`() {
+    val cfg =
+      baseConfig(AlpacaMarketType.EQUITY).copy(
+        alpacaFeed = "overnight",
+        barsBackfillLookbackHours = 120,
+      )
+    val query = alpacaBarsBackfillQuery(cfg, listOf("AAPL", "MSFT"), Instant.parse("2026-03-11T09:30:00Z"), "page-1")
+
+    assertEquals("AAPL,MSFT", query.symbols)
+    assertEquals("1Min", query.timeframe)
+    assertEquals("2026-03-06T09:30:00Z", query.start)
+    assertEquals("2026-03-11T09:30:00Z", query.end)
+    assertEquals("10000", query.limit)
+    assertEquals("asc", query.sort)
+    assertEquals("boats", query.feed)
+    assertEquals("page-1", query.pageToken)
+  }
+
+  @Test
+  fun `crypto backfill query omits feed parameter`() {
+    val cfg = baseConfig(AlpacaMarketType.CRYPTO)
+    val query = alpacaBarsBackfillQuery(cfg, listOf("BTC/USD"), Instant.parse("2026-03-11T09:30:00Z"))
+
+    assertEquals(null, query.feed)
+    assertEquals(null, query.pageToken)
   }
 }

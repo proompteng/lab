@@ -6,11 +6,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional, cast
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -18,6 +17,7 @@ from sqlalchemy.orm import Session
 from ...config import settings
 from ...models import TradeDecision
 from ..llm.schema import PortfolioSnapshot, RecentDecisionSummary
+from ..market_session import market_session_is_open
 from ..models import SignalEnvelope, StrategyDecision
 from ..prices import MarketSnapshot
 from ..regime_hmm import (
@@ -26,7 +26,6 @@ from ..regime_hmm import (
     resolve_regime_context_authority_reason,
     resolve_regime_route_label,
 )
-from ..time_source import trading_now
 from .state import (
     RuntimeUncertaintyGate,
     RuntimeUncertaintyGateAction,
@@ -104,35 +103,7 @@ def _is_market_session_open(
     *,
     now: datetime | None = None,
 ) -> bool:
-    if settings.trading_simulation_enabled:
-        current = (now or trading_now()).astimezone(ZoneInfo("America/New_York"))
-        if current.weekday() >= 5:
-            return False
-        session_open = current.replace(hour=9, minute=30, second=0, microsecond=0)
-        session_close = current.replace(hour=16, minute=0, second=0, microsecond=0)
-        return session_open <= current < session_close
-    get_clock = cast(
-        Callable[[], Any] | None, getattr(trading_client, "get_clock", None)
-    )
-    if callable(get_clock):
-        try:
-            clock = get_clock()
-            is_open = getattr(clock, "is_open", None)
-            if isinstance(is_open, bool):
-                return is_open
-            if is_open is not None:
-                return bool(is_open)
-        except Exception:
-            logger.exception("Failed to resolve Alpaca market clock state")
-
-    current = (now or datetime.now(timezone.utc)).astimezone(
-        ZoneInfo("America/New_York")
-    )
-    if current.weekday() >= 5:
-        return False
-    session_open = current.replace(hour=9, minute=30, second=0, microsecond=0)
-    session_close = current.replace(hour=16, minute=0, second=0, microsecond=0)
-    return session_open <= current < session_close
+    return market_session_is_open(trading_client, now=now)
 
 
 def _latch_signal_continuity_alert_state(state: Any, reason: str) -> None:

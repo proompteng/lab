@@ -1,0 +1,136 @@
+name: headlamp
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    paths:
+      - 'services/headlamp/**'
+      - 'argocd/applications/headlamp/**'
+      - 'docs/headlamp-setup.md'
+      - '.github/workflows/headlamp-ci.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/headlamp/**'
+      - '.github/workflows/headlamp-ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: arc-arm64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+
+      - name: Install kustomize
+        run: |
+          KUSTOMIZE_VERSION="5.8.0"
+          OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          ARCH="$(uname -m)"
+          case "${ARCH}" in
+            x86_64|amd64) ARCH="amd64" ;;
+            aarch64|arm64) ARCH="arm64" ;;
+            *)
+              echo "Unsupported architecture: ${ARCH}" >&2
+              exit 1
+              ;;
+          esac
+          TARBALL="kustomize_v${KUSTOMIZE_VERSION}_${OS}_${ARCH}.tar.gz"
+          URL="https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v${KUSTOMIZE_VERSION}/${TARBALL}"
+          curl -fsSL -o kustomize.tar.gz "${URL}"
+          tar -xzf kustomize.tar.gz kustomize
+          chmod +x kustomize
+          sudo mv kustomize /usr/local/bin/
+          kustomize version
+
+      - name: Render Headlamp manifests
+        run: kustomize build --enable-helm argocd/applications/headlamp >/dev/null
+
+      - name: Run Upstream Multiplexer Regression Tests
+        run: |
+          docker run --rm \
+            -v "$PWD":/workspace \
+            -w /workspace \
+            golang:1.24.13@sha256:d2d2bc1c84f7e60d7d2438a3836ae7d0c847f4888464e7ec9ba3a1339a1ee804 \
+            sh services/headlamp/scripts/test-upstream.sh
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run Upstream Frontend Auth Regression Test
+        run: |
+          TMP_DIR="$(mktemp -d)"
+          sh services/headlamp/scripts/fetch-upstream.sh "${TMP_DIR}"
+          sh services/headlamp/scripts/apply-upstream-patches.sh "${TMP_DIR}"
+          cd "${TMP_DIR}/frontend"
+          npm ci
+          npm test -- --run src/lib/k8s/api/authError.test.ts
+
+      - name: Fetch pinned Headlamp upstream source
+        run: sh services/headlamp/scripts/fetch-upstream.sh services/headlamp/.upstream
+
+      - name: Build Headlamp image
+        run: docker buildx build --platform linux/arm64 --load -t headlamp:test services/headlamp
+
+      - name: Verify multiplexer bundle is present
+        run: docker run --rm --entrypoint sh headlamp:test -lc "grep -R -n 'wsMultiplexer' /headlamp/frontend/assets >/dev/null"
+
+  deploy-main:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: arc-arm64
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Fetch pinned Headlamp upstream source
+        run: sh services/headlamp/scripts/fetch-upstream.sh services/headlamp/.upstream
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            registry.ide-newton.ts.net/lab/headlamp
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}},value=${{ github.sha }}
+            type=sha
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          platforms: linux/arm64
+          context: ./services/headlamp
+          file: ./services/headlamp/Dockerfile
+          build-args: |
+            LAB_GIT_SHA=${{ github.sha }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          push: true
+          cache-from: |
+            type=registry,ref=registry.ide-newton.ts.net/lab/headlamp:latest
+            type=registry,ref=registry.ide-newton.ts.net/lab/headlamp:cache
+          cache-to: |
+            type=registry,ref=registry.ide-newton.ts.net/lab/headlamp:cache,mode=max
+            type=inline

@@ -12,22 +12,10 @@ from sqlalchemy import select
 from ..config import settings
 from ..db import SessionLocal
 from ..models import TradeCursor
+from .simulation_progress import active_simulation_runtime_context
+from .simulation_window import normalize_simulation_cursor, simulation_window_bounds
 
 _SIMULATION_CURSOR_BASELINE = datetime(1970, 1, 1, tzinfo=timezone.utc)
-
-
-def _parse_datetime(raw: str | None) -> datetime | None:
-    value = (raw or "").strip()
-    if not value:
-        return None
-    normalized = f"{value[:-1]}+00:00" if value.endswith("Z") else value
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
 
 
 @dataclass(frozen=True)
@@ -51,6 +39,7 @@ class TradingTimeSource:
 
     def __init__(self) -> None:
         self._cache_by_account: dict[str, tuple[TradingTimeSnapshot, float]] = {}
+        self._active_run_id: str | None = None
 
     def now(self, *, account_label: str | None = None) -> datetime:
         return self.snapshot(account_label=account_label).now
@@ -66,6 +55,12 @@ class TradingTimeSource:
         if not settings.trading_simulation_enabled or mode == "live":
             now = datetime.now(timezone.utc)
             return TradingTimeSnapshot(mode="live", now=now, source="wall_clock")
+
+        runtime_context = active_simulation_runtime_context()
+        active_run_id = (runtime_context or {}).get('run_id')
+        if active_run_id != self._active_run_id:
+            self._cache_by_account.clear()
+            self._active_run_id = active_run_id
 
         effective_account_label = self._effective_account_label(account_label=account_label)
         cache_ttl = max(settings.trading_simulation_clock_cache_seconds, 0)
@@ -88,10 +83,11 @@ class TradingTimeSource:
     def _resolve_simulation_snapshot(
         self, *, account_label: str | None = None
     ) -> TradingTimeSnapshot:
-        start = _parse_datetime(settings.trading_simulation_window_start)
+        start, _end = simulation_window_bounds()
         account = self._effective_account_label(account_label=account_label)
-        cursor_at = self._load_clickhouse_cursor(account_label=account)
-        if cursor_at is not None:
+        raw_cursor_at = self._load_clickhouse_cursor(account_label=account)
+        cursor_at = normalize_simulation_cursor(raw_cursor_at)
+        if raw_cursor_at is not None and cursor_at is not None and cursor_at == raw_cursor_at:
             return TradingTimeSnapshot(
                 mode="simulation_cursor",
                 now=cursor_at,
@@ -104,6 +100,13 @@ class TradingTimeSource:
                 now=start,
                 source="window_start",
                 cursor_at=None,
+            )
+        if cursor_at is not None:
+            return TradingTimeSnapshot(
+                mode="simulation_cursor",
+                now=cursor_at,
+                source="trade_cursor.normalized",
+                cursor_at=cursor_at,
             )
         now = datetime.now(timezone.utc)
         return TradingTimeSnapshot(
