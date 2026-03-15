@@ -5,7 +5,7 @@ deploymentAnnotations:
 image:
   registry: registry.ide-newton.ts.net
   repository: lab/headlamp@sha256
-  tag: b98127a560afe1d19a6022fd0179b4f0655550be0848ced41541c07245819188
+  tag: 6a9bc2112e8de09a9ded297a7d321f202aaf5184b3761ec7ac35d9d3b39d0634
 persistentVolumeClaim:
   enabled: false
 podSecurityContext:
