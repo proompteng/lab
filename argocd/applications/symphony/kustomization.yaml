@@ -18,5 +18,5 @@ resources:
 images:
   - name: registry.ide-newton.ts.net/lab/symphony
     newName: registry.ide-newton.ts.net/lab/symphony
-    newTag: "sha-6cd9ecf"
-    digest: sha256:5133413281bd516b3f45074057e02779901cfec457ce59d3e3a47bc9dded0416
+    newTag: "sha-b3511a1"
+    digest: sha256:53218facc729108e2ca8d515d08f9c364886487c5335f2771d9fabfa2b3df590
