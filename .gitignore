@@ -220,6 +220,7 @@ dist-electron/
 apps/alchimie/*.egg-info
 
 .tmp_dagster*/
+services/headlamp/.upstream/
 
 # Python
 *.pyc
