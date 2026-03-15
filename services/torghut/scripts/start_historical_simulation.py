@@ -246,6 +246,11 @@ SIMULATION_POSTGRES_RUNTIME_RESET_TABLES = (
     'execution_tca_metrics',
     'execution_order_events',
 )
+SIMULATION_POSTGRES_REQUIRED_METADATA_TABLES = (
+    'simulation_run_progress',
+    'simulation_runtime_context',
+    'vnext_completion_gate_results',
+)
 KAFKA_API_VERSION = (4, 1, 1)
 SCHEMA_REGISTRY_CONTENT_TYPE = 'application/vnd.schemaregistry.v1+json'
 EMBEDDED_SCHEMA_REGISTRY_SCHEMA_BY_SUFFIX = {
@@ -491,6 +496,14 @@ class PostgresRuntimeConfig:
     @property
     def torghut_runtime_dsn(self) -> str:
         return self.runtime_simulation_dsn or self.simulation_dsn
+
+    @property
+    def admin_simulation_dsn(self) -> str:
+        return _replace_database_in_dsn(
+            self.admin_dsn,
+            database=self.simulation_db,
+            label='manifest.postgres.admin_dsn',
+        )
 
 
 @dataclass(frozen=True)
@@ -1173,6 +1186,12 @@ def _build_postgres_runtime_config(
             password=admin_password,
             label='manifest.postgres.admin_dsn',
         )
+    simulation_password = _as_text(postgres.get('simulation_dsn_password'))
+    if simulation_password is None:
+        simulation_password_env = _as_text(postgres.get('simulation_dsn_password_env'))
+        if simulation_password_env:
+            simulation_password = _as_text(os.environ.get(simulation_password_env))
+    effective_simulation_password = simulation_password or admin_password
 
     simulation_dsn = _as_text(postgres.get('simulation_dsn'))
     simulation_template = _as_text(postgres.get('simulation_dsn_template'))
@@ -1182,13 +1201,19 @@ def _build_postgres_runtime_config(
         simulation_dsn = _derive_simulation_dsn(admin_dsn, simulation_db)
     simulation_dsn = _ensure_dsn_password(
         simulation_dsn,
-        password=admin_password,
+        password=effective_simulation_password,
         label='manifest.postgres.simulation_dsn',
     )
     simulation_db = _database_name_from_dsn(
         simulation_dsn,
         label='manifest.postgres.simulation_dsn',
     )
+    runtime_password = _as_text(postgres.get('runtime_simulation_dsn_password'))
+    if runtime_password is None:
+        runtime_password_env = _as_text(postgres.get('runtime_simulation_dsn_password_env'))
+        if runtime_password_env:
+            runtime_password = _as_text(os.environ.get(runtime_password_env))
+    effective_runtime_password = runtime_password or effective_simulation_password
     runtime_simulation_dsn = _as_text(postgres.get('runtime_simulation_dsn'))
     runtime_template = _as_text(postgres.get('runtime_simulation_dsn_template'))
     if runtime_simulation_dsn is None and runtime_template is not None:
@@ -1196,7 +1221,7 @@ def _build_postgres_runtime_config(
     if runtime_simulation_dsn is not None:
         runtime_simulation_dsn = _ensure_dsn_password(
             runtime_simulation_dsn,
-            password=admin_password,
+            password=effective_runtime_password,
             label='manifest.postgres.runtime_simulation_dsn',
         )
         runtime_db = _database_name_from_dsn(
@@ -3510,7 +3535,7 @@ def _ensure_postgres_runtime_permissions(config: PostgresRuntimeConfig) -> dict[
 def _run_migrations(config: PostgresRuntimeConfig) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     env = dict(os.environ)
-    env['DB_DSN'] = config.torghut_runtime_dsn
+    env['DB_DSN'] = config.admin_simulation_dsn
     _remove_appledouble_sidecars(repo_root / 'migrations' / 'versions')
 
     def _run(command: str) -> None:
@@ -3527,6 +3552,7 @@ def _run_migrations(config: PostgresRuntimeConfig) -> None:
             label='run_migrations',
             operation=lambda: _run(config.migrations_command),
         )
+        _assert_required_simulation_metadata_tables(config)
         return
     except RuntimeError as exc:
         if not _is_vector_extension_create_permission_error(exc):
@@ -3552,6 +3578,28 @@ def _run_migrations(config: PostgresRuntimeConfig) -> None:
     _run_with_transient_postgres_retry(
         label='run_migrations_fallback_pre_vector',
         operation=lambda: _run(fallback_command),
+    )
+    _assert_required_simulation_metadata_tables(config)
+
+
+def _assert_required_simulation_metadata_tables(config: PostgresRuntimeConfig) -> None:
+    def _validate() -> None:
+        with psycopg.connect(config.admin_simulation_dsn, autocommit=True) as conn:
+            with conn.cursor() as cursor:
+                missing_tables: list[str] = []
+                for table in SIMULATION_POSTGRES_REQUIRED_METADATA_TABLES:
+                    cursor.execute('SELECT to_regclass(%s)', (f'public.{table}',))
+                    row = cursor.fetchone()
+                    if row is None or row[0] is None:
+                        missing_tables.append(table)
+                if missing_tables:
+                    raise RuntimeError(
+                        'required_simulation_metadata_tables_missing:' + ','.join(sorted(missing_tables))
+                    )
+
+    _run_with_transient_postgres_retry(
+        label='assert_required_simulation_metadata_tables',
+        operation=_validate,
     )
 
 

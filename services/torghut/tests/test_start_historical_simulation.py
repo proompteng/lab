@@ -628,6 +628,45 @@ class TestStartHistoricalSimulation(TestCase):
             'postgresql://torghut_app:postgres-secret@localhost:5432/torghut_sim_test',
         )
 
+    def test_build_postgres_runtime_config_supports_separate_admin_and_runtime_password_envs(self) -> None:
+        with patch.dict(
+            'os.environ',
+            {
+                'TORGHUT_POSTGRES_ADMIN_PASSWORD': 'admin-secret',
+                'TORGHUT_POSTGRES_PASSWORD': 'app-secret',
+            },
+            clear=False,
+        ):
+            config = _build_postgres_runtime_config(
+                {
+                    'postgres': {
+                        'admin_dsn': 'postgresql://postgres@localhost:5432/postgres',
+                        'admin_dsn_password_env': 'TORGHUT_POSTGRES_ADMIN_PASSWORD',
+                        'simulation_dsn_template': 'postgresql://torghut_app@localhost:5432/{db}',
+                        'simulation_dsn_password_env': 'TORGHUT_POSTGRES_PASSWORD',
+                        'runtime_simulation_dsn_template': 'postgresql://torghut_app@localhost:5432/{db}',
+                        'runtime_simulation_dsn_password_env': 'TORGHUT_POSTGRES_PASSWORD',
+                    }
+                },
+                simulation_db='torghut_sim_test',
+            )
+        self.assertEqual(
+            config.admin_dsn,
+            'postgresql://postgres:admin-secret@localhost:5432/postgres',
+        )
+        self.assertEqual(
+            config.admin_simulation_dsn,
+            'postgresql://postgres:admin-secret@localhost:5432/torghut_sim_test',
+        )
+        self.assertEqual(
+            config.simulation_dsn,
+            'postgresql://torghut_app:app-secret@localhost:5432/torghut_sim_test',
+        )
+        self.assertEqual(
+            config.runtime_simulation_dsn,
+            'postgresql://torghut_app:app-secret@localhost:5432/torghut_sim_test',
+        )
+
     def test_build_postgres_runtime_config_uses_db_from_explicit_dsn(self) -> None:
         config = _build_postgres_runtime_config(
             {
@@ -658,20 +697,20 @@ class TestStartHistoricalSimulation(TestCase):
         target = _find_vector_extension_blocking_revision(repo_root)
         self.assertEqual(target, '0016_whitepaper_engineering_triggers_and_rollout')
 
-    def test_run_migrations_falls_back_to_pre_vector_revision_on_permission_error(self) -> None:
+    def test_run_migrations_uses_admin_simulation_dsn(self) -> None:
         config = PostgresRuntimeConfig(
-            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            admin_dsn='postgresql://postgres:admin-secret@localhost:5432/postgres',
             simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1',
             simulation_db='torghut_sim_sim_1',
             migrations_command='/opt/venv/bin/alembic upgrade heads',
         )
-        calls: list[str] = []
+        captured_envs: list[str] = []
 
         def _fake_run_command(args, *, cwd=None, env=None, input_text=None) -> None:
-            _ = (cwd, env, input_text)
-            calls.append(' '.join(args))
-            if args[-1] == 'heads':
-                raise RuntimeError('command_failed: permission denied to create extension \"vector\"')
+            _ = (args, cwd, input_text)
+            if env is None:
+                raise AssertionError('expected DB_DSN env to be provided')
+            captured_envs.append(str(env['DB_DSN']))
             return None
 
         def _fake_retry(*, label: str, operation: object, attempts: int = 8, sleep_seconds: float = 0.5) -> None:
@@ -685,15 +724,70 @@ class TestStartHistoricalSimulation(TestCase):
                 side_effect=_fake_retry,
             ),
             patch(
-                'scripts.start_historical_simulation._find_vector_extension_blocking_revision',
-                return_value='0016_whitepaper_engineering_triggers_and_rollout',
+                'scripts.start_historical_simulation._assert_required_simulation_metadata_tables',
+                return_value=None,
             ),
         ):
             _run_migrations(config)
 
-        self.assertEqual(len(calls), 2)
-        self.assertIn('heads', calls[0])
-        self.assertIn('0016_whitepaper_engineering_triggers_and_rollout', calls[1])
+        self.assertEqual(
+            captured_envs,
+            ['postgresql://postgres:admin-secret@localhost:5432/torghut_sim_sim_1'],
+        )
+
+    def test_assert_required_simulation_metadata_tables_raises_when_missing(self) -> None:
+        config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://postgres:admin-secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1',
+            simulation_db='torghut_sim_sim_1',
+            migrations_command='/opt/venv/bin/alembic upgrade heads',
+        )
+
+        class _FakeCursor:
+            def __init__(self) -> None:
+                self._table = ''
+
+            def execute(self, statement: str, params: tuple[str, ...]) -> None:
+                _ = statement
+                self._table = params[0]
+
+            def fetchone(self) -> tuple[str | None]:
+                if self._table.endswith('vnext_completion_gate_results'):
+                    return (None,)
+                return (self._table.split('.', 1)[1],)
+
+            def __enter__(self) -> _FakeCursor:
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                return False
+
+        class _FakeConnection:
+            def cursor(self) -> _FakeCursor:
+                return _FakeCursor()
+
+            def __enter__(self) -> _FakeConnection:
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                return False
+
+        def _fake_retry(*, label: str, operation: object, attempts: int = 8, sleep_seconds: float = 0.5) -> None:
+            _ = (label, attempts, sleep_seconds)
+            return operation()
+
+        with (
+            patch('scripts.start_historical_simulation.psycopg.connect', return_value=_FakeConnection()),
+            patch(
+                'scripts.start_historical_simulation._run_with_transient_postgres_retry',
+                side_effect=_fake_retry,
+            ),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                'required_simulation_metadata_tables_missing:vnext_completion_gate_results',
+            ):
+                start_historical_simulation._assert_required_simulation_metadata_tables(config)
 
     def test_remove_appledouble_sidecars_deletes_only_sidecar_python_files(self) -> None:
         with TemporaryDirectory() as tmpdir:
