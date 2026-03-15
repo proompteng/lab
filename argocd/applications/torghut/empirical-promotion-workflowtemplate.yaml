@@ -21,7 +21,7 @@ spec:
           - name: manifestB64
           - name: outputRoot
       container:
-        image: registry.ide-newton.ts.net/lab/torghut@sha256:129ad8f8ab120f83d2dd94649c34b6a79862c11e587204015a784358472b7237
+        image: registry.ide-newton.ts.net/lab/torghut@sha256:2e58028364ca7ed0502fb6eb8d00fe736c8df38e6d66cf7b98bd4150ed4bcedf
         imagePullPolicy: IfNotPresent
         command:
           - /bin/bash
