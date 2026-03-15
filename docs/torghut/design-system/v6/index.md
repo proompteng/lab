@@ -13,6 +13,8 @@
   - `40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md`
   - `41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md`
   - `39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md`
+- Discover stage merge anchor:
+  - `42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md`
   - `42-torghut-quant-control-plane-and-profitability-program-2026-03-15.md`
 - Evidence sync: `14-legacy-gap-disposition-map-2026-03-03.md` (signed v4/v5 disposition completeness)
 - Rollout status: v6 pack controls are represented by merged runtime/control-plane closure phases in `main` (`#3921` through `#3960`).
@@ -61,6 +63,8 @@ Current source-state priority is narrower:
   lanes, capital-budget-aware progression, and demotion guardrails to move from static safety to measurable profit growth.
 - `42-torghut-quant-control-plane-and-profitability-program-2026-03-15.md` defines the full architecture merge program that
   binds segment-aware control-plane operations with hypothesis profitability lane governance.
+- `42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md` now records the
+  discover-stage merge contract with evidence and explicit engineer/deployer acceptance gates.
 - `33-alpaca-options-market-data-and-technical-analysis-lane-2026-03-08.md` now records the production design for a
   separate Alpaca options ingest and TA lane, grounded in the current equity-only Torghut runtime and cluster state.
 - `34-alpaca-options-lane-implementation-contract-set-2026-03-08.md` now turns that architecture into explicit event,
@@ -134,7 +138,8 @@ This pack is positioned as the next architecture layer above:
 39. `39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md`
 40. `40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md`
 41. `41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md`
-42. `42-torghut-quant-control-plane-and-profitability-program-2026-03-15.md`
+42. `42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md`
+43. `42-torghut-quant-control-plane-and-profitability-program-2026-03-15.md`
 
 ## Recommended Build Order
 
@@ -179,7 +184,8 @@ This pack is positioned as the next architecture layer above:
 39. `39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md`
 40. `40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md`
 41. `41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md`
-42. `42-torghut-quant-control-plane-and-profitability-program-2026-03-15.md`
+42. `42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md`
+43. `42-torghut-quant-control-plane-and-profitability-program-2026-03-15.md`
 
 ## Why This Sequence
 
@@ -221,3 +227,5 @@ This pack is positioned as the next architecture layer above:
   live data contract and a session-proven production feed.
 - The options trading-runtime integration comes last because it is only safe once both the market-data lane and the
   replay/proof lane are authoritative.
+- `42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md` is now the discover
+  stage transition contract with explicit cluster/source/database assessment and rollout/rollback requirements.
