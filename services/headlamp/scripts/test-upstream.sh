@@ -12,3 +12,4 @@ sh "$SCRIPT_DIR/apply-upstream-patches.sh" "$WORK_DIR"
 
 cd "$WORK_DIR/backend"
 go test ./cmd -run 'Test(GetOrCreateConnection|EstablishClusterConnection|GetOrCreateConnection_HTTPWatchStream|Reconnect|Reconnect_WithToken)'
+go test ./pkg/auth -run 'Test(GetCookiePath|GetWebSocketCookiePath|SetAndGetAuthCookie|GetAuthCookieChunked|ClearAuthCookie)'
