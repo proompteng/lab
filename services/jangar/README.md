@@ -282,6 +282,22 @@ Control-plane status now includes an additive `agentrun_ingestion` block in
 - `untouched_run_count`
 - `oldest_untouched_age_seconds`
 
+Execution-trust gating can be enabled in `/api/agents/control-plane/status` via:
+
+- `JANGAR_CONTROL_PLANE_EXECUTION_TRUST` (optional; default: `false`)
+- `JANGAR_CONTROL_PLANE_EXECUTION_TRUST_SWARMS` (optional comma list; default: `jangar-control-plane,torghut-quant`)
+- `JANGAR_CONTROL_PLANE_EXECUTION_TRUST_SUMMARY_LIMIT` (optional; default: `20`)
+
+When enabled and trust is not healthy, the status payload includes:
+
+- `execution_trust`
+- `swarms`
+- `stages`
+
+`execution_trust.status` will be one of `healthy`, `degraded`, `blocked`, or `unknown`.
+`/ready` returns `503` when execution trust is `degraded`, `blocked`, or `unknown`
+and includes the same `execution_trust` block in its response.
+
 ## Control-plane cache freshness behavior
 
 When cache reads are enabled for `/api/agents/control-plane/resource` and `/api/agents/control-plane/resources`, responses may include a `cache` object:

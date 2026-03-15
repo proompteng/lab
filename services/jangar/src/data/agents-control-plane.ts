@@ -172,6 +172,56 @@ export type WorkflowsReliabilityStatus = {
   message: string
 }
 
+export type ExecutionTrustStatus = {
+  status: 'healthy' | 'degraded' | 'blocked' | 'unknown'
+  reason: string
+  last_evaluated_at: string
+  blocking_windows: Array<{
+    type: 'swarms' | 'stages' | 'dependencies'
+    scope: string
+    name?: string
+    reason: string
+    class: 'degraded' | 'blocked' | 'unknown'
+  }>
+  evidence_summary: string[]
+}
+
+export type ExecutionTrustSwarm = {
+  name: string
+  namespace: string
+  phase: string
+  ready: boolean
+  updated_at: string | null
+  observed_generation: number | null
+  freeze: {
+    reason: string | null
+    until: string | null
+  } | null
+  requirements_pending: number
+  requirements_pending_class: 'healthy' | 'degraded' | 'blocked' | 'unknown'
+  last_discover_at: string | null
+  last_plan_at: string | null
+  last_implement_at: string | null
+  last_verify_at: string | null
+}
+
+export type ExecutionTrustStage = {
+  swarm: string
+  namespace: string
+  stage: 'discover' | 'plan' | 'implement' | 'verify'
+  phase: string
+  last_run_at: string | null
+  next_expected_at: string | null
+  configured_every_ms: number | null
+  age_ms: number | null
+  stale_after_ms: number | null
+  stale: boolean
+  recent_failed_jobs: number
+  recent_backoff_limit_exceeded_jobs: number
+  last_failure_reason: string | null
+  data_confidence: 'high' | 'degraded' | 'unknown'
+}
+
 export type DependencyQuorumDecision = 'allow' | 'delay' | 'block' | 'unknown'
 
 export type DependencyQuorumSegmentStatus = 'healthy' | 'degraded' | 'blocked'
@@ -313,6 +363,9 @@ export type ControlPlaneStatus = {
   agentrun_ingestion: AgentRunIngestionStatus
   rollout_health: ControlPlaneRolloutHealth
   empirical_services: EmpiricalServicesStatus
+  execution_trust?: ExecutionTrustStatus
+  swarms?: ExecutionTrustSwarm[]
+  stages?: ExecutionTrustStage[]
   namespaces: NamespaceStatus[]
 }
 

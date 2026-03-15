@@ -4,6 +4,8 @@ import { assessAgentRunIngestion, getAgentsControllerHealth } from '~/server/age
 import { getLeaderElectionStatus } from '~/server/leader-election'
 import { getOrchestrationControllerHealth } from '~/server/orchestration-controller'
 import { getSupportingControllerHealth } from '~/server/supporting-primitives-controller'
+import { buildExecutionTrust } from '~/server/control-plane-status'
+import { parseBooleanEnv } from '~/server/agents-controller/env-config'
 
 const isControllerHealthReady = (health: ReturnType<typeof getAgentsControllerHealth>) =>
   !health.enabled || health.crdsReady !== false
@@ -18,6 +20,29 @@ const isAgentRunIngestionReady = (health: ReturnType<typeof getAgentsControllerH
 const isStandbyLeaderElectionReady = (leaderElection: ReturnType<typeof getLeaderElectionStatus>) =>
   leaderElection.lastAttemptAt !== null && leaderElection.lastError === null
 
+const resolveExecutionTrustEnabled = () => parseBooleanEnv(process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST, false)
+
+const executionTrustStatus = async (namespace: string) => {
+  if (!resolveExecutionTrustEnabled()) return null
+  try {
+    return (
+      await buildExecutionTrust({
+        namespace,
+        now: new Date(),
+        swarms: [],
+      })
+    ).executionTrust
+  } catch {
+    return {
+      status: 'unknown' as const,
+      reason: 'execution trust check failed',
+      last_evaluated_at: new Date().toISOString(),
+      blocking_windows: [],
+      evidence_summary: [],
+    }
+  }
+}
+
 export const Route = createFileRoute('/ready')({
   server: {
     handlers: {
@@ -31,6 +56,8 @@ export const getReadyHandler = async () => {
   const agentsController = getAgentsControllerHealth()
   const orchestrationController = getOrchestrationControllerHealth()
   const supportingController = getSupportingControllerHealth()
+  const namespace = agentsController.namespaces?.[0] ?? 'agents'
+  const trust = await executionTrustStatus(namespace)
 
   const controllersOk =
     isControllerHealthReady(agentsController) &&
@@ -42,7 +69,8 @@ export const getReadyHandler = async () => {
   const agentsControllerReady = activeControllerReplica
     ? isAgentRunIngestionReady(agentsController)
     : leaderElectionReady
-  const ready = controllersOk && agentsControllerReady
+  const executionTrustReady = !trust || trust.status === 'healthy'
+  const ready = controllersOk && agentsControllerReady && executionTrustReady
 
   const body = JSON.stringify({
     status: ready ? 'ok' : 'degraded',
@@ -51,6 +79,7 @@ export const getReadyHandler = async () => {
     agentsController,
     orchestrationController,
     supportingController,
+    ...(trust ? { execution_trust: trust } : {}),
   })
 
   const headers: Record<string, string> = {
