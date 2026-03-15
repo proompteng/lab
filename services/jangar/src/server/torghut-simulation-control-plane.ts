@@ -1,8 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { posix as pathPosix } from 'node:path'
 
-import { sql } from 'kysely'
-
 import { stableJsonStringifyForHash } from '~/server/agents-controller/template-hash'
 import { getDb } from '~/server/db'
 import { ensureMigrations } from '~/server/kysely-migrations'
@@ -118,6 +116,8 @@ const DEFAULT_CONFIRM_PHRASE = 'START_HISTORICAL_SIMULATION'
 const DEFAULT_WORKFLOW_TEMPLATE_NAME = 'torghut-historical-simulation'
 const DEFAULT_DUMP_FORMAT = 'jsonl.zst'
 const DEFAULT_CAMPAIGN_OUTPUT_ROOT = `${DEFAULT_OUTPUT_ROOT}/campaigns`
+const DEFAULT_SIMULATION_CACHE_BUCKET = (process.env.TORGHUT_SIM_CACHE_BUCKET ?? 'argo-workflows').trim()
+const DEFAULT_SIMULATION_CACHE_PREFIX = (process.env.TORGHUT_SIM_CACHE_PREFIX ?? 'torghut-simulation-cache').trim()
 const DEFAULT_SIMULATION_KAFKA_BOOTSTRAP = 'kafka-kafka-bootstrap.kafka.svc.cluster.local:9092'
 const DEFAULT_SIMULATION_KAFKA_USERNAME = 'kafka-codex-credentials'
 const DEFAULT_SIMULATION_KAFKA_PASSWORD_ENV = 'TORGHUT_SIM_KAFKA_PASSWORD'
@@ -287,6 +287,21 @@ const resolveWorkflowOutputRoot = (outputRoot: string) => {
   return pathPosix.join(DEFAULT_WORKFLOW_OUTPUT_ROOT, normalized)
 }
 
+const dumpSuffixForFormat = (dumpFormat: string) =>
+  dumpFormat === 'jsonl.gz' ? '.jsonl.gz' : dumpFormat === 'jsonl.zst' ? '.jsonl.zst' : '.ndjson'
+
+const buildDatasetCacheArtifactPaths = (cacheKey: string, dumpFormat: string) => {
+  const objectKey = pathPosix.join(
+    DEFAULT_SIMULATION_CACHE_PREFIX,
+    cacheKey,
+    `source-dump${dumpSuffixForFormat(dumpFormat)}`,
+  )
+  return {
+    artifactPath: `s3://${DEFAULT_SIMULATION_CACHE_BUCKET}/${objectKey}`,
+    chunkManifestPath: `s3://${DEFAULT_SIMULATION_CACHE_BUCKET}/${objectKey}.manifest.json`,
+  }
+}
+
 const reserveSimulationLane = async (params: { runId: string; runClass: string; cacheKey: string | null }) => {
   const db = await ensureDb()
   await reconcileSimulationLaneLeases(db)
@@ -358,19 +373,13 @@ const upsertDatasetCache = async (params: {
   manifest: JsonRecord
   profile: string
   runId: string
-  outputRoot: string
-  runToken: string
   status: string
-  hitCountIncrement?: boolean
 }) => {
   const db = await ensureDb()
   const performance = asRecord(params.manifest.performance)
   const window = asRecord(params.manifest.window)
   const dumpFormat = asString(performance.dumpFormat) ?? DEFAULT_DUMP_FORMAT
-  const artifactPath = `${params.outputRoot.replace(/\/+$/, '')}/${params.runToken}/source-dump${
-    dumpFormat === 'jsonl.gz' ? '.jsonl.gz' : dumpFormat === 'jsonl.zst' ? '.jsonl.zst' : '.ndjson'
-  }`
-  const chunkManifestPath = `${artifactPath}.manifest.json`
+  const cachePaths = buildDatasetCacheArtifactPaths(params.cacheKey, dumpFormat)
   await db
     .insertInto('torghut_control_plane.dataset_cache')
     .values({
@@ -383,8 +392,8 @@ const upsertDatasetCache = async (params: {
       schema_digest: asString(params.manifest.strategy_spec_ref),
       code_digest: asString(asRecord(params.manifest.metadata).imageDigest),
       dump_format: dumpFormat,
-      artifact_path: artifactPath,
-      chunk_manifest_path: chunkManifestPath,
+      artifact_path: cachePaths.artifactPath,
+      chunk_manifest_path: cachePaths.chunkManifestPath,
       records_total: 0,
       bytes_total: 0,
       built_by_run_id: params.runId,
@@ -392,26 +401,45 @@ const upsertDatasetCache = async (params: {
       last_verified_at: null,
       metadata: {
         replayProfile: params.profile,
+        storage: 'durable_ceph_s3',
       },
-      hit_count: params.hitCountIncrement ? 1 : 0,
+      hit_count: 0,
       last_used_at: new Date(),
     })
     .onConflict((oc) =>
       oc.column('cache_key').doUpdateSet({
         status: params.status,
-        artifact_path: artifactPath,
-        chunk_manifest_path: chunkManifestPath,
+        artifact_path: cachePaths.artifactPath,
+        chunk_manifest_path: cachePaths.chunkManifestPath,
         built_by_run_id: params.runId,
         metadata: {
           replayProfile: params.profile,
+          storage: 'durable_ceph_s3',
         },
-        hit_count: params.hitCountIncrement
-          ? sql<number>`torghut_control_plane.dataset_cache.hit_count + 1`
-          : sql<number>`torghut_control_plane.dataset_cache.hit_count`,
         last_used_at: new Date(),
         updated_at: new Date(),
       }),
     )
+    .execute()
+}
+
+const touchDatasetCacheHit = async (cacheKey: string) => {
+  const db = await ensureDb()
+  const existing = await db
+    .selectFrom('torghut_control_plane.dataset_cache')
+    .selectAll()
+    .where('cache_key', '=', cacheKey)
+    .executeTakeFirst()
+  if (!existing) return
+
+  await db
+    .updateTable('torghut_control_plane.dataset_cache')
+    .set({
+      hit_count: Number(existing.hit_count ?? 0) + 1,
+      last_used_at: new Date(),
+      updated_at: new Date(),
+    })
+    .where('cache_key', '=', cacheKey)
     .execute()
 }
 
@@ -1066,6 +1094,7 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
   const cacheKey = buildSimulationCacheKey(manifest, profile)
   const digest = manifestDigest(manifest)
   const idempotencyKey = `${runId}:${digest}:${request.forceReplay ? 'replay' : 'noreplay'}:${request.forceDump ? 'dump' : 'nodump'}`
+  const requestedCachePolicy = (request.cachePolicy ?? DEFAULT_CACHE_POLICY).trim().toLowerCase()
 
   const existing = await db
     .selectFrom('torghut_control_plane.simulation_runs')
@@ -1083,14 +1112,33 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
   const outputRoot = String(runtime.output_root ?? DEFAULT_OUTPUT_ROOT)
   const workflowOutputRoot = resolveWorkflowOutputRoot(outputRoot)
   const artifactRoot = `${outputRoot.replace(/\/+$/, '')}/${normalizeRunToken(runId)}`
-  const cachedDataset = await db
-    .selectFrom('torghut_control_plane.dataset_cache')
-    .selectAll()
-    .where('cache_key', '=', cacheKey)
-    .executeTakeFirst()
+  const cachedDataset =
+    requestedCachePolicy === 'refresh'
+      ? null
+      : await db
+          .selectFrom('torghut_control_plane.dataset_cache')
+          .selectAll()
+          .where('cache_key', '=', cacheKey)
+          .where('status', '=', 'ready')
+          .executeTakeFirst()
+  const cacheDecision = cachedDataset ? 'hit' : requestedCachePolicy === 'refresh' ? 'refresh' : 'miss'
   const cacheStatus = cachedDataset ? 'hit' : 'miss'
-  if ((request.cachePolicy ?? DEFAULT_CACHE_POLICY) === 'require_cache' && !cachedDataset) {
+  const cachePaths = buildDatasetCacheArtifactPaths(cacheKey, asString(performance.dumpFormat) ?? DEFAULT_DUMP_FORMAT)
+  const cacheArtifactPath = asString(cachedDataset?.artifact_path) ?? cachePaths.artifactPath
+  const cacheChunkManifestPath = asString(cachedDataset?.chunk_manifest_path) ?? cachePaths.chunkManifestPath
+  const cacheBuiltByRunId = asString(cachedDataset?.built_by_run_id) ?? (cachedDataset ? undefined : runId)
+  if (requestedCachePolicy === 'require_cache' && !cachedDataset) {
     throw new Error(`required simulation dataset cache is missing for cache_key=${cacheKey}`)
+  }
+
+  const manifestMetadata = asRecord(manifest.metadata)
+  manifest.metadata = {
+    ...manifestMetadata,
+    cacheKey,
+    cacheDecision,
+    cacheArtifactPath,
+    cacheChunkManifestPath,
+    cacheBuiltByRunId,
   }
 
   await db
@@ -1120,6 +1168,10 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
       manifest_digest: digest,
       metadata: {
         ...request.metadata,
+        cacheDecision,
+        cacheArtifactPath,
+        cacheChunkManifestPath,
+        cacheBuiltByRunId,
         torghutService: resolveSimulationServiceName(manifest),
         torghutNamespace: resolveSimulationNamespace(manifest),
         workflowNamespace: resolveSimulationWorkflowNamespace(manifest),
@@ -1153,6 +1205,10 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
       lane_id: laneReservation.laneId,
       metadata: {
         ...request.metadata,
+        cacheDecision,
+        cacheArtifactPath,
+        cacheChunkManifestPath,
+        cacheBuiltByRunId,
         laneReservation: {
           laneId: laneReservation.laneId,
           leaseExpiresAt: laneReservation.leaseExpiresAt.toISOString(),
@@ -1202,6 +1258,10 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
       workflow_phase: workflowPhase,
       metadata: {
         ...request.metadata,
+        cacheDecision,
+        cacheArtifactPath,
+        cacheChunkManifestPath,
+        cacheBuiltByRunId,
         laneReservation: {
           laneId: laneReservation.laneId,
           leaseExpiresAt: laneReservation.leaseExpiresAt.toISOString(),
@@ -1230,17 +1290,18 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
     cacheStatus,
     cacheKey,
   })
-  await upsertDatasetCache({
-    cacheKey,
-    lane,
-    manifest,
-    profile,
-    runId,
-    outputRoot,
-    runToken: normalizeRunToken(runId),
-    status: cachedDataset ? 'ready' : 'building',
-    hitCountIncrement: Boolean(cachedDataset),
-  })
+  if (cachedDataset) {
+    await touchDatasetCacheHit(cacheKey)
+  } else {
+    await upsertDatasetCache({
+      cacheKey,
+      lane,
+      manifest,
+      profile,
+      runId,
+      status: 'building',
+    })
+  }
   await upsertExpectedArtifacts(runId, outputRoot, asString(performance.dumpFormat) ?? DEFAULT_DUMP_FORMAT)
 
   const createdRow = await db
@@ -1577,7 +1638,9 @@ export const syncTorghutSimulationRun = async (runId: string) => {
       final_verdict: finalVerdict,
       cache_status: TERMINAL_RUN_STATUSES.has(snapshot.status)
         ? snapshot.status === 'succeeded'
-          ? 'ready'
+          ? asString(asRecord(snapshot.metadata).cacheDecision) === 'hit'
+            ? 'hit'
+            : 'ready'
           : 'failed'
         : snapshot.cacheStatus,
       updated_at: new Date(),
@@ -1587,16 +1650,17 @@ export const syncTorghutSimulationRun = async (runId: string) => {
 
   if (TERMINAL_RUN_STATUSES.has(snapshot.status)) {
     await releaseSimulationLane(runId)
-    await upsertDatasetCache({
-      cacheKey: snapshot.cacheKey ?? buildSimulationCacheKey(snapshot.manifest, snapshot.profile),
-      lane: snapshot.lane,
-      manifest: snapshot.manifest,
-      profile: snapshot.profile,
-      runId: snapshot.runId,
-      outputRoot: snapshot.outputRoot ?? DEFAULT_OUTPUT_ROOT,
-      runToken: normalizeRunToken(snapshot.runId),
-      status: snapshot.status === 'succeeded' ? 'ready' : 'failed',
-    })
+    const cacheDecision = asString(asRecord(snapshot.metadata).cacheDecision) ?? 'miss'
+    if (cacheDecision !== 'hit') {
+      await upsertDatasetCache({
+        cacheKey: snapshot.cacheKey ?? buildSimulationCacheKey(snapshot.manifest, snapshot.profile),
+        lane: snapshot.lane,
+        manifest: snapshot.manifest,
+        profile: snapshot.profile,
+        runId: snapshot.runId,
+        status: snapshot.status === 'succeeded' ? 'ready' : 'failed',
+      })
+    }
     await appendRunEvent(runId, 'simulation_run.completed', {
       status: snapshot.status,
       finalVerdict,

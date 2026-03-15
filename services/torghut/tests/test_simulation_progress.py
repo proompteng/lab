@@ -11,6 +11,7 @@ from app.trading.simulation_progress import (
     COMPONENT_ARTIFACTS,
     COMPONENT_REPLAY,
     COMPONENT_TORGHUT,
+    _active_simulation_runtime_context_via_session,
     active_simulation_runtime_context,
     simulation_progress_snapshot,
 )
@@ -48,6 +49,27 @@ def _row(**values: object) -> SimpleNamespace:
 
 
 class TestSimulationProgress(TestCase):
+    def test_active_runtime_context_uses_explicit_runtime_context_row(self) -> None:
+        session = MagicMock()
+        session.execute.return_value.scalars.return_value.first.return_value = SimpleNamespace(
+            run_id='sim-proof-active',
+            dataset_id='dataset-a',
+            lane='equity',
+            account_label='paper',
+            window_start=datetime(2026, 3, 13, 14, 30, tzinfo=timezone.utc),
+            window_end=datetime(2026, 3, 13, 21, 0, tzinfo=timezone.utc),
+            metadata_json={},
+        )
+
+        with patch('app.trading.simulation_progress.settings.trading_account_label', 'paper'):
+            context = _active_simulation_runtime_context_via_session(session)
+
+        assert context is not None
+        self.assertEqual(context['run_id'], 'sim-proof-active')
+        self.assertEqual(context['account_label'], 'paper')
+        self.assertEqual(context['window_start'], '2026-03-13T14:30:00+00:00')
+        self.assertEqual(context['window_end'], '2026-03-13T21:00:00+00:00')
+
     def test_active_runtime_context_prefers_latest_nonterminal_row(self) -> None:
         active_row = _row(
             run_id='sim-proof-active',

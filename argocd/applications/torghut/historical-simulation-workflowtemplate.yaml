@@ -67,6 +67,22 @@ spec:
             secretKeyRef:
               name: torghut-db-superuser
               key: password
+        - name: TORGHUT_SIM_CACHE_CEPH_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: argo-workflows
+              key: AWS_ACCESS_KEY_ID
+        - name: TORGHUT_SIM_CACHE_CEPH_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: argo-workflows
+              key: AWS_SECRET_ACCESS_KEY
+        - name: TORGHUT_SIM_CACHE_CEPH_BUCKET
+          value: argo-workflows
+        - name: TORGHUT_SIM_CACHE_CEPH_ENDPOINT
+          value: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
+        - name: TORGHUT_SIM_CACHE_CEPH_REGION
+          value: us-east-1
       command:
         - /bin/bash
         - -lc

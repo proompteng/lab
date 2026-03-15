@@ -682,6 +682,77 @@ class CephS3Client:
             "uri": f"s3://{bucket}/{key}",
         }
 
+    def get_object(
+        self,
+        *,
+        bucket: str,
+        key: str,
+    ) -> bytes:
+        now = datetime.now(timezone.utc)
+        amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+        datestamp = now.strftime("%Y%m%d")
+
+        parsed = urlparse(self.endpoint)
+        if not parsed.scheme or not parsed.netloc:
+            raise RuntimeError("invalid_ceph_endpoint")
+
+        canonical_uri = f"/{quote(bucket, safe='')}/{quote(key, safe='/-_.~')}"
+        payload_hash = hashlib.sha256(b"").hexdigest()
+        host = parsed.netloc
+
+        canonical_headers = (
+            f"host:{host}\n"
+            f"x-amz-content-sha256:{payload_hash}\n"
+            f"x-amz-date:{amz_date}\n"
+        )
+        signed_headers = "host;x-amz-content-sha256;x-amz-date"
+        canonical_request = "\n".join(
+            [
+                "GET",
+                canonical_uri,
+                "",
+                canonical_headers,
+                signed_headers,
+                payload_hash,
+            ]
+        )
+
+        algorithm = "AWS4-HMAC-SHA256"
+        credential_scope = f"{datestamp}/{self.region}/s3/aws4_request"
+        string_to_sign = "\n".join(
+            [
+                algorithm,
+                amz_date,
+                credential_scope,
+                hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
+            ]
+        )
+
+        signing_key = self._signing_key(datestamp)
+        signature = hmac.new(signing_key, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+        authorization = (
+            f"{algorithm} "
+            f"Credential={self.access_key}/{credential_scope}, "
+            f"SignedHeaders={signed_headers}, "
+            f"Signature={signature}"
+        )
+
+        url = f"{self.endpoint}{canonical_uri}"
+        status, _response_headers, payload = _http_request_bytes(
+            url,
+            method='GET',
+            headers={
+                'Host': host,
+                'Authorization': authorization,
+                'x-amz-date': amz_date,
+                'x-amz-content-sha256': payload_hash,
+            },
+            timeout_seconds=self.timeout_seconds,
+        )
+        if status < 200 or status >= 300:
+            raise RuntimeError(f'ceph_download_http_{status}')
+        return payload
+
     def _signing_key(self, datestamp: str) -> bytes:
         date_key = hmac.new(("AWS4" + self.secret_key).encode("utf-8"), datestamp.encode("utf-8"), hashlib.sha256)
         region_key = hmac.new(date_key.digest(), self.region.encode("utf-8"), hashlib.sha256)

@@ -1,4 +1,8 @@
+import { createHash } from 'node:crypto'
+
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { stableJsonStringifyForHash } from '~/server/agents-controller/template-hash'
 
 type FakeState = {
   runs: Map<string, Record<string, unknown>>
@@ -214,6 +218,17 @@ const buildFakeDb = (currentState: FakeState) => {
           }
           return { numUpdatedRows: existing ? 1 : 0 }
         }
+        if (table === 'torghut_control_plane.dataset_cache') {
+          const cacheKey = String(filters.find(([column]) => column === 'cache_key')?.[1] ?? '')
+          const existing = currentState.cache.get(cacheKey)
+          if (existing) {
+            currentState.cache.set(cacheKey, {
+              ...existing,
+              ...values,
+            })
+          }
+          return { numUpdatedRows: existing ? 1 : 0 }
+        }
         if (table === 'torghut_control_plane.simulation_lane_leases') {
           const runId = String(filters.find(([column]) => column === 'run_id')?.[1] ?? '')
           const laneIdFilter = String(filters.find(([column]) => column === 'lane_id')?.[1] ?? '')
@@ -379,5 +394,126 @@ describe('submitTorghutSimulationRun', () => {
     expect(result.run.runId).toBe('sim-reclaim-proof')
     expect(state.lanes.get('sim-fast-1')?.run_id).toBe('sim-reclaim-proof')
     expect((state.lanes.get('sim-fast-1')?.metadata as Record<string, unknown>)?.releaseReason).toBeUndefined()
+  })
+
+  it('preserves the existing ready cache artifact when a run consumes a cache hit', async () => {
+    const manifest = {
+      dataset_id: 'dataset-a',
+      candidate_id: 'intraday_tsmom_v1@prod',
+      baseline_candidate_id: 'intraday_tsmom_v1@baseline',
+      strategy_spec_ref: 'strategy-specs/intraday_tsmom_v1@1.1.0.json',
+      window: {
+        start: '2026-03-06T14:30:00Z',
+        end: '2026-03-06T14:45:00Z',
+      },
+      performance: {
+        replayProfile: 'compact',
+        dumpFormat: 'jsonl.zst',
+      },
+    }
+    const cacheKey = createHash('sha256')
+      .update(
+        stableJsonStringifyForHash({
+          lane: 'equity',
+          dataset_id: manifest.dataset_id,
+          window: manifest.window,
+          strategy_spec_ref: manifest.strategy_spec_ref,
+          candidate_id: manifest.candidate_id,
+          baseline_candidate_id: manifest.baseline_candidate_id,
+          dump_format: manifest.performance.dumpFormat,
+          profile: 'compact',
+        }),
+      )
+      .digest('hex')
+
+    state.cache.set(cacheKey, {
+      cache_key: cacheKey,
+      lane: 'equity',
+      status: 'ready',
+      artifact_path: 'artifacts/torghut/simulations/prior-run/source-dump.jsonl.zst',
+      chunk_manifest_path: 'artifacts/torghut/simulations/prior-run/source-dump.jsonl.zst.manifest.json',
+      built_by_run_id: 'prior-run',
+      hit_count: 2,
+    })
+
+    const result = await submitTorghutSimulationRun({
+      runId: 'sim-cache-hit-proof',
+      profile: 'compact',
+      cachePolicy: 'prefer_cache',
+      manifest,
+    })
+
+    expect(result.run.cacheStatus).toBe('hit')
+    const cacheRow = state.cache.get(cacheKey)
+    expect(cacheRow?.status).toBe('ready')
+    expect(cacheRow?.artifact_path).toBe('artifacts/torghut/simulations/prior-run/source-dump.jsonl.zst')
+    expect(cacheRow?.chunk_manifest_path).toBe(
+      'artifacts/torghut/simulations/prior-run/source-dump.jsonl.zst.manifest.json',
+    )
+    expect(cacheRow?.built_by_run_id).toBe('prior-run')
+    expect(cacheRow?.hit_count).toBe(3)
+    expect((state.runs.get('sim-cache-hit-proof')?.metadata as Record<string, unknown>)?.cacheDecision).toBe('hit')
+    expect((state.runs.get('sim-cache-hit-proof')?.metadata as Record<string, unknown>)?.cacheArtifactPath).toBe(
+      'artifacts/torghut/simulations/prior-run/source-dump.jsonl.zst',
+    )
+  })
+
+  it('records deterministic durable cache artifact paths on a cache miss', async () => {
+    const manifest = {
+      dataset_id: 'dataset-b',
+      candidate_id: 'intraday_tsmom_v1@prod',
+      baseline_candidate_id: 'intraday_tsmom_v1@baseline',
+      strategy_spec_ref: 'strategy-specs/intraday_tsmom_v1@1.1.0.json',
+      window: {
+        start: '2026-03-13T13:30:00Z',
+        end: '2026-03-13T20:00:00Z',
+      },
+      performance: {
+        replayProfile: 'compact',
+        dumpFormat: 'jsonl.zst',
+      },
+    }
+    const cacheKey = createHash('sha256')
+      .update(
+        stableJsonStringifyForHash({
+          lane: 'equity',
+          dataset_id: manifest.dataset_id,
+          window: manifest.window,
+          strategy_spec_ref: manifest.strategy_spec_ref,
+          candidate_id: manifest.candidate_id,
+          baseline_candidate_id: manifest.baseline_candidate_id,
+          dump_format: manifest.performance.dumpFormat,
+          profile: 'compact',
+        }),
+      )
+      .digest('hex')
+    const expectedArtifactPath = `s3://argo-workflows/torghut-simulation-cache/${cacheKey}/source-dump.jsonl.zst`
+    const expectedManifestPath = `${expectedArtifactPath}.manifest.json`
+
+    const result = await submitTorghutSimulationRun({
+      runId: 'sim-cache-miss-proof',
+      profile: 'compact',
+      cachePolicy: 'prefer_cache',
+      manifest,
+    })
+
+    expect(result.run.cacheStatus).toBe('miss')
+    const cacheRow = state.cache.get(cacheKey)
+    expect(cacheRow?.artifact_path).toBe(expectedArtifactPath)
+    expect(cacheRow?.chunk_manifest_path).toBe(expectedManifestPath)
+    expect((state.runs.get('sim-cache-miss-proof')?.metadata as Record<string, unknown>)?.cacheArtifactPath).toBe(
+      expectedArtifactPath,
+    )
+    expect((state.runs.get('sim-cache-miss-proof')?.metadata as Record<string, unknown>)?.cacheChunkManifestPath).toBe(
+      expectedManifestPath,
+    )
+    expect(
+      (
+        (state.runs.get('sim-cache-miss-proof')?.manifest as Record<string, unknown>)?.metadata as Record<
+          string,
+          unknown
+        >
+      )?.cacheArtifactPath,
+    ).toBe(expectedArtifactPath)
   })
 })

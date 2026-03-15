@@ -50,6 +50,7 @@ from app.trading.simulation_progress import (
     COMPONENT_TA,
     COMPONENT_TORGHUT,
 )
+from app.whitepapers.workflow import CephS3Client
 from scripts import historical_simulation_verification as simulation_verification
 from scripts.simulation_lane_contracts import (
     EQUITY_SIMULATION_LANE,
@@ -69,6 +70,9 @@ DEFAULT_SIM_TA_DEPLOYMENT = 'torghut-ta-sim'
 DEFAULT_SIM_TORGHUT_SERVICE = 'torghut-sim'
 DEFAULT_SIM_FORECAST_SERVICE = 'torghut-forecast-sim'
 DEFAULT_OUTPUT_ROOT = Path('artifacts/torghut/simulations')
+DEFAULT_SIMULATION_CACHE_BUCKET = 'argo-workflows'
+DEFAULT_SIMULATION_CACHE_ENDPOINT = 'http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80'
+DEFAULT_SIMULATION_CACHE_PREFIX = 'torghut-simulation-cache'
 
 PRODUCTION_TOPIC_BY_ROLE = dict(EQUITY_SIMULATION_LANE.source_topic_by_role)
 SIMULATION_TOPIC_BY_ROLE = dict(EQUITY_SIMULATION_LANE.simulation_topic_by_role)
@@ -117,6 +121,7 @@ TORGHUT_ENV_KEYS = [
 
 SIMULATION_TORGHUT_ENV_OVERRIDE_ALLOWLIST = frozenset(
     {
+        'TRADING_ACCOUNT_LABEL',
         'TRADING_FEATURE_QUALITY_ENABLED',
         'TRADING_FEATURE_MAX_REQUIRED_NULL_RATE',
         'TRADING_FEATURE_MAX_STALENESS_MS',
@@ -2297,6 +2302,25 @@ def _torghut_env_overrides_from_manifest(
     return overrides
 
 
+def _simulation_account_label(
+    *,
+    resources: SimulationResources,
+    manifest: Mapping[str, Any],
+    torghut_env_overrides: Mapping[str, Any] | None = None,
+) -> str:
+    if torghut_env_overrides is not None:
+        override_value = _as_text(torghut_env_overrides.get('TRADING_ACCOUNT_LABEL'))
+        if override_value:
+            return override_value
+    runtime = _as_mapping(manifest.get('runtime'))
+    runtime_value = _as_text(runtime.get('account_label')) or _as_text(runtime.get('accountLabel'))
+    if runtime_value:
+        return runtime_value
+    if resources.target_mode == 'dedicated_service':
+        return 'TORGHUT_SIM'
+    return 'paper'
+
+
 def _performance_config(manifest: Mapping[str, Any]) -> dict[str, Any]:
     performance = _as_mapping(manifest.get('performance'))
     replay_profile = (
@@ -2515,6 +2539,248 @@ def _ensure_directory(path: Path) -> None:
 def _save_json(path: Path, payload: Mapping[str, Any]) -> None:
     _ensure_directory(path)
     path.write_text(json.dumps(dict(payload), indent=2, sort_keys=True), encoding='utf-8')
+
+
+def _write_dump_marker(
+    *,
+    dump_path: Path,
+    dump_sha256: str,
+    records: int,
+    dump_format: str,
+    min_source_timestamp_ms: int | None,
+    max_source_timestamp_ms: int | None,
+) -> None:
+    _save_json(
+        _dump_marker_path(dump_path),
+        {
+            'completed_at': datetime.now(timezone.utc).isoformat(),
+            'dump_sha256': dump_sha256,
+            'records': records,
+            'dump_format': dump_format,
+            'min_source_timestamp_ms': min_source_timestamp_ms,
+            'max_source_timestamp_ms': max_source_timestamp_ms,
+        },
+    )
+
+
+def _write_dump_marker_from_manifest(
+    *,
+    dump_path: Path,
+    artifact_manifest: Mapping[str, Any],
+) -> None:
+    chunks = artifact_manifest.get('chunks')
+    if not isinstance(chunks, list) or not chunks:
+        raise RuntimeError('cache_manifest_missing_chunks')
+    first_chunk = _as_mapping(chunks[0])
+    dump_sha256 = _as_text(first_chunk.get('sha256'))
+    records = _safe_int(first_chunk.get('records'), default=-1)
+    if not dump_sha256 or records < 0:
+        raise RuntimeError('cache_manifest_missing_required_chunk_fields')
+    dump_format = _as_text(artifact_manifest.get('dump_format')) or _dump_format_for_path(dump_path)
+    _write_dump_marker(
+        dump_path=dump_path,
+        dump_sha256=dump_sha256,
+        records=records,
+        dump_format=dump_format,
+        min_source_timestamp_ms=_safe_int(first_chunk.get('min_source_timestamp_ms'), default=-1)
+        if first_chunk.get('min_source_timestamp_ms') is not None
+        else None,
+        max_source_timestamp_ms=_safe_int(first_chunk.get('max_source_timestamp_ms'), default=-1)
+        if first_chunk.get('max_source_timestamp_ms') is not None
+        else None,
+    )
+
+
+def _simulation_cache_client_from_env() -> tuple[CephS3Client | None, str]:
+    access_key = (
+        os.getenv('TORGHUT_SIM_CACHE_CEPH_ACCESS_KEY', '').strip()
+        or os.getenv('AWS_ACCESS_KEY_ID', '').strip()
+    )
+    secret_key = (
+        os.getenv('TORGHUT_SIM_CACHE_CEPH_SECRET_KEY', '').strip()
+        or os.getenv('AWS_SECRET_ACCESS_KEY', '').strip()
+    )
+    bucket = (
+        os.getenv('TORGHUT_SIM_CACHE_CEPH_BUCKET', '').strip()
+        or DEFAULT_SIMULATION_CACHE_BUCKET
+    )
+    endpoint = (
+        os.getenv('TORGHUT_SIM_CACHE_CEPH_ENDPOINT', '').strip()
+        or DEFAULT_SIMULATION_CACHE_ENDPOINT
+    )
+    region = os.getenv('TORGHUT_SIM_CACHE_CEPH_REGION', 'us-east-1').strip() or 'us-east-1'
+    timeout_seconds = max(
+        1,
+        int(os.getenv('TORGHUT_SIM_CACHE_CEPH_TIMEOUT_SECONDS', '20') or '20'),
+    )
+    if not access_key or not secret_key or not endpoint:
+        return None, bucket
+    return (
+        CephS3Client(
+            endpoint=endpoint,
+            access_key=access_key,
+            secret_key=secret_key,
+            region=region,
+            timeout_seconds=timeout_seconds,
+        ),
+        bucket,
+    )
+
+
+def _cache_metadata(manifest: Mapping[str, Any]) -> dict[str, str]:
+    metadata = _as_mapping(manifest.get('metadata'))
+    return {
+        'cache_key': _as_text(metadata.get('cacheKey')) or '',
+        'cache_decision': (_as_text(metadata.get('cacheDecision')) or '').lower(),
+        'cache_artifact_path': _as_text(metadata.get('cacheArtifactPath')) or '',
+        'cache_manifest_path': _as_text(metadata.get('cacheChunkManifestPath')) or '',
+    }
+
+
+def _s3_bucket_key(uri: str) -> tuple[str, str] | None:
+    normalized = uri.strip()
+    if not normalized.startswith('s3://'):
+        return None
+    path = normalized[len('s3://') :]
+    bucket, _, key = path.partition('/')
+    bucket = bucket.strip()
+    key = key.strip('/')
+    if not bucket or not key:
+        return None
+    return bucket, key
+
+
+def _restore_cached_dump_if_available(
+    *,
+    manifest: Mapping[str, Any],
+    dump_path: Path,
+) -> dict[str, Any] | None:
+    cache = _cache_metadata(manifest)
+    cache_artifact_path = cache['cache_artifact_path']
+    cache_manifest_path = cache['cache_manifest_path']
+    cache_policy = _as_text(_performance_config(manifest).get('cache_policy')) or 'prefer_cache'
+    if not cache_artifact_path:
+        if cache_policy == 'require_cache':
+            raise RuntimeError('required_cache_artifact_path_missing')
+        return None
+
+    artifact_ref = _s3_bucket_key(cache_artifact_path)
+    manifest_ref = _s3_bucket_key(cache_manifest_path) if cache_manifest_path else None
+    if artifact_ref is None:
+        if cache_policy == 'require_cache':
+            raise RuntimeError(f'required_cache_artifact_uri_invalid:{cache_artifact_path}')
+        return None
+
+    client, default_bucket = _simulation_cache_client_from_env()
+    if client is None:
+        if cache_policy == 'require_cache':
+            raise RuntimeError('required_cache_client_unavailable')
+        return None
+
+    bucket, key = artifact_ref
+    bucket = bucket or default_bucket
+    try:
+        payload = client.get_object(bucket=bucket, key=key)
+        _ensure_directory(dump_path)
+        dump_path.write_bytes(payload)
+        if manifest_ref is not None:
+            manifest_bucket, manifest_key = manifest_ref
+            manifest_payload = client.get_object(bucket=manifest_bucket or default_bucket, key=manifest_key)
+            artifact_manifest = json.loads(manifest_payload.decode('utf-8'))
+            if not isinstance(artifact_manifest, Mapping):
+                raise RuntimeError('cache_manifest_invalid_payload')
+            _dump_artifact_manifest_path(dump_path).write_text(
+                json.dumps(dict(artifact_manifest), indent=2, sort_keys=True),
+                encoding='utf-8',
+            )
+            _write_dump_marker_from_manifest(
+                dump_path=dump_path,
+                artifact_manifest=artifact_manifest,
+            )
+        else:
+            _write_dump_marker(
+                dump_path=dump_path,
+                dump_sha256=_file_sha256(dump_path),
+                records=_count_lines(dump_path),
+                dump_format=_dump_format_for_path(dump_path),
+                min_source_timestamp_ms=None,
+                max_source_timestamp_ms=None,
+            )
+        report = _reusable_dump_report(dump_path)
+        if report is None:
+            raise RuntimeError('downloaded_cache_dump_validation_failed')
+        report['restored_from_cache'] = True
+        report['cache_artifact_path'] = cache_artifact_path
+        report['cache_manifest_path'] = cache_manifest_path or None
+        _log_script_event(
+            'Restored simulation dump from durable cache',
+            cache_key=cache['cache_key'] or 'unknown',
+            cache_artifact_path=cache_artifact_path,
+        )
+        return report
+    except Exception as exc:
+        dump_path.unlink(missing_ok=True)
+        _dump_artifact_manifest_path(dump_path).unlink(missing_ok=True)
+        if cache_policy == 'require_cache':
+            raise
+        _log_script_event(
+            'Failed to restore simulation dump from durable cache',
+            cache_key=cache['cache_key'] or 'unknown',
+            cache_artifact_path=cache_artifact_path,
+            error=str(exc),
+        )
+        return None
+
+
+def _upload_dump_to_cache(
+    *,
+    manifest: Mapping[str, Any],
+    dump_path: Path,
+) -> dict[str, Any] | None:
+    cache = _cache_metadata(manifest)
+    cache_key = cache['cache_key']
+    if not cache_key:
+        return None
+
+    artifact_ref = _s3_bucket_key(cache['cache_artifact_path'])
+    manifest_ref = _s3_bucket_key(cache['cache_manifest_path'])
+    if artifact_ref is None or manifest_ref is None:
+        return None
+
+    client, default_bucket = _simulation_cache_client_from_env()
+    if client is None:
+        return None
+
+    bucket, key = artifact_ref
+    manifest_bucket, manifest_key = manifest_ref
+    bucket = bucket or default_bucket
+    manifest_bucket = manifest_bucket or default_bucket
+
+    dump_content_type = {
+        'ndjson': 'application/x-ndjson',
+        'jsonl.gz': 'application/gzip',
+        'jsonl.zst': 'application/zstd',
+    }[_dump_format_for_path(dump_path)]
+    dump_result = client.put_object(
+        bucket=bucket,
+        key=key,
+        body=dump_path.read_bytes(),
+        content_type=dump_content_type,
+    )
+    manifest_path = _dump_artifact_manifest_path(dump_path)
+    manifest_result = client.put_object(
+        bucket=manifest_bucket,
+        key=manifest_key,
+        body=manifest_path.read_bytes(),
+        content_type='application/json',
+    )
+    return {
+        'cache_key': cache_key,
+        'artifact_path': f's3://{bucket}/{key}',
+        'artifact_etag': dump_result.get('etag'),
+        'manifest_path': f's3://{manifest_bucket}/{manifest_key}',
+        'manifest_etag': manifest_result.get('etag'),
+    }
 
 
 def _utc_from_millis(value: int | None) -> datetime | None:
@@ -3350,7 +3616,7 @@ def _seed_simulation_trade_cursor(
     *,
     config: PostgresRuntimeConfig,
     manifest: Mapping[str, Any],
-    account_label: str = 'TORGHUT_SIM',
+    account_label: str,
 ) -> datetime:
     window_start, _window_end = _resolve_window_bounds(manifest)
 
@@ -3392,6 +3658,88 @@ def _seed_simulation_trade_cursor(
         operation=_seed,
     )
     return window_start
+
+
+def _upsert_simulation_runtime_context(
+    *,
+    config: PostgresRuntimeConfig,
+    resources: SimulationResources,
+    manifest: Mapping[str, Any],
+    account_label: str,
+) -> None:
+    window_start, window_end = _resolve_window_bounds(manifest)
+    cache_metadata = _cache_metadata(manifest)
+
+    def _write() -> None:
+        with psycopg.connect(config.torghut_runtime_dsn, autocommit=True) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO simulation_runtime_context (
+                      lane,
+                      account_label,
+                      run_id,
+                      dataset_id,
+                      window_start,
+                      window_end,
+                      cache_key,
+                      cache_artifact_path,
+                      cache_manifest_path,
+                      warm_lane_enabled,
+                      metadata_json
+                    ) VALUES (
+                      %(lane)s,
+                      %(account_label)s,
+                      %(run_id)s,
+                      %(dataset_id)s,
+                      %(window_start)s,
+                      %(window_end)s,
+                      %(cache_key)s,
+                      %(cache_artifact_path)s,
+                      %(cache_manifest_path)s,
+                      %(warm_lane_enabled)s,
+                      %(metadata_json)s::jsonb
+                    )
+                    ON CONFLICT (lane, account_label) DO UPDATE SET
+                      run_id = EXCLUDED.run_id,
+                      dataset_id = EXCLUDED.dataset_id,
+                      window_start = EXCLUDED.window_start,
+                      window_end = EXCLUDED.window_end,
+                      cache_key = EXCLUDED.cache_key,
+                      cache_artifact_path = EXCLUDED.cache_artifact_path,
+                      cache_manifest_path = EXCLUDED.cache_manifest_path,
+                      warm_lane_enabled = EXCLUDED.warm_lane_enabled,
+                      metadata_json = COALESCE(simulation_runtime_context.metadata_json, '{}'::jsonb)
+                        || COALESCE(EXCLUDED.metadata_json, '{}'::jsonb),
+                      updated_at = NOW()
+                    """,
+                    {
+                        'lane': resources.lane,
+                        'account_label': account_label,
+                        'run_id': resources.run_id,
+                        'dataset_id': resources.dataset_id,
+                        'window_start': window_start,
+                        'window_end': window_end,
+                        'cache_key': cache_metadata['cache_key'] or None,
+                        'cache_artifact_path': cache_metadata['cache_artifact_path'] or None,
+                        'cache_manifest_path': cache_metadata['cache_manifest_path'] or None,
+                        'warm_lane_enabled': resources.warm_lane_enabled,
+                        'metadata_json': json.dumps(
+                            {
+                                'run_token': resources.run_token,
+                                'cache_decision': cache_metadata['cache_decision'] or None,
+                                'window_start': window_start.astimezone(timezone.utc).isoformat(),
+                                'window_end': window_end.astimezone(timezone.utc).isoformat(),
+                            },
+                            sort_keys=True,
+                        ),
+                    },
+                )
+
+    _run_with_transient_postgres_retry(
+        label='upsert_simulation_runtime_context',
+        operation=_write,
+    )
 
 
 def _runtime_sessionmaker(config: PostgresRuntimeConfig) -> tuple[Any, Any]:
@@ -3616,11 +3964,17 @@ def _torghut_service_env_for_simulation(
         f'http://{resources.torghut_forecast_service}.{resources.namespace}.svc.cluster.local:8089'
     )
     warm_lane_enabled = resources.warm_lane_enabled
+    account_label = _simulation_account_label(
+        resources=resources,
+        manifest=manifest,
+        torghut_env_overrides=torghut_env_overrides,
+    )
 
     updates = {
         'DB_DSN': postgres_config.torghut_runtime_dsn,
         'TRADING_ENABLED': 'true',
         'TRADING_MODE': 'paper',
+        'TRADING_ACCOUNT_LABEL': account_label,
         'TRADING_FEATURE_FLAGS_ENABLED': 'false',
         'TA_CLICKHOUSE_URL': clickhouse_config.http_url,
         'TA_CLICKHOUSE_USERNAME': clickhouse_config.username or '',
@@ -4244,6 +4598,29 @@ def _dump_topics(
                 },
             )
             return reusable_report
+        restored_report = _restore_cached_dump_if_available(
+            manifest=manifest,
+            dump_path=dump_path,
+        )
+        if restored_report is not None:
+            _upsert_simulation_progress_row(
+                postgres_config=postgres_config,
+                resources=resources,
+                component=COMPONENT_REPLAY,
+                status='dump_restored',
+                records_dumped=_safe_int(restored_report.get('records')),
+                last_source_ts=_utc_from_millis(
+                    _safe_int(restored_report.get('max_source_timestamp_ms'), default=0) or None
+                ),
+                payload={
+                    'dump_path': str(dump_path),
+                    'dump_format': restored_report.get('dump_format'),
+                    'restored_from_cache': True,
+                    'cache_artifact_path': restored_report.get('cache_artifact_path'),
+                    'cache_manifest_path': restored_report.get('cache_manifest_path'),
+                },
+            )
+            return restored_report
 
     window = _as_mapping(manifest.get('window'))
     start = _parse_rfc3339_timestamp(_as_text(window.get('start')), label='window.start')
@@ -4405,6 +4782,7 @@ def _dump_topics(
             'cache_policy': _as_text(performance_cfg.get('cache_policy')) or 'prefer_cache',
             'replay_profile': _as_text(performance_cfg.get('replay_profile')) or DEFAULT_SIMULATION_REPLAY_PROFILE,
         }
+        cache_upload_report: dict[str, Any] | None = None
         _upsert_simulation_progress_row(
             postgres_config=postgres_config,
             resources=resources,
@@ -4420,16 +4798,13 @@ def _dump_topics(
                 'dump_sha256': file_sha256,
             },
         )
-        _save_json(
-            _dump_marker_path(dump_path),
-            {
-                'completed_at': datetime.now(timezone.utc).isoformat(),
-                'dump_sha256': file_sha256,
-                'records': report['records'],
-                'dump_format': dump_format,
-                'min_source_timestamp_ms': report['min_source_timestamp_ms'],
-                'max_source_timestamp_ms': report['max_source_timestamp_ms'],
-            },
+        _write_dump_marker(
+            dump_path=dump_path,
+            dump_sha256=file_sha256,
+            records=report['records'],
+            dump_format=dump_format,
+            min_source_timestamp_ms=report['min_source_timestamp_ms'],
+            max_source_timestamp_ms=report['max_source_timestamp_ms'],
         )
         _save_json(
             _dump_artifact_manifest_path(dump_path),
@@ -4452,6 +4827,13 @@ def _dump_topics(
                 ],
             },
         )
+        if _cache_metadata(manifest)['cache_decision'] != 'hit':
+            cache_upload_report = _upload_dump_to_cache(
+                manifest=manifest,
+                dump_path=dump_path,
+            )
+            if cache_upload_report is not None:
+                report['cache_upload'] = cache_upload_report
         return report
     finally:
         if raw_dump_path != dump_path:
@@ -4920,6 +5302,11 @@ def _apply(
     window_policy = _validate_window_policy(manifest)
     torghut_env_overrides = _torghut_env_overrides_from_manifest(manifest)
     warm_lane_enabled = resources.warm_lane_enabled
+    account_label = _simulation_account_label(
+        resources=resources,
+        manifest=manifest,
+        torghut_env_overrides=torghut_env_overrides,
+    )
     ta_reconfigured = False
     torghut_reconfigured = False
     ta_restart_nonce: int | None = None
@@ -4981,6 +5368,13 @@ def _apply(
         seeded_cursor_at = _seed_simulation_trade_cursor(
             config=postgres_config,
             manifest=manifest,
+            account_label=account_label,
+        )
+        _upsert_simulation_runtime_context(
+            config=postgres_config,
+            resources=resources,
+            manifest=manifest,
+            account_label=account_label,
         )
         _upsert_simulation_progress_row(
             postgres_config=postgres_config,
@@ -5108,6 +5502,7 @@ def _apply(
         'ta_reconfigured': ta_reconfigured,
         'torghut_reconfigured': torghut_reconfigured,
         'warm_lane_enabled': warm_lane_enabled,
+        'account_label': account_label,
         'seeded_cursor_at': seeded_cursor_at.isoformat(),
         'resources': asdict(resources)
         | {
