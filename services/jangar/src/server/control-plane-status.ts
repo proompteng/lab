@@ -43,6 +43,8 @@ const DEFAULT_WORKFLOWS_SWARMS = ['jangar-control-plane']
 const DEFAULT_WORKFLOWS_NAMESPACES = ['agents']
 const DEFAULT_WORKFLOWS_WARNING_BACKOFF_THRESHOLD = 2
 const DEFAULT_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD = 3
+const DEFAULT_WATCH_RELIABILITY_BLOCK_ERRORS = 6
+const DEFAULT_WATCH_RELIABILITY_BLOCK_RESTARTS = 3
 const DEFAULT_ROLLOUT_DEPLOYMENTS = ['agents', 'agents-controllers']
 const DEFAULT_EXECUTION_TRUST_SWARMS = ['jangar-control-plane', 'torghut-quant']
 const DEFAULT_EXECUTION_TRUST_ENABLED = false
@@ -374,8 +376,8 @@ const resolveExecutionTrustSummaryLimit = () =>
     100,
   )
 
-const asExecutionTrustClass = (value: unknown): 'healthy' | 'degraded' | 'blocked' | 'unknown' =>
-  value === 'healthy' || value === 'degraded' || value === 'blocked' || value === 'unknown' ? value : 'unknown'
+const asExecutionTrustClass = (value: unknown): 'degraded' | 'blocked' | 'unknown' =>
+  value === 'degraded' || value === 'blocked' || value === 'unknown' ? value : 'unknown'
 
 const readRequirementsPending = (raw: unknown): number => {
   if (typeof raw === 'number' && Number.isFinite(raw)) return Math.max(0, Math.floor(raw))
@@ -395,7 +397,7 @@ const evaluateRequirementsPendingClass = (input: {
   if (input.frozen) return 'blocked'
   if (input.pending <= 0) return 'healthy'
   if (input.latestRequirementTimestampMs === null) return 'unknown'
-  const ageMs = nowMs - input.latestRequirementTimestampMs
+  const ageMs = input.nowMs - input.latestRequirementTimestampMs
   if (ageMs > SWARM_REQUIREMENTS_PENDING_STALE_THRESHOLD_MS) return 'degraded'
   return 'degraded'
 }
@@ -523,7 +525,7 @@ export const buildExecutionTrust = async ({
   for (const resource of resources.filter((item): item is Record<string, unknown> => {
     return item !== null && typeof item === 'object' && !Array.isArray(item)
   })) {
-    const metadata = asRecord(resource.metadata)
+    const metadata = asRecord(resource.metadata) ?? {}
     const name = asString(metadata.name)
     if (name) byName.set(name, resource)
   }
@@ -556,10 +558,10 @@ export const buildExecutionTrust = async ({
       continue
     }
 
-    const metadata = asRecord(rawResource.metadata)
-    const status = asRecord(rawResource.status)
-    const spec = asRecord(rawResource.spec)
-    const stageStates = asRecord(status.stageStates)
+    const metadata = asRecord(rawResource.metadata) ?? {}
+    const status = asRecord(rawResource.status) ?? {}
+    const spec = asRecord(rawResource.spec) ?? {}
+    const stageStates = asRecord(status.stageStates) ?? {}
 
     const lastDiscoveredAt = asString(status[SWARM_STAGE_LAST_RUN_KEY.discover])
     const lastPlanAt = asString(status[SWARM_STAGE_LAST_RUN_KEY.plan])
@@ -572,7 +574,7 @@ export const buildExecutionTrust = async ({
       parseDateMs(lastVerifyAt) ?? -1,
     )
     const phase = asString(status.phase) ?? 'Unknown'
-    const freezeRaw = asRecord(status.freeze)
+    const freezeRaw = asRecord(status.freeze) ?? {}
     const freezeUntil = asString(freezeRaw.until)
     const freezeUntilMs = parseDateMs(freezeUntil)
     const freezeActive = freezeUntilMs !== null && freezeUntilMs > nowMs
@@ -582,7 +584,7 @@ export const buildExecutionTrust = async ({
       ? Math.max(0, Number(spec.observedGeneration ?? metadata.generation ?? 0))
       : null
 
-    const requirementsRaw = asRecord(status.requirements)
+    const requirementsRaw = asRecord(status.requirements) ?? {}
     const requirementsPending = readRequirementsPending(requirementsRaw.pending)
     const requirementsPendingClass = evaluateRequirementsPendingClass({
       pending: requirementsPending,
@@ -666,12 +668,13 @@ export const buildExecutionTrust = async ({
       })
       snapshot.stages.push(builtStage.stageData)
       if (builtStage.blockingClass) {
+        const stageBlockingClass = asExecutionTrustClass(builtStage.blockingClass)
         snapshot.blockingWindows.push({
           type: 'stages',
           scope: namespace,
           name: `${swarmName}:${stage}`,
           reason: builtStage.failureReason ?? `${stage} is unhealthy`,
-          class: builtStage.blockingClass,
+          class: stageBlockingClass,
         })
       }
     }
@@ -1278,6 +1281,20 @@ const resolveWorkflowSwarms = () => {
   return [...DEFAULT_WORKFLOWS_SWARMS]
 }
 
+const resolveWatchReliabilityBlockErrorsThreshold = () =>
+  resolveWorkflowThreshold(
+    process.env.JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_ERRORS,
+    DEFAULT_WATCH_RELIABILITY_BLOCK_ERRORS,
+    1,
+  )
+
+const resolveWatchReliabilityBlockRestartsThreshold = () =>
+  resolveWorkflowThreshold(
+    process.env.JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_RESTARTS,
+    DEFAULT_WATCH_RELIABILITY_BLOCK_RESTARTS,
+    1,
+  )
+
 const resolveWorkflowNamespaces = (optionsNamespace: string) => {
   const fallback = uniqueStrings([optionsNamespace, ...DEFAULT_WORKFLOWS_NAMESPACES])
   try {
@@ -1757,6 +1774,8 @@ const buildDependencyQuorum = (input: {
   now: Date
   warningBackoffThreshold: number
   degradedBackoffThreshold: number
+  watchReliabilityBlockErrorsThreshold: number
+  watchReliabilityBlockRestartsThreshold: number
   executionTrust?: ExecutionTrustStatus
 }): DependencyQuorumStatus => {
   const blockReasons: string[] = []
@@ -1878,7 +1897,18 @@ const buildDependencyQuorum = (input: {
     addWorkflowReason('workflow_backoff_warning', 'degraded')
   }
 
-  if (input.watchReliability.status === 'degraded') {
+  const maxWatchReliabilityRestarts = (input.watchReliability.streams ?? []).reduce(
+    (max, stream) => Math.max(max, stream.restarts),
+    0,
+  )
+  const isWatchReliabilityBlocked =
+    input.watchReliability.status === 'degraded' &&
+    (input.watchReliability.total_errors >= input.watchReliabilityBlockErrorsThreshold ||
+      maxWatchReliabilityRestarts >= input.watchReliabilityBlockRestartsThreshold)
+
+  if (isWatchReliabilityBlocked) {
+    blockReasons.push('watch_reliability_blocked')
+  } else if (input.watchReliability.status === 'degraded') {
     delayReasons.push('watch_reliability_degraded')
     addWatchReason('watch_reliability_degraded')
   }
@@ -1888,8 +1918,11 @@ const buildDependencyQuorum = (input: {
     addRolloutReason('rollout_health_degraded')
   }
 
-  // Forecast/LEAN/empirical jobs remain observable via empirical_services and degraded_components,
-  // but they are not hard admission dependencies for live trading control-plane readiness.
+  if (input.empiricalServices.jobs.status === 'degraded') {
+    blockReasons.push('empirical_jobs_degraded')
+  } else if (input.empiricalServices.jobs.status === 'unknown') {
+    delayReasons.push('empirical_jobs_unknown')
+  }
 
   const reasons = uniqueStrings(blockReasons.length > 0 ? blockReasons : delayReasons)
   const decision: DependencyQuorumStatus['decision'] =
@@ -2073,6 +2106,8 @@ export const buildControlPlaneStatus = async (
     DEFAULT_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD,
     warningBackoffThreshold,
   )
+  const watchReliabilityBlockErrorsThreshold = resolveWatchReliabilityBlockErrorsThreshold()
+  const watchReliabilityBlockRestartsThreshold = resolveWatchReliabilityBlockRestartsThreshold()
   const executionTrustEnabled = resolveExecutionTrustEnabled()
   const executionTrust = executionTrustEnabled
     ? await (deps.resolveExecutionTrust ?? buildExecutionTrust)({
@@ -2081,17 +2116,19 @@ export const buildControlPlaneStatus = async (
         swarms: resolveExecutionTrustSwarms(),
         kube: createKubernetesClient(),
         summaryLimit: resolveExecutionTrustSummaryLimit(),
-      }).catch((error: unknown) => ({
-        executionTrust: {
-          status: 'unknown',
-          reason: `execution trust evaluation failed: ${normalizeMessage(error)}`,
-          last_evaluated_at: now.toISOString(),
-          blocking_windows: [],
-          evidence_summary: [],
-        },
-        swarms: [],
-        stages: [],
-      }))
+      }).catch(
+        (error: unknown): ExecutionTrustSnapshot => ({
+          executionTrust: {
+            status: 'unknown',
+            reason: `execution trust evaluation failed: ${normalizeMessage(error)}`,
+            last_evaluated_at: now.toISOString(),
+            blocking_windows: [],
+            evidence_summary: [],
+          },
+          swarms: [],
+          stages: [],
+        }),
+      )
     : undefined
 
   const workflows = await (deps.getWorkflowsReliabilityStatus ?? resolveWorkflowsReliabilityStatus)({
@@ -2120,6 +2157,8 @@ export const buildControlPlaneStatus = async (
     now,
     warningBackoffThreshold,
     degradedBackoffThreshold,
+    watchReliabilityBlockErrorsThreshold,
+    watchReliabilityBlockRestartsThreshold,
     executionTrust: executionTrust?.executionTrust,
   })
 

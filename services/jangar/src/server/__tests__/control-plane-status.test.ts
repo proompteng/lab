@@ -284,6 +284,8 @@ describe('control-plane status', () => {
     delete process.env.JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD
     delete process.env.JANGAR_WORKFLOWS_WINDOW_MINUTES
     delete process.env.JANGAR_WORKFLOWS_SWARMS
+    delete process.env.JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_ERRORS
+    delete process.env.JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_RESTARTS
     delete process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST
     delete process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST_SUMMARY_LIMIT
     delete process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST_SWARMS
@@ -686,7 +688,7 @@ describe('control-plane status', () => {
     )
   })
 
-  it('keeps empirical degradations observable without delaying dependency quorum', async () => {
+  it('blocks rollout quorum when empirical jobs are degraded', async () => {
     setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
 
     const status = await buildControlPlaneStatus(
@@ -735,10 +737,10 @@ describe('control-plane status', () => {
       },
     )
 
-    expect(status.dependency_quorum).toMatchObject({
-      decision: 'allow',
-      reasons: [],
-      message: 'Control-plane admission dependencies are healthy.',
+    expect(status.dependency_quorum).toEqual({
+      decision: 'block',
+      reasons: ['empirical_jobs_degraded'],
+      message: 'Control-plane dependency quorum is blocked.',
     })
     expect(status.namespaces[0]?.status).toBe('degraded')
     expect(status.namespaces[0]?.degraded_components ?? []).toContain('empirical:forecast')
@@ -750,6 +752,188 @@ describe('control-plane status', () => {
       status: 'degraded',
       stale_jobs: ['benchmark_parity'],
     })
+  })
+
+  it('blocks rollout quorum when watch reliability exceeds block thresholds', async () => {
+    process.env.JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_ERRORS = '2'
+    process.env.JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_RESTARTS = '2'
+    setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
+
+    const status = await buildControlPlaneStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:20:00Z'),
+        getHeartbeat: createHeartbeatResolver(),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () =>
+          buildTemporalAdapter({
+            message: 'temporal configuration resolved',
+          }),
+        checkDatabase: async () => ({
+          ...buildDatabaseStatus({
+            latency_ms: 1,
+          }),
+        }),
+        getWatchReliabilitySummary: () => ({
+          ...watchReliabilityDegraded,
+          total_errors: 3,
+          total_restarts: 3,
+          streams: [
+            {
+              resource: 'agents',
+              namespace: 'agents',
+              events: 2,
+              errors: 3,
+              restarts: 3,
+              last_seen_at: '2026-01-20T00:20:00Z',
+            },
+            {
+              resource: 'agentruns',
+              namespace: 'agents',
+              events: 1,
+              errors: 0,
+              restarts: 0,
+              last_seen_at: '2026-01-20T00:20:00Z',
+            },
+          ],
+        }),
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+        resolveEmpiricalServices: async () => ({
+          forecast: {
+            status: 'healthy',
+            endpoint: 'http://torghut-forecast/readyz',
+            message: 'forecast service ready',
+            authoritative: true,
+            calibration_status: 'ready',
+            eligible_models: ['chronos'],
+          },
+          lean: {
+            status: 'healthy',
+            endpoint: 'http://torghut-lean-runner/readyz',
+            message: 'LEAN runner ready',
+            authoritative: true,
+            authoritative_modes: ['research_backtest'],
+          },
+          jobs: {
+            status: 'healthy',
+            endpoint: 'http://torghut/trading/empirical-jobs',
+            message: 'empirical jobs fresh',
+            authoritative: true,
+            eligible_jobs: ['benchmark_parity', 'foundation_router_parity'],
+            stale_jobs: [],
+          },
+        }),
+      },
+    )
+
+    expect(status.dependency_quorum).toEqual({
+      decision: 'block',
+      reasons: ['watch_reliability_blocked'],
+      message: 'Control-plane dependency quorum is blocked.',
+    })
+    expect(status.namespaces[0]?.degraded_components ?? []).toContain('watch_reliability')
+    expect(status.watch_reliability.status).toBe('degraded')
+  })
+
+  it('delays rollout when watch reliability is degraded but below block thresholds', async () => {
+    process.env.JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_ERRORS = '10'
+    process.env.JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_RESTARTS = '10'
+    setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
+
+    const status = await buildControlPlaneStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:20:00Z'),
+        getHeartbeat: createHeartbeatResolver(),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () =>
+          buildTemporalAdapter({
+            message: 'temporal configuration resolved',
+          }),
+        checkDatabase: async () => ({
+          ...buildDatabaseStatus({
+            latency_ms: 1,
+          }),
+        }),
+        getWatchReliabilitySummary: () => ({
+          ...watchReliabilityDegraded,
+          total_errors: 3,
+          total_restarts: 3,
+          streams: [
+            {
+              resource: 'agents',
+              namespace: 'agents',
+              events: 2,
+              errors: 3,
+              restarts: 3,
+              last_seen_at: '2026-01-20T00:20:00Z',
+            },
+            {
+              resource: 'agentruns',
+              namespace: 'agents',
+              events: 1,
+              errors: 0,
+              restarts: 0,
+              last_seen_at: '2026-01-20T00:20:00Z',
+            },
+          ],
+        }),
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+        resolveEmpiricalServices: async () => ({
+          forecast: {
+            status: 'healthy',
+            endpoint: 'http://torghut-forecast/readyz',
+            message: 'forecast service ready',
+            authoritative: true,
+            calibration_status: 'ready',
+            eligible_models: ['chronos'],
+          },
+          lean: {
+            status: 'healthy',
+            endpoint: 'http://torghut-lean-runner/readyz',
+            message: 'LEAN runner ready',
+            authoritative: true,
+            authoritative_modes: ['research_backtest'],
+          },
+          jobs: {
+            status: 'healthy',
+            endpoint: 'http://torghut/trading/empirical-jobs',
+            message: 'empirical jobs fresh',
+            authoritative: true,
+            eligible_jobs: ['benchmark_parity', 'foundation_router_parity'],
+            stale_jobs: [],
+          },
+        }),
+      },
+    )
+
+    expect(status.dependency_quorum).toEqual({
+      decision: 'delay',
+      reasons: ['watch_reliability_degraded'],
+      message: 'Control-plane dependency quorum is degraded; delay capital promotion.',
+    })
+    expect(status.namespaces[0]?.degraded_components ?? []).toContain('watch_reliability')
+    expect(status.watch_reliability.status).toBe('degraded')
   })
 
   it('marks workflows as degraded when backoff count crosses warning threshold', async () => {
@@ -1322,6 +1506,13 @@ describe('control-plane status', () => {
                 cadence: '1h',
                 lastRunTime: '2026-01-20T00:00:00Z',
                 consecutiveFailures: 3,
+              },
+              verify: {
+                phase: 'Running',
+                healthy: true,
+                cadence: '1h',
+                lastRunTime: '2026-01-20T00:00:00Z',
+                consecutiveFailures: 0,
               },
             },
           }),
