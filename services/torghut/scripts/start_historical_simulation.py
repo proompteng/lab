@@ -3684,28 +3684,6 @@ def _assert_required_simulation_metadata_tables(config: PostgresRuntimeConfig) -
         label='assert_required_simulation_metadata_tables',
         operation=_validate,
     )
-    _assert_required_simulation_metadata_tables(config)
-
-
-def _assert_required_simulation_metadata_tables(config: PostgresRuntimeConfig) -> None:
-    def _validate() -> None:
-        with psycopg.connect(config.admin_simulation_dsn, autocommit=True) as conn:
-            with conn.cursor() as cursor:
-                missing_tables: list[str] = []
-                for table in SIMULATION_POSTGRES_REQUIRED_METADATA_TABLES:
-                    cursor.execute('SELECT to_regclass(%s)', (f'public.{table}',))
-                    row = cursor.fetchone()
-                    if row is None or row[0] is None:
-                        missing_tables.append(table)
-                if missing_tables:
-                    raise RuntimeError(
-                        'required_simulation_metadata_tables_missing:' + ','.join(sorted(missing_tables))
-                    )
-
-    _run_with_transient_postgres_retry(
-        label='assert_required_simulation_metadata_tables',
-        operation=_validate,
-    )
 
 
 def _remove_appledouble_sidecars(directory: Path) -> None:
