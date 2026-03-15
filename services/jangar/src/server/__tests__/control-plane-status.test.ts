@@ -350,7 +350,7 @@ describe('control-plane status', () => {
       target_namespaces: 1,
       message: '',
     })
-    expect(status.dependency_quorum).toEqual({
+    expect(status.dependency_quorum).toMatchObject({
       decision: 'allow',
       reasons: [],
       message: 'Control-plane admission dependencies are healthy.',
@@ -535,7 +535,7 @@ describe('control-plane status', () => {
       },
     )
 
-    expect(status.dependency_quorum).toEqual({
+    expect(status.dependency_quorum).toMatchObject({
       decision: 'allow',
       reasons: [],
       message: 'Control-plane admission dependencies are healthy.',
@@ -602,12 +602,24 @@ describe('control-plane status', () => {
       { reason: 'BackoffLimitExceeded', count: 3 },
       { reason: 'DeadlineExceeded', count: 1 },
     ])
-    expect(status.dependency_quorum).toEqual({
+    expect(status.dependency_quorum).toMatchObject({
       decision: 'delay',
       reasons: ['workflow_backoff_warning'],
       message:
         'Control-plane dependency quorum is degraded; delay capital promotion. recent workflow reasons: BackoffLimitExceeded, DeadlineExceeded',
     })
+    expect(status.dependency_quorum.degradation_scope).toBe('single_capability')
+    expect(status.dependency_quorum.segments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          segment: 'dependency_quorum',
+          status: 'degraded',
+          scope: 'single_capability',
+          confidence: 'medium',
+          reasons: ['workflow_backoff_warning'],
+        }),
+      ]),
+    )
     expect(status.namespaces[0]?.status).toBe('degraded')
     expect(status.namespaces[0]?.degraded_components ?? []).toContain('workflows')
     expect(status.namespaces[0]?.degraded_components ?? []).not.toContain('runtime:workflows')
@@ -661,12 +673,23 @@ describe('control-plane status', () => {
       message:
         'workflow reliability unavailable (1/1 namespace queries failed); sample errors: agents: simulated kubernetes failure',
     })
-    expect(status.dependency_quorum).toEqual({
+    expect(status.dependency_quorum).toMatchObject({
       decision: 'block',
       reasons: ['workflows_data_unknown'],
       message:
         'Control-plane dependency quorum is blocked. workflow reliability unavailable (1/1 namespace queries failed); sample errors: agents: simulated kubernetes failure',
     })
+    expect(status.dependency_quorum.degradation_scope).toBe('global')
+    expect(status.dependency_quorum.segments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          segment: 'dependency_quorum',
+          status: 'blocked',
+          scope: 'global',
+          confidence: 'low',
+        }),
+      ]),
+    )
     expect(status.namespaces[0]?.status).toBe('degraded')
     expect(status.namespaces[0]?.degraded_components ?? []).toContain('workflows')
     expect(status.namespaces[0]?.degraded_components ?? []).toContain('runtime:workflows')
@@ -792,7 +815,7 @@ describe('control-plane status', () => {
     expect(status.controllers.every((controller) => controller.authority.mode === 'heartbeat')).toBe(true)
     expect(status.controllers[0]?.authority.source_deployment).toBe('agents-controllers')
     expect(status.runtime_adapters.find((adapter) => adapter.name === 'workflow')?.authority.mode).toBe('heartbeat')
-    expect(status.dependency_quorum).toEqual({
+    expect(status.dependency_quorum).toMatchObject({
       decision: 'allow',
       reasons: [],
       message: 'Control-plane admission dependencies are healthy.',
@@ -885,7 +908,7 @@ describe('control-plane status', () => {
         source_deployment: 'agents-controllers',
       },
     })
-    expect(status.dependency_quorum).toEqual({
+    expect(status.dependency_quorum).toMatchObject({
       decision: 'allow',
       reasons: [],
       message: 'Control-plane admission dependencies are healthy.',
@@ -965,7 +988,7 @@ describe('control-plane status', () => {
     expect(status.runtime_adapters.find((adapter) => adapter.name === 'workflow')?.message).toBe(
       'workflow runtime derived from available agents-controllers rollout',
     )
-    expect(status.dependency_quorum).toEqual({
+    expect(status.dependency_quorum).toMatchObject({
       decision: 'allow',
       reasons: [],
       message: 'Control-plane admission dependencies are healthy.',
@@ -1018,5 +1041,6 @@ describe('control-plane status', () => {
     expect(status.dependency_quorum.reasons).toContain('agents_controller_status_unknown')
     expect(status.dependency_quorum.reasons).toContain('workflow_runtime_status_unknown')
     expect(status.dependency_quorum.reasons).not.toContain('agents_controller_unavailable')
+    expect(status.dependency_quorum.degradation_scope).toBe('global')
   })
 })

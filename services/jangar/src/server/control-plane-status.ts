@@ -22,7 +22,13 @@ import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { parseNamespaceScopeEnv } from '~/server/namespace-scope'
 import { createKubernetesClient, type KubernetesClient } from '~/server/primitives-kube'
 import { parseEnvStringList, parseOptionalNumber } from '~/server/agents-controller/env-config'
-import type { WorkflowsReliabilityStatus } from '~/data/agents-control-plane'
+import type {
+  DependencyQuorumSegment,
+  DependencyQuorumSegmentName,
+  DependencyQuorumSegmentScope,
+  DependencyQuorumSegmentStatus,
+  WorkflowsReliabilityStatus,
+} from '~/data/agents-control-plane'
 
 const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
 const DEFAULT_TEMPORAL_PORT = 7233
@@ -752,9 +758,9 @@ const resolveEmpiricalServices = async (): Promise<EmpiricalServicesStatus> => (
   }),
 })
 
-const uniqueStrings = (values: string[]) => {
-  const seen = new Set<string>()
-  const unique: string[] = []
+const uniqueStrings = <T extends string>(values: readonly T[]) => {
+  const seen = new Set<T>()
+  const unique: T[] = []
   for (const value of values) {
     if (!value || seen.has(value)) continue
     seen.add(value)
@@ -1265,62 +1271,146 @@ const buildDependencyQuorum = (input: {
   watchReliability: ControlPlaneWatchReliabilitySummary
   workflows: WorkflowsReliabilityStatus
   rolloutHealth: ControlPlaneRolloutHealth
-  empiricalServices: EmpiricalServicesStatus
+  now: Date
   warningBackoffThreshold: number
   degradedBackoffThreshold: number
 }): DependencyQuorumStatus => {
   const blockReasons: string[] = []
   const delayReasons: string[] = []
+  const asOf = input.now.toISOString()
   const workflowTopReasons = input.workflows.top_failure_reasons
     .map((item) => item.reason)
     .filter((reason) => reason.length > 0)
+  const segmentReasons = new Map<DependencyQuorumSegmentName, string[]>()
+  const segmentScopes = new Map<DependencyQuorumSegmentName, DependencyQuorumSegmentScope>()
+  const segmentConfidences = new Map<DependencyQuorumSegmentName, 'high' | 'medium' | 'low'>()
+
+  const setSegmentScope = (segment: DependencyQuorumSegmentName, scope: DependencyQuorumSegmentScope) => {
+    const currentScope = segmentScopes.get(segment)
+    if (currentScope == null) {
+      segmentScopes.set(segment, scope)
+      return
+    }
+
+    if (currentScope === scope) {
+      return
+    }
+
+    if (scope === 'global') {
+      segmentScopes.set(segment, scope)
+      return
+    }
+
+    if (scope === 'capital_family' && currentScope === 'single_capability') {
+      segmentScopes.set(segment, scope)
+    }
+  }
+
+  const appendSegmentReason = (
+    segment: DependencyQuorumSegmentName,
+    reason: string,
+    scope: DependencyQuorumSegmentScope,
+    confidence: 'high' | 'medium' | 'low',
+  ) => {
+    const list = segmentReasons.get(segment) ?? []
+    list.push(reason)
+    segmentReasons.set(segment, list)
+    setSegmentScope(segment, scope)
+    segmentConfidences.set(segment, confidence)
+  }
+
+  const addControlRuntimeReason = (reason: string, status: 'blocked' | 'degraded') => {
+    appendSegmentReason('control_runtime', reason, 'global', status === 'blocked' ? 'low' : 'medium')
+  }
+
+  const addWorkflowReason = (reason: string, status: 'blocked' | 'degraded') => {
+    appendSegmentReason(
+      'dependency_quorum',
+      reason,
+      status === 'blocked' ? 'global' : 'single_capability',
+      status === 'blocked' ? 'low' : 'medium',
+    )
+  }
+
+  const addWatchReason = (reason: string) => {
+    appendSegmentReason('watch_stream', reason, 'single_capability', 'medium')
+  }
+
+  const addRolloutReason = (reason: string) => {
+    appendSegmentReason('control_runtime', reason, 'single_capability', 'medium')
+  }
+
+  const summarizeSegment = (
+    segment: DependencyQuorumSegmentName,
+    status: DependencyQuorumSegmentStatus,
+  ): DependencyQuorumSegment => ({
+    segment,
+    status,
+    scope: segmentScopes.get(segment) ?? 'global',
+    confidence: segmentConfidences.get(segment) ?? 'high',
+    reasons: uniqueStrings(segmentReasons.get(segment) ?? []),
+    as_of: asOf,
+  })
 
   for (const controller of input.controllers) {
     if (controller.status === 'healthy') continue
 
     if (controller.status === 'unknown') {
       blockReasons.push(asDependencyReason(controller.name, 'status_unknown'))
+      addControlRuntimeReason(asDependencyReason(controller.name, 'status_unknown'), 'blocked')
       continue
     }
 
     if (controller.name === 'agents-controller') {
       blockReasons.push('agents_controller_unavailable')
+      addControlRuntimeReason('agents_controller_unavailable', 'blocked')
       continue
     }
     delayReasons.push(`${controller.name.replace(/-/g, '_')}_degraded`)
+    addControlRuntimeReason(`${controller.name.replace(/-/g, '_')}_degraded`, 'degraded')
   }
 
   const workflowAdapter = input.runtimeAdapters.find((adapter) => adapter.name === 'workflow')
   if (!workflowAdapter) {
     blockReasons.push('workflow_runtime_unavailable')
+    addControlRuntimeReason('workflow_runtime_unavailable', 'blocked')
   } else if (workflowAdapter.status === 'unknown') {
     blockReasons.push('workflow_runtime_status_unknown')
+    addControlRuntimeReason('workflow_runtime_status_unknown', 'blocked')
   } else if (workflowAdapter.available === false || workflowAdapter.status === 'degraded') {
     blockReasons.push('workflow_runtime_unavailable')
+    addControlRuntimeReason('workflow_runtime_unavailable', 'blocked')
   }
 
   if (input.database.status !== 'healthy') {
     blockReasons.push('control_plane_database_unhealthy')
+    addControlRuntimeReason('control_plane_database_unhealthy', 'blocked')
   }
 
   if (input.workflows.data_confidence === 'unknown') {
     blockReasons.push('workflows_data_unknown')
+    addWorkflowReason('workflows_data_unknown', 'blocked')
   } else if (input.workflows.data_confidence === 'degraded') {
     delayReasons.push('workflows_data_degraded')
+    addWorkflowReason('workflows_data_degraded', 'degraded')
   }
 
   if (input.workflows.backoff_limit_exceeded_jobs >= input.degradedBackoffThreshold) {
     blockReasons.push('workflow_backoff_limit_exceeded')
+    addWorkflowReason('workflow_backoff_limit_exceeded', 'blocked')
   } else if (input.workflows.backoff_limit_exceeded_jobs >= input.warningBackoffThreshold) {
     delayReasons.push('workflow_backoff_warning')
+    addWorkflowReason('workflow_backoff_warning', 'degraded')
   }
 
   if (input.watchReliability.status === 'degraded') {
     delayReasons.push('watch_reliability_degraded')
+    addWatchReason('watch_reliability_degraded')
   }
 
   if (hasMaterialRolloutDegradation(input.rolloutHealth)) {
     delayReasons.push('rollout_health_degraded')
+    addRolloutReason('rollout_health_degraded')
   }
 
   // Forecast/LEAN/empirical jobs remain observable via empirical_services and degraded_components,
@@ -1329,6 +1419,34 @@ const buildDependencyQuorum = (input: {
   const reasons = uniqueStrings(blockReasons.length > 0 ? blockReasons : delayReasons)
   const decision: DependencyQuorumStatus['decision'] =
     blockReasons.length > 0 ? 'block' : delayReasons.length > 0 ? 'delay' : 'allow'
+  const segmentOrder: DependencyQuorumSegmentName[] = [
+    'control_runtime',
+    'dependency_quorum',
+    'freshness_authority',
+    'evidence_authority',
+    'market_data_context',
+    'watch_stream',
+  ]
+  const segments: DependencyQuorumSegment[] = segmentOrder.flatMap((segment) => {
+    const segmentReasonSet = segmentReasons.get(segment)
+    if (segmentReasonSet == null || segmentReasonSet.length === 0) {
+      return [summarizeSegment(segment, 'healthy')]
+    }
+    const hasBlock = segmentReasonSet.some((reason) => blockReasons.includes(reason))
+    const status: DependencyQuorumSegmentStatus = hasBlock ? 'blocked' : 'degraded'
+    return [summarizeSegment(segment, status)]
+  })
+  const delayedSegments = segments.filter((segment) => segment.status === 'degraded')
+  const blockedSegments = segments.filter((segment) => segment.status === 'blocked')
+  const segmentScopesForDelay = uniqueStrings(
+    delayedSegments.map((segment) => segment.scope).filter((scope) => scope !== 'global'),
+  )
+  const degradationScope =
+    decision === 'block'
+      ? (uniqueStrings(blockedSegments.map((segment) => segment.scope))[0] ?? 'global')
+      : decision === 'delay'
+        ? (segmentScopesForDelay[0] ?? 'single_capability')
+        : undefined
   const message =
     decision === 'allow'
       ? 'Control-plane admission dependencies are healthy.'
@@ -1346,6 +1464,8 @@ const buildDependencyQuorum = (input: {
     decision,
     reasons,
     message,
+    segments,
+    degradation_scope: degradationScope,
   }
 }
 
@@ -1392,8 +1512,6 @@ export const buildControlPlaneStatus = async (
     heartbeat: orchestrationHeartbeat,
     now,
   })
-  const controllers = [agentsController, supportingController, orchestrationController]
-
   const workflowRuntimeController = buildControllerStatusFromHeartbeat({
     name: 'workflow-runtime',
     health: agentsHealth,
@@ -1502,7 +1620,7 @@ export const buildControlPlaneStatus = async (
     watchReliability,
     workflows,
     rolloutHealth,
-    empiricalServices,
+    now,
     warningBackoffThreshold,
     degradedBackoffThreshold,
   })
