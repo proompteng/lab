@@ -35,11 +35,15 @@ ENV GOPATH=/go \
     GOARCH=${TARGETARCH}
 
 COPY --from=source /src/backend/go.* /headlamp/backend/
+COPY scripts /tools
+COPY patches /patches
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     cd ./backend && go mod download
 
 COPY --from=source /src/backend /headlamp/backend
+
+RUN sh /tools/apply-upstream-patches.sh /headlamp
 
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \

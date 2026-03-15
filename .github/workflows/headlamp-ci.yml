@@ -59,6 +59,9 @@ jobs:
       - name: Render Headlamp manifests
         run: kustomize build --enable-helm argocd/applications/headlamp >/dev/null
 
+      - name: Run Upstream Multiplexer Regression Tests
+        run: sh services/headlamp/scripts/test-upstream.sh
+
       - name: Build Headlamp image
         run: docker buildx build --platform linux/arm64 --load -t headlamp:test services/headlamp
 
