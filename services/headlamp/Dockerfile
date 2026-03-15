@@ -34,14 +34,15 @@ ENV GOPATH=/go \
 
 COPY --from=source /src/backend/go.* /headlamp/backend/
 COPY scripts /tools
-COPY patches /patches
+COPY patches /tools/patches
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     cd ./backend && go mod download
 
 COPY --from=source /src/backend /headlamp/backend
 
-RUN sh /tools/apply-upstream-patches.sh /headlamp
+RUN sh /tools/apply-upstream-patches.sh /headlamp \
+    && grep -q 'handleHTTPWatchStream' /headlamp/backend/cmd/multiplexer.go
 
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
