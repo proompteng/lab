@@ -408,6 +408,59 @@ def _kubectl_json(namespace: str, args: Sequence[str]) -> dict[str, Any]:
     return {str(key): value for key, value in cast(Mapping[str, Any], payload).items()}
 
 
+def _cluster_service_http_urls(raw_url: str) -> list[str]:
+    parsed = urlsplit(raw_url)
+    host = parsed.hostname
+    if host is None or '.svc' not in host:
+        return [raw_url]
+
+    host_parts = host.split('.')
+    if len(host_parts) < 2:
+        return [raw_url]
+
+    service_name = host_parts[0]
+    namespace = host_parts[1]
+    resolved_urls = [raw_url]
+    seen_urls = {raw_url}
+
+    def _append_host(candidate_host: str | None) -> None:
+        if candidate_host is None:
+            return
+        candidate_host = candidate_host.strip()
+        if not candidate_host or candidate_host.lower() == 'none':
+            return
+        netloc = f'{candidate_host}:{parsed.port}' if parsed.port is not None else candidate_host
+        candidate_url = parsed._replace(netloc=netloc).geturl()
+        if candidate_url in seen_urls:
+            return
+        seen_urls.add(candidate_url)
+        resolved_urls.append(candidate_url)
+
+    try:
+        service_payload = _kubectl_json(namespace, ['get', 'service', service_name, '-o', 'json'])
+    except Exception:
+        service_payload = {}
+    _append_host(_as_text(_as_mapping(_as_mapping(service_payload).get('spec')).get('clusterIP')))
+
+    try:
+        endpoint_payload = _kubectl_json(namespace, ['get', 'endpoints', service_name, '-o', 'json'])
+    except Exception:
+        endpoint_payload = {}
+    subsets = endpoint_payload.get('subsets')
+    if isinstance(subsets, Sequence):
+        for subset in subsets:
+            if not isinstance(subset, Mapping):
+                continue
+            addresses = subset.get('addresses')
+            if not isinstance(addresses, Sequence):
+                continue
+            for address in addresses:
+                if not isinstance(address, Mapping):
+                    continue
+                _append_host(_as_text(address.get('ip')))
+    return resolved_urls
+
+
 def _is_transient_postgres_error(error: Exception) -> bool:
     message = str(error).lower()
     return any(pattern in message for pattern in TRANSIENT_POSTGRES_ERROR_PATTERNS)
@@ -444,16 +497,6 @@ def _http_clickhouse_query(
     http_url = _as_text(_resource_attr(config, 'http_url'))
     if http_url is None:
         raise RuntimeError('clickhouse http_url is required')
-    parsed = urlsplit(http_url)
-    if not parsed.scheme or not parsed.hostname:
-        raise RuntimeError(f'invalid_clickhouse_http_url:{http_url}')
-
-    connection_class = HTTPSConnection if parsed.scheme == 'https' else HTTPConnection
-    connection = connection_class(parsed.hostname, parsed.port)
-    path = parsed.path or '/'
-    if parsed.query:
-        path = f'{path}?{parsed.query}'
-
     headers = {'Content-Type': 'text/plain'}
     username = _as_text(_resource_attr(config, 'username'))
     password = _as_text(_resource_attr(config, 'password'))
@@ -462,12 +505,30 @@ def _http_clickhouse_query(
     if password is not None:
         headers['X-ClickHouse-Key'] = password
 
-    try:
-        connection.request('POST', path, body=query.encode('utf-8'), headers=headers)
-        response = connection.getresponse()
-        return response.status, response.read().decode('utf-8')
-    finally:
-        connection.close()
+    last_error: OSError | None = None
+    for candidate_url in _cluster_service_http_urls(http_url):
+        parsed = urlsplit(candidate_url)
+        if not parsed.scheme or not parsed.hostname:
+            raise RuntimeError(f'invalid_clickhouse_http_url:{candidate_url}')
+        connection_class = HTTPSConnection if parsed.scheme == 'https' else HTTPConnection
+        connection: HTTPConnection | HTTPSConnection | None = None
+        try:
+            connection = connection_class(parsed.hostname, parsed.port)
+            path = parsed.path or '/'
+            if parsed.query:
+                path = f'{path}?{parsed.query}'
+            connection.request('POST', path, body=query.encode('utf-8'), headers=headers)
+            response = connection.getresponse()
+            return response.status, response.read().decode('utf-8')
+        except OSError as exc:
+            last_error = exc
+            continue
+        finally:
+            if connection is not None:
+                connection.close()
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError(f'invalid_clickhouse_http_url:{http_url}')
 
 
 def _condition_status(payload: Mapping[str, Any], *, condition_type: str) -> str | None:

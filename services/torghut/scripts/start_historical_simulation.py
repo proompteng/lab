@@ -4107,6 +4107,8 @@ def _torghut_service_env_for_simulation(
         'TRADING_MODE': 'paper',
         'TRADING_ACCOUNT_LABEL': account_label,
         'TRADING_FEATURE_FLAGS_ENABLED': 'false',
+        'TRADING_STRATEGY_RUNTIME_MODE': 'scheduler_v3',
+        'TRADING_STRATEGY_SCHEDULER_ENABLED': 'true',
         'TA_CLICKHOUSE_URL': clickhouse_config.http_url,
         'TA_CLICKHOUSE_USERNAME': clickhouse_config.username or '',
         'TA_CLICKHOUSE_PASSWORD': clickhouse_config.password or '',
