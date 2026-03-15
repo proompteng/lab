@@ -40,6 +40,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     cd ./backend && go mod download
 
 COPY --from=source /src/backend /headlamp/backend
+COPY --from=source /src/frontend /headlamp/frontend
 
 RUN sh /tools/apply-upstream-patches.sh /headlamp \
     && grep -q 'handleHTTPWatchStream' /headlamp/backend/cmd/multiplexer.go
@@ -55,6 +56,8 @@ WORKDIR /headlamp
 COPY --from=source /src/.git /headlamp/.git
 COPY --from=source /src/app/package.json /headlamp/app/package.json
 COPY --from=source /src/frontend/package*.json /headlamp/frontend/
+COPY scripts /tools
+COPY patches /tools/patches
 
 RUN cd ./frontend && npm ci --only=prod
 
@@ -62,7 +65,10 @@ FROM frontend-build AS frontend
 
 ENV REACT_APP_ENABLE_WEBSOCKET_MULTIPLEXER=true
 
+COPY --from=source /src/backend /headlamp/backend
 COPY --from=source /src/frontend /headlamp/frontend
+
+RUN sh /tools/apply-upstream-patches.sh /headlamp
 
 RUN cd ./frontend && npm run build
 
