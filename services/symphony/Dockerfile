@@ -32,7 +32,7 @@ RUN --mount=type=cache,target=/var/cache/apt \
   --mount=type=cache,target=/var/lib/apt/lists \
   set -eux; \
   apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
-  apt-get install -y --no-install-recommends bash ca-certificates curl git jq xz-utils; \
+  apt-get install -y --no-install-recommends bash ca-certificates curl gh git jq xz-utils; \
   rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \

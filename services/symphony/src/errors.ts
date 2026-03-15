@@ -30,6 +30,7 @@ export type SymphonyErrorCode =
   | 'response_timeout'
   | 'runtime_unavailable'
   | 'startup_failed'
+  | 'target_health_check_failed'
   | 'template_parse_error'
   | 'template_render_error'
   | 'turn_cancelled'

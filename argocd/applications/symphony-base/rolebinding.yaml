@@ -2,14 +2,12 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: symphony
-  namespace: jangar
   labels:
     app.kubernetes.io/name: symphony
     app.kubernetes.io/part-of: lab
 subjects:
   - kind: ServiceAccount
     name: symphony
-    namespace: jangar
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role

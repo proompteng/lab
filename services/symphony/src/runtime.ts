@@ -6,6 +6,7 @@ import { makeLeaderElectionLayer } from './leader-election'
 import { makeTrackerLayer } from './linear-client'
 import { makeOrchestratorLayer } from './orchestrator'
 import { makeStateStoreLayer } from './state-store'
+import { makeTargetHealthLayer } from './target-health'
 import { makeWorkflowLayer } from './workflow'
 import { makeShellLayer, makeWorkspaceLayer } from './workspace-manager'
 import type { Logger } from './logger'
@@ -18,6 +19,7 @@ export const makeSymphonyLayer = (workflowPath: string, logger: Logger) => {
   const codexSessionLayer = makeCodexSessionLayer(logger)
   const leaderElectionLayer = makeLeaderElectionLayer(logger)
   const stateStoreLayer = makeStateStoreLayer(logger).pipe(Layer.provide(workflowLayer))
+  const targetHealthLayer = makeTargetHealthLayer(logger).pipe(Layer.provide(workflowLayer))
   const issueRunnerLayer = makeIssueRunnerLayer(logger)
     .pipe(Layer.provide(codexSessionLayer))
     .pipe(Layer.provide(workspaceLayer))
@@ -30,6 +32,7 @@ export const makeSymphonyLayer = (workflowPath: string, logger: Logger) => {
     .pipe(Layer.provide(trackerLayer))
     .pipe(Layer.provide(leaderElectionLayer))
     .pipe(Layer.provide(stateStoreLayer))
+    .pipe(Layer.provide(targetHealthLayer))
     .pipe(Layer.provide(workflowLayer))
 }
 

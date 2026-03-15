@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, relative } from 'node:path'
+import { basename, join, relative } from 'node:path'
 
 import { repoRoot } from '../shared/cli'
-import { updateSymphonyManifests } from './deploy-service'
+import { updateSymphonyManifests } from './update-manifests'
 
 const createFixture = () => {
   const dir = mkdtempSync(join(tmpdir(), 'symphony-deploy-test-'))
@@ -34,24 +34,40 @@ const createFixture = () => {
 }
 
 describe('updateSymphonyManifests', () => {
-  it('updates kustomization tags when newName is present and adds digest pinning', () => {
-    const fixture = createFixture()
+  it('updates all requested overlay manifests and rollout annotations', () => {
+    const fixtureA = createFixture()
+    const fixtureB = createFixture()
 
-    updateSymphonyManifests({
+    const result = updateSymphonyManifests({
+      imageName: 'registry.ide-newton.ts.net/lab/symphony',
       tag: 'ca7550d11',
       digest: 'registry.ide-newton.ts.net/lab/symphony@sha256:abc123',
       rolloutTimestamp: '2026-03-13T09:00:00.000Z',
-      kustomizationPath: relative(repoRoot, fixture.kustomizationPath),
-      deploymentPath: relative(repoRoot, fixture.deploymentPath),
+      kustomizationPaths: [
+        relative(repoRoot, fixtureA.kustomizationPath),
+        relative(repoRoot, fixtureB.kustomizationPath),
+      ],
+      deploymentPaths: [relative(repoRoot, fixtureA.deploymentPath), relative(repoRoot, fixtureB.deploymentPath)],
     })
 
-    const kustomization = readFileSync(fixture.kustomizationPath, 'utf8')
-    const deployment = readFileSync(fixture.deploymentPath, 'utf8')
+    const kustomizationA = readFileSync(fixtureA.kustomizationPath, 'utf8')
+    const deploymentA = readFileSync(fixtureA.deploymentPath, 'utf8')
+    const kustomizationB = readFileSync(fixtureB.kustomizationPath, 'utf8')
+    const deploymentB = readFileSync(fixtureB.deploymentPath, 'utf8')
 
-    expect(kustomization).toContain('newTag: "ca7550d11"')
-    expect(kustomization).toContain('digest: sha256:abc123')
-    expect(deployment).toContain('kubectl.kubernetes.io/restartedAt: "2026-03-13T09:00:00.000Z"')
+    expect(kustomizationA).toContain('newTag: "ca7550d11"')
+    expect(kustomizationA).toContain('digest: sha256:abc123')
+    expect(deploymentA).toContain('kubectl.kubernetes.io/restartedAt: "2026-03-13T09:00:00.000Z"')
+    expect(kustomizationB).toContain('newTag: "ca7550d11"')
+    expect(kustomizationB).toContain('digest: sha256:abc123')
+    expect(deploymentB).toContain('kubectl.kubernetes.io/restartedAt: "2026-03-13T09:00:00.000Z"')
+    expect(result.changed).toHaveLength(2)
+    expect(result.changed.map((entry) => basename(entry.kustomizationPath))).toEqual([
+      'kustomization.yaml',
+      'kustomization.yaml',
+    ])
 
-    rmSync(fixture.dir, { recursive: true, force: true })
+    rmSync(fixtureA.dir, { recursive: true, force: true })
+    rmSync(fixtureB.dir, { recursive: true, force: true })
   })
 })

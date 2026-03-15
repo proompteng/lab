@@ -1,0 +1,54 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: symphony
+  labels:
+    app.kubernetes.io/name: symphony
+    app.kubernetes.io/part-of: lab
+rules:
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - ''
+    resources:
+      - pods
+      - services
+      - configmaps
+      - persistentvolumeclaims
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+      - statefulsets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - serving.knative.dev
+    resources:
+      - services
+    verbs:
+      - get
+      - list
+      - watch

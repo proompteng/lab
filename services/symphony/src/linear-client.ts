@@ -90,11 +90,62 @@ const GraphqlEnvelopeSchema = Schema.Struct({
   errors: Schema.optionalWith(Schema.Unknown, { nullable: true }),
 })
 
+const IssueTeamStatesSchema = Schema.Struct({
+  issue: Schema.optionalWith(
+    Schema.Struct({
+      team: Schema.optionalWith(
+        Schema.Struct({
+          states: Schema.optionalWith(
+            Schema.Struct({
+              nodes: Schema.optionalWith(
+                Schema.Array(
+                  Schema.Struct({
+                    id: NullableStringSchema,
+                    name: NullableStringSchema,
+                  }),
+                ),
+                { nullable: true },
+              ),
+            }),
+            { nullable: true },
+          ),
+        }),
+        { nullable: true },
+      ),
+    }),
+    { nullable: true },
+  ),
+})
+
+const CommentMutationSchema = Schema.Struct({
+  commentCreate: Schema.optionalWith(
+    Schema.Struct({
+      success: Schema.optionalWith(Schema.Boolean, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
+})
+
+const IssueUpdateMutationSchema = Schema.Struct({
+  issueUpdate: Schema.optionalWith(
+    Schema.Struct({
+      success: Schema.optionalWith(Schema.Boolean, { nullable: true }),
+    }),
+    { nullable: true },
+  ),
+})
+
 type IssueNode = typeof IssueNodeSchema.Type
 type IssuesPage = typeof IssuesPageSchema.Type
+type IssueTeamStatesPayload = typeof IssueTeamStatesSchema.Type
+type CommentMutationPayload = typeof CommentMutationSchema.Type
+type IssueUpdateMutationPayload = typeof IssueUpdateMutationSchema.Type
 
 const decodeIssuesPage = Schema.decodeUnknown(IssuesPageSchema)
 const decodeGraphqlEnvelope = Schema.decodeUnknown(GraphqlEnvelopeSchema)
+const decodeIssueTeamStates = Schema.decodeUnknown(IssueTeamStatesSchema)
+const decodeCommentMutation = Schema.decodeUnknown(CommentMutationSchema)
+const decodeIssueUpdateMutation = Schema.decodeUnknown(IssueUpdateMutationSchema)
 
 const formatSchemaError = (error: ParseResult.ParseError): string => TreeFormatter.formatErrorSync(error)
 
@@ -224,6 +275,11 @@ export interface IssueTrackerClient {
     query: string,
     variables?: Record<string, unknown>,
   ) => Effect.Effect<Record<string, unknown>, WorkflowError | ConfigError | TrackerError>
+  readonly handoffIssue: (
+    issueId: string,
+    body: string,
+    handoffState: string,
+  ) => Effect.Effect<void, WorkflowError | ConfigError | TrackerError>
 }
 
 export class TrackerService extends Context.Tag('symphony/TrackerService')<TrackerService, IssueTrackerClient>() {}
@@ -336,6 +392,48 @@ export const makeTrackerLayer = (logger: Logger) =>
           ),
         )
 
+      const resolveHandoffStateId = (issueId: string, stateName: string) =>
+        Effect.gen(function* () {
+          const config = yield* workflow.config
+          const rawData = yield* requestGraphql(
+            config.tracker.endpoint,
+            config.tracker.apiKey ?? '',
+            `
+              query SymphonyIssueTeamStates($issueId: ID!) {
+                issue(id: $issueId) {
+                  team {
+                    states {
+                      nodes {
+                        id
+                        name
+                      }
+                    }
+                  }
+                }
+              }
+            `,
+            { issueId },
+          )
+
+          const payload: IssueTeamStatesPayload = yield* decodeIssueTeamStates(rawData).pipe(
+            Effect.mapError(mapSchemaError),
+          )
+          const state = (payload.issue?.team?.states?.nodes ?? []).find(
+            (entry) => normalizeState(entry.name) === normalizeState(stateName),
+          )
+          if (!state?.id) {
+            return yield* Effect.fail(
+              new TrackerError(
+                'linear_unknown_payload',
+                `Linear state "${stateName}" was not found for issue ${issueId}`,
+                payload,
+              ),
+            )
+          }
+
+          return state.id
+        })
+
       const service: IssueTrackerClient = {
         fetchCandidateIssues: workflow.config.pipe(
           Effect.flatMap((config) => fetchIssuesByFilter(config.tracker.activeStates)),
@@ -370,6 +468,71 @@ export const makeTrackerLayer = (logger: Logger) =>
             }
             return data as Record<string, unknown>
           }),
+        handoffIssue: (issueId, body, handoffState) =>
+          Effect.gen(function* () {
+            const config = yield* workflow.config
+            if (config.tracker.kind !== 'linear' || !config.tracker.apiKey) {
+              return yield* Effect.fail(new TrackerError('missing_tracker_api_key', 'Linear auth is not configured'))
+            }
+
+            const stateId = yield* resolveHandoffStateId(issueId, handoffState)
+
+            const commentPayload: CommentMutationPayload = yield* requestGraphql(
+              config.tracker.endpoint,
+              config.tracker.apiKey,
+              `
+                mutation SymphonyCommentOnIssue($issueId: ID!, $body: String!) {
+                  commentCreate(input: { issueId: $issueId, body: $body }) {
+                    success
+                  }
+                }
+              `,
+              { issueId, body },
+            ).pipe(Effect.flatMap((data) => decodeCommentMutation(data).pipe(Effect.mapError(mapSchemaError))))
+
+            if (!commentPayload.commentCreate?.success) {
+              return yield* Effect.fail(
+                new TrackerError(
+                  'linear_graphql_errors',
+                  `failed to add Linear comment for issue ${issueId}`,
+                  commentPayload,
+                ),
+              )
+            }
+
+            const updatePayload: IssueUpdateMutationPayload = yield* requestGraphql(
+              config.tracker.endpoint,
+              config.tracker.apiKey,
+              `
+                mutation SymphonyMoveIssueToHandoff($issueId: ID!, $stateId: ID!) {
+                  issueUpdate(id: $issueId, input: { stateId: $stateId }) {
+                    success
+                  }
+                }
+              `,
+              { issueId, stateId },
+            ).pipe(Effect.flatMap((data) => decodeIssueUpdateMutation(data).pipe(Effect.mapError(mapSchemaError))))
+
+            if (!updatePayload.issueUpdate?.success) {
+              return yield* Effect.fail(
+                new TrackerError(
+                  'linear_graphql_errors',
+                  `failed to move Linear issue ${issueId} to ${handoffState}`,
+                  updatePayload,
+                ),
+              )
+            }
+          }).pipe(
+            Effect.tapError((error) =>
+              Effect.sync(() => {
+                trackerLogger.log('warn', 'linear_handoff_failed', {
+                  issue_id: issueId,
+                  handoff_state: handoffState,
+                  ...toLogError(error),
+                })
+              }),
+            ),
+          ),
       }
 
       return service

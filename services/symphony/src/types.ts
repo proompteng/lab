@@ -41,6 +41,7 @@ export type TrackerConfig = {
   projectSlug: string | null
   activeStates: string[]
   terminalStates: string[]
+  handoffState: string
 }
 
 export type WorkerConfig = {
@@ -70,6 +71,56 @@ export type ServerConfig = {
   port: number | null
 }
 
+export type InstanceConfig = {
+  name: string
+  namespace: string
+  argocdApplication: string
+}
+
+export type TargetConfig = {
+  name: string
+  namespace: string
+  argocdApplication: string
+  repo: string
+  defaultBranch: string
+}
+
+export type ReleaseDeployableConfig = {
+  name: string
+  image: string
+  manifestPaths: string[]
+  buildWorkflow: string | null
+  releaseWorkflow: string | null
+  postDeployWorkflow: string | null
+}
+
+export type ReleaseConfig = {
+  mode: string
+  requiredChecksSource: string
+  promotionBranchPrefix: string
+  blockedLabels: string[]
+  deployables: ReleaseDeployableConfig[]
+}
+
+export type HealthCheckConfig = {
+  name: string
+  type: 'argocd_application' | 'http' | 'knative_service' | 'kubernetes_resource'
+  namespace: string | null
+  application: string | null
+  url: string | null
+  expectedStatus: number | null
+  expectedSync: string | null
+  expectedHealth: string | null
+  resourceKind: string | null
+  resourceName: string | null
+  path: string | null
+}
+
+export type HealthConfig = {
+  preDispatch: HealthCheckConfig[]
+  postDeploy: HealthCheckConfig[]
+}
+
 export type SymphonyConfig = {
   workflowPath: string
   tracker: TrackerConfig
@@ -80,6 +131,10 @@ export type SymphonyConfig = {
   agent: AgentConfig
   codex: CodexConfig
   server: ServerConfig
+  instance: InstanceConfig
+  target: TargetConfig
+  release: ReleaseConfig
+  health: HealthConfig
 }
 
 export type LoadedWorkflow = {
@@ -157,6 +212,52 @@ export type WorkflowSummary = {
   trackerKind: string | null
   projectSlug: string | null
   promptTemplateEmpty: boolean
+}
+
+export type InstanceSummary = {
+  name: string
+  namespace: string
+  argocdApplication: string
+}
+
+export type TargetSummary = {
+  name: string
+  namespace: string
+  argocdApplication: string
+  repo: string
+  defaultBranch: string
+}
+
+export type ReleaseSummary = {
+  mode: string
+  requiredChecksSource: string
+  promotionBranchPrefix: string
+  blockedLabels: string[]
+  deployables: Array<{
+    name: string
+    image: string
+    manifestPaths: string[]
+    buildWorkflow: string | null
+    releaseWorkflow: string | null
+    postDeployWorkflow: string | null
+  }>
+}
+
+export type TargetHealthCheckResult = {
+  name: string
+  type: HealthCheckConfig['type']
+  ok: boolean
+  message: string
+  observed: string | null
+}
+
+export type TargetHealthSummary = {
+  checkedAt: string | null
+  readyForDispatch: boolean
+  openPromotionPr: boolean
+  promotionPrCount: number
+  checks: TargetHealthCheckResult[]
+  lastError: string | null
 }
 
 export type LeaderSnapshot = {
@@ -240,8 +341,12 @@ export type RuntimeSnapshot = {
     secondsRunning: number
   }
   rateLimits: RateLimitSnapshot | null
+  instance: InstanceSummary
+  target: TargetSummary
+  release: ReleaseSummary
   policy: PolicySummary
   workflow: WorkflowSummary
+  targetHealth: TargetHealthSummary
   leader: LeaderSnapshot
   recentEvents: RecentEvent[]
   recentErrors: RecentError[]

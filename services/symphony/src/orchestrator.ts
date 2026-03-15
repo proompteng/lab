@@ -23,9 +23,11 @@ import { IssueRunnerService } from './issue-runner'
 import { LeaderElectionService } from './leader-election'
 import { TrackerService } from './linear-client'
 import { emptyPersistedSchedulerState, StateStoreService } from './state-store'
+import { TargetHealthService } from './target-health'
 import type {
   CapacitySnapshot,
   CodexTotals,
+  InstanceSummary,
   Issue,
   IssueDetails,
   IssueRecord,
@@ -35,9 +37,11 @@ import type {
   PolicySummary,
   RecentError,
   RecentEvent,
+  ReleaseSummary,
   RunHistoryEntry,
   RuntimeSnapshot,
   SymphonyConfig,
+  TargetSummary,
   TokenUsageTotals,
   WorkflowSummary,
 } from './types'
@@ -283,6 +287,35 @@ const buildWorkflowSummary = (
   promptTemplateEmpty: issuePromptEmpty,
 })
 
+const buildInstanceSummary = (config: SymphonyConfig): InstanceSummary => ({
+  name: config.instance.name,
+  namespace: config.instance.namespace,
+  argocdApplication: config.instance.argocdApplication,
+})
+
+const buildTargetSummary = (config: SymphonyConfig): TargetSummary => ({
+  name: config.target.name,
+  namespace: config.target.namespace,
+  argocdApplication: config.target.argocdApplication,
+  repo: config.target.repo,
+  defaultBranch: config.target.defaultBranch,
+})
+
+const buildReleaseSummary = (config: SymphonyConfig): ReleaseSummary => ({
+  mode: config.release.mode,
+  requiredChecksSource: config.release.requiredChecksSource,
+  promotionBranchPrefix: config.release.promotionBranchPrefix,
+  blockedLabels: [...config.release.blockedLabels],
+  deployables: config.release.deployables.map((deployable) => ({
+    name: deployable.name,
+    image: deployable.image,
+    manifestPaths: [...deployable.manifestPaths],
+    buildWorkflow: deployable.buildWorkflow,
+    releaseWorkflow: deployable.releaseWorkflow,
+    postDeployWorkflow: deployable.postDeployWorkflow,
+  })),
+})
+
 const buildCapacitySnapshot = (state: OrchestratorState, config: SymphonyConfig): CapacitySnapshot => {
   const runningEntries = Array.from(state.running.values())
   const runningByState = new Map<string, number>()
@@ -411,6 +444,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
       const issueRunner = yield* IssueRunnerService
       const leaderElection = yield* LeaderElectionService
       const stateStore = yield* StateStoreService
+      const targetHealth = yield* TargetHealthService
       const orchestratorLogger = logger.child({ component: 'orchestrator' })
 
       const stateRef = yield* SynchronizedRef.make<OrchestratorState>(EMPTY_STATE())
@@ -483,6 +517,62 @@ export const makeOrchestratorLayer = (logger: Logger) =>
           ),
         ),
       )
+
+      const buildHandoffMessage = (issue: Issue, config: SymphonyConfig, detail: string) =>
+        [
+          `Symphony did not start autonomous work for ${issue.identifier}.`,
+          `Reason: ${detail}`,
+          `The issue was moved to ${config.tracker.handoffState} so it leaves the active automation queue.`,
+          'Re-activate it only after the blocking condition has been resolved.',
+        ].join('\n')
+
+      const handoffSkippedIssue = (
+        issue: Issue,
+        config: SymphonyConfig,
+        reason: 'manual_work_required' | 'promotion_pr_open' | 'target_not_ready',
+        detail: string,
+      ) =>
+        tracker.handoffIssue(issue.id, buildHandoffMessage(issue, config, detail), config.tracker.handoffState).pipe(
+          Effect.tap(() =>
+            SynchronizedRef.modifyEffect(stateRef, (state) => {
+              addRecentEvent(state, {
+                at: new Date().toISOString(),
+                event: 'issue_handed_off',
+                message: `issue ${issue.identifier} moved to ${config.tracker.handoffState}: ${detail}`,
+                issueId: issue.id,
+                issueIdentifier: issue.identifier,
+                level: 'warn',
+                reason,
+              })
+              return Effect.succeed([undefined, state] as const)
+            }),
+          ),
+          Effect.catchAll((error) =>
+            Effect.sync(() => {
+              orchestratorLogger.log('warn', 'issue_handoff_failed', {
+                issue_id: issue.id,
+                issue_identifier: issue.identifier,
+                handoff_state: config.tracker.handoffState,
+                reason,
+                ...toLogError(error),
+              })
+            }).pipe(
+              Effect.zipRight(
+                SynchronizedRef.modifyEffect(stateRef, (state) => {
+                  addRecentError(state, {
+                    at: new Date().toISOString(),
+                    code: error.code,
+                    message: error.message,
+                    issueId: issue.id,
+                    issueIdentifier: issue.identifier,
+                    context: 'issue_handoff',
+                  })
+                  return Effect.succeed([undefined, state] as const)
+                }),
+              ),
+            ),
+          ),
+        )
 
       const scheduleRetry = (
         issueId: string,
@@ -943,6 +1033,58 @@ export const makeOrchestratorLayer = (logger: Logger) =>
           return
         }
 
+        const preDispatchHealth = yield* targetHealth.evaluatePreDispatch
+        if (!preDispatchHealth.readyForDispatch) {
+          const handoffReason = preDispatchHealth.openPromotionPr ? 'promotion_pr_open' : 'target_not_ready'
+          const blockedMessage = preDispatchHealth.openPromotionPr
+            ? 'dispatch paused because a promotion pull request is already open'
+            : preDispatchHealth.lastError
+              ? `dispatch paused: ${preDispatchHealth.lastError}`
+              : preDispatchHealth.checks
+                  .filter((check) => !check.ok)
+                  .map((check) => check.message)
+                  .join('; ') || 'dispatch paused because target health checks are failing'
+          yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+            addRecentEvent(state, {
+              at: new Date().toISOString(),
+              event: 'dispatch_paused',
+              message: blockedMessage,
+              level: 'warn',
+              reason: handoffReason,
+            })
+            return Effect.succeed([undefined, state] as const)
+          })
+          const issuesToHandoff = yield* tracker.fetchCandidateIssues.pipe(
+            Effect.catchAll((error) =>
+              Effect.sync(() => {
+                orchestratorLogger.log('error', 'candidate_fetch_failed_for_handoff', toLogError(error))
+              }).pipe(
+                Effect.zipRight(
+                  SynchronizedRef.modifyEffect(stateRef, (state) => {
+                    addRecentError(state, {
+                      at: new Date().toISOString(),
+                      code: error.code,
+                      message: error.message,
+                      issueId: null,
+                      issueIdentifier: null,
+                      context: 'candidate_fetch_handoff',
+                    })
+                    return Effect.succeed([undefined, state] as const)
+                  }),
+                ),
+                Effect.zipRight(Effect.succeed<Issue[]>([])),
+              ),
+            ),
+          )
+          yield* Effect.forEach(
+            issuesToHandoff,
+            (issue) => handoffSkippedIssue(issue, config, handoffReason, blockedMessage),
+            { concurrency: 1, discard: true },
+          )
+          yield* persistStateBestEffort
+          return
+        }
+
         const issues = yield* tracker.fetchCandidateIssues.pipe(
           Effect.catchAll((error) =>
             Effect.sync(() => {
@@ -986,6 +1128,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
 
           if (
             decision.reason === 'no_slots' ||
+            decision.reason === 'manual_work_required' ||
             decision.reason === 'blocked_issue' ||
             decision.reason === 'non_active_state'
           ) {
@@ -1001,6 +1144,14 @@ export const makeOrchestratorLayer = (logger: Logger) =>
               })
               return Effect.succeed([undefined, state] as const)
             })
+            if (decision.reason === 'manual_work_required') {
+              yield* handoffSkippedIssue(
+                issue,
+                config,
+                'manual_work_required',
+                'the issue requires manual work outside the first-wave autonomous scope',
+              )
+            }
             if (decision.reason === 'no_slots') {
               break
             }
@@ -1047,6 +1198,15 @@ export const makeOrchestratorLayer = (logger: Logger) =>
 
           if (candidates.length === 0) {
             yield* scheduleRetry(issueId, retryEntry.identifier, retryEntry.attempt + 1, 'failure', 'retry poll failed')
+            return
+          }
+
+          const preDispatchHealth = yield* targetHealth.evaluatePreDispatch
+          if (!preDispatchHealth.readyForDispatch) {
+            const reason = preDispatchHealth.openPromotionPr
+              ? 'promotion pull request already open'
+              : preDispatchHealth.lastError || 'target health checks are failing'
+            yield* scheduleRetry(issueId, retryEntry.identifier, retryEntry.attempt + 1, 'failure', reason)
             return
           }
 
@@ -1418,6 +1578,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                     projectSlug: null,
                     activeStates: [],
                     terminalStates: [],
+                    handoffState: 'Backlog',
                   },
                   pollingIntervalMs: state.pollIntervalMs,
                   workspaceRoot: '',
@@ -1451,7 +1612,32 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                     host: '127.0.0.1',
                     port: null,
                   },
+                  instance: {
+                    name: 'symphony',
+                    namespace: 'jangar',
+                    argocdApplication: 'symphony',
+                  },
+                  target: {
+                    name: 'symphony',
+                    namespace: 'jangar',
+                    argocdApplication: 'symphony',
+                    repo: 'proompteng/lab',
+                    defaultBranch: 'main',
+                  },
+                  release: {
+                    mode: 'gitops_pr_on_main',
+                    requiredChecksSource: 'branch_protection',
+                    promotionBranchPrefix: 'codex/symphony-release-',
+                    blockedLabels: [],
+                    deployables: [],
+                  },
+                  health: {
+                    preDispatch: [],
+                    postDeploy: [],
+                  },
                 } satisfies SymphonyConfig)
+
+          const preDispatchHealth = yield* targetHealth.evaluatePreDispatch
 
           return {
             generatedAt,
@@ -1489,6 +1675,9 @@ export const makeOrchestratorLayer = (logger: Logger) =>
               secondsRunning: state.codexTotals.endedRuntimeSeconds + activeRuntimeSeconds,
             },
             rateLimits: state.codexRateLimits,
+            instance: buildInstanceSummary(config),
+            target: buildTargetSummary(config),
+            release: buildReleaseSummary(config),
             policy: buildPolicySummary(config),
             workflow: buildWorkflowSummary(
               config.workflowPath,
@@ -1497,6 +1686,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                 : true,
               config,
             ),
+            targetHealth: preDispatchHealth,
             leader,
             recentEvents: [...state.recentEvents],
             recentErrors: [...state.recentErrors],
