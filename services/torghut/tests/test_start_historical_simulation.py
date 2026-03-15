@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from contextlib import ExitStack
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1193,64 +1194,104 @@ class TestStartHistoricalSimulation(TestCase):
 
         with TemporaryDirectory() as tmpdir:
             resources = replace(resources, output_root=Path(tmpdir))
-            with (
-                patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
-                patch('scripts.start_historical_simulation._ensure_lz4_codec_available', return_value=None),
-                patch(
-                    'scripts.start_historical_simulation._acquire_simulation_runtime_lock',
-                    return_value={'status': 'acquired', 'run_id': resources.run_id},
-                ),
-                patch(
-                    'scripts.start_historical_simulation._capture_cluster_state',
-                    return_value={
-                        'ta_data': {
-                            'TA_GROUP_ID': 'prod-ta-group',
-                            'TA_CHECKPOINT_DIR': 's3a://bucket/checkpoints',
-                            'TA_SAVEPOINT_DIR': 's3a://bucket/savepoints',
-                        }
-                    },
-                ),
-                patch('scripts.start_historical_simulation._ensure_topics', return_value={'status': 'ok'}),
-                patch('scripts.start_historical_simulation._ensure_clickhouse_database') as ensure_db,
-                patch('scripts.start_historical_simulation._ensure_clickhouse_runtime_tables', return_value=None),
-                patch('scripts.start_historical_simulation._ensure_postgres_database') as ensure_postgres_db,
-                patch(
-                    'scripts.start_historical_simulation._ensure_postgres_runtime_permissions',
-                    return_value={'grants_applied': True},
-                ),
-                patch('scripts.start_historical_simulation._run_migrations', return_value=None),
-                patch('scripts.start_historical_simulation._reset_postgres_runtime_state', return_value=None),
-                patch(
-                    'scripts.start_historical_simulation._seed_simulation_trade_cursor',
-                    return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
-                ),
-                patch(
-                    'scripts.start_historical_simulation._upsert_simulation_runtime_context',
-                    return_value=None,
-                ),
-                patch(
-                    'scripts.start_historical_simulation._dump_topics',
-                    return_value={'records': 1, 'sha256': 'abc'},
-                ),
-                patch(
-                    'scripts.start_historical_simulation._validate_dump_coverage',
-                    return_value={'coverage_ratio': 1.0},
-                ),
-                patch(
-                    'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
-                    return_value=True,
-                ),
-                patch(
-                    'scripts.start_historical_simulation._torghut_service_reconfigure_required',
-                    return_value=True,
-                ),
-                patch('scripts.start_historical_simulation._configure_ta_for_simulation', return_value=None),
-                patch('scripts.start_historical_simulation._restart_ta_deployment', return_value='nonce'),
-                patch(
-                    'scripts.start_historical_simulation._configure_torghut_service_for_simulation',
-                    return_value=None,
-                ),
-            ):
+            with ExitStack() as stack:
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
+                )
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._ensure_lz4_codec_available', return_value=None),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._acquire_simulation_runtime_lock',
+                        return_value={'status': 'acquired', 'run_id': resources.run_id},
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._capture_cluster_state',
+                        return_value={
+                            'ta_data': {
+                                'TA_GROUP_ID': 'prod-ta-group',
+                                'TA_CHECKPOINT_DIR': 's3a://bucket/checkpoints',
+                                'TA_SAVEPOINT_DIR': 's3a://bucket/savepoints',
+                            }
+                        },
+                    ),
+                )
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._ensure_topics', return_value={'status': 'ok'}),
+                )
+                ensure_db = stack.enter_context(
+                    patch('scripts.start_historical_simulation._ensure_clickhouse_database'),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._ensure_clickhouse_runtime_tables',
+                        return_value=None,
+                    ),
+                )
+                ensure_postgres_db = stack.enter_context(
+                    patch('scripts.start_historical_simulation._ensure_postgres_database'),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._ensure_postgres_runtime_permissions',
+                        return_value={'grants_applied': True},
+                    ),
+                )
+                stack.enter_context(patch('scripts.start_historical_simulation._run_migrations', return_value=None))
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._reset_postgres_runtime_state', return_value=None),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._seed_simulation_trade_cursor',
+                        return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._upsert_simulation_runtime_context',
+                        return_value=None,
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._dump_topics',
+                        return_value={'records': 1, 'sha256': 'abc'},
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._validate_dump_coverage',
+                        return_value={'coverage_ratio': 1.0},
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
+                        return_value=True,
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._torghut_service_reconfigure_required',
+                        return_value=True,
+                    ),
+                )
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._configure_ta_for_simulation', return_value=None),
+                )
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._restart_ta_deployment', return_value='nonce'),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._configure_torghut_service_for_simulation',
+                        return_value=None,
+                    ),
+                )
                 report = start_historical_simulation._apply(
                     resources=resources,
                     manifest=manifest,
@@ -1306,56 +1347,92 @@ class TestStartHistoricalSimulation(TestCase):
 
         with TemporaryDirectory() as tmpdir:
             resources = replace(resources, output_root=Path(tmpdir))
-            with (
-                patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
-                patch('scripts.start_historical_simulation._ensure_lz4_codec_available', return_value=None),
-                patch(
-                    'scripts.start_historical_simulation._acquire_simulation_runtime_lock',
-                    return_value={'status': 'acquired', 'run_id': resources.run_id},
-                ),
-                patch(
-                    'scripts.start_historical_simulation._capture_cluster_state',
-                    return_value={'ta_data': {'TA_GROUP_ID': 'torghut-ta-sim-default'}},
-                ),
-                patch('scripts.start_historical_simulation._ensure_topics', return_value={'status': 'ok'}),
-                patch('scripts.start_historical_simulation._ensure_clickhouse_runtime_tables', return_value=None),
-                patch(
-                    'scripts.start_historical_simulation._ensure_postgres_runtime_permissions',
-                    return_value={'grants_applied': True},
-                ),
-                patch('scripts.start_historical_simulation._run_migrations', return_value=None),
-                patch('scripts.start_historical_simulation._reset_postgres_runtime_state', return_value=None),
-                patch(
-                    'scripts.start_historical_simulation._seed_simulation_trade_cursor',
-                    return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
-                ),
-                patch(
-                    'scripts.start_historical_simulation._upsert_simulation_runtime_context',
-                    return_value=None,
-                ),
-                patch(
-                    'scripts.start_historical_simulation._dump_topics',
-                    return_value={'records': 1, 'sha256': 'abc'},
-                ),
-                patch(
-                    'scripts.start_historical_simulation._validate_dump_coverage',
-                    return_value={'coverage_ratio': 1.0},
-                ),
-                patch(
-                    'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
-                    return_value=False,
-                ),
-                patch(
-                    'scripts.start_historical_simulation._torghut_service_reconfigure_required',
-                    return_value=False,
-                ),
-                patch('scripts.start_historical_simulation._configure_ta_for_simulation') as configure_ta,
-                patch(
-                    'scripts.start_historical_simulation._restart_ta_deployment',
-                    return_value=7,
-                ) as restart_ta,
-                patch('scripts.start_historical_simulation._configure_torghut_service_for_simulation') as configure_service,
-            ):
+            with ExitStack() as stack:
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
+                )
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._ensure_lz4_codec_available', return_value=None),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._acquire_simulation_runtime_lock',
+                        return_value={'status': 'acquired', 'run_id': resources.run_id},
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._capture_cluster_state',
+                        return_value={'ta_data': {'TA_GROUP_ID': 'torghut-ta-sim-default'}},
+                    ),
+                )
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._ensure_topics', return_value={'status': 'ok'}),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._ensure_clickhouse_runtime_tables',
+                        return_value=None,
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._ensure_postgres_runtime_permissions',
+                        return_value={'grants_applied': True},
+                    ),
+                )
+                stack.enter_context(patch('scripts.start_historical_simulation._run_migrations', return_value=None))
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._reset_postgres_runtime_state', return_value=None),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._seed_simulation_trade_cursor',
+                        return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._upsert_simulation_runtime_context',
+                        return_value=None,
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._dump_topics',
+                        return_value={'records': 1, 'sha256': 'abc'},
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._validate_dump_coverage',
+                        return_value={'coverage_ratio': 1.0},
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
+                        return_value=False,
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._torghut_service_reconfigure_required',
+                        return_value=False,
+                    ),
+                )
+                configure_ta = stack.enter_context(
+                    patch('scripts.start_historical_simulation._configure_ta_for_simulation'),
+                )
+                restart_ta = stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._restart_ta_deployment',
+                        return_value=7,
+                    ),
+                )
+                configure_service = stack.enter_context(
+                    patch('scripts.start_historical_simulation._configure_torghut_service_for_simulation'),
+                )
                 report = start_historical_simulation._apply(
                     resources=resources,
                     manifest=manifest,
@@ -1516,66 +1593,106 @@ class TestStartHistoricalSimulation(TestCase):
 
         with TemporaryDirectory() as tmpdir:
             resources = replace(resources, output_root=Path(tmpdir))
-            with (
-                patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
-                patch('scripts.start_historical_simulation._ensure_lz4_codec_available', return_value=None),
-                patch(
-                    'scripts.start_historical_simulation._acquire_simulation_runtime_lock',
-                    return_value={'status': 'acquired', 'run_id': resources.run_id},
-                ),
-                patch(
-                    'scripts.start_historical_simulation._capture_cluster_state',
-                    return_value={'ta_data': {'TA_GROUP_ID': 'torghut-ta-sim-default'}},
-                ),
-                patch('scripts.start_historical_simulation._ensure_topics', return_value={'status': 'ok'}),
-                patch('scripts.start_historical_simulation._ensure_clickhouse_runtime_tables', return_value=None),
-                patch(
-                    'scripts.start_historical_simulation._ensure_postgres_runtime_permissions',
-                    return_value={'grants_applied': True},
-                ) as ensure_permissions,
-                patch('scripts.start_historical_simulation._run_migrations', return_value=None) as run_migrations,
-                patch('scripts.start_historical_simulation._reset_postgres_runtime_state', return_value=None) as reset_runtime_state,
-                patch(
-                    'scripts.start_historical_simulation._seed_simulation_trade_cursor',
-                    return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
-                ),
-                patch(
-                    'scripts.start_historical_simulation._upsert_simulation_runtime_context',
-                    return_value=None,
-                ),
-                patch(
-                    'scripts.start_historical_simulation._dump_topics',
-                    return_value={'records': 1, 'sha256': 'abc'},
-                ),
-                patch(
-                    'scripts.start_historical_simulation._validate_dump_coverage',
-                    return_value={'coverage_ratio': 1.0},
-                ),
-                patch(
-                    'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
-                    return_value=False,
-                ),
-                patch(
-                    'scripts.start_historical_simulation._torghut_service_reconfigure_required',
-                    return_value=False,
-                ),
-                patch(
-                    'scripts.start_historical_simulation._configure_ta_for_simulation',
-                    return_value=None,
-                ),
-                patch(
-                    'scripts.start_historical_simulation._restart_ta_deployment',
-                    return_value=1,
-                ),
-                patch(
-                    'scripts.start_historical_simulation._configure_torghut_service_for_simulation',
-                    return_value=None,
-                ),
-                patch(
-                    'scripts.start_historical_simulation._release_simulation_runtime_lock',
-                    return_value={'status': 'released', 'run_id': resources.run_id},
-                ),
-            ):
+            with ExitStack() as stack:
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
+                )
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._ensure_lz4_codec_available', return_value=None),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._acquire_simulation_runtime_lock',
+                        return_value={'status': 'acquired', 'run_id': resources.run_id},
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._capture_cluster_state',
+                        return_value={'ta_data': {'TA_GROUP_ID': 'torghut-ta-sim-default'}},
+                    ),
+                )
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._ensure_topics', return_value={'status': 'ok'}),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._ensure_clickhouse_runtime_tables',
+                        return_value=None,
+                    ),
+                )
+                ensure_permissions = stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._ensure_postgres_runtime_permissions',
+                        return_value={'grants_applied': True},
+                    ),
+                )
+                run_migrations = stack.enter_context(
+                    patch('scripts.start_historical_simulation._run_migrations', return_value=None),
+                )
+                reset_runtime_state = stack.enter_context(
+                    patch('scripts.start_historical_simulation._reset_postgres_runtime_state', return_value=None),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._seed_simulation_trade_cursor',
+                        return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._upsert_simulation_runtime_context',
+                        return_value=None,
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._dump_topics',
+                        return_value={'records': 1, 'sha256': 'abc'},
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._validate_dump_coverage',
+                        return_value={'coverage_ratio': 1.0},
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
+                        return_value=False,
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._torghut_service_reconfigure_required',
+                        return_value=False,
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._configure_ta_for_simulation',
+                        return_value=None,
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._restart_ta_deployment',
+                        return_value=1,
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._configure_torghut_service_for_simulation',
+                        return_value=None,
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._release_simulation_runtime_lock',
+                        return_value={'status': 'released', 'run_id': resources.run_id},
+                    ),
+                )
                 start_historical_simulation._apply(
                     resources=resources,
                     manifest=manifest,
@@ -1623,65 +1740,101 @@ class TestStartHistoricalSimulation(TestCase):
 
         with TemporaryDirectory() as tmpdir:
             resources = replace(resources, output_root=Path(tmpdir))
-            with (
-                patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
-                patch('scripts.start_historical_simulation._ensure_lz4_codec_available', return_value=None),
-                patch(
-                    'scripts.start_historical_simulation._acquire_simulation_runtime_lock',
-                    return_value={'status': 'acquired', 'run_id': resources.run_id},
-                ),
-                patch(
-                    'scripts.start_historical_simulation._capture_cluster_state',
-                    return_value={
-                        'ta_data': {
-                            'TA_GROUP_ID': 'prod-ta-group',
-                        }
-                    },
-                ),
-                patch('scripts.start_historical_simulation._ensure_topics', return_value={'status': 'ok'}),
-                patch('scripts.start_historical_simulation._ensure_clickhouse_database'),
-                patch('scripts.start_historical_simulation._ensure_clickhouse_runtime_tables', return_value=None),
-                patch('scripts.start_historical_simulation._ensure_postgres_database'),
-                patch(
-                    'scripts.start_historical_simulation._ensure_postgres_runtime_permissions',
-                    return_value={'grants_applied': True},
-                ),
-                patch('scripts.start_historical_simulation._run_migrations', return_value=None),
-                patch('scripts.start_historical_simulation._reset_postgres_runtime_state', return_value=None),
-                patch(
-                    'scripts.start_historical_simulation._seed_simulation_trade_cursor',
-                    return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
-                ),
-                patch(
-                    'scripts.start_historical_simulation._upsert_simulation_runtime_context',
-                    return_value=None,
-                ),
-                patch(
-                    'scripts.start_historical_simulation._dump_topics',
-                    return_value={'records': 1, 'sha256': 'abc'},
-                ),
-                patch(
-                    'scripts.start_historical_simulation._validate_dump_coverage',
-                    return_value={'coverage_ratio': 1.0},
-                ),
-                patch(
-                    'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
-                    return_value=True,
-                ),
-                patch(
-                    'scripts.start_historical_simulation._torghut_service_reconfigure_required',
-                    return_value=True,
-                ),
-                patch('scripts.start_historical_simulation._configure_ta_for_simulation', return_value=None),
-                patch(
-                    'scripts.start_historical_simulation._restart_ta_deployment',
-                    return_value='nonce',
-                ) as restart_ta,
-                patch(
-                    'scripts.start_historical_simulation._configure_torghut_service_for_simulation',
-                    return_value=None,
-                ),
-            ):
+            with ExitStack() as stack:
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
+                )
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._ensure_lz4_codec_available', return_value=None),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._acquire_simulation_runtime_lock',
+                        return_value={'status': 'acquired', 'run_id': resources.run_id},
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._capture_cluster_state',
+                        return_value={
+                            'ta_data': {
+                                'TA_GROUP_ID': 'prod-ta-group',
+                            }
+                        },
+                    ),
+                )
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._ensure_topics', return_value={'status': 'ok'}),
+                )
+                stack.enter_context(patch('scripts.start_historical_simulation._ensure_clickhouse_database'))
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._ensure_clickhouse_runtime_tables',
+                        return_value=None,
+                    ),
+                )
+                stack.enter_context(patch('scripts.start_historical_simulation._ensure_postgres_database'))
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._ensure_postgres_runtime_permissions',
+                        return_value={'grants_applied': True},
+                    ),
+                )
+                stack.enter_context(patch('scripts.start_historical_simulation._run_migrations', return_value=None))
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._reset_postgres_runtime_state', return_value=None),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._seed_simulation_trade_cursor',
+                        return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._upsert_simulation_runtime_context',
+                        return_value=None,
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._dump_topics',
+                        return_value={'records': 1, 'sha256': 'abc'},
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._validate_dump_coverage',
+                        return_value={'coverage_ratio': 1.0},
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
+                        return_value=True,
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._torghut_service_reconfigure_required',
+                        return_value=True,
+                    ),
+                )
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._configure_ta_for_simulation', return_value=None),
+                )
+                restart_ta = stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._restart_ta_deployment',
+                        return_value='nonce',
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._configure_torghut_service_for_simulation',
+                        return_value=None,
+                    ),
+                )
                 report = start_historical_simulation._apply(
                     resources=resources,
                     manifest=manifest,
@@ -1795,67 +1948,103 @@ class TestStartHistoricalSimulation(TestCase):
 
         with TemporaryDirectory() as tmpdir:
             resources = replace(resources, output_root=Path(tmpdir))
-            with (
-                patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
-                patch('scripts.start_historical_simulation._ensure_lz4_codec_available', return_value=None),
-                patch(
-                    'scripts.start_historical_simulation._acquire_simulation_runtime_lock',
-                    return_value={'status': 'acquired', 'run_id': resources.run_id},
-                ),
-                patch(
-                    'scripts.start_historical_simulation._capture_cluster_state',
-                    return_value={
-                        'ta_data': {
-                            'TA_GROUP_ID': 'prod-ta-group',
-                            'TA_CHECKPOINT_DIR': '/checkpoints',
-                            'TA_SAVEPOINT_DIR': '/savepoints',
-                        }
-                    },
-                ),
-                patch('scripts.start_historical_simulation._ensure_topics', return_value={'status': 'ok'}),
-                patch('scripts.start_historical_simulation._ensure_clickhouse_database'),
-                patch('scripts.start_historical_simulation._ensure_clickhouse_runtime_tables', return_value=None),
-                patch('scripts.start_historical_simulation._ensure_postgres_database'),
-                patch(
-                    'scripts.start_historical_simulation._ensure_postgres_runtime_permissions',
-                    return_value={'grants_applied': True},
-                ),
-                patch('scripts.start_historical_simulation._run_migrations', return_value=None),
-                patch('scripts.start_historical_simulation._reset_postgres_runtime_state', return_value=None),
-                patch(
-                    'scripts.start_historical_simulation._seed_simulation_trade_cursor',
-                    return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
-                ),
-                patch(
-                    'scripts.start_historical_simulation._upsert_simulation_runtime_context',
-                    return_value=None,
-                ),
-                patch(
-                    'scripts.start_historical_simulation._dump_topics',
-                    return_value={'records': 1, 'sha256': 'abc'},
-                ),
-                patch(
-                    'scripts.start_historical_simulation._validate_dump_coverage',
-                    return_value={'coverage_ratio': 1.0},
-                ),
-                patch(
-                    'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
-                    return_value=True,
-                ),
-                patch(
-                    'scripts.start_historical_simulation._torghut_service_reconfigure_required',
-                    return_value=True,
-                ),
-                patch('scripts.start_historical_simulation._configure_ta_for_simulation', return_value=None),
-                patch(
-                    'scripts.start_historical_simulation._restart_ta_deployment',
-                    return_value='nonce',
-                ) as restart_ta,
-                patch(
-                    'scripts.start_historical_simulation._configure_torghut_service_for_simulation',
-                    return_value=None,
-                ),
-            ):
+            with ExitStack() as stack:
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
+                )
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._ensure_lz4_codec_available', return_value=None),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._acquire_simulation_runtime_lock',
+                        return_value={'status': 'acquired', 'run_id': resources.run_id},
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._capture_cluster_state',
+                        return_value={
+                            'ta_data': {
+                                'TA_GROUP_ID': 'prod-ta-group',
+                                'TA_CHECKPOINT_DIR': '/checkpoints',
+                                'TA_SAVEPOINT_DIR': '/savepoints',
+                            }
+                        },
+                    ),
+                )
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._ensure_topics', return_value={'status': 'ok'}),
+                )
+                stack.enter_context(patch('scripts.start_historical_simulation._ensure_clickhouse_database'))
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._ensure_clickhouse_runtime_tables',
+                        return_value=None,
+                    ),
+                )
+                stack.enter_context(patch('scripts.start_historical_simulation._ensure_postgres_database'))
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._ensure_postgres_runtime_permissions',
+                        return_value={'grants_applied': True},
+                    ),
+                )
+                stack.enter_context(patch('scripts.start_historical_simulation._run_migrations', return_value=None))
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._reset_postgres_runtime_state', return_value=None),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._seed_simulation_trade_cursor',
+                        return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._upsert_simulation_runtime_context',
+                        return_value=None,
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._dump_topics',
+                        return_value={'records': 1, 'sha256': 'abc'},
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._validate_dump_coverage',
+                        return_value={'coverage_ratio': 1.0},
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
+                        return_value=True,
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._torghut_service_reconfigure_required',
+                        return_value=True,
+                    ),
+                )
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._configure_ta_for_simulation', return_value=None),
+                )
+                restart_ta = stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._restart_ta_deployment',
+                        return_value='nonce',
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._configure_torghut_service_for_simulation',
+                        return_value=None,
+                    ),
+                )
                 report = start_historical_simulation._apply(
                     resources=resources,
                     manifest=manifest,
@@ -1907,61 +2096,97 @@ class TestStartHistoricalSimulation(TestCase):
 
         with TemporaryDirectory() as tmpdir:
             resources = replace(resources, output_root=Path(tmpdir))
-            with (
-                patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
-                patch('scripts.start_historical_simulation._ensure_lz4_codec_available', return_value=None),
-                patch(
-                    'scripts.start_historical_simulation._acquire_simulation_runtime_lock',
-                    return_value={'status': 'acquired', 'run_id': resources.run_id},
-                ),
-                patch(
-                    'scripts.start_historical_simulation._capture_cluster_state',
-                    return_value={'ta_data': {'TA_GROUP_ID': 'prod-ta-group'}},
-                ),
-                patch('scripts.start_historical_simulation._ensure_topics', return_value={'status': 'ok'}),
-                patch('scripts.start_historical_simulation._ensure_clickhouse_database'),
-                patch('scripts.start_historical_simulation._ensure_clickhouse_runtime_tables', return_value=None),
-                patch('scripts.start_historical_simulation._ensure_postgres_database'),
-                patch(
-                    'scripts.start_historical_simulation._ensure_postgres_runtime_permissions',
-                    return_value={'grants_applied': True},
-                ),
-                patch('scripts.start_historical_simulation._run_migrations', return_value=None),
-                patch('scripts.start_historical_simulation._reset_postgres_runtime_state', return_value=None),
-                patch(
-                    'scripts.start_historical_simulation._seed_simulation_trade_cursor',
-                    return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
-                ),
-                patch(
-                    'scripts.start_historical_simulation._upsert_simulation_runtime_context',
-                    return_value=None,
-                ),
-                patch(
-                    'scripts.start_historical_simulation._dump_topics',
-                    return_value={'records': 1, 'sha256': 'abc'},
-                ),
-                patch(
-                    'scripts.start_historical_simulation._validate_dump_coverage',
-                    return_value={'coverage_ratio': 1.0},
-                ),
-                patch(
-                    'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
-                    return_value=True,
-                ),
-                patch(
-                    'scripts.start_historical_simulation._torghut_service_reconfigure_required',
-                    return_value=True,
-                ),
-                patch('scripts.start_historical_simulation._configure_ta_for_simulation', return_value=None),
-                patch(
-                    'scripts.start_historical_simulation._restart_ta_deployment',
-                    return_value='nonce',
-                ) as restart_ta,
-                patch(
-                    'scripts.start_historical_simulation._configure_torghut_service_for_simulation',
-                    return_value=None,
-                ),
-            ):
+            with ExitStack() as stack:
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
+                )
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._ensure_lz4_codec_available', return_value=None),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._acquire_simulation_runtime_lock',
+                        return_value={'status': 'acquired', 'run_id': resources.run_id},
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._capture_cluster_state',
+                        return_value={'ta_data': {'TA_GROUP_ID': 'prod-ta-group'}},
+                    ),
+                )
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._ensure_topics', return_value={'status': 'ok'}),
+                )
+                stack.enter_context(patch('scripts.start_historical_simulation._ensure_clickhouse_database'))
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._ensure_clickhouse_runtime_tables',
+                        return_value=None,
+                    ),
+                )
+                stack.enter_context(patch('scripts.start_historical_simulation._ensure_postgres_database'))
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._ensure_postgres_runtime_permissions',
+                        return_value={'grants_applied': True},
+                    ),
+                )
+                stack.enter_context(patch('scripts.start_historical_simulation._run_migrations', return_value=None))
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._reset_postgres_runtime_state', return_value=None),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._seed_simulation_trade_cursor',
+                        return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._upsert_simulation_runtime_context',
+                        return_value=None,
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._dump_topics',
+                        return_value={'records': 1, 'sha256': 'abc'},
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._validate_dump_coverage',
+                        return_value={'coverage_ratio': 1.0},
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
+                        return_value=True,
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._torghut_service_reconfigure_required',
+                        return_value=True,
+                    ),
+                )
+                stack.enter_context(
+                    patch('scripts.start_historical_simulation._configure_ta_for_simulation', return_value=None),
+                )
+                restart_ta = stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._restart_ta_deployment',
+                        return_value='nonce',
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._configure_torghut_service_for_simulation',
+                        return_value=None,
+                    ),
+                )
                 report = start_historical_simulation._apply(
                     resources=resources,
                     manifest=manifest,
@@ -4281,47 +4506,68 @@ class TestStartHistoricalSimulation(TestCase):
             verify_poll_seconds=5,
         )
 
-        with (
-            patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
-            patch('scripts.start_historical_simulation._update_run_state', return_value=None),
-            patch('scripts.start_historical_simulation._save_json', return_value=None),
-            patch('scripts.start_historical_simulation.persist_completion_trace', return_value={}),
-            patch('scripts.start_historical_simulation._upsert_simulation_progress_row', return_value=None),
-            patch('scripts.start_historical_simulation.SessionLocal') as mock_session_local,
-            patch('scripts.start_historical_simulation._prepare_argocd_for_run', return_value={'managed': False}),
-            patch('scripts.start_historical_simulation._restore_argocd_after_run', return_value={'managed': False}),
-            patch('scripts.start_historical_simulation._apply', return_value={'status': 'ok'}),
-            patch(
-                'scripts.start_historical_simulation._run_rollouts_analysis',
-                side_effect=[
-                    {'phase': 'Successful'},
-                    {'phase': 'Failed'},
-                ],
-            ),
-            patch('scripts.start_historical_simulation._runtime_verify', return_value={'runtime_state': 'ready'}),
-            patch('scripts.start_historical_simulation._replay_dump', return_value={'status': 'ok'}),
-            patch(
-                'scripts.start_historical_simulation._monitor_run_completion',
-                return_value={
-                    'status': 'ok',
-                    'activity_classification': 'success',
-                    'final_snapshot': {
-                        'signal_rows': 5,
-                        'price_rows': 5,
-                        'trade_decisions': 3,
-                        'cursor_at': '2026-02-27T21:00:00Z',
-                        'executions': 2,
-                        'execution_tca_metrics': 2,
-                        'execution_order_events': 2,
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
+            )
+            stack.enter_context(patch('scripts.start_historical_simulation._update_run_state', return_value=None))
+            stack.enter_context(patch('scripts.start_historical_simulation._save_json', return_value=None))
+            stack.enter_context(
+                patch('scripts.start_historical_simulation.persist_completion_trace', return_value={}),
+            )
+            stack.enter_context(
+                patch('scripts.start_historical_simulation._upsert_simulation_progress_row', return_value=None),
+            )
+            mock_session_local = stack.enter_context(patch('scripts.start_historical_simulation.SessionLocal'))
+            stack.enter_context(
+                patch('scripts.start_historical_simulation._prepare_argocd_for_run', return_value={'managed': False}),
+            )
+            stack.enter_context(
+                patch('scripts.start_historical_simulation._restore_argocd_after_run', return_value={'managed': False}),
+            )
+            stack.enter_context(patch('scripts.start_historical_simulation._apply', return_value={'status': 'ok'}))
+            stack.enter_context(
+                patch(
+                    'scripts.start_historical_simulation._run_rollouts_analysis',
+                    side_effect=[
+                        {'phase': 'Successful'},
+                        {'phase': 'Failed'},
+                    ],
+                ),
+            )
+            stack.enter_context(
+                patch('scripts.start_historical_simulation._runtime_verify', return_value={'runtime_state': 'ready'}),
+            )
+            stack.enter_context(
+                patch('scripts.start_historical_simulation._replay_dump', return_value={'status': 'ok'}),
+            )
+            stack.enter_context(
+                patch(
+                    'scripts.start_historical_simulation._monitor_run_completion',
+                    return_value={
+                        'status': 'ok',
+                        'activity_classification': 'success',
+                        'final_snapshot': {
+                            'signal_rows': 5,
+                            'price_rows': 5,
+                            'trade_decisions': 3,
+                            'cursor_at': '2026-02-27T21:00:00Z',
+                            'executions': 2,
+                            'execution_tca_metrics': 2,
+                            'execution_order_events': 2,
+                        },
                     },
-                },
-            ),
-            patch('scripts.start_historical_simulation._report_simulation', return_value={'status': 'ok'}),
-            patch(
-                'scripts.start_historical_simulation._build_strategy_proof_artifact',
-                return_value={'status': 'ok', 'legacy_path_count': 0},
-            ),
-        ):
+                ),
+            )
+            stack.enter_context(
+                patch('scripts.start_historical_simulation._report_simulation', return_value={'status': 'ok'}),
+            )
+            stack.enter_context(
+                patch(
+                    'scripts.start_historical_simulation._build_strategy_proof_artifact',
+                    return_value={'status': 'ok', 'legacy_path_count': 0},
+                ),
+            )
             mock_session_local.return_value.__enter__.return_value = SimpleNamespace(commit=lambda: None)
             report = _run_full_lifecycle(
                 resources=resources,
@@ -4400,48 +4646,71 @@ class TestStartHistoricalSimulation(TestCase):
             call_order.append(phase)
             return {'phase': 'Successful'}
 
-        with (
-            patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
-            patch('scripts.start_historical_simulation._update_run_state', return_value=None),
-            patch('scripts.start_historical_simulation._save_json', return_value=None),
-            patch('scripts.start_historical_simulation.persist_completion_trace', return_value={}),
-            patch('scripts.start_historical_simulation._upsert_simulation_progress_row', return_value=None),
-            patch('scripts.start_historical_simulation.SessionLocal') as mock_session_local,
-            patch('scripts.start_historical_simulation._prepare_argocd_for_run', return_value={'managed': False}),
-            patch(
-                'scripts.start_historical_simulation._restore_argocd_after_run',
-                side_effect=lambda **_: call_order.append('argocd_restore') or {'managed': False},
-            ),
-            patch('scripts.start_historical_simulation._apply', return_value={'status': 'ok'}),
-            patch('scripts.start_historical_simulation._run_rollouts_analysis', side_effect=_rollouts_side_effect),
-            patch('scripts.start_historical_simulation._runtime_verify', return_value={'runtime_state': 'ready'}),
-            patch('scripts.start_historical_simulation._replay_dump', return_value={'status': 'ok'}),
-            patch(
-                'scripts.start_historical_simulation._monitor_run_completion',
-                return_value={
-                    'status': 'ok',
-                    'activity_classification': 'success',
-                    'final_snapshot': {
-                        'signal_rows': 5,
-                        'price_rows': 5,
-                        'trade_decisions': 3,
-                        'cursor_at': '2026-02-27T21:00:00Z',
-                        'executions': 2,
-                        'execution_tca_metrics': 2,
-                        'execution_order_events': 2,
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
+            )
+            stack.enter_context(patch('scripts.start_historical_simulation._update_run_state', return_value=None))
+            stack.enter_context(patch('scripts.start_historical_simulation._save_json', return_value=None))
+            stack.enter_context(
+                patch('scripts.start_historical_simulation.persist_completion_trace', return_value={}),
+            )
+            stack.enter_context(
+                patch('scripts.start_historical_simulation._upsert_simulation_progress_row', return_value=None),
+            )
+            mock_session_local = stack.enter_context(patch('scripts.start_historical_simulation.SessionLocal'))
+            stack.enter_context(
+                patch('scripts.start_historical_simulation._prepare_argocd_for_run', return_value={'managed': False}),
+            )
+            stack.enter_context(
+                patch(
+                    'scripts.start_historical_simulation._restore_argocd_after_run',
+                    side_effect=lambda **_: call_order.append('argocd_restore') or {'managed': False},
+                ),
+            )
+            stack.enter_context(patch('scripts.start_historical_simulation._apply', return_value={'status': 'ok'}))
+            stack.enter_context(
+                patch('scripts.start_historical_simulation._run_rollouts_analysis', side_effect=_rollouts_side_effect),
+            )
+            stack.enter_context(
+                patch('scripts.start_historical_simulation._runtime_verify', return_value={'runtime_state': 'ready'}),
+            )
+            stack.enter_context(
+                patch('scripts.start_historical_simulation._replay_dump', return_value={'status': 'ok'}),
+            )
+            stack.enter_context(
+                patch(
+                    'scripts.start_historical_simulation._monitor_run_completion',
+                    return_value={
+                        'status': 'ok',
+                        'activity_classification': 'success',
+                        'final_snapshot': {
+                            'signal_rows': 5,
+                            'price_rows': 5,
+                            'trade_decisions': 3,
+                            'cursor_at': '2026-02-27T21:00:00Z',
+                            'executions': 2,
+                            'execution_tca_metrics': 2,
+                            'execution_order_events': 2,
+                        },
                     },
-                },
-            ),
-            patch('scripts.start_historical_simulation._report_simulation', return_value={'status': 'ok'}),
-            patch(
-                'scripts.start_historical_simulation._build_strategy_proof_artifact',
-                return_value={'status': 'ok', 'legacy_path_count': 0},
-            ),
-            patch(
-                'scripts.start_historical_simulation._teardown',
-                side_effect=lambda **_: call_order.append('teardown') or {'status': 'ok'},
-            ),
-        ):
+                ),
+            )
+            stack.enter_context(
+                patch('scripts.start_historical_simulation._report_simulation', return_value={'status': 'ok'}),
+            )
+            stack.enter_context(
+                patch(
+                    'scripts.start_historical_simulation._build_strategy_proof_artifact',
+                    return_value={'status': 'ok', 'legacy_path_count': 0},
+                ),
+            )
+            stack.enter_context(
+                patch(
+                    'scripts.start_historical_simulation._teardown',
+                    side_effect=lambda **_: call_order.append('teardown') or {'status': 'ok'},
+                ),
+            )
             mock_session_local.return_value.__enter__.return_value = SimpleNamespace(commit=lambda: None)
             report = _run_full_lifecycle(
                 resources=resources,
@@ -4523,42 +4792,65 @@ class TestStartHistoricalSimulation(TestCase):
                 return {'phase': 'Failed'}
             return {'phase': 'Successful'}
 
-        with (
-            patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
-            patch('scripts.start_historical_simulation._update_run_state', return_value=None),
-            patch('scripts.start_historical_simulation._save_json', return_value=None),
-            patch('scripts.start_historical_simulation.persist_completion_trace', return_value={}),
-            patch('scripts.start_historical_simulation._upsert_simulation_progress_row', return_value=None),
-            patch('scripts.start_historical_simulation.SessionLocal') as mock_session_local,
-            patch('scripts.start_historical_simulation._prepare_argocd_for_run', return_value={'managed': False}),
-            patch('scripts.start_historical_simulation._restore_argocd_after_run', return_value={'managed': False}),
-            patch('scripts.start_historical_simulation._apply', return_value={'status': 'ok'}),
-            patch('scripts.start_historical_simulation._run_rollouts_analysis', side_effect=_rollouts_side_effect),
-            patch('scripts.start_historical_simulation._runtime_verify', return_value={'runtime_state': 'ready'}),
-            patch('scripts.start_historical_simulation._replay_dump', return_value={'status': 'ok'}),
-            patch(
-                'scripts.start_historical_simulation._monitor_run_completion',
-                return_value={
-                    'status': 'ok',
-                    'activity_classification': 'success',
-                    'final_snapshot': {
-                        'signal_rows': 5,
-                        'price_rows': 5,
-                        'trade_decisions': 3,
-                        'cursor_at': '2026-02-27T21:00:00Z',
-                        'executions': 2,
-                        'execution_tca_metrics': 2,
-                        'execution_order_events': 2,
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
+            )
+            stack.enter_context(patch('scripts.start_historical_simulation._update_run_state', return_value=None))
+            stack.enter_context(patch('scripts.start_historical_simulation._save_json', return_value=None))
+            stack.enter_context(
+                patch('scripts.start_historical_simulation.persist_completion_trace', return_value={}),
+            )
+            stack.enter_context(
+                patch('scripts.start_historical_simulation._upsert_simulation_progress_row', return_value=None),
+            )
+            mock_session_local = stack.enter_context(patch('scripts.start_historical_simulation.SessionLocal'))
+            stack.enter_context(
+                patch('scripts.start_historical_simulation._prepare_argocd_for_run', return_value={'managed': False}),
+            )
+            stack.enter_context(
+                patch('scripts.start_historical_simulation._restore_argocd_after_run', return_value={'managed': False}),
+            )
+            stack.enter_context(patch('scripts.start_historical_simulation._apply', return_value={'status': 'ok'}))
+            stack.enter_context(
+                patch('scripts.start_historical_simulation._run_rollouts_analysis', side_effect=_rollouts_side_effect),
+            )
+            stack.enter_context(
+                patch('scripts.start_historical_simulation._runtime_verify', return_value={'runtime_state': 'ready'}),
+            )
+            stack.enter_context(
+                patch('scripts.start_historical_simulation._replay_dump', return_value={'status': 'ok'}),
+            )
+            stack.enter_context(
+                patch(
+                    'scripts.start_historical_simulation._monitor_run_completion',
+                    return_value={
+                        'status': 'ok',
+                        'activity_classification': 'success',
+                        'final_snapshot': {
+                            'signal_rows': 5,
+                            'price_rows': 5,
+                            'trade_decisions': 3,
+                            'cursor_at': '2026-02-27T21:00:00Z',
+                            'executions': 2,
+                            'execution_tca_metrics': 2,
+                            'execution_order_events': 2,
+                        },
                     },
-                },
-            ),
-            patch('scripts.start_historical_simulation._report_simulation', return_value={'status': 'ok'}),
-            patch(
-                'scripts.start_historical_simulation._build_strategy_proof_artifact',
-                return_value={'status': 'ok', 'legacy_path_count': 0},
-            ),
-            patch('scripts.start_historical_simulation._teardown', return_value={'status': 'ok'}),
-        ):
+                ),
+            )
+            stack.enter_context(
+                patch('scripts.start_historical_simulation._report_simulation', return_value={'status': 'ok'}),
+            )
+            stack.enter_context(
+                patch(
+                    'scripts.start_historical_simulation._build_strategy_proof_artifact',
+                    return_value={'status': 'ok', 'legacy_path_count': 0},
+                ),
+            )
+            stack.enter_context(
+                patch('scripts.start_historical_simulation._teardown', return_value={'status': 'ok'}),
+            )
             mock_session_local.return_value.__enter__.return_value = SimpleNamespace(commit=lambda: None)
             with self.assertRaisesRegex(
                 RuntimeError,
