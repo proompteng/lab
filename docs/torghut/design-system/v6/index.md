@@ -13,6 +13,7 @@
   - `40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md`
   - `41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md`
   - `39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md`
+- `44-torghut-quant-plan-design-document-and-handoff-contract-2026-03-15.md`
 - Discover stage merge anchor:
   - `42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md`
   - `42-torghut-quant-control-plane-and-profitability-program-2026-03-15.md`
@@ -140,6 +141,7 @@ This pack is positioned as the next architecture layer above:
 41. `41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md`
 42. `42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md`
 43. `42-torghut-quant-control-plane-and-profitability-program-2026-03-15.md`
+44. `44-torghut-quant-plan-design-document-and-handoff-contract-2026-03-15.md`
 
 ## Recommended Build Order
 
