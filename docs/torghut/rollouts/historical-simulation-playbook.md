@@ -51,7 +51,11 @@ Start from `services/torghut/config/simulation/example-dataset.yaml` and set:
 - `dataset_id`
 - `window.profile=us_equities_regular`, `window.trading_day`, and matching session `start/end`
 - `clickhouse.simulation_database` (example: `torghut_sim_<run_token>`)
-- `postgres.simulation_dsn_template` or `postgres.simulation_dsn`
+- `postgres.admin_dsn` must point at the bootstrap/superuser role for isolated database creation + migrations
+- `postgres.simulation_dsn_template` or `postgres.simulation_dsn` must point at the Torghut runtime role
+- `postgres.simulation_dsn_password_env=TORGHUT_POSTGRES_PASSWORD`
+- `postgres.runtime_simulation_dsn_password_env=TORGHUT_POSTGRES_PASSWORD`
+- `postgres.admin_dsn_password_env=TORGHUT_POSTGRES_ADMIN_PASSWORD`
 - `runtime.target_mode=dedicated_service`
 - `argocd.manage_automation=true` and ApplicationSet/app names
 - `torghut_env_overrides` for simulation-only runtime knobs (allowlist enforced by script)

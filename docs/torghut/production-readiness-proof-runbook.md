@@ -22,6 +22,9 @@ This runbook is the authoritative operator sequence for a production-readiness s
    - `TORGHUT_SIM_CACHE_CEPH_SECRET_KEY`
    - `TORGHUT_SIM_CACHE_CEPH_BUCKET`
    - `TORGHUT_SIM_CACHE_CEPH_ENDPOINT`
+4. Ensure the simulation manifest uses split Postgres credentials:
+   - `postgres.admin_dsn` targets the bootstrap/superuser role with `TORGHUT_POSTGRES_ADMIN_PASSWORD`
+   - `postgres.simulation_dsn` / `postgres.runtime_simulation_dsn` target the Torghut app role with `TORGHUT_POSTGRES_PASSWORD`
 
 ## Sequence
 
