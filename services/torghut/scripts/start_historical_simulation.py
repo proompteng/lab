@@ -1146,6 +1146,28 @@ def _replace_alembic_upgrade_target(command: str, target: str) -> str | None:
     return ' '.join(shlex.quote(item) for item in tokens)
 
 
+def _resolve_command_args(command: str) -> list[str]:
+    try:
+        tokens = shlex.split(command)
+    except Exception as exc:
+        raise RuntimeError(f'command_parse_failed:{command}') from exc
+    if not tokens:
+        raise RuntimeError('command_parse_failed:empty')
+    binary = tokens[0]
+    if os.path.isabs(binary) and not Path(binary).exists():
+        fallback_binary = shutil.which(Path(binary).name)
+        if fallback_binary:
+            _log_script_event(
+                'command_binary_resolved',
+                original_binary=binary,
+                resolved_binary=fallback_binary,
+            )
+            tokens[0] = fallback_binary
+        else:
+            raise RuntimeError(f'command_binary_not_found:{binary}')
+    return tokens
+
+
 def _run_alembic_upgrade(
     *,
     command: str,
@@ -1156,7 +1178,7 @@ def _run_alembic_upgrade(
     _run_with_transient_postgres_retry(
         label=label,
         operation=lambda: _run_command(
-            shlex.split(command),
+            _resolve_command_args(command),
             cwd=cwd,
             env=env,
         ),
@@ -1540,6 +1562,8 @@ def _run_command(
             env=dict(env) if env is not None else None,
             input=input_text,
         )
+    except FileNotFoundError as exc:
+        raise RuntimeError(f'command_missing: {" ".join(args)}: {exc.filename}') from exc
     except subprocess.CalledProcessError as exc:
         stdout = (exc.stdout or '').strip()
         stderr = (exc.stderr or '').strip()
@@ -3600,19 +3624,14 @@ def _run_migrations(config: PostgresRuntimeConfig) -> None:
     env['DB_DSN'] = config.admin_simulation_dsn
     _remove_appledouble_sidecars(repo_root / 'migrations' / 'versions')
 
-    def _run(command: str) -> None:
-        _run_command(
-            shlex.split(command),
-            cwd=repo_root,
-            env=env,
-        )
-
     migration_error: Exception | None = None
 
     try:
-        _run_with_transient_postgres_retry(
+        _run_alembic_upgrade(
+            command=config.migrations_command,
+            env=env,
+            cwd=repo_root,
             label='run_migrations',
-            operation=lambda: _run(config.migrations_command),
         )
         _assert_required_simulation_metadata_tables(config)
         return
@@ -3637,9 +3656,11 @@ def _run_migrations(config: PostgresRuntimeConfig) -> None:
             f'run_migrations_fallback_target_parse_failed: command={config.migrations_command} target={fallback_revision}'
         ) from migration_error
 
-    _run_with_transient_postgres_retry(
+    _run_alembic_upgrade(
+        command=fallback_command,
+        env=env,
+        cwd=repo_root,
         label='run_migrations_fallback_pre_vector',
-        operation=lambda: _run(fallback_command),
     )
     _assert_required_simulation_metadata_tables(config)
 
@@ -7014,20 +7035,25 @@ def _run_full_lifecycle(
     )
     completion_trace_path = _artifact_path(resources, 'completion-trace.json')
     _save_json(completion_trace_path, completion_trace)
+    gate_row_ids: dict[str, Any] = {}
+    completion_trace_db_refs = _as_mapping(completion_trace.get('db_row_refs'))
     runtime_session_factory, runtime_engine = _runtime_sessionmaker(postgres_config)
     try:
-        with runtime_session_factory() as session:
-            gate_row_ids = persist_completion_trace(
-                session=session,
-                trace_payload=completion_trace,
-                default_artifact_ref=str(completion_trace_path),
-            )
-            session.commit()
+        try:
+            with runtime_session_factory() as session:
+                gate_row_ids = persist_completion_trace(
+                    session=session,
+                    trace_payload=completion_trace,
+                    default_artifact_ref=str(completion_trace_path),
+                )
+                session.commit()
+        except Exception as exc:
+            completion_trace_db_refs['completion_gate_persist_error'] = str(exc)
+            errors.append(f'completion_trace_persist:{exc}')
     finally:
         runtime_engine.dispose()
-    updated_db_refs = _as_mapping(completion_trace.get('db_row_refs'))
-    updated_db_refs['completion_gate_row_ids'] = gate_row_ids
-    completion_trace['db_row_refs'] = updated_db_refs
+    completion_trace_db_refs['completion_gate_row_ids'] = gate_row_ids
+    completion_trace['db_row_refs'] = completion_trace_db_refs
     _save_json(completion_trace_path, completion_trace)
     if errors:
         error_payload = {

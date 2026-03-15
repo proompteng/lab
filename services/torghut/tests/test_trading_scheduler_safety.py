@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import tempfile
 from pathlib import Path
@@ -59,6 +59,9 @@ class TestTradingSchedulerSafety(TestCase):
             "trading_signal_market_closed_expected_reasons_raw": (
                 config.settings.trading_signal_market_closed_expected_reasons_raw
             ),
+            "trading_signal_bootstrap_grace_seconds": (
+                config.settings.trading_signal_bootstrap_grace_seconds
+            ),
         }
 
     def tearDown(self) -> None:
@@ -96,6 +99,9 @@ class TestTradingSchedulerSafety(TestCase):
         config.settings.trading_signal_market_closed_expected_reasons_raw = (
             self._snapshot["trading_signal_market_closed_expected_reasons_raw"]
         )
+        config.settings.trading_signal_bootstrap_grace_seconds = self._snapshot[
+            "trading_signal_bootstrap_grace_seconds"
+        ]
 
     def test_simulation_run_context_reset_clears_run_scoped_safety_state(self) -> None:
         config.settings.trading_simulation_enabled = True
@@ -148,6 +154,8 @@ class TestTradingSchedulerSafety(TestCase):
         self.assertIsNone(scheduler.state.signal_continuity_alert_started_at)
         self.assertIsNone(scheduler.state.signal_continuity_alert_last_seen_at)
         self.assertEqual(scheduler.state.signal_continuity_recovery_streak, 0)
+        self.assertIsNotNone(scheduler.state.signal_bootstrap_started_at)
+        self.assertIsNone(scheduler.state.signal_bootstrap_completed_at)
         self.assertEqual(scheduler.state.autonomy_no_signal_streak, 0)
         self.assertIsNone(scheduler.state.last_evidence_continuity_report)
         self.assertEqual(scheduler.state.autonomy_failure_streak, 0)
@@ -227,6 +235,63 @@ class TestTradingSchedulerSafety(TestCase):
 
             self.assertFalse(scheduler.state.emergency_stop_active)
             self.assertEqual(scheduler.state.rollback_incidents_total, 0)
+
+    def test_critical_no_signal_streak_is_suppressed_during_bootstrap_grace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config.settings.trading_autonomy_artifact_dir = tmpdir
+            config.settings.trading_emergency_stop_enabled = True
+            config.settings.trading_rollback_signal_staleness_alert_streak_limit = 2
+            config.settings.trading_signal_staleness_alert_critical_reasons_raw = (
+                "no_signals_in_window"
+            )
+            config.settings.trading_signal_market_closed_expected_reasons_raw = (
+                "cursor_tail_stable,empty_batch_advanced"
+            )
+            config.settings.trading_signal_bootstrap_grace_seconds = 180
+            scheduler = TradingScheduler()
+            scheduler._pipeline = _PipelineStub()  # type: ignore[assignment]
+            scheduler._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+            scheduler.state.signal_bootstrap_started_at = datetime.now(timezone.utc)
+            scheduler.state.signal_bootstrap_completed_at = None
+            scheduler.state.metrics.no_signal_reason_streak = {
+                "no_signals_in_window": 3
+            }
+
+            scheduler._evaluate_safety_controls()
+
+            self.assertFalse(scheduler.state.emergency_stop_active)
+            self.assertEqual(scheduler.state.rollback_incidents_total, 0)
+
+    def test_critical_no_signal_streak_triggers_after_bootstrap_grace_expires(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config.settings.trading_autonomy_artifact_dir = tmpdir
+            config.settings.trading_emergency_stop_enabled = True
+            config.settings.trading_rollback_signal_staleness_alert_streak_limit = 2
+            config.settings.trading_signal_staleness_alert_critical_reasons_raw = (
+                "no_signals_in_window"
+            )
+            config.settings.trading_signal_market_closed_expected_reasons_raw = (
+                "cursor_tail_stable,empty_batch_advanced"
+            )
+            config.settings.trading_signal_bootstrap_grace_seconds = 180
+            scheduler = TradingScheduler()
+            scheduler._pipeline = _PipelineStub()  # type: ignore[assignment]
+            scheduler._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+            scheduler.state.signal_bootstrap_started_at = datetime.now(
+                timezone.utc
+            ) - timedelta(seconds=181)
+            scheduler.state.signal_bootstrap_completed_at = None
+            scheduler.state.metrics.no_signal_reason_streak = {
+                "no_signals_in_window": 3
+            }
+
+            scheduler._evaluate_safety_controls()
+
+            self.assertTrue(scheduler.state.emergency_stop_active)
+            self.assertIn(
+                "signal_staleness_streak_exceeded:no_signals_in_window:3",
+                scheduler.state.emergency_stop_reason or "",
+            )
 
     def test_freshness_emergency_stop_auto_clears_after_recovery_hysteresis(
         self,
