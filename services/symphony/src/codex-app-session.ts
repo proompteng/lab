@@ -232,21 +232,15 @@ export const makeCodexSessionLayer = (logger: Logger) =>
             }
           })
 
-        const child = yield* Effect.acquireRelease(
-          Effect.sync(() =>
-            spawn('bash', ['-lc', options.command], {
-              cwd: options.cwd,
-              env: process.env,
-              stdio: ['pipe', 'pipe', 'pipe'],
-            }),
-          ),
-          (resource) =>
-            Effect.sync(() => {
-              if (!resource.killed) {
-                resource.kill('SIGKILL')
-              }
-            }),
+        const child = yield* Effect.sync(() =>
+          spawn('bash', ['-lc', options.command], {
+            cwd: options.cwd,
+            env: process.env,
+            stdio: ['pipe', 'pipe', 'pipe'],
+          }),
         )
+        const stdoutFiberRef = yield* Ref.make<Fiber.RuntimeFiber<void, CodexProtocolError> | null>(null)
+        const stderrFiberRef = yield* Ref.make<Fiber.RuntimeFiber<void, CodexProtocolError> | null>(null)
 
         yield* Effect.sync(() => {
           child.once('exit', (code, signal) => {
@@ -488,7 +482,8 @@ export const makeCodexSessionLayer = (logger: Logger) =>
         const stdoutFiber = yield* Stream.fromAsyncIterable(
           child.stdout,
           (error) => new CodexProtocolError('port_exit', 'codex stdout stream failed', error),
-        ).pipe(Stream.decodeText(), Stream.splitLines, Stream.runForEach(handleProtocolLine), Effect.forkScoped)
+        ).pipe(Stream.decodeText(), Stream.splitLines, Stream.runForEach(handleProtocolLine), Effect.fork)
+        yield* Ref.set(stdoutFiberRef, stdoutFiber)
 
         const stderrFiber = yield* Stream.fromAsyncIterable(
           child.stderr,
@@ -502,11 +497,28 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               sessionLogger.log('info', 'codex_stderr', { message: line.trim() })
             }),
           ),
-          Effect.forkScoped,
+          Effect.fork,
         )
+        yield* Ref.set(stderrFiberRef, stderrFiber)
 
         yield* Effect.addFinalizer(() =>
-          Fiber.interruptFork(stdoutFiber).pipe(Effect.zipRight(Fiber.interruptFork(stderrFiber))),
+          Effect.gen(function* () {
+            yield* Effect.sync(() => {
+              if (!child.killed) {
+                child.kill('SIGKILL')
+              }
+            })
+
+            const activeStdoutFiber = yield* Ref.get(stdoutFiberRef)
+            if (activeStdoutFiber) {
+              yield* Fiber.interruptFork(activeStdoutFiber)
+            }
+
+            const activeStderrFiber = yield* Ref.get(stderrFiberRef)
+            if (activeStderrFiber) {
+              yield* Fiber.interruptFork(activeStderrFiber)
+            }
+          }),
         )
 
         const request = (method: string, params: unknown) =>
