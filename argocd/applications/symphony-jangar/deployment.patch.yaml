@@ -28,4 +28,4 @@ spec:
             name: symphony-workflow-jangar
         - name: codex-auth
           secret:
-            secretName: codex-auth-symphony-jangar
+            secretName: codex-auth-symphony-jangar-jangar
