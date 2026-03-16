@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 from http.client import HTTPConnection, HTTPSConnection
 from pathlib import Path
 from typing import Any, cast
-from urllib.parse import quote_plus, urlsplit
+from urllib.parse import quote_plus, unquote_plus, urlsplit
 from zoneinfo import ZoneInfo
 
 import psycopg
@@ -69,6 +69,9 @@ DEFAULT_RUN_MONITOR_MIN_ORDER_EVENTS = 0
 DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS = 120
 DEFAULT_HTTP_PROBE_TIMEOUT_SECONDS = 5
 DEFAULT_RUN_MONITOR_PROFILE = 'smoke'
+DEFAULT_WARM_LANE_SIMULATION_DATABASE = 'torghut_sim_default'
+DEFAULT_SIMULATION_ORDER_FEED_GROUP_ID = 'torghut-order-feed-sim-default'
+DEFAULT_SIMULATION_TA_GROUP_ID = 'torghut-ta-sim-default'
 MONITOR_PROFILE_DEFAULTS: dict[str, dict[str, int]] = {
     'compact': {
         'timeout_seconds': 300,
@@ -345,6 +348,11 @@ def _validate_dump_coverage(
     if min_ms < 0 or max_ms < 0 or max_ms < min_ms:
         raise RuntimeError('dump_timestamp_coverage_invalid')
     observed_minutes = (max_ms - min_ms) / 60_000.0
+    coverage_ratio = (
+        observed_minutes / float(min_coverage_minutes)
+        if min_coverage_minutes is not None and float(min_coverage_minutes) > 0
+        else None
+    )
 
     if min_coverage_minutes is not None:
         required_minutes = float(min_coverage_minutes) * strict_ratio
@@ -358,6 +366,7 @@ def _validate_dump_coverage(
         return {
             'applied': True,
             'observed_minutes': observed_minutes,
+            'coverage_ratio': coverage_ratio,
             'required_minutes': required_minutes,
             'min_source_timestamp_ms': min_ms,
             'max_source_timestamp_ms': max_ms,
@@ -367,6 +376,7 @@ def _validate_dump_coverage(
     return {
         'applied': False,
         'observed_minutes': observed_minutes,
+        'coverage_ratio': coverage_ratio,
         'reason': 'no_minimum_coverage_policy',
         'min_source_timestamp_ms': min_ms,
         'max_source_timestamp_ms': max_ms,
@@ -378,6 +388,20 @@ def _replace_database_in_dsn(dsn: str, *, database: str, label: str) -> str:
     if not parsed.scheme or not parsed.netloc:
         raise SystemExit(f'{label} must be a valid URL')
     return parsed._replace(path='/' + quote_plus(database)).geturl()
+
+
+def _database_name_from_dsn(raw_dsn: str | None) -> str | None:
+    text = (raw_dsn or '').strip()
+    if not text:
+        return None
+    parsed = urlsplit(text)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    raw_path = parsed.path.lstrip('/')
+    if not raw_path:
+        return None
+    database = unquote_plus(raw_path).strip()
+    return database or None
 
 
 def _run_command(
@@ -859,8 +883,9 @@ def _simulation_progress_snapshot(
     clickhouse_config: Any,
 ) -> dict[str, Any]:
     components = _progress_component_snapshot(resources=resources, postgres_config=postgres_config)
+    direct_snapshot = _monitor_snapshot(postgres_config)
     if not components:
-        snapshot = _monitor_snapshot(postgres_config)
+        snapshot = direct_snapshot
         snapshot.update(_signal_snapshot(resources=resources, clickhouse_config=clickhouse_config))
         snapshot['progress_source'] = 'direct_tables'
         snapshot['components'] = {}
@@ -869,6 +894,27 @@ def _simulation_progress_snapshot(
     torghut = _as_mapping(components.get('torghut'))
     replay = _as_mapping(components.get('replay'))
     ta = _as_mapping(components.get('ta'))
+    direct_cursor_at = _parse_optional_rfc3339_timestamp(_as_text(direct_snapshot.get('cursor_at')))
+    progress_cursor_at = _parse_optional_rfc3339_timestamp(_as_text(torghut.get('cursor_at')))
+    cursor_at = direct_cursor_at if direct_cursor_at and (
+        progress_cursor_at is None or direct_cursor_at > progress_cursor_at
+    ) else progress_cursor_at
+    trade_decisions = max(
+        _safe_int(torghut.get('trade_decisions')),
+        _safe_int(direct_snapshot.get('trade_decisions')),
+    )
+    executions = max(
+        _safe_int(torghut.get('executions')),
+        _safe_int(direct_snapshot.get('executions')),
+    )
+    execution_tca_metrics = max(
+        _safe_int(torghut.get('execution_tca_metrics')),
+        _safe_int(direct_snapshot.get('execution_tca_metrics')),
+    )
+    execution_order_events = max(
+        _safe_int(torghut.get('execution_order_events')),
+        _safe_int(direct_snapshot.get('execution_order_events')),
+    )
     signal_snapshot = _signal_snapshot(resources=resources, clickhouse_config=clickhouse_config)
     last_signal_ts = (
         _as_text(signal_snapshot.get('last_signal_ts'))
@@ -887,14 +933,29 @@ def _simulation_progress_snapshot(
         or _as_text(torghut.get('last_source_ts'))
         or _as_text(ta.get('last_source_ts'))
     )
+    progress_source = 'simulation_run_progress'
+    if (
+        trade_decisions > _safe_int(torghut.get('trade_decisions'))
+        or executions > _safe_int(torghut.get('executions'))
+        or execution_tca_metrics > _safe_int(torghut.get('execution_tca_metrics'))
+        or execution_order_events > _safe_int(torghut.get('execution_order_events'))
+        or (
+            cursor_at is not None
+            and (
+                progress_cursor_at is None
+                or cursor_at > progress_cursor_at
+            )
+        )
+    ):
+        progress_source = 'simulation_run_progress+direct_tables'
     return {
-        'progress_source': 'simulation_run_progress',
+        'progress_source': progress_source,
         'components': components,
-        'trade_decisions': _safe_int(torghut.get('trade_decisions')),
-        'executions': _safe_int(torghut.get('executions')),
-        'execution_tca_metrics': _safe_int(torghut.get('execution_tca_metrics')),
-        'execution_order_events': _safe_int(torghut.get('execution_order_events')),
-        'cursor_at': _as_text(torghut.get('cursor_at')),
+        'trade_decisions': trade_decisions,
+        'executions': executions,
+        'execution_tca_metrics': execution_tca_metrics,
+        'execution_order_events': execution_order_events,
+        'cursor_at': cursor_at.isoformat() if cursor_at is not None else None,
         'signal_rows': 1 if last_signal_ts is not None else 0,
         'price_rows': 1 if last_price_ts is not None else 0,
         'last_signal_ts': last_signal_ts,
@@ -1510,11 +1571,20 @@ def _teardown_clean(
     clickhouse_price_table = _as_text(resource_payload.get('clickhouse_price_table')) or ''
     order_feed_group_id = _as_text(resource_payload.get('order_feed_group_id')) or ''
     ta_group_id = _as_text(resource_payload.get('ta_group_id')) or ''
+    target_mode = _as_text(resource_payload.get('target_mode')) or ''
     warm_lane_enabled = bool(_resource_attr(resources, 'warm_lane_enabled', default=False))
     runtime_dsn = _as_text(_resource_attr(postgres_config, 'torghut_runtime_dsn')) or ''
     simulation_topics = _as_mapping(resource_payload.get('simulation_topic_by_role'))
     run_scoped_order_updates_topic = _as_text(simulation_topics.get('order_updates')) or ''
     lane_default_order_updates_topic = _as_text(lane_contract.simulation_topic_by_role.get('order_updates')) or ''
+    lane_default_signal_table = (
+        f'{DEFAULT_WARM_LANE_SIMULATION_DATABASE}.'
+        f'{lane_contract.clickhouse_simulation_table_by_role[lane_contract.signal_table_role]}'
+    )
+    lane_default_price_table = (
+        f'{DEFAULT_WARM_LANE_SIMULATION_DATABASE}.'
+        f'{lane_contract.clickhouse_simulation_table_by_role[lane_contract.price_table_role]}'
+    )
     if not run_scoped_order_updates_topic or run_scoped_order_updates_topic == lane_default_order_updates_topic:
         run_scoped_order_updates_topic = _run_scoped_simulation_topic(
             lane_default_order_updates_topic,
@@ -1542,6 +1612,7 @@ def _teardown_clean(
     def env_value(key: str) -> str | None:
         return _as_text(_as_mapping(env_by_name.get(key)).get('value'))
 
+    runtime_database = _database_name_from_dsn(env_value('DB_DSN'))
     run_scoped_markers_present = {
         'trading_simulation_run_id': env_value('TRADING_SIMULATION_RUN_ID') == run_id,
         'trading_simulation_dataset_id': env_value('TRADING_SIMULATION_DATASET_ID') == dataset_id,
@@ -1589,9 +1660,32 @@ def _teardown_clean(
             )
             == simulation_clickhouse_db,
         }
+        dedicated_service_baseline = {}
         restored = all(warm_lane_baseline.values()) and not any(run_scoped_markers_present.values())
+    elif target_mode == 'dedicated_service':
+        warm_lane_baseline = {}
+        dedicated_service_baseline = {
+            'trading_simulation_enabled': env_value('TRADING_SIMULATION_ENABLED') == 'true',
+            'trading_simulation_run_id_cleared': not env_value('TRADING_SIMULATION_RUN_ID'),
+            'trading_simulation_dataset_id_cleared': not env_value('TRADING_SIMULATION_DATASET_ID'),
+            'db_dsn_database': runtime_database == DEFAULT_WARM_LANE_SIMULATION_DATABASE,
+            'signal_table': env_value('TRADING_SIGNAL_TABLE') == lane_default_signal_table,
+            'price_table': env_value('TRADING_PRICE_TABLE') == lane_default_price_table,
+            'order_feed_topic': env_value('TRADING_ORDER_FEED_TOPIC') == lane_default_order_updates_topic,
+            'simulation_order_updates_topic': (
+                env_value('TRADING_SIMULATION_ORDER_UPDATES_TOPIC') == lane_default_order_updates_topic
+            ),
+            'order_feed_group_id': env_value('TRADING_ORDER_FEED_GROUP_ID') == DEFAULT_SIMULATION_ORDER_FEED_GROUP_ID,
+            'ta_group_id': _as_text(ta_data.get(lane_contract.ta_group_id_key)) == DEFAULT_SIMULATION_TA_GROUP_ID,
+            'ta_clickhouse_database': _clickhouse_database_from_jdbc_url(
+                _as_text(ta_data.get(lane_contract.ta_clickhouse_url_key))
+            )
+            == DEFAULT_WARM_LANE_SIMULATION_DATABASE,
+        }
+        restored = all(dedicated_service_baseline.values()) and not any(run_scoped_markers_present.values())
     else:
         warm_lane_baseline = {}
+        dedicated_service_baseline = {}
         restored = not any(simulation_markers_present.values())
 
     return {
@@ -1603,6 +1697,7 @@ def _teardown_clean(
         'run_scoped_markers_present': run_scoped_markers_present,
         'simulation_markers_present': simulation_markers_present,
         'warm_lane_baseline': warm_lane_baseline,
+        'dedicated_service_baseline': dedicated_service_baseline,
     }
 
 
