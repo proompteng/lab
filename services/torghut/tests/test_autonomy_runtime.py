@@ -137,3 +137,67 @@ class TestAutonomyRuntime(TestCase):
         )
         self.assertEqual(len(result.decisions), 1)
         self.assertEqual(result.decisions[0].action, 'sell')
+
+    def test_intraday_tsmom_v1_plugin_emits_buy_for_one_second_profile(self) -> None:
+        runtime = StrategyRuntime(default_runtime_registry())
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 13, 13, 33, 46, tzinfo=timezone.utc),
+            symbol='MSFT',
+            timeframe='1Sec',
+            payload={
+                'macd': {'macd': '0.0061800252285331625', 'signal': '-0.0207157904036421'},
+                'rsi14': '60.84685352855714',
+                'price': '395.5129',
+                'ema12': '395.51296737223805',
+                'ema26': '395.50678734700955',
+                'vol_realized_w60s': '0.00009809491242978304',
+            },
+        )
+
+        result = runtime.evaluate(
+            signal,
+            [
+                StrategyRuntimeConfig(
+                    strategy_id='tsmom-1sec',
+                    strategy_type='intraday_tsmom_v1',
+                    version='1.1.0',
+                    base_timeframe='1Sec',
+                    params={},
+                )
+            ],
+        )
+
+        self.assertEqual(len(result.decisions), 1)
+        self.assertEqual(result.decisions[0].action, 'buy')
+
+    def test_intraday_tsmom_v1_plugin_emits_sell_for_one_second_profile(self) -> None:
+        runtime = StrategyRuntime(default_runtime_registry())
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 13, 13, 36, 38, tzinfo=timezone.utc),
+            symbol='PLTR',
+            timeframe='1Sec',
+            payload={
+                'macd': {'macd': '-0.004793351722122387', 'signal': '-0.000495365185694872'},
+                'rsi14': '39.013689684962074',
+                'price': '150.9813',
+                'ema12': '150.98135382176636',
+                'ema26': '150.9861471734885',
+                'vol_realized_w60s': '0.00011776977395581281',
+            },
+        )
+
+        result = runtime.evaluate(
+            signal,
+            [
+                StrategyRuntimeConfig(
+                    strategy_id='tsmom-1sec',
+                    strategy_type='intraday_tsmom_v1',
+                    version='1.1.0',
+                    base_timeframe='1Sec',
+                    params={},
+                )
+            ],
+        )
+
+        self.assertEqual(len(result.decisions), 1)
+        self.assertEqual(result.decisions[0].action, 'sell')
