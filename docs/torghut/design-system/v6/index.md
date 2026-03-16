@@ -14,7 +14,8 @@
   - `41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md`
   - `39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md`
   - `44-torghut-quant-plan-design-document-and-handoff-contract-2026-03-15.md`
-  - `47-torghut-quant-plan-merge-contract-and-handoff-implementation-2026-03-16.md`
+- `47-torghut-quant-plan-merge-contract-and-handoff-implementation-2026-03-16.md`
+- `48-torghut-quant-discover-implementation-readiness-and-handoff-contract-2026-03-16.md`
 - Discover stage merge anchor:
   - `42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md`
   - `42-torghut-quant-control-plane-and-profitability-program-2026-03-15.md`
@@ -62,6 +63,8 @@ Current source-state priority is narrower:
 - `47-torghut-quant-plan-merge-contract-and-handoff-implementation-2026-03-16.md` now finalizes the discover-to-plan
   transition with explicit segment-scoped rollout design, profitability mesh decision gates, and explicit engineer/deployer
   rollout and rollback handoff expectations.
+- `48-torghut-quant-discover-implementation-readiness-and-handoff-contract-2026-03-16.md` records the latest discover assessment,
+  failure-mode evidence, and merged-PR lineage for a concrete handoff from architect to engineer/deployer.
 - `40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md` now defines segment-local
   control-plane authority and scoped rollout semantics to prevent watch noise from becoming global rollout blockers.
 - `41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md` now defines multi-horizon profitability
@@ -148,6 +151,7 @@ This pack is positioned as the next architecture layer above:
 44. `44-torghut-quant-plan-design-document-and-handoff-contract-2026-03-15.md`
 45. `46-torghut-probability-and-capital-mesh-for-profitable-autonomy-2026-03-16.md`
 46. `47-torghut-quant-plan-merge-contract-and-handoff-implementation-2026-03-16.md`
+47. `48-torghut-quant-discover-implementation-readiness-and-handoff-contract-2026-03-16.md`
 
 ## Recommended Build Order
 
