@@ -7,9 +7,9 @@ It closes the current discovery-to-plan loop by selecting one control-plane resi
 
 Primary outcomes:
 
-- Jangar: reduce blast-radius failures during rollout churn by isolating segment-specific health and by making rollout transitions explicit and scoped.
+- Jangar: reduce blast-radius failures during rollout churn by isolating segment-specific health and making rollout transitions explicit and scoped.
 - Torghut: increase measurable profitability potential through evidence- and budget-governed hypothesis lanes with automatic demotion behavior.
-- Operations: preserve fast execution even under partial-surface failures through segment/lane-aware gating and bounded fallback.
+- Operations: preserve fast execution under partial-surface failures through segment/lane-aware gating and bounded fallback.
 
 ## Mission inputs and success criteria
 
@@ -33,28 +33,31 @@ Success criteria for this mission are:
 
 ### Rollout and health evidence (as observed on 2026-03-16)
 
-- `kubectl get events -n torghut --field-selector type!=Normal --sort-by=.lastTimestamp` shows repeated rollout instability on the simulation and TA surfaces:
-  - `torghut-sim-00239`, `torghut-sim-00240`, `torghut-sim-00241`, `torghut-sim-00242`: repeated readiness/startup probe failures and repeated `UpdateError`/`InternalError` reconciler conflicts around knative private service endpoints.
-  - `torghut-ta-sim` and `flinkdeployments` show analysis/job exceptions and rapid update churn.
-  - `ErrorNoBackup` for `torghut-db-restore` references missing backup `torghut/torghut-db-daily-20260310020000`.
-- `kubectl get events -n jangar ...` shows one active `ErrorNoBackup` on `jangar-db-restore` and a transient pod readiness failure (`jangar` readiness probe timeout during startup recovery).
-- `kubectl get events -n agents ...` shows `FailedMount` and repeated `BackoffLimitExceeded` for template pods (`codex-spark-smoke-*`, swarm discover/plan/verify templates), plus transient agent-controller readiness alerts.
-- Pod snapshots show `Jangar` and `Torghut` control components mostly running, while simulation pods cycle through probe failures and retry windows.
+- `kubectl get swarms.swarm.proompteng.ai -A` shows:
+  - `agents/jangar-control-plane` with phase `Frozen`, freeze reason `StageStaleness`, and pending requirements `5`.
+  - `agents/torghut-quant` with phase `Frozen`, freeze reason `StageStaleness`, and pending requirements `0`.
+- `kubectl get pods -n torghut -o wide` shows mostly healthy core services with segment-local failures:
+  - `ImagePullBackOff`: `torghut-options-ta`
+  - `CrashLoopBackOff`: `torghut-options-catalog`, `torghut-options-enricher`
+  - readiness/availability warnings: `torghut-ws-options` and `torghut-00143-deployment`.
+- `kubectl get events -A --field-selector type!=Normal --sort-by='.lastTimestamp' | tail -n 80` shows:
+  - repeated template restart/backoff windows in `agents` (`jangar-swarm-discover-template-step-1-attempt-1`, `jangar-swarm-plan-template-step-1-attempt-1`, `jangar-swarm-verify-template-step-1-attempt-1`, `torghut-swarm-discover-template-step-1-attempt-1`),
+  - `ErrorNoBackup` for `jangar/jangar-db-daily-20260309110000` and `torghut/torghut-db-daily-20260310020000`,
+  - restart and probe failures in options and deployment surfaces,
+  - ClickHouse config map update bursts during the same period.
 
 ### Control-plane resilience implication
 
-The cluster is not in full incident lockout, but failure modes are clearly segment-correlated: same-time readiness jitter, knative rollout conflicts, and backup-lineage misses are interacting. Global-stop behavior from shared control predicates would increase blast radius.
+The cluster is not in full incident lockout, but failures are strongly segment-correlated. A single global stop policy would unnecessarily block healthy paths, while segment-scoped freeze provides the required blast-radius reduction.
 
 ## Source architecture assessment
 
 ### Jangar
 
-- Existing status surfaces already carry dependency and rollout signals in:
-  - `services/jangar/src/server/control-plane-status.ts`
-  - `services/jangar/src/server/torghut-quant-runtime.ts`
-  - `services/jangar/src/server/torghut-quant-metrics.ts`
-- Existing control-plane semantics are sufficiently rich but still not yet implemented as segment-isolated lock semantics across all rollback and transition paths.
-- Test coverage includes status helper behavior and controller primitives, but no comprehensive mixed-failure segment-rollback integration test matrix.
+- Existing status and rollout semantics are already in `services/jangar/src/server/control-plane-status.ts`, `services/jangar/src/server/orchestration-controller.ts`, `services/jangar/src/server/torghut-quant-runtime.ts`, and `services/jangar/src/server/torghut-quant-metrics.ts`.
+- Existing control-plane semantics are sufficiently rich but still do not fully enforce segment-isolated lock behavior in all rollback and transition paths.
+- Test coverage includes status helper behavior and controller primitives, but no comprehensive matrix for mixed segment failure + recovery behavior.
+- Risk remains in the coupling between segment state and global canary decisions.
 
 ### Torghut
 
@@ -63,149 +66,146 @@ The cluster is not in full incident lockout, but failure modes are clearly segme
   - `services/torghut/app/completion.py`
   - `services/torghut/app/main.py`
   - `services/torghut/app/trading/empirical_jobs.py`
-- The control-plane consumption path already has contract inputs for hypothesis, evidence, and capital data (`/trading/status`, `/trading/empirical-jobs`, `/db-check`) but lacks final per-hypothesis budget lineage outputs and strict lane continuity gating in all paths.
+- Control-plane APIs already expose hypothesis and readiness inputs (`/trading/status`, `/trading/empirical-jobs`, `/db-check`).
+- Missing is a fully unified per-hypothesis budget and continuity contract that enforces growth policy across all lanes.
 
 ### Source-risk posture
 
-- High-value coupling remains: a small degradation in one proof or rollout segment can currently influence broader scheduling/rollout behavior.
-- Missing evidence: a single, merged reference contract that ties cluster-safe rollout control, hypothesis lane policy, and deployer actions into one explicit handoff artifact.
+- Coupling risk remains: one degraded segment can still influence unrelated scheduling behavior through broad predicates.
+- Documentation risk remains: there was no single merged handoff contract that bound cluster resilience, hypothesis governance, and deployer sequence in one place.
+- This mission closes that gap with a merged architecture contract and rollout/rollback matrix.
 
 ## Database and data posture assessment
 
-- Data surfaces are present and queryable through API-contracts, but direct in-cluster DB reads are blocked by RBAC.
-- Observed and code-exposed signals include:
-  - schema checks and freshness checks in `services/torghut/app/main.py`;
-  - empirical proof continuity logic and manifest hash/lineage validation scaffolding in `services/torghut/app/trading/empirical_jobs.py`.
-- Runtime gaps remain:
-  - missing backup lineage events (`ErrorNoBackup`) reduce confidence in continuity recovery windows,
-  - empirical run evidence generation and continuity adoption is uneven across all hypothesis lanes.
+- Torghut migration chain is present with staged governance and execution persistence in `services/torghut/migrations/versions`, including hypothesis and empirical job control up through `0024_simulation_runtime_context.py`.
+- Direct DB query verification remains limited by RBAC/pod-exec constraints.
+- Runtime event evidence (`ErrorNoBackup`) reduces confidence in continuity windows and requires explicit continuity gating before scale.
+- Schema-backed evidence lineage is therefore the safer gating source versus ad hoc manual state checks.
 
-## Architecture options and tradeoffs
+## Architecture alternatives and tradeoffs
 
 ### Jangar resilience alternatives
 
-Option A: threshold-tuning only
+Option A: threshold tuning only
 
-- Low implementation cost.
-- Keeps shared failure channels and does not reduce blast radius.
+- lower engineering cost
+- does not materially reduce blast radius
 
-Option B: manual runbook-only gating
+Option B: manual runbook-only controls
 
-- Reduces automation burden but is slow and variable across shifts.
+- human-readable and low code change
+- inconsistent and slow under repeated churn
 
-Option C: segment-aware control-plane gates and scoped rollbacks (selected)
+Option C: segment-aware rollout gates and scoped rollbacks (selected)
 
-- Adds explicit segment metadata (`discover`, `plan`, `verify`, `implement`) and segment-local gate decisions.
-- Limits impact radius and creates deterministic scoped rollback actions.
+- explicit segment contracts and scoped freeze logic
+- higher implementation rigor but clear failure reduction and recoverability
 
 ### Torghut profitability alternatives
 
-Option A: tighten global global gates only
+Option A: global gating only
 
-- Limited gain; still uses implicit risk-sharing across hypotheses.
+- no per-hypothesis accountability
+- weak guardrail coverage
 
 Option B: static manual capital buckets
 
-- Predictable but too slow for changing market states.
+- explicit but too slow for regime shifts and not evidence-automatable
 
-Option C: hypothesis + evidence + capital mesh with kill/degrade transitions (selected)
+Option C: hypothesis and evidence mesh with demotion transitions (selected)
 
-- Per-hypothesis, per-lane budget limits.
-- Automatic downgrades on repeated evidence decay or guardrail violation.
+- explicit lane progression with measurable thresholds
+- automatic demotion on recurring evidence erosion
+- tighter continuity coupling to backup and proof lineage
 
 ## Decision
 
-Select Option C for both domains:
+Select Option C for both domains.
 
-- Jangar uses segment-scoped rollout authority;
-- Torghut uses hypothesis-lane profit governance with explicit deallocation and concentration limits.
+- Jangar keeps rollout control scoped by segment and failure class.
+- Torghut promotes by measurable evidence windows and enforces automatic hypothesis demotion on repeated guardrail breaches.
 
 ## Merged implementation architecture (plan scope)
 
 ### 1) Segment-scoped control-plane contract (Jangar)
 
-Define a control-plane payload segment envelope that includes:
+Define per-segment trust state in control-plane responses:
 
-- `segment` identity and `status` (`allow`, `warn`, `block`, `hold`);
-- `dependency_quorum`, `watch_freshness`, `migration_consistency`, `rollout_pressure`;
-- `gate_failures[]` with `reason`, `evidence_ref`, `recovery_condition`, `next_check_at`;
-- `next_retry_at` and `last_recovery_at`.
+- `segment`: `discover | plan | verify | implement | options | inference | data-plane`
+- `status`: `allow | warn | block | hold | recoverable-fail`
+- `freshness_ms`, `failure_class`, `failure_rate`, `evidence_refs`, `next_retry_at`, `cooldown_until`.
 
-Rollout behavior:
+Transition behavior:
 
-- gate decisions are applied to segment-local transitions only;
-- `block` in one segment cannot freeze unrelated segments;
-- repeated segment lock -> `hold` -> `cooldown` -> scoped `rollback`.
+- segment `block` pauses only the impacted segment transitions,
+- unrelated segments remain operational based on own state,
+- recovery requires two consecutive `healthy` samples before clearing block.
 
-### 2) Profitability mesh contract (Torghut)
+### 2) Hypothesis profitability mesh (Torghut)
 
-Define deterministic lane and budget state for each hypothesis:
+Define mandatory state fields for every candidate hypothesis:
 
-- lifecycle: `shadow`, `canary`, `scaled`, `degrade`, `decommissioned`;
-- inputs: expectancy, continuity ratio, freshness SLA, drawdown budget, concentration overlap, evidence lineage IDs;
-- actions: `downgrade`, `pause_capital_scale`, `halt_live`, `kill_to_shadow`, `decommission`.
+- `hypothesis_id`, `strategy_family`, `target_regime`, `primary_metric`, `expected_minimum_effect`, `confidence_threshold`, `evidence_window`, `continuity_ratio_min`.
+- lane lifecycle: `shadow -> canary -> live -> scale -> protect -> degrade -> decommissioned`.
 
-Gate rules:
+Promotion rule set:
 
-- no live or scale-up transition without fresh, complete evidence windows;
-- consecutive negative windows force demotion before global stop;
-- anti-concentration constraints evaluated per regime and global budget.
+- no canary/live/scale transition without two consecutive complete evidence windows,
+- no portfolio-scale without concentration and slippage checks,
+- two consecutive guardrail breaches force immediate `degrade` and local capital pause.
 
-### 3) Shared handoff contract
+### 3) Shared traceability and handoff contract
 
-`/trading/status` and `/control-plane/status` must expose machine-readable, schema-stable records for:
+Both Jangar and Torghut status surfaces must carry a machine-readable evidence graph and freeze/recovery reasons:
 
-- active segment state,
-- hypothesis lane state,
+- segment/lane state,
 - continuity score,
-- active cap utilization,
-- rollback lineage.
+- confidence and cap utilization,
+- rollback lineage and operator acknowledgement token.
 
-Deployer action contract:
+### 4) Rollout and rollback expectations
 
-- only one scope at a time is auto-escalated; healthy scope remains active if another scope is degraded,
-- evidence IDs are mandatory for every rollback event.
+Rollout order:
+
+1. schema compatibility and segment/lane observability in shadow mode,
+2. one canary hypothesis family in one segment,
+3. conservative scale on proven low-risk hypothesis.
+
+Rollback sequence:
+
+- two consecutive critical segment blockages: hold + cooldown + operator review,
+- two consecutive hypothesis guardrail breaches: demotion to `degrade`/`shadow` and local capital cap,
+- repeated high-loss conditions: decommission with explicit re-authorization required.
 
 ## Validation gates
 
-### Engineering gates (merge-precondition)
+### Engineering gates
 
-- Tests for mixed failure isolation across segments and hypothesis lanes.
-- Contract-shape snapshots for Jangar segment status and Torghut lane state responses.
-- Regression checks proving one segment/one lane can be blocked without forcing global lockout.
+- tests proving one-segment block does not block an unrelated healthy segment,
+- tests proving per-hypothesis demotion after two violating windows,
+- contract snapshot tests for control-plane status and trading status payloads,
+- migration-coverage checks for policy fields and hypothesis evidence references.
 
-### Deployer gates (live rollout precondition)
+### Deployer gates
 
-- one market session with `observe -> gate -> dryrun` and no cross-surface freeze despite one local failure;
-- one scoped rollback drill showing automatic demotion sequence and persisted reason lineage;
-- proof windows verified before any canary scale-up with continuity below threshold blocked.
-
-## Rollout and rollback expectations
-
-Rollout cadence:
-
-1. Shadow and compatibility mode for segment/lane schema updates.
-2. Canister stage with mixed-failure simulations for 1 cycle.
-3. Controlled canary for one hypothesis family under new mesh rules.
-
-Rollback:
-
-- if two consecutive critical blockages occur in one segment: hold + cooldown + operator alert;
-- if two consecutive evidence violations occur for a live hypothesis: forced demotion to `degrade` then `shadow`;
-- if market-control breach compounds with active loss-risk threshold breach: decommission and require explicit re-enablement.
+- one scoped rollback drill showing no cross-segment global freeze,
+- evidence bundle continuity checks before any canary scale,
+- proof that demotion and resume events are persistent and auditable.
 
 ## Handoff acceptance
 
 Engineer handoff:
 
-- segment-scoped segment gating code + tests in Jangar runtime and metric surfaces;
-- hypothesis-lane transition + budget guards + demotion matrix in Torghut runtime;
-- CI checks for changed JS/TS and Python surfaces run and pass.
+- wire segment trust envelopes into Jangar status and orchestration paths,
+- wire hypothesis-policy evaluation into Torghut promotion paths,
+- add segment and hypothesis matrix tests,
+- document rollout rollback and acceptance steps in source-ready runbooks.
 
 Deployer handoff:
 
-- runbook for scoped rollback drill and segment hold/cooldown.
-- acceptance requires evidence of no global freeze when one segment is unhealthy and evidence of lane demotion within contract window.
+- apply one segment or one hypothesis change per wave,
+- ensure operator review path for any cross-segment dependency breach,
+- block scale until continuity, freshness, and evidence thresholds are passed.
 
 ## Merge references
 
@@ -215,5 +215,6 @@ Deployer handoff:
 - `docs/torghut/design-system/v6/44-torghut-quant-plan-design-document-and-handoff-contract-2026-03-15.md`
 - `docs/torghut/design-system/v6/45-torghut-quant-profitability-hypothesis-and-guardrail-architecture-2026-03-15.md`
 - `docs/torghut/design-system/v6/46-torghut-probability-and-capital-mesh-for-profitable-autonomy-2026-03-16.md`
+- `docs/agents/designs/48-jangar-torghut-architecture-plan-and-profitability-mesh-contract-2026-03-16.md`
 
-This document supersedes prior plan-stage notes by explicitly binding these references into a merged handoff contract.
+This document is the merged control-plane/profitability implementation contract for this plan stage and is intentionally explicit on rollout and rollback acceptance.
