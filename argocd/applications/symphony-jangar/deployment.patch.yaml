@@ -26,3 +26,6 @@ spec:
         - name: workflow
           configMap:
             name: symphony-workflow-jangar
+        - name: codex-auth
+          secret:
+            secretName: codex-auth-symphony-jangar
