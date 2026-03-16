@@ -162,7 +162,7 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(policy['mode'], 'stateless')
         self.assertEqual(policy['source'], 'profile_default:compact')
 
-    def test_ta_restore_policy_defaults_full_day_profiles_to_required(self) -> None:
+    def test_ta_restore_policy_defaults_full_day_profiles_to_stateless(self) -> None:
         policy = start_historical_simulation._ta_restore_policy(
             {
                 'window': {
@@ -175,7 +175,7 @@ class TestStartHistoricalSimulation(TestCase):
             }
         )
 
-        self.assertEqual(policy['mode'], 'required')
+        self.assertEqual(policy['mode'], 'stateless')
         self.assertEqual(policy['source'], 'profile_default:full_day')
 
     def test_analysis_run_name_uses_dns1123_safe_token(self) -> None:
@@ -1560,6 +1560,134 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertTrue(report['clickhouse']['database_precreated'])
         self.assertTrue(report['postgres']['database_precreated'])
         self.assertEqual(report['simulation_lock']['status'], 'acquired')
+
+    def test_apply_reasserts_manual_argocd_control_before_runtime_mutation(self) -> None:
+        resources = _build_resources('sim-1', {'dataset_id': 'dataset-a'})
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+        clickhouse_config = ClickHouseRuntimeConfig(
+            http_url='http://clickhouse:8123',
+            username='torghut',
+            password='secret',
+        )
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1',
+            simulation_db='torghut_sim_sim_1',
+            migrations_command='true',
+        )
+        argocd_config = ArgocdAutomationConfig(
+            manage_automation=True,
+            applicationset_name='product',
+            applicationset_namespace='argocd',
+            app_name='torghut',
+            root_app_name='root',
+            desired_mode_during_run='manual',
+            restore_mode_after_run='previous',
+            verify_timeout_seconds=30,
+        )
+        manifest = {
+            'dataset_id': 'dataset-a',
+            'window': {
+                'start': '2026-02-27T14:30:00Z',
+                'end': '2026-02-27T15:30:00Z',
+            },
+        }
+
+        with TemporaryDirectory() as tmpdir:
+            resources = replace(resources, output_root=Path(tmpdir))
+            with ExitStack() as stack:
+                stack.enter_context(patch('scripts.start_historical_simulation._ensure_supported_binary'))
+                stack.enter_context(patch('scripts.start_historical_simulation._ensure_lz4_codec_available'))
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._acquire_simulation_runtime_lock',
+                        return_value={'status': 'acquired', 'run_id': resources.run_id},
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._capture_cluster_state',
+                        return_value={
+                            'ta_data': {
+                                'TA_GROUP_ID': 'prod-ta-group',
+                                'TA_CHECKPOINT_DIR': 's3a://bucket/checkpoints',
+                                'TA_SAVEPOINT_DIR': 's3a://bucket/savepoints',
+                            }
+                        },
+                    ),
+                )
+                stack.enter_context(patch('scripts.start_historical_simulation._ensure_topics', return_value={'status': 'ok'}))
+                stack.enter_context(patch('scripts.start_historical_simulation._ensure_clickhouse_database'))
+                stack.enter_context(patch('scripts.start_historical_simulation._ensure_clickhouse_runtime_tables', return_value=None))
+                stack.enter_context(patch('scripts.start_historical_simulation._ensure_postgres_database'))
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._ensure_postgres_runtime_permissions',
+                        return_value={'grants_applied': True},
+                    ),
+                )
+                stack.enter_context(patch('scripts.start_historical_simulation._run_migrations', return_value=None))
+                stack.enter_context(patch('scripts.start_historical_simulation._reset_postgres_runtime_state', return_value=None))
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._seed_simulation_trade_cursor',
+                        return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
+                    ),
+                )
+                stack.enter_context(patch('scripts.start_historical_simulation._upsert_simulation_runtime_context', return_value=None))
+                stack.enter_context(patch('scripts.start_historical_simulation._dump_topics', return_value={'records': 1, 'sha256': 'abc'}))
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._validate_dump_coverage',
+                        return_value={'coverage_ratio': 1.0},
+                    ),
+                )
+                runtime_guard = stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._ensure_argocd_manual_before_runtime_mutation',
+                        return_value={'managed': True, 'changed': True},
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._ta_runtime_reconfigure_required',
+                        return_value=True,
+                    ),
+                )
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._torghut_service_reconfigure_required',
+                        return_value=True,
+                    ),
+                )
+                stack.enter_context(patch('scripts.start_historical_simulation._configure_ta_for_simulation', return_value=None))
+                stack.enter_context(patch('scripts.start_historical_simulation._restart_ta_deployment', return_value='nonce'))
+                stack.enter_context(
+                    patch(
+                        'scripts.start_historical_simulation._configure_torghut_service_for_simulation',
+                        return_value=None,
+                    ),
+                )
+
+                report = start_historical_simulation._apply(
+                    resources=resources,
+                    manifest=manifest,
+                    kafka_config=kafka_config,
+                    clickhouse_config=clickhouse_config,
+                    postgres_config=postgres_config,
+                    argocd_config=argocd_config,
+                    force_dump=False,
+                    force_replay=False,
+                )
+
+        runtime_guard.assert_called_once_with(config=argocd_config)
+        self.assertEqual(report['argocd_runtime_guard'], {'managed': True, 'changed': True})
 
     def test_apply_restarts_ta_when_warm_lane_baseline_is_already_ready(self) -> None:
         resources = _build_resources(
@@ -3182,6 +3310,8 @@ class TestStartHistoricalSimulation(TestCase):
                 torghut_env_overrides={
                     'TRADING_FEATURE_MAX_STALENESS_MS': '43200000',
                     'TRADING_FEATURE_QUALITY_ENABLED': 'true',
+                    'TRADING_STRATEGY_RUNTIME_MODE': 'plugin_v3',
+                    'TRADING_STRATEGY_SCHEDULER_ENABLED': 'false',
                 },
             )
 
@@ -3214,11 +3344,11 @@ class TestStartHistoricalSimulation(TestCase):
         )
         self.assertEqual(
             env_by_name['TRADING_STRATEGY_RUNTIME_MODE'].get('value'),
-            'scheduler_v3',
+            'plugin_v3',
         )
         self.assertEqual(
             env_by_name['TRADING_STRATEGY_SCHEDULER_ENABLED'].get('value'),
-            'true',
+            'false',
         )
 
     def test_configure_torghut_service_allows_explicit_runtime_override(self) -> None:
@@ -3452,9 +3582,31 @@ class TestStartHistoricalSimulation(TestCase):
         dump_sha256 = start_historical_simulation.hashlib.sha256(dump_bytes).hexdigest()
         cache_artifact_path = 's3://argo-workflows/torghut-simulation-cache/cache-key/source-dump.ndjson'
         cache_manifest_path = f'{cache_artifact_path}.manifest.json'
+        manifest = {
+            'dataset_id': resources.dataset_id,
+            'dataset_snapshot_ref': 'dataset-a@snapshot-1',
+            'candidate_id': 'intraday_tsmom_v1@prod',
+            'baseline_candidate_id': 'intraday_tsmom_v1@baseline',
+            'strategy_spec_ref': 'strategy-specs/intraday_tsmom_v1@1.1.0.json',
+            'model_refs': ['rules/intraday_tsmom_v1'],
+            'runtime_version_refs': ['services/torghut@sha256:abc'],
+            'cachePolicy': 'prefer_cache',
+            'metadata': {
+                'cacheKey': 'cache-key',
+                'cacheDecision': 'hit',
+                'cacheArtifactPath': cache_artifact_path,
+                'cacheChunkManifestPath': cache_manifest_path,
+            },
+            'performance': {
+                'dumpFormat': 'ndjson',
+                'replayProfile': 'compact',
+            },
+            'window': {'start': '2026-01-01T00:00:00Z', 'end': '2026-01-01T01:00:00Z'},
+        }
         artifact_manifest = {
             'dataset_id': resources.dataset_id,
             'run_id': 'prior-run',
+            'lineage': start_historical_simulation._cache_lineage_payload(manifest),
             'dump_format': 'ndjson',
             'cache_policy': 'prefer_cache',
             'replay_profile': 'compact',
@@ -3481,21 +3633,6 @@ class TestStartHistoricalSimulation(TestCase):
 
         with TemporaryDirectory() as tmp_dir:
             dump_path = Path(tmp_dir) / 'source-dump.ndjson'
-            manifest = {
-                'cachePolicy': 'prefer_cache',
-                'metadata': {
-                    'cacheKey': 'cache-key',
-                    'cacheDecision': 'hit',
-                    'cacheArtifactPath': cache_artifact_path,
-                    'cacheChunkManifestPath': cache_manifest_path,
-                },
-                'performance': {
-                    'dumpFormat': 'ndjson',
-                    'replayProfile': 'compact',
-                },
-                'window': {'start': '2026-01-01T00:00:00Z', 'end': '2026-01-01T01:00:00Z'},
-            }
-
             with (
                 patch(
                     'scripts.start_historical_simulation._consumer_for_dump',
@@ -3521,6 +3658,550 @@ class TestStartHistoricalSimulation(TestCase):
             marker = json.loads(dump_path.with_suffix('.dump-marker.json').read_text(encoding='utf-8'))
             self.assertEqual(marker['dump_sha256'], dump_sha256)
             self.assertEqual(marker['records'], 1)
+
+    def test_dump_topics_derives_durable_cache_metadata_for_local_manifests(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+        dump_line = json.dumps(
+            {
+                'source_topic': resources.source_topic_by_role['trades'],
+                'replay_topic': resources.simulation_topic_by_role['trades'],
+                'source_timestamp_ms': 1704067200000,
+                'key_b64': None,
+                'value_b64': None,
+                'headers': [],
+            }
+        )
+        dump_bytes = f'{dump_line}\n'.encode('utf-8')
+        dump_sha256 = start_historical_simulation.hashlib.sha256(dump_bytes).hexdigest()
+        manifest = {
+            'dataset_id': resources.dataset_id,
+            'dataset_snapshot_ref': 'dataset-a@snapshot-1',
+            'candidate_id': 'intraday_tsmom_v1@prod',
+            'baseline_candidate_id': 'intraday_tsmom_v1@baseline',
+            'strategy_spec_ref': 'strategy-specs/intraday_tsmom_v1@1.1.0.json',
+            'model_refs': ['rules/intraday_tsmom_v1'],
+            'runtime_version_refs': ['services/torghut@sha256:abc'],
+            'cachePolicy': 'prefer_cache',
+            'performance': {
+                'dumpFormat': 'ndjson',
+                'replayProfile': 'compact',
+            },
+            'window': {'start': '2026-01-01T00:00:00Z', 'end': '2026-01-01T01:00:00Z'},
+        }
+        cache_metadata = start_historical_simulation._cache_metadata(manifest)
+        cache_artifact_path = cache_metadata['cache_artifact_path']
+        cache_manifest_path = cache_metadata['cache_manifest_path']
+        self.assertTrue(cache_metadata['cache_key'])
+        self.assertTrue(cache_artifact_path.endswith('/source-dump.ndjson'))
+        self.assertEqual(cache_manifest_path, f'{cache_artifact_path}.manifest.json')
+        artifact_manifest = {
+            'dataset_id': resources.dataset_id,
+            'run_id': 'prior-run',
+            'lineage': start_historical_simulation._cache_lineage_payload(manifest),
+            'dump_format': 'ndjson',
+            'cache_policy': 'prefer_cache',
+            'replay_profile': 'compact',
+            'chunk_count': 1,
+            'chunks': [
+                {
+                    'path': cache_artifact_path,
+                    'records': 1,
+                    'sha256': dump_sha256,
+                    'payload_sha256': dump_sha256,
+                    'min_source_timestamp_ms': 1704067200000,
+                    'max_source_timestamp_ms': 1704067200000,
+                }
+            ],
+        }
+
+        class _FakeCephClient:
+            def get_object(self, *, bucket: str, key: str) -> bytes:
+                if bucket != 'argo-workflows':
+                    raise AssertionError(f'unexpected bucket: {bucket}')
+                if key.endswith('.manifest.json'):
+                    return json.dumps(artifact_manifest).encode('utf-8')
+                return dump_bytes
+
+        with TemporaryDirectory() as tmp_dir:
+            dump_path = Path(tmp_dir) / 'source-dump.ndjson'
+
+            with (
+                patch(
+                    'scripts.start_historical_simulation._consumer_for_dump',
+                    side_effect=AssertionError('expected durable cache restore; consumer should not be constructed'),
+                ),
+                patch(
+                    'scripts.start_historical_simulation._simulation_cache_client_from_env',
+                    return_value=(_FakeCephClient(), 'argo-workflows'),
+                ),
+            ):
+                report = _dump_topics(
+                    resources=resources,
+                    kafka_config=kafka_config,
+                    manifest=manifest,
+                    dump_path=dump_path,
+                    force=False,
+                )
+
+            self.assertTrue(report['restored_from_cache'])
+            self.assertEqual(report['records'], 1)
+            self.assertEqual(report['cache_artifact_path'], cache_artifact_path)
+            self.assertTrue(dump_path.exists())
+
+    def test_restore_cached_dump_rejects_lineage_mismatch(self) -> None:
+        manifest = {
+            'dataset_id': 'dataset-a',
+            'dataset_snapshot_ref': 'dataset-a@snapshot-2',
+            'candidate_id': 'intraday_tsmom_v1@prod',
+            'baseline_candidate_id': 'intraday_tsmom_v1@baseline',
+            'strategy_spec_ref': 'strategy-specs/intraday_tsmom_v1@1.1.0.json',
+            'model_refs': ['rules/intraday_tsmom_v1'],
+            'runtime_version_refs': ['services/torghut@sha256:def'],
+            'cachePolicy': 'prefer_cache',
+            'performance': {
+                'dumpFormat': 'ndjson',
+                'replayProfile': 'compact',
+            },
+            'window': {'start': '2026-01-01T00:00:00Z', 'end': '2026-01-01T01:00:00Z'},
+        }
+        cache_metadata = start_historical_simulation._cache_metadata(manifest)
+        artifact_manifest = {
+            'dataset_id': 'dataset-a',
+            'run_id': 'prior-run',
+            'lineage': {
+                'schema_version': 'torghut-simulation-cache-v1',
+                'lane': 'equity',
+                'dataset_id': 'dataset-a',
+                'dataset_snapshot_ref': 'dataset-a@snapshot-1',
+                'window': manifest['window'],
+                'strategy_spec_ref': manifest['strategy_spec_ref'],
+                'candidate_id': manifest['candidate_id'],
+                'baseline_candidate_id': manifest['baseline_candidate_id'],
+                'model_refs': manifest['model_refs'],
+                'runtime_version_refs': ['services/torghut@sha256:abc'],
+                'dump_format': 'ndjson',
+                'profile': 'compact',
+            },
+            'dump_format': 'ndjson',
+            'cache_policy': 'prefer_cache',
+            'replay_profile': 'compact',
+            'chunk_count': 1,
+            'chunks': [
+                {
+                    'path': cache_metadata['cache_artifact_path'],
+                    'records': 1,
+                    'sha256': 'abc',
+                    'payload_sha256': 'abc',
+                    'min_source_timestamp_ms': 1704067200000,
+                    'max_source_timestamp_ms': 1704067200000,
+                }
+            ],
+        }
+
+        class _FakeCephClient:
+            def get_object(self, *, bucket: str, key: str) -> bytes:
+                if key.endswith('.manifest.json'):
+                    return json.dumps(artifact_manifest).encode('utf-8')
+                return b'{}\n'
+
+        with TemporaryDirectory() as tmp_dir:
+            dump_path = Path(tmp_dir) / 'source-dump.ndjson'
+            with patch(
+                'scripts.start_historical_simulation._simulation_cache_client_from_env',
+                return_value=(_FakeCephClient(), 'argo-workflows'),
+            ):
+                report = start_historical_simulation._restore_cached_dump_if_available(
+                    manifest=manifest,
+                    dump_path=dump_path,
+                )
+
+        self.assertIsNone(report)
+        self.assertFalse(dump_path.exists())
+
+    def test_restore_cached_dump_skips_explicit_non_hit_cache_decision(self) -> None:
+        manifest = {
+            'cachePolicy': 'prefer_cache',
+            'metadata': {
+                'cacheKey': 'cache-key',
+                'cacheDecision': 'miss',
+                'cacheArtifactPath': 's3://argo-workflows/torghut-simulation-cache/cache-key/source-dump.ndjson',
+                'cacheChunkManifestPath': (
+                    's3://argo-workflows/torghut-simulation-cache/cache-key/source-dump.ndjson.manifest.json'
+                ),
+            },
+            'performance': {
+                'dumpFormat': 'ndjson',
+            },
+        }
+
+        with TemporaryDirectory() as tmp_dir:
+            dump_path = Path(tmp_dir) / 'source-dump.ndjson'
+
+            with patch(
+                'scripts.start_historical_simulation._simulation_cache_client_from_env',
+                side_effect=AssertionError('non-hit cache decisions must not attempt restore'),
+            ):
+                report = start_historical_simulation._restore_cached_dump_if_available(
+                    manifest=manifest,
+                    dump_path=dump_path,
+                )
+
+        self.assertIsNone(report)
+        self.assertFalse(dump_path.exists())
+
+    def test_simulation_cache_upload_timeout_seconds_scales_with_dump_size(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            dump_path = Path(tmp_dir) / 'source-dump.jsonl.zst'
+            dump_path.write_bytes(b'x' * (5 * 1024 * 1024))
+
+            timeout_seconds = start_historical_simulation._simulation_cache_upload_timeout_seconds(dump_path)
+
+        self.assertGreaterEqual(timeout_seconds, 60)
+
+    def test_upload_dump_to_cache_retries_transient_timeout(self) -> None:
+        manifest = {
+            'dataset_id': 'dataset-a',
+            'dataset_snapshot_ref': 'dataset-a@snapshot-1',
+            'candidate_id': 'intraday_tsmom_v1@prod',
+            'baseline_candidate_id': 'intraday_tsmom_v1@baseline',
+            'strategy_spec_ref': 'strategy-specs/intraday_tsmom_v1@1.1.0.json',
+            'model_refs': ['rules/intraday_tsmom_v1'],
+            'runtime_version_refs': ['services/torghut@sha256:abc'],
+            'cachePolicy': 'refresh',
+            'performance': {
+                'dumpFormat': 'ndjson',
+                'replayProfile': 'compact',
+            },
+            'window': {'start': '2026-01-01T00:00:00Z', 'end': '2026-01-01T01:00:00Z'},
+        }
+        client_timeouts: list[int | None] = []
+        put_attempts: list[tuple[str, str]] = []
+
+        class _FakeCephClient:
+            def __init__(self, timeout_seconds: int | None) -> None:
+                self.timeout_seconds = timeout_seconds
+                self._attempt = 0
+
+            def put_object(
+                self,
+                *,
+                bucket: str,
+                key: str,
+                body: bytes,
+                content_type: str,
+            ) -> dict[str, Any]:
+                _ = (body, content_type)
+                put_attempts.append((bucket, key))
+                self._attempt += 1
+                if self._attempt == 1:
+                    raise TimeoutError('timed out')
+                return {'etag': f'etag-{self._attempt}'}
+
+        def _fake_cache_client(timeout_seconds: int | None = None) -> tuple[Any, str]:
+            client_timeouts.append(timeout_seconds)
+            return _FakeCephClient(timeout_seconds), 'argo-workflows'
+
+        with TemporaryDirectory() as tmp_dir:
+            dump_path = Path(tmp_dir) / 'source-dump.ndjson'
+            dump_path.write_bytes(b'{}\n')
+            dump_manifest_path = start_historical_simulation._dump_artifact_manifest_path(dump_path)
+            dump_manifest_path.write_text(
+                json.dumps(
+                    {
+                        'dataset_id': 'dataset-a',
+                        'run_id': 'sim-1',
+                        'lineage': start_historical_simulation._cache_lineage_payload(manifest),
+                        'dump_format': 'ndjson',
+                        'cache_policy': 'refresh',
+                        'replay_profile': 'compact',
+                        'chunk_count': 1,
+                        'chunks': [
+                            {
+                                'path': str(dump_path),
+                                'records': 1,
+                                'sha256': 'abc',
+                                'payload_sha256': 'abc',
+                            }
+                        ],
+                    }
+                ),
+                encoding='utf-8',
+            )
+
+            with (
+                patch(
+                    'scripts.start_historical_simulation._simulation_cache_client_from_env',
+                    side_effect=_fake_cache_client,
+                ),
+                patch(
+                    'scripts.start_historical_simulation.time.sleep',
+                    return_value=None,
+                ),
+            ):
+                report = start_historical_simulation._upload_dump_to_cache(
+                    manifest=manifest,
+                    dump_path=dump_path,
+                )
+
+        self.assertEqual(report['status'], 'ok')
+        self.assertEqual(report['attempt_count'], 2)
+        self.assertEqual(len(client_timeouts), 1)
+        self.assertGreaterEqual(client_timeouts[0] or 0, 60)
+        self.assertEqual(len(put_attempts), 3)
+
+    def test_dump_topics_records_cache_upload_error_without_failing_fresh_dump(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        resources = replace(
+            resources,
+            replay_topic_by_source_topic={'torghut.trades.v1': 'torghut.sim.trades.v1'},
+        )
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+
+        class _OffsetMeta:
+            def __init__(self, offset: int) -> None:
+                self.offset = offset
+
+        class _Record:
+            def __init__(self, topic: str, partition: int, offset: int, timestamp: int) -> None:
+                self.topic = topic
+                self.partition = partition
+                self.offset = offset
+                self.timestamp = timestamp
+                self.key = None
+                self.value = None
+                self.headers: list[tuple[str, bytes]] = []
+
+        class _FakeConsumer:
+            def __init__(self) -> None:
+                self._tp = ('torghut.trades.v1', 0)
+                self._position = 0
+                self._poll_calls = 0
+                self._offset_lookup_calls = 0
+
+            def partitions_for_topic(self, topic: str) -> set[int]:
+                self._topic = topic
+                return {0}
+
+            def assign(self, topic_partitions: list[tuple[str, int]]) -> None:
+                self._topic_partitions = topic_partitions
+
+            def beginning_offsets(self, topic_partitions: list[tuple[str, int]]) -> dict[tuple[str, int], int]:
+                return {tp: 0 for tp in topic_partitions}
+
+            def end_offsets(self, topic_partitions: list[tuple[str, int]]) -> dict[tuple[str, int], int]:
+                return {tp: 1 for tp in topic_partitions}
+
+            def offsets_for_times(
+                self,
+                request: dict[tuple[str, int], int],
+            ) -> dict[tuple[str, int], _OffsetMeta]:
+                self._offset_lookup_calls += 1
+                offset = 0 if self._offset_lookup_calls == 1 else 1
+                return {tp: _OffsetMeta(offset) for tp in request}
+
+            def seek(self, tp: tuple[str, int], offset: int) -> None:
+                self._position = offset
+
+            def poll(self, timeout_ms: int = 0, max_records: int = 0) -> dict[tuple[str, int], list[_Record]]:
+                _ = (timeout_ms, max_records)
+                self._poll_calls += 1
+                if self._poll_calls == 1:
+                    self._position = 1
+                    return {
+                        self._tp: [_Record(self._tp[0], self._tp[1], 0, 1735693200100)],
+                    }
+                return {}
+
+            def position(self, tp: tuple[str, int]) -> int:
+                _ = tp
+                return self._position
+
+            def close(self) -> None:
+                return None
+
+        manifest = {
+            'dataset_id': 'dataset-a',
+            'dataset_snapshot_ref': 'dataset-a@snapshot-1',
+            'candidate_id': 'intraday_tsmom_v1@prod',
+            'baseline_candidate_id': 'intraday_tsmom_v1@baseline',
+            'strategy_spec_ref': 'strategy-specs/intraday_tsmom_v1@1.1.0.json',
+            'model_refs': ['rules/intraday_tsmom_v1'],
+            'runtime_version_refs': ['services/torghut@sha256:abc'],
+            'cachePolicy': 'refresh',
+            'performance': {
+                'dumpFormat': 'ndjson',
+                'replayProfile': 'compact',
+            },
+            'window': {'start': '2025-01-01T00:00:00Z', 'end': '2025-01-01T00:00:01Z'},
+        }
+
+        with TemporaryDirectory() as tmp_dir:
+            dump_path = Path(tmp_dir) / 'source-dump.ndjson'
+            with (
+                patch.dict(
+                    'sys.modules',
+                    {'kafka': SimpleNamespace(TopicPartition=lambda topic, partition: (topic, partition))},
+                ),
+                patch(
+                    'scripts.start_historical_simulation._consumer_for_dump',
+                    return_value=_FakeConsumer(),
+                ),
+                patch(
+                    'scripts.start_historical_simulation._upload_dump_to_cache',
+                    side_effect=TimeoutError('timed out'),
+                ),
+            ):
+                report = _dump_topics(
+                    resources=resources,
+                    kafka_config=kafka_config,
+                    manifest=manifest,
+                    dump_path=dump_path,
+                    force=True,
+                )
+
+        self.assertEqual(report['records'], 1)
+        self.assertEqual(report['cache_upload']['status'], 'error')
+        self.assertEqual(report['cache_upload']['error'], 'timed out')
+
+    def test_dump_topics_orders_output_deterministically_across_partitions(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        resources = replace(
+            resources,
+            replay_topic_by_source_topic={'torghut.trades.v1': 'torghut.sim.trades.v1'},
+        )
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+
+        class _OffsetMeta:
+            def __init__(self, offset: int) -> None:
+                self.offset = offset
+
+        class _Record:
+            def __init__(self, topic: str, partition: int, offset: int, timestamp: int) -> None:
+                self.topic = topic
+                self.partition = partition
+                self.offset = offset
+                self.timestamp = timestamp
+                self.key = None
+                self.value = None
+                self.headers: list[tuple[str, bytes]] = []
+
+        class _FakeConsumer:
+            def __init__(self) -> None:
+                self._topic = 'torghut.trades.v1'
+                self._positions = {
+                    (self._topic, 0): 0,
+                    (self._topic, 1): 0,
+                }
+                self._offset_lookup_calls = 0
+                self._poll_calls = 0
+
+            def partitions_for_topic(self, topic: str) -> set[int]:
+                self._topic = topic
+                return {0, 1}
+
+            def assign(self, topic_partitions: list[tuple[str, int]]) -> None:
+                self._topic_partitions = topic_partitions
+
+            def beginning_offsets(self, topic_partitions: list[tuple[str, int]]) -> dict[tuple[str, int], int]:
+                return {tp: 0 for tp in topic_partitions}
+
+            def end_offsets(self, topic_partitions: list[tuple[str, int]]) -> dict[tuple[str, int], int]:
+                return {tp: 1 for tp in topic_partitions}
+
+            def offsets_for_times(
+                self,
+                request: dict[tuple[str, int], int],
+            ) -> dict[tuple[str, int], _OffsetMeta]:
+                self._offset_lookup_calls += 1
+                offset = 0 if self._offset_lookup_calls == 1 else 1
+                return {tp: _OffsetMeta(offset) for tp in request}
+
+            def seek(self, tp: tuple[str, int], offset: int) -> None:
+                self._positions[tp] = offset
+
+            def poll(self, timeout_ms: int = 0, max_records: int = 0) -> dict[tuple[str, int], list[_Record]]:
+                _ = (timeout_ms, max_records)
+                self._poll_calls += 1
+                if self._poll_calls == 1:
+                    self._positions[(self._topic, 1)] = 1
+                    self._positions[(self._topic, 0)] = 1
+                    return {
+                        (self._topic, 1): [_Record(self._topic, 1, 0, 1735693200200)],
+                        (self._topic, 0): [_Record(self._topic, 0, 0, 1735693200100)],
+                    }
+                return {}
+
+            def position(self, tp: tuple[str, int]) -> int:
+                return self._positions[tp]
+
+            def close(self) -> None:
+                return None
+
+        with TemporaryDirectory() as tmp_dir:
+            dump_path = Path(tmp_dir) / 'source-dump.ndjson'
+            fake_consumer = _FakeConsumer()
+
+            with (
+                patch.dict(
+                    'sys.modules',
+                    {'kafka': SimpleNamespace(TopicPartition=lambda topic, partition: (topic, partition))},
+                ),
+                patch(
+                    'scripts.start_historical_simulation._consumer_for_dump',
+                    return_value=fake_consumer,
+                ),
+            ):
+                report = _dump_topics(
+                    resources=resources,
+                    kafka_config=kafka_config,
+                    manifest={'window': {'start': '2025-01-01T00:00:00Z', 'end': '2025-01-01T00:00:01Z'}},
+                    dump_path=dump_path,
+                    force=True,
+                )
+
+            lines = [json.loads(line) for line in dump_path.read_text(encoding='utf-8').splitlines()]
+            self.assertEqual(report['records'], 2)
+            self.assertEqual(
+                [(line['source_timestamp_ms'], line['source_partition'], line['source_offset']) for line in lines],
+                [
+                    (1735693200100, 0, 0),
+                    (1735693200200, 1, 0),
+                ],
+            )
 
     def test_dump_topics_completes_when_last_record_reaches_stop_offset(self) -> None:
         resources = _build_resources(
@@ -4433,6 +5114,92 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(full_day['status'], 'satisfied')
         self.assertIsNone(full_day['blocked_reason'])
 
+    def test_build_simulation_completion_trace_derives_full_day_coverage_from_observed_minutes(self) -> None:
+        resources = _build_resources(
+            'sim-2026-03-13-full-day',
+            {
+                'dataset_id': 'torghut-full-day-20260313',
+                'dataset_snapshot_ref': 'torghut-full-day-20260313',
+                'window': {
+                    'profile': 'us_equities_regular',
+                    'start': '2026-03-13T13:30:00Z',
+                    'end': '2026-03-13T20:00:00Z',
+                    'min_coverage_minutes': 390,
+                    'strict_coverage_ratio': 0.95,
+                },
+            },
+        )
+        postgres = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost/torghut_sim_full_day',
+            simulation_db='torghut_sim_full_day',
+            migrations_command='alembic upgrade heads',
+        )
+        with TemporaryDirectory() as tmpdir:
+            resources = replace(resources, output_root=Path(tmpdir))
+            for filename in (
+                'run-manifest.json',
+                'run-full-lifecycle-manifest.json',
+                'runtime-verify.json',
+                'replay-report.json',
+                'signal-activity.json',
+                'decision-activity.json',
+                'execution-activity.json',
+            ):
+                (resources.output_root / resources.run_token / filename).parent.mkdir(
+                    parents=True,
+                    exist_ok=True,
+                )
+                (resources.output_root / resources.run_token / filename).write_text(
+                    '{}',
+                    encoding='utf-8',
+                )
+
+            trace = _build_simulation_completion_trace(
+                resources=resources,
+                manifest={
+                    'dataset_snapshot_ref': 'torghut-full-day-20260313',
+                    'window': {
+                        'profile': 'us_equities_regular',
+                        'start': '2026-03-13T13:30:00Z',
+                        'end': '2026-03-13T20:00:00Z',
+                        'min_coverage_minutes': 390,
+                        'strict_coverage_ratio': 0.95,
+                    },
+                },
+                postgres_config=postgres,
+                apply_report={
+                    'window_policy': {'min_coverage_minutes': 390, 'strict_coverage_ratio': 0.95},
+                    'dump_coverage': {
+                        'observed_minutes': 389.9975,
+                        'required_minutes': 370.5,
+                        'strict_ratio': 0.95,
+                    },
+                },
+                runtime_verify_report={'runtime_state': 'ready'},
+                monitor_report={
+                    'activity_classification': 'success',
+                    'final_snapshot': {
+                        'trade_decisions': 123,
+                        'executions': 16,
+                        'execution_tca_metrics': 16,
+                        'execution_order_events': 16,
+                    },
+                },
+                analytics_report={},
+                fill_price_error_budget_report={
+                    'status': 'within_budget',
+                    'schema_version': 'fill-price-error-budget-report-v1',
+                },
+                rollouts_report={},
+                errors=[],
+            )
+
+        full_day = trace['result_by_gate']['simulation_full_day_coverage']
+        self.assertEqual(full_day['status'], 'satisfied')
+        self.assertIsNone(full_day['blocked_reason'])
+        self.assertAlmostEqual(full_day['acceptance_snapshot']['coverage_ratio'], 389.9975 / 390.0)
+
     def test_validate_window_policy_us_equities_regular_profile(self) -> None:
         policy = _validate_window_policy(
             {
@@ -4492,6 +5259,30 @@ class TestStartHistoricalSimulation(TestCase):
                 },
             )
 
+    def test_validate_dump_coverage_reports_ratio_when_policy_present(self) -> None:
+        coverage = _validate_dump_coverage(
+            manifest={
+                'window': {
+                    'profile': 'us_equities_regular',
+                    'trading_day': '2026-03-13',
+                    'timezone': 'America/New_York',
+                    'start': '2026-03-13T13:30:00Z',
+                    'end': '2026-03-13T20:00:00Z',
+                    'min_coverage_minutes': 390,
+                    'strict_coverage_ratio': 0.95,
+                }
+            },
+            dump_report={
+                'records': 100,
+                'min_source_timestamp_ms': 1773408600150,
+                'max_source_timestamp_ms': 1773432000000,
+            },
+        )
+
+        self.assertTrue(coverage['applied'])
+        self.assertAlmostEqual(coverage['coverage_ratio'], 389.9975 / 390.0)
+        self.assertAlmostEqual(coverage['required_minutes'], 390 * 0.95)
+
     def test_validate_dump_coverage_reports_full_day_coverage_ratio(self) -> None:
         report = _validate_dump_coverage(
             manifest={
@@ -4501,6 +5292,8 @@ class TestStartHistoricalSimulation(TestCase):
                     'timezone': 'America/New_York',
                     'start': '2026-02-27T14:30:00Z',
                     'end': '2026-02-27T21:00:00Z',
+                    'min_coverage_minutes': 390,
+                    'strict_coverage_ratio': 0.95,
                 }
             },
             dump_report={
@@ -7772,6 +8565,96 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertTrue(report['applicationset_managed'])
         self.assertEqual(report['previous_mode'], 'auto')
         self.assertEqual(report['current_mode'], 'manual')
+
+    def test_ensure_argocd_manual_before_runtime_mutation_noops_when_everything_is_manual(self) -> None:
+        config = ArgocdAutomationConfig(
+            manage_automation=True,
+            applicationset_name='product',
+            applicationset_namespace='argocd',
+            app_name='torghut',
+            root_app_name='root',
+            desired_mode_during_run='manual',
+            restore_mode_after_run='previous',
+            verify_timeout_seconds=30,
+        )
+        with (
+            patch(
+                'scripts.start_historical_simulation._read_argocd_automation_mode',
+                return_value={'pointer': '/spec/generators/0/list/elements/0/automation', 'mode': 'manual'},
+            ),
+            patch(
+                'scripts.start_historical_simulation._read_named_argocd_application_sync_policy',
+                side_effect=[
+                    {
+                        'sync_policy': {
+                            'automated': {'enabled': False, 'prune': False, 'selfHeal': False},
+                            'syncOptions': ['CreateNamespace=true'],
+                        },
+                        'automation_mode': 'manual',
+                    },
+                    {
+                        'sync_policy': {
+                            'automated': {'enabled': False, 'prune': False, 'selfHeal': False},
+                            'syncOptions': ['CreateNamespace=true'],
+                        },
+                        'automation_mode': 'manual',
+                    },
+                ],
+            ),
+            patch('scripts.start_historical_simulation._prepare_argocd_for_run') as prepare_mock,
+        ):
+            report = start_historical_simulation._ensure_argocd_manual_before_runtime_mutation(config=config)
+
+        prepare_mock.assert_not_called()
+        self.assertEqual(report['reason'], 'already_manual')
+        self.assertFalse(report['changed'])
+        self.assertEqual(report['current_mode'], 'manual')
+
+    def test_ensure_argocd_manual_before_runtime_mutation_reasserts_when_child_app_drifted(self) -> None:
+        config = ArgocdAutomationConfig(
+            manage_automation=True,
+            applicationset_name='product',
+            applicationset_namespace='argocd',
+            app_name='torghut',
+            root_app_name='root',
+            desired_mode_during_run='manual',
+            restore_mode_after_run='previous',
+            verify_timeout_seconds=30,
+        )
+        with (
+            patch(
+                'scripts.start_historical_simulation._read_argocd_automation_mode',
+                return_value={'pointer': '/spec/generators/0/list/elements/0/automation', 'mode': 'manual'},
+            ),
+            patch(
+                'scripts.start_historical_simulation._read_named_argocd_application_sync_policy',
+                side_effect=[
+                    {
+                        'sync_policy': {
+                            'automated': {'enabled': True, 'prune': True, 'selfHeal': True},
+                            'syncOptions': ['CreateNamespace=true'],
+                        },
+                        'automation_mode': 'auto',
+                    },
+                    {
+                        'sync_policy': {
+                            'automated': {'enabled': False, 'prune': False, 'selfHeal': False},
+                            'syncOptions': ['CreateNamespace=true'],
+                        },
+                        'automation_mode': 'manual',
+                    },
+                ],
+            ),
+            patch(
+                'scripts.start_historical_simulation._prepare_argocd_for_run',
+                return_value={'managed': True, 'changed': True, 'current_mode': 'manual'},
+            ) as prepare_mock,
+        ):
+            report = start_historical_simulation._ensure_argocd_manual_before_runtime_mutation(config=config)
+
+        prepare_mock.assert_called_once_with(config=config)
+        self.assertEqual(report['reason'], 'reasserted_manual_before_runtime_mutation')
+        self.assertTrue(report['changed'])
 
     def test_restore_argocd_after_run_restores_root_and_applicationset(self) -> None:
         config = ArgocdAutomationConfig(

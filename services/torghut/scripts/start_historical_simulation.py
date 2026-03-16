@@ -73,6 +73,7 @@ DEFAULT_OUTPUT_ROOT = Path('artifacts/torghut/simulations')
 DEFAULT_SIMULATION_CACHE_BUCKET = 'argo-workflows'
 DEFAULT_SIMULATION_CACHE_ENDPOINT = 'http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80'
 DEFAULT_SIMULATION_CACHE_PREFIX = 'torghut-simulation-cache'
+SIMULATION_CACHE_KEY_SCHEMA_VERSION = 'torghut-simulation-cache-v2'
 
 PRODUCTION_TOPIC_BY_ROLE = dict(EQUITY_SIMULATION_LANE.source_topic_by_role)
 SIMULATION_TOPIC_BY_ROLE = dict(EQUITY_SIMULATION_LANE.simulation_topic_by_role)
@@ -211,6 +212,13 @@ DEFAULT_ROLLOUTS_TEARDOWN_TEMPLATE = 'torghut-simulation-teardown-clean'
 DEFAULT_ROLLOUTS_ARTIFACT_TEMPLATE = 'torghut-simulation-artifact-bundle'
 DEFAULT_ROLLOUTS_VERIFY_TIMEOUT_SECONDS = 1800
 DEFAULT_ROLLOUTS_VERIFY_POLL_SECONDS = 5
+DEFAULT_SIMULATION_CACHE_CEPH_TIMEOUT_SECONDS = 20
+SIMULATION_CACHE_UPLOAD_MIN_TIMEOUT_SECONDS = 60
+SIMULATION_CACHE_UPLOAD_TIMEOUT_MAX_SECONDS = 900
+SIMULATION_CACHE_UPLOAD_BYTES_PER_SECOND_FLOOR = 2 * 1024 * 1024
+SIMULATION_CACHE_UPLOAD_TIMEOUT_SLACK_SECONDS = 30
+SIMULATION_CACHE_UPLOAD_RETRY_ATTEMPTS = 3
+SIMULATION_CACHE_UPLOAD_RETRY_SLEEP_SECONDS = 2.0
 SIMULATION_RUNTIME_LOCK_NAME = 'torghut-historical-simulation-lock'
 SIMULATION_CLICKHOUSE_SCHEMA_SOURCE_DATABASE = 'torghut'
 SIMULATION_CLICKHOUSE_TABLE_VISIBILITY_ATTEMPTS = 10
@@ -2432,6 +2440,67 @@ def _dump_suffix(dump_format: str) -> str:
     return suffix
 
 
+def _stable_json_for_hash(payload: Mapping[str, Any]) -> str:
+    return json.dumps(dict(payload), sort_keys=True, separators=(',', ':'))
+
+
+def _stable_string_list(values: Any) -> list[str]:
+    return sorted({item for item in _as_string_list(values) if item})
+
+
+def _cache_lineage_payload(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    performance_cfg = _performance_config(manifest)
+    return {
+        'schema_version': SIMULATION_CACHE_KEY_SCHEMA_VERSION,
+        'lane': _as_text(manifest.get('lane')) or 'equity',
+        'dataset_id': _as_text(manifest.get('dataset_id')),
+        'dataset_snapshot_ref': _as_text(manifest.get('dataset_snapshot_ref'))
+        or _as_text(manifest.get('dataset_id')),
+        'window': _as_mapping(manifest.get('window')),
+        'strategy_spec_ref': _as_text(manifest.get('strategy_spec_ref')),
+        'candidate_id': _as_text(manifest.get('candidate_id')),
+        'baseline_candidate_id': _as_text(manifest.get('baseline_candidate_id')),
+        'model_refs': _stable_string_list(manifest.get('model_refs')),
+        'runtime_version_refs': _stable_string_list(manifest.get('runtime_version_refs')),
+        'dump_format': _as_text(performance_cfg.get('dump_format')) or DEFAULT_SIMULATION_DUMP_FORMAT,
+        'profile': _as_text(performance_cfg.get('replay_profile')) or DEFAULT_SIMULATION_REPLAY_PROFILE,
+    }
+
+
+def _derived_simulation_cache_key(manifest: Mapping[str, Any]) -> str:
+    payload = _cache_lineage_payload(manifest)
+    return hashlib.sha256(_stable_json_for_hash(payload).encode('utf-8')).hexdigest()
+
+
+def _derived_simulation_cache_paths(cache_key: str, dump_format: str) -> dict[str, str]:
+    normalized_prefix = DEFAULT_SIMULATION_CACHE_PREFIX.strip('/')
+    object_key = '/'.join(
+        part
+        for part in (
+            normalized_prefix,
+            cache_key.strip(),
+            f'source-dump{_dump_suffix(dump_format)}',
+        )
+        if part
+    )
+    artifact_path = f's3://{DEFAULT_SIMULATION_CACHE_BUCKET}/{object_key}'
+    return {
+        'cache_artifact_path': artifact_path,
+        'cache_manifest_path': f'{artifact_path}.manifest.json',
+    }
+
+
+def _cache_artifact_lineage_matches(
+    *,
+    manifest: Mapping[str, Any],
+    artifact_manifest: Mapping[str, Any],
+) -> bool:
+    artifact_lineage = _as_mapping(artifact_manifest.get('lineage'))
+    if not artifact_lineage:
+        return False
+    return artifact_lineage == _cache_lineage_payload(manifest)
+
+
 def _state_paths(
     resources: SimulationResources,
     manifest: Mapping[str, Any] | None = None,
@@ -2448,6 +2517,77 @@ def _state_paths(
 
 def _dump_artifact_manifest_path(dump_path: Path) -> Path:
     return dump_path.with_suffix(dump_path.suffix + '.manifest.json')
+
+
+def _dump_sort_stage_path(dump_path: Path) -> Path:
+    return dump_path.with_suffix(dump_path.suffix + '.sort-stage.tsv')
+
+
+def _dump_sort_output_path(dump_path: Path) -> Path:
+    return dump_path.with_suffix(dump_path.suffix + '.sort-output.tsv')
+
+
+def _dump_sort_key(
+    *,
+    source_timestamp_ms: int,
+    source_topic: str,
+    source_partition: int,
+    source_offset: int,
+) -> str:
+    return '\t'.join(
+        (
+            f'{source_timestamp_ms:020d}',
+            source_topic,
+            f'{source_partition:010d}',
+            f'{source_offset:020d}',
+        )
+    )
+
+
+def _materialize_deterministic_dump(
+    *,
+    staged_path: Path,
+    dump_path: Path,
+) -> str:
+    _ensure_supported_binary('sort')
+    sorted_path = _dump_sort_output_path(dump_path)
+    try:
+        with sorted_path.open('w', encoding='utf-8') as sorted_handle:
+            subprocess.run(
+                [
+                    'sort',
+                    '-t',
+                    '\t',
+                    '-k1,1n',
+                    '-k2,2',
+                    '-k3,3n',
+                    '-k4,4n',
+                    str(staged_path),
+                ],
+                check=True,
+                text=True,
+                stdout=sorted_handle,
+                stderr=subprocess.PIPE,
+            )
+    except FileNotFoundError as exc:
+        raise RuntimeError(f'command_missing: sort: {exc.filename}') from exc
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or '').strip() or str(exc)
+        raise RuntimeError(f'command_failed: sort: {detail}') from exc
+
+    hasher = hashlib.sha256()
+    with sorted_path.open('r', encoding='utf-8') as sorted_handle, dump_path.open('w', encoding='utf-8') as dump_handle:
+        for row in sorted_handle:
+            parts = row.split('\t', 4)
+            if len(parts) != 5:
+                raise RuntimeError('deterministic_dump_sort_row_invalid')
+            line = parts[4]
+            dump_handle.write(line)
+            stripped = line.rstrip('\n')
+            hasher.update(stripped.encode('utf-8'))
+            hasher.update(b'\n')
+
+    return hasher.hexdigest()
 
 
 def _run_state_path(resources: SimulationResources) -> Path:
@@ -2467,7 +2607,9 @@ def _ta_restore_policy(manifest: Mapping[str, Any]) -> dict[str, Any]:
     mode = explicit_mode
     source = 'explicit'
     if not mode:
-        mode = 'required' if replay_profile == 'full_day' else 'stateless'
+        # Historical replay must be deterministic on a frozen dump; do not resume prior
+        # TA operator state unless a future lineage-aware restore contract exists.
+        mode = 'stateless'
         source = f'profile_default:{replay_profile}'
     allowed_modes = {'required', 'stateless_if_missing', 'stateless'}
     if mode not in allowed_modes:
@@ -2647,7 +2789,9 @@ def _write_dump_marker_from_manifest(
     )
 
 
-def _simulation_cache_client_from_env() -> tuple[CephS3Client | None, str]:
+def _simulation_cache_client_from_env(
+    timeout_seconds: int | None = None,
+) -> tuple[CephS3Client | None, str]:
     access_key = (
         os.getenv('TORGHUT_SIM_CACHE_CEPH_ACCESS_KEY', '').strip()
         or os.getenv('AWS_ACCESS_KEY_ID', '').strip()
@@ -2665,9 +2809,17 @@ def _simulation_cache_client_from_env() -> tuple[CephS3Client | None, str]:
         or DEFAULT_SIMULATION_CACHE_ENDPOINT
     )
     region = os.getenv('TORGHUT_SIM_CACHE_CEPH_REGION', 'us-east-1').strip() or 'us-east-1'
-    timeout_seconds = max(
+    effective_timeout_seconds = max(
         1,
-        int(os.getenv('TORGHUT_SIM_CACHE_CEPH_TIMEOUT_SECONDS', '20') or '20'),
+        timeout_seconds
+        if timeout_seconds is not None
+        else int(
+            os.getenv(
+                'TORGHUT_SIM_CACHE_CEPH_TIMEOUT_SECONDS',
+                str(DEFAULT_SIMULATION_CACHE_CEPH_TIMEOUT_SECONDS),
+            )
+            or str(DEFAULT_SIMULATION_CACHE_CEPH_TIMEOUT_SECONDS)
+        ),
     )
     if not access_key or not secret_key or not endpoint:
         return None, bucket
@@ -2677,19 +2829,112 @@ def _simulation_cache_client_from_env() -> tuple[CephS3Client | None, str]:
             access_key=access_key,
             secret_key=secret_key,
             region=region,
-            timeout_seconds=timeout_seconds,
+            timeout_seconds=effective_timeout_seconds,
         ),
         bucket,
     )
 
 
+def _simulation_cache_upload_timeout_seconds(dump_path: Path) -> int:
+    configured_timeout_seconds = max(
+        1,
+        int(
+            os.getenv(
+                'TORGHUT_SIM_CACHE_CEPH_TIMEOUT_SECONDS',
+                str(DEFAULT_SIMULATION_CACHE_CEPH_TIMEOUT_SECONDS),
+            )
+            or str(DEFAULT_SIMULATION_CACHE_CEPH_TIMEOUT_SECONDS)
+        ),
+    )
+    size_bytes = max(dump_path.stat().st_size, 0)
+    size_based_timeout_seconds = SIMULATION_CACHE_UPLOAD_TIMEOUT_SLACK_SECONDS
+    if size_bytes > 0:
+        size_based_timeout_seconds += int(
+            (
+                size_bytes + SIMULATION_CACHE_UPLOAD_BYTES_PER_SECOND_FLOOR - 1
+            )
+            // SIMULATION_CACHE_UPLOAD_BYTES_PER_SECOND_FLOOR
+        )
+    return min(
+        SIMULATION_CACHE_UPLOAD_TIMEOUT_MAX_SECONDS,
+        max(
+            configured_timeout_seconds,
+            SIMULATION_CACHE_UPLOAD_MIN_TIMEOUT_SECONDS,
+            size_based_timeout_seconds,
+        ),
+    )
+
+
+def _simulation_cache_upload_attempts() -> tuple[int, float]:
+    attempts = max(
+        1,
+        _safe_int(
+            os.getenv(
+                'TORGHUT_SIM_CACHE_CEPH_UPLOAD_RETRY_ATTEMPTS',
+                str(SIMULATION_CACHE_UPLOAD_RETRY_ATTEMPTS),
+            ),
+            default=SIMULATION_CACHE_UPLOAD_RETRY_ATTEMPTS,
+        ),
+    )
+    try:
+        sleep_seconds = float(
+            os.getenv(
+                'TORGHUT_SIM_CACHE_CEPH_UPLOAD_RETRY_SLEEP_SECONDS',
+                str(SIMULATION_CACHE_UPLOAD_RETRY_SLEEP_SECONDS),
+            )
+            or str(SIMULATION_CACHE_UPLOAD_RETRY_SLEEP_SECONDS)
+        )
+    except ValueError:
+        sleep_seconds = SIMULATION_CACHE_UPLOAD_RETRY_SLEEP_SECONDS
+    return attempts, max(sleep_seconds, 0.0)
+
+
+def _is_transient_simulation_cache_upload_error(error: Exception) -> bool:
+    if isinstance(error, (TimeoutError, OSError)):
+        return True
+    message = str(error).lower()
+    if not message:
+        return False
+    transient_markers = (
+        'timed out',
+        'timeout',
+        'temporary failure',
+        'temporarily unavailable',
+        'connection reset',
+        'connection aborted',
+        'broken pipe',
+        'service unavailable',
+        'ceph_upload_http_500',
+        'ceph_upload_http_502',
+        'ceph_upload_http_503',
+        'ceph_upload_http_504',
+    )
+    return any(marker in message for marker in transient_markers)
+
+
 def _cache_metadata(manifest: Mapping[str, Any]) -> dict[str, str]:
     metadata = _as_mapping(manifest.get('metadata'))
+    performance_cfg = _performance_config(manifest)
+    cache_decision = (_as_text(metadata.get('cacheDecision')) or '').lower()
+    cache_key = _as_text(metadata.get('cacheKey')) or _derived_simulation_cache_key(manifest)
+    cache_artifact_path = _as_text(metadata.get('cacheArtifactPath')) or ''
+    cache_manifest_path = _as_text(metadata.get('cacheChunkManifestPath')) or ''
+    if cache_key and (not cache_artifact_path or not cache_manifest_path):
+        derived_paths = _derived_simulation_cache_paths(
+            cache_key,
+            _as_text(performance_cfg.get('dump_format')) or DEFAULT_SIMULATION_DUMP_FORMAT,
+        )
+        if not cache_artifact_path:
+            cache_artifact_path = derived_paths['cache_artifact_path']
+        if not cache_manifest_path:
+            cache_manifest_path = derived_paths['cache_manifest_path']
+    if not cache_decision and (_as_text(performance_cfg.get('cache_policy')) or 'prefer_cache') == 'refresh':
+        cache_decision = 'refresh'
     return {
-        'cache_key': _as_text(metadata.get('cacheKey')) or '',
-        'cache_decision': (_as_text(metadata.get('cacheDecision')) or '').lower(),
-        'cache_artifact_path': _as_text(metadata.get('cacheArtifactPath')) or '',
-        'cache_manifest_path': _as_text(metadata.get('cacheChunkManifestPath')) or '',
+        'cache_key': cache_key,
+        'cache_decision': cache_decision,
+        'cache_artifact_path': cache_artifact_path,
+        'cache_manifest_path': cache_manifest_path,
     }
 
 
@@ -2715,6 +2960,11 @@ def _restore_cached_dump_if_available(
     cache_artifact_path = cache['cache_artifact_path']
     cache_manifest_path = cache['cache_manifest_path']
     cache_policy = _as_text(_performance_config(manifest).get('cache_policy')) or 'prefer_cache'
+    cache_decision = cache['cache_decision']
+    if cache_decision and cache_decision != 'hit':
+        if cache_policy == 'require_cache':
+            raise RuntimeError(f'required_cache_not_ready:{cache_decision}')
+        return None
     if not cache_artifact_path:
         if cache_policy == 'require_cache':
             raise RuntimeError('required_cache_artifact_path_missing')
@@ -2745,6 +2995,11 @@ def _restore_cached_dump_if_available(
             artifact_manifest = json.loads(manifest_payload.decode('utf-8'))
             if not isinstance(artifact_manifest, Mapping):
                 raise RuntimeError('cache_manifest_invalid_payload')
+            if not _cache_artifact_lineage_matches(
+                manifest=manifest,
+                artifact_manifest=cast(Mapping[str, Any], artifact_manifest),
+            ):
+                raise RuntimeError('cache_manifest_lineage_mismatch')
             _dump_artifact_manifest_path(dump_path).write_text(
                 json.dumps(dict(artifact_manifest), indent=2, sort_keys=True),
                 encoding='utf-8',
@@ -2803,7 +3058,8 @@ def _upload_dump_to_cache(
     if artifact_ref is None or manifest_ref is None:
         return None
 
-    client, default_bucket = _simulation_cache_client_from_env()
+    timeout_seconds = _simulation_cache_upload_timeout_seconds(dump_path)
+    client, default_bucket = _simulation_cache_client_from_env(timeout_seconds=timeout_seconds)
     if client is None:
         return None
 
@@ -2817,26 +3073,45 @@ def _upload_dump_to_cache(
         'jsonl.gz': 'application/gzip',
         'jsonl.zst': 'application/zstd',
     }[_dump_format_for_path(dump_path)]
-    dump_result = client.put_object(
-        bucket=bucket,
-        key=key,
-        body=dump_path.read_bytes(),
-        content_type=dump_content_type,
-    )
     manifest_path = _dump_artifact_manifest_path(dump_path)
-    manifest_result = client.put_object(
-        bucket=manifest_bucket,
-        key=manifest_key,
-        body=manifest_path.read_bytes(),
-        content_type='application/json',
-    )
-    return {
-        'cache_key': cache_key,
-        'artifact_path': f's3://{bucket}/{key}',
-        'artifact_etag': dump_result.get('etag'),
-        'manifest_path': f's3://{manifest_bucket}/{manifest_key}',
-        'manifest_etag': manifest_result.get('etag'),
-    }
+    dump_body = dump_path.read_bytes()
+    manifest_body = manifest_path.read_bytes()
+    retry_attempts, retry_sleep_seconds = _simulation_cache_upload_attempts()
+    last_error: Exception | None = None
+
+    for attempt in range(1, retry_attempts + 1):
+        try:
+            dump_result = client.put_object(
+                bucket=bucket,
+                key=key,
+                body=dump_body,
+                content_type=dump_content_type,
+            )
+            manifest_result = client.put_object(
+                bucket=manifest_bucket,
+                key=manifest_key,
+                body=manifest_body,
+                content_type='application/json',
+            )
+            return {
+                'status': 'ok',
+                'cache_key': cache_key,
+                'artifact_path': f's3://{bucket}/{key}',
+                'artifact_etag': dump_result.get('etag'),
+                'manifest_path': f's3://{manifest_bucket}/{manifest_key}',
+                'manifest_etag': manifest_result.get('etag'),
+                'timeout_seconds': timeout_seconds,
+                'attempt_count': attempt,
+            }
+        except Exception as exc:
+            last_error = exc
+            if attempt >= retry_attempts or not _is_transient_simulation_cache_upload_error(exc):
+                break
+            time.sleep(retry_sleep_seconds * attempt)
+
+    if last_error is None:
+        return None
+    raise last_error
 
 
 def _utc_from_millis(value: int | None) -> datetime | None:
@@ -4774,13 +5049,14 @@ def _dump_topics(
     from kafka import TopicPartition  # type: ignore[import-not-found]
 
     consumer = _consumer_for_dump(kafka_config, resources.run_token)
-    hasher = hashlib.sha256()
     count = 0
     count_by_topic: dict[str, int] = {}
     min_source_timestamp_ms: int | None = None
     max_source_timestamp_ms: int | None = None
     dump_started_at = datetime.now(timezone.utc)
     raw_dump_path = dump_path
+    staged_dump_path = _dump_sort_stage_path(dump_path)
+    sorted_dump_path = _dump_sort_output_path(dump_path)
     dump_format = _as_text(performance_cfg.get('dump_format')) or DEFAULT_SIMULATION_DUMP_FORMAT
     if _dump_format_for_path(dump_path) != 'ndjson':
         raw_dump_path = dump_path.with_suffix(dump_path.suffix + '.tmp.ndjson')
@@ -4828,7 +5104,7 @@ def _dump_topics(
 
         _ensure_directory(raw_dump_path)
         done: set[Any] = set()
-        with raw_dump_path.open('w', encoding='utf-8') as handle:
+        with staged_dump_path.open('w', encoding='utf-8') as handle:
             idle_polls = 0
             while len(done) < len(topic_partitions):
                 if count >= expected_records:
@@ -4875,10 +5151,17 @@ def _dump_topics(
                             'headers': _headers_to_json(getattr(record, 'headers', [])),
                         }
                         line = json.dumps(line_payload, sort_keys=True)
+                        handle.write(
+                            _dump_sort_key(
+                                source_timestamp_ms=int(record.timestamp),
+                                source_topic=source_topic,
+                                source_partition=int(record.partition),
+                                source_offset=int(record.offset),
+                            )
+                        )
+                        handle.write('\t')
                         handle.write(line)
                         handle.write('\n')
-                        hasher.update(line.encode('utf-8'))
-                        hasher.update(b'\n')
                         count += 1
                         count_by_topic[source_topic] = count_by_topic.get(source_topic, 0) + 1
                         source_timestamp_ms = int(record.timestamp)
@@ -4900,6 +5183,10 @@ def _dump_topics(
                         done.update(topic_partitions)
                         break
 
+        payload_sha256 = _materialize_deterministic_dump(
+            staged_path=staged_dump_path,
+            dump_path=raw_dump_path,
+        )
         if raw_dump_path != dump_path:
             _compress_dump_file(source_path=raw_dump_path, dump_path=dump_path)
         file_sha256 = _file_sha256(dump_path)
@@ -4910,7 +5197,7 @@ def _dump_topics(
             'records': count,
             'expected_records': expected_records,
             'sha256': file_sha256,
-            'payload_sha256': hasher.hexdigest(),
+            'payload_sha256': payload_sha256,
             'records_by_topic': count_by_topic,
             'start': start.isoformat(),
             'end': end.isoformat(),
@@ -4934,7 +5221,7 @@ def _dump_topics(
                 'dump_path': str(dump_path),
                 'dump_format': dump_format,
                 'records_by_topic': count_by_topic,
-                'payload_sha256': hasher.hexdigest(),
+                'payload_sha256': payload_sha256,
                 'dump_sha256': file_sha256,
             },
         )
@@ -4951,6 +5238,7 @@ def _dump_topics(
             {
                 'dataset_id': resources.dataset_id,
                 'run_id': resources.run_id,
+                'lineage': _cache_lineage_payload(manifest),
                 'dump_format': dump_format,
                 'cache_policy': _as_text(performance_cfg.get('cache_policy')) or 'prefer_cache',
                 'replay_profile': _as_text(performance_cfg.get('replay_profile')) or DEFAULT_SIMULATION_REPLAY_PROFILE,
@@ -4960,7 +5248,7 @@ def _dump_topics(
                         'path': str(dump_path),
                         'records': count,
                         'sha256': file_sha256,
-                        'payload_sha256': hasher.hexdigest(),
+                        'payload_sha256': payload_sha256,
                         'min_source_timestamp_ms': min_source_timestamp_ms,
                         'max_source_timestamp_ms': max_source_timestamp_ms,
                     }
@@ -4968,16 +5256,31 @@ def _dump_topics(
             },
         )
         if _cache_metadata(manifest)['cache_decision'] != 'hit':
-            cache_upload_report = _upload_dump_to_cache(
-                manifest=manifest,
-                dump_path=dump_path,
-            )
+            try:
+                cache_upload_report = _upload_dump_to_cache(
+                    manifest=manifest,
+                    dump_path=dump_path,
+                )
+            except Exception as exc:
+                cache_upload_report = {
+                    'status': 'error',
+                    'cache_key': _cache_metadata(manifest).get('cache_key'),
+                    'error': str(exc),
+                }
+                _log_script_event(
+                    'Failed to upload simulation dump to durable cache',
+                    cache_key=_cache_metadata(manifest).get('cache_key') or 'unknown',
+                    cache_artifact_path=_cache_metadata(manifest).get('cache_artifact_path') or None,
+                    error=str(exc),
+                )
             if cache_upload_report is not None:
                 report['cache_upload'] = cache_upload_report
         return report
     finally:
         if raw_dump_path != dump_path:
             raw_dump_path.unlink(missing_ok=True)
+        staged_dump_path.unlink(missing_ok=True)
+        sorted_dump_path.unlink(missing_ok=True)
         consumer.close()
 
 
@@ -5433,6 +5736,7 @@ def _apply(
     kafka_config: KafkaRuntimeConfig,
     clickhouse_config: ClickHouseRuntimeConfig,
     postgres_config: PostgresRuntimeConfig,
+    argocd_config: ArgocdAutomationConfig | None = None,
     force_dump: bool,
     force_replay: bool,
 ) -> dict[str, Any]:
@@ -5450,6 +5754,7 @@ def _apply(
     ta_reconfigured = False
     torghut_reconfigured = False
     ta_restart_nonce: int | None = None
+    argocd_runtime_guard_report: dict[str, Any] | None = None
 
     state_path, run_manifest_path, dump_path = _state_paths(resources, manifest)
     _ensure_directory(state_path)
@@ -5581,6 +5886,13 @@ def _apply(
         )
         replay_cfg = _as_mapping(manifest.get('replay'))
         auto_offset_reset = (_as_text(replay_cfg.get('auto_offset_reset')) or 'earliest').lower()
+        if (
+            argocd_config is not None
+            and resources.target_mode == 'dedicated_service'
+        ):
+            argocd_runtime_guard_report = _ensure_argocd_manual_before_runtime_mutation(
+                config=argocd_config,
+            )
         ta_reconfigured = _ta_runtime_reconfigure_required(
             resources=resources,
             clickhouse_config=clickhouse_config,
@@ -5643,6 +5955,7 @@ def _apply(
         'ta_restart_forced': ta_restart_forced,
         'ta_reconfigured': ta_reconfigured,
         'torghut_reconfigured': torghut_reconfigured,
+        'argocd_runtime_guard': argocd_runtime_guard_report,
         'warm_lane_enabled': warm_lane_enabled,
         'account_label': account_label,
         'seeded_cursor_at': seeded_cursor_at.isoformat(),
@@ -5813,6 +6126,69 @@ def _prepare_argocd_for_run(
         'root_application': root_application_report,
         'application': application_mode_report,
     }
+
+
+def _ensure_argocd_manual_before_runtime_mutation(
+    *,
+    config: ArgocdAutomationConfig,
+) -> dict[str, Any]:
+    if not config.manage_automation:
+        return {
+            'managed': False,
+            'changed': False,
+            'reason': 'automation_management_disabled',
+        }
+
+    desired_mode = _normalized_automation_mode(config.desired_mode_during_run)
+    applicationset_state = _read_argocd_automation_mode(config=config)
+    application_state = _read_named_argocd_application_sync_policy(
+        namespace=config.applicationset_namespace,
+        app_name=config.app_name,
+    )
+    root_state = _read_named_argocd_application_sync_policy(
+        namespace=config.applicationset_namespace,
+        app_name=config.root_app_name,
+    )
+    desired_root_sync_policy = _manual_argocd_application_sync_policy(
+        cast(Mapping[str, Any] | None, root_state.get('sync_policy'))
+    )
+    current_application_mode = _normalized_automation_mode(_as_text(application_state.get('automation_mode')))
+    current_root_sync_policy = _clone_json_mapping(
+        cast(Mapping[str, Any] | None, root_state.get('sync_policy'))
+    )
+    current_applicationset_mode = _normalized_automation_mode(_as_text(applicationset_state.get('mode')))
+    if (
+        current_applicationset_mode == desired_mode
+        and current_application_mode == desired_mode
+        and current_root_sync_policy == desired_root_sync_policy
+    ):
+        return {
+            'managed': True,
+            'changed': False,
+            'reason': 'already_manual',
+            'desired_mode': desired_mode,
+            'current_mode': current_application_mode,
+            'applicationset_managed': True,
+            'applicationset': {
+                'pointer': applicationset_state.get('pointer'),
+                'current_mode': current_applicationset_mode,
+                'desired_mode': desired_mode,
+                'changed': False,
+            },
+            'root_application': {
+                'current_sync_policy': current_root_sync_policy,
+                'desired_sync_policy': desired_root_sync_policy,
+                'changed': False,
+            },
+            'application': {
+                'app_name': config.app_name,
+                'current_mode': current_application_mode,
+            },
+        }
+
+    report = _prepare_argocd_for_run(config=config)
+    report['reason'] = 'reasserted_manual_before_runtime_mutation'
+    return report
 
 
 def _restore_argocd_after_run(
@@ -6379,6 +6755,28 @@ def _existing_artifact_refs(resources: SimulationResources, analytics_report: Ma
     return refs
 
 
+def _completion_trace_coverage_ratio(
+    *,
+    window_policy: Mapping[str, Any],
+    dump_coverage: Mapping[str, Any],
+    analytics_report: Mapping[str, Any],
+) -> float:
+    coverage_ratio = dump_coverage.get('coverage_ratio')
+    if coverage_ratio is not None:
+        return max(_safe_float(coverage_ratio), 0.0)
+
+    observed_minutes = _safe_float(dump_coverage.get('observed_minutes'), default=0.0)
+    min_coverage_minutes = _safe_int(window_policy.get('min_coverage_minutes'), default=0)
+    if observed_minutes > 0 and min_coverage_minutes > 0:
+        return max(observed_minutes / float(min_coverage_minutes), 0.0)
+
+    report_coverage = _as_mapping(analytics_report.get('coverage'))
+    report_ratio = report_coverage.get('window_coverage_ratio_from_dump')
+    if report_ratio is not None:
+        return max(_safe_float(report_ratio), 0.0)
+    return 0.0
+
+
 def _build_simulation_completion_trace(
     *,
     resources: SimulationResources,
@@ -6407,7 +6805,11 @@ def _build_simulation_completion_trace(
     execution_order_events = _safe_int(final_snapshot.get('execution_order_events'))
     activity_classification = _as_text(monitor_payload.get('activity_classification')) or 'unknown'
     runtime_state = _as_text(runtime_payload.get('runtime_state')) or 'unknown'
-    coverage_ratio = float(dump_coverage.get('coverage_ratio') or 0.0)
+    coverage_ratio = _completion_trace_coverage_ratio(
+        window_policy=window_policy,
+        dump_coverage=dump_coverage,
+        analytics_report=analytics_payload,
+    )
     strict_ratio = float(window_policy.get('strict_coverage_ratio') or 0.0)
     fill_price_payload = _as_mapping(fill_price_error_budget_report)
     gate_results: dict[str, dict[str, Any]] = {}
@@ -6612,6 +7014,7 @@ def _run_full_lifecycle(
                 kafka_config=kafka_config,
                 clickhouse_config=clickhouse_config,
                 postgres_config=postgres_config,
+                argocd_config=argocd_config,
                 force_dump=force_dump,
                 force_replay=force_replay,
             )
@@ -7215,6 +7618,7 @@ def main() -> None:
             kafka_config=kafka_config,
             clickhouse_config=clickhouse_config,
             postgres_config=postgres_config,
+            argocd_config=argocd_config,
             force_dump=bool(args.force_dump),
             force_replay=bool(args.force_replay),
         )

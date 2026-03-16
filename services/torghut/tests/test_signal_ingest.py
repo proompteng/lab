@@ -653,23 +653,43 @@ class TestSignalIngest(TestCase):
         self.assertIn("AND event_ts <= toDateTime64", envelope_ingestor.last_query)
         self.assertIn("ORDER BY event_ts ASC, seq ASC", envelope_ingestor.last_query)
 
-    def test_fetch_signals_between_dedupes_envelope_duplicates_by_earliest_ingest(self) -> None:
+    def test_fetch_signals_between_dedupes_replay_duplicates_by_stable_identity(self) -> None:
         rows = [
             {
                 "event_ts": "2026-03-06T14:50:00Z",
                 "ingest_ts": "2026-03-08T01:33:32.461000Z",
                 "symbol": "SIM-SPY",
-                "payload": {"rsi14": 30},
+                "payload": {
+                    "rsi14": 30,
+                    "simulation_context": {
+                        "dataset_event_id": "evt-1",
+                        "source_topic": "torghut.trades.v1",
+                        "source_partition": 2,
+                        "source_offset": 900,
+                        "signal_seq": 100,
+                        "simulation_run_id": "sim-old",
+                    },
+                },
                 "seq": 100,
-                "source": "ta",
+                "source": "ws",
                 "window_size": "PT1S",
             },
             {
                 "event_ts": "2026-03-06T14:50:00Z",
                 "ingest_ts": "2026-03-06T14:51:00.316000Z",
                 "symbol": "SIM-SPY",
-                "payload": {"rsi14": 30},
-                "seq": 200,
+                "payload": {
+                    "rsi14": 30,
+                    "simulation_context": {
+                        "dataset_event_id": "evt-1",
+                        "source_topic": "torghut.trades.v1",
+                        "source_partition": 2,
+                        "source_offset": 900,
+                        "signal_seq": 100,
+                        "simulation_run_id": "sim-current",
+                    },
+                },
+                "seq": 100,
                 "source": "ws",
                 "window_size": "PT1S",
             },
@@ -677,9 +697,19 @@ class TestSignalIngest(TestCase):
                 "event_ts": "2026-03-06T14:50:01Z",
                 "ingest_ts": "2026-03-06T14:51:01.316000Z",
                 "symbol": "SIM-SPY",
-                "payload": {"rsi14": 31},
+                "payload": {
+                    "rsi14": 31,
+                    "simulation_context": {
+                        "dataset_event_id": "evt-2",
+                        "source_topic": "torghut.trades.v1",
+                        "source_partition": 2,
+                        "source_offset": 901,
+                        "signal_seq": 101,
+                        "simulation_run_id": "sim-current",
+                    },
+                },
                 "seq": 101,
-                "source": "ta",
+                "source": "ws",
                 "window_size": "PT1S",
             },
         ]
@@ -688,21 +718,82 @@ class TestSignalIngest(TestCase):
             def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
                 return rows
 
-        ingestor = DuplicateEnvelopeIngestor(schema="envelope", table="torghut.ta_signals", url="http://example")
+        original_enabled = settings.trading_simulation_enabled
+        original_run_id = settings.trading_simulation_run_id
+        try:
+            settings.trading_simulation_enabled = True
+            settings.trading_simulation_run_id = "sim-current"
+            ingestor = DuplicateEnvelopeIngestor(schema="envelope", table="torghut.ta_signals", url="http://example")
+            signals = ingestor.fetch_signals_between(
+                start=datetime(2026, 3, 6, 14, 50, tzinfo=timezone.utc),
+                end=datetime(2026, 3, 6, 14, 51, tzinfo=timezone.utc),
+            )
+        finally:
+            settings.trading_simulation_enabled = original_enabled
+            settings.trading_simulation_run_id = original_run_id
+
+        self.assertEqual(len(signals), 2)
+        self.assertEqual(signals[0].event_ts, datetime(2026, 3, 6, 14, 50, tzinfo=timezone.utc))
+        self.assertEqual(signals[0].seq, 100)
+        self.assertEqual(signals[0].source, "ws")
+        self.assertEqual(
+            signals[0].payload.get("simulation_context", {}).get("simulation_run_id"),
+            "sim-current",
+        )
+        self.assertEqual(signals[1].seq, 101)
+
+    def test_fetch_signals_between_preserves_distinct_envelopes_sharing_timestamp(self) -> None:
+        rows = [
+            {
+                "event_ts": "2026-03-06T14:50:00Z",
+                "ingest_ts": "2026-03-08T01:33:32.461000Z",
+                "symbol": "SIM-SPY",
+                "payload": {
+                    "rsi14": 30,
+                    "simulation_context": {
+                        "dataset_event_id": "evt-1",
+                        "source_topic": "torghut.trades.v1",
+                        "source_partition": 2,
+                        "source_offset": 900,
+                        "signal_seq": 100,
+                    },
+                },
+                "seq": 100,
+                "source": "ta",
+                "window_size": "PT1S",
+            },
+            {
+                "event_ts": "2026-03-06T14:50:00Z",
+                "ingest_ts": "2026-03-06T14:51:00.316000Z",
+                "symbol": "SIM-SPY",
+                "payload": {
+                    "rsi14": 31,
+                    "simulation_context": {
+                        "dataset_event_id": "evt-2",
+                        "source_topic": "torghut.quotes.v1",
+                        "source_partition": 5,
+                        "source_offset": 1234,
+                        "signal_seq": 200,
+                    },
+                },
+                "seq": 200,
+                "source": "ws",
+                "window_size": "PT1S",
+            },
+        ]
+
+        class DistinctEnvelopeIngestor(ClickHouseSignalIngestor):
+            def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
+                return rows
+
+        ingestor = DistinctEnvelopeIngestor(schema="envelope", table="torghut.ta_signals", url="http://example")
         signals = ingestor.fetch_signals_between(
             start=datetime(2026, 3, 6, 14, 50, tzinfo=timezone.utc),
             end=datetime(2026, 3, 6, 14, 51, tzinfo=timezone.utc),
         )
 
         self.assertEqual(len(signals), 2)
-        self.assertEqual(signals[0].event_ts, datetime(2026, 3, 6, 14, 50, tzinfo=timezone.utc))
-        self.assertEqual(signals[0].seq, 200)
-        self.assertEqual(signals[0].source, "ws")
-        self.assertEqual(
-            signals[0].ingest_ts,
-            datetime(2026, 3, 6, 14, 51, 0, 316000, tzinfo=timezone.utc),
-        )
-        self.assertEqual(signals[1].seq, 101)
+        self.assertEqual([signal.seq for signal in signals], [100, 200])
 
     def test_fetch_signals_between_filters_disallowed_sources(self) -> None:
         rows = [

@@ -19,6 +19,7 @@ from ..models import TradeCursor
 from .clickhouse import normalize_symbol, to_datetime64
 from .models import SignalEnvelope
 from .simulation import resolve_simulation_context, signal_ingest_runtime, simulation_context_enabled
+from .simulation_progress import active_simulation_runtime_context
 from .simulation_window import normalize_simulation_cursor, simulation_window_bounds
 from .time_source import trading_now
 
@@ -820,11 +821,11 @@ class ClickHouseSignalIngestor:
         if self.schema == "flat" or len(signals) < 2:
             return signals
 
-        deduped_by_key: dict[tuple[datetime, str, str | None], SignalEnvelope] = {}
+        deduped_by_key: dict[tuple[datetime, str, str | None, tuple[Any, ...], str], SignalEnvelope] = {}
         for signal in signals:
             key = _signal_identity(signal)
             current = deduped_by_key.get(key)
-            if current is None or _prefer_earlier_ingest_signal(candidate=signal, current=current):
+            if current is None or _prefer_preferred_signal(candidate=signal, current=current):
                 deduped_by_key[key] = signal
         if len(deduped_by_key) == len(signals):
             return signals
@@ -1331,11 +1332,15 @@ def _next_signal_cursor_state(
     return max_event_ts, max_seq, max_symbol
 
 
-def _signal_identity(signal: SignalEnvelope) -> tuple[datetime, str, str | None]:
+def _signal_identity(
+    signal: SignalEnvelope,
+) -> tuple[datetime, str, str | None, tuple[Any, ...], str]:
     return (
         signal.event_ts.astimezone(timezone.utc),
         signal.symbol,
         signal.timeframe,
+        _signal_provenance_key(signal),
+        _signal_payload_fingerprint(signal),
     )
 
 
@@ -1349,14 +1354,80 @@ def _signal_sort_key(signal: SignalEnvelope) -> tuple[datetime, str, str, int, s
     )
 
 
-def _prefer_earlier_ingest_signal(*, candidate: SignalEnvelope, current: SignalEnvelope) -> bool:
-    current_ingest = current.ingest_ts.astimezone(timezone.utc) if current.ingest_ts is not None else None
-    candidate_ingest = candidate.ingest_ts.astimezone(timezone.utc) if candidate.ingest_ts is not None else None
-    if current_ingest is None:
-        return candidate_ingest is not None
-    if candidate_ingest is None:
+def _prefer_preferred_signal(*, candidate: SignalEnvelope, current: SignalEnvelope) -> bool:
+    return _signal_preference_key(candidate) > _signal_preference_key(current)
+
+
+def _signal_preference_key(signal: SignalEnvelope) -> tuple[int, int, int, str, int, str]:
+    return (
+        1 if _signal_matches_active_simulation_run(signal) else 0,
+        _signal_provenance_completeness(signal),
+        len(_signal_payload_fingerprint(signal)),
+        _signal_payload_context_fingerprint(signal),
+        _coerce_seq(signal.seq) or -1,
+        signal.source or '',
+    )
+
+
+def _signal_matches_active_simulation_run(signal: SignalEnvelope) -> bool:
+    context = _signal_simulation_context(signal)
+    signal_run_id = str(context.get('simulation_run_id') or '').strip()
+    if not signal_run_id:
         return False
-    return candidate_ingest < current_ingest
+    runtime_context = active_simulation_runtime_context()
+    active_run_id = str(
+        (runtime_context or {}).get('run_id') or settings.trading_simulation_run_id or ''
+    ).strip()
+    if not active_run_id:
+        return False
+    return signal_run_id == active_run_id
+
+
+def _signal_provenance_completeness(signal: SignalEnvelope) -> int:
+    context = _signal_simulation_context(signal)
+    values: tuple[Any, ...] = (
+        context.get('dataset_event_id'),
+        context.get('source_topic'),
+        context.get('source_partition'),
+        context.get('source_offset'),
+        context.get('replay_topic'),
+        context.get('signal_seq'),
+        signal.seq,
+        signal.source,
+    )
+    return sum(1 for value in values if value not in (None, '', -1))
+
+
+def _signal_provenance_key(signal: SignalEnvelope) -> tuple[Any, ...]:
+    context = _signal_simulation_context(signal)
+    return (
+        str(context.get('dataset_event_id') or ''),
+        str(context.get('source_topic') or ''),
+        _coerce_seq(context.get('source_partition')) or -1,
+        _coerce_seq(context.get('source_offset')) or -1,
+        str(context.get('replay_topic') or ''),
+        _coerce_seq(context.get('signal_seq')) or _coerce_seq(signal.seq) or -1,
+        signal.source or '',
+    )
+
+
+def _signal_payload_fingerprint(signal: SignalEnvelope) -> str:
+    payload = dict(signal.payload)
+    payload.pop('simulation_context', None)
+    return json.dumps(payload, sort_keys=True, separators=(',', ':'), default=str)
+
+
+def _signal_payload_context_fingerprint(signal: SignalEnvelope) -> str:
+    context = dict(_signal_simulation_context(signal))
+    context.pop('simulation_run_id', None)
+    return json.dumps(context, sort_keys=True, separators=(',', ':'), default=str)
+
+
+def _signal_simulation_context(signal: SignalEnvelope) -> dict[str, Any]:
+    raw_context = signal.payload.get('simulation_context')
+    if isinstance(raw_context, Mapping):
+        return {str(key): value for key, value in cast(Mapping[object, Any], raw_context).items()}
+    return {}
 
 
 def _coerce_seq(value: Any) -> Optional[int]:

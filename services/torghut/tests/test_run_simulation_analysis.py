@@ -233,7 +233,7 @@ class TestRunSimulationAnalysis(TestCase):
                 return_value={'runtime_state': 'ready', 'environment_state': 'complete'},
             ),
             patch(
-                'scripts.run_simulation_analysis._current_activity_report',
+                'scripts.run_simulation_analysis._monitor_run_completion',
                 return_value={'status': 'degraded', 'activity_classification': 'executions_absent'},
             ),
             redirect_stdout(stdout),
@@ -244,6 +244,67 @@ class TestRunSimulationAnalysis(TestCase):
         self.assertEqual(ctx.exception.code, 1)
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload['activity_classification'], 'executions_absent')
+
+    def test_activity_uses_completion_monitor_and_exits_zero_when_successful(self) -> None:
+        stdout = io.StringIO()
+        with (
+            patch(
+                'sys.argv',
+                [
+                    'run_simulation_analysis.py',
+                    'activity',
+                    '--run-id',
+                    'sim-1',
+                    '--dataset-id',
+                    'dataset-a',
+                    '--namespace',
+                    'torghut',
+                    '--torghut-service',
+                    'torghut-sim',
+                    '--ta-deployment',
+                    'torghut-ta-sim',
+                    '--forecast-service',
+                    'torghut-forecast-sim',
+                    '--window-start',
+                    '2026-03-06T14:30:00Z',
+                    '--window-end',
+                    '2026-03-06T15:30:00Z',
+                    '--signal-table',
+                    'torghut_sim_sim_1.ta_signals',
+                    '--price-table',
+                    'torghut_sim_sim_1.ta_microbars',
+                    '--postgres-base-dsn',
+                    'postgresql://torghut:secret@localhost:5432/postgres',
+                    '--postgres-database',
+                    'torghut_sim_sim_1',
+                    '--clickhouse-http-url',
+                    'http://clickhouse:8123',
+                    '--clickhouse-username',
+                    'torghut',
+                    '--json',
+                ],
+            ),
+            patch(
+                'scripts.run_simulation_analysis._runtime_verify',
+                return_value={'runtime_state': 'ready', 'environment_state': 'complete'},
+            ),
+            patch(
+                'scripts.run_simulation_analysis._monitor_run_completion',
+                return_value={
+                    'status': 'ok',
+                    'activity_classification': 'success',
+                    'trade_decisions': 3,
+                    'executions': 2,
+                },
+            ) as monitor_mock,
+            redirect_stdout(stdout),
+        ):
+            main()
+
+        monitor_mock.assert_called_once()
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload['activity_classification'], 'success')
+        self.assertEqual(payload['trade_decisions'], 3)
 
     def test_teardown_clean_does_not_require_window_arguments(self) -> None:
         stdout = io.StringIO()
