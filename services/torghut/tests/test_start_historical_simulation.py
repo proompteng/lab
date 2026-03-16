@@ -35,7 +35,7 @@ from scripts.start_historical_simulation import (
     _count_lines,
     _configure_torghut_service_for_simulation,
     _doc29_simulation_gate_ids,
-    _discover_automation_pointer,
+    _discover_applicationset_entry,
     _find_vector_extension_blocking_revision,
     _dump_topics,
     _dump_sha256_for_replay,
@@ -1687,7 +1687,7 @@ class TestStartHistoricalSimulation(TestCase):
                     force_replay=False,
                 )
 
-        runtime_guard.assert_called_once_with(config=argocd_config)
+        runtime_guard.assert_called_once_with(config=argocd_config, resources=resources)
         self.assertEqual(report['argocd_runtime_guard'], {'managed': True, 'changed': True})
 
     def test_apply_restarts_ta_when_warm_lane_baseline_is_already_ready(self) -> None:
@@ -8471,7 +8471,7 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertIn('--signal-table "{{args.signalTable}}"', args_text)
         self.assertIn('--price-table "{{args.priceTable}}"', args_text)
 
-    def test_discover_automation_pointer_finds_nested_element(self) -> None:
+    def test_discover_applicationset_entry_finds_nested_element(self) -> None:
         payload = {
             'spec': {
                 'generators': [
@@ -8493,12 +8493,12 @@ class TestStartHistoricalSimulation(TestCase):
                 ]
             }
         }
-        discovered = _discover_automation_pointer(payload, app_name='torghut')
+        discovered = _discover_applicationset_entry(payload, app_name='torghut')
         self.assertIsNotNone(discovered)
         assert discovered is not None
-        pointer, mode = discovered
+        pointer, entry = discovered
         self.assertIn('/spec/', pointer)
-        self.assertEqual(mode, 'manual')
+        self.assertEqual(entry['automation'], 'manual')
 
     def test_set_argocd_automation_mode_patches_and_verifies(self) -> None:
         payload_auto = {
@@ -8603,27 +8603,45 @@ class TestStartHistoricalSimulation(TestCase):
             {'enabled': False, 'prune': False, 'selfHeal': False},
         )
 
-    def test_set_argocd_application_skip_reconcile_patches_and_verifies(self) -> None:
-        payload_unset = {
-            'metadata': {
-                'annotations': {},
+    def test_set_argocd_application_ignore_differences_patches_and_verifies(self) -> None:
+        runtime_ignore_differences = [
+            {
+                'group': 'serving.knative.dev',
+                'kind': 'Service',
+                'namespace': 'torghut',
+                'name': 'torghut-sim',
+                'jsonPointers': ['/spec/template/spec/containers/0/env'],
             }
-        }
-        payload_enabled = {
-            'metadata': {
-                'annotations': {
-                    'argocd.argoproj.io/skip-reconcile': 'true',
-                }
-            }
-        }
+        ]
         with (
             patch(
-                'scripts.start_historical_simulation._kubectl_json_global',
-                side_effect=[payload_unset, payload_enabled],
+                'scripts.start_historical_simulation._read_argocd_applicationset_entry',
+                side_effect=[
+                    {
+                        'pointer': '/spec/generators/0/list/elements/0',
+                        'automation_pointer': '/spec/generators/0/list/elements/0/automation',
+                        'mode': 'manual',
+                        'ignore_differences': [],
+                    },
+                    {
+                        'pointer': '/spec/generators/0/list/elements/0',
+                        'automation_pointer': '/spec/generators/0/list/elements/0/automation',
+                        'mode': 'manual',
+                        'ignore_differences': runtime_ignore_differences,
+                    },
+                ],
             ),
-            patch('scripts.start_historical_simulation._kubectl_patch') as patch_mock,
+            patch(
+                'scripts.start_historical_simulation._read_named_argocd_application_sync_policy',
+                return_value={
+                    'sync_policy': None,
+                    'automation_mode': 'manual',
+                    'ignore_differences': runtime_ignore_differences,
+                },
+            ),
+            patch('scripts.start_historical_simulation._kubectl_patch_json') as patch_mock,
         ):
-            report = start_historical_simulation._set_argocd_application_skip_reconcile(
+            report = start_historical_simulation._set_argocd_application_ignore_differences(
                 config=ArgocdAutomationConfig(
                     manage_automation=True,
                     applicationset_name='product',
@@ -8634,12 +8652,24 @@ class TestStartHistoricalSimulation(TestCase):
                     restore_mode_after_run='previous',
                     verify_timeout_seconds=30,
                 ),
-                desired_value='true',
+                required_ignore_differences=runtime_ignore_differences,
+                desired_ignore_differences=runtime_ignore_differences,
             )
         self.assertTrue(report['changed'])
-        patch_mock.assert_called_once()
-        self.assertEqual(report['current_value'], 'true')
-        self.assertTrue(report['enabled'])
+        patch_mock.assert_called_once_with(
+            'argocd',
+            'applicationset',
+            'product',
+            [
+                {
+                    'op': 'add',
+                    'path': '/spec/generators/0/list/elements/0/ignoreDifferences',
+                    'value': runtime_ignore_differences,
+                }
+            ],
+        )
+        self.assertEqual(report['current_ignore_differences'], runtime_ignore_differences)
+        self.assertTrue(report['coverage_complete'])
 
     def test_argocd_application_mode_from_sync_policy_treats_missing_automation_as_manual(self) -> None:
         self.assertEqual(
@@ -8673,6 +8703,19 @@ class TestStartHistoricalSimulation(TestCase):
             restore_mode_after_run='previous',
             verify_timeout_seconds=30,
         )
+        resources = SimpleNamespace(
+            namespace='torghut',
+            torghut_service='torghut-sim',
+            ta_configmap='torghut-ta-sim-config',
+            ta_deployment='torghut-ta-sim',
+        )
+        baseline_ignore_differences = [
+            {
+                'group': 'serving.knative.dev',
+                'kind': 'Service',
+                'jsonPointers': ['/metadata/annotations'],
+            }
+        ]
         with (
             patch(
                 'scripts.start_historical_simulation._read_argocd_automation_mode',
@@ -8687,8 +8730,7 @@ class TestStartHistoricalSimulation(TestCase):
                             'syncOptions': ['CreateNamespace=true'],
                         },
                         'automation_mode': 'auto',
-                        'skip_reconcile_enabled': False,
-                        'skip_reconcile_value': None,
+                        'ignore_differences': baseline_ignore_differences,
                     },
                     {
                         'sync_policy': {
@@ -8696,6 +8738,7 @@ class TestStartHistoricalSimulation(TestCase):
                             'syncOptions': ['CreateNamespace=true'],
                         },
                         'automation_mode': 'auto',
+                        'ignore_differences': None,
                     },
                 ],
             ) as application_read_mock,
@@ -8723,14 +8766,15 @@ class TestStartHistoricalSimulation(TestCase):
                 ],
             ) as application_sync_mock,
             patch(
-                'scripts.start_historical_simulation._set_argocd_application_skip_reconcile',
+                'scripts.start_historical_simulation._set_argocd_application_ignore_differences',
                 return_value={
-                    'previous_value': None,
-                    'current_value': 'true',
-                    'enabled': True,
+                    'previous_ignore_differences': baseline_ignore_differences,
+                    'current_ignore_differences': baseline_ignore_differences,
+                    'required_ignore_differences': [],
+                    'coverage_complete': True,
                     'changed': True,
                 },
-            ) as skip_reconcile_mock,
+            ) as ignore_differences_mock,
             patch(
                 'scripts.start_historical_simulation._set_argocd_automation_mode',
                 return_value={
@@ -8749,7 +8793,7 @@ class TestStartHistoricalSimulation(TestCase):
                 },
             ) as application_mode_mock,
         ):
-            report = _prepare_argocd_for_run(config=config)
+            report = _prepare_argocd_for_run(config=config, resources=resources)
         automation_read_mock.assert_called_once()
         self.assertEqual(application_read_mock.call_args_list, [
             call(namespace='argocd', app_name='torghut'),
@@ -8773,10 +8817,16 @@ class TestStartHistoricalSimulation(TestCase):
                 },
             ),
         ])
-        skip_reconcile_mock.assert_called_once_with(
+        ignore_differences_mock.assert_called_once_with(
             config=config,
             app_name='torghut',
-            desired_value='true',
+            required_ignore_differences=start_historical_simulation._simulation_runtime_argocd_ignore_differences(
+                resources=resources
+            ),
+            desired_ignore_differences=start_historical_simulation._merge_argocd_application_ignore_differences(
+                current_ignore_differences=baseline_ignore_differences,
+                resources=resources,
+            ),
         )
         applicationset_mock.assert_called_once()
         application_mode_mock.assert_called_once()
@@ -8784,7 +8834,7 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertIn('application', report)
         self.assertIn('root_application', report)
         self.assertIn('application_sync_policy', report)
-        self.assertIn('application_skip_reconcile', report)
+        self.assertIn('application_ignore_differences', report)
         self.assertTrue(report['applicationset_managed'])
         self.assertEqual(report['previous_mode'], 'auto')
         self.assertEqual(report['current_mode'], 'manual')
@@ -8800,6 +8850,15 @@ class TestStartHistoricalSimulation(TestCase):
             restore_mode_after_run='previous',
             verify_timeout_seconds=30,
         )
+        resources = SimpleNamespace(
+            namespace='torghut',
+            torghut_service='torghut-sim',
+            ta_configmap='torghut-ta-sim-config',
+            ta_deployment='torghut-ta-sim',
+        )
+        runtime_ignore_differences = start_historical_simulation._simulation_runtime_argocd_ignore_differences(
+            resources=resources
+        )
         with (
             patch(
                 'scripts.start_historical_simulation._read_argocd_automation_mode',
@@ -8814,8 +8873,7 @@ class TestStartHistoricalSimulation(TestCase):
                             'syncOptions': ['CreateNamespace=true'],
                         },
                         'automation_mode': 'manual',
-                        'skip_reconcile_enabled': True,
-                        'skip_reconcile_value': 'true',
+                        'ignore_differences': runtime_ignore_differences,
                     },
                     {
                         'sync_policy': {
@@ -8823,18 +8881,22 @@ class TestStartHistoricalSimulation(TestCase):
                             'syncOptions': ['CreateNamespace=true'],
                         },
                         'automation_mode': 'manual',
+                        'ignore_differences': None,
                     },
                 ],
             ),
             patch('scripts.start_historical_simulation._prepare_argocd_for_run') as prepare_mock,
         ):
-            report = start_historical_simulation._ensure_argocd_manual_before_runtime_mutation(config=config)
+            report = start_historical_simulation._ensure_argocd_manual_before_runtime_mutation(
+                config=config,
+                resources=resources,
+            )
 
         prepare_mock.assert_not_called()
         self.assertEqual(report['reason'], 'already_manual')
         self.assertFalse(report['changed'])
         self.assertEqual(report['current_mode'], 'manual')
-        self.assertTrue(report['application_skip_reconcile']['enabled'])
+        self.assertTrue(report['application_ignore_differences']['coverage_complete'])
 
     def test_ensure_argocd_manual_before_runtime_mutation_reasserts_when_child_app_drifted(self) -> None:
         config = ArgocdAutomationConfig(
@@ -8846,6 +8908,12 @@ class TestStartHistoricalSimulation(TestCase):
             desired_mode_during_run='manual',
             restore_mode_after_run='previous',
             verify_timeout_seconds=30,
+        )
+        resources = SimpleNamespace(
+            namespace='torghut',
+            torghut_service='torghut-sim',
+            ta_configmap='torghut-ta-sim-config',
+            ta_deployment='torghut-ta-sim',
         )
         with (
             patch(
@@ -8861,8 +8929,7 @@ class TestStartHistoricalSimulation(TestCase):
                             'syncOptions': ['CreateNamespace=true'],
                         },
                         'automation_mode': 'auto',
-                        'skip_reconcile_enabled': False,
-                        'skip_reconcile_value': None,
+                        'ignore_differences': [],
                     },
                     {
                         'sync_policy': {
@@ -8870,6 +8937,7 @@ class TestStartHistoricalSimulation(TestCase):
                             'syncOptions': ['CreateNamespace=true'],
                         },
                         'automation_mode': 'manual',
+                        'ignore_differences': None,
                     },
                 ],
             ),
@@ -8878,9 +8946,12 @@ class TestStartHistoricalSimulation(TestCase):
                 return_value={'managed': True, 'changed': True, 'current_mode': 'manual'},
             ) as prepare_mock,
         ):
-            report = start_historical_simulation._ensure_argocd_manual_before_runtime_mutation(config=config)
+            report = start_historical_simulation._ensure_argocd_manual_before_runtime_mutation(
+                config=config,
+                resources=resources,
+            )
 
-        prepare_mock.assert_called_once_with(config=config)
+        prepare_mock.assert_called_once_with(config=config, resources=resources)
         self.assertEqual(report['reason'], 'reasserted_manual_before_runtime_mutation')
         self.assertTrue(report['changed'])
 
@@ -8930,14 +9001,15 @@ class TestStartHistoricalSimulation(TestCase):
                 ],
             ) as application_mock,
             patch(
-                'scripts.start_historical_simulation._set_argocd_application_skip_reconcile',
+                'scripts.start_historical_simulation._set_argocd_application_ignore_differences',
                 return_value={
-                    'previous_value': 'true',
-                    'current_value': None,
-                    'enabled': False,
+                    'previous_ignore_differences': [{'group': '', 'kind': 'ConfigMap', 'jsonPointers': ['/data']}],
+                    'current_ignore_differences': [],
+                    'required_ignore_differences': [],
+                    'coverage_complete': True,
                     'changed': True,
                 },
-            ) as skip_reconcile_mock,
+            ) as ignore_differences_mock,
             patch(
                 'scripts.start_historical_simulation._wait_for_argocd_application_mode',
                 return_value={
@@ -8951,14 +9023,14 @@ class TestStartHistoricalSimulation(TestCase):
                 previous_mode='auto',
                 previous_root_sync_policy=previous_sync_policy,
                 previous_child_sync_policy=previous_sync_policy,
-                previous_child_skip_reconcile_value=None,
+                previous_child_ignore_differences=None,
             )
         applicationset_mock.assert_called_once()
         self.assertEqual(application_mock.call_count, 2)
-        skip_reconcile_mock.assert_called_once_with(
+        ignore_differences_mock.assert_called_once_with(
             config=config,
             app_name='torghut',
-            desired_value=None,
+            desired_ignore_differences=None,
         )
         application_mode_mock.assert_called_once()
         self.assertTrue(report['changed'])
