@@ -882,6 +882,11 @@ def _simulation_progress_snapshot(
         or _as_text(replay.get('last_price_ts'))
         or _as_text(ta.get('last_price_ts'))
     )
+    last_source_ts = (
+        _as_text(replay.get('last_source_ts'))
+        or _as_text(torghut.get('last_source_ts'))
+        or _as_text(ta.get('last_source_ts'))
+    )
     return {
         'progress_source': 'simulation_run_progress',
         'components': components,
@@ -894,6 +899,7 @@ def _simulation_progress_snapshot(
         'price_rows': 1 if last_price_ts is not None else 0,
         'last_signal_ts': last_signal_ts,
         'last_price_ts': last_price_ts,
+        'last_source_ts': last_source_ts,
         'records_dumped': _safe_int(replay.get('records_dumped')),
         'records_replayed': _safe_int(replay.get('records_replayed')),
         'strategy_type': _as_text(torghut.get('strategy_type')) or _as_text(replay.get('strategy_type')),
@@ -906,12 +912,17 @@ def _effective_terminal_signal_ts(
     *,
     window_end: datetime,
     last_signal_ts: datetime | None,
+    last_price_ts: datetime | None,
+    last_source_ts: datetime | None,
 ) -> datetime:
-    if last_signal_ts is None:
+    coverage_candidates = [
+        timestamp
+        for timestamp in (last_source_ts, last_price_ts, last_signal_ts)
+        if timestamp is not None
+    ]
+    if not coverage_candidates:
         return window_end
-    if last_signal_ts < window_end:
-        return last_signal_ts
-    return window_end
+    return min(max(coverage_candidates), window_end)
 
 
 def _clickhouse_database_from_jdbc_url(raw_url: str | None) -> str | None:
@@ -978,10 +989,13 @@ def _activity_state(
     runtime_ready = bool(runtime_verify.get('runtime_state') == 'ready')
     last_signal_ts = _parse_optional_rfc3339_timestamp(_as_text(snapshot.get('last_signal_ts')))
     last_price_ts = _parse_optional_rfc3339_timestamp(_as_text(snapshot.get('last_price_ts')))
+    last_source_ts = _parse_optional_rfc3339_timestamp(_as_text(snapshot.get('last_source_ts')))
     cursor_at = _parse_optional_rfc3339_timestamp(_as_text(snapshot.get('cursor_at')))
     effective_terminal_signal_ts = _effective_terminal_signal_ts(
         window_end=end,
         last_signal_ts=last_signal_ts,
+        last_price_ts=last_price_ts,
+        last_source_ts=last_source_ts,
     )
     trade_decisions = _safe_int(snapshot.get('trade_decisions'))
     executions = _safe_int(snapshot.get('executions'))
@@ -1009,15 +1023,18 @@ def _activity_state(
     cursor_gap_seconds: float | None = None
     if cursor_at is not None:
         cursor_gap_seconds = max((effective_terminal_signal_ts - cursor_at).total_seconds(), 0.0)
-    terminal_reason = 'window_end_reached'
-    if last_signal_ts is not None and last_signal_ts < end:
-        terminal_reason = 'terminal_signal_reached'
+    terminal_reason = (
+        'terminal_signal_reached'
+        if effective_terminal_signal_ts < end
+        else 'window_end_reached'
+    )
     return {
         'window_start': start.isoformat(),
         'window_end': end.isoformat(),
         'effective_terminal_signal_ts': effective_terminal_signal_ts.isoformat(),
         'last_signal_ts': last_signal_ts.isoformat() if last_signal_ts is not None else None,
         'last_price_ts': last_price_ts.isoformat() if last_price_ts is not None else None,
+        'last_source_ts': last_source_ts.isoformat() if last_source_ts is not None else None,
         'cursor_at': cursor_at.isoformat() if cursor_at is not None else None,
         'cursor_gap_seconds': cursor_gap_seconds,
         'thresholds_met': thresholds_met,
@@ -1027,7 +1044,7 @@ def _activity_state(
         'completion_reason': terminal_reason if terminal_reached else 'waiting_for_terminal_signal',
         'dataset_alignment': (
             'window_declared_beyond_dataset'
-            if last_signal_ts is not None and last_signal_ts < end
+            if effective_terminal_signal_ts < end
             else 'window_aligned_with_dataset'
         ),
     }
