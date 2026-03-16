@@ -21,7 +21,7 @@ spec:
                 restartPolicy: Never
                 containers:
                   - name: analysis
-                    image: registry.ide-newton.ts.net/lab/torghut@sha256:e0d565cca3781d9fd239a92c57e15289c2b4cb87cef0b073628a41d086ba3c25
+                    image: registry.ide-newton.ts.net/lab/torghut@sha256:573b324af51596e86ad602e22b7dbbd1ba2cd9a7f3b7d09127015b9805a551b8
                     imagePullPolicy: IfNotPresent
                     command:
                       - /bin/bash
