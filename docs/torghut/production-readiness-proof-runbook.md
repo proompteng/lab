@@ -32,6 +32,10 @@ This runbook is the authoritative operator sequence for a production-readiness s
 
 Run one fresh March 13 full-day replay on the frozen digest.
 
+Replay contract for the proof lane:
+- historical proof manifests must use `ta_restore.mode=stateless`
+- proof reruns must hard-reset TA operator state; resuming prior checkpoint lineage is invalid for readiness signoff
+
 Required outcome:
 - non-zero decisions
 - non-zero executions

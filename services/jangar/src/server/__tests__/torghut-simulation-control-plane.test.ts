@@ -86,6 +86,29 @@ describe('torghut simulation control plane', () => {
     })
   })
 
+  it('defaults full-day proofs to stateless TA recovery', () => {
+    const manifest = __private.normalizeSimulationManifest(
+      {
+        dataset_id: 'dataset-a',
+        window: {
+          start: '2026-03-13T13:30:00Z',
+          end: '2026-03-13T20:00:00Z',
+        },
+      },
+      {
+        runId: 'sim-demo-full-day',
+        outputRoot: '/tmp/torghut-sim',
+        cachePolicy: 'refresh',
+        profile: 'full_day',
+      },
+    )
+
+    expect(manifest.performance).toMatchObject({
+      replayProfile: 'full_day',
+    })
+    expect(manifest.ta_restore).toMatchObject({ mode: 'stateless' })
+  })
+
   it('derives isolated simulation databases when warm lanes are disabled', () => {
     const manifest = __private.normalizeSimulationManifest(
       {
@@ -157,10 +180,13 @@ describe('torghut simulation control plane', () => {
   it('builds stable cache keys and manifest digests regardless of object key order', () => {
     const manifestA = {
       dataset_id: 'dataset-a',
+      dataset_snapshot_ref: 'dataset-a@snapshot-1',
       lane: 'equity',
       candidate_id: 'candidate-a',
       baseline_candidate_id: 'baseline-a',
       strategy_spec_ref: 'strategy-specs/intraday_tsmom_v1@1.1.0.json',
+      model_refs: ['rules/intraday_tsmom_v1', 'rules/risk-v1'],
+      runtime_version_refs: ['services/torghut@sha256:abc', 'services/torghut-forecast@sha256:def'],
       performance: {
         dumpFormat: 'jsonl.zst',
       },
@@ -177,10 +203,13 @@ describe('torghut simulation control plane', () => {
       performance: {
         dumpFormat: 'jsonl.zst',
       },
+      runtime_version_refs: ['services/torghut@sha256:abc', 'services/torghut-forecast@sha256:def'],
+      model_refs: ['rules/intraday_tsmom_v1', 'rules/risk-v1'],
       strategy_spec_ref: 'strategy-specs/intraday_tsmom_v1@1.1.0.json',
       baseline_candidate_id: 'baseline-a',
       candidate_id: 'candidate-a',
       lane: 'equity',
+      dataset_snapshot_ref: 'dataset-a@snapshot-1',
       dataset_id: 'dataset-a',
     }
 

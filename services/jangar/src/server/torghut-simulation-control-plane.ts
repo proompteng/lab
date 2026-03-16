@@ -235,9 +235,9 @@ const INTERACTIVE_LANES = ['sim-fast-1'] as const
 const BATCH_LANES = ['sim-fast-1'] as const
 const CONTROL_PLANE_LEASE_OWNER = 'jangar-control-plane'
 const PROGRESS_FETCH_TIMEOUT_MS = 2_500
+const SIMULATION_CACHE_KEY_SCHEMA_VERSION = 'torghut-simulation-cache-v2'
 
-const defaultTaRestoreMode = (profile: string) =>
-  profile.trim().toLowerCase() === 'full_day' ? 'required' : 'stateless'
+const defaultTaRestoreMode = (_profile: string) => 'stateless'
 
 const resolveRunClass = (profile: string, priority: string) => {
   const normalizedProfile = profile.trim().toLowerCase()
@@ -264,16 +264,29 @@ const resolveSimulationWorkflowNamespace = (manifest: JsonRecord) => {
   return asString(runtime.workflow_namespace) ?? DEFAULT_WORKFLOW_NAMESPACE
 }
 
+const stableStringList = (value: unknown) =>
+  [
+    ...new Set(
+      asArray(value)
+        .map((item) => asString(item)?.trim())
+        .filter((item): item is string => Boolean(item)),
+    ),
+  ].sort()
+
 const buildSimulationCacheKey = (manifest: JsonRecord, profile: string) =>
   createHash('sha256')
     .update(
       stableJsonStringifyForHash({
+        schema_version: SIMULATION_CACHE_KEY_SCHEMA_VERSION,
         lane: asString(manifest.lane) ?? 'equity',
         dataset_id: asString(manifest.dataset_id),
+        dataset_snapshot_ref: asString(manifest.dataset_snapshot_ref) ?? asString(manifest.dataset_id),
         window: asRecord(manifest.window),
         strategy_spec_ref: asString(manifest.strategy_spec_ref),
         candidate_id: asString(manifest.candidate_id),
         baseline_candidate_id: asString(manifest.baseline_candidate_id),
+        model_refs: stableStringList(manifest.model_refs),
+        runtime_version_refs: stableStringList(manifest.runtime_version_refs),
         dump_format: asString(asRecord(manifest.performance).dumpFormat) ?? DEFAULT_DUMP_FORMAT,
         profile,
       }),

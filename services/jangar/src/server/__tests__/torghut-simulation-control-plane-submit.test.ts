@@ -399,9 +399,12 @@ describe('submitTorghutSimulationRun', () => {
   it('preserves the existing ready cache artifact when a run consumes a cache hit', async () => {
     const manifest = {
       dataset_id: 'dataset-a',
+      dataset_snapshot_ref: 'dataset-a@snapshot-1',
       candidate_id: 'intraday_tsmom_v1@prod',
       baseline_candidate_id: 'intraday_tsmom_v1@baseline',
       strategy_spec_ref: 'strategy-specs/intraday_tsmom_v1@1.1.0.json',
+      model_refs: ['rules/intraday_tsmom_v1'],
+      runtime_version_refs: ['services/torghut@sha256:abc'],
       window: {
         start: '2026-03-06T14:30:00Z',
         end: '2026-03-06T14:45:00Z',
@@ -414,12 +417,16 @@ describe('submitTorghutSimulationRun', () => {
     const cacheKey = createHash('sha256')
       .update(
         stableJsonStringifyForHash({
+          schema_version: 'torghut-simulation-cache-v2',
           lane: 'equity',
           dataset_id: manifest.dataset_id,
+          dataset_snapshot_ref: manifest.dataset_snapshot_ref,
           window: manifest.window,
           strategy_spec_ref: manifest.strategy_spec_ref,
           candidate_id: manifest.candidate_id,
           baseline_candidate_id: manifest.baseline_candidate_id,
+          model_refs: manifest.model_refs,
+          runtime_version_refs: manifest.runtime_version_refs,
           dump_format: manifest.performance.dumpFormat,
           profile: 'compact',
         }),
@@ -461,9 +468,12 @@ describe('submitTorghutSimulationRun', () => {
   it('records deterministic durable cache artifact paths on a cache miss', async () => {
     const manifest = {
       dataset_id: 'dataset-b',
+      dataset_snapshot_ref: 'dataset-b@snapshot-2',
       candidate_id: 'intraday_tsmom_v1@prod',
       baseline_candidate_id: 'intraday_tsmom_v1@baseline',
       strategy_spec_ref: 'strategy-specs/intraday_tsmom_v1@1.1.0.json',
+      model_refs: ['rules/intraday_tsmom_v1'],
+      runtime_version_refs: ['services/torghut@sha256:def'],
       window: {
         start: '2026-03-13T13:30:00Z',
         end: '2026-03-13T20:00:00Z',
@@ -476,12 +486,16 @@ describe('submitTorghutSimulationRun', () => {
     const cacheKey = createHash('sha256')
       .update(
         stableJsonStringifyForHash({
+          schema_version: 'torghut-simulation-cache-v2',
           lane: 'equity',
           dataset_id: manifest.dataset_id,
+          dataset_snapshot_ref: manifest.dataset_snapshot_ref,
           window: manifest.window,
           strategy_spec_ref: manifest.strategy_spec_ref,
           candidate_id: manifest.candidate_id,
           baseline_candidate_id: manifest.baseline_candidate_id,
+          model_refs: manifest.model_refs,
+          runtime_version_refs: manifest.runtime_version_refs,
           dump_format: manifest.performance.dumpFormat,
           profile: 'compact',
         }),
