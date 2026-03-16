@@ -13,4 +13,5 @@ spec:
       services:
         - name: bilig-web
           port: 80
-  tls: {}
+  tls:
+    secretName: bilig-wildcard-tls
