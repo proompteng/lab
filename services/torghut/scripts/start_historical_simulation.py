@@ -205,7 +205,6 @@ DEFAULT_ARGOCD_NAMESPACE = 'argocd'
 DEFAULT_ARGOCD_APP_NAME = 'torghut'
 DEFAULT_ARGOCD_ROOT_APP_NAME = 'root'
 DEFAULT_ARGOCD_RUN_MODE = 'manual'
-_ARGOCD_SKIP_RECONCILE_ANNOTATION = 'argocd.argoproj.io/skip-reconcile'
 DEFAULT_ROLLOUTS_NAMESPACE = 'torghut'
 DEFAULT_ROLLOUTS_RUNTIME_TEMPLATE = 'torghut-simulation-runtime-ready'
 DEFAULT_ROLLOUTS_ACTIVITY_TEMPLATE = 'torghut-simulation-activity'
@@ -1731,12 +1730,12 @@ def _json_pointer_unescape(value: str) -> str:
     return value.replace('~1', '/').replace('~0', '~')
 
 
-def _discover_automation_pointer(
+def _discover_applicationset_entry(
     node: Any,
     *,
     app_name: str,
     path: str = '',
-) -> tuple[str, str] | None:
+) -> tuple[str, dict[str, Any]] | None:
     if isinstance(node, Mapping):
         elements = node.get('elements')
         if isinstance(elements, list):
@@ -1745,25 +1744,63 @@ def _discover_automation_pointer(
                 if not isinstance(entry, Mapping):
                     continue
                 name = _as_text(entry.get('name'))
-                automation = _as_text(entry.get('automation'))
-                if name == app_name and automation is not None:
-                    pointer = (
-                        f'{elements_path}/{idx}/{_json_pointer_escape("automation")}'
-                    )
-                    return pointer, automation
+                if name == app_name:
+                    pointer = f'{elements_path}/{idx}'
+                    return pointer, _clone_json_mapping(entry) or {}
         for key, value in node.items():
             child_path = f'{path}/{_json_pointer_escape(str(key))}'
-            found = _discover_automation_pointer(value, app_name=app_name, path=child_path)
+            found = _discover_applicationset_entry(value, app_name=app_name, path=child_path)
             if found is not None:
                 return found
         return None
     if isinstance(node, list):
         for idx, value in enumerate(node):
             child_path = f'{path}/{idx}'
-            found = _discover_automation_pointer(value, app_name=app_name, path=child_path)
+            found = _discover_applicationset_entry(value, app_name=app_name, path=child_path)
             if found is not None:
                 return found
     return None
+
+
+def _read_argocd_applicationset_entry(
+    *,
+    config: ArgocdAutomationConfig,
+) -> dict[str, Any]:
+    payload = _kubectl_json_global(
+        [
+            '-n',
+            config.applicationset_namespace,
+            'get',
+            'applicationset',
+            config.applicationset_name,
+            '-o',
+            'json',
+        ]
+    )
+    discovered = _discover_applicationset_entry(payload, app_name=config.app_name)
+    if discovered is None:
+        raise RuntimeError(
+            'argocd_applicationset_entry_not_found '
+            f'applicationset={config.applicationset_name} app={config.app_name}'
+        )
+    pointer, entry = discovered
+    automation = _as_text(entry.get('automation'))
+    if automation is None:
+        raise RuntimeError(
+            'argocd_automation_path_not_found '
+            f'applicationset={config.applicationset_name} app={config.app_name}'
+        )
+    return {
+        'pointer': pointer,
+        'entry': entry,
+        'automation_pointer': f'{pointer}/{_json_pointer_escape("automation")}',
+        'mode': _normalized_automation_mode(automation),
+        'ignore_differences': _clone_json_list(
+            cast(Sequence[Any] | None, entry.get('ignoreDifferences'))
+            if isinstance(entry.get('ignoreDifferences'), list)
+            else None
+        ),
+    }
 
 
 def _json_pointer_get(payload: Any, pointer: str) -> Any:
@@ -1798,6 +1835,12 @@ def _clone_json_mapping(value: Mapping[str, Any] | None) -> dict[str, Any] | Non
     if value is None:
         return None
     return cast(dict[str, Any], json.loads(json.dumps(dict(value))))
+
+
+def _clone_json_list(value: Sequence[Any] | None) -> list[Any] | None:
+    if value is None:
+        return None
+    return cast(list[Any], json.loads(json.dumps(list(value))))
 
 
 def _simulation_lock_payload(
@@ -1888,28 +1931,10 @@ def _read_argocd_automation_mode(
     *,
     config: ArgocdAutomationConfig,
 ) -> dict[str, Any]:
-    payload = _kubectl_json_global(
-        [
-            '-n',
-            config.applicationset_namespace,
-            'get',
-            'applicationset',
-            config.applicationset_name,
-            '-o',
-            'json',
-        ]
-    )
-    discovered = _discover_automation_pointer(payload, app_name=config.app_name)
-    if discovered is None:
-        raise RuntimeError(
-            'argocd_automation_path_not_found '
-            f'applicationset={config.applicationset_name} app={config.app_name}'
-        )
-    pointer, automation = discovered
-    mode = _normalized_automation_mode(automation)
+    entry_state = _read_argocd_applicationset_entry(config=config)
     return {
-        'pointer': pointer,
-        'mode': mode,
+        'pointer': entry_state['automation_pointer'],
+        'mode': entry_state['mode'],
     }
 
 
@@ -1919,8 +1944,8 @@ def _set_argocd_automation_mode(
     desired_mode: str,
 ) -> dict[str, Any]:
     normalized_desired = _normalized_automation_mode(desired_mode)
-    state = _read_argocd_automation_mode(config=config)
-    pointer = str(state['pointer'])
+    state = _read_argocd_applicationset_entry(config=config)
+    pointer = str(state['automation_pointer'])
     current_mode = _normalized_automation_mode(_as_text(state.get('mode')))
     changed = current_mode != normalized_desired
     if changed:
@@ -1941,8 +1966,8 @@ def _set_argocd_automation_mode(
     deadline = started + timedelta(seconds=config.verify_timeout_seconds)
     verified_mode = current_mode
     while True:
-        verified_state = _read_argocd_automation_mode(config=config)
-        pointer_observed = str(verified_state['pointer'])
+        verified_state = _read_argocd_applicationset_entry(config=config)
+        pointer_observed = str(verified_state['automation_pointer'])
         if pointer_observed != pointer:
             raise RuntimeError(
                 'argocd_automation_pointer_changed '
@@ -1997,16 +2022,17 @@ def _read_named_argocd_application_sync_policy(
     )
     spec = _as_mapping(payload.get('spec'))
     metadata = _as_mapping(payload.get('metadata'))
-    annotations = _as_mapping(metadata.get('annotations'))
     sync_policy_raw = spec.get('syncPolicy')
     sync_policy = _clone_json_mapping(_as_mapping(sync_policy_raw) if isinstance(sync_policy_raw, Mapping) else None)
+    ignore_differences_raw = spec.get('ignoreDifferences')
+    ignore_differences = _clone_json_list(
+        cast(Sequence[Any] | None, ignore_differences_raw) if isinstance(ignore_differences_raw, list) else None
+    )
     automation_mode = _argocd_application_mode_from_sync_policy(sync_policy)
-    skip_reconcile_value = _as_text(annotations.get(_ARGOCD_SKIP_RECONCILE_ANNOTATION))
     return {
         'sync_policy': sync_policy,
+        'ignore_differences': ignore_differences,
         'automation_mode': automation_mode,
-        'skip_reconcile_value': skip_reconcile_value,
-        'skip_reconcile_enabled': (skip_reconcile_value or '').lower() == 'true',
     }
 
 
@@ -2090,62 +2116,199 @@ def _set_argocd_application_sync_policy(
     }
 
 
-def _normalize_argocd_skip_reconcile_value(value: str | None) -> str | None:
-    normalized = _as_text(value)
-    if normalized is None:
-        return None
-    normalized = normalized.lower()
-    if normalized not in {'true', 'false'}:
-        raise RuntimeError(f'unsupported_argocd_skip_reconcile_value:{value}')
-    return normalized
+def _normalized_argocd_ignore_difference_rule(
+    rule: Mapping[str, Any],
+) -> dict[str, Any]:
+    normalized_rule = _clone_json_mapping(rule) or {}
+    for key in ('group', 'name', 'namespace'):
+        value = _as_text(normalized_rule.get(key))
+        if value:
+            normalized_rule[key] = value
+        else:
+            normalized_rule.pop(key, None)
+    for key in ('jsonPointers', 'jqPathExpressions', 'managedFieldsManagers'):
+        values = normalized_rule.get(key)
+        if not isinstance(values, list):
+            continue
+        normalized_rule[key] = sorted(_as_text(item) or '' for item in values if _as_text(item))
+    return normalized_rule
 
 
-def _set_argocd_application_skip_reconcile(
+def _normalized_argocd_ignore_differences(
+    ignore_differences: Sequence[Mapping[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    if not ignore_differences:
+        return []
+    normalized_rules = [
+        _normalized_argocd_ignore_difference_rule(rule)
+        for rule in ignore_differences
+    ]
+    normalized_rules.sort(key=lambda item: json.dumps(item, sort_keys=True, separators=(',', ':')))
+    return normalized_rules
+
+
+def _simulation_runtime_argocd_ignore_differences(
+    *,
+    resources: SimulationResources,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            'group': 'serving.knative.dev',
+            'kind': 'Service',
+            'namespace': resources.namespace,
+            'name': resources.torghut_service,
+            'jsonPointers': ['/spec/template/spec/containers/0/env'],
+        },
+        {
+            'group': '',
+            'kind': 'ConfigMap',
+            'namespace': resources.namespace,
+            'name': resources.ta_configmap,
+            'jsonPointers': ['/data'],
+        },
+        {
+            'group': 'flink.apache.org',
+            'kind': 'FlinkDeployment',
+            'namespace': resources.namespace,
+            'name': resources.ta_deployment,
+            'jsonPointers': ['/spec/job/state', '/spec/job/upgradeMode', '/spec/restartNonce'],
+        },
+    ]
+
+
+def _merge_argocd_application_ignore_differences(
+    *,
+    current_ignore_differences: Sequence[Mapping[str, Any]] | None,
+    resources: SimulationResources,
+) -> list[dict[str, Any]]:
+    merged_rules = _normalized_argocd_ignore_differences(current_ignore_differences)
+    existing_keys = {
+        json.dumps(rule, sort_keys=True, separators=(',', ':'))
+        for rule in merged_rules
+    }
+    for rule in _simulation_runtime_argocd_ignore_differences(resources=resources):
+        normalized_rule = _normalized_argocd_ignore_difference_rule(rule)
+        normalized_key = json.dumps(normalized_rule, sort_keys=True, separators=(',', ':'))
+        if normalized_key in existing_keys:
+            continue
+        merged_rules.append(normalized_rule)
+        existing_keys.add(normalized_key)
+    merged_rules.sort(key=lambda item: json.dumps(item, sort_keys=True, separators=(',', ':')))
+    return merged_rules
+
+
+def _argocd_ignore_differences_cover_runtime_mutations(
+    *,
+    current_ignore_differences: Sequence[Mapping[str, Any]] | None,
+    resources: SimulationResources,
+) -> bool:
+    return _argocd_ignore_differences_cover_required_rules(
+        current_ignore_differences=current_ignore_differences,
+        required_ignore_differences=_simulation_runtime_argocd_ignore_differences(resources=resources),
+    )
+
+
+def _argocd_ignore_differences_cover_required_rules(
+    *,
+    current_ignore_differences: Sequence[Mapping[str, Any]] | None,
+    required_ignore_differences: Sequence[Mapping[str, Any]] | None,
+) -> bool:
+    current_rules = {
+        json.dumps(rule, sort_keys=True, separators=(',', ':'))
+        for rule in _normalized_argocd_ignore_differences(current_ignore_differences)
+    }
+    required_rules = {
+        json.dumps(rule, sort_keys=True, separators=(',', ':'))
+        for rule in _normalized_argocd_ignore_differences(required_ignore_differences)
+    }
+    return required_rules.issubset(current_rules)
+
+
+def _set_argocd_application_ignore_differences(
     *,
     config: ArgocdAutomationConfig,
     app_name: str | None = None,
-    desired_value: str | None,
+    required_ignore_differences: Sequence[Mapping[str, Any]] | None = None,
+    desired_ignore_differences: Sequence[Mapping[str, Any]] | None,
 ) -> dict[str, Any]:
-    normalized_desired = _normalize_argocd_skip_reconcile_value(desired_value)
+    normalized_desired = _normalized_argocd_ignore_differences(desired_ignore_differences)
+    normalized_required = _normalized_argocd_ignore_differences(required_ignore_differences)
     target_app_name = app_name or config.app_name
-    state = _read_named_argocd_application_sync_policy(
-        namespace=config.applicationset_namespace,
-        app_name=target_app_name,
+    if target_app_name != config.app_name:
+        raise RuntimeError(f'unsupported_argocd_managed_application:{target_app_name}')
+    state = _read_argocd_applicationset_entry(config=config)
+    current_ignore_differences = _normalized_argocd_ignore_differences(
+        cast(Sequence[Mapping[str, Any]] | None, state.get('ignore_differences'))
     )
-    current_value = _normalize_argocd_skip_reconcile_value(_as_text(state.get('skip_reconcile_value')))
-    changed = current_value != normalized_desired
+    changed = current_ignore_differences != normalized_desired
     if changed:
-        _kubectl_patch(
-            config.applicationset_namespace,
-            'application',
-            target_app_name,
-            {'metadata': {'annotations': {_ARGOCD_SKIP_RECONCILE_ANNOTATION: normalized_desired}}},
-        )
+        ignore_differences_pointer = f'{state["pointer"]}/{_json_pointer_escape("ignoreDifferences")}'
+        patch_op = 'replace' if current_ignore_differences else 'add'
+        if normalized_desired:
+            _kubectl_patch_json(
+                config.applicationset_namespace,
+                'applicationset',
+                config.applicationset_name,
+                [
+                    {
+                        'op': patch_op,
+                        'path': ignore_differences_pointer,
+                        'value': normalized_desired,
+                    }
+                ],
+            )
+        else:
+            _kubectl_patch_json(
+                config.applicationset_namespace,
+                'applicationset',
+                config.applicationset_name,
+                [{'op': 'remove', 'path': ignore_differences_pointer}],
+            )
 
     deadline = datetime.now(timezone.utc) + timedelta(seconds=config.verify_timeout_seconds)
-    verified_value = current_value
+    verified_ignore_differences = current_ignore_differences
+    verified_application_ignore_differences = _normalized_argocd_ignore_differences(None)
     while True:
-        verified_state = _read_named_argocd_application_sync_policy(
+        verified_state = _read_argocd_applicationset_entry(config=config)
+        verified_ignore_differences = _normalized_argocd_ignore_differences(
+            cast(Sequence[Mapping[str, Any]] | None, verified_state.get('ignore_differences'))
+        )
+        application_state = _read_named_argocd_application_sync_policy(
             namespace=config.applicationset_namespace,
             app_name=target_app_name,
         )
-        verified_value = _normalize_argocd_skip_reconcile_value(
-            _as_text(verified_state.get('skip_reconcile_value'))
+        verified_application_ignore_differences = _normalized_argocd_ignore_differences(
+            cast(Sequence[Mapping[str, Any]] | None, application_state.get('ignore_differences'))
         )
-        if verified_value == normalized_desired:
+        if (
+            verified_ignore_differences == normalized_desired
+            and verified_application_ignore_differences == normalized_desired
+        ):
             break
         if datetime.now(timezone.utc) >= deadline:
             raise RuntimeError(
-                'argocd_application_skip_reconcile_verify_timeout '
-                f'desired={normalized_desired} observed={verified_value}'
+                'argocd_application_ignore_differences_verify_timeout '
+                f'desired={json.dumps(normalized_desired, sort_keys=True)} '
+                f'observed_applicationset={json.dumps(verified_ignore_differences, sort_keys=True)} '
+                f'observed_application={json.dumps(verified_application_ignore_differences, sort_keys=True)}'
             )
         time.sleep(2)
 
     return {
         'app_name': target_app_name,
-        'previous_value': current_value,
-        'current_value': verified_value,
-        'enabled': verified_value == 'true',
+        'applicationset_pointer': _as_text(state.get('pointer')),
+        'previous_ignore_differences': current_ignore_differences,
+        'current_ignore_differences': verified_ignore_differences,
+        'current_application_ignore_differences': verified_application_ignore_differences,
+        'required_ignore_differences': normalized_required,
+        'coverage_complete': (
+            True
+            if not normalized_required
+            else _argocd_ignore_differences_cover_required_rules(
+                current_ignore_differences=verified_application_ignore_differences,
+                required_ignore_differences=normalized_required,
+            )
+        ),
         'changed': changed,
     }
 
@@ -5960,6 +6123,7 @@ def _apply(
         ):
             argocd_runtime_guard_report = _ensure_argocd_manual_before_runtime_mutation(
                 config=argocd_config,
+                resources=resources,
             )
         ta_reconfigured = _ta_runtime_reconfigure_required(
             resources=resources,
@@ -6152,6 +6316,7 @@ def _teardown(
 def _prepare_argocd_for_run(
     *,
     config: ArgocdAutomationConfig,
+    resources: SimulationResources,
 ) -> dict[str, Any]:
     if not config.manage_automation:
         return {
@@ -6184,10 +6349,14 @@ def _prepare_argocd_for_run(
             cast(Mapping[str, Any] | None, root_sync_state.get('sync_policy'))
         ),
     )
-    application_skip_reconcile_report = _set_argocd_application_skip_reconcile(
+    application_ignore_differences_report = _set_argocd_application_ignore_differences(
         config=config,
         app_name=config.app_name,
-        desired_value='true',
+        required_ignore_differences=_simulation_runtime_argocd_ignore_differences(resources=resources),
+        desired_ignore_differences=_merge_argocd_application_ignore_differences(
+            current_ignore_differences=cast(Sequence[Mapping[str, Any]] | None, child_sync_state.get('ignore_differences')),
+            resources=resources,
+        ),
     )
     applicationset_report = _set_argocd_automation_mode(
         config=config,
@@ -6203,7 +6372,7 @@ def _prepare_argocd_for_run(
         'changed': (
             child_application_report['changed']
             or root_application_report['changed']
-            or application_skip_reconcile_report['changed']
+            or application_ignore_differences_report['changed']
             or applicationset_report['changed']
         ),
         'pointer': automation_state.get('pointer'),
@@ -6213,7 +6382,7 @@ def _prepare_argocd_for_run(
         'applicationset_managed': True,
         'applicationset': applicationset_report,
         'application_sync_policy': child_application_report,
-        'application_skip_reconcile': application_skip_reconcile_report,
+        'application_ignore_differences': application_ignore_differences_report,
         'root_application': root_application_report,
         'application': application_mode_report,
     }
@@ -6222,6 +6391,7 @@ def _prepare_argocd_for_run(
 def _ensure_argocd_manual_before_runtime_mutation(
     *,
     config: ArgocdAutomationConfig,
+    resources: SimulationResources,
 ) -> dict[str, Any]:
     if not config.manage_automation:
         return {
@@ -6248,11 +6418,15 @@ def _ensure_argocd_manual_before_runtime_mutation(
         cast(Mapping[str, Any] | None, root_state.get('sync_policy'))
     )
     current_applicationset_mode = _normalized_automation_mode(_as_text(applicationset_state.get('mode')))
-    current_skip_reconcile_enabled = bool(application_state.get('skip_reconcile_enabled'))
+    current_ignore_differences = cast(Sequence[Mapping[str, Any]] | None, application_state.get('ignore_differences'))
+    current_runtime_guard_complete = _argocd_ignore_differences_cover_runtime_mutations(
+        current_ignore_differences=current_ignore_differences,
+        resources=resources,
+    )
     if (
         current_applicationset_mode == desired_mode
         and current_application_mode == desired_mode
-        and current_skip_reconcile_enabled
+        and current_runtime_guard_complete
         and current_root_sync_policy == desired_root_sync_policy
     ):
         return {
@@ -6277,16 +6451,16 @@ def _ensure_argocd_manual_before_runtime_mutation(
                 'app_name': config.app_name,
                 'current_mode': current_application_mode,
             },
-            'application_skip_reconcile': {
+            'application_ignore_differences': {
                 'app_name': config.app_name,
-                'current_value': _as_text(application_state.get('skip_reconcile_value')),
-                'desired_value': 'true',
-                'enabled': current_skip_reconcile_enabled,
+                'current_ignore_differences': _normalized_argocd_ignore_differences(current_ignore_differences),
+                'required_ignore_differences': _simulation_runtime_argocd_ignore_differences(resources=resources),
+                'coverage_complete': current_runtime_guard_complete,
                 'changed': False,
             },
         }
 
-    report = _prepare_argocd_for_run(config=config)
+    report = _prepare_argocd_for_run(config=config, resources=resources)
     report['reason'] = 'reasserted_manual_before_runtime_mutation'
     return report
 
@@ -6297,7 +6471,7 @@ def _restore_argocd_after_run(
     previous_mode: str | None,
     previous_root_sync_policy: Mapping[str, Any] | None,
     previous_child_sync_policy: Mapping[str, Any] | None,
-    previous_child_skip_reconcile_value: str | None,
+    previous_child_ignore_differences: Sequence[Mapping[str, Any]] | None,
 ) -> dict[str, Any]:
     if not config.manage_automation:
         return {
@@ -6316,10 +6490,10 @@ def _restore_argocd_after_run(
         app_name=config.app_name,
         desired_sync_policy=previous_child_sync_policy,
     )
-    child_skip_reconcile_report = _set_argocd_application_skip_reconcile(
+    child_ignore_differences_report = _set_argocd_application_ignore_differences(
         config=config,
         app_name=config.app_name,
-        desired_value=previous_child_skip_reconcile_value,
+        desired_ignore_differences=previous_child_ignore_differences,
     )
     applicationset_report = _set_argocd_automation_mode(
         config=config,
@@ -6339,7 +6513,7 @@ def _restore_argocd_after_run(
         'managed': True,
         'changed': (
             child_application_report['changed']
-            or child_skip_reconcile_report['changed']
+            or child_ignore_differences_report['changed']
             or root_application_report['changed']
             or applicationset_report['changed']
         ),
@@ -6349,7 +6523,7 @@ def _restore_argocd_after_run(
         'applicationset_managed': True,
         'applicationset': applicationset_report,
         'application_sync_policy': child_application_report,
-        'application_skip_reconcile': child_skip_reconcile_report,
+        'application_ignore_differences': child_ignore_differences_report,
         'root_application': root_application_report,
         'application': application_mode_report,
     }
@@ -7075,7 +7249,7 @@ def _run_full_lifecycle(
     argocd_restore_required = False
     previous_root_application_sync_policy: dict[str, Any] | None = None
     previous_child_application_sync_policy: dict[str, Any] | None = None
-    previous_child_skip_reconcile_value: str | None = None
+    previous_child_ignore_differences: list[dict[str, Any]] | None = None
     teardown_succeeded = False
 
     try:
@@ -7109,15 +7283,20 @@ def _run_full_lifecycle(
                 previous_child_application_sync_policy = _clone_json_mapping(
                     cast(Mapping[str, Any] | None, current_app_state.get('sync_policy'))
                 )
-                previous_child_skip_reconcile_value = _as_text(current_app_state.get('skip_reconcile_value'))
+                previous_child_ignore_differences = _clone_json_list(
+                    cast(Sequence[Any] | None, current_app_state.get('ignore_differences'))
+                )
                 argocd_restore_required = (
                     previous_automation_mode != _normalized_automation_mode(argocd_config.desired_mode_during_run)
                 )
                 if _normalized_automation_mode(_as_text(current_app_state.get('automation_mode'))) != 'manual':
                     argocd_restore_required = True
-                if not bool(current_app_state.get('skip_reconcile_enabled')):
+                if not _argocd_ignore_differences_cover_runtime_mutations(
+                    current_ignore_differences=cast(Sequence[Mapping[str, Any]] | None, current_app_state.get('ignore_differences')),
+                    resources=resources,
+                ):
                     argocd_restore_required = True
-            argocd_prepare_report = _prepare_argocd_for_run(config=argocd_config)
+            argocd_prepare_report = _prepare_argocd_for_run(config=argocd_config, resources=resources)
             if previous_automation_mode is None:
                 previous_automation_mode = _as_text(argocd_prepare_report.get('previous_mode'))
             if previous_root_application_sync_policy is None:
@@ -7130,9 +7309,11 @@ def _run_full_lifecycle(
                 previous_child_application_sync_policy = _clone_json_mapping(
                     cast(Mapping[str, Any] | None, application_report.get('previous_sync_policy'))
                 )
-            if previous_child_skip_reconcile_value is None:
-                skip_report = _as_mapping(argocd_prepare_report.get('application_skip_reconcile'))
-                previous_child_skip_reconcile_value = _as_text(skip_report.get('previous_value'))
+            if previous_child_ignore_differences is None:
+                ignore_report = _as_mapping(argocd_prepare_report.get('application_ignore_differences'))
+                previous_child_ignore_differences = _clone_json_list(
+                    cast(Sequence[Any] | None, ignore_report.get('previous_ignore_differences'))
+                )
             argocd_prepare_succeeded = True
             _update_run_state(
                 resources=resources,
@@ -7501,7 +7682,7 @@ def _run_full_lifecycle(
                     previous_mode=previous_automation_mode,
                     previous_root_sync_policy=previous_root_application_sync_policy,
                     previous_child_sync_policy=previous_child_application_sync_policy,
-                    previous_child_skip_reconcile_value=previous_child_skip_reconcile_value,
+                    previous_child_ignore_differences=previous_child_ignore_differences,
                 )
                 _update_run_state(resources=resources, phase='argocd_restore', status='ok')
             except Exception as exc:
