@@ -910,9 +910,12 @@ class ClickHouseSignalIngestor:
                 continue
             candidate_seq = _coerce_seq(signal.seq)
             if cursor_seq is not None and candidate_seq is not None:
-                if candidate_seq < cursor_seq:
-                    continue
-                if candidate_seq == cursor_seq and cursor_symbol is not None and signal.symbol <= cursor_symbol:
+                if cursor_symbol is not None:
+                    if signal.symbol < cursor_symbol:
+                        continue
+                    if signal.symbol == cursor_symbol and candidate_seq <= cursor_seq:
+                        continue
+                elif candidate_seq <= cursor_seq:
                     continue
                 filtered.append(signal)
                 continue

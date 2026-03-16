@@ -964,6 +964,69 @@ class TestSignalIngest(TestCase):
             [("AAPL", "1Min", 1), ("AAPL", "5Min", 3), ("MSFT", "1Min", 2)],
         )
 
+    def test_simulation_cursor_keeps_later_symbols_with_lower_local_seq(self) -> None:
+        rows = [
+            {
+                "event_ts": "2026-03-13T13:30:10Z",
+                "symbol": "AAPL",
+                "payload": {"feature_schema_version": "3.0.0"},
+                "timeframe": "1Sec",
+                "seq": 22888,
+                "source": "ta",
+            },
+            {
+                "event_ts": "2026-03-13T13:30:10Z",
+                "symbol": "AMAT",
+                "payload": {"feature_schema_version": "3.0.0"},
+                "timeframe": "1Sec",
+                "seq": 6651,
+                "source": "ta",
+            },
+            {
+                "event_ts": "2026-03-13T13:30:10Z",
+                "symbol": "AMD",
+                "payload": {"feature_schema_version": "3.0.0"},
+                "timeframe": "1Sec",
+                "seq": 18723,
+                "source": "ta",
+            },
+            {
+                "event_ts": "2026-03-13T13:30:10Z",
+                "symbol": "AVGO",
+                "payload": {"feature_schema_version": "3.0.0"},
+                "timeframe": "1Sec",
+                "seq": 22894,
+                "source": "ta",
+            },
+        ]
+
+        class CursorIngestor(ClickHouseSignalIngestor):
+            def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
+                _ = query
+                return rows
+
+        ingestor = CursorIngestor(
+            schema="envelope",
+            table="torghut.ta_signals",
+            url="http://example",
+            fast_forward_stale_cursor=False,
+        )
+
+        batch = ingestor._fetch_simulation_signals(
+            cursor_at=datetime(2026, 3, 13, 13, 30, 10, tzinfo=timezone.utc),
+            cursor_seq=22888,
+            cursor_symbol="AAPL",
+            latest_signal_at=datetime(2026, 3, 13, 13, 30, 20, tzinfo=timezone.utc),
+            poll_started_at=datetime(2026, 3, 13, 13, 30, 11, tzinfo=timezone.utc),
+            fast_forwarded=False,
+        )
+
+        self.assertEqual(
+            [(signal.symbol, signal.seq) for signal in batch.signals],
+            [("AMAT", 6651), ("AMD", 18723), ("AVGO", 22894)],
+        )
+        self.assertIsNone(batch.no_signal_reason)
+
     def test_cursor_is_account_scoped(self) -> None:
         engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
         Base.metadata.create_all(engine)
