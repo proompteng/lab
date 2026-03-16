@@ -193,10 +193,14 @@ describe('linear tracker client', () => {
 
       expect(requests).toHaveLength(3)
       expect(requests[0]?.query).toContain('SymphonyIssueTeamStates')
+      expect(requests[0]?.query).toContain('$issueId: String!')
       expect(requests[0]?.variables.issueId).toBe('issue-1')
       expect(requests[1]?.query).toContain('commentCreate')
+      expect(requests[1]?.query).toContain('$issueId: String!')
       expect(requests[1]?.variables.body).toContain('promotion PR is already open')
       expect(requests[2]?.query).toContain('issueUpdate')
+      expect(requests[2]?.query).toContain('$issueId: String!')
+      expect(requests[2]?.query).toContain('$stateId: String!')
       expect(requests[2]?.variables.stateId).toBe('state-backlog')
     } finally {
       await runtime.dispose()
