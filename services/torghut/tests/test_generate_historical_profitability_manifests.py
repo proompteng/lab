@@ -9,6 +9,8 @@ from unittest import TestCase
 import yaml
 
 from scripts.generate_historical_profitability_manifests import (
+    _resolve_model_refs,
+    _trading_session_window_bounds_utc,
     generate_profitability_manifests,
 )
 
@@ -49,13 +51,32 @@ class TestGenerateHistoricalProfitabilityManifests(TestCase):
                     'services/torghut-forecast@sha256:a9c60e5ed5ddd06253e3126d363d4f6c82c1ef4fc5ea809e21c012ee39d438a5',
                 ],
             )
-            self.assertEqual(payload['window']['start'], '2026-03-02T13:30:00Z')
-            self.assertEqual(payload['window']['end'], '2026-03-02T20:00:00Z')
+            self.assertEqual(payload['window']['start'], '2026-03-02T14:30:00Z')
+            self.assertEqual(payload['window']['end'], '2026-03-02T21:00:00Z')
             self.assertEqual(
                 payload['clickhouse']['simulation_database'],
                 'torghut_sim_2026_03_02_full_day_a9c60e5e',
             )
+            self.assertEqual(payload['model_refs'], ['rules/intraday_tsmom_v1'])
 
             index_payload = json.loads((output_dir / 'manifest-index.json').read_text(encoding='utf-8'))
             self.assertEqual(index_payload['schema_version'], 'torghut.historical-profitability-manifest-index.v1')
             self.assertEqual(index_payload['cache_policy'], 'refresh')
+
+    def test_trading_session_bounds_follow_new_york_market_hours(self) -> None:
+        self.assertEqual(
+            _trading_session_window_bounds_utc(trading_day=date(2026, 3, 2)),
+            ('2026-03-02T14:30:00Z', '2026-03-02T21:00:00Z'),
+        )
+        self.assertEqual(
+            _trading_session_window_bounds_utc(trading_day=date(2026, 3, 10)),
+            ('2026-03-10T13:30:00Z', '2026-03-10T20:00:00Z'),
+        )
+
+    def test_model_refs_default_and_override(self) -> None:
+        self.assertEqual(_resolve_model_refs(None), ['rules/intraday_tsmom_v1'])
+        self.assertEqual(_resolve_model_refs([]), ['rules/intraday_tsmom_v1'])
+        self.assertEqual(
+            _resolve_model_refs(['rules/intraday_tsmom_v2']),
+            ['rules/intraday_tsmom_v2'],
+        )
