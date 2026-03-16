@@ -33,7 +33,41 @@ hooks:
     else
       git remote set-url origin https://github.com/proompteng/lab.git
     fi
-    git fetch --depth 1 origin main
+    ISSUE_IDENTIFIER="${SYMPHONY_ISSUE_IDENTIFIER:-}"
+    ISSUE_SLUG=""
+    if [ -n "${ISSUE_IDENTIFIER}" ]; then
+      ISSUE_SLUG="$(printf '%s' "${ISSUE_IDENTIFIER}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g')"
+    fi
+    CURRENT_BRANCH="$(git branch --show-current || true)"
+    ISSUE_BRANCH="${SYMPHONY_ISSUE_BRANCH_NAME:-}"
+    case "${ISSUE_BRANCH}" in
+      codex/*) ;;
+      *) ISSUE_BRANCH="" ;;
+    esac
+    if [ -n "${ISSUE_SLUG}" ]; then
+      case "${CURRENT_BRANCH}" in
+        "codex/${ISSUE_SLUG}"|"codex/${ISSUE_SLUG}-"*|"codex/${ISSUE_SLUG}/"*)
+          ISSUE_BRANCH="${CURRENT_BRANCH}"
+          ;;
+      esac
+      if [ -z "${ISSUE_BRANCH}" ]; then
+        ISSUE_BRANCH="codex/${ISSUE_SLUG}"
+      fi
+    fi
+    if [ -n "${ISSUE_BRANCH}" ]; then
+      git fetch --depth 1 origin main "${ISSUE_BRANCH}" || git fetch --depth 1 origin main
+      if [ "${CURRENT_BRANCH}" != "${ISSUE_BRANCH}" ]; then
+        if git show-ref --verify --quiet "refs/heads/${ISSUE_BRANCH}"; then
+          git checkout "${ISSUE_BRANCH}"
+        elif git ls-remote --exit-code --heads origin "${ISSUE_BRANCH}" >/dev/null 2>&1; then
+          git checkout -b "${ISSUE_BRANCH}" "origin/${ISSUE_BRANCH}"
+        else
+          git checkout -b "${ISSUE_BRANCH}" origin/main
+        fi
+      fi
+    else
+      git fetch --depth 1 origin main
+    fi
     mkdir -p .codex
   after_run: |
     set -euo pipefail

@@ -6,12 +6,12 @@ import { Context, Effect, Layer } from 'effect'
 import * as Duration from 'effect/Duration'
 
 import { ConfigError, WorkspaceError, WorkflowError, toLogError } from './errors'
-import type { WorkspaceInfo } from './types'
+import type { WorkspaceHookContext, WorkspaceInfo } from './types'
 import { ensurePathInsideRoot, sanitizeWorkspaceKey, toAbsolutePath } from './utils'
 import { WorkflowService } from './workflow'
 import type { Logger } from './logger'
 
-const PREP_GARBAGE = ['tmp', '.elixir_ls']
+const PREP_GARBAGE = ['tmp', '.elixir_ls', '.bun-tmp']
 const MAX_HOOK_LOG_BYTES = 4_096
 
 const truncateOutput = (value: string): string =>
@@ -29,6 +29,7 @@ export interface ShellServiceDefinition {
       cwd: string
       timeoutMs: number
       hookName: 'after_create' | 'before_run' | 'after_run' | 'before_remove'
+      env?: Record<string, string>
     },
   ) => Effect.Effect<ShellResult, WorkspaceError>
 }
@@ -39,8 +40,14 @@ export interface WorkspaceServiceDefinition {
   readonly createForIssue: (
     identifier: string,
   ) => Effect.Effect<WorkspaceInfo, WorkflowError | ConfigError | WorkspaceError>
-  readonly runBeforeRun: (workspacePath: string) => Effect.Effect<void, WorkflowError | ConfigError | WorkspaceError>
-  readonly runAfterRun: (workspacePath: string) => Effect.Effect<void, WorkflowError | ConfigError | WorkspaceError>
+  readonly runBeforeRun: (
+    workspacePath: string,
+    context?: WorkspaceHookContext,
+  ) => Effect.Effect<void, WorkflowError | ConfigError | WorkspaceError>
+  readonly runAfterRun: (
+    workspacePath: string,
+    context?: WorkspaceHookContext,
+  ) => Effect.Effect<void, WorkflowError | ConfigError | WorkspaceError>
   readonly removeWorkspace: (identifier: string) => Effect.Effect<void, WorkflowError | ConfigError | WorkspaceError>
 }
 
@@ -73,7 +80,10 @@ export const makeShellLayer = (logger: Logger) =>
           Effect.sync(() =>
             spawn('bash', ['-lc', script], {
               cwd: options.cwd,
-              env: process.env,
+              env: {
+                ...process.env,
+                ...options.env,
+              },
               stdio: ['ignore', 'pipe', 'pipe'],
             }),
           ),
@@ -151,6 +161,18 @@ export const makeShellLayer = (logger: Logger) =>
       ),
   })
 
+const buildHookEnv = (context?: WorkspaceHookContext): Record<string, string> => {
+  const env: Record<string, string> = {}
+
+  if (context?.issueId) env.SYMPHONY_ISSUE_ID = context.issueId
+  if (context?.issueIdentifier) env.SYMPHONY_ISSUE_IDENTIFIER = context.issueIdentifier
+  if (context?.issueBranchName) env.SYMPHONY_ISSUE_BRANCH_NAME = context.issueBranchName
+  if (context?.issueTitle) env.SYMPHONY_ISSUE_TITLE = context.issueTitle
+  if (context?.issueState) env.SYMPHONY_ISSUE_STATE = context.issueState
+
+  return env
+}
+
 export const makeWorkspaceLayer = (logger: Logger) =>
   Layer.effect(
     WorkspaceService,
@@ -165,8 +187,9 @@ export const makeWorkspaceLayer = (logger: Logger) =>
         workspacePath: string,
         timeoutMs: number,
         failOnError: boolean,
+        context?: WorkspaceHookContext,
       ) =>
-        shell.run(script, { cwd: workspacePath, timeoutMs, hookName }).pipe(
+        shell.run(script, { cwd: workspacePath, timeoutMs, hookName, env: buildHookEnv(context) }).pipe(
           Effect.tap(() =>
             Effect.sync(() => {
               workspaceLogger.log('info', 'workspace_hook_completed', {
@@ -246,7 +269,9 @@ export const makeWorkspaceLayer = (logger: Logger) =>
             yield* cleanupEphemeralArtifacts(workspacePath)
 
             if (createdNow && config.hooks.afterCreate) {
-              yield* runHook('after_create', config.hooks.afterCreate, workspacePath, config.hooks.timeoutMs, true)
+              yield* runHook('after_create', config.hooks.afterCreate, workspacePath, config.hooks.timeoutMs, true, {
+                issueIdentifier: identifier,
+              })
             }
 
             return {
@@ -255,19 +280,19 @@ export const makeWorkspaceLayer = (logger: Logger) =>
               createdNow,
             }
           }),
-        runBeforeRun: (workspacePath) =>
+        runBeforeRun: (workspacePath, context) =>
           workflow.config.pipe(
             Effect.flatMap((config) =>
               config.hooks.beforeRun
-                ? runHook('before_run', config.hooks.beforeRun, workspacePath, config.hooks.timeoutMs, true)
+                ? runHook('before_run', config.hooks.beforeRun, workspacePath, config.hooks.timeoutMs, true, context)
                 : Effect.void,
             ),
           ),
-        runAfterRun: (workspacePath) =>
+        runAfterRun: (workspacePath, context) =>
           workflow.config.pipe(
             Effect.flatMap((config) =>
               config.hooks.afterRun
-                ? runHook('after_run', config.hooks.afterRun, workspacePath, config.hooks.timeoutMs, false)
+                ? runHook('after_run', config.hooks.afterRun, workspacePath, config.hooks.timeoutMs, false, context)
                 : Effect.void,
             ),
           ),
@@ -310,7 +335,9 @@ export const makeWorkspaceLayer = (logger: Logger) =>
             }
 
             if (config.hooks.beforeRemove) {
-              yield* runHook('before_remove', config.hooks.beforeRemove, workspacePath, config.hooks.timeoutMs, false)
+              yield* runHook('before_remove', config.hooks.beforeRemove, workspacePath, config.hooks.timeoutMs, false, {
+                issueIdentifier: identifier,
+              })
             }
 
             yield* Effect.tryPromise({

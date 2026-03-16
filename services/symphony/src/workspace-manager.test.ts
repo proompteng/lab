@@ -21,9 +21,10 @@ const makeConfig = (workspaceRoot: string): SymphonyConfig =>
     },
     hooks: {
       afterCreate: 'echo after_create >> ../hooks.log',
-      beforeRun: 'echo before_run >> ../hooks.log',
-      afterRun: 'echo after_run >> ../hooks.log',
-      beforeRemove: 'echo before_remove >> ../hooks.log',
+      beforeRun:
+        'printf "before_run:%s:%s\\n" "${SYMPHONY_ISSUE_IDENTIFIER:-}" "${SYMPHONY_ISSUE_BRANCH_NAME:-}" >> ../hooks.log',
+      afterRun: 'printf "after_run:%s\\n" "${SYMPHONY_ISSUE_STATE:-}" >> ../hooks.log',
+      beforeRemove: 'printf "before_remove:%s\\n" "${SYMPHONY_ISSUE_IDENTIFIER:-}" >> ../hooks.log',
       timeoutMs: 5_000,
     },
   })
@@ -81,14 +82,25 @@ describe('workspace manager', () => {
       await runtime.runPromise(
         Effect.gen(function* () {
           const manager = yield* WorkspaceService
-          yield* manager.runBeforeRun(second.path)
-          yield* manager.runAfterRun(second.path)
+          yield* manager.runBeforeRun(second.path, {
+            issueIdentifier: 'ABC/123',
+            issueBranchName: 'codex/abc-123',
+            issueState: 'In Progress',
+          })
+          yield* manager.runAfterRun(second.path, {
+            issueState: 'In Progress',
+          })
           yield* manager.removeWorkspace('ABC/123')
         }),
       )
 
       const hookLog = readFileSync(path.join(tempDir, 'hooks.log'), 'utf8').trim().split('\n')
-      expect(hookLog).toEqual(['after_create', 'before_run', 'after_run', 'before_remove'])
+      expect(hookLog).toEqual([
+        'after_create',
+        'before_run:ABC/123:codex/abc-123',
+        'after_run:In Progress',
+        'before_remove:ABC/123',
+      ])
     } finally {
       await runtime.dispose()
     }

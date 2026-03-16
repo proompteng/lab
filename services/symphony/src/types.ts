@@ -149,6 +149,14 @@ export type WorkspaceInfo = {
   createdNow: boolean
 }
 
+export type WorkspaceHookContext = {
+  issueId?: string | null
+  issueIdentifier?: string | null
+  issueBranchName?: string | null
+  issueTitle?: string | null
+  issueState?: string | null
+}
+
 export type TokenUsageTotals = {
   inputTokens: number
   outputTokens: number
