@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   buildControlPlaneStatus,
+  buildExecutionTrust,
   type DatabaseStatus as ControlPlaneDatabaseStatus,
 } from '~/server/control-plane-status'
 import type {
@@ -9,6 +10,9 @@ import type {
   ControlPlaneHeartbeatStoreGetInput,
 } from '~/server/control-plane-heartbeat-store'
 import type {
+  ExecutionTrustStage,
+  ExecutionTrustStatus,
+  ExecutionTrustSwarm,
   ControlPlaneWatchReliability,
   DatabaseMigrationConsistency,
   WorkflowsReliabilityStatus,
@@ -280,7 +284,131 @@ describe('control-plane status', () => {
     delete process.env.JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD
     delete process.env.JANGAR_WORKFLOWS_WINDOW_MINUTES
     delete process.env.JANGAR_WORKFLOWS_SWARMS
+    delete process.env.JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_ERRORS
+    delete process.env.JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_RESTARTS
+    delete process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST
+    delete process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST_SUMMARY_LIMIT
+    delete process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST_SWARMS
   })
+
+  const buildExecutionTrustSwarmResource = (
+    options: {
+      metadataGeneration?: number
+      observedGeneration?: number | null
+      phase?: string
+      freezeReason?: string | null
+      freezeUntil?: string | null
+      requirementsPending?: number
+      requirementsLastSeen?: string | null
+      stageStates?: Record<string, Record<string, string | number | boolean>>
+    } = {},
+  ) => ({
+    metadata: {
+      name: 'jangar-control-plane',
+      namespace: 'agents',
+      generation: options.metadataGeneration ?? 1,
+    },
+    status: {
+      observedGeneration: options.observedGeneration ?? 4,
+      phase: options.phase ?? 'Active',
+      freeze: {
+        reason: options.freezeReason ?? null,
+        until: options.freezeUntil ?? null,
+      },
+      requirements: {
+        pending: options.requirementsPending ?? 0,
+      },
+      lastDiscoverAt: options.requirementsLastSeen ?? '2026-01-20T00:00:00Z',
+      lastPlanAt: options.requirementsLastSeen ?? '2026-01-20T00:00:00Z',
+      lastImplementAt: options.requirementsLastSeen ?? '2026-01-20T00:00:00Z',
+      lastVerifyAt: options.requirementsLastSeen ?? '2026-01-20T00:00:00Z',
+      stageStates: {
+        discover: {
+          phase: 'Running',
+          healthy: true,
+          cadence: '1m',
+          lastRunTime: options.requirementsLastSeen ?? '2026-01-20T00:00:00Z',
+          consecutiveFailures: 0,
+        },
+        plan: {
+          phase: 'Running',
+          healthy: true,
+          cadence: '1m',
+          lastRunTime: options.requirementsLastSeen ?? '2026-01-20T00:00:00Z',
+          consecutiveFailures: 0,
+        },
+        implement: {
+          phase: 'Running',
+          healthy: true,
+          cadence: '1m',
+          lastRunTime: options.requirementsLastSeen ?? '2026-01-20T00:00:00Z',
+          consecutiveFailures: 0,
+        },
+        verify: {
+          phase: 'Running',
+          healthy: true,
+          cadence: '1m',
+          lastRunTime: options.requirementsLastSeen ?? '2026-01-20T00:00:00Z',
+          consecutiveFailures: 0,
+        },
+        ...options.stageStates,
+      },
+    },
+  })
+
+  const blockedExecutionTrust: ExecutionTrustStatus = {
+    status: 'blocked',
+    reason: 'execution trust blocked',
+    last_evaluated_at: '2026-01-20T00:20:00Z',
+    blocking_windows: [
+      {
+        type: 'swarms',
+        scope: 'agents',
+        name: 'jangar-control-plane',
+        reason: 'active freeze on jangar-control-plane',
+        class: 'blocked',
+      },
+    ],
+    evidence_summary: ['swarms:agents:jangar-control-plane:active freeze on jangar-control-plane'],
+  }
+
+  const blockedExecutionTrustSwarm: ExecutionTrustSwarm = {
+    name: 'jangar-control-plane',
+    namespace: 'agents',
+    phase: 'Frozen',
+    ready: false,
+    updated_at: '2026-01-20T00:10:00Z',
+    observed_generation: 4,
+    freeze: {
+      reason: 'StageStaleness',
+      until: '2026-01-20T01:00:00Z',
+    },
+    requirements_pending: 2,
+    requirements_pending_class: 'blocked',
+    last_discover_at: '2026-01-20T00:00:00Z',
+    last_plan_at: '2026-01-20T00:00:00Z',
+    last_implement_at: '2026-01-20T00:00:00Z',
+    last_verify_at: '2026-01-20T00:00:00Z',
+  }
+
+  const blockedExecutionTrustStages: ExecutionTrustStage[] = [
+    {
+      swarm: 'jangar-control-plane',
+      namespace: 'agents',
+      stage: 'discover',
+      phase: 'Frozen',
+      last_run_at: '2026-01-20T00:00:00Z',
+      next_expected_at: '2026-01-20T00:01:00Z',
+      configured_every_ms: 60000,
+      age_ms: 1200000,
+      stale_after_ms: 120000,
+      stale: true,
+      recent_failed_jobs: 0,
+      recent_backoff_limit_exceeded_jobs: 0,
+      last_failure_reason: 'discover blocked by swarm freeze',
+      data_confidence: 'high',
+    },
+  ]
 
   it('returns healthy summary when components are healthy', async () => {
     setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
@@ -560,7 +688,7 @@ describe('control-plane status', () => {
     )
   })
 
-  it('keeps empirical degradations observable without delaying dependency quorum', async () => {
+  it('blocks rollout quorum when empirical jobs are degraded', async () => {
     setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
 
     const status = await buildControlPlaneStatus(
@@ -610,9 +738,9 @@ describe('control-plane status', () => {
     )
 
     expect(status.dependency_quorum).toMatchObject({
-      decision: 'allow',
-      reasons: [],
-      message: 'Control-plane admission dependencies are healthy.',
+      decision: 'block',
+      reasons: ['empirical_jobs_degraded'],
+      message: 'Control-plane dependency quorum is blocked.',
     })
     expect(status.namespaces[0]?.status).toBe('degraded')
     expect(status.namespaces[0]?.degraded_components ?? []).toContain('empirical:forecast')
@@ -624,6 +752,188 @@ describe('control-plane status', () => {
       status: 'degraded',
       stale_jobs: ['benchmark_parity'],
     })
+  })
+
+  it('blocks rollout quorum when watch reliability exceeds block thresholds', async () => {
+    process.env.JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_ERRORS = '2'
+    process.env.JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_RESTARTS = '2'
+    setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
+
+    const status = await buildControlPlaneStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:20:00Z'),
+        getHeartbeat: createHeartbeatResolver(),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () =>
+          buildTemporalAdapter({
+            message: 'temporal configuration resolved',
+          }),
+        checkDatabase: async () => ({
+          ...buildDatabaseStatus({
+            latency_ms: 1,
+          }),
+        }),
+        getWatchReliabilitySummary: () => ({
+          ...watchReliabilityDegraded,
+          total_errors: 3,
+          total_restarts: 3,
+          streams: [
+            {
+              resource: 'agents',
+              namespace: 'agents',
+              events: 2,
+              errors: 3,
+              restarts: 3,
+              last_seen_at: '2026-01-20T00:20:00Z',
+            },
+            {
+              resource: 'agentruns',
+              namespace: 'agents',
+              events: 1,
+              errors: 0,
+              restarts: 0,
+              last_seen_at: '2026-01-20T00:20:00Z',
+            },
+          ],
+        }),
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+        resolveEmpiricalServices: async () => ({
+          forecast: {
+            status: 'healthy',
+            endpoint: 'http://torghut-forecast/readyz',
+            message: 'forecast service ready',
+            authoritative: true,
+            calibration_status: 'ready',
+            eligible_models: ['chronos'],
+          },
+          lean: {
+            status: 'healthy',
+            endpoint: 'http://torghut-lean-runner/readyz',
+            message: 'LEAN runner ready',
+            authoritative: true,
+            authoritative_modes: ['research_backtest'],
+          },
+          jobs: {
+            status: 'healthy',
+            endpoint: 'http://torghut/trading/empirical-jobs',
+            message: 'empirical jobs fresh',
+            authoritative: true,
+            eligible_jobs: ['benchmark_parity', 'foundation_router_parity'],
+            stale_jobs: [],
+          },
+        }),
+      },
+    )
+
+    expect(status.dependency_quorum).toMatchObject({
+      decision: 'block',
+      reasons: ['watch_reliability_blocked'],
+      message: 'Control-plane dependency quorum is blocked.',
+    })
+    expect(status.namespaces[0]?.degraded_components ?? []).toContain('watch_reliability')
+    expect(status.watch_reliability.status).toBe('degraded')
+  })
+
+  it('delays rollout when watch reliability is degraded but below block thresholds', async () => {
+    process.env.JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_ERRORS = '10'
+    process.env.JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_RESTARTS = '10'
+    setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
+
+    const status = await buildControlPlaneStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:20:00Z'),
+        getHeartbeat: createHeartbeatResolver(),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () =>
+          buildTemporalAdapter({
+            message: 'temporal configuration resolved',
+          }),
+        checkDatabase: async () => ({
+          ...buildDatabaseStatus({
+            latency_ms: 1,
+          }),
+        }),
+        getWatchReliabilitySummary: () => ({
+          ...watchReliabilityDegraded,
+          total_errors: 3,
+          total_restarts: 3,
+          streams: [
+            {
+              resource: 'agents',
+              namespace: 'agents',
+              events: 2,
+              errors: 3,
+              restarts: 3,
+              last_seen_at: '2026-01-20T00:20:00Z',
+            },
+            {
+              resource: 'agentruns',
+              namespace: 'agents',
+              events: 1,
+              errors: 0,
+              restarts: 0,
+              last_seen_at: '2026-01-20T00:20:00Z',
+            },
+          ],
+        }),
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+        resolveEmpiricalServices: async () => ({
+          forecast: {
+            status: 'healthy',
+            endpoint: 'http://torghut-forecast/readyz',
+            message: 'forecast service ready',
+            authoritative: true,
+            calibration_status: 'ready',
+            eligible_models: ['chronos'],
+          },
+          lean: {
+            status: 'healthy',
+            endpoint: 'http://torghut-lean-runner/readyz',
+            message: 'LEAN runner ready',
+            authoritative: true,
+            authoritative_modes: ['research_backtest'],
+          },
+          jobs: {
+            status: 'healthy',
+            endpoint: 'http://torghut/trading/empirical-jobs',
+            message: 'empirical jobs fresh',
+            authoritative: true,
+            eligible_jobs: ['benchmark_parity', 'foundation_router_parity'],
+            stale_jobs: [],
+          },
+        }),
+      },
+    )
+
+    expect(status.dependency_quorum).toMatchObject({
+      decision: 'delay',
+      reasons: ['watch_reliability_degraded'],
+      message: 'Control-plane dependency quorum is degraded; delay capital promotion.',
+    })
+    expect(status.namespaces[0]?.degraded_components ?? []).toContain('watch_reliability')
+    expect(status.watch_reliability.status).toBe('degraded')
   })
 
   it('marks workflows as degraded when backoff count crosses warning threshold', async () => {
@@ -1116,5 +1426,262 @@ describe('control-plane status', () => {
     expect(status.dependency_quorum.reasons).toContain('workflow_runtime_status_unknown')
     expect(status.dependency_quorum.reasons).not.toContain('agents_controller_unavailable')
     expect(status.dependency_quorum.degradation_scope).toBe('global')
+  })
+
+  it('buildExecutionTrust marks blocked trust when a tracked swarm has an active freeze', async () => {
+    kubeClientMocks.createKubernetesClient.mockReturnValue({
+      list: vi.fn(async () => ({
+        items: [
+          buildExecutionTrustSwarmResource({
+            phase: 'Frozen',
+            freezeReason: 'StageStaleness',
+            freezeUntil: '2026-01-20T00:40:00Z',
+            requirementsPending: 2,
+            requirementsLastSeen: '2026-01-20T00:00:00Z',
+            stageStates: {
+              discover: {
+                phase: 'Frozen',
+                healthy: false,
+                cadence: '1m',
+                lastRunTime: '2026-01-20T00:00:00Z',
+                consecutiveFailures: 1,
+              },
+              plan: {
+                phase: 'Running',
+                healthy: false,
+                cadence: '1m',
+                lastRunTime: '2026-01-20T00:00:00Z',
+                consecutiveFailures: 1,
+              },
+            },
+          }),
+        ],
+      })),
+    })
+
+    const snapshot = await buildExecutionTrust({
+      namespace: 'agents',
+      now: new Date('2026-01-20T00:20:00Z'),
+      swarms: ['jangar-control-plane'],
+      summaryLimit: 20,
+    })
+
+    expect(snapshot.executionTrust.status).toBe('blocked')
+    expect(snapshot.executionTrust.blocking_windows.some((window) => window.class === 'blocked')).toBe(true)
+    expect(snapshot.executionTrust.reason).toContain('execution trust blocked')
+    expect(snapshot.swarms).toHaveLength(1)
+    expect(snapshot.swarms[0]?.freeze).toMatchObject({
+      reason: 'StageStaleness',
+    })
+    expect(snapshot.stages).toHaveLength(4)
+    expect(snapshot.stages.some((stage) => stage.phase === 'Frozen')).toBe(true)
+  })
+
+  it('buildExecutionTrust marks degraded trust when requirements and stages are unhealthy', async () => {
+    kubeClientMocks.createKubernetesClient.mockReturnValue({
+      list: vi.fn(async () => ({
+        items: [
+          buildExecutionTrustSwarmResource({
+            phase: 'Active',
+            requirementsPending: 1,
+            requirementsLastSeen: '2026-01-20T00:00:00Z',
+            stageStates: {
+              discover: {
+                phase: 'Running',
+                healthy: true,
+                cadence: '1h',
+                lastRunTime: '2026-01-20T00:00:00Z',
+                consecutiveFailures: 0,
+              },
+              plan: {
+                phase: 'Running',
+                healthy: false,
+                cadence: '1h',
+                lastRunTime: '2026-01-20T00:00:00Z',
+                consecutiveFailures: 0,
+              },
+              implement: {
+                phase: 'Running',
+                healthy: true,
+                cadence: '1h',
+                lastRunTime: '2026-01-20T00:00:00Z',
+                consecutiveFailures: 3,
+              },
+              verify: {
+                phase: 'Running',
+                healthy: true,
+                cadence: '1h',
+                lastRunTime: '2026-01-20T00:00:00Z',
+                consecutiveFailures: 0,
+              },
+            },
+          }),
+        ],
+      })),
+    })
+
+    const snapshot = await buildExecutionTrust({
+      namespace: 'agents',
+      now: new Date('2026-01-20T00:20:00Z'),
+      swarms: ['jangar-control-plane'],
+      summaryLimit: 20,
+    })
+
+    expect(snapshot.executionTrust.status).toBe('degraded')
+    expect(snapshot.executionTrust.blocking_windows.some((window) => window.class === 'degraded')).toBe(true)
+    expect(snapshot.executionTrust.blocking_windows.some((window) => window.class === 'blocked')).toBe(false)
+    expect(snapshot.swarms).toHaveLength(1)
+    expect(snapshot.stages).toHaveLength(4)
+  })
+
+  it('buildExecutionTrust prefers status observed generation over metadata generation', async () => {
+    kubeClientMocks.createKubernetesClient.mockReturnValue({
+      list: vi.fn(async () => ({
+        items: [
+          buildExecutionTrustSwarmResource({
+            metadataGeneration: 9,
+            observedGeneration: 4,
+          }),
+        ],
+      })),
+    })
+
+    const snapshot = await buildExecutionTrust({
+      namespace: 'agents',
+      now: new Date('2026-01-20T00:20:00Z'),
+      swarms: ['jangar-control-plane'],
+      summaryLimit: 20,
+    })
+
+    expect(snapshot.swarms[0]?.observed_generation).toBe(4)
+  })
+
+  it('omits execution trust fields from status when flag is disabled', async () => {
+    setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
+
+    const status = await buildControlPlaneStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:00:00Z'),
+        getHeartbeat: createHeartbeatResolver(),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => buildTemporalAdapter(),
+        checkDatabase: async () => buildDatabaseStatus(),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+        resolveEmpiricalServices: async () => ({
+          forecast: {
+            status: 'healthy',
+            endpoint: 'http://torghut-forecast/readyz',
+            message: 'forecast service ready',
+            authoritative: true,
+            calibration_status: 'ready',
+            eligible_models: ['chronos'],
+          },
+          lean: {
+            status: 'healthy',
+            endpoint: 'http://torghut-lean-runner/readyz',
+            message: 'LEAN runner ready',
+            authoritative: true,
+            authoritative_modes: ['research_backtest'],
+          },
+          jobs: {
+            status: 'healthy',
+            endpoint: 'http://torghut/trading/empirical-jobs',
+            message: 'empirical jobs fresh',
+            authoritative: true,
+            eligible_jobs: ['benchmark_parity', 'foundation_router_parity'],
+            stale_jobs: [],
+          },
+        }),
+      },
+    )
+
+    expect(status.execution_trust).toBeUndefined()
+    expect(status.swarms).toBeUndefined()
+    expect(status.stages).toBeUndefined()
+    expect(status.dependency_quorum).toMatchObject({
+      decision: 'allow',
+      reasons: [],
+      message: 'Control-plane admission dependencies are healthy.',
+    })
+  })
+
+  it('adds execution trust to quorum and blocks on enabled blocked trust', async () => {
+    process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST = 'true'
+    setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
+
+    const status = await buildControlPlaneStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:20:00Z'),
+        getHeartbeat: createHeartbeatResolver(),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => buildTemporalAdapter(),
+        checkDatabase: async () => buildDatabaseStatus(),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+        resolveEmpiricalServices: async () => ({
+          forecast: {
+            status: 'healthy',
+            endpoint: 'http://torghut-forecast/readyz',
+            message: 'forecast service ready',
+            authoritative: true,
+            calibration_status: 'ready',
+            eligible_models: ['chronos'],
+          },
+          lean: {
+            status: 'healthy',
+            endpoint: 'http://torghut-lean-runner/readyz',
+            message: 'LEAN runner ready',
+            authoritative: true,
+            authoritative_modes: ['research_backtest'],
+          },
+          jobs: {
+            status: 'healthy',
+            endpoint: 'http://torghut/trading/empirical-jobs',
+            message: 'empirical jobs fresh',
+            authoritative: true,
+            eligible_jobs: ['benchmark_parity', 'foundation_router_parity'],
+            stale_jobs: [],
+          },
+        }),
+        resolveExecutionTrust: async () => ({
+          executionTrust: blockedExecutionTrust,
+          swarms: [blockedExecutionTrustSwarm],
+          stages: blockedExecutionTrustStages,
+        }),
+      },
+    )
+
+    expect(status.execution_trust).toMatchObject(blockedExecutionTrust)
+    expect(status.swarms).toEqual([blockedExecutionTrustSwarm])
+    expect(status.stages).toEqual(blockedExecutionTrustStages)
+    expect(status.dependency_quorum).toMatchObject({
+      decision: 'block',
+      reasons: ['execution_trust_blocked'],
+      message: 'Control-plane dependency quorum is blocked.',
+    })
+    expect(status.namespaces[0]?.degraded_components ?? []).toContain('execution_trust')
   })
 })

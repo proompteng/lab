@@ -17,14 +17,27 @@ const supportingControllerMocks = vi.hoisted(() => ({
   getSupportingControllerHealth: vi.fn(),
 }))
 
+const controlPlaneStatusMocks = vi.hoisted(() => ({
+  buildExecutionTrust: vi.fn(),
+}))
+
 vi.mock('~/server/agents-controller', () => agentsControllerMocks)
 vi.mock('~/server/leader-election', () => leaderElectionMocks)
 vi.mock('~/server/orchestration-controller', () => orchestrationControllerMocks)
 vi.mock('~/server/supporting-primitives-controller', () => supportingControllerMocks)
+vi.mock('~/server/control-plane-status', async () => {
+  const actual = await vi.importActual<typeof import('~/server/control-plane-status')>('~/server/control-plane-status')
+  return {
+    ...actual,
+    buildExecutionTrust: controlPlaneStatusMocks.buildExecutionTrust,
+  }
+})
 
 describe('getReadyHandler', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    controlPlaneStatusMocks.buildExecutionTrust.mockReset()
+    delete process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST
 
     agentsControllerMocks.getAgentsControllerHealth.mockReturnValue({
       enabled: true,
@@ -150,5 +163,154 @@ describe('getReadyHandler', () => {
     expect(response.status).toBe(503)
     const body = await response.json()
     expect(body.status).toBe('degraded')
+  })
+
+  it('returns 200 when execution trust is healthy and enabled', async () => {
+    process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST = 'true'
+    controlPlaneStatusMocks.buildExecutionTrust.mockResolvedValue({
+      executionTrust: {
+        status: 'healthy',
+        reason: 'execution trust is healthy.',
+        last_evaluated_at: '2026-03-08T21:00:00Z',
+        blocking_windows: [],
+        evidence_summary: [],
+      },
+      swarms: [],
+      stages: [],
+    })
+
+    const { getReadyHandler } = await import('./ready')
+
+    const response = await getReadyHandler()
+
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body.status).toBe('ok')
+    expect(body.execution_trust).toMatchObject({
+      status: 'healthy',
+    })
+  })
+
+  it('returns 503 when execution trust is blocked', async () => {
+    process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST = 'true'
+    controlPlaneStatusMocks.buildExecutionTrust.mockResolvedValue({
+      executionTrust: {
+        status: 'blocked',
+        reason: 'execution trust blocked by stage staleness',
+        last_evaluated_at: '2026-03-08T21:00:00Z',
+        blocking_windows: [
+          {
+            type: 'swarms',
+            scope: 'agents',
+            name: 'jangar-control-plane',
+            reason: 'requirements stalled',
+            class: 'blocked',
+          },
+        ],
+        evidence_summary: ['execution trust blocked'],
+      },
+      swarms: [],
+      stages: [],
+    })
+
+    const { getReadyHandler } = await import('./ready')
+
+    const response = await getReadyHandler()
+
+    expect(response.status).toBe(503)
+    const body = await response.json()
+    expect(body.status).toBe('degraded')
+    expect(body.execution_trust).toMatchObject({
+      status: 'blocked',
+    })
+  })
+
+  it('returns 503 when any watched namespace reports blocked execution trust', async () => {
+    process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST = 'true'
+    agentsControllerMocks.getAgentsControllerHealth.mockReturnValue({
+      enabled: true,
+      started: true,
+      namespaces: ['agents', 'staging'],
+      crdsReady: true,
+      missingCrds: [],
+      lastCheckedAt: '2026-03-08T21:00:00Z',
+      agentRunIngestion: [],
+    })
+    controlPlaneStatusMocks.buildExecutionTrust
+      .mockResolvedValueOnce({
+        executionTrust: {
+          status: 'healthy',
+          reason: 'execution trust is healthy.',
+          last_evaluated_at: '2026-03-08T21:00:00Z',
+          blocking_windows: [],
+          evidence_summary: [],
+        },
+        swarms: [],
+        stages: [],
+      })
+      .mockResolvedValueOnce({
+        executionTrust: {
+          status: 'blocked',
+          reason: 'execution trust blocked by stage staleness',
+          last_evaluated_at: '2026-03-08T21:00:00Z',
+          blocking_windows: [
+            {
+              type: 'swarms',
+              scope: 'staging',
+              name: 'torghut-quant',
+              reason: 'requirements stalled',
+              class: 'blocked',
+            },
+          ],
+          evidence_summary: ['execution trust blocked'],
+        },
+        swarms: [],
+        stages: [],
+      })
+
+    const { getReadyHandler } = await import('./ready')
+
+    const response = await getReadyHandler()
+
+    expect(response.status).toBe(503)
+    expect(controlPlaneStatusMocks.buildExecutionTrust).toHaveBeenCalledTimes(2)
+    expect(controlPlaneStatusMocks.buildExecutionTrust).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        namespace: 'agents',
+      }),
+    )
+    expect(controlPlaneStatusMocks.buildExecutionTrust).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        namespace: 'staging',
+      }),
+    )
+    const body = await response.json()
+    expect(body.status).toBe('degraded')
+    expect(body.execution_trust).toMatchObject({
+      status: 'blocked',
+    })
+    expect(body.execution_trust.reason).toContain('2 namespaces')
+    expect(body.execution_trust.blocking_windows).toEqual([
+      expect.objectContaining({
+        scope: 'staging',
+        class: 'blocked',
+      }),
+    ])
+  })
+
+  it('skips execution trust check when the feature flag is disabled', async () => {
+    process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST = '0'
+
+    const { getReadyHandler } = await import('./ready')
+
+    const response = await getReadyHandler()
+
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body.status).toBe('ok')
+    expect(body.execution_trust).toBeUndefined()
+    expect(controlPlaneStatusMocks.buildExecutionTrust).not.toHaveBeenCalled()
   })
 })
