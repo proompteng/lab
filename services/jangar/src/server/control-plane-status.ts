@@ -1770,6 +1770,7 @@ const buildDependencyQuorum = (input: {
   watchReliability: ControlPlaneWatchReliabilitySummary
   workflows: WorkflowsReliabilityStatus
   rolloutHealth: ControlPlaneRolloutHealth
+  empiricalServices: EmpiricalServicesStatus
   now: Date
   warningBackoffThreshold: number
   degradedBackoffThreshold: number
@@ -2150,6 +2151,7 @@ export const buildControlPlaneStatus = async (
     controllers: effectiveControllers,
     runtimeAdapters: effectiveRuntimeAdapters,
     database,
+    empiricalServices,
     watchReliability,
     workflows,
     rolloutHealth,

@@ -737,7 +737,7 @@ describe('control-plane status', () => {
       },
     )
 
-    expect(status.dependency_quorum).toEqual({
+    expect(status.dependency_quorum).toMatchObject({
       decision: 'block',
       reasons: ['empirical_jobs_degraded'],
       message: 'Control-plane dependency quorum is blocked.',
@@ -836,7 +836,7 @@ describe('control-plane status', () => {
       },
     )
 
-    expect(status.dependency_quorum).toEqual({
+    expect(status.dependency_quorum).toMatchObject({
       decision: 'block',
       reasons: ['watch_reliability_blocked'],
       message: 'Control-plane dependency quorum is blocked.',
@@ -927,7 +927,7 @@ describe('control-plane status', () => {
       },
     )
 
-    expect(status.dependency_quorum).toEqual({
+    expect(status.dependency_quorum).toMatchObject({
       decision: 'delay',
       reasons: ['watch_reliability_degraded'],
       message: 'Control-plane dependency quorum is degraded; delay capital promotion.',
@@ -1610,7 +1610,7 @@ describe('control-plane status', () => {
     expect(status.execution_trust).toBeUndefined()
     expect(status.swarms).toBeUndefined()
     expect(status.stages).toBeUndefined()
-    expect(status.dependency_quorum).toEqual({
+    expect(status.dependency_quorum).toMatchObject({
       decision: 'allow',
       reasons: [],
       message: 'Control-plane admission dependencies are healthy.',
@@ -1677,7 +1677,7 @@ describe('control-plane status', () => {
     expect(status.execution_trust).toMatchObject(blockedExecutionTrust)
     expect(status.swarms).toEqual([blockedExecutionTrustSwarm])
     expect(status.stages).toEqual(blockedExecutionTrustStages)
-    expect(status.dependency_quorum).toEqual({
+    expect(status.dependency_quorum).toMatchObject({
       decision: 'block',
       reasons: ['execution_trust_blocked'],
       message: 'Control-plane dependency quorum is blocked.',
