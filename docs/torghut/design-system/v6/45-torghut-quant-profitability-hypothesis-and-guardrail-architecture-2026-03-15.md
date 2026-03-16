@@ -1,203 +1,194 @@
-# Torghut quant profitability architecture and guardrail contract (2026-03-15)
+# Torghut quant profitability architecture and guardrail contract (2026-03-16)
 
-## Problem
+## Objective and success criteria
 
-Current evidence suggests the system can execute strategy candidates but has uneven measurable profitability outcomes across regimes, while fallback-heavy observability can delay confidence in lane-level capital allocation. We need architecture changes that prioritize statistically defensible alpha, explicit risk budgets, and guardrails that prevent unbounded loss concentration.
+Primary objective
 
-Key risk indicators from runtime evidence include:
+- Increase measurable profitability without increasing tail risk.
+- Convert hypothesis progression into a hypothesis-evidence-and-budget contract with machine-readable proofs.
+- Keep strategy risk bounded during mixed market and mixed signal regimes.
 
-- cluster-level scheduling and template failures in discover/plan surfaces,
-- stale market context observations and mixed-quality metric paths,
-- dependence on a limited set of global progression heuristics with weak per-hypothesis capital governance.
+Success criteria
 
-## Baseline and source evidence
+- Canary expectancy must be positive on 3 consecutive evidence windows before any live capital increase.
+- Scale-up is blocked when continuity, freshness, or drawdown controls fail.
+- Reduce time-to-decline after evidence deterioration to under 30 minutes.
+- Increase percentage of hypotheses with complete evidence artifacts by at least 20% in one quarter cycle.
 
-- Hypothesis runtime contract is already defined:
-  - `services/torghut/app/trading/hypotheses.py`
-- Existing research and metric structures support lifecycle gating:
-  - `services/torghut/app/models/entities.py`
-  - `services/torghut/app/trading/models.py`
-  - `services/torghut/app/trading/strategy_runtime.py`
-- Profitability signal assembly uses freshness- and status-aware metrics:
-  - `services/jangar/src/server/torghut-quant-metrics.ts`
-- Current governance docs establish progression concepts:
-  - `docs/torghut/design-system/v6/40-decision-profitability-circuit-and-evidenced-capital-allocation-2026-03-15.md`
-  - `docs/torghut/design-system/v6/41-profitability-hypothesis-and-guardrail-contract-2026-03-15.md`
+## Evidence snapshot (as of 2026-03-16)
 
-## Architecture goals
+### Cluster and rollout evidence
 
-1. Define a measurable profitability ladder with explicit statistical gates per hypothesis.
-2. Add multi-lane capital governance with hard caps and kill thresholds.
-3. Improve freshness and consistency checks so stale hypotheses do not receive live capital.
-4. Reduce hypothesis promotion latency while keeping loss control strict.
+- Torghut sim/test lanes continue to show rollout friction (`Unhealthy` startup/readiness, probe 503, and job exceptions) during rapid revision churn.
+- `torghut-ta-sim` shows periodic `flink` task failures and JDBC write failures in event stream history.
+- Restore jobs report `ErrorNoBackup` in `torghut-db-restore`, confirming backup lineage is a practical continuity risk for empirical evidence generation.
 
-## Alternatives considered
+### Source assessment
 
-### Alternative A: Keep existing gating model and only harden telemetry checks
+- The core hypothesis contract is present in `services/torghut/app/trading/hypotheses.py` but admission controls still need more explicit capital routing signals.
+- Evidence and state surfaces exist in `services/torghut/app/main.py` (`/trading/status`, `/trading/empirical-jobs`, `/db-check`) and can absorb richer contract fields without broad schema churn.
+- `services/jangar/src/server/torghut-quant-metrics.ts` already computes freshness and status counters but does not yet enforce per-hypothesis capital deallocation semantics.
 
-Pros:
+### Database / data consistency evidence
 
-- Minimal code changes.
-- Fewer contract changes.
+- Data-quality gates are still partially process-derived; full cluster-side checks for evidence continuity are not yet enforced before transitions.
+- Missing `db-check` continuity in some promotion contexts means stale data can survive longer than intended.
 
-Cons:
+## Architecture alternatives
 
-- Leaves capital allocation centralized and less adaptive.
-- Limited control over regime-level concentration risk.
-- Hard to prove profitability improvements with low variance.
+### Alternative A: Keep fixed global promotion gates and only add dashboards
 
-### Alternative B: Static capital buckets + periodic manual review only
+Pros
 
-Pros:
+- Easy rollout.
+- Lower schema coupling.
 
-- Deterministic and easy to audit.
+Cons
 
-Cons:
+- Fails to handle regime and symbol-specific decay.
+- Promotes hypotheses with uneven evidence under aggregate windows.
 
-- Slow response to changing market regimes.
-- Over-reliance on operator intervention.
-- Does not scale with model count growth.
+### Alternative B: Static capital slices with manual review only
 
-### Alternative C: Dynamic profitability mesh with evidence-budgeted capital routing (chosen)
+Pros
 
-Pros:
+- Predictable and easy to audit.
+- Minimal code impact.
 
-- Capital can be moved by objective evidence quality and recent realized performance.
-- Supports both aggressive and conservative lanes with explicit budgets.
-- Enables automatic deallocation on degradation.
+Cons
 
-Cons:
+- Slow reaction to drawdown or concept drift.
+- No automatic deallocation from evidence decay.
 
-- More state and metric coupling.
-- Requires stronger schema and test coverage in `services/torghut`.
+### Alternative C: Evidence-budgeted profitability mesh with explicit kill/degrade transitions (chosen)
 
-### Alternative D: Full replacement of the hypothesis model with external brokered routing
+Pros
 
-Pros:
+- Allocates capital by objective evidence quality and risk profile.
+- Handles mixed regime behavior with explicit budgets and anti-concentration controls.
+- Enables automatic deallocation with reproducible reasons.
 
-- Maximum abstraction and potential external ML governance.
+Cons
 
-Cons:
+- More state and tests required.
+- Operational teams must tune gate thresholds over first two cycles.
 
-- Migration risk.
-- Long implementation horizon.
-- Unnecessary complexity for current maturity.
+### Alternative D: Replace current hypothesis stack with external allocation engine
+
+Pros
+
+- Potentially cleaner abstraction.
+
+Cons
+
+- Significant migration cost and integration risk during discovery stage.
 
 ## Decision
 
-Choose Alternative C: a **Profitability Mesh** with explicit hypothesis-to-capital contracts and hard guardrails.
+Choose Alternative C.
 
-The chosen design introduces:
+Implement explicit, machine-readable hypothesis and budget contracts with conservative defaults, staged transitions, and automatic downgrade behavior.
 
-- Lane contracts as first-class governance objects.
-- Dynamic capital fractions by regime + evidence score.
-- Strict deallocation and rollback triggers for stale/negative evidence.
+## Architecture design
 
-## Core design
+### 1) Hypothesis lifecycle contract
 
-### 1) Three-layer profitability ladder
+Each hypothesis must move through:
 
-Each hypothesis follows:
+- `shadow` (no live capital)
+- `canary` (bounded capital cap)
+- `live` (controlled capital bucket)
+- `degrade` (forced reduction)
 
-1. Shadow lane (no capital).
-2. Canary lane (bounded fractional capital).
-3. Scaled live lane (performance-adjusted exposure).
+Transition condition bundle:
 
-Transitions require:
+- `sample_count`, `expectancy_rolling`, `evidence_continuity_ratio`, `freshness_sla`, and `drawdown_guard`.
+- `manifest_fingerprint` and `feature_fingerprint` must match for repeated transitions.
 
-- minimum completed sample threshold,
-- minimum signal quality score,
-- bounded freshness SLA,
-- and minimum evidence continuity for the last N executions.
+### 2) Profitability mesh and capital budgets
 
-### 2) Quantified hypothesis admission rules
+Introduce budget controls per regime and hypothesis family:
 
-- `min_sample_count_for_live_canary` and `min_sample_count_for_scale_up` remain required in manifest.
-- New explicit thresholds:
-  - minimum positive expectancy over 20 rolling intervals,
-  - maximum rolling drawdown floor per regime,
-  - minimum trade quality score from execution telemetry.
-- Confidence decay after freshness breaches to reduce risk.
+- global max live capital percent,
+- per-hypothesis max percent,
+- per-regime max concentration,
+- max symbol overlap,
+- kill-switch on two consecutive negative evidence checkpoints.
 
-### 3) Guardrail budget model
+Lane defaults (starter values to be tuned in plan stage):
 
-- Per-strategy and per-regime risk budgets expressed in bps.
-- Hard global budget ceilings:
-  - max active capital percent,
-  - max concentration by regime,
-  - max open-symbol overlap.
-- Deallocation guard:
-  - automatic downgrade to `shadow` when drawdown or freshness breaches persist across two checkpoints.
+- shadow: 0%
+- canary: up to 15% of live budget with hard cap per hypothesis
+- live: up to remaining budget with active anti-concentration constraints
 
-### 4) Hypothesis evidence ledger
+### 3) Evidence continuity and freshness
 
-- Persist measurable state:
-  - lifecycle, evidence continuity, feature drift checks, and gate outcomes.
-- Link gate outcomes to manifest revision and feature spec hash to avoid blind reuse.
-- Require evidence continuity checks in both canary and live scale transitions.
+A hypothesis cannot scale if any of these fail:
 
-## Success metrics
+- missing evidence for last N runs,
+- stale ta-feature lineage beyond threshold,
+- missing execution manifests,
+- confidence drop without recovery in two windows.
 
-- Primary hypotheses:
-  - Hypothesis canary net expectancy improvement: `>0` over baseline strategy for 3 straight windows.
-  - Drawdown control: rolling 95p intraday drawdown below configured cap.
-  - Latency: 95p decision-to-execution time under guardrail threshold after rollout.
-  - Data freshness compliance: ta_signals and market context freshness violations under 1% of windows.
-- Profitability guardrail goals:
-  - reduce late-stage kill latency by 30% versus current manual path,
-  - increase number of hypotheses with complete evidence artifacts by 25% in one cycle.
+Degrade action rules:
 
-## Rollout plan
+- first breach: downgrade from live to canary,
+- second consecutive breach: force shadow,
+- third breach: maintain shadow and emit explicit `kill` advisory.
 
-1. Phase A (Discover artifact): publish contracts and hypothesis mapping for implementation stage.
-2. Phase B (Discover/Plan handoff): implement schema + validation tests for:
-   - evidence continuity,
-   - freshness continuity,
-   - guardrail budget checks.
-3. Phase C (Staged pilot): enable profitability mesh in torghut shadow/limited canary.
-4. Phase D: expand to scaled live under controlled capital budgets.
+### 4) Guardrail model
 
-## Rollback and failure behavior
+Add explicit reasons and counters in status contract:
 
-- On metric inversion (expectancy or freshness failure), auto-degrade exposure lane by one level immediately.
-- If evidence continuity remains degraded over two checkpoints:
-  - auto-halt scaling,
-  - force `shadow` state,
-  - emit explicit rollback reason referencing gate IDs and metric names.
-- All downgrades are logged for manual replay and post-mortem reproducibility.
+- `rule` (`expectancy`, `freshness`, `concentration`, `overlap`, `drawdown`),
+- `value` and `threshold`,
+- `evidence_windows` used,
+- `next_check_at`,
+- `action_taken` (`downgrade`, `pause`, `halt_scale`).
 
-## Deployment dependencies
+## Test and validation model
 
-- `services/torghut/app/trading/hypotheses.py`: manifest schema extensions and admission policy.
-- `services/torghut/app/models/entities.py`: governance/ledger indexing support if needed for budget tracking.
-- `services/jangar/src/server/torghut-quant-runtime.ts`: control-plane decisions should respect lane contract outputs.
-- `services/jangar/src/server/torghut-quant-metrics.ts`: quality scoring should classify stale metrics as risk blockers.
-- New/updated tests:
-  - hypothesis schema strictness,
-  - profitability ladder transitions,
-  - guardrail enforcement and rollback trigger tests.
+### Required regression tests
 
-## Risks and assumptions
+Engineering will add tests for:
 
-- Assumption: regime and market-feature tagging quality remains sufficient for per-regime budgeting.
-- Risk: over-concentration in high-performing hypotheses without anti-correlation checks.
-  - Mitigation: enforce overlap caps and concentration thresholds.
-- Risk: test data drift from execution sources.
-  - Mitigation: explicit continuity constraints and freshness windows before scaling.
-- Risk: operational skepticism from frequent lane downgrades during early rollout.
-  - Mitigation: publish gate thresholds and allow staged confidence windows.
+- hypothesis transition ladder under mixed signal drift,
+- concentration and overlap budget caps,
+- continuous evidence decay and auto-degrade,
+- no-regression scenario where unchanged hypothesis stays live when all windows pass.
 
-## Handoff to implementation/deployer
+### Operational gates
 
-Engineering must implement:
+- Discovery evidence gate: full assessment artifacts included in PR description and signed with concrete acceptance steps.
+- Stage handoff gate: engineer must show evidence of transition tests and status contract fields.
+- Production pilot gate: one canary hypothesis completes 3 evidence windows at canary level with no kill triggers.
 
-- contract fields,
-- policy evaluator,
-- guardrail budget checks,
-- lane downgrade automation and evidence ledger.
+## Rollout and rollback contract
 
-Deployer must ensure:
+Rollout phases
 
-- canary + staged rollout of contract changes in `agents` and `torghut`,
-- metrics dashboards for gate transitions,
-- rollback switches for auto-degrade behavior.
+1. Publish design contract and schema map.
+2. Add contract fields in `services/torghut/app/main.py`, hypothesis policy in `services/torghut/app/trading/hypotheses.py`, and contract reader in `services/jangar/src/server/torghut-quant-runtime.ts`.
+3. Run staged canary in `discover`-mirrored scope.
+4. Promote to broad canary if the gate windows remain green for 1 full cycle.
+5. Permit `live` scale for one hypothesis family at a time.
+
+Rollback behavior
+
+- On any two consecutive negative canary windows: auto-revert to shadow and pause scaling.
+- Persist rollback reason with rule, timestamp, and evidence window for audit replay.
+- If multiple lanes breach simultaneously, prefer hypothesis-wide hard cap enforcement before kill decisions.
+
+## Handoff expectations
+
+Engineering
+
+- Implement hypothesis contracts, budget guards, and evidence continuity checks.
+- Extend tests around ladder transitions and forced downgrades.
+- Keep contract fields backwards-compatible for one release window.
+
+Deployer
+
+- Roll out one hypothesis family canary-first.
+- Publish dashboard cards for lane transitions, continuity score, and kill triggers.
+- Verify no rollback action leaves healthy segments without capital caps.

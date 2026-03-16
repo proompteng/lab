@@ -1,210 +1,209 @@
-# Jangar control-plane resilience and safer rollout contract (2026-03-15)
+# Jangar control-plane resilience and safer rollout contract (2026-03-16)
 
-## Problem
+## Objective and success criteria
 
-The torghut quant control plane has repeatedly shown mixed-failure behavior where single subsystem failures propagate into broad orchestration degradation. This can be seen in production signals:
+Primary objective
 
-- `jangar-control-plane` and `torghut-quant` swarms currently report `READY=False`, `lightweight` and `Frozen` in namespace `agents`.
-- Worker history includes `BackoffLimitExceeded` and `error` patterns on multiple swarm run templates.
-- A known rollout issue is recurring `FailedMount` for missing configmaps in the torghut/jangar discover templates.
-- Pod health noise includes repeated probe timeouts on `torghut-00134-deployment` and intermittent DB restore events (`ErrorNoBackup`) on ClickHouse restore jobs.
+- Remove correlated failure blast radius in torghut quant control-plane operations where a degraded subsystem disables unrelated surfaces.
+- Keep deployment actions deterministic under mixed-failure conditions while preserving fast recovery.
+- Expose machine-readable gates, rollback actions, and handoff signals that engineering and deployer stages can execute independently.
 
-These symptoms indicate one controller outage can cause:
+Success criteria
 
-1. Ingestion starvation (agent runs not observed, run state stale).
-2. Rollout churn (jobs backoff/retry without global visibility).
-3. Increased time-to-repair due to non-reversible failure mode and weak rollback signals.
+- Reduce cross-surface incidents during rollout churn by at least 40% from current baseline over 14 days.
+- Achieve deterministic recovery: failed segment recovery to healthy status under 90 minutes after first gate block.
+- Keep non-failing segments available during segment-local failures (no full-runbook stop).
+- Maintain backward-compatible `/control-plane/status` output for one release cycle.
 
-## Context and evidence
+## Evidence snapshot (as of 2026-03-16)
 
-- Source control-plane orchestration paths currently include explicit heartbeat authority, rollout summary, migration checks, watch reliability, and dependency quorum logic:
-  - `services/jangar/src/server/control-plane-status.ts`
-  - `services/jangar/src/server/control-plane-runtime.ts`
-  - `services/jangar/src/server/control-plane-watch-reliability.ts`
-- Source metrics and readiness indicators are already segmented but remain coupled to global fail-open behavior:
-  - `services/jangar/src/server/torghut-quant-metrics.ts`
-  - `services/jangar/src/server/torghut-quant-runtime.ts`
-  - `services/jangar/src/server/torghut-market-context.ts`
-- Hypothesis-driven gating and promotion contracts exist but have room for stricter isolation and explicit rollback contracts:
-  - `services/torghut/app/trading/hypotheses.py`
+### Cluster health, rollout, and events
 
-## Desired state
+- `kubectl get events -n torghut --field-selector type!=Normal --sort-by=.lastTimestamp` recorded persistent rollout instability in sim surfaces: `Unhealthy` startup/readiness on `pod/torghut-sim-00239...`, `route/torghut-sim` internal resource conflicts, and repeated `UpdateCompleted` bursts from ClickHouse CM changes.
+- `kubectl get events -n jangar --field-selector type!=Normal` shows recovery-relevant DB restore warning `ErrorNoBackup` for `jangar-db-restore` and no active blocking deployment-level health warnings.
+- `kubectl get events -n agents --field-selector type!=Normal` shows `BackoffLimitExceeded` and `FailedMount` on run-template helper pods (`codex-spark-smoke...`) pointing to shared dependency readiness issues.
+- `kubectl get pods -n torghut` shows current steady state with `torghut-sim-00239-deployment` pods running while transient readiness churn is still present in prior revisions.
 
-- Explicit failure containment so a bad rollout in one surface cannot mask unrelated healthy surfaces.
-- Safer rollout behavior with deterministic gates and bounded blast radius.
-- Verifiable recovery behavior from every critical control-plane path (controller, rollouts, empirical dependencies, agentrun ingestion, DB).
+### Source architecture and test surface
 
-## Option set considered
+- Segment behavior already exists in `services/jangar/src/server/control-plane-status.ts`, but it is still consumed as broad health context for most rollout actions.
+- Rollout and migration checks are present in the same runtime (`services/jangar/src/server/torghut-quant-runtime.ts`) and same metrics surface (`services/jangar/src/server/torghut-quant-metrics.ts`), so single-segment degradation can still influence scheduling for multiple surfaces.
+- Unit coverage currently validates helper behavior for status and dependency quorum, but does not fully pin mixed-failure rollback boundaries around segment-scoped segments in one integrated test.
 
-### Option 1: Keep current pattern and tune alerting only
+### Database / data quality and consistency assumptions
 
-Pros:
+- Readiness and evidence APIs in `services/torghut/app/main.py` already expose schema-fingerprint and `db-check` diagnostics.
+- Direct in-cluster data inspection is blocked by RBAC (`pods/exec forbidden`) in this environment, so architecture decisions rely on API-contract evidence plus existing readiness contract surfaces.
+- `ErrorNoBackup` events for restore jobs remain evidence that migration-lineage recovery workflows need explicit gating.
 
-- Lowest change cost.
-- Minimal schema/code impact.
+## Option set and tradeoffs
 
-Cons:
+### Option A: Only adjust monitoring/alerting thresholds
 
-- Does not reduce blast radius at the decision boundary.
-- Backoff/retry churn still saturates run queues and can hide healthy path recovery.
-- No explicit per-surface rollback contract.
+Pros
 
-### Option 2: Add manual runbook-only gates
+- Lowest engineering burden.
+- Immediate deployment with minimal runtime impact.
 
-Pros:
+Cons
 
-- No architectural dependency changes.
-- Easy rollback by operator action.
+- Does not change failure semantics; correlated rollout failures still propagate globally.
+- Does not create deterministic rollback actions or segment-specific recovery expectations.
 
-Cons:
+### Option B: Keep architecture unchanged and use manual operator runbooks only
 
-- Does not improve autonomous control.
-- Response-time dependent on human intervention.
-- Inconsistent apply across all swarms/schedules.
+Pros
 
-### Option 3: Segment-by-segment control plane with bounded rollout and explicit dependency gates (chosen)
+- No API contract changes.
+- Operator retains strict manual control.
 
-Pros:
+Cons
 
-- Reduces correlated failure spread by enforcing per-segment state machines.
-- Enables fail-fast and fail-safe transitions with predictable recovery.
-- Supports automatic rollback with explicit guardrails and evidence checks.
+- Recovery remains human-latent and inconsistent by shift.
+- Human-only intervention in mixed failures delays guardrail restoration and increases blast radius.
 
-Cons:
+### Option C: Segment-scoped control-plane and rollout circuits with explicit gate contracts (chosen)
 
-- Requires new contract fields and a few runtime checks.
-- Requires disciplined rollout sequencing and migration of existing observers.
+Pros
 
-### Option 4: Replace orchestrator core (defer)
+- Breaks failure propagation by giving each surface its own failure domain.
+- Preserves progress on healthy surfaces while non-critical gates are blocked.
+- Makes rollback deterministic and auditable via structured gate reasons.
 
-Pros:
+Cons
 
-- Maximum control and future-proofing.
+- Requires contract additions to status payload, rollout scheduling, and rollout decision tests.
+- Requires phased rollout and operator adjustment in initial stage.
 
-Cons:
+### Option D: Replace orchestrator stack
 
-- Highest risk, long lead-time.
-- Unnecessary for current maturity stage.
+Pros
+
+- Maximum strategic flexibility.
+
+Cons
+
+- Largest delivery risk and unacceptable for current discovery constraints.
 
 ## Decision
 
-Choose Option 3.
+Choose Option C.
 
-We will implement a control-plane contract that:
+We will treat each control-plane workflow as a segment domain and enforce explicit gates before segment rollout transitions occur.
 
-1. Enforces segment-aware health and rollout decisions:
-   - `control-plane-status` exposes segment-level state and explicit gate reasons.
-   - Rollout behavior is suppressed when segment readiness drops below threshold, instead of allowing silent global "proceed".
-2. Applies deterministic rollout gates:
-   - controller readiness gate,
-   - migration consistency gate,
-   - empirical dependency gate,
-   - watch ingestion freshness gate,
-   - and rollout health gate.
-3. Enables fast recovery by codifying rollback criteria before each deployment step.
-4. Makes failures machine-readable with severity classes (`block`, `delay`, `proceed`, `warn`) instead of ad-hoc boolean checks.
+Chosen architecture components:
 
-## Architecture changes
+- Segment-scoped health envelope with stable schema:
+  - `segment`, `status`, `severity`, `dependencies`, `gates`, `rollout_decision`.
+- Segment-local gate evaluation:
+  - controller readiness, migration consistency, watch ingestion freshness, and rollout health.
+- Structured rollback actions emitted at gate block level:
+  - `hold`, `cooldown`, `rollback`, `escalate`.
 
-### 1) Control-plane failure-domain segmentation
+## Detailed architecture
 
-Control decisions for `discover`, `plan`, `verify`, and `implement` must no longer collapse into one global fail-open gate. Each run surface:
+### 1) Segment-specific control-plane status envelope
 
-- consumes independent status inputs,
-- records degradation reasons independently,
-- emits one canonical health envelope to be interpreted by the scheduler.
+`services/jangar/src/server/control-plane-status.ts` will represent status as independent segments:
 
-### 2) Rollout gate contract
+- `discover` (readiness + rollout readiness)
+- `plan` (model and hypothesis build health)
+- `verify` (validation queue and migration checks)
+- `implement` (infra job template readiness + run execution capacity)
 
-Each rollout step must satisfy gate checks before progressing:
+Each segment will report:
 
-- dependency quorum confidence above the minimum threshold for the target segment,
-- stable rollout signal for target namespace(s) (deployments + replica health),
-- stable watch stream or local fallback with explicit authority tags,
-- no sustained freshness violation on critical telemetry windows.
+- `score` (0-100 normalized)
+- `decision` (`allow`, `warn`, `block`, `hold`)
+- `gate_failures[]` with reason, timestamp, and expected recovery condition
+- `last_recovery_at` and `next_retry_at`
 
-If any gate is blocking:
+### 2) Rollout scheduler gate semantics
 
-- block the rollout at source segment boundary,
-- emit a structured event with:
-  - segment,
-  - failing gate,
-  - threshold breached,
-  - expected recovery condition,
-- open a short-lived maintenance cooldown window before retry.
+`services/jangar/src/server/torghut-quant-runtime.ts` will consume these segment gates.
 
-### 3) Heartbeat and config reliability contract
+Gate preconditions before segment transition:
 
-- `resolveHeartbeatStore` failures must not block status assembly for unaffected segments.
-- ConfigMap expectations are versioned and validated before job creation:
-  - checksum pinning in run payload,
-  - required manifest hash in job-level metadata,
-  - explicit failure if manifest not found rather than silent template reuse.
+- `dependency_quorum >= configured_min` for segment symbol/asset scope.
+- watch ingestion age under segment freshness bound.
+- migration consistency check green for schema/mapping scope touched by that segment.
+- no sustained `BackoffLimitExceeded` for segment-local runtime jobs.
 
-### 4) Ingestion and watch reliability partitioning
+If any gate blocks:
 
-- `agentrun` ingestion and watch reliability are tracked by namespace with separate tolerances.
-- Recovery playbooks should prioritize:
-  1. ingestion and watch segments,
-  2. rollout and dependency segments,
-  3. policy updates only after the first two are stable.
+- abort only the affected segment transition,
+- keep unrelated segments unchanged,
+- emit a one-line structured maintenance event with gate IDs and recovery expectations.
 
-## Validation gates
+### 3) Rollback contract
 
-### Discovery gate (pre-implementation)
+Rollback is triggered when one of these repeats within one control-cycle:
 
-- Design document accepted with measurable hypotheses.
-- Evidence package includes:
-  - cluster rollup snapshots,
-  - source high-risk module list,
-  - schema freshness/freshness query checks.
+- same segment has `gate_block_count >= 3` with no freshness improvement,
+- migration gate remains blocked after first full cooldown,
+- critical rollout job health remains unhealthy for 2 consecutive checks.
 
-### Implementation gate
+Rollback action matrix:
 
-- Static checks for any touched source files pass format/linting.
-- Unit tests for changed control-plane status and metrics modules include:
-  - gate reason propagation,
-  - segmentation behavior under partial failure,
-  - stable fallback behavior when dependency status is stale.
+- `hold` segment and leave active surface untouched.
+- `cooldown` segment for bounded backoff window.
+- `rollback` segment to prior-good version.
+- `escalate` to operator alert once two hold cycles occur.
 
-### Operational gate (before production rollout)
+### 4) Readiness and dependency isolation
 
-- staging replay of a mixed-failure canary:
-  - failed mount in one template should not degrade healthy template rollout.
-- runtemplate backoff rate and recover-time reduction compared to baseline.
+`services/jangar/src/server/torghut-quant-runtime.ts` will preserve existing global readiness behavior for observability but will never convert one segment failure into global `block`.
+
+- failed segment readiness => `block_segment`
+- unrelated segment readiness => unaffected until touched
+
+## Validation gates and acceptance criteria
+
+### Discovery stage acceptance
+
+- Design contract published and signed.
+- Evidence package includes
+  - cluster event tails for `torghut`, `jangar`, and `agents`,
+  - source module list and known blind spots,
+  - schema-check behavior and DB-check availability.
+
+### Pre-merge acceptance (implementation stage)
+
+- Unit tests for segment status envelope and gate propagation.
+- `bun run --filter @proompteng/backend lint` (or equivalent code lint step in CI matrix) for touched JS/TS sources.
+- No regressions in existing control-plane tests (`services/jangar/src/server/__tests__/control-plane-status.test.ts`, `services/jangar/src/server/__tests__/supporting-primitives-controller.test.ts`).
+
+### Post-merge rollout acceptance
+
+- During staged rollout, cross-surface impact should drop:
+  - fewer than 1 full-surface failure lockout per 10 deploy attempts.
+  - no more than one unrelated segment blocked by a single gate failure.
+- Recovery SLO: median control-plane segment recovery under 90 minutes.
 
 ## Rollout and rollback expectations
 
-Rollout:
+Rollout
 
-1. Merge architecture doc and publish to discover contract.
-2. Add schema and runtime support in two phases:
-   - phase A: status payload extension and gate reason fields,
-   - phase B: rollout scheduler honoring gates per segment.
-3. Deploy in `agents` namespace with canary template first.
-4. Escalate to all torghut swarms if metrics remain within gate thresholds.
+1. Publish merged design and implementation PR in discover-stage contract form.
+2. Implement contract fields and scheduler reads in a canary scope first.
+3. Run one controlled mixed-failure simulation and compare pre/post gate behavior.
+4. Promote to all torghut-associated surfaces only when gate-block counts are below threshold.
 
-Rollback:
+Rollback
 
-- If rollback condition met (`watch degradation > threshold`, `dependency gate blocked`, `migration gate unstable`, or repeated rollout `BackoffLimitExceeded`), revert to last known-good segment policy.
-- Keep canary lanes disabled while non-canary surfaces remain running to preserve revenue safety.
-- Preserve previous status endpoint schema for backward compatibility during one release cycle.
+- If a segment remains blocked after 2 cooldown cycles, keep segment at `hold`, keep healthy segments active, and provide explicit operator handoff evidence (gate IDs, last recovery timestamps, rollout commit).
+- Preserve schema compatibility for one release while deployers observe two full run cycles.
 
-## Risks
+## Handover contract
 
-- Partial-segment migration may temporarily change operator intuition if statuses become more explicit than before.
-- Additional gate checks can initially increase blocking in edge cases if windows are too strict.
-- ConfigMap checksum enforcement increases failure specificity; rollout pipelines must ship correct manifests for each segment.
+Engineering
 
-## Measurement and success criteria
+- Implement segment status schema and gate decision evaluator.
+- Add tests for segment isolation, mixed-failure transition, and rollback actions.
+- Update rollout metrics with gate fields and failure lineage.
 
-- Reduction in control-plane incident propagation:
-  - fewer than 1 cross-segment blast event per 10 deploy attempts for first 30 days.
-- Rollout recovery:
-- median failed rollout recovery to healthy status ≤ 90 minutes after first block event.
-- Stability:
-  - no unbounded event loop from repeated template backoff when one segment remains healthy.
+Deployer
 
-## Open implementation notes
-
-This document is actionable for implementation stage and intentionally requires source changes in `services/jangar` and corresponding run-template contracts before production use.
+- Deploy in canary scope first and verify gate behavior in `agents` and `torghut` namespaces.
+- Confirm event volume reduction and segment recovery times in PostHog / cluster logs.
+- Escalate only on `escalate` gate state transitions.
