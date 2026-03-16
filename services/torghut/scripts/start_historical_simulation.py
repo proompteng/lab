@@ -2021,7 +2021,6 @@ def _read_named_argocd_application_sync_policy(
         ]
     )
     spec = _as_mapping(payload.get('spec'))
-    metadata = _as_mapping(payload.get('metadata'))
     sync_policy_raw = spec.get('syncPolicy')
     sync_policy = _clone_json_mapping(_as_mapping(sync_policy_raw) if isinstance(sync_policy_raw, Mapping) else None)
     ignore_differences_raw = spec.get('ignoreDifferences')
