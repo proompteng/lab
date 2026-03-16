@@ -8603,6 +8603,44 @@ class TestStartHistoricalSimulation(TestCase):
             {'enabled': False, 'prune': False, 'selfHeal': False},
         )
 
+    def test_set_argocd_application_skip_reconcile_patches_and_verifies(self) -> None:
+        payload_unset = {
+            'metadata': {
+                'annotations': {},
+            }
+        }
+        payload_enabled = {
+            'metadata': {
+                'annotations': {
+                    'argocd.argoproj.io/skip-reconcile': 'true',
+                }
+            }
+        }
+        with (
+            patch(
+                'scripts.start_historical_simulation._kubectl_json_global',
+                side_effect=[payload_unset, payload_enabled],
+            ),
+            patch('scripts.start_historical_simulation._kubectl_patch') as patch_mock,
+        ):
+            report = start_historical_simulation._set_argocd_application_skip_reconcile(
+                config=ArgocdAutomationConfig(
+                    manage_automation=True,
+                    applicationset_name='product',
+                    applicationset_namespace='argocd',
+                    app_name='torghut',
+                    root_app_name='root',
+                    desired_mode_during_run='manual',
+                    restore_mode_after_run='previous',
+                    verify_timeout_seconds=30,
+                ),
+                desired_value='true',
+            )
+        self.assertTrue(report['changed'])
+        patch_mock.assert_called_once()
+        self.assertEqual(report['current_value'], 'true')
+        self.assertTrue(report['enabled'])
+
     def test_argocd_application_mode_from_sync_policy_treats_missing_automation_as_manual(self) -> None:
         self.assertEqual(
             start_historical_simulation._argocd_application_mode_from_sync_policy(
@@ -8635,26 +8673,57 @@ class TestStartHistoricalSimulation(TestCase):
             ) as automation_read_mock,
             patch(
                 'scripts.start_historical_simulation._read_named_argocd_application_sync_policy',
-                return_value={
-                    'sync_policy': {
-                        'automated': {'enabled': True, 'prune': True, 'selfHeal': True},
-                        'syncOptions': ['CreateNamespace=true'],
+                side_effect=[
+                    {
+                        'sync_policy': {
+                            'automated': {'enabled': True, 'prune': True, 'selfHeal': True},
+                            'syncOptions': ['CreateNamespace=true'],
+                        },
+                        'automation_mode': 'auto',
+                        'skip_reconcile_enabled': False,
+                        'skip_reconcile_value': None,
                     },
-                    'automation_mode': 'auto',
-                },
+                    {
+                        'sync_policy': {
+                            'automated': {'enabled': True, 'prune': True, 'selfHeal': True},
+                            'syncOptions': ['CreateNamespace=true'],
+                        },
+                        'automation_mode': 'auto',
+                    },
+                ],
             ) as application_read_mock,
             patch(
                 'scripts.start_historical_simulation._set_argocd_application_sync_policy',
+                side_effect=[
+                    {
+                        'previous_sync_policy': {
+                            'automated': {'enabled': True, 'prune': True, 'selfHeal': True},
+                        },
+                        'current_sync_policy': {
+                            'automated': {'enabled': False, 'prune': False, 'selfHeal': False},
+                        },
+                        'changed': True,
+                    },
+                    {
+                        'previous_sync_policy': {
+                            'automated': {'enabled': True, 'prune': True, 'selfHeal': True},
+                        },
+                        'current_sync_policy': {
+                            'automated': {'enabled': False, 'prune': False, 'selfHeal': False},
+                        },
+                        'changed': True,
+                    },
+                ],
+            ) as application_sync_mock,
+            patch(
+                'scripts.start_historical_simulation._set_argocd_application_skip_reconcile',
                 return_value={
-                    'previous_sync_policy': {
-                        'automated': {'enabled': True, 'prune': True, 'selfHeal': True},
-                    },
-                    'current_sync_policy': {
-                        'automated': {'enabled': False, 'prune': False, 'selfHeal': False},
-                    },
+                    'previous_value': None,
+                    'current_value': 'true',
+                    'enabled': True,
                     'changed': True,
                 },
-            ) as root_application_mock,
+            ) as skip_reconcile_mock,
             patch(
                 'scripts.start_historical_simulation._set_argocd_automation_mode',
                 return_value={
@@ -8675,16 +8744,40 @@ class TestStartHistoricalSimulation(TestCase):
         ):
             report = _prepare_argocd_for_run(config=config)
         automation_read_mock.assert_called_once()
-        application_read_mock.assert_called_once_with(
-            namespace='argocd',
-            app_name='root',
+        self.assertEqual(application_read_mock.call_args_list, [
+            call(namespace='argocd', app_name='torghut'),
+            call(namespace='argocd', app_name='root'),
+        ])
+        self.assertEqual(application_sync_mock.call_args_list, [
+            call(
+                config=config,
+                app_name='torghut',
+                desired_sync_policy={
+                    'automated': {'enabled': False, 'prune': False, 'selfHeal': False},
+                    'syncOptions': ['CreateNamespace=true'],
+                },
+            ),
+            call(
+                config=config,
+                app_name='root',
+                desired_sync_policy={
+                    'automated': {'enabled': False, 'prune': False, 'selfHeal': False},
+                    'syncOptions': ['CreateNamespace=true'],
+                },
+            ),
+        ])
+        skip_reconcile_mock.assert_called_once_with(
+            config=config,
+            app_name='torghut',
+            desired_value='true',
         )
-        root_application_mock.assert_called_once()
         applicationset_mock.assert_called_once()
         application_mode_mock.assert_called_once()
         self.assertTrue(report['changed'])
         self.assertIn('application', report)
         self.assertIn('root_application', report)
+        self.assertIn('application_sync_policy', report)
+        self.assertIn('application_skip_reconcile', report)
         self.assertTrue(report['applicationset_managed'])
         self.assertEqual(report['previous_mode'], 'auto')
         self.assertEqual(report['current_mode'], 'manual')
@@ -8714,6 +8807,8 @@ class TestStartHistoricalSimulation(TestCase):
                             'syncOptions': ['CreateNamespace=true'],
                         },
                         'automation_mode': 'manual',
+                        'skip_reconcile_enabled': True,
+                        'skip_reconcile_value': 'true',
                     },
                     {
                         'sync_policy': {
@@ -8732,6 +8827,7 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(report['reason'], 'already_manual')
         self.assertFalse(report['changed'])
         self.assertEqual(report['current_mode'], 'manual')
+        self.assertTrue(report['application_skip_reconcile']['enabled'])
 
     def test_ensure_argocd_manual_before_runtime_mutation_reasserts_when_child_app_drifted(self) -> None:
         config = ArgocdAutomationConfig(
@@ -8758,6 +8854,8 @@ class TestStartHistoricalSimulation(TestCase):
                             'syncOptions': ['CreateNamespace=true'],
                         },
                         'automation_mode': 'auto',
+                        'skip_reconcile_enabled': False,
+                        'skip_reconcile_value': None,
                     },
                     {
                         'sync_policy': {
@@ -8807,14 +8905,32 @@ class TestStartHistoricalSimulation(TestCase):
             ) as applicationset_mock,
             patch(
                 'scripts.start_historical_simulation._set_argocd_application_sync_policy',
-                return_value={
-                    'previous_sync_policy': {
-                        'automated': {'enabled': False, 'prune': False, 'selfHeal': False},
+                side_effect=[
+                    {
+                        'previous_sync_policy': {
+                            'automated': {'enabled': False, 'prune': False, 'selfHeal': False},
+                        },
+                        'current_sync_policy': previous_sync_policy,
+                        'changed': True,
                     },
-                    'current_sync_policy': previous_sync_policy,
+                    {
+                        'previous_sync_policy': {
+                            'automated': {'enabled': False, 'prune': False, 'selfHeal': False},
+                        },
+                        'current_sync_policy': previous_sync_policy,
+                        'changed': True,
+                    },
+                ],
+            ) as application_mock,
+            patch(
+                'scripts.start_historical_simulation._set_argocd_application_skip_reconcile',
+                return_value={
+                    'previous_value': 'true',
+                    'current_value': None,
+                    'enabled': False,
                     'changed': True,
                 },
-            ) as application_mock,
+            ) as skip_reconcile_mock,
             patch(
                 'scripts.start_historical_simulation._wait_for_argocd_application_mode',
                 return_value={
@@ -8826,10 +8942,17 @@ class TestStartHistoricalSimulation(TestCase):
             report = _restore_argocd_after_run(
                 config=config,
                 previous_mode='auto',
-                previous_sync_policy=previous_sync_policy,
+                previous_root_sync_policy=previous_sync_policy,
+                previous_child_sync_policy=previous_sync_policy,
+                previous_child_skip_reconcile_value=None,
             )
         applicationset_mock.assert_called_once()
-        application_mock.assert_called_once()
+        self.assertEqual(application_mock.call_count, 2)
+        skip_reconcile_mock.assert_called_once_with(
+            config=config,
+            app_name='torghut',
+            desired_value=None,
+        )
         application_mode_mock.assert_called_once()
         self.assertTrue(report['changed'])
         self.assertEqual(report['restored_mode'], 'auto')
