@@ -1018,23 +1018,34 @@ def _classify_activity_snapshot(
 ) -> str:
     cursor_at = _parse_optional_rfc3339_timestamp(_as_text(snapshot.get('cursor_at')))
     cursor_at_raw = snapshot.get('cursor_at')
+    signal_rows = _safe_int(snapshot.get('signal_rows'))
+    trade_decisions = _safe_int(snapshot.get('trade_decisions'))
+    executions = _safe_int(snapshot.get('executions'))
+    execution_tca_metrics = _safe_int(snapshot.get('execution_tca_metrics'))
+    execution_order_events = _safe_int(snapshot.get('execution_order_events'))
+    cursor_terminal_reached = cursor_at is not None and cursor_at >= effective_terminal_signal_ts
+    has_terminal_success_snapshot = (
+        signal_rows > 0
+        and cursor_terminal_reached
+        and trade_decisions > 0
+        and executions > 0
+        and execution_tca_metrics > 0
+        and execution_order_events > 0
+    )
+    if has_terminal_success_snapshot:
+        return 'success'
     if not runtime_ready:
         return 'infra_not_active'
-    if _safe_int(snapshot.get('signal_rows')) <= 0:
+    if signal_rows <= 0:
         return 'signals_absent'
     if cursor_at_raw is None or cursor_at is None:
         return 'cursor_not_advancing'
     if cursor_at < effective_terminal_signal_ts:
         return 'cursor_stalled_before_terminal_signal'
-    if _safe_int(snapshot.get('trade_decisions')) <= 0:
+    if trade_decisions <= 0:
         return 'decisions_absent'
-    if (
-        _safe_int(snapshot.get('executions')) <= 0
-        or _safe_int(snapshot.get('execution_tca_metrics')) <= 0
-        or (
-            _safe_int(snapshot.get('executions')) > 0
-            and _safe_int(snapshot.get('execution_order_events')) <= 0
-        )
+    if executions <= 0 or execution_tca_metrics <= 0 or (
+        executions > 0 and execution_order_events <= 0
     ):
         return 'executions_absent'
     return 'success'
