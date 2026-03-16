@@ -142,8 +142,22 @@ data class OptionsTaConfig(
         clickhouseUrl = clickhouseUrl,
         clickhouseUsername = envEither("OPTIONS_TA_CLICKHOUSE_USERNAME", "TA_CLICKHOUSE_USERNAME", "torghut"),
         clickhousePassword = envEither("OPTIONS_TA_CLICKHOUSE_PASSWORD", "TA_CLICKHOUSE_PASSWORD"),
-        clickhouseInsertBatchSize = envInt("OPTIONS_TA_CLICKHOUSE_BATCH_SIZE", "TA_CLICKHOUSE_BATCH_SIZE", 500),
-        clickhouseInsertFlushMs = envLong("OPTIONS_TA_CLICKHOUSE_FLUSH_MS", "TA_CLICKHOUSE_FLUSH_MS", 1_000),
+        clickhouseInsertBatchSize =
+          normalizeClickhouseInsertBatchSize(
+            envInt(
+              "OPTIONS_TA_CLICKHOUSE_BATCH_SIZE",
+              "TA_CLICKHOUSE_BATCH_SIZE",
+              DEFAULT_CLICKHOUSE_INSERT_BATCH_SIZE,
+            ),
+          ),
+        clickhouseInsertFlushMs =
+          normalizeClickhouseInsertFlushMs(
+            envLong(
+              "OPTIONS_TA_CLICKHOUSE_FLUSH_MS",
+              "TA_CLICKHOUSE_FLUSH_MS",
+              DEFAULT_CLICKHOUSE_INSERT_FLUSH_MS,
+            ),
+          ),
         clickhouseInsertMaxRetries = envInt("OPTIONS_TA_CLICKHOUSE_MAX_RETRIES", "TA_CLICKHOUSE_MAX_RETRIES", 3),
         clickhouseConnectionTimeoutSeconds =
           envInt("OPTIONS_TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS", "TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS", 30),

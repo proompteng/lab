@@ -121,8 +121,14 @@ data class FlinkTaConfig(
         clickhouseUrl = clickhouseUrl,
         clickhouseUsername = env("TA_CLICKHOUSE_USERNAME", "torghut"),
         clickhousePassword = env("TA_CLICKHOUSE_PASSWORD"),
-        clickhouseInsertBatchSize = envInt("TA_CLICKHOUSE_BATCH_SIZE", 500),
-        clickhouseInsertFlushMs = envLong("TA_CLICKHOUSE_FLUSH_MS", 1_000),
+        clickhouseInsertBatchSize =
+          normalizeClickhouseInsertBatchSize(
+            envInt("TA_CLICKHOUSE_BATCH_SIZE", DEFAULT_CLICKHOUSE_INSERT_BATCH_SIZE),
+          ),
+        clickhouseInsertFlushMs =
+          normalizeClickhouseInsertFlushMs(
+            envLong("TA_CLICKHOUSE_FLUSH_MS", DEFAULT_CLICKHOUSE_INSERT_FLUSH_MS),
+          ),
         clickhouseInsertMaxRetries = envInt("TA_CLICKHOUSE_MAX_RETRIES", 3),
         clickhouseConnectionTimeoutSeconds = envInt("TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS", 30),
         clickhouseSchemaInitMaxRetries = envInt("TA_CLICKHOUSE_SCHEMA_INIT_MAX_RETRIES", 180),

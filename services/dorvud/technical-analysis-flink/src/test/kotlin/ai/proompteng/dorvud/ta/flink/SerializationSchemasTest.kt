@@ -61,6 +61,20 @@ class SerializationSchemasTest {
   }
 
   @Test
+  fun `clickhouse insert batch size is capped to safe ceiling`() {
+    assertEquals(1, normalizeClickhouseInsertBatchSize(0))
+    assertEquals(64, normalizeClickhouseInsertBatchSize(64))
+    assertEquals(MAX_SAFE_CLICKHOUSE_INSERT_BATCH_SIZE, normalizeClickhouseInsertBatchSize(500))
+  }
+
+  @Test
+  fun `clickhouse insert flush interval falls back to safe minimum`() {
+    assertEquals(DEFAULT_CLICKHOUSE_INSERT_FLUSH_MS, normalizeClickhouseInsertFlushMs(0))
+    assertEquals(MIN_CLICKHOUSE_INSERT_FLUSH_MS, normalizeClickhouseInsertFlushMs(10))
+    assertEquals(500, normalizeClickhouseInsertFlushMs(500))
+  }
+
+  @Test
   fun `avro serde is java-serializable`() {
     assertSerializable(serde)
   }
