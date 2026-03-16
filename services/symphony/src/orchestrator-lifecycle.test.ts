@@ -145,4 +145,94 @@ describe('orchestrator lifecycle', () => {
       await runtime.dispose()
     }
   })
+
+  test('does not lose fast worker exits that happen during dispatch startup', async () => {
+    const config = makeTestConfig({
+      pollingIntervalMs: 60_000,
+      health: { preDispatch: [], postDeploy: [] },
+    })
+
+    const runtime = ManagedRuntime.make(
+      makeOrchestratorLayer(createLogger({ test: 'orchestrator-fast-exit' })).pipe(
+        Layer.provide(
+          Layer.succeed(WorkflowService, {
+            current: Effect.succeed({
+              definition: { config: {}, promptTemplate: 'Work on {{issue.identifier}}' },
+              config,
+            }),
+            config: Effect.succeed(config),
+            reload: Effect.succeed({
+              definition: { config: {}, promptTemplate: 'Work on {{issue.identifier}}' },
+              config,
+            }),
+            changes: Stream.empty,
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(TrackerService, {
+            fetchCandidateIssues: Effect.succeed([candidateIssue]),
+            fetchIssuesByStates: () => Effect.succeed([]),
+            fetchIssueStatesByIds: () => Effect.succeed([candidateIssue]),
+            executeLinearGraphql: () => Effect.succeed({}),
+            handoffIssue: () => Effect.void,
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(WorkspaceService, {
+            createForIssue: () => Effect.die('not used'),
+            runBeforeRun: () => Effect.void,
+            runAfterRun: () => Effect.void,
+            removeWorkspace: () => Effect.void,
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(IssueRunnerService, {
+            runAttempt: (_issue, _attempt, callbacks) =>
+              callbacks
+                .onWorkspacePath('/workspace/symphony/ABC-1')
+                .pipe(Effect.zipRight(Effect.succeed('/workspace/symphony/ABC-1'))),
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(LeaderElectionService, {
+            start: Effect.void,
+            stop: Effect.void,
+            status: Effect.succeed(leaderSnapshot),
+            changes: Stream.empty,
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(StateStoreService, {
+            load: Effect.succeed(emptyPersistedSchedulerState()),
+            save: () => Effect.void,
+            stateFilePath: Effect.succeed('/tmp/symphony-state.json'),
+          }),
+        ),
+        Layer.provide(Layer.succeed(TargetHealthService, { evaluatePreDispatch: Effect.succeed(targetHealthSummary) })),
+      ),
+    )
+
+    try {
+      await runtime.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const orchestrator = yield* OrchestratorService
+            yield* orchestrator.start
+            yield* orchestrator.triggerRefresh
+            yield* Effect.sleep(50)
+
+            const snapshot = yield* orchestrator.getSnapshot
+            expect(snapshot.counts.running).toBe(0)
+            expect(snapshot.counts.retrying).toBe(1)
+            expect(snapshot.retrying[0]?.issueIdentifier).toBe('ABC-1')
+            expect(snapshot.recentEvents.some((event) => event.event === 'retry_scheduled')).toBe(true)
+
+            yield* orchestrator.stop
+          }),
+        ),
+      )
+    } finally {
+      await runtime.dispose()
+    }
+  })
 })
