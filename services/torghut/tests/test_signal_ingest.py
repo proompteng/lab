@@ -386,7 +386,7 @@ class TestSignalIngest(TestCase):
         self.assertEqual(batch.query_end, latest_signal)
         self.assertEqual(batch.signal_lag_seconds, 0.0)
 
-    def test_simulation_mode_fetch_uses_bounded_replay_query_without_order_by(self) -> None:
+    def test_simulation_mode_fetch_uses_bounded_cursor_ordered_query(self) -> None:
         engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
         Base.metadata.create_all(engine)
         session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
@@ -417,7 +417,8 @@ class TestSignalIngest(TestCase):
         replay_query = ingestor.queries[-1]
         self.assertIn("WHERE event_ts >= toDateTime64", replay_query)
         self.assertIn("AND event_ts <= toDateTime64", replay_query)
-        self.assertNotIn("ORDER BY", replay_query)
+        self.assertIn("ORDER BY event_ts ASC, symbol ASC, seq ASC", replay_query)
+        self.assertIn("LIMIT 500", replay_query)
 
     def test_simulation_mode_fetch_filters_cursor_boundary_rows_before_advancing(self) -> None:
         engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
@@ -1117,6 +1118,66 @@ class TestSignalIngest(TestCase):
             [("AMAT", 6651), ("AMD", 18723), ("AVGO", 22894)],
         )
         self.assertIsNone(batch.no_signal_reason)
+
+    def test_simulation_fetch_query_is_cursor_ordered_limited_and_bounded(self) -> None:
+        ingestor = SimulationWindowIngestor(
+            schema='envelope',
+            table='torghut.ta_signals',
+            url='http://example',
+            latest_signal_ts=datetime(2026, 3, 13, 13, 30, 20, tzinfo=timezone.utc),
+            rows=[
+                {
+                    'event_ts': '2026-03-13T13:30:10Z',
+                    'symbol': 'AVGO',
+                    'payload': {'feature_schema_version': '3.0.0'},
+                    'timeframe': '1Sec',
+                    'seq': 22894,
+                    'source': 'ta',
+                },
+            ],
+            batch_size=64,
+            fast_forward_stale_cursor=False,
+        )
+
+        batch = ingestor._fetch_simulation_signals(
+            cursor_at=datetime(2026, 3, 13, 13, 30, 10, tzinfo=timezone.utc),
+            cursor_seq=22888,
+            cursor_symbol='AAPL',
+            latest_signal_at=datetime(2026, 3, 13, 13, 30, 20, tzinfo=timezone.utc),
+            poll_started_at=datetime(2026, 3, 13, 13, 30, 11, tzinfo=timezone.utc),
+            fast_forwarded=False,
+        )
+
+        query = ingestor.queries[-1]
+        self.assertIn('ORDER BY event_ts ASC, symbol ASC, seq ASC', query)
+        self.assertIn('LIMIT 64', query)
+        self.assertIn('event_ts <=', query)
+        self.assertIn("symbol > 'AAPL' OR (symbol = 'AAPL' AND seq > 22888)", query)
+        self.assertEqual([(signal.symbol, signal.seq) for signal in batch.signals], [('AVGO', 22894)])
+
+    def test_simulation_fetch_query_keeps_equal_timestamp_without_tiebreakers(self) -> None:
+        ingestor = SimulationWindowIngestor(
+            schema='envelope',
+            table='torghut.ta_signals',
+            url='http://example',
+            latest_signal_ts=datetime(2026, 3, 13, 13, 30, 20, tzinfo=timezone.utc),
+            rows=[],
+            batch_size=32,
+            fast_forward_stale_cursor=False,
+        )
+
+        ingestor._fetch_simulation_signals(
+            cursor_at=datetime(2026, 3, 13, 13, 30, 10, tzinfo=timezone.utc),
+            cursor_seq=None,
+            cursor_symbol=None,
+            latest_signal_at=datetime(2026, 3, 13, 13, 30, 20, tzinfo=timezone.utc),
+            poll_started_at=datetime(2026, 3, 13, 13, 30, 11, tzinfo=timezone.utc),
+            fast_forwarded=False,
+        )
+
+        query = ingestor.queries[-1]
+        self.assertIn('AND event_ts >= ', query)
+        self.assertNotIn('AND (event_ts > ', query)
 
     def test_cursor_is_account_scoped(self) -> None:
         engine = create_engine("sqlite+pysqlite:///:memory:", future=True)

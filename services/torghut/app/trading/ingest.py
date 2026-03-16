@@ -236,13 +236,13 @@ class ClickHouseSignalIngestor:
             )
 
         time_column = _safe_identifier(self._resolve_time_column(), kind='column')
-        query = self._build_replay_query(
+        query = self._build_simulation_query(
             start=query_window_start,
             end=query_window_end,
-            normalized_symbol=None,
-            limit=None,
+            cursor_at=cursor_at,
+            cursor_seq=cursor_seq,
+            cursor_symbol=cursor_symbol,
             time_column=time_column,
-            ordered=False,
         )
         rows = self._query_clickhouse(query)
         signals = self._signals_from_rows(rows)
@@ -580,6 +580,73 @@ class ClickHouseSignalIngestor:
             query_parts.extend(['LIMIT', str(max(int(limit), 1))])
         query_parts.append('FORMAT JSONEachRow')
         return ' '.join(query_parts)
+
+    def _build_simulation_query(
+        self,
+        *,
+        start: datetime,
+        end: datetime,
+        cursor_at: datetime,
+        cursor_seq: Optional[int],
+        cursor_symbol: Optional[str],
+        time_column: str,
+    ) -> str:
+        cursor_expr = to_datetime64(cursor_at)
+        where_parts = [
+            f'{time_column} >= {to_datetime64(start)}',
+            f'{time_column} <= {to_datetime64(end)}',
+        ]
+        supports_seq = self._supports_seq_for_time_column(time_column)
+        if supports_seq:
+            if cursor_seq is not None or cursor_symbol is not None:
+                symbol_clause = ''
+                if cursor_symbol is not None:
+                    symbol_literal = _quote_literal(cursor_symbol)
+                    if cursor_seq is not None:
+                        symbol_clause = (
+                            f'(symbol > {symbol_literal} OR '
+                            f'(symbol = {symbol_literal} AND seq > {cursor_seq}))'
+                        )
+                    else:
+                        symbol_clause = f'symbol > {symbol_literal}'
+                else:
+                    symbol_clause = f'seq > {cursor_seq}'
+                where_parts.append(
+                    f'({time_column} > {cursor_expr} OR '
+                    f'({time_column} = {cursor_expr} AND {symbol_clause}))'
+                )
+            else:
+                where_parts.append(f'{time_column} >= {cursor_expr}')
+        elif cursor_symbol is not None:
+            symbol_literal = _quote_literal(cursor_symbol)
+            where_parts.append(
+                f'({time_column} > {cursor_expr} OR '
+                f'({time_column} = {cursor_expr} AND symbol > {symbol_literal}))'
+            )
+        else:
+            where_parts.append(f'{time_column} >= {cursor_expr}')
+
+        order_clause = f'{time_column} ASC'
+        if supports_seq:
+            order_clause = f'{time_column} ASC, symbol ASC, seq ASC'
+        elif time_column == 'ts':
+            order_clause = f'{time_column} ASC, symbol ASC'
+
+        return ' '.join(
+            [
+                'SELECT',
+                self._select_expression(time_column),
+                'FROM',
+                self.table,
+                'WHERE',
+                ' AND '.join(where_parts),
+                'ORDER BY',
+                order_clause,
+                'LIMIT',
+                str(max(int(self.batch_size), 1)),
+                'FORMAT JSONEachRow',
+            ]
+        )
 
     def _signals_from_rows(self, rows: list[dict[str, Any]]) -> list[SignalEnvelope]:
         signals: list[SignalEnvelope] = []
