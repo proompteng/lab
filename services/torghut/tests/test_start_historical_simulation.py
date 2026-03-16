@@ -4492,6 +4492,28 @@ class TestStartHistoricalSimulation(TestCase):
                 },
             )
 
+    def test_validate_dump_coverage_reports_full_day_coverage_ratio(self) -> None:
+        report = _validate_dump_coverage(
+            manifest={
+                'window': {
+                    'profile': 'us_equities_regular',
+                    'trading_day': '2026-02-27',
+                    'timezone': 'America/New_York',
+                    'start': '2026-02-27T14:30:00Z',
+                    'end': '2026-02-27T21:00:00Z',
+                }
+            },
+            dump_report={
+                'records': 100,
+                'min_source_timestamp_ms': 1709044200000,
+                'max_source_timestamp_ms': 1709044200000 + (390 * 60 * 1000),
+            },
+        )
+
+        self.assertTrue(report['applied'])
+        self.assertAlmostEqual(report['coverage_ratio'], 1.0)
+        self.assertAlmostEqual(report['required_minutes'], 390 * 0.95)
+
     def test_monitor_run_completion_requires_order_events_when_executions_exist(self) -> None:
         postgres_config = PostgresRuntimeConfig(
             admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
@@ -4606,6 +4628,89 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(report['activity_classification'], 'success')
         self.assertEqual(report['effective_terminal_signal_ts'], '2026-03-11T13:34:58+00:00')
         self.assertEqual(report['dataset_alignment'], 'window_declared_beyond_dataset')
+
+    def test_monitor_run_completion_uses_direct_counts_when_progress_rows_are_stale(self) -> None:
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1',
+            simulation_db='torghut_sim_sim_1',
+            migrations_command='true',
+        )
+        manifest = {
+            'window': {
+                'start': '2026-03-13T13:30:00Z',
+                'end': '2026-03-13T20:00:00Z',
+            },
+            'monitor': {
+                'timeout_seconds': 10,
+                'poll_seconds': 1,
+                'min_trade_decisions': 1,
+                'min_executions': 1,
+                'min_execution_tca_metrics': 1,
+                'min_execution_order_events': 1,
+                'cursor_grace_seconds': 0,
+            },
+        }
+        resources = _build_resources('sim-1', {'dataset_id': 'dataset-a'})
+        clickhouse_config = ClickHouseRuntimeConfig(
+            http_url='http://clickhouse:8123',
+            username='torghut',
+            password=None,
+        )
+        with (
+            patch(
+                'scripts.historical_simulation_verification._progress_component_snapshot',
+                return_value={
+                    'torghut': {
+                        'trade_decisions': 0,
+                        'executions': 0,
+                        'execution_tca_metrics': 0,
+                        'execution_order_events': 0,
+                        'cursor_at': '2026-03-13T20:00:00Z',
+                        'last_signal_ts': '2026-03-13T20:00:00Z',
+                        'last_price_ts': '2026-03-13T20:00:00Z',
+                    },
+                    'replay': {
+                        'last_source_ts': '2026-03-13T20:00:00Z',
+                    },
+                },
+            ),
+            patch(
+                'scripts.historical_simulation_verification._monitor_snapshot',
+                return_value={
+                    'trade_decisions': 213,
+                    'executions': 60,
+                    'execution_tca_metrics': 60,
+                    'execution_order_events': 60,
+                    'cursor_at': '2026-03-13T20:00:00Z',
+                },
+            ),
+            patch(
+                'scripts.historical_simulation_verification._signal_snapshot',
+                return_value={
+                    'signal_rows': 1,
+                    'price_rows': 1,
+                    'last_signal_ts': '2026-03-13T20:00:00Z',
+                    'last_price_ts': '2026-03-13T20:00:00Z',
+                },
+            ),
+            patch('scripts.historical_simulation_verification.time.sleep', return_value=None),
+        ):
+            report = _monitor_run_completion(
+                resources=resources,
+                manifest=manifest,
+                postgres_config=postgres_config,
+                clickhouse_config=clickhouse_config,
+                runtime_verify={'runtime_state': 'ready'},
+            )
+
+        self.assertEqual(report['status'], 'ok')
+        self.assertEqual(report['activity_classification'], 'success')
+        self.assertEqual(report['final_snapshot']['progress_source'], 'simulation_run_progress+direct_tables')
+        self.assertEqual(report['final_snapshot']['trade_decisions'], 213)
+        self.assertEqual(report['final_snapshot']['executions'], 60)
+        self.assertEqual(report['final_snapshot']['execution_tca_metrics'], 60)
+        self.assertEqual(report['final_snapshot']['execution_order_events'], 60)
 
     def test_monitor_run_completion_waits_for_source_window_when_signal_generation_lags(self) -> None:
         postgres_config = PostgresRuntimeConfig(
@@ -7070,6 +7175,88 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertTrue(report['warm_lane_enabled'])
         self.assertFalse(any(report['run_scoped_markers_present'].values()))
         self.assertTrue(all(report['warm_lane_baseline'].values()))
+
+    def test_teardown_clean_accepts_restored_dedicated_service_baseline(self) -> None:
+        resources = _build_resources(
+            'sim-teardown-clean-dedicated-service',
+            {
+                'dataset_id': 'dataset-a',
+                'runtime': {
+                    'target_mode': 'dedicated_service',
+                    'namespace': 'torghut',
+                    'ta_configmap': 'torghut-ta-sim-config',
+                    'ta_deployment': 'torghut-ta-sim',
+                    'torghut_service': 'torghut-sim',
+                    'torghut_forecast_service': 'torghut-forecast-sim',
+                },
+            },
+        )
+        kservice_payload = {
+            'spec': {
+                'template': {
+                    'spec': {
+                        'containers': [
+                            {
+                                'name': 'user-container',
+                                'env': [
+                                    {
+                                        'name': 'DB_DSN',
+                                        'value': (
+                                            'postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)'
+                                            '@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default'
+                                        ),
+                                    },
+                                    {'name': 'TRADING_SIMULATION_ENABLED', 'value': 'true'},
+                                    {'name': 'TRADING_SIGNAL_TABLE', 'value': 'torghut_sim_default.ta_signals'},
+                                    {'name': 'TRADING_PRICE_TABLE', 'value': 'torghut_sim_default.ta_microbars'},
+                                    {'name': 'TRADING_ORDER_FEED_TOPIC', 'value': 'torghut.sim.trade-updates.v1'},
+                                    {'name': 'TRADING_ORDER_FEED_GROUP_ID', 'value': 'torghut-order-feed-sim-default'},
+                                    {
+                                        'name': 'TRADING_SIMULATION_ORDER_UPDATES_TOPIC',
+                                        'value': 'torghut.sim.trade-updates.v1',
+                                    },
+                                ],
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        ta_configmap_payload = {
+            'data': {
+                'TA_GROUP_ID': 'torghut-ta-sim-default',
+                'TA_CLICKHOUSE_URL': 'jdbc:clickhouse://clickhouse/torghut_sim_default',
+            }
+        }
+
+        with (
+            patch(
+                'scripts.historical_simulation_verification._kubectl_json',
+                side_effect=[kservice_payload, ta_configmap_payload],
+            ),
+            patch(
+                'scripts.historical_simulation_verification._flink_runtime_health',
+                return_value={
+                    'name': 'torghut-ta-sim',
+                    'desired_state': 'suspended',
+                    'lifecycle_state': 'FINISHED',
+                    'job_manager_status': 'READY',
+                },
+            ),
+        ):
+            report = historical_simulation_verification._teardown_clean(
+                resources=resources,
+                postgres_config=SimpleNamespace(
+                    torghut_runtime_dsn='postgresql://torghut@db/torghut_sim_2026_03_13_full_day_c981f25b'
+                ),
+            )
+
+        self.assertEqual(report['status'], 'ok')
+        self.assertEqual(report['activity_classification'], 'success')
+        self.assertTrue(report['restored'])
+        self.assertFalse(report['warm_lane_enabled'])
+        self.assertFalse(any(report['run_scoped_markers_present'].values()))
+        self.assertTrue(all(report['dedicated_service_baseline'].values()))
 
     def test_teardown_clean_rejects_run_scoped_markers_on_warm_lane(self) -> None:
         resources = _build_resources(

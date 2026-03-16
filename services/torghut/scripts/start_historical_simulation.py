@@ -870,6 +870,11 @@ def _validate_dump_coverage(
     if min_ms < 0 or max_ms < 0 or max_ms < min_ms:
         raise RuntimeError('dump_timestamp_coverage_invalid')
     observed_minutes = (max_ms - min_ms) / 60_000.0
+    coverage_ratio = (
+        observed_minutes / float(min_coverage_minutes)
+        if min_coverage_minutes is not None and float(min_coverage_minutes) > 0
+        else None
+    )
 
     if min_coverage_minutes is not None:
         required_minutes = float(min_coverage_minutes) * strict_ratio
@@ -883,6 +888,7 @@ def _validate_dump_coverage(
         return {
             'applied': True,
             'observed_minutes': observed_minutes,
+            'coverage_ratio': coverage_ratio,
             'required_minutes': required_minutes,
             'min_source_timestamp_ms': min_ms,
             'max_source_timestamp_ms': max_ms,
@@ -892,6 +898,7 @@ def _validate_dump_coverage(
     return {
         'applied': False,
         'observed_minutes': observed_minutes,
+        'coverage_ratio': coverage_ratio,
         'reason': 'no_minimum_coverage_policy',
         'min_source_timestamp_ms': min_ms,
         'max_source_timestamp_ms': max_ms,
