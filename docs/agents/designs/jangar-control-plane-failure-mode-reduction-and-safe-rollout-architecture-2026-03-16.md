@@ -1,8 +1,8 @@
 # Jangar Control Plane Failure-Mode Reduction and Safe Rollout Architecture (2026-03-16)
 
-Status: Proposed
+Status: Implemented (discover architecture finalization)
 Owner: Victor Chen (Jangar Architecture)
-Related objective: `codex/swarm-jangar-control-plane-plan` (`swarmStage: plan`)
+Related objective: `codex/swarm-jangar-control-plane-discover` (`swarmStage: discover`)
 
 ## Summary
 
@@ -55,6 +55,18 @@ Gaps:
 - Regression coverage is still lighter around multi-stage coordinated freeze behavior (discover/plan/implement/verify together).
 - No explicit regression tests yet for quota-error fallback policy in schedule parameterization.
 - no end-to-end assertion that rollout-safe gates block risky merges from schedule-controller feedback.
+
+## Assessment evidence (discover run)
+
+- Cluster evidence snapshot:
+  - `jangar-control-plane` is `Frozen` with `StageStaleness`, `Ready: false`, `queuedNeeds > 0`.
+  - `kubectl get events -n agents` repeatedly contains stage-level churn and `BackoffLimitExceeded` entries in the inspected window.
+- Source evidence:
+  - decision and status logic paths are already present in `services/jangar/src/server/control-plane-status.ts` and `services/jangar/src/server/supporting-primitives-controller.ts`.
+  - existing fallback/readiness behavior is centralized and can be tightened with minimal contract break risk.
+- Data contract evidence:
+  - migration consistency and watch reliability are already carried in `services/jangar/src/server/control-plane-status.ts`,
+  - freshness checks exist through migration and watch surfaces and are directly testable without schema migration.
 
 ## Database/source-data assessment
 
@@ -182,11 +194,28 @@ Engineering gate (pre-merge):
   - new `control-plane-status` coverage includes confidence transitions,
   - new controller coverage includes stage-specific freeze trigger matrix.
 
+Data gate (pre-merge):
+
+- migration consistency must remain healthy and include unapplied/unexpected counts in control-plane status.
+- watch reliability must report stable totals for ingestion, and unknown must require explicit operator override in this stage.
+
 Deployment gate:
 
 - 2 consecutive stage windows with no confidence regression and no `StageStaleness`.
 - rollout deployment health message contains full mismatch details if status drifts (`ready/updated/reason`).
 - `watch_reliability` must report `status=healthy` before enabling automatic unfreeze.
+
+Rollout scope for engineer/deployer:
+
+- Scope to source modules:
+  - `services/jangar/src/data/agents-control-plane.ts`
+  - `services/jangar/src/server/control-plane-status.ts`
+  - `services/jangar/src/server/supporting-primitives-controller.ts`
+  - `services/jangar/src/server/torghut-trading.ts`
+- Scope to validations:
+  - stage-confidence transition tests,
+  - freeze/recover matrix tests,
+  - end-to-end rollout precondition integration test.
 
 Rollback gate:
 
