@@ -543,7 +543,9 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               ? Effect.void
               : request('initialize', {
                   clientInfo: { name: 'symphony', version: '0.1.0' },
-                  capabilities: {},
+                  capabilities: {
+                    experimentalApi: options.dynamicTools.length > 0,
+                  },
                 }).pipe(
                   Effect.zipRight(writeMessage(child, { method: 'initialized', params: {} })),
                   Effect.zipRight(Ref.set(readyRef, true)),

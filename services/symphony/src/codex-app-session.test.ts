@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
+import type { DynamicToolSpec } from '@proompteng/codex'
 import { describe, expect, test } from 'bun:test'
 import { Effect } from 'effect'
 
@@ -126,6 +127,98 @@ setInterval(() => {}, 1000)
       }
 
       expect(exited).toBe(true)
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  test('advertises experimentalApi when dynamic tools are enabled', async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), 'symphony-codex-capabilities-'))
+    const scriptPath = path.join(tempDir, 'fake-codex-app-server.mjs')
+
+    await writeFile(
+      scriptPath,
+      `
+import readline from 'node:readline'
+
+const rl = readline.createInterface({ input: process.stdin })
+let experimentalApi = false
+
+rl.on('line', (line) => {
+  const message = JSON.parse(line)
+
+  if (message.method === 'initialize') {
+    experimentalApi = Boolean(message.params?.capabilities?.experimentalApi)
+    console.log(JSON.stringify({ id: message.id, result: {} }))
+    return
+  }
+
+  if (message.method === 'thread/start') {
+    if (!experimentalApi) {
+      console.log(JSON.stringify({
+        id: message.id,
+        error: { code: -32600, message: 'thread/start.dynamicTools requires experimentalApi capability' },
+      }))
+      return
+    }
+
+    console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'thread-1' } } }))
+    return
+  }
+
+  if (message.method === 'turn/start') {
+    console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'turn-1' } } }))
+    console.log(JSON.stringify({
+      method: 'turn/completed',
+      params: { threadId: 'thread-1', turnId: 'turn-1' },
+    }))
+  }
+})
+      `.trim(),
+      'utf8',
+    )
+
+    const dynamicTool: DynamicToolSpec = {
+      name: 'linear_graphql',
+      description: 'Test dynamic tool',
+      inputSchema: {
+        type: 'object',
+      },
+    }
+
+    try {
+      const program = Effect.scoped(
+        Effect.gen(function* () {
+          const sessions = yield* CodexSessionService
+          const session = yield* sessions.createSession({
+            command: `node ${JSON.stringify(scriptPath)}`,
+            cwd: tempDir,
+            approvalPolicy: null,
+            threadSandbox: null,
+            turnSandboxPolicy: null,
+            readTimeoutMs: 1_000,
+            turnTimeoutMs: 1_000,
+            title: 'dynamic tool turn',
+            dynamicTools: [dynamicTool],
+            logger: createStubLogger(),
+            onEvent: () => Effect.void,
+            onToolCall: () =>
+              Effect.succeed({
+                success: false,
+                error: 'unsupported_tool_call',
+                contentItems: [],
+              }),
+          })
+
+          return yield* session.runTurn('hello')
+        }),
+      ).pipe(Effect.provide(makeCodexSessionLayer(createStubLogger())))
+
+      await expect(Effect.runPromise(program)).resolves.toEqual({
+        status: 'completed',
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+      })
     } finally {
       await rm(tempDir, { recursive: true, force: true })
     }
