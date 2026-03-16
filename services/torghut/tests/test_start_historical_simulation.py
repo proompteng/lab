@@ -4629,6 +4629,94 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(report['effective_terminal_signal_ts'], '2026-03-11T13:34:58+00:00')
         self.assertEqual(report['dataset_alignment'], 'window_declared_beyond_dataset')
 
+    def test_current_activity_report_prefers_terminal_success_over_runtime_flap(self) -> None:
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1',
+            simulation_db='torghut_sim_sim_1',
+            migrations_command='true',
+        )
+        manifest = {
+            'window': {
+                'start': '2026-03-13T13:30:00Z',
+                'end': '2026-03-13T20:00:00Z',
+            },
+            'monitor': {
+                'timeout_seconds': 14400,
+                'poll_seconds': 30,
+                'min_trade_decisions': 1,
+                'min_executions': 1,
+                'min_execution_tca_metrics': 1,
+                'min_execution_order_events': 1,
+                'cursor_grace_seconds': 120,
+            },
+        }
+        resources = _build_resources(
+            'sim-proof-terminal-success',
+            {
+                'dataset_id': 'dataset-a',
+                'runtime': {
+                    'target_mode': 'dedicated_service',
+                    'namespace': 'torghut',
+                    'ta_configmap': 'torghut-ta-sim-config',
+                    'ta_deployment': 'torghut-ta-sim',
+                    'torghut_service': 'torghut-sim',
+                    'torghut_forecast_service': 'torghut-forecast-sim',
+                },
+            },
+        )
+        clickhouse_config = ClickHouseRuntimeConfig(
+            http_url='http://clickhouse:8123',
+            username='torghut',
+            password=None,
+        )
+        with patch(
+            'scripts.historical_simulation_verification._simulation_progress_snapshot',
+            return_value={
+                'components': {
+                    'replay': {
+                        'last_source_ts': '2026-03-13T19:59:59.714000+00:00',
+                        'status': 'replayed',
+                    },
+                    'torghut': {
+                        'cursor_at': '2026-03-13T20:00:00+00:00',
+                        'execution_order_events': 59,
+                        'execution_tca_metrics': 59,
+                        'executions': 59,
+                        'last_signal_ts': '2026-03-13T20:00:00+00:00',
+                        'status': 'running',
+                        'trade_decisions': 174,
+                    },
+                },
+                'cursor_at': '2026-03-13T20:00:00+00:00',
+                'execution_order_events': 59,
+                'execution_tca_metrics': 59,
+                'executions': 59,
+                'last_price_ts': None,
+                'last_signal_ts': '2026-03-13T20:00:00+00:00',
+                'last_source_ts': '2026-03-13T19:59:59.714000+00:00',
+                'price_rows': 0,
+                'progress_source': 'simulation_run_progress',
+                'records_dumped': 0,
+                'records_replayed': 8435001,
+                'signal_rows': 1,
+                'trade_decisions': 174,
+            },
+        ):
+            report = historical_simulation_verification._current_activity_report(
+                resources=resources,
+                manifest=manifest,
+                postgres_config=postgres_config,
+                clickhouse_config=clickhouse_config,
+                runtime_verify={'runtime_state': 'not_ready'},
+            )
+
+        self.assertEqual(report['status'], 'ok')
+        self.assertEqual(report['activity_classification'], 'success')
+        self.assertTrue(report['terminal_reached'])
+        self.assertTrue(report['thresholds_met'])
+        self.assertEqual(report['cursor_at'], '2026-03-13T20:00:00+00:00')
+
     def test_monitor_run_completion_uses_direct_counts_when_progress_rows_are_stale(self) -> None:
         postgres_config = PostgresRuntimeConfig(
             admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
