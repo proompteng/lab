@@ -218,7 +218,7 @@ def main() -> int:
     if not artifact_root_ref:
         raise ValueError("artifact_root_required")
     artifact_root = Path(artifact_root_ref).resolve()
-    args.artifact_root = artifact_root_ref
+    args.artifact_root = str(artifact_root)
     lane_overrides = _build_lane_overrides(args)
 
     try:
@@ -229,7 +229,7 @@ def main() -> int:
                 repository=args.repository,
                 base=args.base,
                 head=args.head,
-                artifact_root=artifact_root_ref,
+                artifact_root=str(artifact_root),
                 run_prefix=args.run_prefix,
                 auth_token=(args.auth_token.strip() or None),
                 issue_number=args.issue_number,
