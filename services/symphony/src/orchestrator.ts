@@ -64,7 +64,7 @@ type RunningRuntimeEntry = {
   session: LiveSession
   lastError: string | null
   recentEvents: RecentEvent[]
-  workerFiber: Fiber.RuntimeFiber<void, never>
+  workerFiber: Fiber.RuntimeFiber<void, never> | null
   stopReason: WorkerStopReason
   terminalCleanupRequested: boolean
 }
@@ -421,6 +421,9 @@ const applyTokenUsage = (state: OrchestratorState, running: RunningRuntimeEntry,
   state.codexTotals.totalTokens += deltaTotal
 }
 
+const interruptWorkerFiber = (fiber: Fiber.RuntimeFiber<void, never> | null) =>
+  fiber ? Fiber.interruptFork(fiber) : Effect.void
+
 export interface OrchestratorServiceDefinition {
   readonly start: Effect.Effect<void, WorkflowError | ConfigError | TrackerError | WorkspaceError | OrchestratorError>
   readonly stop: Effect.Effect<void, never>
@@ -747,20 +750,6 @@ export const makeOrchestratorLayer = (logger: Logger) =>
 
       const dispatchIssue = (issue: Issue, attempt: number | null) =>
         Effect.gen(function* () {
-          const workerEffect = issueRunner
-            .runAttempt(issue, attempt, {
-              onEvent: (event) =>
-                Queue.offer(queue, { _tag: 'CodexEventReceived', issueId: issue.id, event }).pipe(Effect.asVoid),
-              onWorkspacePath: (workspacePath) =>
-                Queue.offer(queue, { _tag: 'WorkspaceReady', issueId: issue.id, workspacePath }).pipe(Effect.asVoid),
-            })
-            .pipe(
-              Effect.exit,
-              Effect.flatMap((exit) => Queue.offer(queue, { _tag: 'WorkerExited', issueId: issue.id, exit })),
-              Effect.asVoid,
-            )
-
-          const workerFiber = yield* Effect.forkIn(workerEffect, serviceScope)
           const startedAtMs = Date.now()
           const startedAt = new Date(startedAtMs).toISOString()
 
@@ -782,7 +771,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
               session: EMPTY_SESSION(),
               lastError: null,
               recentEvents: [],
-              workerFiber,
+              workerFiber: null,
               stopReason: 'running',
               terminalCleanupRequested: false,
             }
@@ -813,6 +802,28 @@ export const makeOrchestratorLayer = (logger: Logger) =>
           if (existingRetry?.fiber) {
             yield* Fiber.interruptFork(existingRetry.fiber)
           }
+
+          const workerEffect = issueRunner
+            .runAttempt(issue, attempt, {
+              onEvent: (event) =>
+                Queue.offer(queue, { _tag: 'CodexEventReceived', issueId: issue.id, event }).pipe(Effect.asVoid),
+              onWorkspacePath: (workspacePath) =>
+                Queue.offer(queue, { _tag: 'WorkspaceReady', issueId: issue.id, workspacePath }).pipe(Effect.asVoid),
+            })
+            .pipe(
+              Effect.exit,
+              Effect.flatMap((exit) => Queue.offer(queue, { _tag: 'WorkerExited', issueId: issue.id, exit })),
+              Effect.asVoid,
+            )
+
+          const workerFiber = yield* Effect.forkIn(workerEffect, serviceScope)
+          yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+            const running = state.running.get(issue.id)
+            if (running) {
+              running.workerFiber = workerFiber
+            }
+            return Effect.succeed([undefined, state] as const)
+          })
           yield* persistStateBestEffort
         })
 
@@ -846,7 +857,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                 }
                 return Effect.succeed([undefined, state] as const)
               })
-              yield* Fiber.interruptFork(running.workerFiber)
+              yield* interruptWorkerFiber(running.workerFiber)
               continue
             }
 
@@ -861,7 +872,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                 }
                 return Effect.succeed([undefined, state] as const)
               })
-              yield* Fiber.interruptFork(running.workerFiber)
+              yield* interruptWorkerFiber(running.workerFiber)
               continue
             }
 
@@ -874,7 +885,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                 }
                 return Effect.succeed([undefined, state] as const)
               })
-              yield* Fiber.interruptFork(running.workerFiber)
+              yield* interruptWorkerFiber(running.workerFiber)
               continue
             }
 
@@ -910,7 +921,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                     }
                     return Effect.succeed([undefined, state] as const)
                   })
-                  yield* Fiber.interruptFork(running.workerFiber)
+                  yield* interruptWorkerFiber(running.workerFiber)
                 }
               }
             })
@@ -969,7 +980,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
           })
 
           for (const running of interrupted.running) {
-            yield* Fiber.interruptFork(running.workerFiber)
+            yield* interruptWorkerFiber(running.workerFiber)
           }
           for (const retry of interrupted.retries) {
             if (retry.fiber) {
@@ -1553,7 +1564,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             }
           }
           for (const running of state.running.values()) {
-            yield* Fiber.interruptFork(running.workerFiber)
+            yield* interruptWorkerFiber(running.workerFiber)
           }
 
           yield* leaderElection.stop
