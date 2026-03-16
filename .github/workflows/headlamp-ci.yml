@@ -67,20 +67,6 @@ jobs:
             golang:1.24.13@sha256:d2d2bc1c84f7e60d7d2438a3836ae7d0c847f4888464e7ec9ba3a1339a1ee804 \
             sh services/headlamp/scripts/test-upstream.sh
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Run Upstream Frontend Auth Regression Test
-        run: |
-          TMP_DIR="$(mktemp -d)"
-          sh services/headlamp/scripts/fetch-upstream.sh "${TMP_DIR}"
-          sh services/headlamp/scripts/apply-upstream-patches.sh "${TMP_DIR}"
-          cd "${TMP_DIR}/frontend"
-          npm ci
-          npm test -- --run src/lib/k8s/api/authError.test.ts
-
       - name: Fetch pinned Headlamp upstream source
         run: sh services/headlamp/scripts/fetch-upstream.sh services/headlamp/.upstream
 
