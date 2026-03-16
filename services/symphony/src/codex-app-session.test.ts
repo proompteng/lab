@@ -85,6 +85,7 @@ setInterval(() => {}, 1000)
               Effect.succeed({
                 success: false,
                 error: 'unsupported_tool_call',
+                contentItems: [],
               }),
           })
 
