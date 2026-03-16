@@ -19,6 +19,18 @@ spec:
           ports:
             - name: http
               containerPort: 4321
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
           env:
             - name: NODE_ENV
               value: "production"
