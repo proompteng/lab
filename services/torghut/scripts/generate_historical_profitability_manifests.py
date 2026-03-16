@@ -6,11 +6,16 @@ from __future__ import annotations
 import argparse
 import json
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Sequence
+from zoneinfo import ZoneInfo
 
 import yaml
+
+
+_NYC_TZ = ZoneInfo('America/New_York')
+_MODEL_REF_DEFAULT = ['rules/intraday_tsmom_v1']
 
 
 @dataclass(frozen=True)
@@ -35,9 +40,33 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument('--candidate-id', default='intraday_tsmom_v1@prod')
     parser.add_argument('--baseline-candidate-id', default='intraday_tsmom_v1@baseline')
     parser.add_argument('--strategy-spec-ref', default='strategy-specs/intraday_tsmom_v1@1.1.0.json')
-    parser.add_argument('--model-ref', action='append', default=['rules/intraday_tsmom_v1'])
+    parser.add_argument('--model-ref', action='append', default=None)
     parser.add_argument('--json', action='store_true')
     return parser.parse_args()
+
+
+def _resolve_model_refs(raw_model_refs: Sequence[str] | None) -> list[str]:
+    if raw_model_refs is None or len(raw_model_refs) == 0:
+        return list(_MODEL_REF_DEFAULT)
+    return list(raw_model_refs)
+
+
+def _to_utc_hour_minute(*, trading_day: date, hour: int, minute: int) -> datetime:
+    local_start = datetime.combine(
+        trading_day,
+        time(hour=hour, minute=minute),
+        tzinfo=_NYC_TZ,
+    )
+    return local_start.astimezone(UTC)
+
+
+def _trading_session_window_bounds_utc(*, trading_day: date) -> tuple[str, str]:
+    session_start_utc = _to_utc_hour_minute(trading_day=trading_day, hour=9, minute=30)
+    session_end_utc = _to_utc_hour_minute(trading_day=trading_day, hour=16, minute=0)
+    return (
+        f'{session_start_utc:%Y-%m-%dT%H:%M:%SZ}',
+        f'{session_end_utc:%Y-%m-%dT%H:%M:%SZ}',
+    )
 
 
 def _parse_day(raw: str) -> date:
@@ -108,8 +137,8 @@ def _manifest_payload(
             'profile': 'us_equities_regular',
             'trading_day': day_iso,
             'timezone': 'America/New_York',
-            'start': f'{day_iso}T13:30:00Z',
-            'end': f'{day_iso}T20:00:00Z',
+            'start': _trading_session_window_bounds_utc(trading_day=trading_day)[0],
+            'end': _trading_session_window_bounds_utc(trading_day=trading_day)[1],
             'min_coverage_minutes': 390,
             'strict_coverage_ratio': 0.95,
         },
@@ -277,7 +306,7 @@ def main() -> int:
         candidate_id=args.candidate_id,
         baseline_candidate_id=args.baseline_candidate_id,
         strategy_spec_ref=args.strategy_spec_ref,
-        model_refs=args.model_ref,
+        model_refs=_resolve_model_refs(args.model_ref),
     )
     if args.json:
         print(json.dumps(summary, indent=2))
