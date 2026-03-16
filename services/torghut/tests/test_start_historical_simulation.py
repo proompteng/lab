@@ -4580,6 +4580,7 @@ class TestStartHistoricalSimulation(TestCase):
                     'execution_tca_metrics': 12,
                     'execution_order_events': 12,
                     'cursor_at': '2026-03-11T13:34:58Z',
+                    'last_source_ts': '2026-03-11T13:34:58Z',
                 },
             ),
             patch(
@@ -4588,7 +4589,7 @@ class TestStartHistoricalSimulation(TestCase):
                     'signal_rows': 120,
                     'price_rows': 120,
                     'last_signal_ts': '2026-03-11T13:34:58Z',
-                    'last_price_ts': '2026-03-11T13:34:59Z',
+                    'last_price_ts': '2026-03-11T13:34:58Z',
                 },
             ),
             patch('scripts.historical_simulation_verification.time.sleep', return_value=None),
@@ -4605,6 +4606,88 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(report['activity_classification'], 'success')
         self.assertEqual(report['effective_terminal_signal_ts'], '2026-03-11T13:34:58+00:00')
         self.assertEqual(report['dataset_alignment'], 'window_declared_beyond_dataset')
+
+    def test_monitor_run_completion_waits_for_source_window_when_signal_generation_lags(self) -> None:
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1',
+            simulation_db='torghut_sim_sim_1',
+            migrations_command='true',
+        )
+        manifest = {
+            'window': {
+                'start': '2026-03-13T13:30:00Z',
+                'end': '2026-03-13T20:00:00Z',
+            },
+            'monitor': {
+                'timeout_seconds': 30,
+                'poll_seconds': 1,
+                'cursor_grace_seconds': 0,
+                'min_trade_decisions': 1,
+                'min_executions': 1,
+                'min_execution_tca_metrics': 1,
+                'min_execution_order_events': 1,
+            },
+        }
+        resources = _build_resources('sim-1', {'dataset_id': 'dataset-a'})
+        clickhouse_config = ClickHouseRuntimeConfig(
+            http_url='http://clickhouse:8123',
+            username='torghut',
+            password=None,
+        )
+        with (
+            patch(
+                'scripts.historical_simulation_verification._monitor_snapshot',
+                side_effect=[
+                    {
+                        'trade_decisions': 0,
+                        'executions': 0,
+                        'execution_tca_metrics': 0,
+                        'execution_order_events': 0,
+                        'cursor_at': '2026-03-13T17:26:00Z',
+                        'last_source_ts': '2026-03-13T19:59:59Z',
+                    },
+                    {
+                        'trade_decisions': 17,
+                        'executions': 3,
+                        'execution_tca_metrics': 3,
+                        'execution_order_events': 3,
+                        'cursor_at': '2026-03-13T20:00:00Z',
+                        'last_source_ts': '2026-03-13T19:59:59Z',
+                    },
+                ],
+            ),
+            patch(
+                'scripts.historical_simulation_verification._signal_snapshot',
+                side_effect=[
+                    {
+                        'signal_rows': 120,
+                        'price_rows': 120,
+                        'last_signal_ts': '2026-03-13T17:26:00Z',
+                        'last_price_ts': '2026-03-13T20:00:00Z',
+                    },
+                    {
+                        'signal_rows': 120,
+                        'price_rows': 120,
+                        'last_signal_ts': '2026-03-13T20:00:00Z',
+                        'last_price_ts': '2026-03-13T20:00:00Z',
+                    },
+                ],
+            ),
+            patch('scripts.historical_simulation_verification.time.sleep', return_value=None),
+        ):
+            report = _monitor_run_completion(
+                resources=resources,
+                manifest=manifest,
+                postgres_config=postgres_config,
+                clickhouse_config=clickhouse_config,
+                runtime_verify={'runtime_state': 'ready'},
+            )
+
+        self.assertEqual(report['status'], 'ok')
+        self.assertEqual(report['activity_classification'], 'success')
+        self.assertEqual(report['effective_terminal_signal_ts'], '2026-03-13T20:00:00+00:00')
+        self.assertEqual(report['dataset_alignment'], 'window_aligned_with_dataset')
 
     def test_run_full_lifecycle_fails_when_activity_verify_is_degraded(self) -> None:
         resources = _build_resources(
