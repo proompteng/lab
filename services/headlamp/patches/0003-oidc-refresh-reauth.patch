@@ -1,5 +1,5 @@
 diff --git a/backend/cmd/headlamp.go b/backend/cmd/headlamp.go
-index b428cc4dd..1483e882a 100644
+index b428cc4..1483e88 100644
 --- a/backend/cmd/headlamp.go
 +++ b/backend/cmd/headlamp.go
 @@ -925,10 +925,14 @@ func createHeadlampHandler(config *HeadlampConfig) http.Handler {
@@ -62,7 +62,7 @@ index b428cc4dd..1483e882a 100644
  		next.ServeHTTP(w, r)
  		c.telemetryHandler.RecordDuration(ctx, start,
 diff --git a/backend/cmd/headlamp_test.go b/backend/cmd/headlamp_test.go
-index c67563d74..637501f7b 100644
+index c67563d..637501f 100644
 --- a/backend/cmd/headlamp_test.go
 +++ b/backend/cmd/headlamp_test.go
 @@ -38,6 +38,7 @@ import (
@@ -149,7 +149,7 @@ index c67563d74..637501f7b 100644
  	// Create a temporary directory for plugins
  	tempDir, err := os.MkdirTemp("", "headlamp-test")
 diff --git a/backend/pkg/auth/auth.go b/backend/pkg/auth/auth.go
-index 0c4689a6f..dc1e83fbe 100644
+index 0c4689a..dc1e83f 100644
 --- a/backend/pkg/auth/auth.go
 +++ b/backend/pkg/auth/auth.go
 @@ -46,6 +46,8 @@ const (
@@ -248,7 +248,7 @@ index 0c4689a6f..dc1e83fbe 100644
  		token,
  		provider.Endpoint().TokenURL,
 diff --git a/backend/pkg/auth/auth_test.go b/backend/pkg/auth/auth_test.go
-index ef0940ae8..9f2fcb0ee 100644
+index ef0940a..9f2fcb0 100644
 --- a/backend/pkg/auth/auth_test.go
 +++ b/backend/pkg/auth/auth_test.go
 @@ -414,10 +414,15 @@ func (f *fakeCache) Get(_ context.Context, key string) (interface{}, error) {
@@ -284,7 +284,7 @@ index ef0940ae8..9f2fcb0ee 100644
  	} {
  		t.Run(tc.name, func(t *testing.T) {
 diff --git a/backend/pkg/auth/cookies.go b/backend/pkg/auth/cookies.go
-index bab079a6d..165a0bd3f 100644
+index 179a9d5..e6c5026 100644
 --- a/backend/pkg/auth/cookies.go
 +++ b/backend/pkg/auth/cookies.go
 @@ -19,9 +19,11 @@ package auth
@@ -309,15 +309,15 @@ index bab079a6d..165a0bd3f 100644
  )
  
  // GetCookiePath returns the full cookie path including baseURL.
-@@ -105,6 +110,7 @@ func SetTokenCookie(w http.ResponseWriter, r *http.Request, cluster, token, base
+@@ -128,6 +133,7 @@ func SetTokenCookie(w http.ResponseWriter, r *http.Request, cluster, token, base
  
  	// if token is larger than maxCookieSize, split it into multiple cookies
  	chunks := splitToken(token, chunkSize)
 +	maxAge := getTokenCookieMaxAge(token)
- 
- 	for _, path := range []string{GetCookiePath(baseURL, cluster), GetWebSocketCookiePath(baseURL)} {
+ 	for _, path := range getSetCookiePaths(baseURL, cluster) {
  		for i, chunk := range chunks {
-@@ -115,7 +121,7 @@ func SetTokenCookie(w http.ResponseWriter, r *http.Request, cluster, token, base
+ 			cookie := &http.Cookie{
+@@ -137,7 +143,7 @@ func SetTokenCookie(w http.ResponseWriter, r *http.Request, cluster, token, base
  				Secure:   secure,
  				SameSite: http.SameSiteStrictMode,
  				Path:     path,
@@ -326,7 +326,7 @@ index bab079a6d..165a0bd3f 100644
  			}
  
  			http.SetCookie(w, cookie)
-@@ -123,6 +129,35 @@ func SetTokenCookie(w http.ResponseWriter, r *http.Request, cluster, token, base
+@@ -145,6 +151,35 @@ func SetTokenCookie(w http.ResponseWriter, r *http.Request, cluster, token, base
  	}
  }
  
@@ -363,7 +363,7 @@ index bab079a6d..165a0bd3f 100644
  func GetTokenFromCookie(r *http.Request, cluster string) (string, error) {
  	sanitizedCluster := SanitizeClusterName(cluster)
 diff --git a/backend/pkg/auth/cookies_test.go b/backend/pkg/auth/cookies_test.go
-index d44f1b719..f89b8f539 100644
+index 8517233..3d4a239 100644
 --- a/backend/pkg/auth/cookies_test.go
 +++ b/backend/pkg/auth/cookies_test.go
 @@ -18,10 +18,13 @@ package auth_test
@@ -398,7 +398,7 @@ index d44f1b719..f89b8f539 100644
  func TestSanitizeClusterName(t *testing.T) {
  	tests := []struct {
  		input    string
-@@ -198,6 +212,27 @@ func TestGetWebSocketCookiePath(t *testing.T) {
+@@ -204,6 +218,27 @@ func TestGetBaseCookiePath(t *testing.T) {
  	}
  }
  
@@ -426,280 +426,3 @@ index d44f1b719..f89b8f539 100644
  func TestSetAndGetAuthCookie(t *testing.T) {
  	req := httptest.NewRequest("GET", localhost, nil)
  	req.Host = localhost
-diff --git a/frontend/src/lib/k8s/api/v1/clusterRequests.ts b/frontend/src/lib/k8s/api/v1/clusterRequests.ts
-index 1c17b3c8a..ff06d878d 100644
---- a/frontend/src/lib/k8s/api/v1/clusterRequests.ts
-+++ b/frontend/src/lib/k8s/api/v1/clusterRequests.ts
-@@ -20,12 +20,11 @@ import { addBackstageAuthHeaders } from '../../../../helpers/addBackstageAuthHea
- import { isDebugVerbose } from '../../../../helpers/debugVerbose';
- import { getAppUrl } from '../../../../helpers/getAppUrl';
- import { isBackstage } from '../../../../helpers/isBackstage';
--import store from '../../../../redux/stores/store';
- import { findKubeconfigByClusterName } from '../../../../stateless/findKubeconfigByClusterName';
- import { getUserIdFromLocalStorage } from '../../../../stateless/getUserIdFromLocalStorage';
--import { logout } from '../../../auth';
- import { getCluster } from '../../../cluster';
- import type { KubeObjectInterface } from '../../KubeObject';
-+import { handleClusterAuthError } from '../authError';
- import type { ApiError } from '../v2/ApiError';
- import { CLUSTERS_PREFIX, DEFAULT_TIMEOUT, JSON_HEADERS } from './constants';
- import { asQuery, combinePath } from './formatUrl';
-@@ -66,18 +65,6 @@ export interface ClusterRequestParams extends RequestParams {
-   autoLogoutOnAuthError?: boolean;
- }
- 
--/**
-- * @returns Auth type of the cluster, or an empty string if the cluster is not found.
-- * It could return 'oidc' or '' for example.
-- *
-- * @param cluster - Name of the cluster.
-- */
--export function getClusterAuthType(cluster: string): string {
--  const state = store.getState();
--  const authType: string = state.config?.clusters?.[cluster]?.['auth_type'] || '';
--  return authType;
--}
--
- /**
-  * Sends a request to the backend. If the useCluster parameter is true (which it is, by default), it will be
-  * treated as a request to the Kubernetes server of the currently defined (in the URL) cluster.
-@@ -189,10 +176,13 @@ export async function clusterRequest(
- 
-   if (!response.ok) {
-     const { status, statusText } = response;
--    if (autoLogoutOnAuthError && status === 401 && opts.headers.Authorization) {
--      console.error('Logging out due to auth error', { status, statusText, path });
--      logout(cluster);
--    }
-+    await handleClusterAuthError({
-+      autoLogoutOnAuthError,
-+      cluster,
-+      hasAuthorizationHeader: Boolean(opts.headers.Authorization),
-+      path,
-+      status,
-+    });
- 
-     let message = statusText;
-     try {
-diff --git a/frontend/src/lib/k8s/api/v2/fetch.ts b/frontend/src/lib/k8s/api/v2/fetch.ts
-index c4a98d5cb..9b07f17c7 100644
---- a/frontend/src/lib/k8s/api/v2/fetch.ts
-+++ b/frontend/src/lib/k8s/api/v2/fetch.ts
-@@ -18,6 +18,7 @@ import { addBackstageAuthHeaders } from '../../../../helpers/addBackstageAuthHea
- import { getAppUrl } from '../../../../helpers/getAppUrl';
- import { findKubeconfigByClusterName } from '../../../../stateless/findKubeconfigByClusterName';
- import { getUserIdFromLocalStorage } from '../../../../stateless/getUserIdFromLocalStorage';
-+import { handleClusterAuthError } from '../authError';
- import { ApiError } from './ApiError';
- import { makeUrl } from './makeUrl';
- 
-@@ -92,6 +93,13 @@ export async function clusterFetch(url: string | URL, init: RequestInit & { clus
-   } catch (e) {
-     if (e instanceof ApiError) {
-       e.cluster = init.cluster;
-+      await handleClusterAuthError({
-+        autoLogoutOnAuthError: true,
-+        cluster: init.cluster,
-+        hasAuthorizationHeader: init.headers.has('Authorization'),
-+        path: String(url),
-+        status: e.status,
-+      });
-     }
-     throw e;
-   }
-diff --git a/frontend/src/lib/k8s/api/authError.ts b/frontend/src/lib/k8s/api/authError.ts
-new file mode 100644
-index 000000000..86aaae718
---- /dev/null
-+++ b/frontend/src/lib/k8s/api/authError.ts
-@@ -0,0 +1,71 @@
-+/*
-+ * Copyright 2025 The Kubernetes Authors
-+ *
-+ * Licensed under the Apache License, Version 2.0 (the "License");
-+ * you may not use this file except in compliance with the License.
-+ * You may obtain a copy of the License at
-+ *
-+ * http://www.apache.org/licenses/LICENSE-2.0
-+ *
-+ * Unless required by applicable law or agreed to in writing, software
-+ * distributed under the License is distributed on an "AS IS" BASIS,
-+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-+ * See the License for the specific language governing permissions and
-+ * limitations under the License.
-+ */
-+
-+import store from '../../../redux/stores/store';
-+import { logout } from '../../auth';
-+import { createRouteURL } from '../../router/createRouteURL';
-+
-+interface ClusterAuthErrorOptions {
-+  autoLogoutOnAuthError: boolean;
-+  cluster: string;
-+  hasAuthorizationHeader: boolean;
-+  navigate?: (path: string) => void;
-+  path?: string;
-+  status?: number;
-+}
-+
-+/**
-+ * @returns Auth type of the cluster, or an empty string if the cluster is not found.
-+ * It could return 'oidc' or '' for example.
-+ */
-+export function getClusterAuthType(cluster: string): string {
-+  const state = store.getState();
-+  const authType: string = state.config?.clusters?.[cluster]?.['auth_type'] || '';
-+  return authType;
-+}
-+
-+export async function handleClusterAuthError({
-+  autoLogoutOnAuthError,
-+  cluster,
-+  hasAuthorizationHeader,
-+  navigate = path => window.location.assign(path),
-+  path,
-+  status,
-+}: ClusterAuthErrorOptions): Promise<boolean> {
-+  if (!autoLogoutOnAuthError || status !== 401 || !cluster) {
-+    return false;
-+  }
-+
-+  const authType = getClusterAuthType(cluster);
-+  const shouldRedirectToLogin = !hasAuthorizationHeader && authType === 'oidc';
-+  if (!hasAuthorizationHeader && !shouldRedirectToLogin) {
-+    return false;
-+  }
-+
-+  console.error('Logging out due to auth error', {
-+    authType,
-+    cluster,
-+    path,
-+    status,
-+  });
-+  await logout(cluster);
-+
-+  if (shouldRedirectToLogin) {
-+    navigate(createRouteURL('login', { cluster }));
-+  }
-+
-+  return true;
-+}
-diff --git a/frontend/src/lib/k8s/api/authError.test.ts b/frontend/src/lib/k8s/api/authError.test.ts
-new file mode 100644
-index 000000000..58363209e
---- /dev/null
-+++ b/frontend/src/lib/k8s/api/authError.test.ts
-@@ -0,0 +1,113 @@
-+/*
-+ * Copyright 2025 The Kubernetes Authors
-+ *
-+ * Licensed under the Apache License, Version 2.0 (the "License");
-+ * you may not use this file except in compliance with the License.
-+ * You may obtain a copy of the License at
-+ *
-+ * http://www.apache.org/licenses/LICENSE-2.0
-+ *
-+ * Unless required by applicable law or agreed to in writing, software
-+ * distributed under the License is distributed on an "AS IS" BASIS,
-+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-+ * See the License for the specific language governing permissions and
-+ * limitations under the License.
-+ */
-+
-+import { beforeEach, describe, expect, it, vi } from 'vitest';
-+import { handleClusterAuthError } from './authError';
-+
-+const { mockCreateRouteURL, mockGetState, mockLogout } = vi.hoisted(() => ({
-+  mockCreateRouteURL: vi.fn().mockReturnValue('/c/test-cluster/login'),
-+  mockGetState: vi.fn(),
-+  mockLogout: vi.fn().mockResolvedValue(undefined),
-+}));
-+
-+vi.mock('../../auth', () => ({
-+  logout: mockLogout,
-+}));
-+
-+vi.mock('../../router/createRouteURL', () => ({
-+  createRouteURL: mockCreateRouteURL,
-+}));
-+
-+vi.mock('../../../redux/stores/store', () => ({
-+  default: {
-+    getState: mockGetState,
-+  },
-+}));
-+
-+describe('handleClusterAuthError', () => {
-+  let navigate: ReturnType<typeof vi.fn>;
-+
-+  beforeEach(() => {
-+    navigate = vi.fn();
-+    mockLogout.mockClear();
-+    mockCreateRouteURL.mockClear();
-+    mockGetState.mockReset();
-+    mockGetState.mockReturnValue({
-+      config: {
-+        clusters: {
-+          'test-cluster': { auth_type: 'oidc' },
-+        },
-+      },
-+    });
-+  });
-+
-+  it('redirects cookie-based OIDC sessions back to login on 401', async () => {
-+    await expect(
-+      handleClusterAuthError({
-+        autoLogoutOnAuthError: true,
-+        cluster: 'test-cluster',
-+        hasAuthorizationHeader: false,
-+        navigate,
-+        path: '/api/v1/namespaces',
-+        status: 401,
-+      })
-+    ).resolves.toBe(true);
-+
-+    expect(mockLogout).toHaveBeenCalledWith('test-cluster');
-+    expect(mockCreateRouteURL).toHaveBeenCalledWith('login', { cluster: 'test-cluster' });
-+    expect(navigate).toHaveBeenCalledWith('/c/test-cluster/login');
-+  });
-+
-+  it('logs out header-based sessions without redirecting', async () => {
-+    await expect(
-+      handleClusterAuthError({
-+        autoLogoutOnAuthError: true,
-+        cluster: 'test-cluster',
-+        hasAuthorizationHeader: true,
-+        navigate,
-+        path: '/api/v1/namespaces',
-+        status: 401,
-+      })
-+    ).resolves.toBe(true);
-+
-+    expect(mockLogout).toHaveBeenCalledWith('test-cluster');
-+    expect(navigate).not.toHaveBeenCalled();
-+  });
-+
-+  it('ignores cookie-based 401s for non-OIDC clusters', async () => {
-+    mockGetState.mockReturnValue({
-+      config: {
-+        clusters: {
-+          'test-cluster': { auth_type: '' },
-+        },
-+      },
-+    });
-+
-+    await expect(
-+      handleClusterAuthError({
-+        autoLogoutOnAuthError: true,
-+        cluster: 'test-cluster',
-+        hasAuthorizationHeader: false,
-+        navigate,
-+        path: '/api/v1/namespaces',
-+        status: 401,
-+      })
-+    ).resolves.toBe(false);
-+
-+    expect(mockLogout).not.toHaveBeenCalled();
-+    expect(navigate).not.toHaveBeenCalled();
-+  });
-+});
