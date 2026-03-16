@@ -25,7 +25,12 @@ import { ChatToolEventRenderer, chatToolEventRendererLive, type ToolRenderer } f
 import { buildTranscriptSignature, compareTranscript, fitPromptMessages, type TranscriptEntry } from './chat-transcript'
 import { getCodexClient, releaseCodexClient, resetCodexClient, setCodexClientFactory } from './codex-client'
 import { loadConfig } from './config'
-import { recordSseConnection, recordSseError } from './metrics'
+import {
+  recordOpenWebUIDetailTurn,
+  recordOpenWebUITextOnlyFallback,
+  recordSseConnection,
+  recordSseError,
+} from './metrics'
 import { createSignedOpenWebUIRenderHref, resolveOpenWebUIRenderSigningSecret } from './openwebui-render-signing'
 import { getOpenWebUiRenderStore } from './openwebui-render-store'
 import { ThreadState, ThreadStateLive, type ThreadStateService, ThreadStateUnavailableError } from './thread-state'
@@ -196,9 +201,14 @@ type OpenWebUIRenderRuntime = {
   secret: string
 }
 
-const isOpenWebUIRichRenderEnabled = (chatClientKind: ChatClientKind, request: Request) => {
+const isOpenWebUIDetailLinksEnabled = (chatClientKind: ChatClientKind) => {
   if (chatClientKind !== 'openwebui') return false
   if (!parseBooleanEnv(process.env.JANGAR_OPENWEBUI_RICH_RENDER_ENABLED)) return false
+  return true
+}
+
+const shouldEmitExperimentalOpenWebUIJangarEvent = (chatClientKind: ChatClientKind, request: Request) => {
+  if (!isOpenWebUIDetailLinksEnabled(chatClientKind)) return false
   const requestedMode = request.headers.get('x-jangar-openwebui-render-mode')?.trim().toLowerCase()
   return requestedMode === 'rich-ui-v1'
 }
@@ -209,6 +219,8 @@ const resolveOpenWebUIRenderRuntime = (): OpenWebUIRenderRuntime | null => {
   if (!baseUrl || !secret) return null
   return { baseUrl, secret }
 }
+
+let hasLoggedMissingOpenWebUIRenderRuntime = false
 
 const includesMissingUpstreamThreadMessage = (message: string) => {
   const normalized = message.toLowerCase()
@@ -429,7 +441,8 @@ const toSseResponse = (
   completionEncoder: ChatCompletionEncoderService,
   threadContext: ThreadContext | null,
   codexCwd: string,
-  enableOpenWebUIRichRender: boolean,
+  enableOpenWebUIDetailLinks: boolean,
+  enableExperimentalJangarEvent: boolean,
   openWebUIRenderRuntime: OpenWebUIRenderRuntime | null,
   onTurnSettled?: (result: {
     aborted: boolean
@@ -460,7 +473,8 @@ const toSseResponse = (
       let pendingInterrupt = false
       let didInterrupt = false
       let turnFinished = false
-      let persistRenderBlobs: (() => Promise<void>) | null = null
+      let persistRenderBlobs: (() => Promise<string[]>) | null = null
+      let detailLinksEnabledForSession = false
 
       let createRenderRef:
         | ((args: {
@@ -471,7 +485,7 @@ const toSseResponse = (
           }) => { id: string; kind: string; href: string; expiresAt: string } | null)
         | undefined
 
-      if (enableOpenWebUIRichRender && openWebUIRenderRuntime) {
+      if (enableOpenWebUIDetailLinks && openWebUIRenderRuntime) {
         try {
           const renderStore = getOpenWebUiRenderStore()
           createRenderRef = ({ renderId, kind, messageBindingHash, expiresAt }) => ({
@@ -489,10 +503,12 @@ const toSseResponse = (
           })
           persistRenderBlobs = async () => {
             const blobs = session.takePendingRenderBlobs()
+            const failedRenderIds: string[] = []
             for (const blob of blobs) {
               try {
                 await renderStore.setRenderBlob(blob)
               } catch (error) {
+                failedRenderIds.push(blob.renderId)
                 console.warn('[chat] failed to persist openwebui render blob', {
                   chatId: threadContext?.chatId,
                   threadId: activeThreadId ?? threadContext?.threadId ?? null,
@@ -502,9 +518,12 @@ const toSseResponse = (
                 })
               }
             }
+            return failedRenderIds
           }
+          detailLinksEnabledForSession = true
         } catch (error) {
-          console.warn('[chat] openwebui render store unavailable; falling back to inline-only rich mode', {
+          recordOpenWebUITextOnlyFallback('render_store_unavailable')
+          console.warn('[chat] openwebui render store unavailable; falling back to text-only mode', {
             chatId: threadContext?.chatId,
             error: String(error),
           })
@@ -523,9 +542,14 @@ const toSseResponse = (
           turnNumber: threadContext?.turnNumber ?? null,
         },
         jangarRender: {
-          enabled: enableOpenWebUIRichRender,
-          mode: 'rich-ui-v1',
-          createRenderRef,
+          detailLinks: {
+            enabled: detailLinksEnabledForSession,
+            createRenderRef,
+          },
+          jangarEvent: {
+            enabled: enableExperimentalJangarEvent,
+            mode: 'rich-ui-v1',
+          },
         },
       })
 
@@ -760,7 +784,8 @@ const toSseResponse = (
 
               if (persistRenderBlobs) {
                 const frames = session.onDelta(delta)
-                await persistRenderBlobs()
+                const failedRenderIds = await persistRenderBlobs()
+                session.resolvePendingDetailLinks(frames, failedRenderIds)
                 enqueueFrames(frames)
               } else {
                 enqueueFrames(session.onDelta(delta))
@@ -821,7 +846,8 @@ const toSseResponse = (
             type: 'internal',
             code: 'codex_error',
           })
-          await persistRenderBlobs()
+          const failedRenderIds = await persistRenderBlobs()
+          session.resolvePendingDetailLinks(frames, failedRenderIds)
           enqueueFrames(frames)
         } else {
           enqueueFrames(
@@ -855,7 +881,8 @@ const toSseResponse = (
         }
         if (persistRenderBlobs) {
           const frames = session.finalize({ aborted, turnFinished })
-          await persistRenderBlobs()
+          const failedRenderIds = await persistRenderBlobs()
+          session.resolvePendingDetailLinks(frames, failedRenderIds)
           enqueueFrames(frames)
         } else {
           enqueueFrames(session.finalize({ aborted, turnFinished }))
@@ -938,7 +965,25 @@ export const handleChatCompletionEffect = (request: Request) =>
           toolRenderer: ChatToolEventRenderer,
           encoder: ChatCompletionEncoder,
         })
+        const openWebUIDetailLinksRequested = isOpenWebUIDetailLinksEnabled(chatClientKind)
         const openWebUIRenderRuntime = resolveOpenWebUIRenderRuntime()
+        const openWebUIDetailLinksEnabled = openWebUIDetailLinksRequested && openWebUIRenderRuntime !== null
+        const experimentalJangarEventEnabled = shouldEmitExperimentalOpenWebUIJangarEvent(chatClientKind, request)
+
+        if (chatClientKind === 'openwebui') {
+          recordOpenWebUIDetailTurn(
+            openWebUIDetailLinksEnabled ? 'enabled' : openWebUIDetailLinksRequested ? 'text_only' : 'disabled',
+          )
+        }
+        if (openWebUIDetailLinksRequested && !openWebUIRenderRuntime) {
+          recordOpenWebUITextOnlyFallback('render_runtime_missing')
+          if (!hasLoggedMissingOpenWebUIRenderRuntime) {
+            hasLoggedMissingOpenWebUIRenderRuntime = true
+            console.warn(
+              '[chat] openwebui rich detail requested but JANGAR_OPENWEBUI_EXTERNAL_BASE_URL or signing secret is missing; falling back to text-only mode',
+            )
+          }
+        }
 
         let threadContext: ThreadContext | null = null
         let codexCwd = resolveCodexCwd()
@@ -1329,7 +1374,8 @@ export const handleChatCompletionEffect = (request: Request) =>
             encoder,
             threadContext,
             codexCwd,
-            isOpenWebUIRichRenderEnabled(chatClientKind, request),
+            openWebUIDetailLinksEnabled,
+            experimentalJangarEventEnabled,
             openWebUIRenderRuntime,
             finalizeTranscriptState,
             chatClientKind === 'openwebui',

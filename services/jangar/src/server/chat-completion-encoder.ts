@@ -1,5 +1,10 @@
 import { Context } from 'effect'
 import * as Either from 'effect/Either'
+import {
+  recordOpenWebUIDetailLink,
+  recordOpenWebUIDetailPreviewTruncation,
+  recordOpenWebUIDetailStagedBytes,
+} from './metrics'
 import { safeJsonStringify, stripTerminalControl } from './chat-text'
 import { decodeToolEvent, type ToolEvent } from './chat-tool-event'
 import type { ToolRenderer } from './chat-tool-event-renderer'
@@ -9,7 +14,16 @@ import { type OpenWebUiRenderBlob, createOpenWebUiRenderBlob } from './openwebui
 const TOOL_EVENT_DECODE_FAILED_TAG = '[jangar][tool-event][decode-failed]'
 
 const RENDER_EVENT_VERSION = 'v1' as const
-const RENDER_EVENT_PREVIEW_LIMIT = 8_192
+const OPENWEBUI_MAX_INLINE_ACTIVITY_BYTES = 4 * 1024
+const OPENWEBUI_MAX_TOTAL_ACTIVITY_BYTES = 24 * 1024
+const OPENWEBUI_MAX_INLINE_STRUCTURED_PAYLOAD_BYTES = 8 * 1024
+
+type OpenWebUIRenderRef = {
+  id: string
+  kind: string
+  href: string
+  expiresAt: string
+}
 
 type JangarRenderLane = 'message' | 'reasoning' | 'plan' | 'rate_limits' | 'tool' | 'usage' | 'error'
 type JangarRenderOp = 'append_text' | 'merge' | 'replace' | 'complete'
@@ -27,24 +41,24 @@ type JangarRenderEvent = {
     subtitle?: string
     badge?: string
   }
-  renderRef?: {
-    id: string
-    kind: string
-    href: string
-    expiresAt: string
-  }
+  renderRef?: OpenWebUIRenderRef
 }
 
 type JangarRenderConfig = {
-  enabled: boolean
-  mode: 'rich-ui-v1'
-  renderUrlTtlSeconds?: number
-  createRenderRef?: (args: {
-    renderId: string
-    kind: string
-    messageBindingHash: string
-    expiresAt: string
-  }) => JangarRenderEvent['renderRef'] | null
+  detailLinks?: {
+    enabled: boolean
+    renderUrlTtlSeconds?: number
+    createRenderRef?: (args: {
+      renderId: string
+      kind: string
+      messageBindingHash: string
+      expiresAt: string
+    }) => OpenWebUIRenderRef | null
+  }
+  jangarEvent?: {
+    enabled: boolean
+    mode: 'rich-ui-v1'
+  }
 }
 
 type JangarEventState = {
@@ -267,12 +281,44 @@ const normalizeUsage = (raw: unknown) => {
   return normalized
 }
 
-const truncatePreview = (value: string, max = RENDER_EVENT_PREVIEW_LIMIT) =>
-  value.length <= max ? value : `${value.slice(0, max)}…`
+const utf8Encoder = new TextEncoder()
+
+const utf8ByteLength = (value: string) => utf8Encoder.encode(value).length
+
+const truncatePreview = (value: string, max = OPENWEBUI_MAX_INLINE_STRUCTURED_PAYLOAD_BYTES) => {
+  if (utf8ByteLength(value) <= max) return value
+
+  let truncated = ''
+  for (const character of value) {
+    if (utf8ByteLength(`${truncated}${character}…`) > max) break
+    truncated += character
+  }
+  return `${truncated}…`
+}
 
 const clampTextForPreview = (value: unknown): string | undefined => {
   if (typeof value !== 'string' || value.length === 0) return undefined
   return truncatePreview(value)
+}
+
+const closeUnbalancedCodeFence = (value: string) =>
+  (value.match(/```/g) ?? []).length % 2 === 0 ? value : `${value}\n\`\`\`\n`
+
+const fitMarkdownPreviewToBytes = (value: string, maxBytes: number) => {
+  if (maxBytes <= 0) return { content: '', truncated: value.length > 0 }
+  if (utf8ByteLength(value) <= maxBytes) return { content: value, truncated: false }
+
+  const suffix = '\n…\n'
+  const budget = Math.max(0, maxBytes - utf8ByteLength(suffix))
+  let truncated = ''
+
+  for (const character of value) {
+    if (utf8ByteLength(`${truncated}${character}`) > budget) break
+    truncated += character
+  }
+
+  const content = closeUnbalancedCodeFence(`${truncated.trimEnd()}${suffix}`)
+  return { content, truncated: true }
 }
 
 const toJangarMeta = (state: string | undefined): string | undefined => {
@@ -319,7 +365,80 @@ type ToolRenderState = {
   title?: string
   status?: string
   reasoningState: ReasoningDetailsState
+  openWebUiOutput: string
+  openWebUiSummaryKey?: string
+  openWebUiSummaryEmitted?: boolean
 }
+
+type OpenWebUIDetailState = {
+  ref: OpenWebUIRenderRef
+  linkEmitted: boolean
+  pendingLinkMarkdown?: string
+  pendingLinkToken?: string
+}
+
+type JangarEventRenderState = {
+  ref: OpenWebUIRenderRef
+}
+
+type ToolSummaryBase = {
+  title?: string
+  status?: string
+  detail?: string
+}
+
+type CommandToolSummary = ToolSummaryBase & {
+  kind: 'command'
+  exitCode?: unknown
+  duration?: unknown
+  outputPreview?: string
+}
+
+type FileToolSummary = ToolSummaryBase & {
+  kind: 'file'
+  changed: ReturnType<typeof summarizeFileChanges>
+  changedFileCount?: unknown
+  patchSummary?: unknown
+}
+
+type McpToolSummary = ToolSummaryBase & {
+  kind: 'mcp'
+  argumentsPreview?: string
+  resultPreview?: string
+  errorPreview?: string
+}
+
+type WebSearchToolSummary = ToolSummaryBase & {
+  kind: 'webSearch'
+  query?: string
+}
+
+type DynamicToolSummary = ToolSummaryBase & {
+  kind: 'dynamicTool'
+  tool?: string
+  arguments?: unknown
+  result?: unknown
+  success?: boolean
+}
+
+type ImageGenerationToolSummary = ToolSummaryBase & {
+  kind: 'imageGeneration'
+  prompt?: string
+  imageUrl?: string
+}
+
+type GenericToolSummary = ToolSummaryBase & {
+  kind: 'tool'
+}
+
+type ToolSummary =
+  | CommandToolSummary
+  | FileToolSummary
+  | McpToolSummary
+  | WebSearchToolSummary
+  | DynamicToolSummary
+  | ImageGenerationToolSummary
+  | GenericToolSummary
 
 const toToolLogicalId = (kind: string, toolId: string) => `tool:${kind}-${toolId}`
 
@@ -358,7 +477,7 @@ const summarizeFileChanges = (event: ToolEvent) => {
   }
 }
 
-const parseToolMcpSummary = (event: ToolEvent) => {
+const parseToolMcpSummary = (event: ToolEvent): Omit<McpToolSummary, 'kind'> => {
   const detail = toString(event.detail)
   const result =
     event.data && typeof event.data === 'object' && toRecord(event.data.result) ? event.data.result : undefined
@@ -376,7 +495,7 @@ const parseToolMcpSummary = (event: ToolEvent) => {
   }
 }
 
-const parseToolImageGenerationSummary = (event: ToolEvent) => {
+const parseToolImageGenerationSummary = (event: ToolEvent): Omit<ImageGenerationToolSummary, 'kind'> => {
   const data = event.data
   if (!data) return { title: toJangarMeta(event.title), status: toJangarMeta(event.status) }
   const prompt = toString(data.prompt) ?? toString(data.userPrompt)
@@ -484,7 +603,7 @@ const stripToolText = (value: string | undefined, state: ReasoningDetailsState) 
 
 const toolPreviewText = (value: unknown) => clampTextForPreview(typeof value === 'string' ? value : undefined)
 
-const summarizeToolCommand = (event: ToolEvent, reasoningState: ReasoningDetailsState) => {
+const summarizeToolCommand = (event: ToolEvent, reasoningState: ReasoningDetailsState): CommandToolSummary => {
   const data = toRecord(event.data)
   const outputPreview = toolPreviewText(stripToolText(event.delta, reasoningState))
 
@@ -502,7 +621,7 @@ const summarizeToolCommand = (event: ToolEvent, reasoningState: ReasoningDetails
   }
 }
 
-const summarizeToolFile = (event: ToolEvent) => {
+const summarizeToolFile = (event: ToolEvent): FileToolSummary => {
   const data = toRecord(event.data)
   const changed = summarizeFileChanges(event)
   return {
@@ -516,7 +635,7 @@ const summarizeToolFile = (event: ToolEvent) => {
   }
 }
 
-const parseToolWebSearchSummary = (event: ToolEvent) => ({
+const parseToolWebSearchSummary = (event: ToolEvent): WebSearchToolSummary => ({
   kind: 'webSearch',
   title: toJangarMeta(event.title),
   status: toJangarMeta(event.status),
@@ -524,7 +643,7 @@ const parseToolWebSearchSummary = (event: ToolEvent) => ({
   query: toString(toRecord(event.data)?.query) ?? toJangarMeta(event.detail),
 })
 
-const parseToolDynamicSummary = (event: ToolEvent) => ({
+const parseToolDynamicSummary = (event: ToolEvent): DynamicToolSummary => ({
   kind: 'dynamicTool',
   title: toJangarMeta(event.title),
   status: toJangarMeta(event.status),
@@ -535,7 +654,7 @@ const parseToolDynamicSummary = (event: ToolEvent) => ({
   success: (toRecord(event.data)?.success as boolean | undefined) ?? undefined,
 })
 
-const parseToolSummary = (event: ToolEvent, reasoningState: ReasoningDetailsState) => {
+const parseToolSummary = (event: ToolEvent, reasoningState: ReasoningDetailsState): ToolSummary => {
   const kind = event.toolKind
   switch (kind) {
     case 'command': {
@@ -545,7 +664,7 @@ const parseToolSummary = (event: ToolEvent, reasoningState: ReasoningDetailsStat
       return summarizeToolFile(event)
     }
     case 'mcp': {
-      return { kind, ...parseToolMcpSummary(event) }
+      return { kind: 'mcp', ...parseToolMcpSummary(event) }
     }
     case 'webSearch': {
       return parseToolWebSearchSummary(event)
@@ -554,16 +673,77 @@ const parseToolSummary = (event: ToolEvent, reasoningState: ReasoningDetailsStat
       return parseToolDynamicSummary(event)
     }
     case 'imageGeneration': {
-      return { kind, ...parseToolImageGenerationSummary(event) }
+      return { kind: 'imageGeneration', ...parseToolImageGenerationSummary(event) }
     }
     default:
       return {
-        kind,
+        kind: 'tool',
         title: toJangarMeta(event.title),
         status: toJangarMeta(event.status),
         detail: toJangarMeta(event.detail),
       }
   }
+}
+
+const stripShellCommandPrefix = (value: string) => {
+  const trimmed = value.trim()
+  const match = trimmed.match(/^(?:\/(?:usr\/)?bin\/(?:ba|z)sh|(?:ba|z)sh)\s+-lc\s+([\s\S]+)$/u)
+  if (!match) return value
+  let command = match[1]?.trim() ?? ''
+  if (
+    command.length >= 2 &&
+    ((command.startsWith("'") && command.endsWith("'")) || (command.startsWith('"') && command.endsWith('"')))
+  ) {
+    const quote = command[0]
+    command = command.slice(1, -1)
+    if (quote === '"') {
+      command = command.replace(/\\"/g, '"')
+    } else if (quote === "'") {
+      command = command.replace(/\\'/g, "'")
+    }
+  }
+  return command
+}
+
+const normalizeMarkdownText = (value: string) => value.replace(/\r\n/g, '\n')
+
+const buildCodeFence = (language: string, value: string) => {
+  const trimmed = normalizeMarkdownText(value).trimEnd()
+  if (trimmed.length === 0) return ''
+  return `\n\`\`\`${language}\n${trimmed}\n\`\`\`\n`
+}
+
+const formatToolStatus = (status: string | undefined, exitCode?: unknown) => {
+  if (!status) return null
+  if (typeof exitCode === 'number' && Number.isFinite(exitCode)) {
+    if (status === 'completed') return `completed with exit code ${exitCode}`
+    if (status === 'failed' || status === 'error') return `${status} with exit code ${exitCode}`
+  }
+  if (status === 'started') return 'in progress'
+  if (status === 'delta') return 'in progress'
+  return status
+}
+
+const buildChangedPathList = (paths: string[]) =>
+  paths.length > 0 ? paths.map((path) => `- \`${path}\``).join('\n') : '- `unknown-file`'
+
+const summarizeInlineDetail = (value: string | undefined, max = 180) => {
+  if (!value) return undefined
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  if (normalized.length === 0) return undefined
+  return normalized.length <= max ? normalized : `${normalized.slice(0, max - 1)}…`
+}
+
+const countArrayField = (record: Record<string, unknown> | undefined, field: string) => {
+  const value = record?.[field]
+  return Array.isArray(value) ? value.length : undefined
+}
+
+const firstArrayString = (record: Record<string, unknown> | undefined, field: string) => {
+  const value = record?.[field]
+  if (!Array.isArray(value)) return undefined
+  const first = value.find((entry) => typeof entry === 'string')
+  return summarizeInlineDetail(typeof first === 'string' ? first : undefined, 120)
 }
 
 export const normalizeStreamError = (error: unknown) => {
@@ -621,6 +801,7 @@ export type ChatCompletionStreamSession = {
   setThreadMeta: (meta: ThreadMeta) => void
   getState: () => { hasEmittedAnyChunk: boolean; hadError: boolean; assistantContent: string }
   takePendingRenderBlobs: () => OpenWebUiRenderBlob[]
+  resolvePendingDetailLinks: (frames: Record<string, unknown>[], failedRenderIds?: string[]) => void
   onDelta: (delta: unknown) => Record<string, unknown>[]
   onInternalError: (error: InternalErrorPayload) => Record<string, unknown>[]
   onClientAbort: () => Record<string, unknown>[]
@@ -654,14 +835,19 @@ const createSession = (args: {
   meta?: ThreadMeta
 }): ChatCompletionStreamSession => {
   const { id, created, model, includeUsage, toolRenderer, jangarRender } = args
-  const renderEnabled = jangarRender?.enabled === true && jangarRender.mode === 'rich-ui-v1'
-  const renderUrlTtlSeconds = jangarRender?.renderUrlTtlSeconds ?? OPENWEBUI_RENDER_URL_TTL_SECONDS
+  const detailLinksEnabled = jangarRender?.detailLinks?.enabled === true
+  const jangarEventEnabled =
+    jangarRender?.jangarEvent?.enabled === true && jangarRender?.jangarEvent.mode === 'rich-ui-v1'
+  const renderUrlTtlSeconds = jangarRender?.detailLinks?.renderUrlTtlSeconds ?? OPENWEBUI_RENDER_URL_TTL_SECONDS
   const messageBindingHash = createMessageBindingHash(id)
-  const pendingRenderBlobs: OpenWebUiRenderBlob[] = []
+  const pendingRenderBlobs = new Map<string, OpenWebUiRenderBlob>()
+  const openWebUiDetailStates = new Map<string, OpenWebUIDetailState>()
+  const jangarEventRenderStates = new Map<string, JangarEventRenderState>()
 
   let meta: ThreadMeta = { ...args.meta }
   let messageRoleEmitted = false
   let reasoningBuffer = ''
+  let fullReasoningContent = ''
   let commandFenceOpen = false
   let pendingCommandFencePrefix = false
   let trailingNewlines = 1
@@ -674,6 +860,7 @@ const createSession = (args: {
   let hasRenderedRateLimits = false
   let sawAnyMessageDelta = false
   let assistantContent = ''
+  let openWebUiActivityBytesUsed = 0
   const toolStates = new Map<string, ToolRenderState>()
   const jangarEventState = new Map<string, JangarEventState>()
   let nextJangarSeq = 1
@@ -694,6 +881,7 @@ const createSession = (args: {
       title: toolEvent.title,
       status: toolEvent.status,
       reasoningState: createReasoningDetailsState(),
+      openWebUiOutput: '',
     }
     toolStates.set(logicalId, nextState)
     return nextState
@@ -720,17 +908,68 @@ const createSession = (args: {
     pushChunk(frames, chunk)
   }
 
-  const stageRenderBlob = (
+  const stageOpenWebUIDetailBlob = (
     logicalId: string,
     lane: JangarRenderLane,
     kind: string,
     payload: Record<string, unknown>,
     preview?: JangarRenderMeta,
-  ): JangarRenderEvent['renderRef'] | undefined => {
-    if (!renderEnabled || typeof jangarRender?.createRenderRef !== 'function') return undefined
+  ): OpenWebUIRenderRef | undefined => {
+    if (!detailLinksEnabled || typeof jangarRender?.detailLinks?.createRenderRef !== 'function') return undefined
 
-    const expiresAt = new Date(Date.now() + renderUrlTtlSeconds * 1000).toISOString()
+    const existing = openWebUiDetailStates.get(logicalId)
+    const expiresAt = existing?.ref.expiresAt ?? new Date(Date.now() + renderUrlTtlSeconds * 1000).toISOString()
     const blob = createOpenWebUiRenderBlob({
+      renderId: existing?.ref.id,
+      kind,
+      logicalId,
+      lane,
+      payload,
+      preview,
+      messageBindingHash,
+      expiresAt,
+    })
+    recordOpenWebUIDetailStagedBytes(kind, utf8ByteLength(safeJsonStringify(payload)))
+
+    pendingRenderBlobs.set(blob.renderId, blob)
+
+    if (existing) {
+      return existing.ref
+    }
+
+    const renderRef =
+      jangarRender.detailLinks.createRenderRef({
+        renderId: blob.renderId,
+        kind,
+        messageBindingHash,
+        expiresAt,
+      }) ?? undefined
+    if (!renderRef) {
+      recordOpenWebUIDetailLink('failed', kind)
+      return undefined
+    }
+
+    openWebUiDetailStates.set(logicalId, {
+      ref: renderRef,
+      linkEmitted: false,
+    })
+    return renderRef
+  }
+
+  const stageJangarEventBlob = (
+    logicalId: string,
+    lane: JangarRenderLane,
+    kind: string,
+    payload: Record<string, unknown>,
+    preview?: JangarRenderMeta,
+  ): OpenWebUIRenderRef | undefined => {
+    if (!jangarEventEnabled || typeof jangarRender?.detailLinks?.createRenderRef !== 'function') return undefined
+
+    const stateKey = `jangar_event:${logicalId}`
+    const existing = jangarEventRenderStates.get(stateKey)
+    const expiresAt = existing?.ref.expiresAt ?? new Date(Date.now() + renderUrlTtlSeconds * 1000).toISOString()
+    const blob = createOpenWebUiRenderBlob({
+      renderId: existing?.ref.id,
       kind,
       logicalId,
       lane,
@@ -740,29 +979,39 @@ const createSession = (args: {
       expiresAt,
     })
 
-    pendingRenderBlobs.push(blob)
-    return (
-      jangarRender.createRenderRef({
+    pendingRenderBlobs.set(blob.renderId, blob)
+
+    if (existing) {
+      return existing.ref
+    }
+
+    const renderRef =
+      jangarRender.detailLinks.createRenderRef({
         renderId: blob.renderId,
         kind,
         messageBindingHash,
         expiresAt,
       }) ?? undefined
-    )
+    if (!renderRef) return undefined
+
+    jangarEventRenderStates.set(stateKey, {
+      ref: renderRef,
+    })
+    return renderRef
   }
 
-  const maybeStageStructuredPayload = (
+  const maybeStageJangarEventStructuredPayload = (
     logicalId: string,
     lane: JangarRenderLane,
     kind: string,
     payload: Record<string, unknown>,
     preview?: JangarRenderMeta,
   ) => {
-    if (safeJsonStringify(payload).length <= RENDER_EVENT_PREVIEW_LIMIT) return undefined
-    return stageRenderBlob(logicalId, lane, kind, payload, preview)
+    if (utf8ByteLength(safeJsonStringify(payload)) <= OPENWEBUI_MAX_INLINE_STRUCTURED_PAYLOAD_BYTES) return undefined
+    return stageJangarEventBlob(logicalId, lane, kind, payload, preview)
   }
 
-  const maybeStageTextPayload = (
+  const maybeStageJangarEventTextPayload = (
     logicalId: string,
     lane: JangarRenderLane,
     kind: string,
@@ -771,8 +1020,8 @@ const createSession = (args: {
     preview?: JangarRenderMeta,
     payloadExtras: Record<string, unknown> = {},
   ) => {
-    if (text.length <= RENDER_EVENT_PREVIEW_LIMIT) return undefined
-    return stageRenderBlob(logicalId, lane, kind, { ...payloadExtras, [payloadKey]: text }, preview)
+    if (utf8ByteLength(text) <= OPENWEBUI_MAX_INLINE_STRUCTURED_PAYLOAD_BYTES) return undefined
+    return stageJangarEventBlob(logicalId, lane, kind, { ...payloadExtras, [payloadKey]: text }, preview)
   }
 
   const emitJangarEvent = (
@@ -784,7 +1033,7 @@ const createSession = (args: {
     preview?: JangarRenderMeta,
     renderRef?: JangarRenderEvent['renderRef'],
   ) => {
-    if (!renderEnabled) return
+    if (!jangarEventEnabled) return
 
     const last = jangarEventState.get(logicalId)
     const revision = (last?.revision ?? 0) + 1
@@ -814,23 +1063,85 @@ const createSession = (args: {
 
   const eventPayloadText = (value: string) => clampTextForPreview(value) ?? value
 
+  const buildPendingDetailLinkToken = (renderId: string) => `__JANGAR_OPENWEBUI_DETAIL_LINK_${renderId}__`
+
+  const applyDetailLinkReplacements = (value: string, replacements: Map<string, string>) => {
+    let next = value
+    for (const [token, replacement] of replacements) {
+      next = next.replaceAll(token, replacement)
+    }
+    return next
+  }
+
+  const emitOpenWebUIDetailLink = (frames: Record<string, unknown>[], logicalId: string, label: string) => {
+    const detailState = openWebUiDetailStates.get(logicalId)
+    if (!detailState || detailState.linkEmitted) return
+    detailState.linkEmitted = true
+    detailState.pendingLinkToken = buildPendingDetailLinkToken(detailState.ref.id)
+    detailState.pendingLinkMarkdown = `\n\n${label}: <${detailState.ref.href}>\n\n`
+    emitContentDelta(frames, detailState.pendingLinkToken)
+  }
+
+  const emitOpenWebUIActivityBlock = (args: {
+    frames: Record<string, unknown>[]
+    logicalId: string
+    lane: JangarRenderLane
+    kind: string
+    content: string
+    preview?: JangarRenderMeta
+    detailPayload?: Record<string, unknown>
+    detailLabel?: string
+    forceDetailLink?: boolean
+  }) => {
+    const remainingBudget = Math.max(0, OPENWEBUI_MAX_TOTAL_ACTIVITY_BYTES - openWebUiActivityBytesUsed)
+    const previewBudget = Math.min(OPENWEBUI_MAX_INLINE_ACTIVITY_BYTES, remainingBudget)
+    const fittedContent = fitMarkdownPreviewToBytes(args.content, previewBudget)
+    const shouldStageDetail =
+      args.detailPayload != null &&
+      (args.forceDetailLink === true ||
+        fittedContent.truncated ||
+        utf8ByteLength(safeJsonStringify(args.detailPayload)) > OPENWEBUI_MAX_INLINE_STRUCTURED_PAYLOAD_BYTES)
+    if (fittedContent.truncated) {
+      recordOpenWebUIDetailPreviewTruncation(args.kind)
+    }
+    const renderRef = shouldStageDetail
+      ? stageOpenWebUIDetailBlob(
+          args.logicalId,
+          args.lane,
+          args.kind,
+          args.detailPayload as Record<string, unknown>,
+          args.preview,
+        )
+      : undefined
+    if (!shouldStageDetail && args.detailPayload) {
+      recordOpenWebUIDetailLink('skipped', args.kind)
+    }
+
+    if (fittedContent.content.length > 0) {
+      emitContentDelta(args.frames, fittedContent.content)
+      openWebUiActivityBytesUsed += utf8ByteLength(fittedContent.content)
+    }
+
+    if (renderRef && args.detailLabel) {
+      emitOpenWebUIDetailLink(args.frames, args.logicalId, args.detailLabel)
+    }
+  }
+
   const emitMessageEvent = (frames: Record<string, unknown>[], text: string) => {
     const preview = { title: 'assistant', badge: 'message' } satisfies JangarRenderMeta
-    const renderRef = maybeStageTextPayload('message:assistant', 'message', 'message', 'text', text, preview)
-    emitJangarEvent(
-      frames,
-      'message:assistant',
-      'message',
-      'append_text',
-      { text: eventPayloadText(text) },
-      preview,
-      renderRef,
-    )
+    emitJangarEvent(frames, 'message:assistant', 'message', 'append_text', { text: eventPayloadText(text) }, preview)
   }
 
   const emitReasoningEvent = (frames: Record<string, unknown>[], text: string) => {
     const preview = { title: 'reasoning', badge: 'summary' } satisfies JangarRenderMeta
-    const renderRef = maybeStageTextPayload('reasoning:summary', 'reasoning', 'reasoning', 'text', text, preview)
+    const renderRef = maybeStageJangarEventTextPayload(
+      'reasoning:summary',
+      'reasoning',
+      'reasoning',
+      'text',
+      text,
+      preview,
+    )
     emitJangarEvent(
       frames,
       'reasoning:summary',
@@ -844,7 +1155,7 @@ const createSession = (args: {
 
   const emitPlanEvent = (frames: Record<string, unknown>[], markdown: string) => {
     const preview = { title: 'plan', badge: 'plan' } satisfies JangarRenderMeta
-    const renderRef = maybeStageTextPayload('plan:current', 'plan', 'plan', 'markdown', markdown, preview)
+    const renderRef = maybeStageJangarEventTextPayload('plan:current', 'plan', 'plan', 'markdown', markdown, preview)
     emitJangarEvent(
       frames,
       'plan:current',
@@ -858,7 +1169,7 @@ const createSession = (args: {
 
   const emitRateLimitsEvent = (frames: Record<string, unknown>[], markdown: string) => {
     const preview = { title: 'rate limits', badge: 'quota' } satisfies JangarRenderMeta
-    const renderRef = maybeStageTextPayload(
+    const renderRef = maybeStageJangarEventTextPayload(
       'rate_limits:current',
       'rate_limits',
       'rate_limits',
@@ -879,14 +1190,26 @@ const createSession = (args: {
 
   const emitUsageEvent = (frames: Record<string, unknown>[], usage: Record<string, unknown>) => {
     const preview = { title: 'usage', badge: 'usage' } satisfies JangarRenderMeta
-    const renderRef = maybeStageStructuredPayload('usage:final', 'usage', 'usage', { usage }, preview)
+    const renderRef = maybeStageJangarEventStructuredPayload('usage:final', 'usage', 'usage', { usage }, preview)
     emitJangarEvent(frames, 'usage:final', 'usage', 'replace', { usage }, preview, renderRef)
   }
 
   const emitErrorEvent = (frames: Record<string, unknown>[], error: Record<string, unknown>) => {
     const preview = { title: 'error', badge: 'error' } satisfies JangarRenderMeta
-    const renderRef = maybeStageStructuredPayload('error:current', 'error', 'error', { error }, preview)
+    const renderRef = maybeStageJangarEventStructuredPayload('error:current', 'error', 'error', { error }, preview)
     emitJangarEvent(frames, 'error:current', 'error', 'replace', { error }, preview, renderRef)
+  }
+
+  const renderUsageMarkdown = (usage: Record<string, unknown>) => {
+    const prompt = typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : 0
+    const completion = typeof usage.completion_tokens === 'number' ? usage.completion_tokens : 0
+    const total = typeof usage.total_tokens === 'number' ? usage.total_tokens : prompt + completion
+    return `\n\n> Usage: ${prompt} prompt · ${completion} completion · ${total} total tokens\n\n`
+  }
+
+  const renderErrorMarkdown = (error: Record<string, unknown>) => {
+    const message = typeof error.message === 'string' ? error.message : 'The turn failed.'
+    return `\n\n**Error**\n${message}\n\n`
   }
 
   const emitToolEvents = (frames: Record<string, unknown>[], toolEvent: ToolEvent) => {
@@ -907,7 +1230,13 @@ const createSession = (args: {
       subtitle: status ?? undefined,
       badge: summary.kind,
     } satisfies JangarRenderMeta
-    const summaryRenderRef = maybeStageStructuredPayload(logicalId, 'tool', summary.kind, { ...summary }, preview)
+    const summaryRenderRef = maybeStageJangarEventStructuredPayload(
+      logicalId,
+      'tool',
+      summary.kind,
+      { ...summary },
+      preview,
+    )
 
     emitJangarEvent(
       frames,
@@ -928,7 +1257,7 @@ const createSession = (args: {
         badge: summary.kind,
         subtitle: status ?? undefined,
       } satisfies JangarRenderMeta
-      const outputRenderRef = maybeStageTextPayload(
+      const outputRenderRef = maybeStageJangarEventTextPayload(
         logicalId,
         'tool',
         summary.kind,
@@ -970,6 +1299,286 @@ const createSession = (args: {
           badge: summary.kind,
         },
       )
+    }
+  }
+
+  const emitOpenWebUIToolEvents = (frames: Record<string, unknown>[], toolEvent: ToolEvent) => {
+    const toolState = getToolState(toolEvent)
+    toolState.title = toolEvent.title ?? toolState.title
+    toolState.status = toolEvent.status ?? toolState.status
+
+    const status = toJangarMeta(toolEvent.status) ?? toJangarMeta(toolState.status)
+    const summary = parseToolSummary(toolEvent, toolState.reasoningState)
+    const logicalId = toolState.logicalId
+    const title =
+      summary.kind === 'command'
+        ? stripShellCommandPrefix(toJangarMeta(summary.title) ?? toJangarMeta(toolState.title) ?? 'Run command')
+        : summary.kind === 'file' && (toolState.title === 'file changes' || !toolState.title)
+          ? 'Update files'
+          : (toJangarMeta(summary.title) ?? toJangarMeta(toolState.title) ?? summary.kind)
+
+    const preview = {
+      title,
+      subtitle: formatToolStatus(status, 'exitCode' in summary ? summary.exitCode : undefined) ?? status ?? undefined,
+      badge: summary.kind,
+    } satisfies JangarRenderMeta
+
+    if (summary.kind === 'command') {
+      const toolOutput = stripToolText(toolEvent.delta, toolState.reasoningState)
+      if (toolOutput) {
+        toolState.openWebUiOutput += toolOutput
+      }
+
+      const aggregatedOutput = toString(toRecord(toolEvent.data)?.aggregatedOutput)
+      if (aggregatedOutput && aggregatedOutput.length >= toolState.openWebUiOutput.length) {
+        toolState.openWebUiOutput = stripTerminalControl(aggregatedOutput)
+      }
+
+      if (status === 'started' && !toolState.openWebUiSummaryEmitted) {
+        toolState.openWebUiSummaryEmitted = true
+        emitOpenWebUIActivityBlock({
+          frames,
+          logicalId,
+          lane: 'tool',
+          kind: 'command',
+          content: `\n\n**${title}**\nStatus: in progress\nCommand:${buildCodeFence('bash', title)}\n`,
+          preview,
+          detailPayload: {
+            format: 'command',
+            command: title,
+            status: 'started',
+            text: `$ ${title}`,
+          },
+        })
+        return
+      }
+
+      if (!isToolTerminalStatus(status)) return
+
+      const finalStatus = formatToolStatus(status, summary.exitCode) ?? status ?? 'completed'
+      const previewBlock =
+        toolState.openWebUiOutput.trim().length > 0
+          ? `Preview:${buildCodeFence('text', truncatePreview(toolState.openWebUiOutput, OPENWEBUI_MAX_INLINE_ACTIVITY_BYTES))}`
+          : ''
+      const fullTranscript = [`$ ${title}`, toolState.openWebUiOutput.trim()].filter(Boolean).join('\n\n')
+      const summaryKey = `${finalStatus}:${summary.exitCode ?? ''}:${fullTranscript}`
+      if (toolState.openWebUiSummaryKey === summaryKey) return
+      toolState.openWebUiSummaryKey = summaryKey
+
+      emitOpenWebUIActivityBlock({
+        frames,
+        logicalId,
+        lane: 'tool',
+        kind: 'command',
+        content: `\n\n**${title}**\nStatus: ${finalStatus}\nCommand:${buildCodeFence('bash', title)}${previewBlock}\n`,
+        preview: { ...preview, subtitle: finalStatus },
+        detailLabel: 'Open full transcript',
+        detailPayload: {
+          format: 'command',
+          command: title,
+          status,
+          exitCode: summary.exitCode ?? null,
+          durationMs: summary.duration ?? null,
+          text: fullTranscript,
+        },
+        forceDetailLink: utf8ByteLength(fullTranscript) > OPENWEBUI_MAX_INLINE_ACTIVITY_BYTES,
+      })
+      return
+    }
+
+    if (summary.kind === 'file') {
+      if (status === 'started') return
+
+      const changedPaths = summary.changed.changedPaths
+      const diffPreview = summary.changed.compactDiff
+      const fullDiff = (toolEvent.changes ?? [])
+        .map((change) => {
+          if (!change || typeof change !== 'object') return null
+          const record = change as Record<string, unknown>
+          const path = toString(record.path) ?? 'unknown-file'
+          const diff = toString(record.diff) ?? ''
+          return `${path}\n${diff}`.trim()
+        })
+        .filter((value): value is string => value != null && value.length > 0)
+        .join('\n\n')
+      const content = `\n\n**${title}**\nStatus: ${formatToolStatus(status) ?? status ?? 'completed'}\nChanged paths:\n${buildChangedPathList(changedPaths)}\n${
+        diffPreview ? `\nPreview:${buildCodeFence('diff', diffPreview)}` : '\n'
+      }`
+      const summaryKey = `${status}:${changedPaths.join(',')}:${diffPreview ?? ''}`
+      if (toolState.openWebUiSummaryKey === summaryKey) return
+      toolState.openWebUiSummaryKey = summaryKey
+
+      emitOpenWebUIActivityBlock({
+        frames,
+        logicalId,
+        lane: 'tool',
+        kind: 'diff',
+        content,
+        preview,
+        detailLabel: fullDiff.length > 0 ? 'Open full diff' : undefined,
+        detailPayload:
+          fullDiff.length > 0
+            ? {
+                format: 'diff',
+                paths: changedPaths,
+                text: fullDiff,
+                status,
+              }
+            : undefined,
+        forceDetailLink: fullDiff.length > 0,
+      })
+      return
+    }
+
+    if (summary.kind === 'mcp') {
+      if (status === 'delta') return
+      const rawData = toRecord(toolEvent.data)
+      const resultRecord = toRecord(rawData?.result)
+      const itemCount = countArrayField(resultRecord, 'items')
+      const sections = [
+        `\n\n**${title}**`,
+        `Status: ${formatToolStatus(status) ?? status ?? 'completed'}`,
+        summary.detail ? `Summary: ${summary.detail}` : null,
+        summary.argumentsPreview ? `Arguments: \`${summarizeInlineDetail(summary.argumentsPreview)}\`` : null,
+        itemCount != null ? `Items: ${itemCount}` : null,
+        resultRecord?.summary && typeof resultRecord.summary === 'string' ? `Result: ${resultRecord.summary}` : null,
+        summary.errorPreview ? `Error: \`${summarizeInlineDetail(summary.errorPreview)}\`` : null,
+      ].filter((value): value is string => value != null)
+      const content = `${sections.join('\n')}\n`
+      const summaryKey = `${status}:${summary.detail ?? ''}:${summary.resultPreview ?? ''}:${summary.errorPreview ?? ''}`
+      if (toolState.openWebUiSummaryKey === summaryKey) return
+      toolState.openWebUiSummaryKey = summaryKey
+
+      emitOpenWebUIActivityBlock({
+        frames,
+        logicalId,
+        lane: 'tool',
+        kind: 'json',
+        content,
+        preview,
+        detailLabel: 'Open full result',
+        detailPayload: {
+          format: 'json',
+          tool: title,
+          status,
+          detail: summary.detail ?? null,
+          arguments: toRecord(toolEvent.data)?.arguments ?? null,
+          result: toRecord(toolEvent.data)?.result ?? null,
+          error: toRecord(toolEvent.data)?.error ?? null,
+        },
+      })
+      return
+    }
+
+    if (summary.kind === 'dynamicTool') {
+      if (status === 'delta') return
+      const resultRecord = toRecord(summary.result)
+      const itemCount = countArrayField(resultRecord, 'items')
+      const sections = [
+        `\n\n**${title}**`,
+        `Status: ${formatToolStatus(status) ?? status ?? 'completed'}`,
+        summary.detail ? `Summary: ${summary.detail}` : null,
+        summary.arguments ? `Arguments: \`${summarizeInlineDetail(safeJsonStringify(summary.arguments))}\`` : null,
+        itemCount != null ? `Items: ${itemCount}` : null,
+        resultRecord?.summary && typeof resultRecord.summary === 'string' ? `Result: ${resultRecord.summary}` : null,
+        typeof summary.success === 'boolean' ? `Success: ${summary.success ? 'yes' : 'no'}` : null,
+      ].filter((value): value is string => value != null)
+      const content = `${sections.join('\n')}\n`
+      const summaryKey = `${status}:${safeJsonStringify(summary.arguments ?? null)}:${safeJsonStringify(summary.result ?? null)}:${summary.success ?? 'unknown'}`
+      if (toolState.openWebUiSummaryKey === summaryKey) return
+      toolState.openWebUiSummaryKey = summaryKey
+
+      emitOpenWebUIActivityBlock({
+        frames,
+        logicalId,
+        lane: 'tool',
+        kind: 'json',
+        content,
+        preview,
+        detailLabel: 'Open full result',
+        detailPayload: {
+          format: 'json',
+          tool: title,
+          status,
+          detail: summary.detail ?? null,
+          arguments: summary.arguments ?? null,
+          result: summary.result ?? null,
+          success: summary.success ?? null,
+        },
+      })
+      return
+    }
+
+    if (summary.kind === 'webSearch') {
+      if (status === 'delta') return
+      const data = toRecord(toolEvent.data)
+      const resultCount = countArrayField(data, 'results')
+      const topResult = firstArrayString(
+        toRecord({
+          items: Array.isArray(data?.results)
+            ? data?.results
+                .map((entry) =>
+                  entry && typeof entry === 'object' ? toString((entry as Record<string, unknown>).title) : undefined,
+                )
+                .filter((entry): entry is string => entry != null)
+            : undefined,
+        }),
+        'items',
+      )
+      const content = `\n\n**Web search**\nStatus: ${formatToolStatus(status) ?? status ?? 'completed'}\nQuery: \`${summary.query ?? title}\`\n${
+        summary.detail ? `Summary: ${summary.detail}\n` : ''
+      }${resultCount != null ? `Results: ${resultCount}\n` : ''}${topResult ? `Top result: ${topResult}\n` : ''}`
+      const summaryKey = `${status}:${summary.query ?? ''}:${summary.detail ?? ''}`
+      if (toolState.openWebUiSummaryKey === summaryKey) return
+      toolState.openWebUiSummaryKey = summaryKey
+
+      emitOpenWebUIActivityBlock({
+        frames,
+        logicalId,
+        lane: 'tool',
+        kind: 'json',
+        content,
+        preview: { ...preview, title: 'Web search' },
+        detailLabel: 'Open full result',
+        detailPayload: {
+          format: 'json',
+          query: summary.query ?? null,
+          status,
+          detail: summary.detail ?? null,
+          data: toRecord(toolEvent.data) ?? null,
+        },
+      })
+      return
+    }
+
+    if (summary.kind === 'imageGeneration') {
+      if (status === 'delta') return
+      const content = `\n\n**${title}**\nStatus: ${formatToolStatus(status) ?? status ?? 'completed'}\n${
+        summary.prompt ? `Prompt: ${summary.prompt}\n` : ''
+      }`
+      const summaryKey = `${status}:${summary.prompt ?? ''}:${summary.imageUrl ?? ''}`
+      if (toolState.openWebUiSummaryKey === summaryKey) return
+      toolState.openWebUiSummaryKey = summaryKey
+
+      emitOpenWebUIActivityBlock({
+        frames,
+        logicalId,
+        lane: 'tool',
+        kind: 'image',
+        content,
+        preview,
+        detailLabel: summary.imageUrl ? 'Open image preview' : undefined,
+        detailPayload: summary.imageUrl
+          ? {
+              format: 'image',
+              prompt: summary.prompt ?? null,
+              status,
+              imageUrl: summary.imageUrl,
+            }
+          : undefined,
+        forceDetailLink: Boolean(summary.imageUrl),
+      })
+      return
     }
   }
 
@@ -1084,7 +1693,18 @@ const createSession = (args: {
 
     const emittedText = stripTerminalControl(sanitized)
     if (emittedText.length > 0) {
+      fullReasoningContent += emittedText
       emitReasoningEvent(frames, emittedText)
+      if (detailLinksEnabled && utf8ByteLength(fullReasoningContent) > OPENWEBUI_MAX_INLINE_STRUCTURED_PAYLOAD_BYTES) {
+        stageOpenWebUIDetailBlob(
+          'reasoning:summary',
+          'reasoning',
+          'text',
+          { format: 'text', text: fullReasoningContent },
+          { title: 'reasoning', badge: 'summary' },
+        )
+        emitOpenWebUIDetailLink(frames, 'reasoning:summary', 'Open detail')
+      }
     }
 
     reasoningBuffer = carry
@@ -1113,7 +1733,23 @@ const createSession = (args: {
       const markdown = toPlanMarkdown(record)
       if (!markdown || markdown === lastPlanMarkdown) return frames
       lastPlanMarkdown = markdown
-      emitContentDelta(frames, `\n\n${markdown}\n\n\n`)
+      if (detailLinksEnabled) {
+        emitOpenWebUIActivityBlock({
+          frames,
+          logicalId: 'plan:current',
+          lane: 'plan',
+          kind: 'markdown',
+          content: `\n\n${markdown}\n\n\n`,
+          preview: { title: 'plan', badge: 'plan' },
+          detailLabel: 'Open detail',
+          detailPayload: {
+            format: 'markdown',
+            markdown,
+          },
+        })
+      } else {
+        emitContentDelta(frames, `\n\n${markdown}\n\n\n`)
+      }
       emitPlanEvent(frames, markdown)
       return frames
     }
@@ -1123,7 +1759,23 @@ const createSession = (args: {
       const markdown = toRateLimitMarkdown(record?.rateLimits)
       if (!markdown || hasRenderedRateLimits) return frames
       hasRenderedRateLimits = true
-      emitContentDelta(frames, `\n\n${markdown}\n\n`)
+      if (detailLinksEnabled) {
+        emitOpenWebUIActivityBlock({
+          frames,
+          logicalId: 'rate_limits:current',
+          lane: 'rate_limits',
+          kind: 'json',
+          content: `\n\n${markdown}\n\n`,
+          preview: { title: 'rate limits', badge: 'quota' },
+          detailLabel: 'Open detail',
+          detailPayload: {
+            format: 'json',
+            rateLimits: record?.rateLimits ?? null,
+          },
+        })
+      } else {
+        emitContentDelta(frames, `\n\n${markdown}\n\n`)
+      }
       emitRateLimitsEvent(frames, markdown)
       return frames
     }
@@ -1138,6 +1790,21 @@ const createSession = (args: {
       sawUpstreamError = true
       closeCommandFence(frames)
       const normalized = normalizeStreamError(record?.error)
+      if (detailLinksEnabled) {
+        emitOpenWebUIActivityBlock({
+          frames,
+          logicalId: 'error:current',
+          lane: 'error',
+          kind: 'json',
+          content: renderErrorMarkdown(normalized),
+          preview: { title: 'error', badge: 'error' },
+          detailLabel: 'Open detail',
+          detailPayload: {
+            format: 'json',
+            error: normalized,
+          },
+        })
+      }
       pushChunk(frames, { error: normalized })
       emitErrorEvent(frames, normalized)
       return frames
@@ -1190,6 +1857,12 @@ const createSession = (args: {
 
       const toolEvent = decoded.right
 
+      if (detailLinksEnabled) {
+        emitToolEvents(frames, toolEvent)
+        emitOpenWebUIToolEvents(frames, toolEvent)
+        return frames
+      }
+
       // If a new command starts while the command fence is already open, ensure there is a blank line before
       // the next command header. This prevents consecutive commands from visually "sticking" together.
       if (
@@ -1235,6 +1908,21 @@ const createSession = (args: {
       code: error.code,
       ...(error.detail != null ? { detail: error.detail } : {}),
     }
+    if (detailLinksEnabled) {
+      emitOpenWebUIActivityBlock({
+        frames,
+        logicalId: 'error:current',
+        lane: 'error',
+        kind: 'json',
+        content: renderErrorMarkdown(normalized),
+        preview: { title: 'error', badge: 'error' },
+        detailLabel: 'Open detail',
+        detailPayload: {
+          format: 'json',
+          error: normalized,
+        },
+      })
+    }
     pushChunk(frames, { error: normalized })
     emitErrorEvent(frames, normalized)
     return frames
@@ -1249,13 +1937,72 @@ const createSession = (args: {
     }
     hadError = true
     closeCommandFence(frames)
+    if (detailLinksEnabled) {
+      emitOpenWebUIActivityBlock({
+        frames,
+        logicalId: 'error:current',
+        lane: 'error',
+        kind: 'json',
+        content: renderErrorMarkdown(normalized),
+        preview: { title: 'error', badge: 'error' },
+        detailLabel: 'Open detail',
+        detailPayload: {
+          format: 'json',
+          error: normalized,
+        },
+      })
+    }
     pushChunk(frames, { error: normalized })
     emitErrorEvent(frames, normalized)
     return frames
   }
 
   const takePendingRenderBlobs: ChatCompletionStreamSession['takePendingRenderBlobs'] = () =>
-    pendingRenderBlobs.splice(0, pendingRenderBlobs.length)
+    Array.from(pendingRenderBlobs.values()).map((blob) => {
+      pendingRenderBlobs.delete(blob.renderId)
+      return blob
+    })
+
+  const resolvePendingDetailLinks: ChatCompletionStreamSession['resolvePendingDetailLinks'] = (
+    frames,
+    failedRenderIds = [],
+  ) => {
+    if (!detailLinksEnabled) return
+
+    const failedRenderIdSet = new Set(failedRenderIds)
+    const replacements = new Map<string, string>()
+
+    for (const detailState of openWebUiDetailStates.values()) {
+      if (!detailState.pendingLinkToken || detailState.pendingLinkMarkdown == null) continue
+
+      const failed = failedRenderIdSet.has(detailState.ref.id)
+      replacements.set(detailState.pendingLinkToken, failed ? '' : detailState.pendingLinkMarkdown)
+      detailState.pendingLinkToken = undefined
+      detailState.pendingLinkMarkdown = undefined
+
+      if (failed) {
+        detailState.linkEmitted = false
+        recordOpenWebUIDetailLink('failed', detailState.ref.kind)
+        continue
+      }
+
+      recordOpenWebUIDetailLink('created', detailState.ref.kind)
+    }
+
+    if (replacements.size === 0) return
+
+    assistantContent = applyDetailLinkReplacements(assistantContent, replacements)
+
+    for (const frame of frames) {
+      const choices = Array.isArray(frame.choices) ? frame.choices : []
+      for (const choice of choices) {
+        const choiceRecord = toRecord(choice)
+        const delta = toRecord(choiceRecord?.delta)
+        if (!delta || typeof delta.content !== 'string') continue
+        delta.content = applyDetailLinkReplacements(delta.content, replacements)
+      }
+    }
+  }
 
   const finalize: ChatCompletionStreamSession['finalize'] = ({ aborted }) => {
     const frames: Record<string, unknown>[] = []
@@ -1265,6 +2012,21 @@ const createSession = (args: {
 
     if (includeUsage && lastUsage) {
       emitUsageEvent(frames, lastUsage)
+      if (detailLinksEnabled) {
+        emitOpenWebUIActivityBlock({
+          frames,
+          logicalId: 'usage:final',
+          lane: 'usage',
+          kind: 'json',
+          content: renderUsageMarkdown(lastUsage),
+          preview: { title: 'usage', badge: 'usage' },
+          detailLabel: 'Open detail',
+          detailPayload: {
+            format: 'json',
+            usage: lastUsage,
+          },
+        })
+      }
       pushChunk(frames, {
         id,
         object: 'chat.completion.chunk',
@@ -1300,6 +2062,7 @@ const createSession = (args: {
     },
     getState: () => ({ hasEmittedAnyChunk, hadError, assistantContent }),
     takePendingRenderBlobs,
+    resolvePendingDetailLinks,
     onDelta,
     onInternalError,
     onClientAbort,

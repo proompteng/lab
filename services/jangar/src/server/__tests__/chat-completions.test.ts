@@ -238,7 +238,7 @@ describe('chat completions handler', () => {
     expect(hasJangarEvent(enabledText)).toBe(true)
   })
 
-  it('emits signed renderRef links for oversized rich events when external render config is present', async () => {
+  it('emits detail links for oversized OpenWebUI command transcripts without requiring jangar_event mode', async () => {
     process.env.JANGAR_OPENWEBUI_RICH_RENDER_ENABLED = 'true'
     process.env.JANGAR_OPENWEBUI_EXTERNAL_BASE_URL = 'https://jangar.test'
     process.env.JANGAR_OPENWEBUI_RENDER_SIGNING_SECRET = 'test-secret'
@@ -249,7 +249,15 @@ describe('chat completions handler', () => {
         turnId: 'turn-1',
         threadId: 'thread-1',
         stream: (async function* () {
-          yield { type: 'message', delta: 'x'.repeat(9_000) }
+          yield { type: 'tool', toolKind: 'command', id: 'cmd-1', status: 'started', title: 'bun test packages/codex' }
+          yield {
+            type: 'tool',
+            toolKind: 'command',
+            id: 'cmd-1',
+            status: 'completed',
+            title: 'bun test packages/codex',
+            data: { aggregatedOutput: 'x'.repeat(9_000), exitCode: 1 },
+          }
         })(),
       })),
       interruptTurn: vi.fn(async () => {}),
@@ -264,7 +272,6 @@ describe('chat completions handler', () => {
         headers: {
           'content-type': 'application/json',
           'x-jangar-client-kind': 'openwebui',
-          'x-jangar-openwebui-render-mode': 'rich-ui-v1',
         },
         body: JSON.stringify({
           model: 'gpt-5.4',
@@ -274,25 +281,15 @@ describe('chat completions handler', () => {
       }),
     )
 
-    const frames = parseFrames(await response.text())
-    const eventFrame = frames.find((frame) => {
-      const choices = asRecord(frame)?.choices
-      if (!Array.isArray(choices)) return false
-      return choices.some((choice) => asRecord(asRecord(choice)?.delta)?.jangar_event != null)
-    })
-    const eventChoices = asRecord(eventFrame)?.choices
-    const firstChoice = Array.isArray(eventChoices) ? eventChoices[0] : null
-    const event = asRecord(asRecord(asRecord(firstChoice)?.delta)?.jangar_event)
-    const renderRef = asRecord(asRecord(event)?.renderRef)
-
-    expect(renderRef?.kind).toBe('message')
-    expect(typeof renderRef?.href).toBe('string')
-    expect(String(renderRef?.href)).toContain('https://jangar.test/api/openwebui/rich-ui/render/')
-    expect(String(renderRef?.href)).toContain('sig=')
-    expect(String(renderRef?.href)).toContain('e=')
+    const text = await response.text()
+    expect(text).toContain('Open full transcript')
+    expect(text).toContain('https://jangar.test/api/openwebui/rich-ui/render/')
+    expect(text).toContain('sig=')
+    expect(text).toContain('e=')
+    expect(hasJangarEvent(text)).toBe(false)
   })
 
-  it('waits for render blob persistence before streaming frames with renderRef', async () => {
+  it('waits for render blob persistence before streaming detail links', async () => {
     process.env.JANGAR_OPENWEBUI_RICH_RENDER_ENABLED = 'true'
     process.env.JANGAR_OPENWEBUI_EXTERNAL_BASE_URL = 'https://jangar.test'
     process.env.JANGAR_OPENWEBUI_RENDER_SIGNING_SECRET = 'test-secret'
@@ -317,7 +314,15 @@ describe('chat completions handler', () => {
         turnId: 'turn-1',
         threadId: 'thread-1',
         stream: (async function* () {
-          yield { type: 'message', delta: 'x'.repeat(9_000) }
+          yield { type: 'tool', toolKind: 'command', id: 'cmd-1', status: 'started', title: 'bun test packages/codex' }
+          yield {
+            type: 'tool',
+            toolKind: 'command',
+            id: 'cmd-1',
+            status: 'completed',
+            title: 'bun test packages/codex',
+            data: { aggregatedOutput: 'x'.repeat(9_000), exitCode: 1 },
+          }
         })(),
       })),
       interruptTurn: vi.fn(async () => {}),
@@ -332,7 +337,6 @@ describe('chat completions handler', () => {
         headers: {
           'content-type': 'application/json',
           'x-jangar-client-kind': 'openwebui',
-          'x-jangar-openwebui-render-mode': 'rich-ui-v1',
         },
         body: JSON.stringify({
           model: 'gpt-5.4',
@@ -355,8 +359,7 @@ describe('chat completions handler', () => {
 
     if (earlyRead.type === 'read') {
       streamedText += new TextDecoder().decode(earlyRead.result.value)
-      expect(streamedText).not.toContain('jangar_event')
-      expect(streamedText).not.toContain('renderRef')
+      expect(streamedText).not.toContain('Open full transcript')
     }
 
     expect(delayedStore.setRenderBlob).toHaveBeenCalledTimes(1)
@@ -367,16 +370,75 @@ describe('chat completions handler', () => {
     }
     finishPersist()
 
-    while (!streamedText.includes('renderRef')) {
+    while (!streamedText.includes('Open full transcript')) {
       const chunk = earlyRead.type === 'read' && streamedText.length === 0 ? earlyRead.result : await reader!.read()
       streamedText += new TextDecoder().decode(chunk.value)
       if (chunk.done) break
     }
 
-    expect(streamedText).toContain('jangar_event')
-    expect(streamedText).toContain('renderRef')
+    expect(streamedText).toContain('Open full transcript')
+    expect(streamedText).toContain('https://jangar.test/api/openwebui/rich-ui/render/')
 
     await reader?.cancel()
+  })
+
+  it('keeps the OpenWebUI transcript readable and omits dead links when render blob persistence fails', async () => {
+    process.env.JANGAR_OPENWEBUI_RICH_RENDER_ENABLED = 'true'
+    process.env.JANGAR_OPENWEBUI_EXTERNAL_BASE_URL = 'https://jangar.test'
+    process.env.JANGAR_OPENWEBUI_RENDER_SIGNING_SECRET = 'test-secret'
+
+    const failingStore: OpenWebUiRenderStore = {
+      getRenderBlob: vi.fn(async () => null),
+      setRenderBlob: vi.fn(async () => {
+        throw new Error('render store unavailable')
+      }),
+      clearRenderBlob: vi.fn(async () => {}),
+      clearAll: vi.fn(async () => {}),
+      shutdown: vi.fn(async () => {}),
+    }
+    setOpenWebUiRenderStoreForTests(failingStore)
+
+    const mockClient = {
+      runTurnStream: vi.fn(async () => ({
+        turnId: 'turn-1',
+        threadId: 'thread-1',
+        stream: (async function* () {
+          yield { type: 'tool', toolKind: 'command', id: 'cmd-1', status: 'started', title: 'bun test packages/codex' }
+          yield {
+            type: 'tool',
+            toolKind: 'command',
+            id: 'cmd-1',
+            status: 'completed',
+            title: 'bun test packages/codex',
+            data: { aggregatedOutput: 'x'.repeat(9_000), exitCode: 1 },
+          }
+        })(),
+      })),
+      interruptTurn: vi.fn(async () => {}),
+      stop: vi.fn(),
+      ensureReady: vi.fn(),
+    }
+    setCodexClientFactory(() => mockClient as unknown as CodexAppServerClient)
+
+    const response = await chatCompletionsHandler(
+      new Request('http://localhost', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-jangar-client-kind': 'openwebui',
+        },
+        body: JSON.stringify({
+          model: 'gpt-5.4',
+          messages: [{ role: 'user', content: 'hi' }],
+          stream: true,
+        }),
+      }),
+    )
+
+    const text = await response.text()
+    expect(text).toContain('bun test packages/codex')
+    expect(text).not.toContain('Open full transcript')
+    expect(text).not.toContain('https://jangar.test/api/openwebui/rich-ui/render/')
   })
 
   it('creates and releases a dedicated codex client for each streamed request', async () => {

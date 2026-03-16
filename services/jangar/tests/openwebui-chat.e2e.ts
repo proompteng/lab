@@ -19,6 +19,7 @@ const openwebuiBaseUrl = process.env.OPENWEBUI_BASE_URL ?? `http://127.0.0.1:${o
 const jangarChatCompletionsUrl = `http://127.0.0.1:${playwrightPort}/openai/v1/chat/completions`
 const startupTimeoutMs = Number.parseInt(process.env.OPENWEBUI_E2E_STARTUP_TIMEOUT_MS ?? '300000', 10)
 const useExistingStack = process.env.OPENWEBUI_E2E_USE_EXISTING_STACK === '1'
+const useMockCodex = process.env.OPENWEBUI_E2E_USE_MOCK_CODEX === '1' || process.env.JANGAR_MOCK_CODEX === '1'
 const openWebUiModel = process.env.OPENWEBUI_E2E_MODEL ?? process.env.JANGAR_DEFAULT_MODEL ?? 'gpt-5.4'
 
 type ChatMessage = {
@@ -218,7 +219,23 @@ const sendOpenWebUiMessage = async (page: import('@playwright/test').Page, messa
   throw new Error(`OpenWebUI did not submit the composer message '${message}'`)
 }
 
-const readStreamingAssistantReply = async (response: Response) => {
+const extractRenderLinksFromText = (content: string): RenderLink[] => {
+  const links = new Map<string, RenderLink>()
+  const pattern =
+    /(Open full transcript|Open full diff|Open full result|Open image preview|Open detail):\s*<?(https?:\/\/[^\s>]+\/api\/openwebui\/rich-ui\/render\/[^\s>]+)>?/g
+
+  for (const match of content.matchAll(pattern)) {
+    const text = match[1]?.trim() ?? ''
+    const href = match[2]?.trim() ?? ''
+    if (text.length > 0 && href.length > 0) {
+      links.set(href, { text, href })
+    }
+  }
+
+  return Array.from(links.values())
+}
+
+const readStreamingAssistantTurn = async (response: Response) => {
   const reader = response.body?.getReader()
   if (!reader) {
     throw new Error('chat completions response did not include a readable body')
@@ -242,7 +259,9 @@ const readStreamingAssistantReply = async (response: Response) => {
 
       const payload = line.slice(5).trim()
       if (!payload) continue
-      if (payload === '[DONE]') return assistantReply
+      if (payload === '[DONE]') {
+        return { assistantReply, renderLinks: extractRenderLinksFromText(assistantReply) }
+      }
 
       const frame = JSON.parse(payload) as {
         error?: { message?: string; code?: string }
@@ -267,8 +286,11 @@ const readStreamingAssistantReply = async (response: Response) => {
     }
   }
 
-  return assistantReply
+  return { assistantReply, renderLinks: extractRenderLinksFromText(assistantReply) }
 }
+
+const readStreamingAssistantReply = async (response: Response) =>
+  (await readStreamingAssistantTurn(response)).assistantReply
 
 const runChatCompletionTurn = async (chatId: string, messages: ChatMessage[]) => {
   const response = await fetch(jangarChatCompletionsUrl, {
@@ -294,6 +316,30 @@ const runChatCompletionTurn = async (chatId: string, messages: ChatMessage[]) =>
   return readStreamingAssistantReply(response)
 }
 
+const runChatCompletionTurnWithRenderLinks = async (chatId: string, messages: ChatMessage[]) => {
+  const response = await fetch(jangarChatCompletionsUrl, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-openwebui-chat-id': chatId,
+    },
+    body: JSON.stringify({
+      model: openWebUiModel,
+      stream: true,
+      stream_options: {
+        include_usage: true,
+      },
+      messages,
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`chat completions returned ${response.status}: ${await response.text()}`)
+  }
+
+  return readStreamingAssistantTurn(response)
+}
+
 const expectAssistantReply = async (page: import('@playwright/test').Page, expected: string) => {
   const response = page.getByText(expected).last()
   const abortError = page.getByText(/request was aborted by the client/i).last()
@@ -310,6 +356,84 @@ const expectAssistantReply = async (page: import('@playwright/test').Page, expec
   }
 
   await expect(response).toBeVisible({ timeout: 1_000 })
+}
+
+type RenderLink = {
+  text: string
+  href: string
+}
+
+const collectRenderLinks = async (page: import('@playwright/test').Page): Promise<RenderLink[]> =>
+  page.evaluate(() => {
+    const renderLinks = new Map<string, { text: string; href: string }>()
+
+    for (const anchor of Array.from(
+      document.querySelectorAll<HTMLAnchorElement>('a[href*="/api/openwebui/rich-ui/render/"]'),
+    )) {
+      const text = anchor.textContent?.trim() ?? ''
+      const href = anchor.href ?? ''
+      if (text.length > 0 && href.length > 0) {
+        renderLinks.set(href, { text, href })
+      }
+    }
+
+    const bodyText = document.body.innerText ?? ''
+    const textPattern =
+      /(Open full transcript|Open full diff|Open full result|Open image preview|Open detail):\s*<?(https?:\/\/[^\s>]+\/api\/openwebui\/rich-ui\/render\/[^\s>]+)>?/g
+
+    for (const match of bodyText.matchAll(textPattern)) {
+      const text = match[1]?.trim() ?? ''
+      const href = match[2]?.trim() ?? ''
+      if (text.length > 0 && href.length > 0) {
+        renderLinks.set(href, { text, href })
+      }
+    }
+
+    return Array.from(renderLinks.values())
+  })
+
+const conversationViewportPositions = [0, 0.2, 0.4, 0.6, 0.8, 1]
+
+const scrollConversation = async (page: import('@playwright/test').Page, position: number) => {
+  await page.locator('[role="log"]').evaluate((element, nextPosition) => {
+    const scrollable = element instanceof HTMLElement ? element : element.parentElement
+    if (!scrollable) return
+    const maxScrollTop = Math.max(0, scrollable.scrollHeight - scrollable.clientHeight)
+    scrollable.scrollTop = Math.round(maxScrollTop * nextPosition)
+  }, position)
+  await page.waitForTimeout(250)
+}
+
+const collectRenderLinksAcrossViewport = async (page: import('@playwright/test').Page): Promise<RenderLink[]> => {
+  const links = new Map<string, RenderLink>()
+  for (const position of conversationViewportPositions) {
+    await scrollConversation(page, position)
+    for (const link of await collectRenderLinks(page)) {
+      links.set(link.href, link)
+    }
+  }
+  return Array.from(links.values())
+}
+
+const expectVisibleWhileScrolling = async (page: import('@playwright/test').Page, expected: string) => {
+  for (const position of conversationViewportPositions) {
+    await scrollConversation(page, position)
+    const locator = page.getByText(expected).last()
+    if (await locator.isVisible().catch(() => false)) return
+  }
+
+  await expect(page.getByText(expected).last()).toBeVisible({ timeout: 1_000 })
+}
+
+const waitForRenderLinks = async (page: import('@playwright/test').Page, minimumCount: number) => {
+  await expect
+    .poll(async () => (await collectRenderLinksAcrossViewport(page)).length, {
+      timeout: 180_000,
+      message: `Expected at least ${minimumCount} OpenWebUI render links to appear`,
+    })
+    .toBeGreaterThanOrEqual(minimumCount)
+
+  return collectRenderLinksAcrossViewport(page)
 }
 
 test.describe.serial('OpenWebUI chat end-to-end', () => {
@@ -335,7 +459,7 @@ test.describe.serial('OpenWebUI chat end-to-end', () => {
     await runDockerCompose('down', '-v', '--remove-orphans').catch(() => undefined)
   })
 
-  test('OpenAI-compatible streaming chat completes across follow-up turns with real Codex', async () => {
+  test('OpenAI-compatible streaming chat completes across follow-up turns', async () => {
     test.setTimeout(240_000)
     const chatId = `openwebui-http-${Date.now()}`
     const firstUser = 'Add 21873 and 31415. Reply with digits only.'
@@ -378,5 +502,90 @@ test.describe.serial('OpenWebUI chat end-to-end', () => {
 
     await sendOpenWebUiMessage(page, thirdUser)
     await expectAssistantReply(page, '33500')
+  })
+
+  test('OpenWebUI browser chat renders rich activity summaries and detail pages with mock Codex', async ({
+    page,
+    context,
+  }) => {
+    test.skip(!useMockCodex, 'Rich-activity browser coverage runs only when mock Codex mode is enabled.')
+    test.setTimeout(360_000)
+
+    await page.goto(openwebuiBaseUrl, { waitUntil: 'domcontentloaded' })
+
+    await sendOpenWebUiMessage(page, 'Run the rich activity demo and include every activity block.')
+    await expectAssistantReply(page, 'Completed the rich activity demo.')
+
+    await expectVisibleWhileScrolling(page, 'Starting the rich activity demo.')
+    await expectVisibleWhileScrolling(page, 'Completed the rich activity demo.')
+    await expectVisibleWhileScrolling(page, 'Validate the browser transcript and the staged detail pages.')
+    await expectVisibleWhileScrolling(page, 'Rate limits')
+    await expectVisibleWhileScrolling(page, 'src/rich-activity.ts')
+    await expectVisibleWhileScrolling(page, 'catalog.search')
+    await expectVisibleWhileScrolling(page, 'Generated audit findings for the mock activity.')
+    await expectVisibleWhileScrolling(page, 'status board mock')
+
+    const renderTurn = await runChatCompletionTurnWithRenderLinks(`openwebui-http-rich-${Date.now()}`, [
+      { role: 'user', content: 'Run the rich activity demo and include every activity block.' },
+    ])
+    const renderLinks = renderTurn.renderLinks
+    expect(renderLinks.length).toBeGreaterThanOrEqual(6)
+    expect(renderLinks.some((link) => link.text === 'Open full transcript')).toBe(true)
+    expect(renderLinks.some((link) => link.text === 'Open full diff')).toBe(true)
+    expect(renderLinks.filter((link) => link.text === 'Open full result').length).toBeGreaterThanOrEqual(3)
+    expect(renderLinks.some((link) => link.text === 'Open image preview')).toBe(true)
+
+    const transcriptHref = renderLinks.find((link) => link.text === 'Open full transcript')?.href
+    expect(transcriptHref).toBeTruthy()
+    const transcriptPage = await context.newPage()
+    await transcriptPage.goto(transcriptHref!)
+    await expect(transcriptPage.locator('.label').filter({ hasText: /^Transcript$/ })).toBeVisible({ timeout: 30_000 })
+    await expect(transcriptPage.getByText('mock transcript line 1')).toBeVisible({ timeout: 30_000 })
+    await transcriptPage.close()
+
+    const diffHref = renderLinks.find((link) => link.text === 'Open full diff')?.href
+    expect(diffHref).toBeTruthy()
+    const diffPage = await context.newPage()
+    await diffPage.goto(diffHref!)
+    await expect(diffPage.locator('.label').filter({ hasText: /^Unified Diff$/ })).toBeVisible({ timeout: 30_000 })
+    await expect(diffPage.locator('code').filter({ hasText: /^src\/rich-activity\.ts$/ })).toBeVisible({
+      timeout: 30_000,
+    })
+    await diffPage.close()
+
+    const resultLinks = renderLinks.filter((link) => link.text === 'Open full result')
+    const resultBodies: string[] = []
+    for (const link of resultLinks.slice(0, 3)) {
+      const resultPage = await context.newPage()
+      await resultPage.goto(link.href)
+      resultBodies.push((await resultPage.locator('body').textContent()) ?? '')
+      await resultPage.close()
+    }
+
+    expect(resultBodies.some((body) => body.includes('catalog item 1'))).toBe(true)
+    expect(resultBodies.some((body) => body.includes('audit item 1'))).toBe(true)
+    expect(resultBodies.some((body) => body.includes('search item 1'))).toBe(true)
+
+    const imageHref = renderLinks.find((link) => link.text === 'Open image preview')?.href
+    expect(imageHref).toBeTruthy()
+    const imagePage = await context.newPage()
+    await imagePage.goto(imageHref!)
+    await expect(imagePage.locator('.label').filter({ hasText: /^Preview$/ })).toBeVisible({ timeout: 30_000 })
+    await expect(imagePage.locator('img')).toBeVisible({ timeout: 30_000 })
+    await imagePage.close()
+  })
+
+  test('OpenWebUI browser chat renders assistant error blocks with mock Codex', async ({ page }) => {
+    test.skip(!useMockCodex, 'Mock failure coverage runs only when mock Codex mode is enabled.')
+    test.setTimeout(240_000)
+
+    await page.goto(openwebuiBaseUrl, { waitUntil: 'domcontentloaded' })
+
+    await sendOpenWebUiMessage(page, 'Run the failure activity demo.')
+    await expect(page.getByText('Starting the failure activity demo.').last()).toBeVisible({ timeout: 60_000 })
+    await expect(
+      page.getByText('mock Codex app server error: command timed out while collecting artifacts').last(),
+    ).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByText('request was aborted by the client').last()).not.toBeVisible()
   })
 })

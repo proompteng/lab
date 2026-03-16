@@ -18,6 +18,12 @@ import {
 type JangarMetrics = {
   sseConnections: Counter
   sseErrors: Counter
+  openWebUiDetailTurns: Counter
+  openWebUiDetailLinks: Counter
+  openWebUiDetailStagedBytes: Histogram
+  openWebUiDetailPreviewTruncations: Counter
+  openWebUiDetailFallbacks: Counter
+  openWebUiDetailRouteRequests: Counter
   agentCommsInserted: Counter
   agentCommsIngestErrors: Counter
   agentCommsInsertDurationMs: Histogram
@@ -94,6 +100,50 @@ export const recordSseConnection = (stream: SseStream, state: 'opened' | 'closed
 export const recordSseError = (stream: SseStream, reason: string) => {
   if (!metricsState.enabled) return
   recordCounter(metricsState.metrics?.sseErrors, 1, { stream, reason })
+}
+
+export const recordOpenWebUIDetailTurn = (mode: 'enabled' | 'text_only' | 'disabled') => {
+  if (!metricsState.enabled) return
+  recordCounter(metricsState.metrics?.openWebUiDetailTurns, 1, { mode })
+}
+
+export const recordOpenWebUIDetailLink = (outcome: 'created' | 'skipped' | 'failed', kind: string) => {
+  if (!metricsState.enabled) return
+  recordCounter(metricsState.metrics?.openWebUiDetailLinks, 1, {
+    outcome,
+    kind: normalizeWatchLabel(kind),
+  })
+}
+
+export const recordOpenWebUIDetailStagedBytes = (kind: string, bytes: number) => {
+  if (!metricsState.enabled) return
+  if (Number.isFinite(bytes) && bytes >= 0) {
+    recordHistogram(metricsState.metrics?.openWebUiDetailStagedBytes, bytes, {
+      kind: normalizeWatchLabel(kind),
+    })
+  }
+}
+
+export const recordOpenWebUIDetailPreviewTruncation = (kind: string) => {
+  if (!metricsState.enabled) return
+  recordCounter(metricsState.metrics?.openWebUiDetailPreviewTruncations, 1, {
+    kind: normalizeWatchLabel(kind),
+  })
+}
+
+export const recordOpenWebUITextOnlyFallback = (reason: string) => {
+  if (!metricsState.enabled) return
+  recordCounter(metricsState.metrics?.openWebUiDetailFallbacks, 1, {
+    reason: normalizeWatchLabel(reason),
+  })
+}
+
+export const recordOpenWebUIDetailRouteRequest = (kind: string, outcome: string) => {
+  if (!metricsState.enabled) return
+  recordCounter(metricsState.metrics?.openWebUiDetailRouteRequests, 1, {
+    kind: normalizeWatchLabel(kind),
+    outcome: normalizeWatchLabel(outcome),
+  })
 }
 
 export const recordAgentCommsBatch = (count: number, durationMs: number) => {
@@ -574,6 +624,25 @@ const createMetricsState = (): MetricsState => {
       }),
       sseErrors: meter.createCounter('jangar_sse_errors_total', {
         description: 'Count of SSE errors emitted to clients.',
+      }),
+      openWebUiDetailTurns: meter.createCounter('jangar_openwebui_detail_turns_total', {
+        description: 'Count of OpenWebUI chat turns by detail-link mode.',
+      }),
+      openWebUiDetailLinks: meter.createCounter('jangar_openwebui_detail_links_total', {
+        description: 'Count of OpenWebUI detail-link creation attempts by outcome and kind.',
+      }),
+      openWebUiDetailStagedBytes: meter.createHistogram('jangar_openwebui_detail_staged_bytes', {
+        description: 'Bytes staged into the OpenWebUI detail render store by kind.',
+        unit: 'By',
+      }),
+      openWebUiDetailPreviewTruncations: meter.createCounter('jangar_openwebui_detail_preview_truncations_total', {
+        description: 'Count of OpenWebUI activity previews truncated in the assistant transcript by kind.',
+      }),
+      openWebUiDetailFallbacks: meter.createCounter('jangar_openwebui_detail_fallbacks_total', {
+        description: 'Count of OpenWebUI requests that fell back to text-only mode by reason.',
+      }),
+      openWebUiDetailRouteRequests: meter.createCounter('jangar_openwebui_detail_route_requests_total', {
+        description: 'Count of OpenWebUI detail-route requests by kind and outcome.',
       }),
       agentCommsInserted: meter.createCounter('jangar_agent_comms_inserted_total', {
         description: 'Count of agent comms messages inserted into Postgres.',

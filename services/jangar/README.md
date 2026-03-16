@@ -107,23 +107,53 @@ bun --cwd services/jangar run test:e2e:openwebui:existing
 What it does:
 
 - starts disposable local `postgres` and `openwebui` containers via `services/jangar/docker-compose.yml`
-- runs Jangar locally through the existing Playwright web-server harness
-- points Jangar at the host `codex app-server` binary (override with `JANGAR_CODEX_BINARY` if needed)
-- stages a temporary local `CODEX_HOME` for the regression by copying your auth plus a minimal config, so the browser run exercises the real binary without inheriting unrelated workstation MCP servers
+- runs Jangar locally from the production build output (`bun .output/server/index.mjs`) instead of a dev server
+- defaults to the deterministic mock Codex client (`OPENWEBUI_E2E_USE_MOCK_CODEX=1`) so the browser regression covers rich activity rendering without needing a real local Codex process
 - uses an in-memory chat state backend inside the local Jangar Playwright web server so the regression does not depend on host Redis
-- validates both the OpenAI-compatible streaming endpoint and the browser chat flow in OpenWebUI against the real local Codex CLI across multiple turns
+- validates both the OpenAI-compatible streaming endpoint and the browser chat flow in OpenWebUI across multiple turns, including rich activity summaries, signed detail pages, and assistant error rendering
+
+If you need to exercise the real local Codex CLI instead of the mock harness:
+
+- set `OPENWEBUI_E2E_USE_MOCK_CODEX=0`
+- point `JANGAR_CODEX_BINARY` at the host `codex` binary if it is not already on `PATH`
+- optionally stage an isolated `CODEX_HOME` with `CODEX_AUTH_JSON` or `OPENWEBUI_E2E_CODEX_HOME` to avoid inheriting unrelated workstation MCP servers
+
+## OpenWebUI rich detail links
+
+For `chatClientKind === 'openwebui'`, Jangar can enrich the normal streaming transcript with signed markdown links to staged detail pages. This is the production no-fork path: OpenWebUI keeps consuming standard `delta.content` and `delta.reasoning_content`, and Jangar does not rely on OpenAI `tool_calls` for rich activity rendering.
+
+Assistant prose stays inline. Larger activity payloads such as reasoning, plans, rate limits, tool output, usage, errors, and image previews are summarized in the transcript and can link to `/api/openwebui/rich-ui/render/$renderId`.
+
+Enable the production detail-link path with:
+
+- `JANGAR_OPENWEBUI_RICH_RENDER_ENABLED=true`
+- `JANGAR_OPENWEBUI_EXTERNAL_BASE_URL=<browser-reachable Jangar origin>`
+- `JANGAR_OPENWEBUI_RENDER_SIGNING_SECRET=<shared secret>`
+
+`JANGAR_OPENWEBUI_EXTERNAL_BASE_URL` must resolve from the user's browser, not only from inside the cluster, because OpenWebUI renders those signed links directly. Signed detail URLs and staged render blobs use the same 7-day retention window, matching the current OpenWebUI chat/thread continuity horizon.
+
+If the external base URL, signing secret, or render store is unavailable, Jangar falls back to text-only streaming for OpenWebUI without failing the turn.
+
+The request header `x-jangar-openwebui-render-mode: rich-ui-v1` is experimental. It only enables `delta.jangar_event` emission and is not required for the production text-plus-links UX.
 
 Optional overrides:
 
 - `OPENWEBUI_PORT` (default `38080`)
 - `OPENWEBUI_IMAGE` (defaults to `ghcr.io/open-webui/open-webui:v0.8.10` for the local E2E script; override to exercise another tag)
 - `OPENWEBUI_BASE_URL` (used by `test:e2e:openwebui:existing`; defaults to `http://127.0.0.1:8080`)
+- `OPENWEBUI_E2E_USE_MOCK_CODEX` (default `1`; set to `0` to run the browser regression against the real local Codex CLI)
+- `JANGAR_MOCK_CODEX_SCENARIO` (defaults to `openwebui-e2e`)
 - `JANGAR_CODEX_BINARY` (defaults to `codex`)
 - `CODEX_AUTH_JSON` (defaults to `~/.codex/auth.json` when staging the isolated `CODEX_HOME`)
 - `OPENWEBUI_E2E_CODEX_HOME` (defaults to `services/jangar/output/playwright/codex-home`)
 - `JANGAR_MODELS` / `JANGAR_DEFAULT_MODEL` / `OPENWEBUI_E2E_MODEL` (default `gpt-5.4`)
 
-Requirements:
+Requirements for the default mock-Codex path:
+
+- Docker available for the disposable OpenWebUI and Postgres stack
+- Bun dependencies installed for `services/jangar`
+
+Additional requirements for the optional real-Codex path:
 
 - host `codex` CLI installed and authenticated
 - working OpenAI/Codex access for the configured model
@@ -163,7 +193,9 @@ bun run packages/scripts/src/jangar/deploy-service.ts
 
 ## API Notes
 
-- `/openai/v1/chat/completions` is **streaming-only**; requests must set `stream: true`. Non-streaming responses are not implemented.
+- `/openai/v1/chat/completions` supports both streaming SSE responses (`stream: true`) and OpenAI-style non-stream responses (`stream: false` or omitted).
+- For OpenWebUI, the production rich-activity UX still rides on normal SSE text streaming: Jangar emits signed detail links inside standard `delta.content` and `delta.reasoning_content` frames, with no OpenWebUI patch and no OpenAI `tool_calls`.
+- `x-jangar-openwebui-render-mode: rich-ui-v1` is optional and experimental; it only requests `delta.jangar_event` frames when OpenWebUI rich rendering is already enabled on the server.
 - Authentication and rate limiting are intentionally disabled because this endpoint is for internal use only; place it behind your own network guardrails when exposing it.
 - Usage totals are emitted only when the request includes `stream_options: { include_usage: true }`. The final SSE chunk (empty `choices` array) carries the normalized OpenAI-style `usage`, even when a turn ends with an upstream error or client abort.
 - Server-side Effect services follow `Context.Tag + Layer` patterns; see `src/server/effect-services.md`.
@@ -253,6 +285,9 @@ Jangar also exposes JSON endpoints that mirror the MCP memory inputs:
 - `JANGAR_CHAT_KEY_PREFIX` (optional; defaults to `openwebui:chat`)
 - `JANGAR_WORKTREE_KEY_PREFIX` (optional; defaults to `openwebui:worktree`)
 - `JANGAR_TRANSCRIPT_KEY_PREFIX` (optional; defaults to `openwebui:transcript`)
+- `JANGAR_OPENWEBUI_RICH_RENDER_ENABLED` (optional; enables OpenWebUI text-plus-links detail rendering in the standard SSE transcript)
+- `JANGAR_OPENWEBUI_EXTERNAL_BASE_URL` (optional; browser-reachable Jangar origin used to build signed `/api/openwebui/rich-ui/render/$renderId` links)
+- `JANGAR_OPENWEBUI_RENDER_SIGNING_SECRET` (optional; required with the external base URL to sign OpenWebUI detail links)
 - `JANGAR_MCP_URL` (optional; defaults to `http://127.0.0.1:$PORT/mcp`)
 - `DATABASE_URL` (required to use MCP memories tools)
 - `PGSSLMODE` (optional; defaults to `require`; Jangar does not support `sslrootcert` URL params for Bun’s Postgres client)

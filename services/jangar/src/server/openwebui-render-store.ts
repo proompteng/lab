@@ -1,3 +1,6 @@
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 
 import { createBunRedisClient, type BunRedisClient } from './bun-redis-client'
@@ -36,6 +39,7 @@ export type OpenWebUiRenderStore = {
 }
 
 type OpenWebUiRenderStoreOptions = {
+  directory?: string
   url?: string
   prefix?: string
 }
@@ -44,6 +48,12 @@ const redisError = (message: string, error: unknown) =>
   new Error(`${message}: ${error instanceof Error ? error.message : String(error)}`)
 
 const serializeBlob = (blob: OpenWebUiRenderBlob) => JSON.stringify(blob)
+const shouldDebugOpenWebUIRenderStore = () => process.env.JANGAR_DEBUG_OPENWEBUI_RENDER_STORE === '1'
+
+const debugOpenWebUIRenderStore = (event: string, details: Record<string, unknown>) => {
+  if (!shouldDebugOpenWebUIRenderStore()) return
+  console.info(`[openwebui-render-store] ${event}`, details)
+}
 
 const parseBlob = (value: unknown): OpenWebUiRenderBlob | null => {
   if (typeof value !== 'string' || value.length === 0) return null
@@ -63,6 +73,7 @@ const parseBlob = (value: unknown): OpenWebUiRenderBlob | null => {
 }
 
 export const createOpenWebUiRenderBlob = (args: {
+  renderId?: string
   kind: string
   logicalId: string
   lane: OpenWebUiRenderLane
@@ -73,7 +84,7 @@ export const createOpenWebUiRenderBlob = (args: {
 }) =>
   ({
     version: 'v1',
-    renderId: randomUUID(),
+    renderId: args.renderId ?? randomUUID(),
     kind: args.kind,
     logicalId: args.logicalId,
     lane: args.lane,
@@ -111,13 +122,26 @@ export const createRedisOpenWebUiRenderStore = (options: OpenWebUiRenderStoreOpt
   return {
     getRenderBlob: async (renderId) => {
       const redis = await getRedis()
-      return parseBlob(await redis.get(key(renderId)))
+      const blob = parseBlob(await redis.get(key(renderId)))
+      debugOpenWebUIRenderStore('redis:get', {
+        renderId,
+        hit: blob != null,
+        kind: blob?.kind ?? null,
+        logicalId: blob?.logicalId ?? null,
+      })
+      return blob
     },
     setRenderBlob: async (blob) => {
       const redis = await getRedis()
       const redisKey = key(blob.renderId)
       await redis.set(redisKey, serializeBlob(blob))
       await redis.expire(redisKey, OPENWEBUI_RENDER_BLOB_TTL_SECONDS)
+      debugOpenWebUIRenderStore('redis:set', {
+        renderId: blob.renderId,
+        kind: blob.kind,
+        logicalId: blob.logicalId,
+        redisKey,
+      })
     },
     clearRenderBlob: async (renderId) => {
       const redis = await getRedis()
@@ -144,13 +168,93 @@ export const createRedisOpenWebUiRenderStore = (options: OpenWebUiRenderStoreOpt
   }
 }
 
+const sanitizePrefix = (value: string) => value.replace(/[^a-zA-Z0-9._-]+/g, '-')
+
+export const createFileOpenWebUiRenderStore = (options: OpenWebUiRenderStoreOptions = {}): OpenWebUiRenderStore => {
+  const prefix = sanitizePrefix(
+    (options.prefix ?? process.env.JANGAR_OPENWEBUI_RENDER_KEY_PREFIX ?? DEFAULT_PREFIX).replace(/:+$/, ''),
+  )
+  const directory = options.directory ?? process.env.JANGAR_OPENWEBUI_RENDER_DIRECTORY ?? join(tmpdir(), prefix)
+  let ensuredDirectoryPromise: Promise<void> | null = null
+
+  const ensureDirectory = () => {
+    if (!ensuredDirectoryPromise) {
+      ensuredDirectoryPromise = mkdir(directory, { recursive: true }).then(() => undefined)
+    }
+    return ensuredDirectoryPromise
+  }
+
+  const filePath = (renderId: string) => join(directory, `${prefix}-${renderId}.json`)
+
+  return {
+    getRenderBlob: async (renderId) => {
+      await ensureDirectory()
+      try {
+        const blob = parseBlob(await readFile(filePath(renderId), 'utf8'))
+        debugOpenWebUIRenderStore('file:get', {
+          renderId,
+          hit: blob != null,
+          kind: blob?.kind ?? null,
+          logicalId: blob?.logicalId ?? null,
+          path: filePath(renderId),
+        })
+        return blob
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') return null
+        throw error
+      }
+    },
+    setRenderBlob: async (blob) => {
+      await ensureDirectory()
+      const path = filePath(blob.renderId)
+      await writeFile(path, serializeBlob(blob), 'utf8')
+      debugOpenWebUIRenderStore('file:set', {
+        renderId: blob.renderId,
+        kind: blob.kind,
+        logicalId: blob.logicalId,
+        path,
+      })
+    },
+    clearRenderBlob: async (renderId) => {
+      await ensureDirectory()
+      await rm(filePath(renderId), { force: true })
+    },
+    clearAll: async () => {
+      await ensureDirectory()
+      const entries = await readdir(directory, { withFileTypes: true })
+      await Promise.all(
+        entries
+          .filter((entry) => entry.isFile() && entry.name.startsWith(`${prefix}-`) && entry.name.endsWith('.json'))
+          .map((entry) => rm(join(directory, entry.name), { force: true })),
+      )
+    },
+    shutdown: async () => {},
+  }
+}
+
 export const createInMemoryOpenWebUiRenderStore = (): OpenWebUiRenderStore => {
   const blobs = new Map<string, OpenWebUiRenderBlob>()
 
   return {
-    getRenderBlob: async (renderId) => blobs.get(renderId) ?? null,
+    getRenderBlob: async (renderId) => {
+      const blob = blobs.get(renderId) ?? null
+      debugOpenWebUIRenderStore('memory:get', {
+        renderId,
+        hit: blob != null,
+        kind: blob?.kind ?? null,
+        logicalId: blob?.logicalId ?? null,
+        size: blobs.size,
+      })
+      return blob
+    },
     setRenderBlob: async (blob) => {
       blobs.set(blob.renderId, structuredClone(blob))
+      debugOpenWebUIRenderStore('memory:set', {
+        renderId: blob.renderId,
+        kind: blob.kind,
+        logicalId: blob.logicalId,
+        size: blobs.size,
+      })
     },
     clearRenderBlob: async (renderId) => {
       blobs.delete(renderId)
@@ -162,24 +266,60 @@ export const createInMemoryOpenWebUiRenderStore = (): OpenWebUiRenderStore => {
   }
 }
 
-let defaultRenderStore: OpenWebUiRenderStore | null = null
+const globalState = globalThis as typeof globalThis & {
+  __jangarOpenWebUiRenderStore?: OpenWebUiRenderStore | null
+}
+
+const getDefaultRenderStore = () => globalState.__jangarOpenWebUiRenderStore ?? null
+
+const setDefaultRenderStore = (store: OpenWebUiRenderStore | null) => {
+  globalState.__jangarOpenWebUiRenderStore = store
+}
 
 export const getOpenWebUiRenderStore = () => {
-  if (!defaultRenderStore) {
-    defaultRenderStore = shouldUseInMemoryChatStateStore()
-      ? createInMemoryOpenWebUiRenderStore()
-      : createRedisOpenWebUiRenderStore()
+  const existing = getDefaultRenderStore()
+  if (existing) {
+    debugOpenWebUIRenderStore('reuse', { mode: 'existing' })
+    return existing
   }
-  return defaultRenderStore
+
+  const storeMode = process.env.JANGAR_OPENWEBUI_RENDER_STORE_MODE?.trim().toLowerCase()
+  const store =
+    storeMode === 'memory'
+      ? createInMemoryOpenWebUiRenderStore()
+      : storeMode === 'file'
+        ? createFileOpenWebUiRenderStore()
+        : shouldUseInMemoryChatStateStore()
+          ? process.env.NODE_ENV === 'test'
+            ? createInMemoryOpenWebUiRenderStore()
+            : createFileOpenWebUiRenderStore()
+          : createRedisOpenWebUiRenderStore()
+  debugOpenWebUIRenderStore('create', {
+    requestedMode: storeMode ?? null,
+    resolvedMode:
+      storeMode === 'memory'
+        ? 'memory'
+        : storeMode === 'file'
+          ? 'file'
+          : shouldUseInMemoryChatStateStore()
+            ? process.env.NODE_ENV === 'test'
+              ? 'memory'
+              : 'file'
+            : 'redis',
+    nodeEnv: process.env.NODE_ENV ?? null,
+  })
+  setDefaultRenderStore(store)
+  return store
 }
 
 export const resolveOpenWebUIRenderStore = getOpenWebUiRenderStore
 
 export const setOpenWebUiRenderStoreForTests = (store: OpenWebUiRenderStore | null) => {
-  defaultRenderStore = store
+  setDefaultRenderStore(store)
 }
 
 export const resetOpenWebUiRenderStoreForTests = async () => {
+  const defaultRenderStore = getDefaultRenderStore()
   if (!defaultRenderStore) return
   try {
     await defaultRenderStore.clearAll()
@@ -187,7 +327,7 @@ export const resetOpenWebUiRenderStoreForTests = async () => {
     throw redisError('clear default openwebui render store', error)
   } finally {
     await defaultRenderStore.shutdown().catch(() => undefined)
-    defaultRenderStore = null
+    setDefaultRenderStore(null)
   }
 }
 

@@ -1,5 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 
+import { OPENWEBUI_RENDER_BLOB_TTL_SECONDS } from './openwebui-render-store'
+
 type RenderSignaturePayload = {
   renderId: string
   kind: string
@@ -7,7 +9,7 @@ type RenderSignaturePayload = {
   messageBindingHash: string
 }
 
-export const OPENWEBUI_RENDER_URL_TTL_SECONDS = 15 * 60
+export const OPENWEBUI_RENDER_URL_TTL_SECONDS = OPENWEBUI_RENDER_BLOB_TTL_SECONDS
 
 const toBase64Url = (buffer: Buffer) =>
   buffer.toString('base64').replaceAll('+', '-').replaceAll('/', '_').replaceAll(/=+$/g, '')
