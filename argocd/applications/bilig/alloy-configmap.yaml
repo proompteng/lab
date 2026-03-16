@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bilig-alloy
+  namespace: bilig
+data:
+  config.river: |
+    logging {
+      level  = "info"
+      format = "logfmt"
+    }
+
+    discovery.kubernetes "bilig_endpoints" {
+      role = "endpoints"
+
+      namespaces {
+        names = ["bilig"]
+      }
+    }
+
+    discovery.relabel "bilig_metrics" {
+      targets = discovery.kubernetes.bilig_endpoints.targets
+
+      rule {
+        source_labels = ["__meta_kubernetes_endpoint_port_name"]
+        regex         = "(?i)http|metrics"
+        action        = "keep"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_service_name"]
+        target_label  = "service"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+    }
+
+    prometheus.remote_write "mimir" {
+      endpoint {
+        url = "http://observability-mimir-nginx.observability.svc.cluster.local/api/v1/push"
+      }
+    }
+
+    prometheus.scrape "bilig" {
+      job_name   = "bilig"
+      targets    = discovery.relabel.bilig_metrics.output
+      forward_to = [prometheus.remote_write.mimir.receiver]
+    }

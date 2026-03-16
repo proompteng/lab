@@ -1,0 +1,15 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: bilig-sync
+  namespace: bilig
+spec:
+  entryPoints:
+    - web
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`api.bilig.proompteng.ai`)
+      services:
+        - name: bilig-sync
+          port: 80

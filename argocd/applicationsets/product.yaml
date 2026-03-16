@@ -280,6 +280,14 @@ spec:
                   argocd.argoproj.io/sync-wave: "7"
                 automation: manual
                 enabled: "true"
+              - name: bilig
+                path: argocd/applications/bilig
+                namespace: bilig
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "6"
+                automation: manual
+                enabled: "true"
               - name: posthog
                 path: argocd/applications/posthog
                 namespace: posthog

@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bilig-object-storage
+  namespace: bilig
+data:
+  SNAPSHOT_BUCKET: bilig-snapshots
+  SNAPSHOT_ENDPOINT: ""
