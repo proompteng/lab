@@ -142,6 +142,8 @@ This pack is positioned as the next architecture layer above:
 42. `42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md`
 43. `42-torghut-quant-control-plane-and-profitability-program-2026-03-15.md`
 44. `44-torghut-quant-plan-design-document-and-handoff-contract-2026-03-15.md`
+45. `45-torghut-quant-proof-readiness-and-rollout-handoff-contract-2026-03-15.md`
+46. `46-torghut-probability-and-capital-mesh-for-profitable-autonomy-2026-03-16.md`
 
 ## Recommended Build Order
 
@@ -231,3 +233,4 @@ This pack is positioned as the next architecture layer above:
   replay/proof lane are authoritative.
 - `42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md` is now the discover
   stage transition contract with explicit cluster/source/database assessment and rollout/rollback requirements.
+- `45-torghut-quant-proof-readiness-and-rollout-handoff-contract-2026-03-15.md` and `46-torghut-probability-and-capital-mesh-for-profitable-autonomy-2026-03-16.md` convert the historical discovery stack into explicit per-hypothesis and per-lane profitability execution contracts for plan-stage implementation.
