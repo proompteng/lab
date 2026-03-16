@@ -399,7 +399,7 @@ export const makeTrackerLayer = (logger: Logger) =>
             config.tracker.endpoint,
             config.tracker.apiKey ?? '',
             `
-              query SymphonyIssueTeamStates($issueId: ID!) {
+              query SymphonyIssueTeamStates($issueId: String!) {
                 issue(id: $issueId) {
                   team {
                     states {
@@ -481,7 +481,7 @@ export const makeTrackerLayer = (logger: Logger) =>
               config.tracker.endpoint,
               config.tracker.apiKey,
               `
-                mutation SymphonyCommentOnIssue($issueId: ID!, $body: String!) {
+                mutation SymphonyCommentOnIssue($issueId: String!, $body: String!) {
                   commentCreate(input: { issueId: $issueId, body: $body }) {
                     success
                   }
@@ -504,7 +504,7 @@ export const makeTrackerLayer = (logger: Logger) =>
               config.tracker.endpoint,
               config.tracker.apiKey,
               `
-                mutation SymphonyMoveIssueToHandoff($issueId: ID!, $stateId: ID!) {
+                mutation SymphonyMoveIssueToHandoff($issueId: String!, $stateId: String!) {
                   issueUpdate(id: $issueId, input: { stateId: $stateId }) {
                     success
                   }
