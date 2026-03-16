@@ -205,6 +205,7 @@ DEFAULT_ARGOCD_NAMESPACE = 'argocd'
 DEFAULT_ARGOCD_APP_NAME = 'torghut'
 DEFAULT_ARGOCD_ROOT_APP_NAME = 'root'
 DEFAULT_ARGOCD_RUN_MODE = 'manual'
+_ARGOCD_SKIP_RECONCILE_ANNOTATION = 'argocd.argoproj.io/skip-reconcile'
 DEFAULT_ROLLOUTS_NAMESPACE = 'torghut'
 DEFAULT_ROLLOUTS_RUNTIME_TEMPLATE = 'torghut-simulation-runtime-ready'
 DEFAULT_ROLLOUTS_ACTIVITY_TEMPLATE = 'torghut-simulation-activity'
@@ -1995,12 +1996,17 @@ def _read_named_argocd_application_sync_policy(
         ]
     )
     spec = _as_mapping(payload.get('spec'))
+    metadata = _as_mapping(payload.get('metadata'))
+    annotations = _as_mapping(metadata.get('annotations'))
     sync_policy_raw = spec.get('syncPolicy')
     sync_policy = _clone_json_mapping(_as_mapping(sync_policy_raw) if isinstance(sync_policy_raw, Mapping) else None)
     automation_mode = _argocd_application_mode_from_sync_policy(sync_policy)
+    skip_reconcile_value = _as_text(annotations.get(_ARGOCD_SKIP_RECONCILE_ANNOTATION))
     return {
         'sync_policy': sync_policy,
         'automation_mode': automation_mode,
+        'skip_reconcile_value': skip_reconcile_value,
+        'skip_reconcile_enabled': (skip_reconcile_value or '').lower() == 'true',
     }
 
 
@@ -2078,6 +2084,66 @@ def _set_argocd_application_sync_policy(
     return {
         'previous_sync_policy': current_policy,
         'current_sync_policy': verified_policy,
+        'changed': changed,
+    }
+
+
+def _normalize_argocd_skip_reconcile_value(value: str | None) -> str | None:
+    normalized = _as_text(value)
+    if normalized is None:
+        return None
+    normalized = normalized.lower()
+    if normalized not in {'true', 'false'}:
+        raise RuntimeError(f'unsupported_argocd_skip_reconcile_value:{value}')
+    return normalized
+
+
+def _set_argocd_application_skip_reconcile(
+    *,
+    config: ArgocdAutomationConfig,
+    app_name: str | None = None,
+    desired_value: str | None,
+) -> dict[str, Any]:
+    normalized_desired = _normalize_argocd_skip_reconcile_value(desired_value)
+    target_app_name = app_name or config.app_name
+    state = _read_named_argocd_application_sync_policy(
+        namespace=config.applicationset_namespace,
+        app_name=target_app_name,
+    )
+    current_value = _normalize_argocd_skip_reconcile_value(_as_text(state.get('skip_reconcile_value')))
+    changed = current_value != normalized_desired
+    if changed:
+        _kubectl_patch(
+            config.applicationset_namespace,
+            'application',
+            target_app_name,
+            {'metadata': {'annotations': {_ARGOCD_SKIP_RECONCILE_ANNOTATION: normalized_desired}}},
+        )
+
+    deadline = datetime.now(timezone.utc) + timedelta(seconds=config.verify_timeout_seconds)
+    verified_value = current_value
+    while True:
+        verified_state = _read_named_argocd_application_sync_policy(
+            namespace=config.applicationset_namespace,
+            app_name=target_app_name,
+        )
+        verified_value = _normalize_argocd_skip_reconcile_value(
+            _as_text(verified_state.get('skip_reconcile_value'))
+        )
+        if verified_value == normalized_desired:
+            break
+        if datetime.now(timezone.utc) >= deadline:
+            raise RuntimeError(
+                'argocd_application_skip_reconcile_verify_timeout '
+                f'desired={normalized_desired} observed={verified_value}'
+            )
+        time.sleep(2)
+
+    return {
+        'app_name': target_app_name,
+        'previous_value': current_value,
+        'current_value': verified_value,
+        'enabled': verified_value == 'true',
         'changed': changed,
     }
 
@@ -6094,9 +6160,20 @@ def _prepare_argocd_for_run(
         }
     automation_state = _read_argocd_automation_mode(config=config)
     current_mode = _normalized_automation_mode(_as_text(automation_state.get('mode')))
+    child_sync_state = _read_named_argocd_application_sync_policy(
+        namespace=config.applicationset_namespace,
+        app_name=config.app_name,
+    )
     root_sync_state = _read_named_argocd_application_sync_policy(
         namespace=config.applicationset_namespace,
         app_name=config.root_app_name,
+    )
+    child_application_report = _set_argocd_application_sync_policy(
+        config=config,
+        app_name=config.app_name,
+        desired_sync_policy=_manual_argocd_application_sync_policy(
+            cast(Mapping[str, Any] | None, child_sync_state.get('sync_policy'))
+        ),
     )
     root_application_report = _set_argocd_application_sync_policy(
         config=config,
@@ -6104,6 +6181,11 @@ def _prepare_argocd_for_run(
         desired_sync_policy=_manual_argocd_application_sync_policy(
             cast(Mapping[str, Any] | None, root_sync_state.get('sync_policy'))
         ),
+    )
+    application_skip_reconcile_report = _set_argocd_application_skip_reconcile(
+        config=config,
+        app_name=config.app_name,
+        desired_value='true',
     )
     applicationset_report = _set_argocd_automation_mode(
         config=config,
@@ -6116,13 +6198,20 @@ def _prepare_argocd_for_run(
     )
     return {
         'managed': True,
-        'changed': root_application_report['changed'] or applicationset_report['changed'],
+        'changed': (
+            child_application_report['changed']
+            or root_application_report['changed']
+            or application_skip_reconcile_report['changed']
+            or applicationset_report['changed']
+        ),
         'pointer': automation_state.get('pointer'),
         'previous_mode': current_mode,
         'desired_mode': config.desired_mode_during_run,
         'current_mode': application_mode_report['current_mode'],
         'applicationset_managed': True,
         'applicationset': applicationset_report,
+        'application_sync_policy': child_application_report,
+        'application_skip_reconcile': application_skip_reconcile_report,
         'root_application': root_application_report,
         'application': application_mode_report,
     }
@@ -6157,9 +6246,11 @@ def _ensure_argocd_manual_before_runtime_mutation(
         cast(Mapping[str, Any] | None, root_state.get('sync_policy'))
     )
     current_applicationset_mode = _normalized_automation_mode(_as_text(applicationset_state.get('mode')))
+    current_skip_reconcile_enabled = bool(application_state.get('skip_reconcile_enabled'))
     if (
         current_applicationset_mode == desired_mode
         and current_application_mode == desired_mode
+        and current_skip_reconcile_enabled
         and current_root_sync_policy == desired_root_sync_policy
     ):
         return {
@@ -6184,6 +6275,13 @@ def _ensure_argocd_manual_before_runtime_mutation(
                 'app_name': config.app_name,
                 'current_mode': current_application_mode,
             },
+            'application_skip_reconcile': {
+                'app_name': config.app_name,
+                'current_value': _as_text(application_state.get('skip_reconcile_value')),
+                'desired_value': 'true',
+                'enabled': current_skip_reconcile_enabled,
+                'changed': False,
+            },
         }
 
     report = _prepare_argocd_for_run(config=config)
@@ -6195,7 +6293,9 @@ def _restore_argocd_after_run(
     *,
     config: ArgocdAutomationConfig,
     previous_mode: str | None,
-    previous_sync_policy: Mapping[str, Any] | None,
+    previous_root_sync_policy: Mapping[str, Any] | None,
+    previous_child_sync_policy: Mapping[str, Any] | None,
+    previous_child_skip_reconcile_value: str | None,
 ) -> dict[str, Any]:
     if not config.manage_automation:
         return {
@@ -6209,6 +6309,16 @@ def _restore_argocd_after_run(
     if restored_mode is None:
         restored_mode = 'auto'
 
+    child_application_report = _set_argocd_application_sync_policy(
+        config=config,
+        app_name=config.app_name,
+        desired_sync_policy=previous_child_sync_policy,
+    )
+    child_skip_reconcile_report = _set_argocd_application_skip_reconcile(
+        config=config,
+        app_name=config.app_name,
+        desired_value=previous_child_skip_reconcile_value,
+    )
     applicationset_report = _set_argocd_automation_mode(
         config=config,
         desired_mode=restored_mode,
@@ -6216,7 +6326,7 @@ def _restore_argocd_after_run(
     root_application_report = _set_argocd_application_sync_policy(
         config=config,
         app_name=config.root_app_name,
-        desired_sync_policy=previous_sync_policy,
+        desired_sync_policy=previous_root_sync_policy,
     )
     application_mode_report = _wait_for_argocd_application_mode(
         config=config,
@@ -6225,12 +6335,19 @@ def _restore_argocd_after_run(
     )
     return {
         'managed': True,
-        'changed': root_application_report['changed'] or applicationset_report['changed'],
+        'changed': (
+            child_application_report['changed']
+            or child_skip_reconcile_report['changed']
+            or root_application_report['changed']
+            or applicationset_report['changed']
+        ),
         'restored_mode': restored_mode,
         'previous_mode': previous_mode,
         'current_mode': application_mode_report['current_mode'],
         'applicationset_managed': True,
         'applicationset': applicationset_report,
+        'application_sync_policy': child_application_report,
+        'application_skip_reconcile': child_skip_reconcile_report,
         'root_application': root_application_report,
         'application': application_mode_report,
     }
@@ -6955,6 +7072,8 @@ def _run_full_lifecycle(
     argocd_prepare_succeeded = False
     argocd_restore_required = False
     previous_root_application_sync_policy: dict[str, Any] | None = None
+    previous_child_application_sync_policy: dict[str, Any] | None = None
+    previous_child_skip_reconcile_value: str | None = None
     teardown_succeeded = False
 
     try:
@@ -6985,10 +7104,16 @@ def _run_full_lifecycle(
                     cast(Mapping[str, Any] | None, current_root_app_state.get('sync_policy'))
                 )
                 current_app_state = _read_argocd_application_sync_policy(config=argocd_config)
+                previous_child_application_sync_policy = _clone_json_mapping(
+                    cast(Mapping[str, Any] | None, current_app_state.get('sync_policy'))
+                )
+                previous_child_skip_reconcile_value = _as_text(current_app_state.get('skip_reconcile_value'))
                 argocd_restore_required = (
                     previous_automation_mode != _normalized_automation_mode(argocd_config.desired_mode_during_run)
                 )
                 if _normalized_automation_mode(_as_text(current_app_state.get('automation_mode'))) != 'manual':
+                    argocd_restore_required = True
+                if not bool(current_app_state.get('skip_reconcile_enabled')):
                     argocd_restore_required = True
             argocd_prepare_report = _prepare_argocd_for_run(config=argocd_config)
             if previous_automation_mode is None:
@@ -6998,6 +7123,14 @@ def _run_full_lifecycle(
                 previous_root_application_sync_policy = _clone_json_mapping(
                     cast(Mapping[str, Any] | None, application_report.get('previous_sync_policy'))
                 )
+            if previous_child_application_sync_policy is None:
+                application_report = _as_mapping(argocd_prepare_report.get('application_sync_policy'))
+                previous_child_application_sync_policy = _clone_json_mapping(
+                    cast(Mapping[str, Any] | None, application_report.get('previous_sync_policy'))
+                )
+            if previous_child_skip_reconcile_value is None:
+                skip_report = _as_mapping(argocd_prepare_report.get('application_skip_reconcile'))
+                previous_child_skip_reconcile_value = _as_text(skip_report.get('previous_value'))
             argocd_prepare_succeeded = True
             _update_run_state(
                 resources=resources,
@@ -7364,7 +7497,9 @@ def _run_full_lifecycle(
                 argocd_restore_report = _restore_argocd_after_run(
                     config=argocd_config,
                     previous_mode=previous_automation_mode,
-                    previous_sync_policy=previous_root_application_sync_policy,
+                    previous_root_sync_policy=previous_root_application_sync_policy,
+                    previous_child_sync_policy=previous_child_application_sync_policy,
+                    previous_child_skip_reconcile_value=previous_child_skip_reconcile_value,
                 )
                 _update_run_state(resources=resources, phase='argocd_restore', status='ok')
             except Exception as exc:
