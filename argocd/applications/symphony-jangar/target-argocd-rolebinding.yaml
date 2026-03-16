@@ -1,8 +1,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
+kind: ClusterRoleBinding
 metadata:
   name: symphony-target-argocd
-  namespace: argocd
   labels:
     app.kubernetes.io/name: symphony-jangar
     app.kubernetes.io/part-of: lab
@@ -12,5 +11,5 @@ subjects:
     namespace: jangar
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: Role
+  kind: ClusterRole
   name: symphony-target-argocd

@@ -5,6 +5,7 @@ import * as Fiber from 'effect/Fiber'
 import * as Queue from 'effect/Queue'
 import * as Ref from 'effect/Ref'
 import * as Schedule from 'effect/Schedule'
+import * as Scope from 'effect/Scope'
 import * as Stream from 'effect/Stream'
 import * as SynchronizedRef from 'effect/SynchronizedRef'
 
@@ -446,6 +447,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
       const stateStore = yield* StateStoreService
       const targetHealth = yield* TargetHealthService
       const orchestratorLogger = logger.child({ component: 'orchestrator' })
+      const serviceScope = (yield* Effect.scope) as Scope.Scope
 
       const stateRef = yield* SynchronizedRef.make<OrchestratorState>(EMPTY_STATE())
       const queue = yield* Queue.unbounded<OrchestratorCommand>()
@@ -479,7 +481,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
         Effect.sleep(Duration.millis(Math.max(0, dueAtMs - Date.now()))).pipe(
           Effect.zipRight(Queue.offer(queue, { _tag: 'RetryDue', issueId })),
           Effect.asVoid,
-          Effect.forkScoped,
+          Effect.forkIn(serviceScope),
         )
 
       const rehydrateRetryTimers = Effect.gen(function* () {
@@ -758,7 +760,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
               Effect.asVoid,
             )
 
-          const workerFiber = yield* Effect.forkScoped(workerEffect)
+          const workerFiber = yield* Effect.forkIn(workerEffect, serviceScope)
           const startedAtMs = Date.now()
           const startedAt = new Date(startedAtMs).toISOString()
 
@@ -1443,7 +1445,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
         )
 
       const startProcessor = Effect.forever(Queue.take(queue).pipe(Effect.flatMap(handleCommand))).pipe(
-        Effect.forkScoped,
+        Effect.forkIn(serviceScope),
       )
 
       const startSchedulers = Effect.gen(function* () {
@@ -1466,55 +1468,59 @@ export const makeOrchestratorLayer = (logger: Logger) =>
           ),
         )
 
-        const pollFiber = yield* Effect.repeat(enqueuePoll, pollSchedule).pipe(Effect.asVoid, Effect.forkScoped)
-        const stallFiber = yield* Effect.repeat(enqueueStallSweep, stallSchedule).pipe(Effect.asVoid, Effect.forkScoped)
+        const pollFiber = yield* Effect.repeat(enqueuePoll, pollSchedule).pipe(
+          Effect.asVoid,
+          Effect.forkIn(serviceScope),
+        )
+        const stallFiber = yield* Effect.repeat(enqueueStallSweep, stallSchedule).pipe(
+          Effect.asVoid,
+          Effect.forkIn(serviceScope),
+        )
         yield* Ref.set(pollFiberRef, pollFiber)
         yield* Ref.set(stallFiberRef, stallFiber)
       })
 
       const service: OrchestratorServiceDefinition = {
-        start: Effect.scoped(
-          Ref.get(startedRef).pipe(
-            Effect.flatMap((started) =>
-              started
-                ? Effect.void
-                : Effect.gen(function* () {
-                    const loaded = yield* workflow.current
-                    yield* validateDispatchConfigEffect(loaded.config)
+        start: Ref.get(startedRef).pipe(
+          Effect.flatMap((started) =>
+            started
+              ? Effect.void
+              : Effect.gen(function* () {
+                  const loaded = yield* workflow.current
+                  yield* validateDispatchConfigEffect(loaded.config)
 
-                    const persisted = yield* stateStore.load.pipe(
-                      Effect.catchAll((error) =>
-                        Effect.sync(() => {
-                          orchestratorLogger.log('warn', 'durable_state_restore_failed', toLogError(error))
-                        }).pipe(Effect.zipRight(Effect.succeed(emptyPersistedSchedulerState()))),
+                  const persisted = yield* stateStore.load.pipe(
+                    Effect.catchAll((error) =>
+                      Effect.sync(() => {
+                        orchestratorLogger.log('warn', 'durable_state_restore_failed', toLogError(error))
+                      }).pipe(Effect.zipRight(Effect.succeed(emptyPersistedSchedulerState()))),
+                    ),
+                  )
+                  yield* SynchronizedRef.set(stateRef, hydrateStateFromPersisted(persisted, loaded.config))
+
+                  yield* leaderElection.start
+
+                  const processorFiber = yield* startProcessor
+                  yield* Ref.set(processorFiberRef, processorFiber)
+
+                  const leaderFiber = yield* Stream.runForEach(leaderElection.changes, (leader) =>
+                    Ref.getAndSet(seenLeaderStateRef, leader.isLeader).pipe(
+                      Effect.flatMap((previous) =>
+                        previous === leader.isLeader
+                          ? Effect.void
+                          : Queue.offer(queue, { _tag: 'LeaderChanged', leader }),
                       ),
-                    )
-                    yield* SynchronizedRef.set(stateRef, hydrateStateFromPersisted(persisted, loaded.config))
+                    ),
+                  ).pipe(Effect.forkIn(serviceScope))
+                  yield* Ref.set(leaderStreamFiberRef, leaderFiber)
 
-                    yield* leaderElection.start
+                  const currentLeader = yield* leaderElection.status
+                  yield* Ref.set(seenLeaderStateRef, currentLeader.isLeader)
+                  yield* Queue.offer(queue, { _tag: 'LeaderChanged', leader: currentLeader })
 
-                    const processorFiber = yield* startProcessor
-                    yield* Ref.set(processorFiberRef, processorFiber)
-
-                    const leaderFiber = yield* Stream.runForEach(leaderElection.changes, (leader) =>
-                      Ref.getAndSet(seenLeaderStateRef, leader.isLeader).pipe(
-                        Effect.flatMap((previous) =>
-                          previous === leader.isLeader
-                            ? Effect.void
-                            : Queue.offer(queue, { _tag: 'LeaderChanged', leader }),
-                        ),
-                      ),
-                    ).pipe(Effect.forkScoped)
-                    yield* Ref.set(leaderStreamFiberRef, leaderFiber)
-
-                    const currentLeader = yield* leaderElection.status
-                    yield* Ref.set(seenLeaderStateRef, currentLeader.isLeader)
-                    yield* Queue.offer(queue, { _tag: 'LeaderChanged', leader: currentLeader })
-
-                    yield* startSchedulers
-                    yield* Ref.set(startedRef, true)
-                  }),
-            ),
+                  yield* startSchedulers
+                  yield* Ref.set(startedRef, true)
+                }),
           ),
         ),
         stop: Effect.gen(function* () {
