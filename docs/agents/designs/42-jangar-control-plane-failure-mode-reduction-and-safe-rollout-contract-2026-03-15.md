@@ -187,5 +187,4 @@ These fields are written once and reused for mission artifact generation.
 
 ## References
 
-- `docs/agents/designs/28-` and `docs/agents/designs/29-` design line are the current production readyness context.
-- This document extends and supersedes previous control-plane stage-readiness assumptions around static freeze handling.
+This document is the active baseline for stage-recovery class policy and rollout precondition controls for `jangar-control-plane`. It should be applied jointly with existing deployment safety docs and service-specific runbooks already in the repo.
