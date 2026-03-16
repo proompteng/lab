@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bilig-alloy
+  namespace: bilig
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bilig-alloy
+  template:
+    metadata:
+      labels:
+        app: bilig-alloy
+    spec:
+      serviceAccountName: bilig-alloy
+      containers:
+        - name: alloy
+          image: grafana/alloy:v1.11.2
+          args:
+            - run
+            - /etc/alloy/config.river
+          ports:
+            - name: http
+              containerPort: 12345
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alloy
+      volumes:
+        - name: config
+          configMap:
+            name: bilig-alloy
+            items:
+              - key: config.river
+                path: config.river

@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - frontend-deployment.yaml
+  - frontend-service.yaml
+  - frontend-ingressroute.yaml
+  - sync-deployment.yaml
+  - sync-service.yaml
+  - sync-ingressroute.yaml
+  - redis-deployment.yaml
+  - redis-service.yaml
+  - postgres-cluster.yaml
+  - object-storage-configmap.yaml
+  - alloy-configmap.yaml
+  - alloy-deployment.yaml
+  - alloy-rbac.yaml
+images:
+  - name: registry.ide-newton.ts.net/lab/bilig-web
+    newName: registry.ide-newton.ts.net/lab/bilig-web
+    newTag: "fd6553c"
+  - name: registry.ide-newton.ts.net/lab/bilig-sync
+    newName: registry.ide-newton.ts.net/lab/bilig-sync
+    newTag: "fd6553c"

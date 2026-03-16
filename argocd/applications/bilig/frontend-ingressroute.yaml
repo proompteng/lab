@@ -1,0 +1,15 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: bilig-web
+  namespace: bilig
+spec:
+  entryPoints:
+    - web
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`bilig.proompteng.ai`)
+      services:
+        - name: bilig-web
+          port: 80

@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bilig-sync
+  namespace: bilig
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bilig-sync
+  template:
+    metadata:
+      labels:
+        app: bilig-sync
+    spec:
+      containers:
+        - name: bilig-sync
+          image: registry.ide-newton.ts.net/lab/bilig-sync
+          ports:
+            - name: http
+              containerPort: 4321
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "4321"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bilig-db-app
+                  key: uri
+                  optional: true
+            - name: REDIS_URL
+              value: redis://bilig-redis:6379
+            - name: SNAPSHOT_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: bilig-object-storage
+                  key: SNAPSHOT_BUCKET
+                  optional: true
+            - name: SNAPSHOT_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: bilig-object-storage
+                  key: SNAPSHOT_ENDPOINT
+                  optional: true
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi

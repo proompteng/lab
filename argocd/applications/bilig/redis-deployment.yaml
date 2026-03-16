@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bilig-redis
+  namespace: bilig
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bilig-redis
+  template:
+    metadata:
+      labels:
+        app: bilig-redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.4.7
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
