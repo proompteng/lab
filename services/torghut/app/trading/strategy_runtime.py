@@ -14,6 +14,7 @@ from typing import Any, Literal, Protocol, cast
 from ..models import Strategy
 from ..strategies.catalog import extract_catalog_metadata
 from .features import FeatureVectorV3, validate_declared_features
+from .intraday_tsmom_contract import evaluate_intraday_tsmom_signal
 from .strategy_specs import build_compiled_strategy_artifacts, strategy_type_supports_spec_v2
 
 
@@ -380,79 +381,39 @@ class IntradayTsmomPlugin:
     def evaluate(
         self, context: StrategyContext, features: FeatureVectorV3
     ) -> StrategyIntent | None:
-        _ = context
         ema12 = _decimal(features.values.get("ema12"))
         ema26 = _decimal(features.values.get("ema26"))
         macd = _decimal(features.values.get("macd"))
         macd_signal = _decimal(features.values.get("macd_signal"))
         rsi14 = _decimal(features.values.get("rsi14"))
         vol = _decimal(features.values.get("vol_realized_w60s"))
-
-        if (
-            ema12 is None
-            or ema26 is None
-            or macd is None
-            or macd_signal is None
-            or rsi14 is None
-        ):
+        evaluation = evaluate_intraday_tsmom_signal(
+            timeframe=context.timeframe,
+            params=context.params,
+            ema12=ema12,
+            ema26=ema26,
+            macd=macd,
+            macd_signal=macd_signal,
+            rsi14=rsi14,
+            vol_realized_w60s=vol,
+        )
+        if evaluation is None:
             return None
 
-        macd_hist = macd - macd_signal
-        trend_up = ema12 > ema26 and macd > macd_signal
-        trend_down = ema12 < ema26 and macd < macd_signal
-        # Profit-focused filter: avoid noisy low-conviction and high-volatility windows.
-        vol_ok = vol is None or (Decimal("0.001") <= vol <= Decimal("0.012"))
-
         target_notional = _target_notional(context.params)
-
-        if (
-            trend_up
-            and vol_ok
-            and macd_hist >= Decimal("0.04")
-            and Decimal("52") <= rsi14 <= Decimal("62")
-        ):
-            confidence = Decimal("0.64")
-            if macd_hist >= Decimal("0.10"):
-                confidence += Decimal("0.05")
-            if vol is not None and vol <= Decimal("0.008"):
-                confidence += Decimal("0.03")
-            return StrategyIntent(
-                strategy_id=context.strategy_id,
-                symbol=context.symbol,
-                direction="buy",
-                confidence=min(confidence, Decimal("0.82")),
-                target_notional=target_notional,
-                horizon=context.timeframe,
-                explain=(
-                    "tsmom_trend_up",
-                    "momentum_confirmed",
-                    "volatility_within_budget",
-                ),
-                feature_snapshot_hash=features.normalization_hash,
-                required_features=self.required_features,
-            )
-
-        if (
-            trend_down
-            and rsi14 >= Decimal("66")
-            and (macd_signal - macd) >= Decimal("0.06")
-        ):
-            confidence = Decimal("0.62")
-            if rsi14 >= Decimal("72"):
-                confidence += Decimal("0.03")
-            return StrategyIntent(
-                strategy_id=context.strategy_id,
-                symbol=context.symbol,
-                direction="sell",
-                confidence=min(confidence, Decimal("0.78")),
-                target_notional=target_notional,
-                horizon=context.timeframe,
-                explain=("tsmom_trend_down", "momentum_reversal_exit"),
-                feature_snapshot_hash=features.normalization_hash,
-                required_features=self.required_features,
-            )
-
-        return None
+        direction = "buy" if evaluation.direction == "long" else "sell"
+        confidence_cap = Decimal("0.84") if evaluation.direction == "long" else Decimal("0.80")
+        return StrategyIntent(
+            strategy_id=context.strategy_id,
+            symbol=context.symbol,
+            direction=direction,
+            confidence=min(evaluation.confidence, confidence_cap),
+            target_notional=target_notional,
+            horizon=context.timeframe,
+            explain=evaluation.rationale,
+            feature_snapshot_hash=features.normalization_hash,
+            required_features=self.required_features,
+        )
 
 
 class StrategyRuntime:

@@ -13,6 +13,7 @@ from ..features import (
     normalize_feature_vector_v3,
     validate_declared_features,
 )
+from ..intraday_tsmom_contract import evaluate_intraday_tsmom_signal, validate_intraday_tsmom_params
 from ..models import SignalEnvelope, StrategyDecision
 from ..strategy_specs import build_compiled_strategy_artifacts, strategy_type_supports_spec_v2
 
@@ -177,28 +178,7 @@ class IntradayTsmomV1Plugin:
     version = '1.1.0'
 
     def validate_params(self, params: dict[str, Any]) -> None:
-        _validate_optional_decimal_param(
-            params=params,
-            key='bullish_hist_min',
-            invalid_error='invalid_bullish_hist_min',
-        )
-        _validate_optional_decimal_param(
-            params=params,
-            key='bearish_hist_min',
-            invalid_error='invalid_bearish_hist_min',
-        )
-        _validate_optional_rsi_param(
-            params=params,
-            key='min_bull_rsi',
-            invalid_error='invalid_min_bull_rsi',
-            out_of_range_error='min_bull_rsi_out_of_range',
-        )
-        _validate_optional_rsi_param(
-            params=params,
-            key='max_bull_rsi',
-            invalid_error='invalid_max_bull_rsi',
-            out_of_range_error='max_bull_rsi_out_of_range',
-        )
+        validate_intraday_tsmom_params(params)
 
     def required_features(self) -> set[str]:
         return {'price', 'ema12', 'ema26', 'macd', 'macd_signal', 'rsi14', 'vol_realized_w60s'}
@@ -213,78 +193,38 @@ class IntradayTsmomV1Plugin:
         macd_signal = _decimal(fv.values.get('macd_signal'))
         rsi14 = _decimal(fv.values.get('rsi14'))
         vol = _decimal(fv.values.get('vol_realized_w60s'))
-
-        if ema12 is None or ema26 is None or macd is None or macd_signal is None or rsi14 is None:
+        evaluation = evaluate_intraday_tsmom_signal(
+            timeframe=fv.timeframe,
+            params=ctx.params,
+            ema12=ema12,
+            ema26=ema26,
+            macd=macd,
+            macd_signal=macd_signal,
+            rsi14=rsi14,
+            vol_realized_w60s=vol,
+        )
+        if evaluation is None:
             return None
 
-        macd_hist = macd - macd_signal
-        trend_up = ema12 > ema26 and macd > macd_signal
-        trend_down = ema12 < ema26 and macd < macd_signal
-
-        bullish_hist_min = _decimal(ctx.params.get('bullish_hist_min')) or Decimal('0.04')
-        bearish_hist_min = _decimal(ctx.params.get('bearish_hist_min')) or Decimal('0.05')
-        min_bull_rsi = _decimal(ctx.params.get('min_bull_rsi')) or Decimal('52')
-        max_bull_rsi = _decimal(ctx.params.get('max_bull_rsi')) or Decimal('62')
-        min_bear_rsi = _decimal(ctx.params.get('min_bear_rsi')) or Decimal('66')
-        bearish_hist_cap = _decimal(ctx.params.get('bearish_hist_cap')) or Decimal('0.12')
-
-        vol_floor = _decimal(ctx.params.get('vol_floor')) or Decimal('0.001')
-        vol_ceil = _decimal(ctx.params.get('vol_ceil')) or Decimal('0.012')
-
-        vol_ok = vol is None or (vol_floor <= vol <= vol_ceil)
-
-        if trend_up and vol_ok and macd_hist >= bullish_hist_min and min_bull_rsi <= rsi14 <= max_bull_rsi:
-            confidence = Decimal('0.64')
-            if macd_hist >= bullish_hist_min * Decimal('2'):
-                confidence += Decimal('0.05')
-            if vol is not None and vol <= Decimal('0.008'):
-                confidence += Decimal('0.03')
-            if rsi14 >= max_bull_rsi:
-                confidence += Decimal('0.02')
-            return StrategyIntent(
-                strategy_id=ctx.strategy_id,
-                symbol=fv.symbol,
-                direction='long',
-                confidence=min(confidence, Decimal('0.84')),
-                target_qty=_decimal(ctx.params.get('qty')) or Decimal('1'),
-                horizon='intraday',
-                rationale=['tsmom_trend_up', 'momentum_confirmed', 'volatility_within_budget'],
-                meta={
-                    'strategy_type': ctx.strategy_type,
-                    'schema': fv.feature_schema_version,
-                    'feature_hash': fv.normalization_hash,
-                    'macd_hist': str(macd_hist),
-                    'compiler_source': 'spec_v2' if ctx.strategy_spec else 'legacy_runtime',
-                },
-            )
-
-        if (
-            trend_down
-            and -macd_hist >= bearish_hist_min
-            and -macd_hist <= bearish_hist_cap
-            and rsi14 >= min_bear_rsi
-        ):
-            confidence = Decimal('0.62')
-            if rsi14 >= Decimal('72'):
-                confidence += Decimal('0.03')
-            return StrategyIntent(
-                strategy_id=ctx.strategy_id,
-                symbol=fv.symbol,
-                direction='short',
-                confidence=min(confidence, Decimal('0.80')),
-                target_qty=_decimal(ctx.params.get('qty')) or Decimal('1'),
-                horizon='intraday',
-                rationale=['tsmom_trend_down', 'momentum_reversal_exit'],
-                meta={
-                    'strategy_type': ctx.strategy_type,
-                    'schema': fv.feature_schema_version,
-                    'feature_hash': fv.normalization_hash,
-                    'macd_hist': str(macd_hist),
-                    'compiler_source': 'spec_v2' if ctx.strategy_spec else 'legacy_runtime',
-                },
-            )
-
-        return None
+        return StrategyIntent(
+            strategy_id=ctx.strategy_id,
+            symbol=fv.symbol,
+            direction=evaluation.direction,
+            confidence=min(
+                evaluation.confidence,
+                Decimal('0.84') if evaluation.direction == 'long' else Decimal('0.80'),
+            ),
+            target_qty=_decimal(ctx.params.get('qty')) or Decimal('1'),
+            horizon='intraday',
+            rationale=list(evaluation.rationale),
+            meta={
+                'strategy_type': ctx.strategy_type,
+                'schema': fv.feature_schema_version,
+                'feature_hash': fv.normalization_hash,
+                'macd_hist': str(evaluation.macd_hist),
+                'compiler_source': 'spec_v2' if ctx.strategy_spec else 'legacy_runtime',
+            },
+        )
 
 
 class StrategyRuntime:
@@ -427,34 +367,6 @@ def _decimal(value: Any) -> Decimal | None:
         return Decimal(str(value))
     except (ArithmeticError, TypeError, ValueError):
         return None
-
-
-def _validate_optional_decimal_param(
-    *,
-    params: dict[str, Any],
-    key: str,
-    invalid_error: str,
-) -> None:
-    if key not in params:
-        return
-    if _decimal(params.get(key)) is None:
-        raise ValueError(invalid_error)
-
-
-def _validate_optional_rsi_param(
-    *,
-    params: dict[str, Any],
-    key: str,
-    invalid_error: str,
-    out_of_range_error: str,
-) -> None:
-    if key not in params:
-        return
-    value = _decimal(params.get(key))
-    if value is None:
-        raise ValueError(invalid_error)
-    if value < 0 or value > 100:
-        raise ValueError(out_of_range_error)
 
 
 __all__ = [

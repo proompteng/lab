@@ -202,6 +202,80 @@ class TestStrategyRuntime(TestCase):
         self.assertIn("tsmom_trend_down", decision.intent.rationale)
         self.assertIn("momentum_reversal_exit", decision.intent.rationale)
 
+    def test_intraday_tsmom_plugin_emits_buy_for_one_second_profile(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="intraday-tsmom-1sec",
+            description="version=1.1.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="intraday_tsmom_v1",
+            universe_symbols=["MSFT"],
+            max_position_pct_equity=Decimal("0.02"),
+            max_notional_per_trade=Decimal("2500"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 13, 13, 33, 46, tzinfo=timezone.utc),
+            symbol="MSFT",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 395.5129,
+                "ema12": 395.51296737223805,
+                "ema26": 395.50678734700955,
+                "macd": 0.0061800252285331625,
+                "macd_signal": -0.0207157904036421,
+                "rsi14": 60.84685352855714,
+                "vol_realized_w60s": 0.00009809491242978304,
+            },
+        )
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.intent.action, "buy")
+        self.assertIn("tsmom_trend_up", decision.intent.rationale)
+
+    def test_intraday_tsmom_plugin_emits_sell_for_one_second_profile(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="intraday-tsmom-1sec",
+            description="version=1.1.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="intraday_tsmom_v1",
+            universe_symbols=["PLTR"],
+            max_position_pct_equity=Decimal("0.02"),
+            max_notional_per_trade=Decimal("2500"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 13, 13, 36, 38, tzinfo=timezone.utc),
+            symbol="PLTR",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 150.9813,
+                "ema12": 150.98135382176636,
+                "ema26": 150.9861471734885,
+                "macd": -0.004793351722122387,
+                "macd_signal": -0.000495365185694872,
+                "rsi14": 39.013689684962074,
+                "vol_realized_w60s": 0.00011776977395581281,
+            },
+        )
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.intent.action, "sell")
+        self.assertIn("tsmom_trend_down", decision.intent.rationale)
+
     def test_runtime_isolates_plugin_failures_and_continues(self) -> None:
         healthy = Strategy(
             id=uuid.uuid4(),

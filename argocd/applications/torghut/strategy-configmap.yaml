@@ -11,12 +11,25 @@ data:
   strategies.yaml: |
     strategies:
       - name: intraday-tsmom-profit-v2
+        strategy_id: intraday_tsmom_v1@prod
+        strategy_type: intraday_tsmom_v1
+        version: 1.1.0
         description: Intraday momentum strategy tuned for higher selectivity, version=1.1.0
         enabled: true
         base_timeframe: "1Sec"
         universe_type: intraday_tsmom_v1
         max_notional_per_trade: 1000
         max_position_pct_equity: 0.08
+        params:
+          bullish_hist_min: "0.005"
+          bearish_hist_min: "0.004"
+          bearish_hist_cap: "0.03"
+          min_bull_rsi: "52"
+          max_bull_rsi: "62"
+          max_bear_rsi: "45"
+          vol_floor: "0"
+          vol_ceil: "0.00030"
+          low_vol_bonus_threshold: "0.00020"
   forecast-router-policy.json: |
     {
       "policy_version": "forecast_router_policy_v2",
