@@ -1295,6 +1295,62 @@ class TestSignalIngest(TestCase):
             self.assertEqual(len(batch.signals), 2)
             self.assertEqual(batch.cursor_at, base_ts + timedelta(seconds=1))
 
+    def test_fetch_signals_between_dedupes_identical_flat_rows(self) -> None:
+        base_ts = datetime(2026, 3, 13, 16, 34, 30, tzinfo=timezone.utc)
+        rows = [
+            {
+                "ts": base_ts.isoformat(),
+                "symbol": "META",
+                "seq": 3545,
+                "source": "ta",
+                "macd": -0.0137,
+                "macd_signal": 0.0135,
+                "rsi14": 40.82,
+                "price": 625.20,
+            },
+            {
+                "ts": base_ts.isoformat(),
+                "symbol": "META",
+                "seq": 3545,
+                "source": "ta",
+                "macd": -0.0137,
+                "macd_signal": 0.0135,
+                "rsi14": 40.82,
+                "price": 625.20,
+            },
+            {
+                "ts": (base_ts + timedelta(seconds=1)).isoformat(),
+                "symbol": "META",
+                "seq": 3546,
+                "source": "ta",
+                "macd": -0.0101,
+                "macd_signal": 0.0102,
+                "rsi14": 41.10,
+                "price": 625.50,
+            },
+        ]
+
+        class FlatDuplicateIngestor(SchemaDiscoveringIngestor):
+            def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
+                if query.strip().startswith("SELECT name FROM system.columns"):
+                    return super()._query_clickhouse(query)
+                return rows
+
+        ingestor = FlatDuplicateIngestor(
+            schema="flat",
+            table="torghut.ta_signals",
+            url="http://example",
+            columns={"ts", "symbol", "seq", "source", "macd", "macd_signal", "rsi14", "price"},
+        )
+        signals = ingestor.fetch_signals_between(
+            start=base_ts,
+            end=base_ts + timedelta(seconds=2),
+            symbol="META",
+        )
+
+        self.assertEqual(len(signals), 2)
+        self.assertEqual([signal.seq for signal in signals], [3545, 3546])
+
     def test_fetch_signals_between_rejects_invalid_symbol(self) -> None:
         ingestor = CapturingIngestor(schema="flat", table="torghut.ta_signals", url="http://example")
         signals = ingestor.fetch_signals_between(

@@ -7,6 +7,7 @@ from datetime import datetime
 from statistics import quantiles
 
 from .features import (
+    FEATURE_SCHEMA_VERSION_V3,
     FEATURE_VECTOR_V3_REQUIRED_FIELDS,
     map_feature_values_v3,
     signal_declares_compatible_schema,
@@ -83,14 +84,14 @@ class FeatureQualityError(RuntimeError):
 class _FeatureQualityScan:
     null_counts: dict[str, int]
     malformed_staleness_count: int = 0
-    seen_keys: set[tuple[datetime, str, int]] = dataclass_field(
-        default_factory=lambda: set[tuple[datetime, str, int]]()
+    seen_keys: set[tuple[datetime, str, str, int, str, str]] = dataclass_field(
+        default_factory=lambda: set[tuple[datetime, str, str, int, str, str]]()
     )
     duplicate_total: int = 0
     schema_mismatch_total: int = 0
     staleness_values: list[int] = dataclass_field(default_factory=lambda: list[int]())
     non_monotonic_detected: bool = False
-    previous_key: tuple[datetime, str, int] | None = None
+    previous_key: tuple[datetime, str, str, int, str, str] | None = None
 
 
 def evaluate_feature_batch_quality(
@@ -165,7 +166,7 @@ def _scan_feature_batch(signals: list[SignalEnvelope]) -> _FeatureQualityScan:
         else:
             scan.staleness_values.append(staleness)
 
-        key = (signal.event_ts, signal.symbol, signal.seq or 0)
+        key = _quality_identity_key(signal)
         if key in scan.seen_keys:
             scan.duplicate_total += 1
         else:
@@ -247,6 +248,26 @@ def _coerce_staleness_ms(value: object) -> int | None:
         except ValueError:
             return None
     return None
+
+
+def _quality_identity_key(
+    signal: SignalEnvelope,
+) -> tuple[datetime, str, str, int, str, str]:
+    payload = signal.payload or {}
+    declared_schema = payload.get('feature_schema_version')
+    schema_version = (
+        str(declared_schema).strip()
+        if declared_schema not in (None, '')
+        else FEATURE_SCHEMA_VERSION_V3
+    )
+    return (
+        signal.event_ts,
+        signal.symbol,
+        signal.timeframe or '1Min',
+        signal.seq or 0,
+        signal.source or 'unknown',
+        schema_version,
+    )
 
 
 __all__ = [

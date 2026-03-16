@@ -73,6 +73,26 @@ class TestFeatureQuality(TestCase):
         self.assertIn('duplicate_ratio_exceeds_threshold', report.reasons)
         self.assertIn('feature_staleness_exceeds_budget', report.reasons)
 
+    def test_batch_treats_distinct_sources_as_distinct_feature_rows(self) -> None:
+        ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        signals = [
+            _signal(ts=ts, seq=1).model_copy(update={'source': 'ta'}),
+            _signal(ts=ts, seq=1).model_copy(update={'source': 'ws'}),
+        ]
+
+        report = evaluate_feature_batch_quality(
+            signals,
+            thresholds=FeatureQualityThresholds(
+                max_required_null_rate=0.01,
+                max_duplicate_ratio=0.0,
+                max_staleness_ms=2_000,
+            ),
+        )
+
+        self.assertTrue(report.accepted)
+        self.assertEqual(report.duplicate_ratio, 0.0)
+        self.assertNotIn('duplicate_ratio_exceeds_threshold', report.reasons)
+
     def test_batch_uses_event_time_for_staleness_in_simulation_mode(self) -> None:
         original = config.settings.trading_simulation_enabled
         config.settings.trading_simulation_enabled = True
