@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import json
 import uuid
 from contextlib import ExitStack
@@ -4202,6 +4203,128 @@ class TestStartHistoricalSimulation(TestCase):
                     (1735693200200, 1, 0),
                 ],
             )
+
+    def test_dump_topics_cleans_compressed_sort_temps(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        resources = replace(
+            resources,
+            replay_topic_by_source_topic={'torghut.trades.v1': 'torghut.sim.trades.v1'},
+        )
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+
+        class _OffsetMeta:
+            def __init__(self, offset: int) -> None:
+                self.offset = offset
+
+        class _Record:
+            def __init__(self, topic: str, partition: int, offset: int, timestamp: int) -> None:
+                self.topic = topic
+                self.partition = partition
+                self.offset = offset
+                self.timestamp = timestamp
+                self.key = None
+                self.value = None
+                self.headers: list[tuple[str, bytes]] = []
+
+        class _FakeConsumer:
+            def __init__(self) -> None:
+                self._topic = 'torghut.trades.v1'
+                self._position = 0
+                self._offset_lookup_calls = 0
+                self._poll_calls = 0
+
+            def partitions_for_topic(self, topic: str) -> set[int]:
+                self._topic = topic
+                return {0}
+
+            def assign(self, topic_partitions: list[tuple[str, int]]) -> None:
+                self._topic_partitions = topic_partitions
+
+            def beginning_offsets(self, topic_partitions: list[tuple[str, int]]) -> dict[tuple[str, int], int]:
+                return {tp: 0 for tp in topic_partitions}
+
+            def end_offsets(self, topic_partitions: list[tuple[str, int]]) -> dict[tuple[str, int], int]:
+                return {tp: 1 for tp in topic_partitions}
+
+            def offsets_for_times(
+                self,
+                request: dict[tuple[str, int], int],
+            ) -> dict[tuple[str, int], _OffsetMeta]:
+                self._offset_lookup_calls += 1
+                offset = 0 if self._offset_lookup_calls == 1 else 1
+                return {tp: _OffsetMeta(offset) for tp in request}
+
+            def seek(self, tp: tuple[str, int], offset: int) -> None:
+                self._position = offset
+
+            def poll(self, timeout_ms: int = 0, max_records: int = 0) -> dict[tuple[str, int], list[_Record]]:
+                _ = (timeout_ms, max_records)
+                self._poll_calls += 1
+                if self._poll_calls == 1:
+                    self._position = 1
+                    return {
+                        (self._topic, 0): [_Record(self._topic, 0, 0, 1735693200100)],
+                    }
+                return {}
+
+            def position(self, tp: tuple[str, int]) -> int:
+                _ = tp
+                return self._position
+
+            def close(self) -> None:
+                return None
+
+        manifest = {
+            'performance': {
+                'dumpFormat': 'jsonl.gz',
+            },
+            'window': {'start': '2025-01-01T00:00:00Z', 'end': '2025-01-01T00:00:01Z'},
+        }
+
+        with TemporaryDirectory() as tmp_dir:
+            dump_path = Path(tmp_dir) / 'source-dump.jsonl.gz'
+            raw_dump_path = dump_path.with_suffix(dump_path.suffix + '.tmp.ndjson')
+            staged_dump_path = dump_path.with_suffix(dump_path.suffix + '.sort-stage.tsv')
+            sorted_dump_path = raw_dump_path.with_suffix(raw_dump_path.suffix + '.sort-output.tsv')
+
+            with (
+                patch.dict(
+                    'sys.modules',
+                    {'kafka': SimpleNamespace(TopicPartition=lambda topic, partition: (topic, partition))},
+                ),
+                patch(
+                    'scripts.start_historical_simulation._consumer_for_dump',
+                    return_value=_FakeConsumer(),
+                ),
+            ):
+                report = _dump_topics(
+                    resources=resources,
+                    kafka_config=kafka_config,
+                    manifest=manifest,
+                    dump_path=dump_path,
+                    force=True,
+                )
+
+            self.assertEqual(report['records'], 1)
+            self.assertTrue(dump_path.exists())
+            self.assertFalse(raw_dump_path.exists())
+            self.assertFalse(staged_dump_path.exists())
+            self.assertFalse(sorted_dump_path.exists())
+            with gzip.open(dump_path, 'rt', encoding='utf-8') as handle:
+                lines = [json.loads(line) for line in handle]
+            self.assertEqual(len(lines), 1)
+            self.assertEqual(lines[0]['source_timestamp_ms'], 1735693200100)
 
     def test_dump_topics_completes_when_last_record_reaches_stop_offset(self) -> None:
         resources = _build_resources(

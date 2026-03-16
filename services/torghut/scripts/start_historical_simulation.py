@@ -5056,10 +5056,10 @@ def _dump_topics(
     dump_started_at = datetime.now(timezone.utc)
     raw_dump_path = dump_path
     staged_dump_path = _dump_sort_stage_path(dump_path)
-    sorted_dump_path = _dump_sort_output_path(dump_path)
     dump_format = _as_text(performance_cfg.get('dump_format')) or DEFAULT_SIMULATION_DUMP_FORMAT
     if _dump_format_for_path(dump_path) != 'ndjson':
         raw_dump_path = dump_path.with_suffix(dump_path.suffix + '.tmp.ndjson')
+    sorted_dump_path = _dump_sort_output_path(raw_dump_path)
     try:
         topic_partitions: list[Any] = []
         for topic in resources.replay_topic_by_source_topic.keys():
