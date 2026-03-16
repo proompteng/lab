@@ -214,11 +214,110 @@ rl.on('line', (line) => {
         }),
       ).pipe(Effect.provide(makeCodexSessionLayer(createStubLogger())))
 
-      await expect(Effect.runPromise(program)).resolves.toEqual({
+      const result = await Effect.runPromise(program)
+      expect(result).toEqual({
         status: 'completed',
         threadId: 'thread-1',
         turnId: 'turn-1',
       })
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  test('fails the turn when the app-server emits a top-level error notification', async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), 'symphony-codex-error-notification-'))
+    const scriptPath = path.join(tempDir, 'fake-codex-app-server.mjs')
+    const seenEvents: string[] = []
+
+    await writeFile(
+      scriptPath,
+      `
+import readline from 'node:readline'
+
+const rl = readline.createInterface({ input: process.stdin })
+
+rl.on('line', (line) => {
+  const message = JSON.parse(line)
+
+  if (message.method === 'initialize') {
+    console.log(JSON.stringify({ id: message.id, result: {} }))
+    return
+  }
+
+  if (message.method === 'thread/start') {
+    console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'thread-1' } } }))
+    return
+  }
+
+  if (message.method === 'turn/start') {
+    console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'turn-1' } } }))
+    console.log(JSON.stringify({
+      method: 'error',
+      params: {
+        error: {
+          message: 'Quota exceeded. Check your plan and billing details.',
+          codexErrorInfo: 'usageLimitExceeded',
+        },
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+      },
+    }))
+    console.log(JSON.stringify({
+      method: 'turn/completed',
+      params: { threadId: 'thread-1', turnId: 'turn-1' },
+    }))
+  }
+})
+      `.trim(),
+      'utf8',
+    )
+
+    try {
+      const program = Effect.scoped(
+        Effect.gen(function* () {
+          const sessions = yield* CodexSessionService
+          const session = yield* sessions.createSession({
+            command: `node ${JSON.stringify(scriptPath)}`,
+            cwd: tempDir,
+            approvalPolicy: null,
+            threadSandbox: null,
+            turnSandboxPolicy: null,
+            readTimeoutMs: 5_000,
+            turnTimeoutMs: 5_000,
+            title: 'error notification turn',
+            dynamicTools: [],
+            logger: createStubLogger(),
+            onEvent: (event) =>
+              Effect.sync(() => {
+                seenEvents.push(`${event.event}:${event.message ?? ''}`)
+              }),
+            onToolCall: () =>
+              Effect.succeed({
+                success: false,
+                error: 'unsupported_tool_call',
+                contentItems: [],
+              }),
+          })
+
+          return yield* session.runTurn('hello')
+        }),
+      ).pipe(Effect.provide(makeCodexSessionLayer(createStubLogger())))
+
+      const exit = await Effect.runPromiseExit(program)
+      expect(exit._tag).toBe('Failure')
+      if (exit._tag === 'Failure') {
+        const failure = JSON.parse(JSON.stringify(exit)).cause?.failure ?? null
+        expect(failure).toMatchObject({
+          code: 'turn_failed',
+          causeValue: {
+            error: {
+              message: 'Quota exceeded. Check your plan and billing details.',
+            },
+          },
+        })
+      }
+      expect(seenEvents).toContain('turn_ended_with_error:Quota exceeded. Check your plan and billing details.')
     } finally {
       await rm(tempDir, { recursive: true, force: true })
     }
