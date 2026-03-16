@@ -818,7 +818,7 @@ class ClickHouseSignalIngestor:
         return self._sorted_signals(self._filter_signals(self._dedupe_signals(signals)))
 
     def _dedupe_signals(self, signals: list[SignalEnvelope]) -> list[SignalEnvelope]:
-        if self.schema == "flat" or len(signals) < 2:
+        if len(signals) < 2:
             return signals
 
         deduped_by_key: dict[tuple[datetime, str, str | None, tuple[Any, ...], str], SignalEnvelope] = {}
