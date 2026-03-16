@@ -13,3 +13,4 @@ spec:
       services:
         - name: bilig-sync
           port: 80
+  tls: {}

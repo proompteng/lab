@@ -13,3 +13,4 @@ spec:
       services:
         - name: bilig-web
           port: 80
+  tls: {}
