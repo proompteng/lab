@@ -2024,6 +2024,8 @@ def _manual_argocd_application_sync_policy(
     current_sync_policy: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     manual_policy = _clone_json_mapping(current_sync_policy) or {}
+    if _argocd_application_mode_from_sync_policy(manual_policy) == 'manual':
+        return manual_policy
     automated = _as_mapping(manual_policy.get('automated'))
     manual_automated = dict(automated)
     manual_automated['enabled'] = False

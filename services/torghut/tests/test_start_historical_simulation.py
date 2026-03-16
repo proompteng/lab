@@ -8655,6 +8655,13 @@ class TestStartHistoricalSimulation(TestCase):
             'auto',
         )
 
+    def test_manual_argocd_application_sync_policy_preserves_existing_manual_shape(self) -> None:
+        policy = {'syncOptions': ['CreateNamespace=true']}
+
+        manual_policy = start_historical_simulation._manual_argocd_application_sync_policy(policy)
+
+        self.assertEqual(manual_policy, policy)
+
     def test_prepare_argocd_for_run_pauses_root_and_applicationset(self) -> None:
         config = ArgocdAutomationConfig(
             manage_automation=True,
