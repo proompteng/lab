@@ -38,6 +38,22 @@ type ActiveTurn = {
   deferred: Deferred.Deferred<TurnOutcome, CodexProtocolError>
 }
 
+type PendingTurnResolution =
+  | {
+      kind: 'outcome'
+      status: TurnOutcome['status']
+      threadId: string
+      turnId: string
+      message?: string | null
+    }
+  | {
+      kind: 'error'
+      error: CodexProtocolError
+      eventName: string
+      threadId: string | null
+      turnId: string
+    }
+
 export type CodexEvent = {
   event: string
   timestamp: string
@@ -172,6 +188,37 @@ const extractTurnId = (value: unknown): string | null => {
   return null
 }
 
+const extractNotificationMessage = (value: unknown): string | null => {
+  if (!value || typeof value !== 'object') return null
+
+  const raw = value as {
+    message?: unknown
+    msg?: { type?: unknown; message?: unknown }
+    error?: { message?: unknown; codexErrorInfo?: unknown }
+  }
+
+  if (typeof raw.message === 'string' && raw.message.trim().length > 0) {
+    return raw.message
+  }
+
+  if (raw.error && typeof raw.error === 'object') {
+    if (typeof raw.error.message === 'string' && raw.error.message.trim().length > 0) {
+      return raw.error.message
+    }
+    if (typeof raw.error.codexErrorInfo === 'string' && raw.error.codexErrorInfo.trim().length > 0) {
+      return raw.error.codexErrorInfo
+    }
+  }
+
+  if (raw.msg && typeof raw.msg === 'object') {
+    if (typeof raw.msg.message === 'string' && raw.msg.message.trim().length > 0) {
+      return raw.msg.message
+    }
+  }
+
+  return null
+}
+
 const writeMessage = (
   child: ChildProcessWithoutNullStreams,
   payload: Record<string, unknown>,
@@ -214,6 +261,7 @@ export const makeCodexSessionLayer = (logger: Logger) =>
           workspace_path: options.cwd,
         })
         const pending = new Map<number, PendingRequest>()
+        const pendingTurnResolutions = new Map<string, PendingTurnResolution>()
         const nextRequestId = yield* Ref.make(1)
         const threadIdRef = yield* Ref.make<string | null>(null)
         const activeTurnRef = yield* SynchronizedRef.make<ActiveTurn | null>(null)
@@ -369,6 +417,57 @@ export const makeCodexSessionLayer = (logger: Logger) =>
             })
           })
 
+        const failActiveTurn = (error: CodexProtocolError, eventName: string) =>
+          Effect.gen(function* () {
+            const activeTurn = yield* SynchronizedRef.get(activeTurnRef)
+            const timestamp = new Date().toISOString()
+            if (!activeTurn) {
+              yield* options.onEvent({
+                event: eventName,
+                timestamp,
+                codexAppServerPid: String(child.pid ?? ''),
+                message: error.message,
+              })
+              return
+            }
+
+            yield* Deferred.fail(activeTurn.deferred, error)
+            yield* SynchronizedRef.set(activeTurnRef, null)
+            yield* options.onEvent({
+              event: eventName,
+              timestamp,
+              codexAppServerPid: String(child.pid ?? ''),
+              sessionId: `${activeTurn.threadId}-${activeTurn.turnId}`,
+              threadId: activeTurn.threadId,
+              turnId: activeTurn.turnId,
+              message: error.message,
+            })
+          })
+
+        const enqueuePendingTurnResolution = (turnId: string, resolution: PendingTurnResolution) =>
+          Effect.sync(() => {
+            pendingTurnResolutions.set(turnId, resolution)
+          })
+
+        const applyPendingTurnResolution = (turnId: string) =>
+          Effect.gen(function* () {
+            const pendingResolution = pendingTurnResolutions.get(turnId)
+            if (!pendingResolution) return
+            pendingTurnResolutions.delete(turnId)
+
+            if (pendingResolution.kind === 'outcome') {
+              yield* emitTurnOutcome(
+                pendingResolution.status,
+                pendingResolution.turnId,
+                pendingResolution.threadId,
+                pendingResolution.message,
+              )
+              return
+            }
+
+            yield* failActiveTurn(pendingResolution.error, pendingResolution.eventName)
+          })
+
         const handleNotification = (method: string, params: unknown) =>
           Effect.gen(function* () {
             const timestamp = new Date().toISOString()
@@ -378,26 +477,73 @@ export const makeCodexSessionLayer = (logger: Logger) =>
                 ? ((params as { rateLimits?: RateLimitSnapshot | null }).rateLimits ?? null)
                 : null
 
-            if (method === 'turn/completed') {
+            if (method === 'error') {
+              const message = extractNotificationMessage(params) ?? 'codex app-server reported an error'
+              const turnId = extractTurnId(params)
+              const threadId = extractThreadId(params)
+              const error = new CodexProtocolError('turn_failed', message, params)
               const activeTurn = yield* SynchronizedRef.get(activeTurnRef)
-              if (activeTurn) {
+              if ((!activeTurn || activeTurn.turnId !== turnId) && turnId) {
+                yield* enqueuePendingTurnResolution(turnId, {
+                  kind: 'error',
+                  error,
+                  eventName: 'turn_ended_with_error',
+                  threadId,
+                  turnId,
+                })
+                return
+              }
+              yield* failActiveTurn(error, 'turn_ended_with_error')
+              return
+            }
+
+            if (method === 'turn/completed') {
+              const turnId = extractTurnId(params)
+              const threadId = extractThreadId(params)
+              const activeTurn = yield* SynchronizedRef.get(activeTurnRef)
+              if (activeTurn && (!turnId || activeTurn.turnId === turnId)) {
                 yield* emitTurnOutcome('completed', activeTurn.turnId, activeTurn.threadId)
+              } else if (turnId && threadId) {
+                yield* enqueuePendingTurnResolution(turnId, {
+                  kind: 'outcome',
+                  status: 'completed',
+                  threadId,
+                  turnId,
+                })
               }
               return
             }
 
             if (method === 'turn/failed') {
+              const turnId = extractTurnId(params)
+              const threadId = extractThreadId(params)
               const activeTurn = yield* SynchronizedRef.get(activeTurnRef)
-              if (activeTurn) {
+              if (activeTurn && (!turnId || activeTurn.turnId === turnId)) {
                 yield* emitTurnOutcome('failed', activeTurn.turnId, activeTurn.threadId)
+              } else if (turnId && threadId) {
+                yield* enqueuePendingTurnResolution(turnId, {
+                  kind: 'outcome',
+                  status: 'failed',
+                  threadId,
+                  turnId,
+                })
               }
               return
             }
 
             if (method === 'turn/cancelled') {
+              const turnId = extractTurnId(params)
+              const threadId = extractThreadId(params)
               const activeTurn = yield* SynchronizedRef.get(activeTurnRef)
-              if (activeTurn) {
+              if (activeTurn && (!turnId || activeTurn.turnId === turnId)) {
                 yield* emitTurnOutcome('cancelled', activeTurn.turnId, activeTurn.threadId)
+              } else if (turnId && threadId) {
+                yield* enqueuePendingTurnResolution(turnId, {
+                  kind: 'outcome',
+                  status: 'cancelled',
+                  threadId,
+                  turnId,
+                })
               }
               return
             }
@@ -412,10 +558,7 @@ export const makeCodexSessionLayer = (logger: Logger) =>
                 extractThreadId(params) && extractTurnId(params)
                   ? `${extractThreadId(params)}-${extractTurnId(params)}`
                   : null,
-              message:
-                params && typeof params === 'object' && 'message' in params && typeof params.message === 'string'
-                  ? params.message
-                  : null,
+              message: extractNotificationMessage(params),
               usage,
               rateLimits,
             })
@@ -617,6 +760,7 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               sessionId: `${threadId}-${turnId}`,
               message: options.title,
             })
+            yield* applyPendingTurnResolution(turnId)
             return {
               turnId,
               deferred,
