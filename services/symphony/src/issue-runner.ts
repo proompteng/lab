@@ -146,7 +146,15 @@ export const makeIssueRunnerLayer = (logger: Logger) =>
                 onToolCall: handleToolCall,
               })
 
-              yield* workspace.runBeforeRun(workspaceInfo.path)
+              const hookContext = {
+                issueId: issue.id,
+                issueIdentifier: issue.identifier,
+                issueBranchName: issue.branchName,
+                issueTitle: issue.title,
+                issueState: issue.state,
+              }
+
+              yield* workspace.runBeforeRun(workspaceInfo.path, hookContext)
 
               const program = Effect.gen(function* () {
                 for (let turnNumber = 1; turnNumber <= config.agent.maxTurns; turnNumber += 1) {
@@ -182,13 +190,21 @@ export const makeIssueRunnerLayer = (logger: Logger) =>
 
               return yield* program.pipe(
                 Effect.ensuring(
-                  workspace.runAfterRun(workspaceInfo.path).pipe(
-                    Effect.catchAll((error) =>
-                      Effect.sync(() => {
-                        runLogger.log('warn', 'workspace_after_run_failed', toLogError(error))
-                      }),
+                  workspace
+                    .runAfterRun(workspaceInfo.path, {
+                      issueId: lastIssue.id,
+                      issueIdentifier: lastIssue.identifier,
+                      issueBranchName: lastIssue.branchName,
+                      issueTitle: lastIssue.title,
+                      issueState: lastIssue.state,
+                    })
+                    .pipe(
+                      Effect.catchAll((error) =>
+                        Effect.sync(() => {
+                          runLogger.log('warn', 'workspace_after_run_failed', toLogError(error))
+                        }),
+                      ),
                     ),
-                  ),
                 ),
               )
             }),
