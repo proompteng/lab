@@ -1,8 +1,8 @@
 # Torghut Quant Profitability Architecture: Evidence-Driven Growth and Guardrails (2026-03-16)
 
-Status: Proposed
+Status: Implemented (discover architecture finalization)
 Owner: Victor Chen (Jangar/Trading Architecture Liaison)
-Related objective: `codex/swarm-jangar-control-plane-plan` (`swarmName: torghut-quant`)
+Related objective: `codex/swarm-jangar-control-plane-discover` (`swarmName: torghut-quant`)
 
 ## Summary
 
@@ -43,6 +43,12 @@ Gaps:
 - No single control-plane policy defines minimum profitability evidence per strategy promotion.
 - Weak coupling between run-level rejection cause telemetry and strategy-level confidence.
 - Promotion logic still relies on manual interpretation for regime-aware guardrails.
+
+## Assessment evidence (discover run)
+
+- Cluster context confirms `torghut-quant` is in `StageStaleness` with frozen/queued behavior while services remain running.
+- Source context confirms control-plane profitability guardrails are partially present but distributed across completion, route, and controller layers.
+- Data context confirms migration and completion artifacts are present as status inputs, but explicit cross-window replay + guardrail policy is not yet represented as a unified promotion contract.
 
 ## Database/source-data assessment
 
@@ -176,6 +182,23 @@ Rollback gate:
   - adverse drawdown delta crosses policy limit,
   - stale data exceeds limit for two windows.
 - automatic evidence annotation of rollback reason at policy scope level.
+
+## Implementation scope for engineer/deployer handoff
+
+Engineer scope:
+
+- `services/jangar/src/server/torghut-trading.ts`:
+  - policy manifest materialization,
+  - hypothesis-to-guardrail translation.
+- `services/jangar/src/routes/api/torghut/trading/control-plane/quant/health.ts`:
+  - attach latency/rejection freshness fields into control-plane rollout view.
+- `services/jangar/src/routes/api/torghut/trading/control-plane/quant/snapshot.ts`:
+  - snapshot and replay evidence payloads.
+
+Deployer scope:
+
+- `deploy` to `observe` first, promote to `pilot`, then `full` only after two consecutive successful windows.
+- keep rollback metadata and candidate trace IDs immutable for audit.
 
 ## Rollout and rollback expectations
 
