@@ -13,7 +13,8 @@
   - `40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md`
   - `41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md`
   - `39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md`
-- `44-torghut-quant-plan-design-document-and-handoff-contract-2026-03-15.md`
+  - `44-torghut-quant-plan-design-document-and-handoff-contract-2026-03-15.md`
+  - `47-torghut-quant-plan-merge-contract-and-handoff-implementation-2026-03-16.md`
 - Discover stage merge anchor:
   - `42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md`
   - `42-torghut-quant-control-plane-and-profitability-program-2026-03-15.md`
@@ -58,6 +59,9 @@ Current source-state priority is narrower:
 - `39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md` now replaces query-derived freshness and aggregate
   zero-heavy readiness with a producer-authored control-plane ledger plus hypothesis-scoped proof bundles, grounded in
   the March 14 live state where Jangar freshness queries were memory-bound and Torghut empirical jobs remained absent.
+- `47-torghut-quant-plan-merge-contract-and-handoff-implementation-2026-03-16.md` now finalizes the discover-to-plan
+  transition with explicit segment-scoped rollout design, profitability mesh decision gates, and explicit engineer/deployer
+  rollout and rollback handoff expectations.
 - `40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md` now defines segment-local
   control-plane authority and scoped rollout semantics to prevent watch noise from becoming global rollout blockers.
 - `41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md` now defines multi-horizon profitability
@@ -142,8 +146,8 @@ This pack is positioned as the next architecture layer above:
 42. `42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md`
 43. `42-torghut-quant-control-plane-and-profitability-program-2026-03-15.md`
 44. `44-torghut-quant-plan-design-document-and-handoff-contract-2026-03-15.md`
-45. `45-torghut-quant-proof-readiness-and-rollout-handoff-contract-2026-03-15.md`
-46. `46-torghut-probability-and-capital-mesh-for-profitable-autonomy-2026-03-16.md`
+45. `46-torghut-probability-and-capital-mesh-for-profitable-autonomy-2026-03-16.md`
+46. `47-torghut-quant-plan-merge-contract-and-handoff-implementation-2026-03-16.md`
 
 ## Recommended Build Order
 
@@ -233,4 +237,6 @@ This pack is positioned as the next architecture layer above:
   replay/proof lane are authoritative.
 - `42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md` is now the discover
   stage transition contract with explicit cluster/source/database assessment and rollout/rollback requirements.
-- `45-torghut-quant-proof-readiness-and-rollout-handoff-contract-2026-03-15.md` and `46-torghut-probability-and-capital-mesh-for-profitable-autonomy-2026-03-16.md` convert the historical discovery stack into explicit per-hypothesis and per-lane profitability execution contracts for plan-stage implementation.
+- `46-torghut-probability-and-capital-mesh-for-profitable-autonomy-2026-03-16.md` and
+  `47-torghut-quant-plan-merge-contract-and-handoff-implementation-2026-03-16.md` convert the historical discovery stack into
+  explicit per-hypothesis and per-lane profitability execution contracts for plan-stage implementation.
