@@ -1,5 +1,5 @@
 diff --git a/backend/cmd/headlamp.go b/backend/cmd/headlamp.go
-index b428cc4dd..1483e882a 100644
+index b428cc4..1483e88 100644
 --- a/backend/cmd/headlamp.go
 +++ b/backend/cmd/headlamp.go
 @@ -925,10 +925,14 @@ func createHeadlampHandler(config *HeadlampConfig) http.Handler {
@@ -62,7 +62,7 @@ index b428cc4dd..1483e882a 100644
  		next.ServeHTTP(w, r)
  		c.telemetryHandler.RecordDuration(ctx, start,
 diff --git a/backend/cmd/headlamp_test.go b/backend/cmd/headlamp_test.go
-index c67563d74..637501f7b 100644
+index c67563d..637501f 100644
 --- a/backend/cmd/headlamp_test.go
 +++ b/backend/cmd/headlamp_test.go
 @@ -38,6 +38,7 @@ import (
@@ -149,7 +149,7 @@ index c67563d74..637501f7b 100644
  	// Create a temporary directory for plugins
  	tempDir, err := os.MkdirTemp("", "headlamp-test")
 diff --git a/backend/pkg/auth/auth.go b/backend/pkg/auth/auth.go
-index 0c4689a6f..dc1e83fbe 100644
+index 0c4689a..dc1e83f 100644
 --- a/backend/pkg/auth/auth.go
 +++ b/backend/pkg/auth/auth.go
 @@ -46,6 +46,8 @@ const (
@@ -248,7 +248,7 @@ index 0c4689a6f..dc1e83fbe 100644
  		token,
  		provider.Endpoint().TokenURL,
 diff --git a/backend/pkg/auth/auth_test.go b/backend/pkg/auth/auth_test.go
-index ef0940ae8..9f2fcb0ee 100644
+index ef0940a..9f2fcb0 100644
 --- a/backend/pkg/auth/auth_test.go
 +++ b/backend/pkg/auth/auth_test.go
 @@ -414,10 +414,15 @@ func (f *fakeCache) Get(_ context.Context, key string) (interface{}, error) {
@@ -284,7 +284,7 @@ index ef0940ae8..9f2fcb0ee 100644
  	} {
  		t.Run(tc.name, func(t *testing.T) {
 diff --git a/backend/pkg/auth/cookies.go b/backend/pkg/auth/cookies.go
-index bab079a6d..165a0bd3f 100644
+index 179a9d5..e6c5026 100644
 --- a/backend/pkg/auth/cookies.go
 +++ b/backend/pkg/auth/cookies.go
 @@ -19,9 +19,11 @@ package auth
@@ -309,15 +309,15 @@ index bab079a6d..165a0bd3f 100644
  )
  
  // GetCookiePath returns the full cookie path including baseURL.
-@@ -105,6 +110,7 @@ func SetTokenCookie(w http.ResponseWriter, r *http.Request, cluster, token, base
+@@ -128,6 +133,7 @@ func SetTokenCookie(w http.ResponseWriter, r *http.Request, cluster, token, base
  
  	// if token is larger than maxCookieSize, split it into multiple cookies
  	chunks := splitToken(token, chunkSize)
 +	maxAge := getTokenCookieMaxAge(token)
- 
- 	for _, path := range []string{GetCookiePath(baseURL, cluster), GetWebSocketCookiePath(baseURL)} {
+ 	for _, path := range getSetCookiePaths(baseURL, cluster) {
  		for i, chunk := range chunks {
-@@ -115,7 +121,7 @@ func SetTokenCookie(w http.ResponseWriter, r *http.Request, cluster, token, base
+ 			cookie := &http.Cookie{
+@@ -137,7 +143,7 @@ func SetTokenCookie(w http.ResponseWriter, r *http.Request, cluster, token, base
  				Secure:   secure,
  				SameSite: http.SameSiteStrictMode,
  				Path:     path,
@@ -326,7 +326,7 @@ index bab079a6d..165a0bd3f 100644
  			}
  
  			http.SetCookie(w, cookie)
-@@ -123,6 +129,35 @@ func SetTokenCookie(w http.ResponseWriter, r *http.Request, cluster, token, base
+@@ -145,6 +151,35 @@ func SetTokenCookie(w http.ResponseWriter, r *http.Request, cluster, token, base
  	}
  }
  
@@ -363,7 +363,7 @@ index bab079a6d..165a0bd3f 100644
  func GetTokenFromCookie(r *http.Request, cluster string) (string, error) {
  	sanitizedCluster := SanitizeClusterName(cluster)
 diff --git a/backend/pkg/auth/cookies_test.go b/backend/pkg/auth/cookies_test.go
-index d44f1b719..f89b8f539 100644
+index 8517233..3d4a239 100644
 --- a/backend/pkg/auth/cookies_test.go
 +++ b/backend/pkg/auth/cookies_test.go
 @@ -18,10 +18,13 @@ package auth_test
@@ -398,7 +398,7 @@ index d44f1b719..f89b8f539 100644
  func TestSanitizeClusterName(t *testing.T) {
  	tests := []struct {
  		input    string
-@@ -198,6 +212,27 @@ func TestGetWebSocketCookiePath(t *testing.T) {
+@@ -204,6 +218,27 @@ func TestGetBaseCookiePath(t *testing.T) {
  	}
  }
  
