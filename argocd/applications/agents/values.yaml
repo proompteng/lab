@@ -22,6 +22,8 @@ argocdHooks:
   image:
     repository: alpine/k8s
     tag: 1.30.11
+  postSync:
+    enabled: false
   smoke:
     agentRun:
       apiVersion: agents.proompteng.ai/v1alpha1
