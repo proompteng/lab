@@ -139,7 +139,9 @@ Need only the core bootstrap stack? Stop after the first command—leave the oth
 
 All generated Applications default to manual sync. Promote a workload by running `argocd app sync <name>`. Once stable, flip its `automation` value to `auto` inside the relevant stage file to enable automatic reconcilation.
 
-Generated repo-local Applications also set `argocd.argoproj.io/manifest-generate-paths` so Argo CD only refreshes them when relevant monorepo paths change. The default is the app's own `path`; apps with extra local inputs can override this with `manifestGeneratePaths` in the corresponding ApplicationSet element.
+Generated repo-local Applications in the Kustomize-based ApplicationSets also set `argocd.argoproj.io/manifest-generate-paths` so Argo CD only refreshes them when relevant monorepo paths change. The default is the app's own `path`; apps with extra local inputs can override this with `manifestGeneratePaths` in the corresponding ApplicationSet element.
+
+`cdk8s` plugin Applications do **not** get a default path annotation. Their synth step can depend on extra workspace inputs outside the service directory, so add `manifestGeneratePaths` there only when an app has been audited and the full required repo paths are known.
 
 ### Bringing the control plane up before Dex is ready
 

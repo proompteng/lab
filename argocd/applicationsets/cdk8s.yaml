@@ -61,6 +61,7 @@ spec:
   templatePatch: |
     {{- $hasAnnotations := hasKey . "annotations" -}}
     {{- $hasManifestGeneratePaths := hasKey . "manifestGeneratePaths" -}}
+    {{- if or $hasAnnotations $hasManifestGeneratePaths }}
     metadata:
       annotations:
       {{- if $hasAnnotations }}
@@ -68,7 +69,10 @@ spec:
           {{ $key }}: {{ $value | quote }}
       {{- end }}
       {{- end }}
-          argocd.argoproj.io/manifest-generate-paths: '{{ if $hasManifestGeneratePaths }}{{ .manifestGeneratePaths }}{{ else }}/{{ .path }}{{ end }}'
+      {{- if $hasManifestGeneratePaths }}
+          argocd.argoproj.io/manifest-generate-paths: '{{ .manifestGeneratePaths }}'
+      {{- end }}
+    {{- end }}
     {{- $hasDestServer := hasKey . "destinationServer" -}}
     {{- $hasDestName := hasKey . "destinationName" -}}
     {{- $auto := eq .automation "auto" -}}
