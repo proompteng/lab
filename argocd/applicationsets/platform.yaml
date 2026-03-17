@@ -701,11 +701,19 @@ spec:
           jqPathExpressions:
             - .spec.migManager.config.name
   templatePatch: |
-    {{- if .annotations }}
+    {{- $hasAnnotations := hasKey . "annotations" -}}
+    {{- $isLocalRepo := not (hasKey . "repoURL") -}}
+    {{- $hasManifestGeneratePaths := hasKey . "manifestGeneratePaths" -}}
+    {{- if or $hasAnnotations $isLocalRepo $hasManifestGeneratePaths }}
     metadata:
       annotations:
+      {{- if $hasAnnotations }}
       {{- range $key, $value := .annotations }}
           {{ $key }}: {{ $value | quote }}
+      {{- end }}
+      {{- end }}
+      {{- if or $isLocalRepo $hasManifestGeneratePaths }}
+          argocd.argoproj.io/manifest-generate-paths: '{{ if $hasManifestGeneratePaths }}{{ .manifestGeneratePaths }}{{ else }}/{{ .path }}{{ end }}'
       {{- end }}
     {{- end }}
     {{- $hasDestServer := hasKey . "destinationServer" -}}

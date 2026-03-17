@@ -139,6 +139,8 @@ Need only the core bootstrap stack? Stop after the first command—leave the oth
 
 All generated Applications default to manual sync. Promote a workload by running `argocd app sync <name>`. Once stable, flip its `automation` value to `auto` inside the relevant stage file to enable automatic reconcilation.
 
+Generated repo-local Applications also set `argocd.argoproj.io/manifest-generate-paths` so Argo CD only refreshes them when relevant monorepo paths change. The default is the app's own `path`; apps with extra local inputs can override this with `manifestGeneratePaths` in the corresponding ApplicationSet element.
+
 ### Bringing the control plane up before Dex is ready
 
 Dex relies on Sealed Secrets to decrypt the Argo Workflows SSO credentials. When rebuilding a cluster you can bring Argo CD online first and delay Dex until Sealed Secrets and Argo Workflows are configured.

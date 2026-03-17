@@ -59,27 +59,30 @@ spec:
           - PruneLast=true
           - ClientSideApplyMigration=false
   templatePatch: |
-    {{- if .annotations }}
+    {{- $hasAnnotations := hasKey . "annotations" -}}
+    {{- $hasManifestGeneratePaths := hasKey . "manifestGeneratePaths" -}}
     metadata:
       annotations:
+      {{- if $hasAnnotations }}
       {{- range $key, $value := .annotations }}
           {{ $key }}: {{ $value | quote }}
       {{- end }}
-    {{- end }}
+      {{- end }}
+          argocd.argoproj.io/manifest-generate-paths: '{{ if $hasManifestGeneratePaths }}{{ .manifestGeneratePaths }}{{ else }}/{{ .path }}{{ end }}'
     {{- $hasDestServer := hasKey . "destinationServer" -}}
     {{- $hasDestName := hasKey . "destinationName" -}}
     {{- $auto := eq .automation "auto" -}}
     {{- $needsSpec := or $hasDestServer $hasDestName $auto -}}
-        {{- if $needsSpec }}
-        spec:
-          {{- if or $hasDestServer $hasDestName }}
-          destination:
-            namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
-            {{- if $hasDestServer }}
-            server: '{{ .destinationServer }}'
-            {{- end }}
-            {{- if $hasDestName }}
-            name: '{{ .destinationName }}'
+    {{- if $needsSpec }}
+    spec:
+      {{- if or $hasDestServer $hasDestName }}
+      destination:
+        namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+        {{- if $hasDestServer }}
+        server: '{{ .destinationServer }}'
+        {{- end }}
+        {{- if $hasDestName }}
+        name: '{{ .destinationName }}'
         {{- end }}
       {{- end }}
       {{- if $auto }}

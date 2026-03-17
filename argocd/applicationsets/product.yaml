@@ -138,6 +138,7 @@ spec:
               - name: agents
                 path: argocd/applications/agents
                 namespace: agents
+                manifestGeneratePaths: /argocd/applications/agents;/charts/agents
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: auto
@@ -376,13 +377,16 @@ spec:
           - PruneLast=true
           - ClientSideApplyMigration=false
   templatePatch: |
-    {{- if .annotations }}
+    {{- $hasAnnotations := hasKey . "annotations" -}}
+    {{- $hasManifestGeneratePaths := hasKey . "manifestGeneratePaths" -}}
     metadata:
       annotations:
+    {{- if $hasAnnotations }}
     {{- range $key, $value := .annotations }}
         {{ $key }}: {{ $value | quote }}
     {{- end }}
     {{- end }}
+        argocd.argoproj.io/manifest-generate-paths: '{{ if $hasManifestGeneratePaths }}{{ .manifestGeneratePaths }}{{ else }}/{{ .path }}{{ end }}'
     {{- $hasDestServer := hasKey . "destinationServer" -}}
     {{- $hasDestName := hasKey . "destinationName" -}}
     {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}

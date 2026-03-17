@@ -3,6 +3,8 @@ kind: Application
 metadata:
   name: root
   namespace: argocd
+  annotations:
+    argocd.argoproj.io/manifest-generate-paths: /argocd/applicationsets
 spec:
   project: default
   source:

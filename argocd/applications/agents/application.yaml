@@ -3,6 +3,8 @@ kind: Application
 metadata:
   name: agents
   namespace: argocd
+  annotations:
+    argocd.argoproj.io/manifest-generate-paths: /argocd/applications/agents;/charts/agents
 spec:
   project: default
   destination:
