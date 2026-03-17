@@ -160,6 +160,7 @@ spec:
               - name: symphony
                 path: argocd/applications/symphony
                 namespace: jangar
+                manifestGeneratePaths: /argocd/applications/symphony;/argocd/applications/symphony-base
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: auto
@@ -167,6 +168,7 @@ spec:
               - name: symphony-jangar
                 path: argocd/applications/symphony-jangar
                 namespace: jangar
+                manifestGeneratePaths: /argocd/applications/symphony-jangar;/argocd/applications/symphony-base
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: auto
@@ -174,6 +176,7 @@ spec:
               - name: symphony-torghut
                 path: argocd/applications/symphony-torghut
                 namespace: torghut
+                manifestGeneratePaths: /argocd/applications/symphony-torghut;/argocd/applications/symphony-base
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: auto
