@@ -41,6 +41,7 @@ data class FlinkTaConfig(
   val clickhouseInsertBatchSize: Int,
   val clickhouseInsertFlushMs: Long,
   val clickhouseInsertMaxRetries: Int,
+  val clickhouseSinkParallelism: Int,
   val clickhouseConnectionTimeoutSeconds: Int,
   val clickhouseSchemaInitMaxRetries: Int,
   val clickhouseSchemaInitRetryDelayMs: Long,
@@ -87,6 +88,8 @@ data class FlinkTaConfig(
       val checkpointBase = env("TA_CHECKPOINT_DIR", "s3a://flink-checkpoints/torghut/technical-analysis")
       val clickhouseUrl = env("TA_CLICKHOUSE_URL")?.takeIf { it.isNotBlank() }
 
+      val parallelism = envInt("TA_PARALLELISM", 1)
+
       return FlinkTaConfig(
         bootstrapServers = env("TA_KAFKA_BOOTSTRAP", "kafka-kafka-bootstrap.kafka:9092"),
         tradesTopic = env("TA_TRADES_TOPIC", "torghut.trades.v1"),
@@ -108,7 +111,7 @@ data class FlinkTaConfig(
         checkpointTimeoutMs = envLong("TA_CHECKPOINT_TIMEOUT_MS", 120_000),
         minPauseBetweenCheckpointsMs = envLong("TA_CHECKPOINT_PAUSE_MS", 5_000),
         maxOutOfOrderMs = envLong("TA_MAX_OUT_OF_ORDER_MS", 2_000),
-        parallelism = envInt("TA_PARALLELISM", 1),
+        parallelism = parallelism,
         vwapWindow = Duration.ofSeconds(envLong("TA_VWAP_WINDOW_SECONDS", 300)),
         realizedVolWindow = envInt("TA_REALIZED_VOL_WINDOW", 60),
         s3Endpoint = env("TA_S3_ENDPOINT", "http://observability-minio.minio.svc.cluster.local:9000"),
@@ -130,6 +133,11 @@ data class FlinkTaConfig(
             envLong("TA_CLICKHOUSE_FLUSH_MS", DEFAULT_CLICKHOUSE_INSERT_FLUSH_MS),
           ),
         clickhouseInsertMaxRetries = envInt("TA_CLICKHOUSE_MAX_RETRIES", 3),
+        clickhouseSinkParallelism =
+          normalizeClickhouseSinkParallelism(
+            envInt("TA_CLICKHOUSE_SINK_PARALLELISM", DEFAULT_CLICKHOUSE_SINK_PARALLELISM),
+            parallelism,
+          ),
         clickhouseConnectionTimeoutSeconds = envInt("TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS", 30),
         clickhouseSchemaInitMaxRetries = envInt("TA_CLICKHOUSE_SCHEMA_INIT_MAX_RETRIES", 180),
         clickhouseSchemaInitRetryDelayMs = envLong("TA_CLICKHOUSE_SCHEMA_INIT_RETRY_DELAY_MS", 2_000),

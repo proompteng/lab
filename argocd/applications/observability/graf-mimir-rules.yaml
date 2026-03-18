@@ -399,7 +399,7 @@ data:
               up{
                 job="torghut",
                 namespace="torghut",
-                service="torghut-ta"
+                service="torghut-ta-metrics"
               } == 0
             for: 5m
             labels:
@@ -415,7 +415,7 @@ data:
                 - max(
                   flink_jobmanager_job_lastCheckpointCompletedTimestamp{
                     namespace="torghut",
-                    service="torghut-ta"
+                    service="torghut-ta-metrics"
                   }
                 ) / 1000
               ) > 180

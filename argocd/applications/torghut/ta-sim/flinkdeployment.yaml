@@ -6,7 +6,7 @@ metadata:
   labels:
     app: torghut-ta-sim
 spec:
-  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:436aecef1aae71f18fd01935ca97cb26866d149154edb4dab4222d66c4e849b3
+  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:20fe1818a7c5239d58d4e3888804163025b9b3b2ee1a1674fd7db77007f682af
   imagePullPolicy: IfNotPresent
   restartNonce: 0
   flinkVersion: v2_0
