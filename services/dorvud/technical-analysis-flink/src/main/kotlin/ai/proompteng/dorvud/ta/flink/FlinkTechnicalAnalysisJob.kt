@@ -827,8 +827,10 @@ private fun kafkaJaas(config: FlinkTaConfig): String {
   }
 }
 
-private class MicrobarProcessFunction :
-  KeyedProcessFunction<String, Envelope<TradePayload>, Envelope<MicroBarPayload>>() {
+private typealias TradeEnvelope = Envelope<TradePayload>
+private typealias MicroBarEnvelope = Envelope<MicroBarPayload>
+
+private class MicrobarProcessFunction : KeyedProcessFunction<String, TradeEnvelope, MicroBarEnvelope>() {
   private lateinit var bucketState: ValueState<BucketState>
   private lateinit var seqState: ValueState<Long>
 
