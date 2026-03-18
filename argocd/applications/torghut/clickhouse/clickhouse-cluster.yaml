@@ -27,8 +27,49 @@ spec:
           <logger>
             <level>information</level>
           </logger>
-          <!-- Keep system tables from growing without bound on small PVCs. -->
+
+          <!-- Bound internal system logs so they cannot starve user-table writes on a 4Gi pod. -->
+          <text_log>
+            <level>information</level>
+            <engine>Engine = MergeTree PARTITION BY event_date ORDER BY event_time TTL event_date + INTERVAL 3 DAY</engine>
+            <flush_interval_milliseconds>15000</flush_interval_milliseconds>
+            <max_size_rows>262144</max_size_rows>
+            <reserved_size_rows>8192</reserved_size_rows>
+            <buffer_size_rows_flush_threshold>131072</buffer_size_rows_flush_threshold>
+            <flush_on_crash>false</flush_on_crash>
+          </text_log>
+          <query_log>
+            <engine>Engine = MergeTree PARTITION BY event_date ORDER BY event_time TTL event_date + INTERVAL 7 DAY</engine>
+            <flush_interval_milliseconds>15000</flush_interval_milliseconds>
+            <max_size_rows>262144</max_size_rows>
+            <reserved_size_rows>8192</reserved_size_rows>
+            <buffer_size_rows_flush_threshold>131072</buffer_size_rows_flush_threshold>
+            <flush_on_crash>false</flush_on_crash>
+          </query_log>
+          <part_log>
+            <engine>Engine = MergeTree PARTITION BY event_date ORDER BY event_time TTL event_date + INTERVAL 2 DAY</engine>
+            <flush_interval_milliseconds>15000</flush_interval_milliseconds>
+            <max_size_rows>131072</max_size_rows>
+            <reserved_size_rows>4096</reserved_size_rows>
+            <buffer_size_rows_flush_threshold>65536</buffer_size_rows_flush_threshold>
+            <flush_on_crash>false</flush_on_crash>
+          </part_log>
+          <latency_log>
+            <engine>Engine = MergeTree PARTITION BY event_date ORDER BY event_time TTL event_date + INTERVAL 1 DAY</engine>
+            <flush_interval_milliseconds>15000</flush_interval_milliseconds>
+            <max_size_rows>65536</max_size_rows>
+            <reserved_size_rows>2048</reserved_size_rows>
+            <buffer_size_rows_flush_threshold>32768</buffer_size_rows_flush_threshold>
+            <flush_on_crash>false</flush_on_crash>
+          </latency_log>
+
+          <metric_log remove="1"/>
+          <asynchronous_metric_log remove="1"/>
+          <processors_profile_log remove="1"/>
           <trace_log remove="1"/>
+
+          <!-- Keep background merges from exhausting the pod before foreground inserts can complete. -->
+          <merges_mutations_memory_usage_to_ram_ratio>0.25</merges_mutations_memory_usage_to_ram_ratio>
         </yandex>
       users.d/99-profile-overrides.xml: |-
         <yandex>

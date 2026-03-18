@@ -169,8 +169,14 @@ private fun applyClickhouseSinks(
   }
 
   ensureClickhouseSchema(config)
-  microBars.sinkTo(clickhouseMicrobarSink(config)).name("sink-microbars-clickhouse")
-  signals.sinkTo(clickhouseSignalSink(config)).name("sink-signals-clickhouse")
+  microBars
+    .sinkTo(clickhouseMicrobarSink(config))
+    .name("sink-microbars-clickhouse")
+    .setParallelism(config.clickhouseSinkParallelism)
+  signals
+    .sinkTo(clickhouseSignalSink(config))
+    .name("sink-signals-clickhouse")
+    .setParallelism(config.clickhouseSinkParallelism)
 }
 
 private fun ensureClickhouseSchema(config: FlinkTaConfig) {
@@ -821,7 +827,8 @@ private fun kafkaJaas(config: FlinkTaConfig): String {
   }
 }
 
-private class MicrobarProcessFunction : KeyedProcessFunction<String, Envelope<TradePayload>, Envelope<MicroBarPayload>>() {
+private class MicrobarProcessFunction :
+  KeyedProcessFunction<String, Envelope<TradePayload>, Envelope<MicroBarPayload>>() {
   private lateinit var bucketState: ValueState<BucketState>
   private lateinit var seqState: ValueState<Long>
 
@@ -1044,7 +1051,8 @@ private class TaSignalsFunction(
   private lateinit var sessionState: ValueState<SessionAccumulatorState>
 
   override fun open(openContext: OpenContext) {
-    barsState = runtimeContext.getListState(ListStateDescriptor("bars", TypeInformation.of(MicroBarPayload::class.java)))
+    barsState =
+      runtimeContext.getListState(ListStateDescriptor("bars", TypeInformation.of(MicroBarPayload::class.java)))
     quoteState = runtimeContext.getState(ValueStateDescriptor("quote", QuotePayload::class.java))
     sessionState = runtimeContext.getState(ValueStateDescriptor("session", SessionAccumulatorState::class.java))
   }
