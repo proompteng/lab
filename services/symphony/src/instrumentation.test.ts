@@ -97,6 +97,12 @@ afterEach(() => {
 })
 
 describe('instrumentation bindings', () => {
+  test('uses the Tempo distributor OTLP HTTP endpoint by default', () => {
+    expect(__private.getDefaultTracesEndpointForTests()).toBe(
+      'http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces',
+    )
+  })
+
   test('rebinds counters, gauges, and spans to the active global providers', () => {
     const meter = new FakeMeter()
     const tracer = new FakeTracer()
