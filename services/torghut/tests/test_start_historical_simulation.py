@@ -46,6 +46,7 @@ from scripts.start_historical_simulation import (
     _file_sha256,
     _http_clickhouse_query,
     _merge_env_entries,
+    _materialize_deterministic_dump,
     _monitor_run_completion,
     _normalize_run_token,
     _open_dump_reader,
@@ -4203,6 +4204,52 @@ class TestStartHistoricalSimulation(TestCase):
                     (1735693200200, 1, 0),
                 ],
             )
+
+    def test_materialize_deterministic_dump_bounds_sort_memory_and_uses_stage_tmpdir(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            dump_path = Path(tmp_dir) / 'source-dump.ndjson'
+            staged_path = dump_path.with_suffix(dump_path.suffix + '.sort-stage.tsv')
+            staged_path.write_text(
+                '\n'.join(
+                    [
+                        '00000000000000000002\ttorghut.trades.v1\t0000000001\t00000000000000000001\t{"row":2}',
+                        '00000000000000000001\ttorghut.trades.v1\t0000000000\t00000000000000000000\t{"row":1}',
+                    ]
+                )
+                + '\n',
+                encoding='utf-8',
+            )
+
+            captured: dict[str, Any] = {}
+
+            def _fake_run(*args: Any, **kwargs: Any) -> SimpleNamespace:
+                command = args[0]
+                stdout = kwargs['stdout']
+                captured['command'] = command
+                captured['env'] = kwargs['env']
+                sorted_rows = sorted(staged_path.read_text(encoding='utf-8').splitlines())
+                stdout.write('\n'.join(sorted_rows) + '\n')
+                return SimpleNamespace(returncode=0)
+
+            with (
+                patch.dict('os.environ', {'TORGHUT_SIM_DUMP_SORT_MEMORY_LIMIT': '768M'}, clear=False),
+                patch('scripts.start_historical_simulation.subprocess.run', side_effect=_fake_run),
+            ):
+                payload_sha = _materialize_deterministic_dump(
+                    staged_path=staged_path,
+                    dump_path=dump_path,
+                )
+
+            self.assertEqual(
+                captured['command'][:6],
+                ['sort', '-S', '768M', '-T', str(staged_path.parent), '-t'],
+            )
+            self.assertEqual(captured['env']['LC_ALL'], 'C')
+            self.assertEqual(
+                dump_path.read_text(encoding='utf-8').splitlines(),
+                ['{"row":1}', '{"row":2}'],
+            )
+            self.assertEqual(payload_sha, start_historical_simulation._dump_sha256_for_replay(dump_path))
 
     def test_dump_topics_cleans_compressed_sort_temps(self) -> None:
         resources = _build_resources(
