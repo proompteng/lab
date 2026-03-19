@@ -1850,7 +1850,7 @@ class LeanExecutionShadowEvent(Base, CreatedAtMixin):
     simulated_slippage_bps: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
     parity_delta_bps: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
     parity_status: Mapped[str] = mapped_column(
-        String(length=32),
+        String(length=64),
         nullable=False,
         default="unknown",
         server_default=text("'unknown'"),
@@ -1908,7 +1908,7 @@ class LeanStrategyShadowEvaluation(Base, CreatedAtMixin):
     intent_json: Mapped[Any] = mapped_column(JSONType, nullable=False)
     shadow_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
     parity_status: Mapped[str] = mapped_column(
-        String(length=32),
+        String(length=64),
         nullable=False,
         default="unknown",
         server_default=text("'unknown'"),

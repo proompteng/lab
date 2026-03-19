@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from unittest import TestCase
+from unittest.mock import patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.models import Base
+from app.lean_runner import _SCAFFOLD_BLOCKED_STATUS
+from app.models import Base, LeanExecutionShadowEvent, LeanStrategyShadowEvaluation
 from app.trading.lean_lanes import LeanLaneManager
 
 
@@ -56,8 +58,6 @@ class TestLeanLanes(TestCase):
             self.assertIsNotNone(refreshed.completed_at)
 
     def test_parity_summary_aggregates_shadow_events(self) -> None:
-        from app.models import LeanExecutionShadowEvent
-
         with self.SessionLocal() as session:
             session.add(
                 LeanExecutionShadowEvent(
@@ -87,3 +87,34 @@ class TestLeanLanes(TestCase):
         self.assertEqual(summary['drift_events'], 1)
         self.assertAlmostEqual(summary['drift_ratio'], 0.5)
         self.assertEqual(summary['failure_classes'].get('execution_quality_drift'), 1)
+
+    def test_shadow_parity_status_columns_allow_scaffold_blocked_status(self) -> None:
+        required_length = len(_SCAFFOLD_BLOCKED_STATUS)
+        self.assertGreaterEqual(
+            LeanExecutionShadowEvent.__table__.c.parity_status.type.length,
+            required_length,
+        )
+        self.assertGreaterEqual(
+            LeanStrategyShadowEvaluation.__table__.c.parity_status.type.length,
+            required_length,
+        )
+
+    def test_record_strategy_shadow_rolls_back_on_commit_error(self) -> None:
+        manager = LeanLaneManager()
+
+        with self.SessionLocal() as session:
+            with patch.object(session, 'commit', side_effect=RuntimeError('boom')):
+                with patch.object(session, 'rollback') as rollback_mock:
+                    with self.assertRaisesRegex(RuntimeError, 'boom'):
+                        manager.record_strategy_shadow(
+                            session,
+                            strategy_id='strategy-1',
+                            symbol='AAPL',
+                            intent={'action': 'buy', 'qty': '1'},
+                            shadow_result={
+                                'run_id': 'run-1',
+                                'parity_status': _SCAFFOLD_BLOCKED_STATUS,
+                                'governance': {},
+                            },
+                        )
+                rollback_mock.assert_called_once()

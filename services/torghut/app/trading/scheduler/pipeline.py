@@ -881,6 +881,14 @@ class TradingPipeline:
                 return None
             return decision
         except Exception as exc:
+            try:
+                session.rollback()
+            except Exception:
+                logger.exception(
+                    "Decision handler rollback failed strategy_id=%s symbol=%s",
+                    decision.strategy_id,
+                    decision.symbol,
+                )
             logger.exception(
                 "Decision handling failed strategy_id=%s symbol=%s error=%s",
                 decision.strategy_id,
@@ -1922,6 +1930,14 @@ class TradingPipeline:
                 shadow_result=shadow_map,
             )
         except Exception as exc:
+            try:
+                session.rollback()
+            except Exception:
+                logger.exception(
+                    "LEAN strategy shadow rollback failed strategy_id=%s symbol=%s",
+                    decision.strategy_id,
+                    decision.symbol,
+                )
             logger.warning(
                 "LEAN strategy shadow evaluation failed strategy_id=%s symbol=%s error=%s",
                 decision.strategy_id,
