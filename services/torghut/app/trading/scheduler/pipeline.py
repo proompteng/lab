@@ -96,7 +96,12 @@ from .pipeline_helpers import (
     _select_strictest_runtime_uncertainty_gate,
     _uncertainty_gate_staleness_reason,
 )
-from .safety import _is_market_session_open, _latch_signal_continuity_alert_state, _record_signal_continuity_recovery_cycle
+from .safety import (
+    _is_market_session_open,
+    _latch_signal_continuity_alert_state,
+    _record_signal_continuity_recovery_cycle,
+    _signal_bootstrap_grace_active,
+)
 from .state import (
     RuntimeUncertaintyGate,
     RuntimeUncertaintyGateAction,
@@ -768,6 +773,15 @@ class TradingPipeline:
     ) -> bool:
         if reason == "cursor_ahead_of_stream":
             return True
+        if reason in {
+            "no_signals_in_window",
+            "cursor_tail_stable",
+            "empty_batch_advanced",
+        } and _signal_bootstrap_grace_active(
+            self.state,
+            grace_seconds=settings.trading_signal_bootstrap_grace_seconds,
+        ):
+            return False
         if market_session_open:
             return True
         expected_market_closed_reasons = (

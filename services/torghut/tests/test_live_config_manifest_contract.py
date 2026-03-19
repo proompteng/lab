@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from yaml import safe_load
 
 from app.config import Settings
+from app.trading.llm.dspy_programs.runtime import DSPyReviewRuntime
 _CRITICAL_TRADING_TOGGLE_KEYS = {
     "TRADING_ENABLED",
     "TRADING_AUTONOMY_ENABLED",
@@ -289,6 +290,9 @@ class TestLiveConfigManifestContract(TestCase):
         )
         fail_open_env["LLM_DSPY_RUNTIME_MODE"] = "active"
         fail_open_env["LLM_SHADOW_MODE"] = "false"
+        fail_open_env["LLM_DSPY_ARTIFACT_HASH"] = (
+            DSPyReviewRuntime.bootstrap_artifact_hash()
+        )
         approved_settings = Settings(**fail_open_env)
         cutover_allowed, cutover_reasons = (
             approved_settings.llm_dspy_cutover_migration_guard()
