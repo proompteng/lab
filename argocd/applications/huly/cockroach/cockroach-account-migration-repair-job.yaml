@@ -79,8 +79,7 @@ spec:
 
               echo "repairing account_db_v2_social_id_pk_change for CockroachDB"
               sql --execute="ALTER TABLE defaultdb.global_account.otp DROP CONSTRAINT IF EXISTS otp_social_id_fk;"
-              sql --execute="ALTER TABLE defaultdb.global_account.social_id DROP CONSTRAINT IF EXISTS social_id_pk;"
-              sql --execute="ALTER TABLE defaultdb.global_account.social_id ADD CONSTRAINT social_id_pk PRIMARY KEY (_id);"
+              sql --execute="ALTER TABLE defaultdb.global_account.social_id ALTER PRIMARY KEY USING COLUMNS (_id);"
               sql --execute="
                 UPDATE defaultdb.global_account._account_applied_migrations
                 SET applied_at = now(), last_processed_at = now()
