@@ -3136,8 +3136,6 @@ def _build_live_submission_gate_payload(
         }
 
     blocked_reasons: list[str] = []
-    if promotion_eligible_total <= 0:
-        blocked_reasons.append("alpha_readiness_not_promotion_eligible")
     if empirical_ready is False:
         blocked_reasons.append("empirical_jobs_not_ready")
     if dspy_live_ready is False:

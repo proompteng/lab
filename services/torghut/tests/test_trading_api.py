@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from typing import Any
 from unittest import TestCase
 from unittest.mock import patch
@@ -20,6 +21,7 @@ from app.main import (
     _ALPACA_HEALTH_STATE,
     _TRADING_DEPENDENCY_HEALTH_CACHE,
     _assert_dspy_cutover_migration_guard,
+    _build_live_submission_gate_payload,
     _check_alpaca,
     _readiness_dependency_cache_key,
     app,
@@ -1798,6 +1800,43 @@ class TestTradingApi(TestCase):
                 del app.state.trading_scheduler
             else:
                 app.state.trading_scheduler = original_scheduler
+
+    def test_live_submission_gate_allows_configured_live_promotion_without_runtime_alpha_canary(
+        self,
+    ) -> None:
+        original_mode = settings.trading_mode
+        original_allow_live_promotion = settings.trading_autonomy_allow_live_promotion
+        try:
+            settings.trading_mode = "live"
+            settings.trading_autonomy_allow_live_promotion = True
+
+            payload = _build_live_submission_gate_payload(
+                SimpleNamespace(
+                    last_autonomy_promotion_eligible=False,
+                    drift_live_promotion_eligible=False,
+                ),
+                hypothesis_summary={
+                    "promotion_eligible_total": 0,
+                    "capital_stage_totals": {"shadow": 3},
+                    "dependency_quorum": {"decision": "allow"},
+                },
+                empirical_jobs_status={"ready": True},
+                dspy_runtime_status={"mode": "shadow", "live_ready": False},
+            )
+
+            self.assertTrue(payload["allowed"])
+            self.assertEqual(payload["reason"], "ready")
+            self.assertEqual(payload["capital_stage"], "0.10x canary")
+            self.assertEqual(payload["promotion_eligible_total"], 0)
+            self.assertEqual(payload["dependency_quorum_decision"], "allow")
+            self.assertEqual(payload["empirical_jobs_ready"], True)
+            self.assertIsNone(payload["dspy_live_ready"])
+            self.assertEqual(payload["blocked_reasons"], [])
+        finally:
+            settings.trading_mode = original_mode
+            settings.trading_autonomy_allow_live_promotion = (
+                original_allow_live_promotion
+            )
 
     def test_trading_status_surfaces_universe_fail_safe_state(self) -> None:
         original_scheduler = getattr(app.state, "trading_scheduler", None)
