@@ -10,6 +10,7 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
   - `40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md`
   - `41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md`
   - `39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md`
@@ -18,7 +19,7 @@
 - `48-torghut-quant-discover-implementation-readiness-and-handoff-contract-2026-03-16.md`
 - `49-torghut-quant-source-of-truth-and-profit-circuit-handoff-2026-03-19.md`
 - Cross-system source of truth:
-  - `docs/agents/designs/49-jangar-control-plane-execution-truth-spine-and-torghut-profit-circuit-2026-03-19.md`
+  - `docs/agents/designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md`
 - Discover stage merge anchor:
   - `42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md`
   - `42-torghut-quant-control-plane-and-profitability-program-2026-03-15.md`
@@ -71,6 +72,9 @@ Current source-state priority is narrower:
 - `49-torghut-quant-source-of-truth-and-profit-circuit-handoff-2026-03-19.md` now binds the v6 Torghut lane to the
   March 19 cross-system source-of-truth architecture, replaces mixed promotion vocabulary with
   `observe/canary/live/scale/quarantine`, and makes scheduler/status parity plus options-bootstrap gating explicit.
+- `50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md` now turns the March 19 mixed-state
+  runtime evidence into one submission-council contract, lane-local profit cells, and an options bootstrap escrow that
+  keeps import-time DB/image failures from masquerading as general profitability truth.
 - `40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md` now defines segment-local
   control-plane authority and scoped rollout semantics to prevent watch noise from becoming global rollout blockers.
 - `41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md` now defines multi-horizon profitability
@@ -159,6 +163,7 @@ This pack is positioned as the next architecture layer above:
 46. `47-torghut-quant-plan-merge-contract-and-handoff-implementation-2026-03-16.md`
 47. `48-torghut-quant-discover-implementation-readiness-and-handoff-contract-2026-03-16.md`
 48. `49-torghut-quant-source-of-truth-and-profit-circuit-handoff-2026-03-19.md`
+49. `50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
 
 ## Recommended Build Order
 
@@ -206,6 +211,7 @@ This pack is positioned as the next architecture layer above:
 42. `42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md`
 43. `42-torghut-quant-control-plane-and-profitability-program-2026-03-15.md`
 44. `49-torghut-quant-source-of-truth-and-profit-circuit-handoff-2026-03-19.md`
+45. `50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
 
 ## Why This Sequence
 
