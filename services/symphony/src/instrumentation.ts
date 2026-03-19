@@ -53,7 +53,7 @@ type TelemetryState = {
   sdk?: NodeSDK
 }
 
-const DEFAULT_TRACES_ENDPOINT = 'http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces'
+const DEFAULT_TRACES_ENDPOINT = 'http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces'
 const DEFAULT_METRICS_ENDPOINT = 'http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics'
 
 const globalState = globalThis as typeof globalThis & {
@@ -389,6 +389,9 @@ export const updateRuntimeGauges = (params: {
 }
 
 export const __private = {
+  getDefaultTracesEndpointForTests() {
+    return DEFAULT_TRACES_ENDPOINT
+  },
   resetTelemetryStateForTests() {
     delete globalState.__symphonyTelemetry
   },
