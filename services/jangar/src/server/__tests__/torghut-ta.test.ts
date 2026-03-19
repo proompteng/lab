@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { ClickHouseClient } from '~/server/clickhouse'
+import type { ClickHouseClient, ClickHouseParams } from '~/server/clickhouse'
 import { computeFallbackRange, queryLatestTaTableEventTs } from '~/server/torghut-ta'
+
+const mockClickHouseClient = (queryJson: ReturnType<typeof vi.fn>): ClickHouseClient => ({
+  queryJson: async <T = Record<string, unknown>>(query: string, params?: ClickHouseParams) =>
+    (await (queryJson as unknown as (query: string, params?: ClickHouseParams) => Promise<T[]>)(query, params)) as T[],
+})
 
 describe('queryLatestTaTableEventTs', () => {
   it('scopes the aggregate to the latest active partition day before falling back to a full-table scan', async () => {
@@ -11,7 +16,7 @@ describe('queryLatestTaTableEventTs', () => {
       .mockResolvedValueOnce([{ latest: '2025-03-19 12:34:56.789' }])
 
     const latest = await queryLatestTaTableEventTs({
-      client: { queryJson },
+      client: mockClickHouseClient(queryJson),
       table: 'ta_signals',
       symbol: 'BTC-USD',
     })
@@ -36,7 +41,7 @@ describe('queryLatestTaTableEventTs', () => {
       .mockResolvedValueOnce([{ latest: '2025-03-18 23:59:59.999' }])
 
     const latest = await queryLatestTaTableEventTs({
-      client: { queryJson },
+      client: mockClickHouseClient(queryJson),
       table: 'ta_microbars',
       symbol: 'ETH-USD',
     })
