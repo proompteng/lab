@@ -1,27 +1,25 @@
 import { Context, Effect, Layer } from 'effect'
-import * as Fiber from 'effect/Fiber'
-import * as Queue from 'effect/Queue'
+import { PostHog } from 'posthog-node'
 import * as Ref from 'effect/Ref'
 
-import { WorkflowService } from './workflow'
 import type { Logger } from './logger'
 import type { PostHogSummary } from './types'
+import { WorkflowService } from './workflow'
 
 const PROHIBITED_KEY_CHUNKS = ['api_key', 'authorization', 'password', 'secret', 'token']
 const MAX_ARRAY_ITEMS = 20
 const MAX_OBJECT_KEYS = 50
 const MAX_STRING_LENGTH = 8_000
-
-type CaptureEnvelope = {
-  event: '$ai_generation' | '$ai_span' | '$ai_trace'
-  properties: Record<string, unknown>
-}
+const SHUTDOWN_TIMEOUT_MS = 30_000
 
 export type TelemetryTraceEvent = {
   traceId: string
   sessionId: string
   spanName: string
   inputState: Record<string, unknown>
+  outputState?: Record<string, unknown> | null
+  latencySeconds?: number | null
+  error?: Record<string, unknown> | string | null
   properties?: Record<string, unknown>
 }
 
@@ -42,6 +40,7 @@ export type TelemetryGenerationEvent = {
   traceId: string
   sessionId: string
   spanId: string
+  spanName?: string | null
   parentId?: string | null
   model: string
   provider: string
@@ -69,7 +68,7 @@ export class PostHogTelemetryService extends Context.Tag('symphony/PostHogTeleme
 >() {}
 
 const truncateString = (value: string): string =>
-  value.length > MAX_STRING_LENGTH ? `${value.slice(0, MAX_STRING_LENGTH)}…` : value
+  value.length > MAX_STRING_LENGTH ? `${value.slice(0, MAX_STRING_LENGTH)}...` : value
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -103,47 +102,64 @@ const sanitizeValue = (value: unknown): unknown => {
 const sanitizeRecord = (value: Record<string, unknown>): Record<string, unknown> =>
   sanitizeValue(value) as Record<string, unknown>
 
-const joinUrl = (host: string): string => `${host.replace(/\/+$/, '')}/i/v0/e/`
-
-const sendCaptureRequest = (
-  url: string,
-  apiKey: string,
-  timeoutMs: number,
-  envelope: CaptureEnvelope,
-): Effect.Effect<void, Error, never> =>
-  Effect.tryPromise({
-    try: async () => {
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), Math.max(1, timeoutMs))
-      try {
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            accept: 'application/json',
-          },
-          body: JSON.stringify({
-            api_key: apiKey,
-            event: envelope.event,
-            properties: envelope.properties,
-          }),
-          signal: controller.signal,
-        })
-        if (!response.ok) {
-          throw new Error(`posthog_capture_failed:${response.status}`)
-        }
-      } finally {
-        clearTimeout(timeout)
-      }
-    },
-    catch: (error) => (error instanceof Error ? error : new Error(String(error))),
-  })
-
-const buildCommonProperties = (distinctId: string, properties: Record<string, unknown> = {}) =>
+const buildCommonProperties = (properties: Record<string, unknown> = {}) =>
   sanitizeRecord({
-    distinct_id: distinctId,
     $process_person_profile: false,
     ...properties,
+  })
+
+const buildErrorProperties = (error: Record<string, unknown> | string | null | undefined): Record<string, unknown> =>
+  error == null
+    ? {}
+    : {
+        $ai_is_error: true,
+        $ai_error: sanitizeValue(error),
+      }
+
+export const buildTraceCaptureProperties = (event: TelemetryTraceEvent): Record<string, unknown> =>
+  buildCommonProperties({
+    $ai_trace_id: event.traceId,
+    $ai_session_id: event.sessionId,
+    $ai_span_name: event.spanName,
+    $ai_input_state: event.inputState,
+    $ai_output_state: event.outputState ?? null,
+    $ai_latency: event.latencySeconds ?? null,
+    ...buildErrorProperties(event.error),
+    ...event.properties,
+  })
+
+export const buildSpanCaptureProperties = (event: TelemetrySpanEvent): Record<string, unknown> =>
+  buildCommonProperties({
+    $ai_trace_id: event.traceId,
+    $ai_session_id: event.sessionId ?? null,
+    $ai_span_id: event.spanId,
+    $ai_parent_id: event.parentId ?? null,
+    $ai_span_name: event.spanName,
+    $ai_input_state: event.inputState ?? null,
+    $ai_output_state: event.outputState ?? null,
+    $ai_latency: event.latencySeconds ?? null,
+    ...buildErrorProperties(event.error),
+    ...event.properties,
+  })
+
+export const buildGenerationCaptureProperties = (event: TelemetryGenerationEvent): Record<string, unknown> =>
+  buildCommonProperties({
+    $ai_trace_id: event.traceId,
+    $ai_session_id: event.sessionId,
+    $ai_span_id: event.spanId,
+    $ai_span_name: event.spanName ?? null,
+    $ai_parent_id: event.parentId ?? null,
+    $ai_model: event.model,
+    $ai_provider: event.provider,
+    $ai_input: event.input,
+    $ai_output_choices: event.outputChoices,
+    $ai_input_tokens: event.inputTokens ?? null,
+    $ai_output_tokens: event.outputTokens ?? null,
+    $ai_latency: event.latencySeconds ?? null,
+    $ai_time_to_first_token: event.timeToFirstTokenSeconds ?? null,
+    $ai_stream: event.stream ?? null,
+    ...buildErrorProperties(event.error),
+    ...event.properties,
   })
 
 export const makePostHogTelemetryLayer = (logger: Logger) =>
@@ -175,12 +191,65 @@ export const makePostHogTelemetryLayer = (logger: Logger) =>
         } satisfies PostHogTelemetryServiceDefinition
       }
 
-      const captureUrl = joinUrl(config.posthog.host)
       const posthogApiKey = config.posthog.apiKey
-      const queue = yield* Queue.unbounded<CaptureEnvelope>()
+      const client = yield* Effect.try({
+        try: () =>
+          new PostHog(posthogApiKey, {
+            host: config.posthog.host,
+            flushAt: config.posthog.flushAt,
+            flushInterval: config.posthog.flushIntervalMs,
+            requestTimeout: config.posthog.requestTimeoutMs,
+            disableGeoip: true,
+          }),
+        catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+      }).pipe(
+        Effect.tapError((error) =>
+          Ref.set(lastErrorRef, error.message).pipe(
+            Effect.zipRight(
+              Effect.sync(() => {
+                posthogLogger.log('warn', 'posthog_init_failed', {
+                  error: error.message,
+                  host: config.posthog.host,
+                })
+              }),
+            ),
+          ),
+        ),
+      )
 
-      const sendEnvelope = (envelope: CaptureEnvelope) =>
-        sendCaptureRequest(captureUrl, posthogApiKey, config.posthog.requestTimeoutMs, envelope).pipe(
+      yield* Effect.addFinalizer(() =>
+        Effect.tryPromise({
+          try: async () => {
+            await Promise.resolve(client.shutdown(SHUTDOWN_TIMEOUT_MS))
+          },
+          catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+        }).pipe(
+          Effect.catchAll((error) =>
+            Ref.set(lastErrorRef, error.message).pipe(
+              Effect.zipRight(
+                Effect.sync(() => {
+                  posthogLogger.log('warn', 'posthog_shutdown_failed', {
+                    error: error.message,
+                    host: config.posthog.host,
+                  })
+                }),
+              ),
+            ),
+          ),
+        ),
+      )
+
+      const capture = (event: '$ai_generation' | '$ai_span' | '$ai_trace', properties: Record<string, unknown>) =>
+        Effect.try({
+          try: () => {
+            client.capture({
+              distinctId: config.posthog.distinctId,
+              event,
+              properties,
+            })
+          },
+          catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+        }).pipe(
           Effect.tap(() => Ref.set(lastErrorRef, null)),
           Effect.catchAll((error) =>
             Ref.set(lastErrorRef, error.message).pipe(
@@ -188,7 +257,7 @@ export const makePostHogTelemetryLayer = (logger: Logger) =>
                 Effect.sync(() => {
                   posthogLogger.log('warn', 'posthog_capture_failed', {
                     error: error.message,
-                    event: envelope.event,
+                    event,
                     host: config.posthog.host,
                   })
                 }),
@@ -197,83 +266,10 @@ export const makePostHogTelemetryLayer = (logger: Logger) =>
           ),
         )
 
-      const workerFiber = yield* Effect.forever(Queue.take(queue).pipe(Effect.flatMap(sendEnvelope))).pipe(Effect.fork)
-
-      yield* Effect.addFinalizer(() =>
-        Fiber.interrupt(workerFiber).pipe(
-          Effect.catchAll(() => Effect.void),
-          Effect.zipRight(
-            Queue.takeAll(queue).pipe(
-              Effect.flatMap((pending) => Effect.forEach(pending, sendEnvelope, { concurrency: 1, discard: true })),
-              Effect.catchAll(() => Effect.void),
-            ),
-          ),
-        ),
-      )
-
-      const enqueue = (envelope: CaptureEnvelope) =>
-        Queue.offer(queue, envelope).pipe(
-          Effect.asVoid,
-          Effect.catchAll((error) =>
-            Ref.set(lastErrorRef, String(error)).pipe(
-              Effect.zipRight(
-                Effect.sync(() => {
-                  posthogLogger.log('warn', 'posthog_enqueue_failed', { error: String(error), event: envelope.event })
-                }),
-              ),
-            ),
-          ),
-        )
-
       return {
-        captureTrace: (event) =>
-          enqueue({
-            event: '$ai_trace',
-            properties: buildCommonProperties(config.posthog.distinctId, {
-              $ai_trace_id: event.traceId,
-              $ai_session_id: event.sessionId,
-              $ai_span_name: event.spanName,
-              $ai_input_state: event.inputState,
-              ...event.properties,
-            }),
-          }),
-        captureSpan: (event) =>
-          enqueue({
-            event: '$ai_span',
-            properties: buildCommonProperties(config.posthog.distinctId, {
-              $ai_trace_id: event.traceId,
-              $ai_session_id: event.sessionId ?? null,
-              $ai_span_id: event.spanId,
-              $ai_parent_id: event.parentId ?? null,
-              $ai_span_name: event.spanName,
-              $ai_input_state: event.inputState ?? null,
-              $ai_output_state: event.outputState ?? null,
-              $ai_latency: event.latencySeconds ?? null,
-              error: event.error ?? null,
-              ...event.properties,
-            }),
-          }),
-        captureGeneration: (event) =>
-          enqueue({
-            event: '$ai_generation',
-            properties: buildCommonProperties(config.posthog.distinctId, {
-              $ai_trace_id: event.traceId,
-              $ai_session_id: event.sessionId,
-              $ai_span_id: event.spanId,
-              $ai_parent_id: event.parentId ?? null,
-              $ai_model: event.model,
-              $ai_provider: event.provider,
-              $ai_input: event.input,
-              $ai_output_choices: event.outputChoices,
-              $ai_input_tokens: event.inputTokens ?? null,
-              $ai_output_tokens: event.outputTokens ?? null,
-              $ai_latency: event.latencySeconds ?? null,
-              $ai_time_to_first_token: event.timeToFirstTokenSeconds ?? null,
-              $ai_stream: event.stream ?? null,
-              error: event.error ?? null,
-              ...event.properties,
-            }),
-          }),
+        captureTrace: (event) => capture('$ai_trace', buildTraceCaptureProperties(event)),
+        captureSpan: (event) => capture('$ai_span', buildSpanCaptureProperties(event)),
+        captureGeneration: (event) => capture('$ai_generation', buildGenerationCaptureProperties(event)),
         summary: Ref.get(lastErrorRef).pipe(
           Effect.map(
             (lastError) =>

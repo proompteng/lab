@@ -18,6 +18,7 @@
     "@proompteng/otel": "workspace:*",
     "effect": "^3.19.18",
     "handlebars": "^4.7.8",
+    "posthog-node": "^5.28.4",
     "yaml": "^2.8.2"
   },
   "devDependencies": {

@@ -956,6 +956,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                 traceId: running.telemetry.traceId,
                 sessionId: running.telemetry.sessionId,
                 spanId: `${running.telemetry.traceId}:generation:${turnId}`,
+                spanName: 'codex_turn',
                 parentId: running.telemetry.rootSpanId,
                 model: event.model ?? 'unknown',
                 provider: event.provider ?? 'codex',

@@ -190,14 +190,10 @@ export const makeIssueRunnerLayer = (logger: Logger) =>
                 const workspaceInfo = yield* withSymphonyEffectSpan(
                   'symphony.worker_attempt.workspace_create',
                   { 'issue.identifier': issue.identifier },
-                  captureSpan(
-                    'workspace_create',
-                    workspace.createForIssue(issue.identifier),
-                    (result) => ({
-                      workspace_path: result.path,
-                      created_now: result.createdNow,
-                    }),
-                  ),
+                  captureSpan('workspace_create', workspace.createForIssue(issue.identifier), (result) => ({
+                    workspace_path: result.path,
+                    created_now: result.createdNow,
+                  })),
                   { parentSpan: runSpan },
                 )
                 yield* callbacks.onWorkspacePath(workspaceInfo.path)
