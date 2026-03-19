@@ -1,0 +1,152 @@
+---
+title: Temporal Cloud and TLS
+description: Connect the Temporal Bun SDK to Temporal Cloud using API keys, TLS, or mTLS.
+---
+
+Most teams using Temporal Cloud today authenticate workflow traffic with an API
+key. `@proompteng/temporal-bun-sdk` supports that directly.
+
+There are two separate auth surfaces:
+
+- `TEMPORAL_API_KEY` authenticates normal WorkflowService traffic. This is what
+  your worker and client usually need.
+- `TEMPORAL_CLOUD_API_KEY` authenticates the separate Temporal Cloud Ops API
+  used by `client.cloud.*`.
+
+If you only need to run workers and start workflows, start with
+`TEMPORAL_API_KEY`.
+
+## Fast path: Temporal Cloud with API key
+
+This is the simplest setup for a worker or client connecting to Temporal Cloud.
+
+```bash
+TEMPORAL_ADDRESS=your-namespace.your-account.tmprl.cloud:7233
+TEMPORAL_NAMESPACE=your-namespace.a1b2c
+TEMPORAL_TASK_QUEUE=hello-bun
+TEMPORAL_API_KEY=your-temporal-api-key
+```
+
+Then run your worker as usual:
+
+```bash
+bun run dev
+```
+
+Use this path when:
+
+- Your namespace accepts API key auth.
+- You do not need client certificates.
+- The platform trust store is enough for server certificate validation.
+
+## Add TLS settings when needed
+
+You only need extra TLS environment variables when your setup requires a custom
+CA bundle, mTLS client certificates, or an SNI override.
+
+### Custom CA bundle
+
+```bash
+TEMPORAL_ADDRESS=your-namespace.your-account.tmprl.cloud:7233
+TEMPORAL_NAMESPACE=your-namespace.a1b2c
+TEMPORAL_TASK_QUEUE=hello-bun
+TEMPORAL_API_KEY=your-temporal-api-key
+TEMPORAL_TLS_CA_PATH=./certs/ca.pem
+```
+
+### mTLS client certificate
+
+```bash
+TEMPORAL_ADDRESS=your-namespace.your-account.tmprl.cloud:7233
+TEMPORAL_NAMESPACE=your-namespace.a1b2c
+TEMPORAL_TASK_QUEUE=hello-bun
+TEMPORAL_TLS_CA_PATH=./certs/ca.pem
+TEMPORAL_TLS_CERT_PATH=./certs/client.crt
+TEMPORAL_TLS_KEY_PATH=./certs/client.key
+```
+
+### SNI override
+
+If your certificate validation requires a specific server name:
+
+```bash
+TEMPORAL_TLS_SERVER_NAME=your-namespace.your-account.tmprl.cloud
+```
+
+## Temporal Cloud Ops API
+
+The SDK also supports the separate Temporal Cloud Ops API through
+`client.cloud.*`.
+
+Use these variables for that surface:
+
+```bash
+TEMPORAL_CLOUD_API_KEY=your-cloud-ops-api-key
+# Optional when the default is not correct for your setup:
+# TEMPORAL_CLOUD_ADDRESS=saas-api.tmprl.cloud:443
+# TEMPORAL_CLOUD_API_VERSION=2025-05-31
+```
+
+This is distinct from `TEMPORAL_API_KEY`. In practice:
+
+- `TEMPORAL_API_KEY` is for worker and client traffic to your namespace.
+- `TEMPORAL_CLOUD_API_KEY` is for Cloud management calls.
+
+You can set both in the same environment if your process needs both.
+
+## Local development with self-signed certs
+
+For trusted development environments only:
+
+```bash
+TEMPORAL_ALLOW_INSECURE=1
+```
+
+Do not use this in production. It disables certificate verification.
+
+## Common patterns
+
+### Most common production setup
+
+```bash
+TEMPORAL_ADDRESS=your-namespace.your-account.tmprl.cloud:7233
+TEMPORAL_NAMESPACE=your-namespace.a1b2c
+TEMPORAL_TASK_QUEUE=hello-bun
+TEMPORAL_API_KEY=your-temporal-api-key
+```
+
+### Cloud API key plus Cloud Ops API key
+
+```bash
+TEMPORAL_ADDRESS=your-namespace.your-account.tmprl.cloud:7233
+TEMPORAL_NAMESPACE=your-namespace.a1b2c
+TEMPORAL_TASK_QUEUE=hello-bun
+TEMPORAL_API_KEY=your-temporal-api-key
+TEMPORAL_CLOUD_API_KEY=your-cloud-ops-api-key
+```
+
+### Namespace requiring mTLS
+
+```bash
+TEMPORAL_ADDRESS=your-namespace.your-account.tmprl.cloud:7233
+TEMPORAL_NAMESPACE=your-namespace.a1b2c
+TEMPORAL_TASK_QUEUE=hello-bun
+TEMPORAL_TLS_CA_PATH=./certs/ca.pem
+TEMPORAL_TLS_CERT_PATH=./certs/client.crt
+TEMPORAL_TLS_KEY_PATH=./certs/client.key
+```
+
+## Troubleshooting
+
+- `Unauthenticated` usually means the API key is missing, invalid, or attached to
+  the wrong auth surface.
+- Certificate or handshake failures usually mean the CA bundle, client cert/key,
+  or server name override is wrong.
+- If you set `TEMPORAL_TLS_CERT_PATH`, you must also set
+  `TEMPORAL_TLS_KEY_PATH`.
+- If you only use API key auth, you usually do not need
+  `TEMPORAL_TLS_CERT_PATH` and `TEMPORAL_TLS_KEY_PATH`.
+
+## See also
+
+- [Temporal Bun SDK](/docs/temporal-bun-sdk)

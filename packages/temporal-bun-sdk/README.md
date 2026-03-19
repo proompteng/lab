@@ -1,87 +1,95 @@
 # `@proompteng/temporal-bun-sdk`
 
-A Bun-first Temporal SDK implemented entirely in TypeScript. It speaks gRPC over HTTP/2 using [Connect](https://connectrpc.com/) and executes workflows with the [Effect](https://effect.website/) runtime so you can run Temporal workers without shipping Node.js or any native bridge.
+Run Temporal workers and clients on Bun with replay tooling, Docker helpers, and Temporal Cloud/TLS support. The SDK is implemented entirely in TypeScript, speaks gRPC over HTTP/2 using [Connect](https://connectrpc.com/), and executes workflows with the [Effect](https://effect.website/) runtime so you can avoid a native bridge.
 
-## Highlights
+Full docs: <https://docs.proompteng.ai/docs/temporal-bun-sdk>
 
-- **TypeScript-only runtime** – workflow polling, activity execution, and command generation run in Bun using generated Temporal protobuf stubs.
-- **Effect-based workflows** – define deterministic workflows with `Effect` and let the runtime translate results/failures into Temporal commands.
-- **First-class Workflow Updates** – call `client.workflow.update` from Bun services and register update handlers alongside workflows with `defineWorkflowUpdates`.
-- **Connect-powered client** – `createTemporalClient` gives you a fully typed Temporal WorkflowService client backed by @bufbuild/protobuf.
-- **Simple data conversion** – JSON payload conversion out of the box with hooks for custom codecs.
-- **Bun CLI** – `temporal-bun` scaffolds workers and ships lightweight Docker helpers (no Zig build steps required).
-- **Bundled agent skills** – install a ready-to-use Temporal operations skill for Codex-compatible agents via `temporal-bun skill install`.
+## Fastest start
+
+Use this path if you want a working Bun worker as quickly as possible.
+
+1. Scaffold a new project in a clean directory:
+
+   ```bash
+   cd /tmp
+   bunx @proompteng/temporal-bun-sdk init hello-worker
+   cd hello-worker
+   ```
+
+2. Repair the generated SDK version for the current npm release:
+
+   ```bash
+   bun add @proompteng/temporal-bun-sdk@0.7.0
+   ```
+
+3. Start Temporal locally:
+
+   ```bash
+   temporal server start-dev --headless
+   ```
+
+4. Create a `.env` file:
+
+   ```env
+   TEMPORAL_ADDRESS=127.0.0.1:7233
+   TEMPORAL_NAMESPACE=default
+   TEMPORAL_TASK_QUEUE=hello-bun
+   ```
+
+5. Run the worker:
+
+   ```bash
+   bun run dev
+   ```
+
+6. In another shell, start the example workflow:
+
+   ```bash
+   temporal workflow start \
+     --task-queue hello-bun \
+     --workflow-type helloWorkflow \
+     --input '"Codex"'
+   ```
+
+You should see the worker pick up the workflow and complete it.
+
+## Install into an existing Bun project
+
+```bash
+bun add @proompteng/temporal-bun-sdk
+```
+
+For Temporal Cloud, TLS, Docker, replay, and observability, use the full guide:
+<https://docs.proompteng.ai/docs/temporal-bun-sdk>
+
+## Why teams adopt it
+
+- **Bun-native runtime** – run workers, activities, and clients directly on Bun.
+- **Production path included** – TLS, Temporal Cloud, Docker packaging, retries, observability, and replay tooling are built in.
+- **Typed workflow surface** – workflows, queries, updates, signals, schedules, and Cloud/Operator RPCs are exposed with typed helpers.
+- **No native bridge required** – the runtime is pure TypeScript and uses generated protobuf stubs.
+- **CLI included** – `temporal-bun` scaffolds workers, validates config with `doctor`, builds Docker images, and replays histories.
 
 ## Prerequisites
 
 - **Bun ≥ 1.3.10** – required for the runtime and CLI.
 - **Temporal CLI ≥ 1.4** – optional, but useful for spinning up a local dev server.
 
-## Quickstart
+## Production features
 
-1. **Install dependencies**
+- `loadTemporalConfig()` with typed env parsing for local, self-hosted, and Temporal Cloud setups.
+- TLS, API key, and insecure-dev toggles with early configuration validation.
+- `temporal-bun doctor` to validate config and exporters before rollout.
+- Replay tooling to verify determinism against stored histories.
+- Docker helpers for Bun worker packaging.
+- Testing helpers for local and time-skipping environments.
+- Observability hooks for logs, metrics, tracing, and interceptors.
 
-   ```bash
-   bun install
-   ```
+## Useful links
 
-2. **Configure Temporal access**
-   Create an `.env` (or export variables in your shell) with the connection details. `loadTemporalConfig` reads these at runtime:
-   ```env
-   TEMPORAL_ADDRESS=temporal.example.com:7233
-   TEMPORAL_NAMESPACE=default
-   TEMPORAL_API_KEY=temporal-cloud-api-key-123      # optional
-   TEMPORAL_TLS_CA_PATH=certs/cloud-ca.pem          # optional – enable TLS
-   TEMPORAL_TLS_CERT_PATH=certs/worker.crt          # optional – only for mTLS
-   TEMPORAL_TLS_KEY_PATH=certs/worker.key           # optional – only for mTLS
-   TEMPORAL_TLS_SERVER_NAME=temporal.example.com    # optional – SNI override
-   TEMPORAL_CLIENT_RETRY_MAX_ATTEMPTS=5             # optional – WorkflowService RPC attempts
-   TEMPORAL_CLIENT_RETRY_INITIAL_MS=200             # optional – first retry delay in ms
-   TEMPORAL_CLIENT_RETRY_MAX_MS=5000                # optional – max retry delay in ms
-   TEMPORAL_CLIENT_RETRY_BACKOFF=2                  # optional – exponential backoff coefficient
-   TEMPORAL_CLIENT_RETRY_JITTER_FACTOR=0.2          # optional – decorrelated jitter (0-1)
-   TEMPORAL_CLIENT_RETRY_STATUS_CODES=UNAVAILABLE,DEADLINE_EXCEEDED  # optional – retryable gRPC codes
-   TEMPORAL_TASK_QUEUE=replay-fixtures
-   TEMPORAL_WORKFLOW_CONCURRENCY=4                  # optional – workflow pollers
-   TEMPORAL_ACTIVITY_CONCURRENCY=4                  # optional – activity pollers
-   TEMPORAL_STICKY_CACHE_SIZE=256                   # optional – determinism cache capacity
-   TEMPORAL_STICKY_TTL_MS=300000                    # optional – eviction TTL in ms
-   TEMPORAL_STICKY_SCHEDULING_ENABLED=1             # optional – disable to bypass sticky scheduling
-   TEMPORAL_DETERMINISM_MARKER_MODE=delta           # optional – always|interval|delta|never
-   TEMPORAL_DETERMINISM_MARKER_INTERVAL_TASKS=10    # optional – record markers every N workflow tasks
-   TEMPORAL_DETERMINISM_MARKER_FULL_SNAPSHOT_INTERVAL_TASKS=50  # optional – full snapshot cadence in delta mode
-   TEMPORAL_DETERMINISM_MARKER_SKIP_UNCHANGED=1     # optional – skip identical determinism markers
-   TEMPORAL_DETERMINISM_MARKER_MAX_DETAIL_BYTES=1800000  # optional – skip markers exceeding size limit
-   TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_MS=4000     # optional – heartbeat throttle interval in ms
-   TEMPORAL_ACTIVITY_HEARTBEAT_RPC_TIMEOUT_MS=5000  # optional – heartbeat RPC timeout in ms
-   TEMPORAL_WORKER_BUILD_ID=git-sha                 # optional – build-id for versioning
-   ```
-
-````
-
-Defaults: determinism markers run in `delta` mode, record every 10 workflow tasks, take a full snapshot every 50 tasks, skip unchanged snapshots, and avoid emitting markers whose payloads exceed 1.8MB. Override any value with the env vars above.
-
-   > Running against `temporal server start-dev`? Omit TLS variables and set `TEMPORAL_ADDRESS=127.0.0.1:7233`. Set `TEMPORAL_ALLOW_INSECURE=1` when testing with self-signed certificates.
-
-3. **Build the SDK once**
-   ```bash
-   bun run build
-````
-
-4. **Run the Bun worker**
-
-   ```bash
-   # optional: in another shell
-   bun scripts/start-temporal-cli.ts
-
-   # run the worker
-   bun run start:worker
-   ```
-
-5. **Scaffold a new worker project**
-   ```bash
-   temporal-bun init hello-worker
-   ```
+- Docs: <https://docs.proompteng.ai/docs/temporal-bun-sdk>
+- Example app: <https://github.com/proompteng/lab/tree/main/packages/temporal-bun-sdk-example>
+- Package issues: <https://github.com/proompteng/lab/issues>
 
 ## Workflow updates
 

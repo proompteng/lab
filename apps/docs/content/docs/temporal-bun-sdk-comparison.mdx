@@ -1,0 +1,95 @@
+---
+title: Temporal Bun SDK vs Official TypeScript SDK
+description: Compare the Bun-native Temporal SDK with Temporal's official TypeScript and Node.js SDK.
+---
+
+This page compares `@proompteng/temporal-bun-sdk` with Temporal's official
+TypeScript SDK.
+
+The short version:
+
+- Choose the official TypeScript SDK if you want the default, officially
+  supported Node.js path.
+- Choose `@proompteng/temporal-bun-sdk` if you specifically want to run workers
+  and clients on Bun without relying on the Node-focused worker stack.
+
+## What the official SDK says
+
+Temporal's official TypeScript SDK is Node-first. The official
+[`temporalio/sdk-typescript`](https://github.com/temporalio/sdk-typescript)
+README says:
+
+- the SDK is officially supported on Node.js,
+- `@temporalio/client` is believed to work on other server-side runtimes,
+  including Bun, but is not regularly tested there,
+- worker-level features rely on several Node-specific features, and Temporal
+  strongly discourages running workers anywhere except real Node.js today.
+
+That means the comparison is not "two identical runtimes." They optimize for
+different execution environments.
+
+## Quick decision guide
+
+### Use the official TypeScript SDK when
+
+- You are happy running workers on Node.js.
+- You want the default, officially supported Temporal path.
+- You want the broadest community examples and upstream ecosystem alignment.
+- Your team does not care about Bun as a runtime choice.
+
+### Use the Temporal Bun SDK when
+
+- You want to run Temporal workers on Bun.
+- You want a pure TypeScript Bun runtime without a Node worker dependency path.
+- You want Bun-first tooling for scaffolding, replay, and Docker packaging.
+- You want the SDK surface, docs, and configuration centered on Bun workers
+  instead of Node workers.
+
+## Feature comparison
+
+| Area | `@proompteng/temporal-bun-sdk` | Official TypeScript SDK |
+| --- | --- | --- |
+| Worker runtime target | Bun-first | Node.js-first |
+| Official support status | Community/company package | Official Temporal SDK |
+| Client-only usage on Bun | Supported by this package | Possible, but not officially supported by Temporal |
+| Worker execution on Bun | Primary use case | Official docs discourage it |
+| Runtime model | Pure TypeScript Bun runtime | Node worker stack with Node-specific runtime features |
+| Cloud auth | `TEMPORAL_API_KEY` and `TEMPORAL_CLOUD_API_KEY` | Supported in official SDK ecosystem, but Bun workers are not the default path |
+| TLS and mTLS | Built-in config loader for CA, cert, key, and server name override | Supported in official SDK ecosystem |
+| CLI and project bootstrap | Bundled `temporal-bun` CLI | Official Temporal ecosystem provides its own tools and project scaffolds |
+
+## Tradeoffs
+
+### Where the Bun SDK wins
+
+- Bun worker runtime is the main target, not an experiment.
+- Configuration is centered around one env-driven loader for workers, clients,
+  TLS, retries, codecs, and observability.
+- The docs and examples can optimize for "run it on Bun" instead of "run it on
+  Node and maybe try Bun later."
+
+### Where the official SDK wins
+
+- It is the upstream SDK from Temporal.
+- It has the broadest ecosystem recognition, examples, and support expectations.
+- Node.js is the standard deployment path, which lowers adoption risk for many
+  teams.
+
+## Migration mindset
+
+The cleanest way to think about the Bun SDK is:
+
+- it is not trying to beat the official SDK at being the official SDK,
+- it is trying to offer a credible Bun-native worker path where the official SDK
+  remains Node-first.
+
+If your requirement is "official Temporal support on Node," choose the official
+TypeScript SDK.
+
+If your requirement is "run Temporal workers on Bun in production," this SDK is
+the more direct fit.
+
+## Related guides
+
+- [Temporal Bun SDK](/docs/temporal-bun-sdk)
+- [Temporal Cloud and TLS](/docs/temporal-bun-sdk-cloud-tls)
