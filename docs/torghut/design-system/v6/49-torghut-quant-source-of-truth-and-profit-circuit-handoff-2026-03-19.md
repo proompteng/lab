@@ -2,12 +2,16 @@
 
 ## Summary
 
-This document translates the March 19 cross-system architecture into Torghut-specific implementation scope.
-The canonical source-of-truth is:
+This document captures the March 19 baseline handoff that led to the current Torghut-local contract.
+The current canonical source-of-truth is:
 
-- `docs/agents/designs/49-jangar-control-plane-execution-truth-spine-and-torghut-profit-circuit-2026-03-19.md`
+- `docs/agents/designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md`
+- `docs/agents/designs/52-jangar-segment-authority-graph-and-promotion-certificate-fail-safe-2026-03-19.md`
+- `docs/torghut/design-system/v6/50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
+- `docs/torghut/design-system/v6/51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
 
-Use this Torghut document as the local handoff contract for engineer and deployer work inside the v6 pack.
+Keep this document as the March 19 evidence baseline, and use the newer Torghut document as the active handoff
+contract inside the v6 pack.
 
 ## Why this supersedes the March 16 Torghut plan docs
 

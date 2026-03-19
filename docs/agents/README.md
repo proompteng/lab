@@ -20,6 +20,9 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
 - Current Jangar/Torghut architecture contracts:
   - `designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md`
   - `../torghut/design-system/v6/50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
+  - `designs/50-torghut-hypothesis-capital-governor-and-data-quorum-2026-03-19.md`
+  - `designs/52-jangar-segment-authority-graph-and-promotion-certificate-fail-safe-2026-03-19.md`
+  - `../torghut/design-system/v6/51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
 - Security baseline: `threat-model.md`
 - RBAC requirements: `rbac-matrix.md`
 - Production bar (non-negotiables): `production-readiness-design.md`
@@ -164,6 +167,7 @@ For env and gRPC source-of-truth changes in this branch:
 - [designs/49-jangar-control-plane-authority-ledger-and-expiry-watchdog-2026-03-19.md](designs/49-jangar-control-plane-authority-ledger-and-expiry-watchdog-2026-03-19.md)
 - [designs/50-torghut-hypothesis-capital-governor-and-data-quorum-2026-03-19.md](designs/50-torghut-hypothesis-capital-governor-and-data-quorum-2026-03-19.md)
 - [designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md](designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md)
+- [designs/52-jangar-segment-authority-graph-and-promotion-certificate-fail-safe-2026-03-19.md](designs/52-jangar-segment-authority-graph-and-promotion-certificate-fail-safe-2026-03-19.md)
 - [designs/controller-finalizer-conventions.md](designs/controller-finalizer-conventions.md)
 - [designs/controller-kubectl-version-compat.md](designs/controller-kubectl-version-compat.md)
 - [designs/controller-namespace-scope-parse-validate.md](designs/controller-namespace-scope-parse-validate.md)
