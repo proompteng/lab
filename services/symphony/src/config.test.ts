@@ -112,7 +112,7 @@ describe('config normalization', () => {
       {
         LINEAR_API_KEY: 'token',
         POSTHOG_ENABLED: 'true',
-        POSTHOG_HOST: 'http://posthog-events.posthog.svc.cluster.local:8000',
+        POSTHOG_HOST: 'http://posthog-capture.posthog.svc.cluster.local:3000',
         POSTHOG_API_KEY: 'phc_demo',
         POSTHOG_PROJECT_ID: '1',
         POSTHOG_DISTINCT_ID: 'symphony:test',
@@ -124,7 +124,7 @@ describe('config normalization', () => {
 
     expect(config.posthog).toEqual({
       enabled: true,
-      host: 'http://posthog-events.posthog.svc.cluster.local:8000',
+      host: 'http://posthog-capture.posthog.svc.cluster.local:3000',
       apiKey: 'phc_demo',
       projectId: '1',
       distinctId: 'symphony:test',

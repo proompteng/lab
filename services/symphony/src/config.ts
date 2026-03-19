@@ -21,7 +21,7 @@ const DEFAULT_LINEAR_ENDPOINT = 'https://api.linear.app/graphql'
 const DEFAULT_ACTIVE_STATES = ['Todo', 'In Progress']
 const DEFAULT_TERMINAL_STATES = ['Closed', 'Cancelled', 'Canceled', 'Duplicate', 'Done']
 const DEFAULT_BLOCKED_LABELS = ['manual-only', 'secret-rotation', 'cluster-recovery', 'cross-repo', 'db-migration']
-const DEFAULT_POSTHOG_HOST = 'http://posthog-events.posthog.svc.cluster.local:8000'
+const DEFAULT_POSTHOG_HOST = 'http://posthog-capture.posthog.svc.cluster.local:3000'
 
 const RawSectionSchema = Schema.Struct({
   tracker: Schema.optionalWith(
