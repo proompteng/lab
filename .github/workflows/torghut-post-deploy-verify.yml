@@ -390,7 +390,7 @@ jobs:
             ta_deployment: torghut-ta-sim
             torghut_service: torghut-sim
             torghut_forecast_service: torghut-forecast-sim
-            output_root: /tmp/torghut-simulations
+            output_root: artifacts/torghut/simulations
           rollouts:
             enabled: true
             namespace: torghut
@@ -434,129 +434,154 @@ jobs:
             echo "manifest_path=${MANIFEST_PATH}"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Submit historical replay workflow
+      - name: Submit historical replay via Jangar control plane
         id: submit
         shell: bash
         run: |
           set -euo pipefail
 
-          MANIFEST_B64="$(base64 < '${{ steps.manifest.outputs.manifest_path }}' | tr -d '\n')"
-          WORKFLOW_NAME="$(
-            kubectl create -n argo-workflows -f - -o jsonpath='{.metadata.name}' <<EOF
-          apiVersion: argoproj.io/v1alpha1
-          kind: Workflow
-          metadata:
-            generateName: torghut-mar18-open30-
-            namespace: argo-workflows
-          spec:
-            workflowTemplateRef:
-              name: torghut-historical-simulation
-            arguments:
-              parameters:
-                - name: runId
-                  value: '${{ steps.manifest.outputs.run_id }}'
-                - name: mode
-                  value: run
-                - name: datasetManifestB64
-                  value: '${MANIFEST_B64}'
-                - name: confirmPhrase
-                  value: START_HISTORICAL_SIMULATION
-                - name: forceReplay
-                  value: 'false'
-                - name: forceDump
-                  value: 'true'
-                - name: outputRoot
-                  value: /tmp/torghut-simulations
-          EOF
-          )"
+          mkdir -p artifacts/replay
+          REQUEST_BODY="${RUNNER_TEMP}/simulation-run-request.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import yaml
 
-          echo "workflow_name=${WORKFLOW_NAME}" >> "${GITHUB_OUTPUT}"
+          manifest_path = Path(os.environ['MANIFEST_PATH'])
+          manifest = yaml.safe_load(manifest_path.read_text(encoding='utf-8'))
+          payload = {
+              'runId': os.environ['RUN_ID'],
+              'manifest': manifest,
+              'forceReplay': False,
+              'forceDump': True,
+              'outputRoot': f"artifacts/torghut/simulations/open30-{os.environ['GITHUB_RUN_ID']}",
+              'metadata': {
+                  'submittedFrom': 'github-actions',
+                  'githubRunId': os.environ['GITHUB_RUN_ID'],
+                  'githubRunAttempt': os.environ['GITHUB_RUN_ATTEMPT'],
+              },
+          }
+          Path(os.environ['REQUEST_BODY']).write_text(json.dumps(payload), encoding='utf-8')
+          PY
 
-      - name: Wait for replay workflow
+          ACCEPTED='false'
+          for attempt in $(seq 1 24); do
+            HTTP_CODE="$(
+              curl -sS \
+                -o artifacts/replay/submit-response.json \
+                -w '%{http_code}' \
+                -X POST \
+                -H 'content-type: application/json' \
+                -H 'x-user: github-actions' \
+                --data @"${REQUEST_BODY}" \
+                http://jangar.jangar.svc.cluster.local:8080/api/torghut/simulation/runs || true
+            )"
+            printf '%s\n' "${HTTP_CODE}" > artifacts/replay/submit-response.status
+            if [ "${HTTP_CODE}" = '202' ]; then
+              ACCEPTED='true'
+              break
+            fi
+            if [ "${HTTP_CODE}" = '503' ]; then
+              sleep 5
+              continue
+            fi
+            cat artifacts/replay/submit-response.json
+            exit 1
+          done
+
+          if [ "${ACCEPTED}" != 'true' ]; then
+            echo 'Timed out waiting for the Jangar leader to accept simulation submission'
+            cat artifacts/replay/submit-response.json
+            exit 1
+          fi
+
+          RUN_ID="$(jq -r '.run.runId' artifacts/replay/submit-response.json)"
+          STATUS_PATH="$(jq -r '.status_url' artifacts/replay/submit-response.json)"
+          ARTIFACTS_PATH="$(jq -r '.artifacts_url' artifacts/replay/submit-response.json)"
+          STREAM_PATH="$(jq -r '.stream_url' artifacts/replay/submit-response.json)"
+          WORKFLOW_NAME="$(jq -r '.run.workflowName // empty' artifacts/replay/submit-response.json)"
+          {
+            echo "run_id=${RUN_ID}"
+            echo "status_path=${STATUS_PATH}"
+            echo "artifacts_path=${ARTIFACTS_PATH}"
+            echo "stream_path=${STREAM_PATH}"
+            echo "workflow_name=${WORKFLOW_NAME}"
+          } >> "${GITHUB_OUTPUT}"
+        env:
+          MANIFEST_PATH: ${{ steps.manifest.outputs.manifest_path }}
+          REQUEST_BODY: ${{ runner.temp }}/simulation-run-request.json
+          RUN_ID: ${{ steps.manifest.outputs.run_id }}
+
+      - name: Wait for replay completion via Jangar control plane
         shell: bash
         run: |
           set -euo pipefail
 
-          WORKFLOW_NAME="${{ steps.submit.outputs.workflow_name }}"
+          STATUS_URL="http://jangar.jangar.svc.cluster.local:8080${{ steps.submit.outputs.status_path }}"
+          mkdir -p artifacts/replay/history
           for attempt in $(seq 1 480); do
-            PHASE="$(kubectl get workflow "${WORKFLOW_NAME}" -n argo-workflows -o jsonpath='{.status.phase}')"
-            echo "workflow=${WORKFLOW_NAME} phase=${PHASE} attempt=${attempt}"
-            if [ "${PHASE}" = "Succeeded" ]; then
+            HTTP_CODE="$(curl -sS -o artifacts/replay/run-status.json -w '%{http_code}' "${STATUS_URL}" || true)"
+            printf '%s\n' "${HTTP_CODE}" > artifacts/replay/run-status.status
+            if [ "${HTTP_CODE}" != '200' ]; then
+              cat artifacts/replay/run-status.json
+              exit 1
+            fi
+
+            cp artifacts/replay/run-status.json "artifacts/replay/history/run-status-${attempt}.json"
+            STATUS="$(jq -r '.run.status // empty' artifacts/replay/run-status.json)"
+            WORKFLOW_PHASE="$(jq -r '.run.workflowPhase // empty' artifacts/replay/run-status.json)"
+            echo "run=${{ steps.submit.outputs.run_id }} status=${STATUS} workflow_phase=${WORKFLOW_PHASE} attempt=${attempt}"
+            if [ "${STATUS}" = "succeeded" ]; then
               exit 0
             fi
-            if [ "${PHASE}" = "Failed" ] || [ "${PHASE}" = "Error" ]; then
-              kubectl get workflow "${WORKFLOW_NAME}" -n argo-workflows -o yaml
+            if [ "${STATUS}" = "failed" ] || [ "${STATUS}" = "cancelled" ]; then
+              cat artifacts/replay/run-status.json
               exit 1
             fi
             sleep 15
           done
 
-          kubectl get workflow "${WORKFLOW_NAME}" -n argo-workflows -o yaml
           echo "Replay workflow timed out"
           exit 1
 
-      - name: Collect workflow status and logs
+      - name: Collect workflow status and artifacts
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
 
           mkdir -p artifacts/replay
-          WORKFLOW_NAME="${{ steps.submit.outputs.workflow_name }}"
-
-          kubectl get workflow "${WORKFLOW_NAME}" -n argo-workflows -o json > artifacts/replay/workflow.json
-          kubectl get pods -n argo-workflows -l workflows.argoproj.io/workflow="${WORKFLOW_NAME}" -o json \
-            > artifacts/replay/workflow-pods.json
-
-          mapfile -t PODS < <(
-            jq -r '.items[].metadata.name' artifacts/replay/workflow-pods.json | sed '/^$/d'
-          )
-          if [ "${#PODS[@]}" -eq 0 ]; then
-            echo 'No workflow pods found'
-            exit 1
+          if [ -n "${{ steps.submit.outputs.status_path }}" ]; then
+            curl -sS \
+              "http://jangar.jangar.svc.cluster.local:8080${{ steps.submit.outputs.status_path }}" \
+              > artifacts/replay/run-status-final.json || true
+          fi
+          if [ -n "${{ steps.submit.outputs.artifacts_path }}" ]; then
+            curl -sS \
+              "http://jangar.jangar.svc.cluster.local:8080${{ steps.submit.outputs.artifacts_path }}" \
+              > artifacts/replay/run-artifacts.json || true
           fi
 
-          mkdir -p artifacts/replay/pods
-          for pod in "${PODS[@]}"; do
-            kubectl logs -n argo-workflows "${pod}" > "artifacts/replay/pods/${pod}.log" || true
-          done
-
-          cat artifacts/replay/pods/*.log > artifacts/replay/workflow.log
-
       - name: Assert non-zero execution proof
+        if: success()
         shell: bash
         run: |
           set -euo pipefail
 
-          python - <<'PY'
-          import json
-          from pathlib import Path
+          REPORT_SOURCE='artifacts/replay/run-status-final.json'
+          if [ ! -f "${REPORT_SOURCE}" ]; then
+            REPORT_SOURCE='artifacts/replay/run-status.json'
+          fi
 
-          log_path = Path('artifacts/replay/workflow.log')
-          for line in reversed(log_path.read_text(encoding='utf-8').splitlines()):
-              text = line.strip()
-              if not text or not text.startswith('{'):
-                  continue
-              try:
-                  payload = json.loads(text)
-              except json.JSONDecodeError:
-                  continue
-              Path('artifacts/replay/final-report.json').write_text(
-                  json.dumps(payload, indent=2, sort_keys=True),
-                  encoding='utf-8',
-              )
-              break
-          else:
-              raise SystemExit('Final JSON report not found in workflow log')
-          PY
+          jq '.run.finalVerdict | {status,decisions,executions,executionTcaMetrics,executionOrderEvents,activityClassification,legacyPathCount,imageDigest}' \
+            "${REPORT_SOURCE}" | tee artifacts/replay/final-snapshot.json
+          jq '.run | {runId,status,workflowName,workflowPhase,cacheStatus,laneId,artifactRoot,outputRoot}' \
+            "${REPORT_SOURCE}" | tee artifacts/replay/run-summary.json
 
-          jq '.monitor.final_snapshot | {trade_decisions,executions,execution_tca_metrics,execution_order_events,cursor_at,last_signal_ts,last_price_ts}' \
-            artifacts/replay/final-report.json | tee artifacts/replay/final-snapshot.json
-          jq '.strategy_proof | {strategy_type,legacy_path_count,fallback_order_count}' \
-            artifacts/replay/final-report.json | tee artifacts/replay/strategy-proof.json
-
-          EXECUTIONS="$(jq -r '.monitor.final_snapshot.executions // 0' artifacts/replay/final-report.json)"
-          DECISIONS="$(jq -r '.monitor.final_snapshot.trade_decisions // 0' artifacts/replay/final-report.json)"
-          LEGACY_PATHS="$(jq -r '.strategy_proof.legacy_path_count // 0' artifacts/replay/final-report.json)"
+          EXECUTIONS="$(jq -r '.run.finalVerdict.executions // 0' "${REPORT_SOURCE}")"
+          DECISIONS="$(jq -r '.run.finalVerdict.decisions // 0' "${REPORT_SOURCE}")"
+          LEGACY_PATHS="$(jq -r '.run.finalVerdict.legacyPathCount // 0' "${REPORT_SOURCE}")"
           if [ "${DECISIONS}" -lt 1 ] || [ "${EXECUTIONS}" -lt 1 ]; then
             echo "Replay did not produce non-zero decisions/executions"
             exit 1
@@ -567,6 +592,7 @@ jobs:
           fi
 
       - name: Upload inspection artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: torghut-mar18-open30-inspection
