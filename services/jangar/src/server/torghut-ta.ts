@@ -1,3 +1,4 @@
+import type { ClickHouseClient } from '~/server/clickhouse'
 import { normalizeTorghutSymbol } from '~/server/torghut-symbols'
 
 type ValidationResult<T> = { ok: true; value: T } | { ok: false; message: string }
@@ -60,6 +61,25 @@ export const parseClickHouseDateTime64 = (value: string | null | undefined) => {
   const parsed = new Date(withZone)
   if (Number.isNaN(parsed.getTime())) return null
   return parsed
+}
+
+const startOfUtcDay = (value: Date) => {
+  const start = new Date(value)
+  start.setUTCHours(0, 0, 0, 0)
+  return start
+}
+
+const toIsoFromEpochMs = (value: unknown) => {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return new Date(value).toISOString()
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return new Date(parsed).toISOString()
+    }
+  }
+  return null
 }
 
 const parseLimit = (value: string | null, fallback: number) => {
@@ -145,4 +165,58 @@ export const computeFallbackRange = (params: {
     from: formatClickHouseDateTime64(fallbackFrom),
     to: formatClickHouseDateTime64(latestDate),
   }
+}
+
+export const queryLatestTaTableEventTs = async (params: {
+  client: ClickHouseClient
+  table: 'ta_microbars' | 'ta_signals'
+  symbol: string
+}) => {
+  try {
+    const metadataRows = await params.client.queryJson<{ as_of_ms: number | string | null }>(
+      `
+        SELECT nullIf(toUnixTimestamp(max(max_time)) * 1000, 0) AS as_of_ms
+        FROM system.parts
+        WHERE active
+          AND database = currentDatabase()
+          AND table = '${params.table}'
+      `,
+    )
+
+    const metadataAsOf = toIsoFromEpochMs(metadataRows[0]?.as_of_ms)
+    if (metadataAsOf) {
+      const partitionStart = startOfUtcDay(new Date(metadataAsOf))
+      const partitionEnd = new Date(partitionStart)
+      partitionEnd.setUTCDate(partitionEnd.getUTCDate() + 1)
+
+      const rows = await params.client.queryJson<{ latest: string | null }>(
+        `
+          SELECT max(event_ts) as latest
+          FROM ${params.table}
+          WHERE symbol = {symbol:String}
+            AND event_ts >= {partition_start:DateTime}
+            AND event_ts < {partition_end:DateTime}
+        `,
+        {
+          symbol: params.symbol,
+          partition_start: partitionStart,
+          partition_end: partitionEnd,
+        },
+      )
+
+      const latest = rows[0]?.latest
+      return typeof latest === 'string' ? latest : null
+    }
+  } catch {}
+
+  const rows = await params.client.queryJson<{ latest: string | null }>(
+    `
+      SELECT max(event_ts) as latest
+      FROM ${params.table}
+      WHERE symbol = {symbol:String}
+    `,
+    { symbol: params.symbol },
+  )
+  const latest = rows[0]?.latest
+  return typeof latest === 'string' ? latest : null
 }

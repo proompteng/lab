@@ -112,16 +112,24 @@ describe('torghut quant metrics helpers', () => {
   })
 
   it('prefers low-memory ta freshness metadata when available', async () => {
-    const queryJson = vi.fn().mockResolvedValue([{ as_of_ms: 1772834348000 }])
+    const queryJson = vi
+      .fn()
+      .mockResolvedValueOnce([{ as_of_ms: 1772834348000 }])
+      .mockResolvedValueOnce([{ as_of: '2026-03-06T21:59:08.000Z' }])
 
     const freshness = await __private.queryLatestTaSignalFreshness({ queryJson })
 
     expect(freshness).toEqual({
       asOf: '2026-03-06T21:59:08.000Z',
-      source: 'ta_signals.system.parts.max_time',
+      source: 'ta_signals.system.parts.partition_scoped_event_ts',
     })
-    expect(queryJson).toHaveBeenCalledTimes(1)
+    expect(queryJson).toHaveBeenCalledTimes(2)
     expect(queryJson.mock.calls[0]?.[0]).toContain('FROM system.parts')
+    expect(queryJson.mock.calls[1]?.[0]).toContain('WHERE event_ts >= {partition_start:DateTime}')
+    expect(queryJson.mock.calls[1]?.[1]).toEqual({
+      partition_start: new Date('2026-03-06T00:00:00.000Z'),
+      partition_end: new Date('2026-03-07T00:00:00.000Z'),
+    })
   })
 
   it('falls back to the precise ta_signals aggregate when metadata lookup fails', async () => {

@@ -1,7 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
-import type { ClickHouseClient } from '~/server/clickhouse'
 import { resolveClickHouseClient } from '~/server/clickhouse'
-import { computeFallbackRange, parseTaRangeParams } from '~/server/torghut-ta'
+import { computeFallbackRange, parseTaRangeParams, queryLatestTaTableEventTs } from '~/server/torghut-ta'
 
 export const Route = createFileRoute('/api/torghut/ta/signals')({
   server: {
@@ -30,17 +29,6 @@ const buildRangePayload = (requested: { from: string; to: string }, effective?: 
   fallback: Boolean(effective && (effective.from !== requested.from || effective.to !== requested.to)),
 })
 
-const getLatestEventTs = async (client: ClickHouseClient, symbol: string) => {
-  const latestQuery = `
-    SELECT max(event_ts) as latest
-    FROM ta_signals
-    WHERE symbol = {symbol:String}
-  `
-  const result = await client.queryJson(latestQuery, { symbol })
-  const latest = result[0] as Record<string, unknown> | undefined
-  return typeof latest?.latest === 'string' ? latest.latest : null
-}
-
 export const getSignalsHandler = async (request: Request) => {
   const url = new URL(request.url)
   const parsed = parseTaRangeParams(url)
@@ -67,7 +55,11 @@ export const getSignalsHandler = async (request: Request) => {
       return jsonResponse({ ok: true, symbol, items, range: buildRangePayload({ from, to }) })
     }
 
-    const latest = await getLatestEventTs(clientResult.client, symbol)
+    const latest = await queryLatestTaTableEventTs({
+      client: clientResult.client,
+      table: 'ta_signals',
+      symbol,
+    })
     const fallbackRange = latest ? computeFallbackRange({ from, to, latest }) : null
     if (fallbackRange) {
       const fallbackItems = await clientResult.client.queryJson(query, {

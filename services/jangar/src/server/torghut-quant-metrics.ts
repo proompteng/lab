@@ -16,7 +16,7 @@ const LATEST_TA_SIGNAL_ERROR_LOG_COOLDOWN_MS = 5 * 60_000
 
 type LatestTaSignalFreshness = {
   asOf: string
-  source: 'ta_signals.system.parts.max_time' | 'ta_signals.event_ts'
+  source: 'ta_signals.system.parts.partition_scoped_event_ts' | 'ta_signals.event_ts'
 }
 
 let latestTaSignalFreshnessCache: LatestTaSignalFreshness | null = null
@@ -57,6 +57,12 @@ const toIsoFromEpochMs = (value: unknown) => {
   const asOf = new Date(epochMs)
   if (Number.isNaN(asOf.getTime())) return null
   return asOf.toISOString()
+}
+
+const startOfUtcDay = (value: Date) => {
+  const start = new Date(value)
+  start.setUTCHours(0, 0, 0, 0)
+  return start
 }
 
 const secondsBetween = (nowMs: number, asOfIso: string) => {
@@ -136,9 +142,28 @@ const queryLatestTaSignalFreshness = async (client: ClickHouseClient): Promise<L
 
     const metadataAsOf = toIsoFromEpochMs(metadataRows[0]?.as_of_ms)
     if (metadataAsOf) {
+      const partitionStart = startOfUtcDay(new Date(metadataAsOf))
+      const partitionEnd = new Date(partitionStart)
+      partitionEnd.setUTCDate(partitionEnd.getUTCDate() + 1)
+
+      const scopedRows = await client.queryJson<{ as_of: string | null }>(
+        `
+          SELECT max(event_ts) as as_of
+          FROM ta_signals
+          WHERE event_ts >= {partition_start:DateTime}
+            AND event_ts < {partition_end:DateTime}
+        `,
+        {
+          partition_start: partitionStart,
+          partition_end: partitionEnd,
+        },
+      )
+
+      const asOf = scopedRows[0]?.as_of
+      if (!asOf) return null
       return {
-        asOf: metadataAsOf,
-        source: 'ta_signals.system.parts.max_time',
+        asOf: new Date(asOf).toISOString(),
+        source: 'ta_signals.system.parts.partition_scoped_event_ts',
       }
     }
     return null
