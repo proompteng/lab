@@ -94,6 +94,125 @@ const deliveryLayer = Layer.succeed(DeliveryService, {
 })
 
 describe('orchestrator lifecycle', () => {
+  test('recovers from a timed out poll command and dispatches on the next refresh', async () => {
+    const previousCommandTimeout = process.env.SYMPHONY_COMMAND_TIMEOUT_MS
+    const previousPollTimeout = process.env.SYMPHONY_POLL_TICK_TIMEOUT_MS
+    process.env.SYMPHONY_COMMAND_TIMEOUT_MS = '25'
+    process.env.SYMPHONY_POLL_TICK_TIMEOUT_MS = '25'
+
+    const config = makeTestConfig({
+      pollingIntervalMs: 60_000,
+      health: { preDispatch: [], postDeploy: [] },
+    })
+
+    let fetchCandidateIssuesCalls = 0
+    let preDispatchChecks = 0
+
+    const runtime = ManagedRuntime.make(
+      makeOrchestratorLayer(createLogger({ test: 'orchestrator-poll-timeout-recovery' })).pipe(
+        Layer.provide(
+          Layer.succeed(WorkflowService, {
+            current: Effect.succeed({
+              definition: { config: {}, promptTemplate: 'Work on {{issue.identifier}}' },
+              config,
+            }),
+            config: Effect.succeed(config),
+            reload: Effect.succeed({
+              definition: { config: {}, promptTemplate: 'Work on {{issue.identifier}}' },
+              config,
+            }),
+            changes: Stream.empty,
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(TrackerService, {
+            fetchCandidateIssues: Effect.sync(() => {
+              fetchCandidateIssuesCalls += 1
+              return [candidateIssue]
+            }),
+            fetchIssuesByStates: () => Effect.succeed([]),
+            fetchIssueStatesByIds: () => Effect.succeed([candidateIssue]),
+            executeLinearGraphql: () => Effect.succeed({}),
+            handoffIssue: () => Effect.void,
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(WorkspaceService, {
+            createForIssue: () => Effect.die('not used'),
+            runBeforeRun: () => Effect.void,
+            runAfterRun: () => Effect.void,
+            removeWorkspace: () => Effect.void,
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(IssueRunnerService, {
+            runAttempt: (_issue, _attempt, callbacks, _telemetryContext) =>
+              callbacks.onWorkspacePath('/workspace/symphony/ABC-1').pipe(Effect.zipRight(Effect.never)),
+          }),
+        ),
+        Layer.provide(posthogLayer),
+        Layer.provide(deliveryLayer),
+        Layer.provide(
+          Layer.succeed(LeaderElectionService, {
+            start: Effect.void,
+            stop: Effect.void,
+            status: Effect.succeed(leaderSnapshot),
+            changes: Stream.empty,
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(StateStoreService, {
+            load: Effect.succeed(emptyPersistedSchedulerState()),
+            save: () => Effect.void,
+            stateFilePath: Effect.succeed('/tmp/symphony-state.json'),
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(TargetHealthService, {
+            evaluatePreDispatch: Effect.sync(() => {
+              preDispatchChecks += 1
+              return preDispatchChecks
+            }).pipe(Effect.flatMap((attempt) => (attempt === 1 ? Effect.never : Effect.succeed(targetHealthSummary)))),
+          }),
+        ),
+      ),
+    )
+
+    try {
+      await runtime.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const orchestrator = yield* OrchestratorService
+            yield* orchestrator.start
+            yield* Effect.sleep(75)
+            yield* orchestrator.triggerRefresh
+            yield* Effect.sleep(75)
+
+            const snapshot = yield* orchestrator.getSnapshot
+            expect(preDispatchChecks).toBeGreaterThanOrEqual(2)
+            expect(fetchCandidateIssuesCalls).toBeGreaterThan(0)
+            expect(snapshot.counts.running).toBe(1)
+            expect(snapshot.running[0]?.issueIdentifier).toBe('ABC-1')
+
+            yield* orchestrator.stop
+          }),
+        ),
+      )
+    } finally {
+      if (previousCommandTimeout === undefined) {
+        delete process.env.SYMPHONY_COMMAND_TIMEOUT_MS
+      } else {
+        process.env.SYMPHONY_COMMAND_TIMEOUT_MS = previousCommandTimeout
+      }
+      if (previousPollTimeout === undefined) {
+        delete process.env.SYMPHONY_POLL_TICK_TIMEOUT_MS
+      } else {
+        process.env.SYMPHONY_POLL_TICK_TIMEOUT_MS = previousPollTimeout
+      }
+      await runtime.dispose()
+    }
+  })
+
   test('continues processing refresh work after start returns', async () => {
     const config = makeTestConfig({
       pollingIntervalMs: 60_000,

@@ -6,12 +6,16 @@ import { Context, Effect, Layer } from 'effect'
 
 import { OrchestratorError, toLogError } from './errors'
 import type { HealthCheckConfig, TargetHealthCheckResult, TargetHealthSummary } from './types'
+import { readPositiveNumber } from './utils'
 import { WorkflowService } from './workflow'
 import type { Logger } from './logger'
 
 const SERVICE_ACCOUNT_DIRECTORY = '/var/run/secrets/kubernetes.io/serviceaccount'
 const TOKEN_PATH = `${SERVICE_ACCOUNT_DIRECTORY}/token`
 const CA_PATH = `${SERVICE_ACCOUNT_DIRECTORY}/ca.crt`
+const DEFAULT_GITHUB_REQUEST_TIMEOUT_MS = 15_000
+const DEFAULT_HTTP_CHECK_TIMEOUT_MS = 5_000
+const DEFAULT_KUBERNETES_REQUEST_TIMEOUT_MS = 10_000
 
 type KubernetesResponse = {
   status: number
@@ -23,6 +27,7 @@ const requestKubernetes = (
   path: string,
   token: string,
   ca: string,
+  timeoutMs: number,
 ): Effect.Effect<KubernetesResponse, OrchestratorError, never> =>
   Effect.tryPromise({
     try: () =>
@@ -58,7 +63,17 @@ const requestKubernetes = (
           },
         )
 
-        request.on('error', reject)
+        const timeout = setTimeout(() => {
+          request.destroy(new Error(`kubernetes request timed out after ${timeoutMs}ms`))
+        }, timeoutMs)
+
+        request.on('error', (error) => {
+          clearTimeout(timeout)
+          reject(error)
+        })
+        request.on('close', () => {
+          clearTimeout(timeout)
+        })
         request.end()
       }),
     catch: (error) => new OrchestratorError('target_health_check_failed', 'kubernetes request failed', error),
@@ -83,6 +98,7 @@ const evaluateArgoApplicationCheck = (
   check: HealthCheckConfig,
   token: string,
   ca: string,
+  timeoutMs: number,
 ): Effect.Effect<TargetHealthCheckResult, OrchestratorError, never> => {
   const namespace = check.namespace ?? 'argocd'
   const application = check.application ?? ''
@@ -98,6 +114,7 @@ const evaluateArgoApplicationCheck = (
     `/apis/argoproj.io/v1alpha1/namespaces/${namespace}/applications/${application}`,
     token,
     ca,
+    timeoutMs,
   ).pipe(
     Effect.flatMap((response) => {
       if (response.status !== 200) {
@@ -137,6 +154,7 @@ const evaluateKnativeServiceCheck = (
   check: HealthCheckConfig,
   token: string,
   ca: string,
+  timeoutMs: number,
 ): Effect.Effect<TargetHealthCheckResult, OrchestratorError, never> => {
   const namespace = check.namespace ?? ''
   const serviceName = check.resourceName ?? ''
@@ -151,6 +169,7 @@ const evaluateKnativeServiceCheck = (
     `/apis/serving.knative.dev/v1/namespaces/${namespace}/services/${serviceName}`,
     token,
     ca,
+    timeoutMs,
   ).pipe(
     Effect.flatMap((response) => {
       if (response.status !== 200) {
@@ -223,6 +242,7 @@ const evaluateKubernetesResourceCheck = (
   check: HealthCheckConfig,
   token: string,
   ca: string,
+  timeoutMs: number,
 ): Effect.Effect<TargetHealthCheckResult, OrchestratorError, never> =>
   Effect.try({
     try: () => deriveResourcePath(check),
@@ -231,7 +251,7 @@ const evaluateKubernetesResourceCheck = (
         ? error
         : new OrchestratorError('target_health_check_failed', 'failed to resolve kubernetes resource path', error),
   }).pipe(
-    Effect.flatMap((resourcePath) => requestKubernetes('GET', resourcePath, token, ca)),
+    Effect.flatMap((resourcePath) => requestKubernetes('GET', resourcePath, token, ca, timeoutMs)),
     Effect.flatMap((response) => {
       if (response.status !== 200) {
         return Effect.fail(
@@ -319,6 +339,7 @@ const evaluateKubernetesResourceCheck = (
 
 const evaluateHttpCheck = (
   check: HealthCheckConfig,
+  timeoutMs: number,
 ): Effect.Effect<TargetHealthCheckResult, OrchestratorError, never> => {
   const url = check.url ?? ''
   if (!url) {
@@ -327,8 +348,17 @@ const evaluateHttpCheck = (
 
   return Effect.tryPromise({
     try: async () => {
-      const response = await fetch(url)
-      return response.status
+      const controller = new AbortController()
+      const timeout = setTimeout(() => {
+        controller.abort(`http check timed out after ${timeoutMs}ms`)
+      }, timeoutMs)
+
+      try {
+        const response = await fetch(url, { signal: controller.signal })
+        return response.status
+      } finally {
+        clearTimeout(timeout)
+      }
     },
     catch: (error) => new OrchestratorError('target_health_check_failed', `failed to fetch ${url}`, error),
   }).pipe(
@@ -352,16 +382,18 @@ const evaluateCheck = (
   check: HealthCheckConfig,
   token: string,
   ca: string,
+  httpCheckTimeoutMs: number,
+  kubernetesRequestTimeoutMs: number,
 ): Effect.Effect<TargetHealthCheckResult, OrchestratorError, never> => {
   switch (check.type) {
     case 'argocd_application':
-      return evaluateArgoApplicationCheck(check, token, ca)
+      return evaluateArgoApplicationCheck(check, token, ca, kubernetesRequestTimeoutMs)
     case 'http':
-      return evaluateHttpCheck(check)
+      return evaluateHttpCheck(check, httpCheckTimeoutMs)
     case 'knative_service':
-      return evaluateKnativeServiceCheck(check, token, ca)
+      return evaluateKnativeServiceCheck(check, token, ca, kubernetesRequestTimeoutMs)
     case 'kubernetes_resource':
-      return evaluateKubernetesResourceCheck(check, token, ca)
+      return evaluateKubernetesResourceCheck(check, token, ca, kubernetesRequestTimeoutMs)
   }
 }
 
@@ -370,6 +402,7 @@ const fetchOpenPromotionPrCount = (
   defaultBranch: string,
   promotionBranchPrefix: string,
   token: string | null,
+  timeoutMs: number,
 ): Effect.Effect<number, OrchestratorError, never> => {
   if (!promotionBranchPrefix) return Effect.succeed(0)
   if (!token) {
@@ -378,25 +411,35 @@ const fetchOpenPromotionPrCount = (
 
   return Effect.tryPromise({
     try: async () => {
-      const response = await fetch(
-        `https://api.github.com/repos/${repo}/pulls?state=open&base=${encodeURIComponent(defaultBranch)}&per_page=100`,
-        {
-          headers: {
-            authorization: `Bearer ${token}`,
-            accept: 'application/vnd.github+json',
-            'user-agent': 'symphony',
+      const controller = new AbortController()
+      const timeout = setTimeout(() => {
+        controller.abort(`github request timed out after ${timeoutMs}ms`)
+      }, timeoutMs)
+
+      try {
+        const response = await fetch(
+          `https://api.github.com/repos/${repo}/pulls?state=open&base=${encodeURIComponent(defaultBranch)}&per_page=100`,
+          {
+            headers: {
+              authorization: `Bearer ${token}`,
+              accept: 'application/vnd.github+json',
+              'user-agent': 'symphony',
+            },
+            signal: controller.signal,
           },
-        },
-      )
-      if (!response.ok) {
-        throw new OrchestratorError(
-          'target_health_check_failed',
-          `github pull request list returned ${response.status}`,
-          await response.text(),
         )
+        if (!response.ok) {
+          throw new OrchestratorError(
+            'target_health_check_failed',
+            `github pull request list returned ${response.status}`,
+            await response.text(),
+          )
+        }
+        const payload = (await response.json()) as Array<{ head?: { ref?: string } }>
+        return payload.filter((pullRequest) => (pullRequest.head?.ref ?? '').startsWith(promotionBranchPrefix)).length
+      } finally {
+        clearTimeout(timeout)
       }
-      const payload = (await response.json()) as Array<{ head?: { ref?: string } }>
-      return payload.filter((pullRequest) => (pullRequest.head?.ref ?? '').startsWith(promotionBranchPrefix)).length
     },
     catch: (error) =>
       error instanceof OrchestratorError
@@ -420,6 +463,18 @@ export const makeTargetHealthLayer = (logger: Logger) =>
     Effect.gen(function* () {
       const workflow = yield* WorkflowService
       const targetLogger = logger.child({ component: 'target-health' })
+      const githubRequestTimeoutMs = readPositiveNumber(
+        process.env.SYMPHONY_GITHUB_REQUEST_TIMEOUT_MS,
+        DEFAULT_GITHUB_REQUEST_TIMEOUT_MS,
+      )
+      const httpCheckTimeoutMs = readPositiveNumber(
+        process.env.SYMPHONY_HTTP_CHECK_TIMEOUT_MS,
+        DEFAULT_HTTP_CHECK_TIMEOUT_MS,
+      )
+      const kubernetesRequestTimeoutMs = readPositiveNumber(
+        process.env.SYMPHONY_KUBERNETES_REQUEST_TIMEOUT_MS,
+        DEFAULT_KUBERNETES_REQUEST_TIMEOUT_MS,
+      )
 
       return {
         evaluatePreDispatch: workflow.current.pipe(
@@ -431,7 +486,7 @@ export const makeTargetHealthLayer = (logger: Logger) =>
               const githubToken = process.env.GH_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim() || null
 
               const checks = yield* Effect.forEach(config.health.preDispatch, (check) =>
-                evaluateCheck(check, token, ca).pipe(
+                evaluateCheck(check, token, ca, httpCheckTimeoutMs, kubernetesRequestTimeoutMs).pipe(
                   Effect.catchAll((error) =>
                     Effect.succeed({
                       name: check.name,
@@ -449,6 +504,7 @@ export const makeTargetHealthLayer = (logger: Logger) =>
                 config.target.defaultBranch,
                 config.release.promotionBranchPrefix,
                 githubToken,
+                githubRequestTimeoutMs,
               ).pipe(
                 Effect.catchAll((error) => {
                   targetLogger.log('warn', 'target_health_github_query_failed', toLogError(error))
