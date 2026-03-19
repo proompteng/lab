@@ -10,6 +10,7 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `52-torghut-profit-sleeves-segment-scoped-deallocation-and-evidence-decay-2026-03-19.md`
   - `50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
   - `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
   - `40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md`
@@ -22,6 +23,7 @@
 - `50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
 - `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/53-jangar-dependency-provenance-ledger-and-consumer-acknowledged-admission-2026-03-19.md`
   - `docs/agents/designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md`
   - `docs/agents/designs/49-jangar-control-plane-execution-truth-spine-and-torghut-profit-circuit-2026-03-19.md`
   - `docs/agents/designs/52-jangar-rollout-epoch-witness-and-segment-circuit-breakers-2026-03-19.md`
@@ -83,9 +85,15 @@ Current source-state priority is narrower:
 - `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md` now turns the March 19
   live contradictions into a stricter capital contract: non-observe capital requires an expiring profit reservation,
   a healthy schema witness, and owned simulation-slot capacity.
+- `52-torghut-profit-sleeves-segment-scoped-deallocation-and-evidence-decay-2026-03-19.md` now makes that capital
+  contract hypothesis-local: each sleeve carries segment requirements, evidence expiry, overlap caps, and typed
+  alert-driven deallocation.
 - `docs/agents/designs/52-jangar-rollout-epoch-witness-and-segment-circuit-breakers-2026-03-19.md` now extends the
   March 19 authority-ledger work by requiring consumer acknowledgement of rollout epochs and by turning Huly transport
   failures into explicit segment circuit breakers rather than implicit fatal preconditions.
+- `docs/agents/designs/53-jangar-dependency-provenance-ledger-and-consumer-acknowledged-admission-2026-03-19.md`
+  now turns segment health into durable control-plane truth with freshness, evidence refs, consumer acknowledgement,
+  and replayable collaboration outbox semantics.
 - `40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md` now defines segment-local
   control-plane authority and scoped rollout semantics to prevent watch noise from becoming global rollout blockers.
 - `41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md` now defines multi-horizon profitability
@@ -176,6 +184,7 @@ This pack is positioned as the next architecture layer above:
 48. `49-torghut-quant-source-of-truth-and-profit-circuit-handoff-2026-03-19.md`
 49. `50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
 50. `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
+51. `52-torghut-profit-sleeves-segment-scoped-deallocation-and-evidence-decay-2026-03-19.md`
 
 ## Recommended Build Order
 
