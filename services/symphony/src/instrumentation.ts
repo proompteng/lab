@@ -6,8 +6,8 @@ import {
   type Gauge,
   type Histogram,
   type Span,
-  SpanStatusCode,
   metrics,
+  SpanStatusCode,
   trace,
 } from '@proompteng/otel/api'
 import { getNodeAutoInstrumentations } from '@proompteng/otel/auto-instrumentations-node'
@@ -101,6 +101,69 @@ const setGauge = (gauge: Gauge, value: number, attributes?: MetricAttributes) =>
   gauge.set(value, attributes)
 }
 
+const createSymphonyMetrics = (): SymphonyMetrics => {
+  const meter = metrics.getMeter('symphony')
+  return {
+    pollTicksTotal: meter.createCounter('symphony_poll_ticks_total', {
+      description: 'Total Symphony poll ticks by result.',
+    }),
+    pollDurationMs: meter.createHistogram('symphony_poll_duration_ms', {
+      description: 'Symphony poll tick duration.',
+      unit: 'ms',
+    }),
+    reconcileDurationMs: meter.createHistogram('symphony_reconcile_duration_ms', {
+      description: 'Symphony running-issue reconciliation duration.',
+      unit: 'ms',
+    }),
+    candidateFetchTotal: meter.createCounter('symphony_candidate_fetch_total', {
+      description: 'Total candidate issue fetch attempts by result.',
+    }),
+    issueDispatchTotal: meter.createCounter('symphony_issue_dispatch_total', {
+      description: 'Total dispatched issues by state.',
+    }),
+    issueHandoffTotal: meter.createCounter('symphony_issue_handoff_total', {
+      description: 'Total issue handoffs by reason.',
+    }),
+    workerOutcomesTotal: meter.createCounter('symphony_worker_outcomes_total', {
+      description: 'Total Symphony worker outcomes.',
+    }),
+    workerDurationMs: meter.createHistogram('symphony_worker_duration_ms', {
+      description: 'Symphony worker runtime by outcome.',
+      unit: 'ms',
+    }),
+    runningIssues: meter.createGauge('symphony_running_issues', {
+      description: 'Current number of running issues.',
+    }),
+    retryQueueSize: meter.createGauge('symphony_retry_queue_size', {
+      description: 'Current number of retry-queued issues.',
+    }),
+    targetHealthReady: meter.createGauge('symphony_target_health_ready', {
+      description: 'Whether target health currently allows dispatch (1 or 0).',
+    }),
+    leaderState: meter.createGauge('symphony_leader_state', {
+      description: 'Whether this replica is currently the leader (1 or 0).',
+    }),
+    lastSuccessfulPollTimestampSeconds: meter.createGauge('symphony_last_successful_poll_timestamp_seconds', {
+      description: 'Unix timestamp of the last successful poll tick.',
+      unit: 's',
+    }),
+    codexInputTokensTotal: meter.createCounter('symphony_codex_input_tokens_total', {
+      description: 'Total Codex input tokens consumed by Symphony.',
+    }),
+    codexOutputTokensTotal: meter.createCounter('symphony_codex_output_tokens_total', {
+      description: 'Total Codex output tokens consumed by Symphony.',
+    }),
+    codexTotalTokensTotal: meter.createCounter('symphony_codex_total_tokens_total', {
+      description: 'Total Codex tokens consumed by Symphony.',
+    }),
+  }
+}
+
+const rebindTelemetryBindings = (state: TelemetryState) => {
+  state.tracer = trace.getTracer('symphony')
+  state.metrics = createSymphonyMetrics()
+}
+
 const ensureTelemetryState = (): TelemetryState => {
   const existing = globalState.__symphonyTelemetry
   if (existing) return existing
@@ -108,68 +171,13 @@ const ensureTelemetryState = (): TelemetryState => {
   diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.ERROR)
 
   const instance = resolveInstance()
-  const meter = metrics.getMeter('symphony')
-  const tracer = trace.getTracer('symphony')
 
   const created: TelemetryState = {
     initialized: false,
     enabled: true,
     instance,
-    tracer,
-    metrics: {
-      pollTicksTotal: meter.createCounter('symphony_poll_ticks_total', {
-        description: 'Total Symphony poll ticks by result.',
-      }),
-      pollDurationMs: meter.createHistogram('symphony_poll_duration_ms', {
-        description: 'Symphony poll tick duration.',
-        unit: 'ms',
-      }),
-      reconcileDurationMs: meter.createHistogram('symphony_reconcile_duration_ms', {
-        description: 'Symphony running-issue reconciliation duration.',
-        unit: 'ms',
-      }),
-      candidateFetchTotal: meter.createCounter('symphony_candidate_fetch_total', {
-        description: 'Total candidate issue fetch attempts by result.',
-      }),
-      issueDispatchTotal: meter.createCounter('symphony_issue_dispatch_total', {
-        description: 'Total dispatched issues by state.',
-      }),
-      issueHandoffTotal: meter.createCounter('symphony_issue_handoff_total', {
-        description: 'Total issue handoffs by reason.',
-      }),
-      workerOutcomesTotal: meter.createCounter('symphony_worker_outcomes_total', {
-        description: 'Total Symphony worker outcomes.',
-      }),
-      workerDurationMs: meter.createHistogram('symphony_worker_duration_ms', {
-        description: 'Symphony worker runtime by outcome.',
-        unit: 'ms',
-      }),
-      runningIssues: meter.createGauge('symphony_running_issues', {
-        description: 'Current number of running issues.',
-      }),
-      retryQueueSize: meter.createGauge('symphony_retry_queue_size', {
-        description: 'Current number of retry-queued issues.',
-      }),
-      targetHealthReady: meter.createGauge('symphony_target_health_ready', {
-        description: 'Whether target health currently allows dispatch (1 or 0).',
-      }),
-      leaderState: meter.createGauge('symphony_leader_state', {
-        description: 'Whether this replica is currently the leader (1 or 0).',
-      }),
-      lastSuccessfulPollTimestampSeconds: meter.createGauge('symphony_last_successful_poll_timestamp_seconds', {
-        description: 'Unix timestamp of the last successful poll tick.',
-        unit: 's',
-      }),
-      codexInputTokensTotal: meter.createCounter('symphony_codex_input_tokens_total', {
-        description: 'Total Codex input tokens consumed by Symphony.',
-      }),
-      codexOutputTokensTotal: meter.createCounter('symphony_codex_output_tokens_total', {
-        description: 'Total Codex output tokens consumed by Symphony.',
-      }),
-      codexTotalTokensTotal: meter.createCounter('symphony_codex_total_tokens_total', {
-        description: 'Total Codex tokens consumed by Symphony.',
-      }),
-    },
+    tracer: trace.getTracer('symphony'),
+    metrics: createSymphonyMetrics(),
   }
   globalState.__symphonyTelemetry = created
   return created
@@ -186,6 +194,7 @@ const initializeSdk = () => {
   if (isTruthy(process.env.OTEL_SDK_DISABLED) || isTestEnv()) {
     state.enabled = false
     state.initialized = true
+    rebindTelemetryBindings(state)
     return state
   }
 
@@ -240,6 +249,15 @@ const initializeSdk = () => {
   } catch (error) {
     diag.error('failed to start Symphony OpenTelemetry SDK', error)
   }
+
+  rebindTelemetryBindings(state)
+
+  const startupSpan = state.tracer.startSpan('symphony.startup', {
+    attributes: spanAttrs({
+      'symphony.telemetry.enabled': true,
+    }),
+  })
+  startupSpan.end()
 
   const shutdown = () => {
     void sdk.shutdown().catch((error) => {
@@ -368,6 +386,17 @@ export const updateRuntimeGauges = (params: {
   if (params.lastSuccessfulPollTimestampSeconds !== undefined) {
     setGauge(state.metrics.lastSuccessfulPollTimestampSeconds, params.lastSuccessfulPollTimestampSeconds, metricAttrs())
   }
+}
+
+export const __private = {
+  resetTelemetryStateForTests() {
+    delete globalState.__symphonyTelemetry
+  },
+  rebindTelemetryBindingsForTests() {
+    const state = ensureTelemetryState()
+    rebindTelemetryBindings(state)
+    return state
+  },
 }
 
 initializeSymphonyInstrumentation()

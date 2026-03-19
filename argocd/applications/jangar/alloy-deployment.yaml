@@ -13,6 +13,8 @@ spec:
       app.kubernetes.io/name: jangar-alloy
   template:
     metadata:
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "2026-03-19T06:31:00Z"
       labels:
         app.kubernetes.io/name: jangar-alloy
         app.kubernetes.io/component: logging
