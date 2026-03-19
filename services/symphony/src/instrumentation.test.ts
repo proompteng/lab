@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 
 import { metrics, trace } from '@proompteng/otel/api'
+import { NoopMeterProvider } from '@proompteng/otel/sdk-metrics'
+import { NoopTracerProvider } from '@proompteng/otel/sdk-trace'
 
 import {
   __private,
@@ -89,6 +91,8 @@ class FakeTracer {
 }
 
 afterEach(() => {
+  metrics.setGlobalMeterProvider(new NoopMeterProvider())
+  trace.setGlobalTracerProvider(new NoopTracerProvider())
   __private.resetTelemetryStateForTests()
 })
 
