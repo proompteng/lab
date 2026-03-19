@@ -1,0 +1,287 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: events-plugin-ingestion
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: events_plugin_ingestion
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: clickhouse-app-metrics
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: clickhouse_app_metrics
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: clickhouse-app-metrics2
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: clickhouse_app_metrics2
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: cohort-membership-changed
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: cohort_membership_changed
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: distinct-id-usage-events-json
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: distinct_id_usage_events_json
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: clickhouse-ingestion-events-duplicates
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: clickhouse_ingestion_events_duplicates
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: clickhouse-error-tracking-issue-fingerprint
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: clickhouse_error_tracking_issue_fingerprint
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: events-dead-letter-queue
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: events_dead_letter_queue
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: clickhouse-events-json
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: clickhouse_events_json
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: clickhouse-groups
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: clickhouse_groups
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: clickhouse-heatmap-events
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: clickhouse_heatmap_events
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: clickhouse-ingestion-warnings
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: clickhouse_ingestion_warnings
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: log-entries
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: log_entries
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: clickhouse-performance-events
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: clickhouse_performance_events
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: clickhouse-person
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: clickhouse_person
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: clickhouse-person-unique-id
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: clickhouse_person_unique_id
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: clickhouse-person-distinct-id
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: clickhouse_person_distinct_id
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: clickhouse-person-override
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: clickhouse_person_override
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: plugin-log-entries
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: plugin_log_entries
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: clickhouse-document-embeddings
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: clickhouse_document_embeddings
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: clickhouse-prefiltered-events
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: clickhouse_prefiltered_events
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: clickhouse-precalculated-person-properties
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: clickhouse_precalculated_person_properties
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: clickhouse-session-replay-events
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: clickhouse_session_replay_events
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: clickhouse-tophog
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: clickhouse_tophog
+  partitions: 3
+  replicas: 3

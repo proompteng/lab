@@ -65,12 +65,87 @@ spec:
         <clickhouse>
           <named_collections>
             <msk_cluster>
-              <kafka_broker_list>kafka-kafka-bootstrap.kafka.svc.cluster.local:9093</kafka_broker_list>
+              <kafka_broker_list>kafka-kafka-bootstrap.kafka.svc.cluster.local:9092</kafka_broker_list>
+              <kafka_security_protocol>SASL_PLAINTEXT</kafka_security_protocol>
+              <kafka_sasl_mechanism>SCRAM-SHA-512</kafka_sasl_mechanism>
+              <kafka_sasl_username from_env="KAFKA_SASL_USER" />
+              <kafka_sasl_password from_env="KAFKA_SASL_PASSWORD" />
             </msk_cluster>
             <warpstream_ingestion>
-              <kafka_broker_list>kafka-kafka-bootstrap.kafka.svc.cluster.local:9093</kafka_broker_list>
+              <kafka_broker_list>kafka-kafka-bootstrap.kafka.svc.cluster.local:9092</kafka_broker_list>
+              <kafka_security_protocol>SASL_PLAINTEXT</kafka_security_protocol>
+              <kafka_sasl_mechanism>SCRAM-SHA-512</kafka_sasl_mechanism>
+              <kafka_sasl_username from_env="KAFKA_SASL_USER" />
+              <kafka_sasl_password from_env="KAFKA_SASL_PASSWORD" />
             </warpstream_ingestion>
           </named_collections>
+        </clickhouse>
+      config.d/posthog-kafka-scheduler.xml: |
+        <clickhouse>
+          <background_message_broker_schedule_pool_size>32</background_message_broker_schedule_pool_size>
+        </clickhouse>
+      config.d/posthog-system-logs.xml: |
+        <clickhouse>
+          <logger replace="1">
+            <level>warning</level>
+            <log>/var/log/clickhouse-server/clickhouse-server.log</log>
+            <errorlog>/var/log/clickhouse-server/clickhouse-server.err.log</errorlog>
+            <size>1000M</size>
+            <count>10</count>
+            <console>1</console>
+          </logger>
+          <query_log replace="1">
+            <database>system</database>
+            <table>query_log</table>
+            <engine>Engine = MergeTree PARTITION BY event_date ORDER BY event_time TTL event_date + INTERVAL 3 DAY</engine>
+            <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+            <max_size_rows>1048576</max_size_rows>
+            <reserved_size_rows>8192</reserved_size_rows>
+            <buffer_size_rows_flush_threshold>524288</buffer_size_rows_flush_threshold>
+            <flush_on_crash>false</flush_on_crash>
+          </query_log>
+          <part_log replace="1">
+            <database>system</database>
+            <table>part_log</table>
+            <engine>Engine = MergeTree PARTITION BY event_date ORDER BY event_time TTL event_date + INTERVAL 3 DAY</engine>
+            <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+            <max_size_rows>1048576</max_size_rows>
+            <reserved_size_rows>8192</reserved_size_rows>
+            <buffer_size_rows_flush_threshold>524288</buffer_size_rows_flush_threshold>
+            <flush_on_crash>false</flush_on_crash>
+          </part_log>
+          <trace_log replace="1">
+            <database>system</database>
+            <table>trace_log</table>
+            <engine>Engine = MergeTree PARTITION BY event_date ORDER BY event_time TTL event_date + INTERVAL 3 DAY</engine>
+            <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+            <max_size_rows>1048576</max_size_rows>
+            <reserved_size_rows>8192</reserved_size_rows>
+            <buffer_size_rows_flush_threshold>524288</buffer_size_rows_flush_threshold>
+            <flush_on_crash>false</flush_on_crash>
+          </trace_log>
+          <text_log replace="1">
+            <level>warning</level>
+            <database>system</database>
+            <table>text_log</table>
+            <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+            <max_size_rows>1048576</max_size_rows>
+            <reserved_size_rows>8192</reserved_size_rows>
+            <buffer_size_rows_flush_threshold>524288</buffer_size_rows_flush_threshold>
+            <flush_on_crash>false</flush_on_crash>
+            <engine>Engine = MergeTree PARTITION BY event_date ORDER BY event_time TTL event_date + INTERVAL 3 DAY</engine>
+          </text_log>
+          <query_views_log replace="1">
+            <database>system</database>
+            <table>query_views_log</table>
+            <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+            <max_size_rows>1048576</max_size_rows>
+            <reserved_size_rows>8192</reserved_size_rows>
+            <buffer_size_rows_flush_threshold>524288</buffer_size_rows_flush_threshold>
+            <flush_on_crash>false</flush_on_crash>
+            <engine>Engine = MergeTree PARTITION BY toYYYYMM(event_date) ORDER BY (event_date, event_time) TTL event_date + INTERVAL 3 DAY</engine>
+          </query_views_log>
+          <asynchronous_metric_log remove="1" />
         </clickhouse>
       config.d/posthog-crash-log.xml: |
         <clickhouse>
@@ -122,6 +197,14 @@ spec:
           containers:
             - name: clickhouse
               image: clickhouse/clickhouse-server:25.12.5.44
+              env:
+                - name: KAFKA_SASL_USER
+                  value: posthog-kafka
+                - name: KAFKA_SASL_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: posthog-kafka
+                      key: password
               resources:
                 requests:
                   cpu: 1000m

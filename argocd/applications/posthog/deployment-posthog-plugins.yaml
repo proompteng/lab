@@ -47,22 +47,101 @@ spec:
         
         # Used by PostHog/plugin-server. There is no specific reason for the difference. Expected format: comma-separated list of "host:port"
         - name: KAFKA_HOSTS
-          value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9093"
+          value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
         - name: KAFKA_PRODUCER_METADATA_BROKER_LIST
-          value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9093"
+          value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
         - name: KAFKA_CONSUMER_METADATA_BROKER_LIST
-          value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9093"
+          value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
         - name: KAFKA_CDP_PRODUCER_METADATA_BROKER_LIST
-          value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9093"
+          value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
         - name: KAFKA_WARPSTREAM_PRODUCER_METADATA_BROKER_LIST
-          value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9093"
+          value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
         - name: KAFKA_METRICS_PRODUCER_METADATA_BROKER_LIST
-          value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9093"
+          value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
         - name: KAFKA_WAREHOUSE_PRODUCER_METADATA_BROKER_LIST
-          value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9093"
+          value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
         # Used by PostHog/web. There is no specific reason for the difference. Expected format: comma-separated list of "kafka://host:port"
         - name: KAFKA_URL
-          value: "kafka://kafka-kafka-bootstrap.kafka.svc.cluster.local:9093"
+          value: "kafka://kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
+        - name: KAFKA_SECURITY_PROTOCOL
+          value: "SASL_PLAINTEXT"
+        - name: KAFKA_SASL_MECHANISM
+          value: "SCRAM-SHA-512"
+        - name: KAFKA_SASL_USER
+          value: "posthog-kafka"
+        - name: KAFKA_SASL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: posthog-kafka
+              key: password
+        - name: KAFKA_PRODUCER_SECURITY_PROTOCOL
+          value: "sasl_plaintext"
+        - name: KAFKA_PRODUCER_SASL_MECHANISM
+          value: "SCRAM-SHA-512"
+        - name: KAFKA_PRODUCER_SASL_USERNAME
+          value: "posthog-kafka"
+        - name: KAFKA_PRODUCER_SASL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: posthog-kafka
+              key: password
+        - name: KAFKA_CONSUMER_SECURITY_PROTOCOL
+          value: "sasl_plaintext"
+        - name: KAFKA_CONSUMER_SASL_MECHANISM
+          value: "SCRAM-SHA-512"
+        - name: KAFKA_CONSUMER_SASL_USERNAME
+          value: "posthog-kafka"
+        - name: KAFKA_CONSUMER_SASL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: posthog-kafka
+              key: password
+        - name: KAFKA_CDP_PRODUCER_SECURITY_PROTOCOL
+          value: "sasl_plaintext"
+        - name: KAFKA_CDP_PRODUCER_SASL_MECHANISM
+          value: "SCRAM-SHA-512"
+        - name: KAFKA_CDP_PRODUCER_SASL_USERNAME
+          value: "posthog-kafka"
+        - name: KAFKA_CDP_PRODUCER_SASL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: posthog-kafka
+              key: password
+        - name: KAFKA_METRICS_PRODUCER_SECURITY_PROTOCOL
+          value: "sasl_plaintext"
+        - name: KAFKA_METRICS_PRODUCER_SASL_MECHANISM
+          value: "SCRAM-SHA-512"
+        - name: KAFKA_METRICS_PRODUCER_SASL_USERNAME
+          value: "posthog-kafka"
+        - name: KAFKA_METRICS_PRODUCER_SASL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: posthog-kafka
+              key: password
+        - name: KAFKA_WAREHOUSE_PRODUCER_SECURITY_PROTOCOL
+          value: "sasl_plaintext"
+        - name: KAFKA_WAREHOUSE_PRODUCER_SASL_MECHANISM
+          value: "SCRAM-SHA-512"
+        - name: KAFKA_WAREHOUSE_PRODUCER_SASL_USERNAME
+          value: "posthog-kafka"
+        - name: KAFKA_WAREHOUSE_PRODUCER_SASL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: posthog-kafka
+              key: password
+        - name: KAFKA_WARPSTREAM_PRODUCER_SECURITY_PROTOCOL
+          value: "sasl_plaintext"
+        - name: KAFKA_WARPSTREAM_PRODUCER_SASL_MECHANISM
+          value: "SCRAM-SHA-512"
+        - name: KAFKA_WARPSTREAM_PRODUCER_SASL_USERNAME
+          value: "posthog-kafka"
+        - name: KAFKA_WARPSTREAM_PRODUCER_SASL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: posthog-kafka
+              key: password
+        - name: CONSUMER_AUTO_CREATE_TOPICS
+          value: "false"
 
         # Object Storage env variables
         

@@ -38,10 +38,21 @@ spec:
         # Kafka env variables        
         # Used by PostHog/plugin-server. There is no specific reason for the difference. Expected format: comma-separated list of "host:port"
         - name: KAFKA_HOSTS
-          value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9093"
+          value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
         # Used by PostHog/web. There is no specific reason for the difference. Expected format: comma-separated list of "kafka://host:port"
         - name: KAFKA_URL
-          value: "kafka://kafka-kafka-bootstrap.kafka.svc.cluster.local:9093"
+          value: "kafka://kafka-kafka-bootstrap.kafka.svc.cluster.local:9092"
+        - name: KAFKA_SECURITY_PROTOCOL
+          value: "SASL_PLAINTEXT"
+        - name: KAFKA_SASL_MECHANISM
+          value: "SCRAM-SHA-512"
+        - name: KAFKA_SASL_USER
+          value: "posthog-kafka"
+        - name: KAFKA_SASL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: posthog-kafka
+              key: password
 
         # Object Storage env variables        
         
