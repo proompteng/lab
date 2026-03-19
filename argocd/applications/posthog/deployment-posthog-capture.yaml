@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: posthog-capture
+  labels:
+    "app.kubernetes.io/name": "posthog"
+    "app.kubernetes.io/instance": "posthog"
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  selector:
+    matchLabels:
+      app: posthog
+      release: "posthog"
+      role: capture
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: posthog
+        release: "posthog"
+        role: capture
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      serviceAccountName: posthog
+      containers:
+        - name: posthog-capture
+          image: "ghcr.io/posthog/posthog/capture:master@sha256:1f15311fde70602f567d1b9ef85b71467ee3d3e031cdb671ada9befbd2a929a6"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+              protocol: TCP
+          env:
+            - name: ADDRESS
+              value: "0.0.0.0:3000"
+            - name: KAFKA_HOSTS
+              value: "kafka-kafka-bootstrap.kafka.svc.cluster.local:9094"
+            - name: KAFKA_TLS
+              value: "true"
+            - name: KAFKA_TOPIC
+              value: "events_plugin_ingestion"
+            - name: REDIS_URL
+              value: "redis://posthog-redis.posthog.svc.cluster.local:6379/"
+            - name: CAPTURE_MODE
+              value: "events"
+            - name: RUST_LOG
+              value: "info,rdkafka=warn"
+          readinessProbe:
+            httpGet:
+              path: /_readiness
+              port: 3000
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /_liveness
+              port: 3000
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 6
+          resources: {}
