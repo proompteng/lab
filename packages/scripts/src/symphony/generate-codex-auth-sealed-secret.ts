@@ -23,6 +23,7 @@ const defaultNamespace = 'jangar'
 const defaultSecretName = 'codex-auth-symphony'
 const defaultSecretKey = 'auth.json'
 const defaultAuthPath = process.env.CODEX_AUTH ?? resolve(homedir(), '.codex/auth.json')
+const defaultScope = 'strict'
 
 const printUsage = (): never => {
   console.log(`Usage: bun run packages/scripts/src/symphony/generate-codex-auth-sealed-secret.ts [options]
@@ -34,6 +35,7 @@ Options:
   --secret-name <name>         Secret name (default: ${defaultSecretName})
   --secret-key <key>           Secret data key (default: ${defaultSecretKey})
   --auth-path <path>           Local Codex auth.json path (default: ${defaultAuthPath})
+  --scope <scope>              SealedSecret scope: strict, namespace-wide, cluster-wide (default: ${defaultScope})
   --output <path>              Output path (default: ${defaultOutputPath})
   -h, --help                   Show this help
 
@@ -50,6 +52,7 @@ let namespace = defaultNamespace
 let secretName = defaultSecretName
 let secretKey = defaultSecretKey
 let authPath = defaultAuthPath
+let scope = defaultScope
 let outputPath = defaultOutputPath
 
 for (let index = 0; index < args.length; index += 1) {
@@ -72,6 +75,11 @@ for (let index = 0; index < args.length; index += 1) {
     }
     case '--auth-path': {
       authPath = resolve(args[index + 1] ?? fatal('Missing value for --auth-path'))
+      index += 1
+      break
+    }
+    case '--scope': {
+      scope = args[index + 1] ?? fatal('Missing value for --scope')
       index += 1
       break
     }
@@ -126,6 +134,11 @@ const validateAuthFile = (path: string) => {
 
 validateAuthFile(authPath)
 
+const validScopes = new Set(['strict', 'namespace-wide', 'cluster-wide'])
+if (!validScopes.has(scope)) {
+  fatal(`Unsupported scope '${scope}'. Expected one of: ${Array.from(validScopes).join(', ')}`)
+}
+
 const tempDir = mkdtempSync(join(tmpdir(), 'symphony-codex-auth-'))
 const secretManifestPath = join(tempDir, 'secret.yaml')
 
@@ -161,6 +174,8 @@ const runKubeseal = async (): Promise<string> => {
     quote(sealedControllerName),
     '--controller-namespace',
     quote(sealedControllerNamespace),
+    '--scope',
+    quote(scope),
     '--format',
     'yaml',
   ].join(' ')
