@@ -12,6 +12,7 @@ import * as SynchronizedRef from 'effect/SynchronizedRef'
 import { validateDispatchConfigEffect } from './config'
 import type { CodexEvent } from './codex-app-session'
 import { evaluateDispatchIssue, sortIssuesForDispatch } from './dispatch-rules'
+import { createEmptyDeliveryTransaction, DeliveryService } from './delivery-service'
 import {
   OrchestratorError,
   toLogError,
@@ -220,6 +221,7 @@ const ensureIssueRecord = (state: OrchestratorState, issueId: string, issueIdent
     lastError: null,
     tracked: {},
     runHistory: [],
+    delivery: createEmptyDeliveryTransaction(),
     updatedAt: new Date().toISOString(),
   }
   state.issueRecords.set(issueId, created)
@@ -303,6 +305,19 @@ const toIssueDetails = (record: IssueRecord): IssueDetails => ({
   lastError: record.lastError,
   tracked: { ...record.tracked },
   runHistory: [...record.runHistory],
+  delivery: record.delivery
+    ? {
+        ...record.delivery,
+        codePr: record.delivery.codePr ? { ...record.delivery.codePr } : null,
+        requiredChecks: record.delivery.requiredChecks ? { ...record.delivery.requiredChecks } : null,
+        build: record.delivery.build ? { ...record.delivery.build } : null,
+        releaseContract: record.delivery.releaseContract ? { ...record.delivery.releaseContract } : null,
+        promotionPr: record.delivery.promotionPr ? { ...record.delivery.promotionPr } : null,
+        argo: record.delivery.argo ? { ...record.delivery.argo } : null,
+        postDeploy: record.delivery.postDeploy ? { ...record.delivery.postDeploy } : null,
+        rollbackPr: record.delivery.rollbackPr ? { ...record.delivery.rollbackPr } : null,
+      }
+    : null,
 })
 
 const buildPolicySummary = (config: SymphonyConfig): PolicySummary => ({
@@ -404,6 +419,19 @@ const hydrateStateFromPersisted = (persisted: PersistedSchedulerState, config: S
       runHistory: [...record.runHistory],
       logs: { codex_session_logs: [...record.logs.codex_session_logs] },
       tracked: { ...record.tracked },
+      delivery: record.delivery
+        ? {
+            ...record.delivery,
+            codePr: record.delivery.codePr ? { ...record.delivery.codePr } : null,
+            requiredChecks: record.delivery.requiredChecks ? { ...record.delivery.requiredChecks } : null,
+            build: record.delivery.build ? { ...record.delivery.build } : null,
+            releaseContract: record.delivery.releaseContract ? { ...record.delivery.releaseContract } : null,
+            promotionPr: record.delivery.promotionPr ? { ...record.delivery.promotionPr } : null,
+            argo: record.delivery.argo ? { ...record.delivery.argo } : null,
+            postDeploy: record.delivery.postDeploy ? { ...record.delivery.postDeploy } : null,
+            rollbackPr: record.delivery.rollbackPr ? { ...record.delivery.rollbackPr } : null,
+          }
+        : null,
     })
   }
 
@@ -424,7 +452,7 @@ const hydrateStateFromPersisted = (persisted: PersistedSchedulerState, config: S
 }
 
 const toPersistedState = (state: OrchestratorState): PersistedSchedulerState => ({
-  version: 1,
+  version: 2,
   updatedAt: new Date().toISOString(),
   codexTotals: state.codexTotals,
   rateLimits: state.codexRateLimits,
@@ -502,6 +530,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
       const tracker = yield* TrackerService
       const workspace = yield* WorkspaceService
       const issueRunner = yield* IssueRunnerService
+      const delivery = yield* DeliveryService
       const posthog = yield* PostHogTelemetryService
       const leaderElection = yield* LeaderElectionService
       const stateStore = yield* StateStoreService
@@ -649,6 +678,13 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                     level: 'warn',
                     reason,
                   })
+                  const record = ensureIssueRecord(state, issue.id, issue.identifier)
+                  record.delivery = {
+                    ...(record.delivery ?? createEmptyDeliveryTransaction()),
+                    stage: 'handoff_required',
+                    updatedAt: new Date().toISOString(),
+                    lastError: detail,
+                  }
                   return Effect.succeed([undefined, state] as const)
                 }),
               ),
@@ -1207,6 +1243,39 @@ export const makeOrchestratorLayer = (logger: Logger) =>
           ).pipe(Effect.ensuring(Effect.sync(() => recordReconcileDuration(Date.now() - startedAtMs))))
         })()
 
+      const reconcileDeliveryTransactions = (config: SymphonyConfig) =>
+        Effect.gen(function* () {
+          const records = yield* SynchronizedRef.get(stateRef).pipe(
+            Effect.map((state) =>
+              Array.from(state.issueRecords.values()).filter((record) => {
+                const trackedState =
+                  typeof record.tracked.lastKnownState === 'string' ? record.tracked.lastKnownState : null
+                const activeOrHandoff =
+                  trackedState !== null &&
+                  (config.tracker.activeStates.includes(trackedState) || trackedState === config.tracker.handoffState)
+                const deliveryStage = record.delivery?.stage ?? 'coding'
+                return (
+                  activeOrHandoff ||
+                  !['completed', 'rolled_back', 'failed'].includes(deliveryStage) ||
+                  record.status !== 'tracked'
+                )
+              }),
+            ),
+          )
+
+          for (const record of records) {
+            const refreshed = yield* delivery.refreshIssueDelivery(record, config)
+            yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+              const current = state.issueRecords.get(record.issueId)
+              if (current) {
+                current.delivery = refreshed
+                current.updatedAt = new Date().toISOString()
+              }
+              return Effect.succeed([undefined, state] as const)
+            })
+          }
+        })
+
       const reconcileStalledRuns = (config: SymphonyConfig) =>
         config.codex.stallTimeoutMs <= 0
           ? Effect.void
@@ -1344,6 +1413,14 @@ export const makeOrchestratorLayer = (logger: Logger) =>
           yield* withSymphonyEffectSpan('symphony.poll_tick.reconcile', {}, reconcileRunningIssues(config), {
             parentSpan: pollSpan,
           })
+          yield* withSymphonyEffectSpan(
+            'symphony.poll_tick.delivery_reconcile',
+            {},
+            reconcileDeliveryTransactions(config),
+            {
+              parentSpan: pollSpan,
+            },
+          )
 
           const validation = yield* Effect.either(validateDispatchConfigEffect(config))
           if (validation._tag === 'Left') {
@@ -2225,6 +2302,29 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             recentEvents: [...state.recentEvents],
             recentErrors: [...state.recentErrors],
             capacity: buildCapacitySnapshot(state, config),
+            issues: Array.from(state.issueRecords.values())
+              .sort((left, right) => left.issueIdentifier.localeCompare(right.issueIdentifier))
+              .map((record) => ({
+                issueId: record.issueId,
+                issueIdentifier: record.issueIdentifier,
+                status: record.status,
+                trackedState: typeof record.tracked.lastKnownState === 'string' ? record.tracked.lastKnownState : null,
+                updatedAt: record.updatedAt,
+                lastError: record.lastError,
+                delivery: record.delivery
+                  ? {
+                      ...record.delivery,
+                      codePr: record.delivery.codePr ? { ...record.delivery.codePr } : null,
+                      requiredChecks: record.delivery.requiredChecks ? { ...record.delivery.requiredChecks } : null,
+                      build: record.delivery.build ? { ...record.delivery.build } : null,
+                      releaseContract: record.delivery.releaseContract ? { ...record.delivery.releaseContract } : null,
+                      promotionPr: record.delivery.promotionPr ? { ...record.delivery.promotionPr } : null,
+                      argo: record.delivery.argo ? { ...record.delivery.argo } : null,
+                      postDeploy: record.delivery.postDeploy ? { ...record.delivery.postDeploy } : null,
+                      rollbackPr: record.delivery.rollbackPr ? { ...record.delivery.rollbackPr } : null,
+                    }
+                  : null,
+              })),
           } satisfies RuntimeSnapshot
         }),
         getIssueDetails: (issueIdentifier) =>

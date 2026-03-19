@@ -271,6 +271,107 @@ export type ReleaseSummary = {
   }>
 }
 
+export type DeliveryStage =
+  | 'coding'
+  | 'code_pr_open'
+  | 'checks_pending'
+  | 'checks_green'
+  | 'merged_to_main'
+  | 'build_running'
+  | 'release_contract_resolved'
+  | 'promotion_pr_open'
+  | 'promotion_merged'
+  | 'argo_rollout_pending'
+  | 'post_deploy_verify_running'
+  | 'completed'
+  | 'rollback_open'
+  | 'rolled_back'
+  | 'handoff_required'
+  | 'failed'
+
+export type DeliveryPullRequestState = 'open' | 'merged' | 'closed'
+
+export type DeliveryChecksState = 'pending' | 'success' | 'failure' | 'not_found'
+
+export type DeliveryWorkflowState =
+  | 'queued'
+  | 'in_progress'
+  | 'success'
+  | 'failure'
+  | 'cancelled'
+  | 'skipped'
+  | 'neutral'
+  | 'not_found'
+
+export type DeliveryPullRequestRef = {
+  number: number
+  url: string
+  branch: string
+  state: DeliveryPullRequestState
+  title: string | null
+  createdAt: string | null
+  updatedAt: string | null
+  mergedAt: string | null
+  mergedCommitSha: string | null
+}
+
+export type DeliveryChecksSummary = {
+  state: DeliveryChecksState
+  headSha: string
+  requiredCount: number
+  passingCount: number
+  failingCount: number
+  pendingCount: number
+  url: string | null
+}
+
+export type DeliveryWorkflowRunRef = {
+  id: number
+  url: string
+  name: string
+  state: DeliveryWorkflowState
+  status: string | null
+  conclusion: string | null
+  event: string | null
+  headSha: string
+  headBranch: string | null
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+export type DeliveryReleaseContract = {
+  sourceSha: string | null
+  tag: string | null
+  digest: string | null
+  image: string | null
+  reason: string | null
+  resolvedAt: string | null
+}
+
+export type DeliveryArgoObservation = {
+  application: string | null
+  namespace: string | null
+  revision: string | null
+  health: string | null
+  sync: string | null
+  checkedAt: string | null
+}
+
+export type DeliveryTransaction = {
+  stage: DeliveryStage
+  updatedAt: string
+  codePr: DeliveryPullRequestRef | null
+  requiredChecks: DeliveryChecksSummary | null
+  mergedCommitSha: string | null
+  build: DeliveryWorkflowRunRef | null
+  releaseContract: DeliveryReleaseContract | null
+  promotionPr: DeliveryPullRequestRef | null
+  argo: DeliveryArgoObservation | null
+  postDeploy: DeliveryWorkflowRunRef | null
+  rollbackPr: DeliveryPullRequestRef | null
+  lastError: string | null
+}
+
 export type TargetHealthCheckResult = {
   name: string
   type: HealthCheckConfig['type']
@@ -380,6 +481,15 @@ export type RuntimeSnapshot = {
   recentEvents: RecentEvent[]
   recentErrors: RecentError[]
   capacity: CapacitySnapshot
+  issues: Array<{
+    issueId: string
+    issueIdentifier: string
+    status: IssueDetails['status']
+    trackedState: string | null
+    updatedAt: string
+    lastError: string | null
+    delivery: DeliveryTransaction | null
+  }>
 }
 
 export type IssueDetails = {
@@ -415,6 +525,7 @@ export type IssueDetails = {
   lastError: string | null
   tracked: Record<string, unknown>
   runHistory: RunHistoryEntry[]
+  delivery: DeliveryTransaction | null
 }
 
 export type IssueRecord = {
@@ -430,6 +541,7 @@ export type IssueRecord = {
   lastError: string | null
   tracked: Record<string, unknown>
   runHistory: RunHistoryEntry[]
+  delivery: IssueDetails['delivery']
   updatedAt: string
 }
 
@@ -442,7 +554,7 @@ export type PersistedRetryEntry = {
 }
 
 export type PersistedSchedulerState = {
-  version: 1
+  version: 2
   updatedAt: string
   codexTotals: CodexTotals
   rateLimits: RateLimitSnapshot | null

@@ -111,6 +111,7 @@ const renderDashboard = (snapshot: RuntimeSnapshot) => {
     .join('')
 
   const stateLinkRows = [
+    ...snapshot.issues.map((row) => row.issueIdentifier),
     ...snapshot.running.map((row) => row.issueIdentifier),
     ...snapshot.retrying.map((row) => row.issueIdentifier),
   ]
@@ -119,6 +120,26 @@ const renderDashboard = (snapshot: RuntimeSnapshot) => {
     .map(
       (issueIdentifier) => `
         <li><a href="/api/v1/${encodeURIComponent(issueIdentifier)}">${escapeHtml(issueIdentifier)}</a></li>`,
+    )
+    .join('')
+
+  const deliveryRows = snapshot.issues
+    .map(
+      (row) => `
+        <tr>
+          <td><a href="/api/v1/${encodeURIComponent(row.issueIdentifier)}">${escapeHtml(row.issueIdentifier)}</a></td>
+          <td>${escapeHtml(row.status)}</td>
+          <td>${escapeHtml(row.delivery?.stage ?? 'coding')}</td>
+          <td>${escapeHtml(row.delivery?.codePr?.number ?? '')}</td>
+          <td>${escapeHtml(row.delivery?.requiredChecks?.state ?? '')}</td>
+          <td>${escapeHtml(row.delivery?.build?.state ?? '')}</td>
+          <td>${escapeHtml(row.delivery?.releaseContract?.digest ?? row.delivery?.releaseContract?.tag ?? '')}</td>
+          <td>${escapeHtml(row.delivery?.promotionPr?.number ?? '')}</td>
+          <td>${escapeHtml(row.delivery?.argo?.sync ?? '')}/${escapeHtml(row.delivery?.argo?.health ?? '')}</td>
+          <td>${escapeHtml(row.delivery?.postDeploy?.state ?? '')}</td>
+          <td>${escapeHtml(row.delivery?.rollbackPr?.number ?? '')}</td>
+          <td>${escapeHtml(row.delivery?.lastError ?? '')}</td>
+        </tr>`,
     )
     .join('')
 
@@ -325,6 +346,16 @@ const renderDashboard = (snapshot: RuntimeSnapshot) => {
               <tbody>${retryRows || '<tr><td colspan="4">Retry queue is empty.</td></tr>'}</tbody>
             </table>
           </div>
+        </div>
+      </div>
+
+      <div class="card table-card">
+        <h2>Delivery Transactions</h2>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Issue</th><th>Status</th><th>Stage</th><th>Code PR</th><th>Checks</th><th>Build</th><th>Release</th><th>Promotion PR</th><th>Argo</th><th>Post-Deploy</th><th>Rollback PR</th><th>Last Error</th></tr></thead>
+            <tbody>${deliveryRows || '<tr><td colspan="12">No tracked issues.</td></tr>'}</tbody>
+          </table>
         </div>
       </div>
 
