@@ -83,16 +83,18 @@ spec:
           value: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
         - name: TORGHUT_SIM_CACHE_CEPH_REGION
           value: us-east-1
+        - name: TORGHUT_SIM_DUMP_SORT_MEMORY_LIMIT
+          value: 512M
       command:
         - /bin/bash
         - -lc
       resources:
         requests:
-          cpu: 500m
-          memory: 2Gi
+          cpu: 1
+          memory: 8Gi
         limits:
-          cpu: 2
-          memory: 4Gi
+          cpu: 4
+          memory: 16Gi
       args:
         - |
           set -euo pipefail

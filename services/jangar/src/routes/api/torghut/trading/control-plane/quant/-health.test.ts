@@ -93,6 +93,7 @@ describe('getQuantHealthHandler', () => {
     expect(body.status).toBe('degraded')
     expect(body.metricsPipelineLagSeconds).toBe(30)
     expect(body.missingUpdateAlarm).toBe(true)
+    expect(body.emptyLatestStoreAlarm).toBe(false)
     expect(body.runtimeStarted).toBe(true)
     expect(body.runtimeEnabled).toBe(true)
     expect(body.stages).toHaveLength(1)
@@ -132,6 +133,28 @@ describe('getQuantHealthHandler', () => {
     expect(body.ok).toBe(true)
     expect(body.status).toBe('ok')
     expect(body.missingUpdateAlarm).toBe(false)
+    expect(body.emptyLatestStoreAlarm).toBe(false)
+  })
+
+  it('returns degraded status when latest store is empty', async () => {
+    const { getQuantHealthHandler } = await import('./health')
+
+    getQuantLatestStoreStatus.mockResolvedValueOnce({
+      updatedAt: null,
+      count: 0,
+    })
+    listLatestQuantPipelineHealth.mockResolvedValueOnce([])
+
+    const response = await getQuantHealthHandler(
+      new Request('http://localhost/api/torghut/trading/control-plane/quant/health?account=paper&window=1d'),
+    )
+
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body.ok).toBe(true)
+    expect(body.status).toBe('degraded')
+    expect(body.emptyLatestStoreAlarm).toBe(true)
+    expect(body.latestMetricsCount).toBe(0)
   })
 
   it('returns degraded status when any stage is not ok', async () => {

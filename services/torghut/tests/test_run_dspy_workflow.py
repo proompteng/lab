@@ -6,7 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Mapping
 from unittest import TestCase
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 from scripts import run_dspy_workflow
 
@@ -104,6 +104,18 @@ class TestRunDSPyWorkflowScript(TestCase):
 
         overrides = run_dspy_workflow._build_lane_overrides(args)
         self.assertEqual(overrides["promote"]["artifactHash"], "b" * 64)
+
+    def test_default_universe_ref_uses_static_fallback_symbols(self) -> None:
+        with patch.object(
+            type(run_dspy_workflow.settings),
+            "trading_universe_static_fallback_symbols",
+            new_callable=PropertyMock,
+            return_value=["AAPL", "MSFT", "NVDA"],
+        ):
+            self.assertEqual(
+                run_dspy_workflow._default_universe_ref(),
+                "symbols:AAPL,MSFT,NVDA",
+            )
 
     def test_main_records_failure_iteration_report_when_orchestration_fails(
         self,

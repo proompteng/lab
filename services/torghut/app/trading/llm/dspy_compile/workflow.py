@@ -9,12 +9,13 @@ import time
 from datetime import datetime, timezone
 from http.client import HTTPConnection, HTTPSConnection
 from pathlib import Path
-from typing import Any, Literal, Mapping, cast
+from typing import Any, Literal, Mapping, Sequence, cast
 from urllib.parse import quote, urlencode, unquote, urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ....config import settings
 from ....models import LLMDSPyWorkflowArtifact, coerce_json_payload
 from .hashing import hash_payload
 from .schemas import (
@@ -27,6 +28,7 @@ from .schemas import (
 DSPyWorkflowLane = Literal[
     "dataset-build", "compile", "eval", "gepa-experiment", "promote"
 ]
+DSPyWorkflowExecutionMode = Literal["agentrun", "local"]
 
 _DEFAULT_DSPY_AGENT_NAME = "codex-spark-agent"
 _IMPLEMENTATION_SPEC_BY_LANE: dict[DSPyWorkflowLane, str] = {
@@ -49,8 +51,6 @@ _PROMOTION_EVIDENCE_OVERRIDE_KEYS = {
     "fallbackRate",
     "evalReportRef",
 }
-
-
 def _normalize_local_path(candidate_ref: str) -> Path | None:
     parsed_ref = urlsplit(candidate_ref)
     if parsed_ref.scheme not in {"", "file"}:
@@ -96,6 +96,23 @@ def _parse_iso_datetime(value: object) -> datetime | None:
     return parsed_dt.astimezone(timezone.utc)
 
 
+def resolve_default_dspy_universe_ref(
+    symbols: Sequence[str] | None = None,
+) -> str:
+    configured_symbols = list(
+        symbols or settings.trading_universe_static_fallback_symbols
+    )
+    resolved_symbols: list[str] = []
+    seen: set[str] = set()
+    for raw_symbol in configured_symbols:
+        normalized_symbol = str(raw_symbol).strip().upper()
+        if not normalized_symbol or normalized_symbol in seen:
+            continue
+        seen.add(normalized_symbol)
+        resolved_symbols.append(normalized_symbol)
+    if resolved_symbols:
+        return f"symbols:{','.join(resolved_symbols)}"
+    return "torghut:equity:enabled"
 def build_compile_result(
     *,
     program_name: str,
@@ -621,9 +638,7 @@ def _to_bool(value: Any) -> bool | None:
 
 
 def _json_copy(payload: Mapping[str, Any]) -> dict[str, Any]:
-    return json.loads(
-        json.dumps(dict(payload), sort_keys=True, default=str)
-    )
+    return json.loads(json.dumps(dict(payload), sort_keys=True, default=str))
 
 
 def _load_eval_gate_snapshot(eval_report_ref: str) -> dict[str, Any] | None:
@@ -644,7 +659,9 @@ def _load_eval_gate_snapshot(eval_report_ref: str) -> dict[str, Any] | None:
         dict[str, Any], metric_bundle.get("deterministicCompatibility") or {}
     )
     observed_metrics = cast(dict[str, Any], metric_bundle.get("observed") or {})
-    created_at = _parse_iso_datetime(payload.get("createdAt") or payload.get("created_at"))
+    created_at = _parse_iso_datetime(
+        payload.get("createdAt") or payload.get("created_at")
+    )
     return {
         "created_at": created_at,
         "gate_compatibility": str(payload.get("gateCompatibility") or "")
@@ -810,7 +827,7 @@ def orchestrate_dspy_agentrun_workflow(
     head: str,
     artifact_root: str,
     run_prefix: str,
-    auth_token: str | None,
+    auth_token: str | None = None,
     issue_number: str = "0",
     priority_id: str | None = None,
     lane_parameter_overrides: Mapping[DSPyWorkflowLane, Mapping[str, Any]]
@@ -821,11 +838,12 @@ def orchestrate_dspy_agentrun_workflow(
     vcs_ref_name: str = "github",
     secret_binding_ref: str = "codex-github-token",
     ttl_seconds_after_finished: int = 14_400,
+    execution_mode: DSPyWorkflowExecutionMode = "agentrun",
     timeout_seconds: int = 20,
     poll_interval_seconds: int = 5,
     max_wait_seconds: int = 3600,
 ) -> dict[DSPyWorkflowLane, dict[str, Any]]:
-    """Submit dataset-build -> compile -> eval -> [gepa] -> promote AgentRuns and persist lineage rows."""
+    """Execute dataset-build -> compile -> eval -> [gepa] -> promote and persist lineage rows."""
 
     normalized_run_prefix = run_prefix.strip()
     if not normalized_run_prefix:
@@ -890,11 +908,17 @@ def orchestrate_dspy_agentrun_workflow(
         gate_snapshot: dict[str, Any] | None = None
 
         if lane == "promote":
-            artifact_hash_override = str(lane_overrides.get("artifactHash") or "").strip()
+            artifact_hash_override = str(
+                lane_overrides.get("artifactHash") or ""
+            ).strip()
             if not artifact_hash_override:
-                compile_result_snapshot = compile_result_snapshot or _load_compile_result_snapshot()
+                compile_result_snapshot = (
+                    compile_result_snapshot or _load_compile_result_snapshot()
+                )
                 if compile_result_snapshot is not None:
-                    lane_overrides["artifactHash"] = compile_result_snapshot.artifact_hash
+                    lane_overrides["artifactHash"] = (
+                        compile_result_snapshot.artifact_hash
+                    )
                 else:
                     run_key = f"{normalized_run_prefix}:{lane}"
                     idempotency_key = _sanitize_idempotency_key(
@@ -996,6 +1020,75 @@ def orchestrate_dspy_agentrun_workflow(
         }
 
         try:
+            if execution_mode == "local":
+                response_payload = _execute_local_dspy_lane(
+                    session=session,
+                    lane=lane,
+                    repository=repository,
+                    base=base,
+                    head=head,
+                    artifact_path=artifact_path,
+                    lane_overrides=lane_overrides,
+                    compile_result_snapshot=compile_result_snapshot,
+                    eval_report_snapshot=eval_report_snapshot,
+                    promotion_record_snapshot=promotion_record_snapshot,
+                )
+                responses[lane] = response_payload
+                if lane in {"compile", "eval", "promote"}:
+                    compile_result_snapshot = (
+                        compile_result_snapshot or _load_compile_result_snapshot()
+                    )
+                if lane in {"eval", "promote"}:
+                    eval_report_snapshot = (
+                        eval_report_snapshot or _load_eval_report_snapshot()
+                    )
+                if lane == "promote":
+                    promotion_record_snapshot = (
+                        promotion_record_snapshot or _load_promotion_record_snapshot()
+                    )
+                upsert_workflow_artifact_record(
+                    session,
+                    run_key=run_key,
+                    lane=lane,
+                    status="succeeded",
+                    implementation_spec_ref=_IMPLEMENTATION_SPEC_BY_LANE[lane],
+                    idempotency_key=idempotency_key,
+                    request_payload={
+                        "runtime": {"type": "local"},
+                        "parameters": payload.get("parameters", {}),
+                    },
+                    response_payload=response_payload,
+                    compile_result=compile_result_snapshot
+                    if lane in {"compile", "eval", "promote"}
+                    else None,
+                    eval_report=eval_report_snapshot
+                    if lane in {"eval", "promote"}
+                    else None,
+                    promotion_record=promotion_record_snapshot
+                    if lane == "promote"
+                    else None,
+                    metadata={
+                        **(
+                            {"executor": "dspy_live"}
+                            if compile_result_snapshot is not None
+                            else {}
+                        ),
+                        "orchestration": {
+                            "runPrefix": normalized_run_prefix,
+                            "laneOrder": lane_index,
+                            "executionMode": execution_mode,
+                            "terminalPhase": "succeeded",
+                            "terminalObservedAt": datetime.now(
+                                timezone.utc
+                            ).isoformat(),
+                            "priorityId": priority_id,
+                            "lineageByLane": _json_copy(lineage_by_lane),
+                        },
+                    },
+                )
+                session.commit()
+                continue
+
             response_payload = submit_jangar_agentrun(
                 base_url=base_url,
                 payload=payload,
@@ -1021,6 +1114,7 @@ def orchestrate_dspy_agentrun_workflow(
                     "orchestration": {
                         "runPrefix": normalized_run_prefix,
                         "laneOrder": lane_index,
+                        "executionMode": execution_mode,
                         "submittedAt": datetime.now(timezone.utc).isoformat(),
                         "priorityId": priority_id,
                         "lineageByLane": _json_copy(lineage_by_lane),
@@ -1046,7 +1140,9 @@ def orchestrate_dspy_agentrun_workflow(
                     compile_result_snapshot or _load_compile_result_snapshot()
                 )
             if lane in {"eval", "promote"}:
-                eval_report_snapshot = eval_report_snapshot or _load_eval_report_snapshot()
+                eval_report_snapshot = (
+                    eval_report_snapshot or _load_eval_report_snapshot()
+                )
             if lane == "promote":
                 promotion_record_snapshot = (
                     promotion_record_snapshot or _load_promotion_record_snapshot()
@@ -1064,8 +1160,12 @@ def orchestrate_dspy_agentrun_workflow(
                 compile_result=compile_result_snapshot
                 if lane in {"compile", "eval", "promote"}
                 else None,
-                eval_report=eval_report_snapshot if lane in {"eval", "promote"} else None,
-                promotion_record=promotion_record_snapshot if lane == "promote" else None,
+                eval_report=eval_report_snapshot
+                if lane in {"eval", "promote"}
+                else None,
+                promotion_record=promotion_record_snapshot
+                if lane == "promote"
+                else None,
                 metadata={
                     **(
                         {"executor": "dspy_live"}
@@ -1075,11 +1175,12 @@ def orchestrate_dspy_agentrun_workflow(
                     "orchestration": {
                         "runPrefix": normalized_run_prefix,
                         "laneOrder": lane_index,
+                        "executionMode": execution_mode,
                         "terminalPhase": terminal_phase,
                         "terminalObservedAt": datetime.now(timezone.utc).isoformat(),
                         "priorityId": priority_id,
                         "lineageByLane": _json_copy(lineage_by_lane),
-                    }
+                    },
                 },
             )
             session.commit()
@@ -1092,6 +1193,219 @@ def orchestrate_dspy_agentrun_workflow(
             raise
 
     return responses
+
+
+def _execute_local_dspy_lane(
+    *,
+    session: Session,
+    lane: DSPyWorkflowLane,
+    repository: str,
+    base: str,
+    head: str,
+    artifact_path: str,
+    lane_overrides: Mapping[str, Any],
+    compile_result_snapshot: DSPyCompileResult | None,
+    eval_report_snapshot: DSPyEvalReport | None,
+    promotion_record_snapshot: DSPyPromotionRecord | None,
+) -> dict[str, Any]:
+    output_dir = Path(artifact_path).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if lane == "dataset-build":
+        from .dataset import build_dspy_dataset_artifacts
+
+        result = build_dspy_dataset_artifacts(
+            session,
+            repository=repository,
+            base=base,
+            head=head,
+            artifact_path=output_dir,
+            dataset_window=_normalize_string_parameter(
+                key="datasetWindow",
+                value=lane_overrides.get("datasetWindow"),
+            ),
+            universe_ref=_normalize_string_parameter(
+                key="universeRef",
+                value=lane_overrides.get("universeRef"),
+            ),
+            window_end=_parse_iso_datetime(lane_overrides.get("windowEnd")),
+        )
+        return {
+            "mode": "local",
+            "lane": lane,
+            "ok": True,
+            "datasetHash": result.dataset_hash,
+            "totalRows": result.total_rows,
+            "rowCountsBySplit": result.row_counts_by_split,
+            "datasetPath": str(result.dataset_path),
+            "metadataPath": str(result.metadata_path),
+        }
+
+    if lane == "compile":
+        from .compiler import compile_dspy_program_artifacts
+
+        result = compile_dspy_program_artifacts(
+            repository=repository,
+            base=base,
+            head=head,
+            artifact_path=output_dir,
+            dataset_ref=_normalize_string_parameter(
+                key="datasetRef",
+                value=lane_overrides.get("datasetRef"),
+            ),
+            metric_policy_ref=_normalize_string_parameter(
+                key="metricPolicyRef",
+                value=lane_overrides.get("metricPolicyRef"),
+            ),
+            optimizer=_normalize_string_parameter(
+                key="optimizer",
+                value=lane_overrides.get("optimizer"),
+            ),
+            schema_valid_rate=_coerce_optional_float(
+                lane_overrides.get("schemaValidRate")
+            ),
+            veto_alignment_rate=_coerce_optional_float(
+                lane_overrides.get("vetoAlignmentRate")
+            ),
+            false_veto_rate=_coerce_optional_float(lane_overrides.get("falseVetoRate")),
+            fallback_rate=_coerce_optional_float(lane_overrides.get("fallbackRate")),
+            latency_p95_ms=_coerce_optional_int(lane_overrides.get("latencyP95Ms")),
+        )
+        return {
+            "mode": "local",
+            "lane": lane,
+            "ok": True,
+            "artifactHash": result.compile_result.artifact_hash,
+            "reproducibilityHash": result.compile_result.reproducibility_hash,
+            "compileResultRef": str(result.compile_result_path),
+            "compiledArtifactUri": result.compiled_artifact_uri,
+            "compiledArtifactPath": str(result.compiled_artifact_path),
+            "compileMetricsRef": str(result.compile_metrics_path),
+        }
+
+    if lane == "eval":
+        from .evaluator import evaluate_dspy_compile_artifact
+
+        result = evaluate_dspy_compile_artifact(
+            repository=repository,
+            base=base,
+            head=head,
+            artifact_path=output_dir,
+            compile_result_ref=_normalize_string_parameter(
+                key="compileResultRef",
+                value=lane_overrides.get("compileResultRef"),
+            ),
+            gate_policy_ref=_normalize_string_parameter(
+                key="gatePolicyRef",
+                value=lane_overrides.get("gatePolicyRef"),
+            ),
+        )
+        return {
+            "mode": "local",
+            "lane": lane,
+            "ok": True,
+            "artifactHash": result.eval_report.artifact_hash,
+            "evalHash": result.eval_report.eval_hash,
+            "gateCompatibility": result.eval_report.gate_compatibility,
+            "promotionRecommendation": result.eval_report.promotion_recommendation,
+            "evalReportRef": str(result.eval_report_path),
+        }
+
+    if lane == "promote":
+        if promotion_record_snapshot is not None:
+            promotion_record = promotion_record_snapshot
+        else:
+            compile_result = (
+                compile_result_snapshot
+                or _load_compile_result_from_artifact_root(output_dir.parent)
+            )
+            if compile_result is None:
+                raise RuntimeError("dspy_promote_compile_result_missing")
+            eval_report = eval_report_snapshot or _load_eval_report_from_ref(
+                lane_overrides.get("evalReportRef")
+            )
+            if eval_report is None:
+                raise RuntimeError("dspy_promote_eval_report_missing")
+            promotion_record = build_promotion_record(
+                eval_report=eval_report,
+                promotion_target=cast(
+                    Literal["paper", "shadow", "constrained_live", "scaled_live"],
+                    _normalize_string_parameter(
+                        key="promotionTarget",
+                        value=lane_overrides.get("promotionTarget"),
+                    ),
+                ),
+                approved=True,
+                approval_token_ref=_normalize_optional_string(
+                    lane_overrides.get("approvalRef")
+                ),
+                promoted_by="run_dspy_workflow.local",
+            )
+            write_artifact_bundle(
+                output_dir,
+                compile_result=compile_result,
+                eval_report=eval_report,
+                promotion_record=promotion_record,
+            )
+        return {
+            "mode": "local",
+            "lane": lane,
+            "ok": True,
+            "artifactHash": promotion_record.artifact_hash,
+            "promotionHash": promotion_record.promotion_hash,
+            "promotionTarget": promotion_record.promotion_target,
+            "approved": promotion_record.approved,
+            "promotionRecordRef": str(output_dir / "dspy-promotion-record.json"),
+        }
+
+    raise RuntimeError(f"dspy_local_lane_unsupported:{lane}")
+
+
+def _load_compile_result_from_artifact_root(
+    artifact_root: Path,
+) -> DSPyCompileResult | None:
+    payload = _load_local_artifact_payload(
+        str(artifact_root / "compile" / "dspy-compile-result.json")
+    )
+    if payload is None:
+        return None
+    try:
+        return DSPyCompileResult.model_validate(payload)
+    except Exception:
+        return None
+
+
+def _load_eval_report_from_ref(ref: object) -> DSPyEvalReport | None:
+    if ref is None:
+        return None
+    payload = _load_local_artifact_payload(str(ref))
+    if payload is None:
+        return None
+    try:
+        return DSPyEvalReport.model_validate(payload)
+    except Exception:
+        return None
+
+
+def _normalize_optional_string(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _coerce_optional_float(value: object) -> float | None:
+    normalized = _normalize_optional_string(value)
+    if normalized is None:
+        return None
+    return float(normalized)
+
+
+def _coerce_optional_int(value: object) -> int | None:
+    normalized = _normalize_optional_string(value)
+    if normalized is None:
+        return None
+    return int(normalized)
 
 
 def _normalize_string_parameter(*, key: str, value: Any) -> str:

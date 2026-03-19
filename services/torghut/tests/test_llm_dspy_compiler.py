@@ -284,6 +284,118 @@ class TestLLMDSPyCompiler(TestCase):
             self.assertEqual(result.compile_result.metric_bundle["fallbackRate"], 0.02)
             self.assertEqual(result.compile_result.metric_bundle["latencyP95Ms"], 1200)
 
+    def test_compile_derives_observed_metrics_from_dataset_rows(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset_path = root / "dspy-dataset.json"
+            metric_policy_path = root / "dspy-metrics.yaml"
+            dataset_path.write_text(
+                canonical_json(
+                    {
+                        "schemaVersion": "torghut.dspy.dataset.v1",
+                        "rows": [
+                            {
+                                "rowId": "row-1",
+                                "split": "train",
+                                "decision": {
+                                    "status": "planned",
+                                    "executedAt": None,
+                                },
+                                "label": {
+                                    "verdict": "approve",
+                                    "responseJson": {
+                                        "verdict": "approve",
+                                        "confidence": 0.9,
+                                        "confidence_band": "high",
+                                        "calibrated_probabilities": {
+                                            "approve": 1.0,
+                                            "veto": 0.0,
+                                            "adjust": 0.0,
+                                            "abstain": 0.0,
+                                            "escalate": 0.0,
+                                        },
+                                        "uncertainty": {"score": 0.0, "band": "low"},
+                                        "rationale": "approve",
+                                        "required_checks": [],
+                                        "risk_flags": [],
+                                        "dspy": {"latency_ms": 110, "fallback": False},
+                                    },
+                                },
+                            },
+                            {
+                                "rowId": "row-2",
+                                "split": "eval",
+                                "decision": {
+                                    "status": "executed",
+                                    "executedAt": "2026-03-18T16:00:00Z",
+                                },
+                                "label": {
+                                    "verdict": "veto",
+                                    "responseJson": {
+                                        "verdict": "veto",
+                                        "confidence": 0.95,
+                                        "confidence_band": "high",
+                                        "calibrated_probabilities": {
+                                            "approve": 0.0,
+                                            "veto": 1.0,
+                                            "adjust": 0.0,
+                                            "abstain": 0.0,
+                                            "escalate": 0.0,
+                                        },
+                                        "uncertainty": {"score": 0.0, "band": "low"},
+                                        "rationale": "veto",
+                                        "required_checks": [],
+                                        "risk_flags": [],
+                                        "dspy": {"latency_ms": 190, "fallback": True},
+                                    },
+                                },
+                            },
+                            {
+                                "rowId": "row-3",
+                                "split": "test",
+                                "decision": {
+                                    "status": "planned",
+                                    "executedAt": None,
+                                },
+                                "label": {
+                                    "verdict": "approve",
+                                    "responseJson": {"fallback": "pass_through"},
+                                },
+                            },
+                        ],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            metric_policy_path.write_text(
+                "schemaVersion: torghut.dspy.metrics.v1\npolicy: {}\n",
+                encoding="utf-8",
+            )
+
+            result = compile_dspy_program_artifacts(
+                repository="proompteng/lab",
+                base="main",
+                head="codex/dspy-compile-derived",
+                artifact_path=root / "compile",
+                dataset_ref=str(dataset_path),
+                metric_policy_ref=str(metric_policy_path),
+                optimizer="miprov2",
+            )
+
+            metric_bundle = result.compile_result.metric_bundle
+            self.assertEqual(
+                metric_bundle["observedMetricsSource"],
+                "torghut.dspy.observed-metrics.v1",
+            )
+            self.assertEqual(metric_bundle["observedMetricsRows"], 3)
+            self.assertEqual(metric_bundle["observedMetricsSchemaValidRows"], 2)
+            self.assertEqual(metric_bundle["schemaValidRate"], 2 / 3)
+            self.assertEqual(metric_bundle["vetoAlignmentRate"], 1.0)
+            self.assertEqual(metric_bundle["falseVetoRate"], 1.0)
+            self.assertEqual(metric_bundle["fallbackRate"], 2 / 3)
+            self.assertEqual(metric_bundle["latencyP95Ms"], 110)
+
     def test_compile_rejects_partial_observed_metrics(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

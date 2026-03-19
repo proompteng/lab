@@ -454,7 +454,7 @@ spec:
             - name: LLM_ROLLOUT_STAGE
               value: stage3_controlled_live
             - name: LLM_SHADOW_MODE
-              value: "false"
+              value: "true"
             - name: LLM_EVALUATION_REPORT
               value: torghut-llm-shadow-eval-2026-02-12
             - name: LLM_EFFECTIVE_CHALLENGE_ID
@@ -480,9 +480,9 @@ spec:
             - name: LLM_TIMEOUT_SECONDS
               value: "20"
             - name: LLM_DSPY_RUNTIME_MODE
-              value: active
+              value: shadow
             - name: LLM_DSPY_ARTIFACT_HASH
-              value: 373bb47d4588d86a6fcf682e8b127420305a27860ba91c3508448f037e4adca8
+              value: df087a5e643d6478b1ebe51bf44ad2d0e2228825c1c0a8e9dc345729d6a3bbff
             - name: LLM_DSPY_LIVE_RUNTIME_BLOCK_FAIL_MODE
               value: pass_through_reduced_size
             - name: LLM_DSPY_LIVE_RUNTIME_BLOCK_QTY_MULTIPLIER

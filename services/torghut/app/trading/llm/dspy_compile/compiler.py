@@ -11,6 +11,7 @@ from urllib.parse import unquote, urlsplit
 
 import yaml
 
+from ..schema import LLMReviewResponse
 from .hashing import canonical_json, hash_payload
 from .schemas import DSPyCompileResult
 from .workflow import build_compile_result
@@ -29,6 +30,8 @@ _MIPRO_OPTIMIZERS = {
     "mipro_v2",
     "miprov2",
 }
+_DERIVED_METRICS_SCHEMA_VERSION = "torghut.dspy.observed-metrics.v1"
+_FALSE_VETO_EXECUTED_STATUSES = {"executed", "filled"}
 
 
 @dataclass(frozen=True)
@@ -132,6 +135,7 @@ def compile_dspy_program_artifacts(
         "policy": cast(dict[str, Any], metric_policy_payload.get("policy") or {}),
     }
     observed_metrics = _build_observed_metrics(
+        dataset_payload=dataset_payload,
         schema_valid_rate=schema_valid_rate,
         veto_alignment_rate=veto_alignment_rate,
         false_veto_rate=false_veto_rate,
@@ -310,6 +314,7 @@ def _count_rows_by_split(rows: Any) -> dict[str, int]:
 
 def _build_observed_metrics(
     *,
+    dataset_payload: Mapping[str, Any],
     schema_valid_rate: float | None,
     veto_alignment_rate: float | None,
     false_veto_rate: float | None,
@@ -325,7 +330,7 @@ def _build_observed_metrics(
     }
     provided_count = sum(1 for value in observed.values() if value is not None)
     if provided_count == 0:
-        return {}
+        return _derive_observed_metrics_from_dataset(dataset_payload)
     if provided_count != len(observed):
         raise ValueError("observed_metrics_incomplete")
 
@@ -347,6 +352,167 @@ def _build_observed_metrics(
             cast(int, observed["latencyP95Ms"]), field_name="latency_p95_ms"
         ),
     }
+
+
+def _derive_observed_metrics_from_dataset(
+    dataset_payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    rows_raw = dataset_payload.get("rows")
+    rows = cast(list[Any], rows_raw) if isinstance(rows_raw, list) else []
+    total_rows = len(rows)
+    if total_rows <= 0:
+        return {
+            "schemaValidRate": 0.0,
+            "vetoAlignmentRate": 0.0,
+            "falseVetoRate": 1.0,
+            "fallbackRate": 1.0,
+            "latencyP95Ms": 2**31 - 1,
+            "observedMetricsSource": _DERIVED_METRICS_SCHEMA_VERSION,
+            "observedMetricsRows": 0,
+            "observedMetricsSchemaValidRows": 0,
+            "observedMetricsLatencyRows": 0,
+            "observedMetricsFallbackRows": 0,
+            "observedMetricsVetoRows": 0,
+            "observedMetricsFalseVetoRows": 0,
+        }
+
+    schema_valid_rows = 0
+    veto_alignment_rows = 0
+    fallback_rows = 0
+    veto_rows = 0
+    false_veto_rows = 0
+    latency_values: list[int] = []
+
+    for row_raw in rows:
+        if not isinstance(row_raw, Mapping):
+            continue
+        row = cast(Mapping[str, Any], row_raw)
+        label_raw = row.get("label")
+        label: dict[str, Any] = _mapping_to_dict(label_raw)
+        response_raw = label.get("responseJson")
+        response_payload: dict[str, Any] = _mapping_to_dict(response_raw)
+        decision_raw = row.get("decision")
+        decision: dict[str, Any] = _mapping_to_dict(decision_raw)
+        label_verdict = str(label.get("verdict") or "").strip().lower()
+
+        if _row_indicates_fallback(response_payload):
+            fallback_rows += 1
+
+        latency_ms = _extract_latency_ms(response_payload)
+        if latency_ms is not None:
+            latency_values.append(latency_ms)
+
+        try:
+            parsed_response = LLMReviewResponse.model_validate(dict(response_payload))
+        except Exception:
+            continue
+
+        schema_valid_rows += 1
+        parsed_verdict = parsed_response.verdict.strip().lower()
+        if parsed_verdict == label_verdict:
+            veto_alignment_rows += 1
+        if parsed_verdict == "veto":
+            veto_rows += 1
+            if _decision_was_executed(decision):
+                false_veto_rows += 1
+
+    schema_valid_rate = schema_valid_rows / total_rows
+    veto_alignment_rate = (
+        veto_alignment_rows / schema_valid_rows if schema_valid_rows > 0 else 0.0
+    )
+    false_veto_rate = false_veto_rows / veto_rows if veto_rows > 0 else 0.0
+    fallback_rate = fallback_rows / total_rows
+    latency_p95_ms = (
+        _percentile_disc(latency_values, percentile=0.95)
+        if latency_values
+        else 2**31 - 1
+    )
+
+    return {
+        "schemaValidRate": schema_valid_rate,
+        "vetoAlignmentRate": veto_alignment_rate,
+        "falseVetoRate": false_veto_rate,
+        "fallbackRate": fallback_rate,
+        "latencyP95Ms": latency_p95_ms,
+        "observedMetricsSource": _DERIVED_METRICS_SCHEMA_VERSION,
+        "observedMetricsRows": total_rows,
+        "observedMetricsSchemaValidRows": schema_valid_rows,
+        "observedMetricsLatencyRows": len(latency_values),
+        "observedMetricsFallbackRows": fallback_rows,
+        "observedMetricsVetoRows": veto_rows,
+        "observedMetricsFalseVetoRows": false_veto_rows,
+    }
+
+
+def _row_indicates_fallback(response_payload: Mapping[str, Any]) -> bool:
+    direct_fallback = response_payload.get("fallback")
+    if isinstance(direct_fallback, bool):
+        return direct_fallback
+    if isinstance(direct_fallback, str) and direct_fallback.strip():
+        return True
+
+    dspy_raw = response_payload.get("dspy")
+    if not isinstance(dspy_raw, Mapping):
+        return False
+    dspy_payload = cast(Mapping[str, Any], dspy_raw)
+    dspy_fallback = dspy_payload.get("fallback")
+    if isinstance(dspy_fallback, bool):
+        return dspy_fallback
+    if isinstance(dspy_fallback, str):
+        return dspy_fallback.strip().lower() not in {"", "false", "0", "no"}
+    return False
+
+
+def _extract_latency_ms(response_payload: Mapping[str, Any]) -> int | None:
+    dspy_raw = response_payload.get("dspy")
+    if isinstance(dspy_raw, Mapping):
+        dspy_payload = cast(Mapping[str, Any], dspy_raw)
+        latency_candidate = dspy_payload.get("latency_ms")
+        if latency_candidate is None:
+            latency_candidate = dspy_payload.get("latencyMs")
+        normalized = _normalize_optional_non_negative_int(latency_candidate)
+        if normalized is not None:
+            return normalized
+
+    latency_candidate = response_payload.get("latency_ms")
+    if latency_candidate is None:
+        latency_candidate = response_payload.get("latencyMs")
+    return _normalize_optional_non_negative_int(latency_candidate)
+
+
+def _normalize_optional_non_negative_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        normalized = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if normalized < 0:
+        return None
+    return normalized
+
+
+def _decision_was_executed(decision: Mapping[str, Any]) -> bool:
+    executed_at = decision.get("executedAt")
+    if isinstance(executed_at, str) and executed_at.strip():
+        return True
+    status = str(decision.get("status") or "").strip().lower()
+    return status in _FALSE_VETO_EXECUTED_STATUSES
+
+
+def _percentile_disc(values: list[int], *, percentile: float) -> int:
+    if not values:
+        raise ValueError("percentile_values_required")
+    normalized = min(max(float(percentile), 0.0), 1.0)
+    ordered = sorted(values)
+    index = max(int((len(ordered) - 1) * normalized), 0)
+    return ordered[index]
+
+
+def _mapping_to_dict(value: object) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {str(key): item for key, item in cast(Mapping[object, Any], value).items()}
 
 
 def _normalize_rate(value: float, *, field_name: str) -> float:
