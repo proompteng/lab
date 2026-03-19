@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Layer, ManagedRuntime } from 'effect'
 import * as Stream from 'effect/Stream'
 
+import { DeliveryService } from './delivery-service'
 import { IssueRunnerService } from './issue-runner'
 import { createLogger } from './logger'
 import { LeaderElectionService } from './leader-election'
@@ -12,7 +13,7 @@ import { PostHogTelemetryService } from './posthog'
 import { emptyPersistedSchedulerState, StateStoreService } from './state-store'
 import { TargetHealthService } from './target-health'
 import { makeTestConfig } from './test-fixtures'
-import type { Issue, LeaderSnapshot, TargetHealthSummary } from './types'
+import type { Issue, IssueRecord, LeaderSnapshot, TargetHealthSummary } from './types'
 import { WorkflowService } from './workflow'
 import { WorkspaceService } from './workspace-manager'
 
@@ -64,6 +65,32 @@ const posthogLayer = Layer.succeed(PostHogTelemetryService, {
     distinctId: 'symphony:test',
     lastError: null,
   }),
+})
+
+const deliveryLayer = Layer.succeed(DeliveryService, {
+  createPullRequest: () => Effect.die('not used'),
+  getPullRequest: () => Effect.die('not used'),
+  mergePullRequest: () => Effect.die('not used'),
+  inspectRequiredChecks: () => Effect.die('not used'),
+  getWorkflowRun: () => Effect.die('not used'),
+  refreshIssueDelivery: (issue) =>
+    Effect.succeed({
+      ...(issue.delivery ?? {
+        stage: 'coding',
+        updatedAt: new Date().toISOString(),
+        codePr: null,
+        requiredChecks: null,
+        mergedCommitSha: null,
+        build: null,
+        releaseContract: null,
+        promotionPr: null,
+        argo: null,
+        postDeploy: null,
+        rollbackPr: null,
+        lastError: null,
+      }),
+      updatedAt: '2026-03-16T03:00:10.000Z',
+    }),
 })
 
 describe('orchestrator lifecycle', () => {
@@ -118,6 +145,7 @@ describe('orchestrator lifecycle', () => {
           }),
         ),
         Layer.provide(posthogLayer),
+        Layer.provide(deliveryLayer),
         Layer.provide(
           Layer.succeed(LeaderElectionService, {
             start: Effect.void,
@@ -209,6 +237,7 @@ describe('orchestrator lifecycle', () => {
           }),
         ),
         Layer.provide(posthogLayer),
+        Layer.provide(deliveryLayer),
         Layer.provide(
           Layer.succeed(LeaderElectionService, {
             start: Effect.void,
@@ -297,6 +326,7 @@ describe('orchestrator lifecycle', () => {
           }),
         ),
         Layer.provide(posthogLayer),
+        Layer.provide(deliveryLayer),
         Layer.provide(
           Layer.succeed(LeaderElectionService, {
             start: Effect.void,
@@ -342,6 +372,170 @@ describe('orchestrator lifecycle', () => {
             const issue = yield* orchestrator.getIssueDetails(candidateIssue.identifier)
             expect(issue?.status).toBe('tracked')
             expect(issue?.retry).toBeNull()
+
+            yield* orchestrator.stop
+          }),
+        ),
+      )
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  test('rehydrates and refreshes persisted delivery state after restart', async () => {
+    const config = makeTestConfig({
+      pollingIntervalMs: 60_000,
+      health: { preDispatch: [], postDeploy: [] },
+    })
+
+    const runtime = ManagedRuntime.make(
+      makeOrchestratorLayer(createLogger({ test: 'orchestrator-delivery-recovery' })).pipe(
+        Layer.provide(
+          Layer.succeed(WorkflowService, {
+            current: Effect.succeed({
+              definition: { config: {}, promptTemplate: 'Work on {{issue.identifier}}' },
+              config,
+            }),
+            config: Effect.succeed(config),
+            reload: Effect.succeed({
+              definition: { config: {}, promptTemplate: 'Work on {{issue.identifier}}' },
+              config,
+            }),
+            changes: Stream.empty,
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(TrackerService, {
+            fetchCandidateIssues: Effect.succeed([]),
+            fetchIssuesByStates: () => Effect.succeed([]),
+            fetchIssueStatesByIds: () => Effect.succeed([]),
+            executeLinearGraphql: () => Effect.succeed({}),
+            handoffIssue: () => Effect.void,
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(WorkspaceService, {
+            createForIssue: () => Effect.die('not used'),
+            runBeforeRun: () => Effect.void,
+            runAfterRun: () => Effect.void,
+            removeWorkspace: () => Effect.void,
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(IssueRunnerService, {
+            runAttempt: (_issue, _attempt, _callbacks, _telemetryContext) => Effect.die('not used'),
+          }),
+        ),
+        Layer.provide(posthogLayer),
+        Layer.provide(
+          Layer.succeed(DeliveryService, {
+            createPullRequest: () => Effect.die('not used'),
+            getPullRequest: () => Effect.die('not used'),
+            mergePullRequest: () => Effect.die('not used'),
+            inspectRequiredChecks: () => Effect.die('not used'),
+            getWorkflowRun: () => Effect.die('not used'),
+            refreshIssueDelivery: (issue) =>
+              Effect.succeed({
+                ...(issue.delivery ?? {
+                  stage: 'coding',
+                  updatedAt: '2026-03-16T03:00:00.000Z',
+                  codePr: null,
+                  requiredChecks: null,
+                  mergedCommitSha: null,
+                  build: null,
+                  releaseContract: null,
+                  promotionPr: null,
+                  argo: null,
+                  postDeploy: null,
+                  rollbackPr: null,
+                  lastError: null,
+                }),
+                stage: 'completed',
+                updatedAt: '2026-03-16T03:00:20.000Z',
+                postDeploy: {
+                  id: 601,
+                  url: 'https://github.com/proompteng/lab/actions/runs/601',
+                  name: 'symphony-post-deploy-verify',
+                  state: 'success',
+                  status: 'completed',
+                  conclusion: 'success',
+                  event: 'push',
+                  headSha: 'fedcba9876543210fedcba9876543210fedcba98',
+                  headBranch: 'main',
+                  createdAt: '2026-03-16T03:00:10.000Z',
+                  updatedAt: '2026-03-16T03:00:20.000Z',
+                },
+              }),
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(LeaderElectionService, {
+            start: Effect.void,
+            stop: Effect.void,
+            status: Effect.succeed(leaderSnapshot),
+            changes: Stream.empty,
+          }),
+        ),
+        Layer.provide(
+          (() => {
+            const persistedIssue: IssueRecord = {
+              issueIdentifier: candidateIssue.identifier,
+              issueId: candidateIssue.id,
+              status: 'tracked',
+              workspacePath: '/workspace/symphony/ABC-1',
+              attempts: { restartCount: 1, currentRetryAttempt: 0 },
+              running: null,
+              retry: null,
+              logs: { codex_session_logs: [] },
+              recentEvents: [],
+              lastError: null,
+              tracked: { lastKnownState: 'In Progress' },
+              runHistory: [],
+              delivery: {
+                stage: 'promotion_merged',
+                updatedAt: '2026-03-16T03:00:00.000Z',
+                codePr: null,
+                requiredChecks: null,
+                mergedCommitSha: null,
+                build: null,
+                releaseContract: null,
+                promotionPr: null,
+                argo: null,
+                postDeploy: null,
+                rollbackPr: null,
+                lastError: null,
+              },
+              updatedAt: '2026-03-16T03:00:00.000Z',
+            }
+
+            return Layer.succeed(StateStoreService, {
+              load: Effect.succeed({
+                ...emptyPersistedSchedulerState(),
+                issues: [persistedIssue],
+              }),
+              save: () => Effect.void,
+              stateFilePath: Effect.succeed('/tmp/symphony-state.json'),
+            })
+          })(),
+        ),
+        Layer.provide(Layer.succeed(TargetHealthService, { evaluatePreDispatch: Effect.succeed(targetHealthSummary) })),
+      ),
+    )
+
+    try {
+      await runtime.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const orchestrator = yield* OrchestratorService
+            yield* orchestrator.start
+            yield* Effect.sleep(50)
+
+            const issue = yield* orchestrator.getIssueDetails(candidateIssue.identifier)
+            expect(issue?.delivery?.stage).toBe('completed')
+            expect(issue?.delivery?.postDeploy?.id).toBe(601)
+
+            const snapshot = yield* orchestrator.getSnapshot
+            expect(snapshot.issues[0]?.delivery?.stage).toBe('completed')
 
             yield* orchestrator.stop
           }),

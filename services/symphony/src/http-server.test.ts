@@ -46,6 +46,38 @@ const issueDetails: IssueDetails = {
   lastError: null,
   tracked: { lastKnownState: 'In Progress' },
   runHistory: [],
+  delivery: {
+    stage: 'checks_pending',
+    updatedAt: '2026-03-14T12:00:00.000Z',
+    codePr: {
+      number: 101,
+      url: 'https://github.com/proompteng/lab/pull/101',
+      branch: 'codex/proompt-336',
+      state: 'open',
+      title: 'feat(symphony): add delivery engine',
+      createdAt: '2026-03-14T11:30:00.000Z',
+      updatedAt: '2026-03-14T12:00:00.000Z',
+      mergedAt: null,
+      mergedCommitSha: null,
+    },
+    requiredChecks: {
+      state: 'pending',
+      headSha: 'abcdef0123456789abcdef0123456789abcdef01',
+      requiredCount: 3,
+      passingCount: 2,
+      failingCount: 0,
+      pendingCount: 1,
+      url: 'https://github.com/proompteng/lab/pull/101/checks',
+    },
+    mergedCommitSha: null,
+    build: null,
+    releaseContract: null,
+    promotionPr: null,
+    argo: null,
+    postDeploy: null,
+    rollbackPr: null,
+    lastError: null,
+  },
 }
 
 const baseConfig: SymphonyConfig = makeTestConfig({
@@ -91,12 +123,14 @@ describe('http request parsing', () => {
       expect(stateBody.release.mode).toBe('gitops_pr_on_main')
       expect(stateBody.targetHealth.readyForDispatch).toBe(true)
       expect(stateBody.telemetry.enabled).toBe(true)
+      expect(stateBody.issues[0]?.delivery?.codePr?.number).toBe(101)
 
       const issueResponse = await fetch(`http://127.0.0.1:${port}/api/v1/ABC-1`)
       expect(issueResponse.status).toBe(200)
       const issueBody = await issueResponse.json()
       expect(issueBody.workspace.path).toBe('/workspace/symphony/ABC-1')
       expect(issueBody.status).toBe('running')
+      expect(issueBody.delivery.stage).toBe('checks_pending')
 
       const dashboardResponse = await fetch(`http://127.0.0.1:${port}/`)
       const dashboardText = await dashboardResponse.text()
@@ -105,6 +139,7 @@ describe('http request parsing', () => {
       expect(dashboardText).toContain('Telemetry')
       expect(dashboardText).toContain('Recent Errors')
       expect(dashboardText).toContain('Target Health')
+      expect(dashboardText).toContain('Delivery Transactions')
       expect(dashboardText).toContain('/api/v1/ABC-1')
     } finally {
       server.stop()
