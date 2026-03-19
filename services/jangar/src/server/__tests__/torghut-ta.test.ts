@@ -1,32 +1,80 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { computeFallbackRange, formatClickHouseDateTime64, parseClickHouseDateTime64 } from '../torghut-ta'
+import type { ClickHouseClient, ClickHouseParams } from '~/server/clickhouse'
+import { computeFallbackRange, queryLatestTaTableEventTs } from '~/server/torghut-ta'
 
-describe('computeFallbackRange', () => {
-  it('returns null when latest timestamp is within the requested range', () => {
-    const result = computeFallbackRange({
-      from: '2026-01-10T00:00:00.000',
-      to: '2026-01-11T00:00:00.000',
-      latest: '2026-01-10 12:00:00.000',
+const mockClickHouseClient = (queryJson: ReturnType<typeof vi.fn>): ClickHouseClient => ({
+  queryJson: async <T = Record<string, unknown>>(query: string, params?: ClickHouseParams) =>
+    (await (queryJson as unknown as (query: string, params?: ClickHouseParams) => Promise<T[]>)(query, params)) as T[],
+})
+
+describe('queryLatestTaTableEventTs', () => {
+  it('scopes the aggregate to the latest active partition day before falling back to a full-table scan', async () => {
+    const queryJson = vi
+      .fn<ClickHouseClient['queryJson']>()
+      .mockResolvedValueOnce([{ as_of_ms: 1_742_342_400_000 }])
+      .mockResolvedValueOnce([{ latest: '2025-03-19 12:34:56.789' }])
+
+    const latest = await queryLatestTaTableEventTs({
+      client: mockClickHouseClient(queryJson),
+      table: 'ta_signals',
+      symbol: 'BTC-USD',
     })
-    expect(result).toBeNull()
+
+    expect(latest).toBe('2025-03-19 12:34:56.789')
+    expect(queryJson).toHaveBeenCalledTimes(2)
+    expect(queryJson.mock.calls[0]?.[0]).toContain('FROM system.parts')
+    expect(queryJson.mock.calls[1]?.[0]).toContain('FROM ta_signals')
+    expect(queryJson.mock.calls[1]?.[0]).toContain('event_ts >= {partition_start:DateTime}')
+    expect(queryJson.mock.calls[1]?.[0]).toContain('event_ts < {partition_end:DateTime}')
+    expect(queryJson.mock.calls[1]?.[1]).toMatchObject({
+      symbol: 'BTC-USD',
+      partition_start: new Date('2025-03-19T00:00:00.000Z'),
+      partition_end: new Date('2025-03-20T00:00:00.000Z'),
+    })
   })
 
-  it('anchors the window to the latest timestamp when the range has no data', () => {
-    const latest = '2026-01-12 14:30:55.000'
-    const latestDate = parseClickHouseDateTime64(latest)
-    if (!latestDate) {
-      throw new Error('Expected latest timestamp to parse')
-    }
-    const expectedFrom = formatClickHouseDateTime64(new Date(latestDate.getTime() - 24 * 60 * 60 * 1000))
-    const expectedTo = formatClickHouseDateTime64(latestDate)
+  it('falls back to the symbol-scoped aggregate when partition metadata is unavailable', async () => {
+    const queryJson = vi
+      .fn<ClickHouseClient['queryJson']>()
+      .mockRejectedValueOnce(new Error('system.parts unavailable'))
+      .mockResolvedValueOnce([{ latest: '2025-03-18 23:59:59.999' }])
 
-    const result = computeFallbackRange({
-      from: '2026-01-25T00:00:00.000',
-      to: '2026-01-26T00:00:00.000',
-      latest,
+    const latest = await queryLatestTaTableEventTs({
+      client: mockClickHouseClient(queryJson),
+      table: 'ta_microbars',
+      symbol: 'ETH-USD',
     })
 
-    expect(result).toEqual({ from: expectedFrom, to: expectedTo })
+    expect(latest).toBe('2025-03-18 23:59:59.999')
+    expect(queryJson).toHaveBeenCalledTimes(2)
+    expect(queryJson.mock.calls[1]?.[0]).toContain('SELECT max(event_ts) as latest')
+    expect(queryJson.mock.calls[1]?.[0]).not.toContain('partition_start')
+    expect(queryJson.mock.calls[1]?.[1]).toEqual({ symbol: 'ETH-USD' })
+  })
+})
+
+describe('computeFallbackRange', () => {
+  it('re-centers the requested window around the latest event when the requested range is stale', () => {
+    expect(
+      computeFallbackRange({
+        from: '2025-03-18T00:00:00.000',
+        to: '2025-03-18T01:00:00.000',
+        latest: '2025-03-19 12:00:00.000',
+      }),
+    ).toEqual({
+      from: '2025-03-19T11:00:00.000',
+      to: '2025-03-19T12:00:00.000',
+    })
+  })
+
+  it('returns null when the requested range already includes the latest event', () => {
+    expect(
+      computeFallbackRange({
+        from: '2025-03-19T11:00:00.000',
+        to: '2025-03-19T13:00:00.000',
+        latest: '2025-03-19 12:00:00.000',
+      }),
+    ).toBeNull()
   })
 })
