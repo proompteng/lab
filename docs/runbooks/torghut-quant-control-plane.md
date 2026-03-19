@@ -61,10 +61,14 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
    - If `dependency_quorum.decision == "block"` or (`dependency_quorum.decision == "delay"` with `dependency_quorum.degradation_scope` that blocks capital progress), treat the affected control-plane segment as the active blocker and verify impact before disabling promotion.
    - If `dependency_quorum.degradation_scope` is set to `single_capability`, pause affected capital movement paths only and confirm other lanes remain evaluable before broad actions.
    - If a single hypothesis is `blocked` or `shadow`, do not disable the whole service by default; verify the specific blocker reasons and keep unaffected lanes observable.
-   - Treat `live_submission_gate.capital_stage` as configured intent, not sufficient clearance by itself. Before any canary progression, also require:
+   - `live_submission_gate` is now the shared scheduler/status decision surface. Any non-shadow capital requires:
      - `alpha_readiness_promotion_eligible_total > 0`
+     - no capital-critical mismatch in `critical_toggle_parity_blocking_mismatches`
      - non-empty quant latest-store evidence from Jangar
      - healthy options bootstrap for options-dependent hypotheses
+   - If `live_submission_gate.reason = "critical_toggle_parity_diverged"` or
+     `alpha_readiness_not_promotion_eligible`, treat the gate as fail-closed and resolve the underlying config or
+     evidence gap before retrying canary progression.
    - Per-lane blockers are now scoped via each hypothesis manifest dependency capabilities, so a degraded dependency (for example
      `jangar_dependency_delay`) should only affect hypotheses that explicitly require that capability.
    - Read segment output from `dependency_quorum.segments` to confirm impact: check each `segment`, `status`, `scope`, and `reasons` before rerouting incident response.
@@ -133,6 +137,7 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
      - `qty_below_min` share <= `0.03` of recent decisions
      - `llm_unavailable_*` reject share <= `0.02` of recent decisions
      - `alpha_readiness_promotion_eligible_total > 0`
+     - `critical_toggle_parity_blocking_mismatches = []`
      - quant latest-store evidence is non-empty for the target window
    - Hard rollback triggers:
      - clean ratio < `0.70` for 15 minutes

@@ -65,6 +65,11 @@ from .trading.hypotheses import (
 )
 from .trading.lean_lanes import LeanLaneManager
 from .trading.llm.evaluation import build_llm_evaluation_metrics
+from .trading.submission_council import (
+    build_live_submission_gate_payload,
+    build_shadow_first_toggle_parity,
+    resolve_active_capital_stage,
+)
 from .trading.tca import build_tca_gate_inputs
 from .trading.simulation_progress import active_simulation_runtime_context, simulation_progress_snapshot
 from .trading.time_source import trading_time_status
@@ -82,13 +87,6 @@ logger = logging.getLogger(__name__)
 BUILD_VERSION = os.getenv("TORGHUT_VERSION", "dev")
 BUILD_COMMIT = os.getenv("TORGHUT_COMMIT", "unknown")
 BUILD_IMAGE_DIGEST = os.getenv("TORGHUT_IMAGE_DIGEST", "").strip() or None
-_CAPITAL_STAGE_ORDER = (
-    "shadow",
-    "0.10x canary",
-    "0.25x canary",
-    "0.50x live",
-    "1.00x live",
-)
 RUNTIME_PROFITABILITY_LOOKBACK_HOURS = 72
 RUNTIME_PROFITABILITY_SCHEMA_VERSION = "torghut.runtime-profitability.v1"
 LEAN_LANE_MANAGER = LeanLaneManager()
@@ -2483,53 +2481,14 @@ def _active_runtime_revision() -> str | None:
     return revision or None
 
 
-def _critical_trading_toggle_snapshot() -> dict[str, object]:
-    return {
-        "TRADING_ENABLED": settings.trading_enabled,
-        "TRADING_AUTONOMY_ENABLED": settings.trading_autonomy_enabled,
-        "TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION": settings.trading_autonomy_allow_live_promotion,
-        "TRADING_KILL_SWITCH_ENABLED": settings.trading_kill_switch_enabled,
-        "TRADING_MODE": settings.trading_mode,
-        "TRADING_EXECUTION_ADAPTER_POLICY": settings.trading_execution_adapter_policy,
-    }
-
-
 def _build_shadow_first_toggle_parity() -> dict[str, object]:
-    expected = {
-        "TRADING_ENABLED": True,
-        "TRADING_AUTONOMY_ENABLED": False,
-        "TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION": False,
-        "TRADING_KILL_SWITCH_ENABLED": False,
-        "TRADING_MODE": "live",
-    }
-    effective = _critical_trading_toggle_snapshot()
-    mismatches = [
-        key
-        for key, expected_value in expected.items()
-        if effective.get(key) != expected_value
-    ]
-    return {
-        "status": "aligned" if not mismatches else "diverged",
-        "mismatches": mismatches,
-        "expected": expected,
-        "effective": effective,
-    }
+    return build_shadow_first_toggle_parity()
 
 
 def _resolve_active_capital_stage(
     hypothesis_summary: Mapping[str, Any] | None,
 ) -> str | None:
-    if not isinstance(hypothesis_summary, Mapping):
-        return None
-    totals_raw = hypothesis_summary.get("capital_stage_totals")
-    if not isinstance(totals_raw, Mapping):
-        return None
-    totals = cast(Mapping[str, Any], totals_raw)
-    for stage in reversed(_CAPITAL_STAGE_ORDER):
-        count = totals.get(stage)
-        if isinstance(count, int) and count > 0:
-            return stage
-    return "shadow" if totals else None
+    return resolve_active_capital_stage(hypothesis_summary)
 
 
 def _build_shadow_first_runtime_payload(
@@ -3087,83 +3046,12 @@ def _build_live_submission_gate_payload(
     empirical_jobs_status: Mapping[str, Any] | None = None,
     dspy_runtime_status: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
-    summary: Mapping[str, Any] = hypothesis_summary or {}
-    dependency_quorum_payload: dict[str, Any] = (
-        dict(cast(Mapping[str, Any], summary.get("dependency_quorum")))
-        if isinstance(summary.get("dependency_quorum"), Mapping)
-        else {}
+    return build_live_submission_gate_payload(
+        state,
+        hypothesis_summary=hypothesis_summary,
+        empirical_jobs_status=empirical_jobs_status,
+        dspy_runtime_status=dspy_runtime_status,
     )
-    dependency_decision = (
-        str(dependency_quorum_payload.get("decision") or "").strip().lower() or "unknown"
-    )
-    promotion_eligible_total = _safe_int(summary.get("promotion_eligible_total"))
-    empirical_ready = (
-        bool(empirical_jobs_status.get("ready"))
-        if isinstance(empirical_jobs_status, Mapping)
-        else None
-    )
-    dspy_mode = (
-        str(dspy_runtime_status.get("mode") or "").strip().lower()
-        if isinstance(dspy_runtime_status, Mapping)
-        else ""
-    )
-    dspy_live_ready = (
-        bool(dspy_runtime_status.get("live_ready"))
-        if isinstance(dspy_runtime_status, Mapping) and dspy_mode == "active"
-        else None
-    )
-    configured_live_promotion = bool(settings.trading_autonomy_allow_live_promotion)
-    autonomy_promotion_eligible = bool(
-        getattr(state, "last_autonomy_promotion_eligible", False)
-    )
-    drift_live_promotion_eligible = bool(
-        getattr(state, "drift_live_promotion_eligible", False)
-    )
-    active_capital_stage = _resolve_active_capital_stage(summary)
-    if settings.trading_mode != "live":
-        return {
-            "allowed": True,
-            "reason": "non_live_mode",
-            "blocked_reasons": [],
-            "capital_stage": settings.trading_mode,
-            "configured_live_promotion": configured_live_promotion,
-            "autonomy_promotion_eligible": autonomy_promotion_eligible,
-            "drift_live_promotion_eligible": drift_live_promotion_eligible,
-            "promotion_eligible_total": promotion_eligible_total,
-            "dependency_quorum_decision": dependency_decision,
-            "empirical_jobs_ready": empirical_ready,
-            "dspy_live_ready": dspy_live_ready,
-        }
-
-    blocked_reasons: list[str] = []
-    if promotion_eligible_total <= 0:
-        blocked_reasons.append("alpha_readiness_not_promotion_eligible")
-    if empirical_ready is False:
-        blocked_reasons.append("empirical_jobs_not_ready")
-    if dspy_live_ready is False:
-        blocked_reasons.append("dspy_live_runtime_not_ready")
-    if dependency_decision != "allow":
-        blocked_reasons.append(f"dependency_quorum_{dependency_decision}")
-    if not configured_live_promotion and not autonomy_promotion_eligible and not drift_live_promotion_eligible:
-        blocked_reasons.append("live_promotion_disabled")
-
-    allowed = len(blocked_reasons) == 0
-    if allowed and active_capital_stage == "shadow":
-        active_capital_stage = "0.10x canary"
-
-    return {
-        "allowed": allowed,
-        "reason": "ready" if allowed else blocked_reasons[0],
-        "blocked_reasons": blocked_reasons,
-        "capital_stage": active_capital_stage,
-        "configured_live_promotion": configured_live_promotion,
-        "autonomy_promotion_eligible": autonomy_promotion_eligible,
-        "drift_live_promotion_eligible": drift_live_promotion_eligible,
-        "promotion_eligible_total": promotion_eligible_total,
-        "dependency_quorum_decision": dependency_decision,
-        "empirical_jobs_ready": empirical_ready,
-        "dspy_live_ready": dspy_live_ready,
-    }
 
 
 def _load_route_provenance_summary(session: Session) -> dict[str, object]:

@@ -1376,6 +1376,15 @@ class TestTradingPipeline(TestCase):
         config.settings.trading_static_symbols_raw = "AAPL"
 
         try:
+            eligible_summary = {
+                "promotion_eligible_total": 1,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            }
             with self.session_local() as session:
                 strategy = Strategy(
                     name="shadow-stage",
@@ -1416,7 +1425,14 @@ class TestTradingPipeline(TestCase):
                 session_factory=self.session_local,
             )
 
-            pipeline.run_once()
+            with patch(
+                "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                return_value=eligible_summary,
+            ), patch(
+                "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                return_value={"ready": True, "status": "healthy"},
+            ):
+                pipeline.run_once()
 
             with self.session_local() as session:
                 decision_rows = session.execute(select(TradeDecision)).scalars().all()
@@ -1486,13 +1502,22 @@ class TestTradingPipeline(TestCase):
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
         config.settings.trading_live_enabled = True
-        config.settings.trading_autonomy_enabled = True
+        config.settings.trading_autonomy_enabled = False
         config.settings.trading_autonomy_allow_live_promotion = False
         config.settings.trading_kill_switch_enabled = False
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
 
         try:
+            eligible_summary = {
+                "promotion_eligible_total": 1,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            }
             with self.session_local() as session:
                 strategy = Strategy(
                     name="live-canary-eligible",
@@ -1537,7 +1562,14 @@ class TestTradingPipeline(TestCase):
                 session_factory=self.session_local,
             )
 
-            pipeline.run_once()
+            with patch(
+                "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                return_value=eligible_summary,
+            ), patch(
+                "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                return_value={"ready": True, "status": "healthy"},
+            ):
+                pipeline.run_once()
 
             with self.session_local() as session:
                 decision_rows = session.execute(select(TradeDecision)).scalars().all()
@@ -1574,6 +1606,128 @@ class TestTradingPipeline(TestCase):
             ]
             config.settings.trading_static_symbols_raw = original[
                 "trading_static_symbols_raw"
+            ]
+
+    def test_live_submission_blocks_autonomy_eligible_canary_without_promotion_evidence(
+        self,
+    ) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_autonomy_enabled": config.settings.trading_autonomy_enabled,
+            "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
+            "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_live_enabled = True
+        config.settings.trading_autonomy_enabled = False
+        config.settings.trading_autonomy_allow_live_promotion = False
+        config.settings.trading_kill_switch_enabled = False
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+
+        try:
+            blocked_summary = {
+                "promotion_eligible_total": 0,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            }
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="live-canary-missing-proof",
+                    description="autonomy evidence without promotion proof",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+                timeframe="1Min",
+            )
+
+            alpaca_client = FakeAlpacaClient()
+            state = TradingState(
+                last_autonomy_promotion_eligible=True,
+                last_autonomy_promotion_action="promote",
+            )
+            pipeline = TradingPipeline(
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
+                ingestor=FakeIngestor([signal]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=alpaca_client,
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=state,
+                account_label="live",
+                session_factory=self.session_local,
+            )
+
+            with patch(
+                "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                return_value=blocked_summary,
+            ), patch(
+                "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                return_value={"ready": True, "status": "healthy"},
+            ):
+                pipeline.run_once()
+
+            with self.session_local() as session:
+                decision_rows = session.execute(select(TradeDecision)).scalars().all()
+                self.assertEqual(len(decision_rows), 1)
+                self.assertEqual(decision_rows[0].status, "blocked")
+                decision_json = decision_rows[0].decision_json
+                assert isinstance(decision_json, dict)
+                control_plane_snapshot = decision_json.get("control_plane_snapshot")
+                assert isinstance(control_plane_snapshot, dict)
+                live_submission_gate = control_plane_snapshot.get("live_submission_gate")
+                assert isinstance(live_submission_gate, dict)
+                self.assertEqual(live_submission_gate.get("allowed"), False)
+                self.assertEqual(
+                    live_submission_gate.get("reason"),
+                    "alpha_readiness_not_promotion_eligible",
+                )
+                self.assertIn(
+                    "alpha_readiness_not_promotion_eligible",
+                    live_submission_gate.get("blocked_reasons", []),
+                )
+
+            self.assertEqual(alpaca_client.submitted, [])
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_autonomy_enabled = original[
+                "trading_autonomy_enabled"
+            ]
+            config.settings.trading_autonomy_allow_live_promotion = original[
+                "trading_autonomy_allow_live_promotion"
+            ]
+            config.settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
             ]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
@@ -5581,7 +5735,23 @@ class TestTradingPipeline(TestCase):
                 session_factory=self.session_local,
                 llm_review_engine=FakeLLMReviewEngine(error=RuntimeError("boom")),
             )
-            pipeline_live.run_once()
+            eligible_summary = {
+                "promotion_eligible_total": 1,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            }
+            with patch(
+                "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                return_value=eligible_summary,
+            ), patch(
+                "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                return_value={"ready": True, "status": "healthy"},
+            ):
+                pipeline_live.run_once()
 
             with self.session_local() as session:
                 executions = session.execute(select(Execution)).scalars().all()
@@ -5881,7 +6051,23 @@ class TestTradingPipeline(TestCase):
                     session_factory=self.session_local,
                     llm_review_engine=engine,
                 )
-                pipeline.run_once()
+                eligible_summary = {
+                    "promotion_eligible_total": 1,
+                    "capital_stage_totals": {"shadow": 1},
+                    "dependency_quorum": {
+                        "decision": "allow",
+                        "reasons": [],
+                        "message": "ready",
+                    },
+                }
+                with patch(
+                    "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                    return_value=eligible_summary,
+                ), patch(
+                    "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                    return_value={"ready": True, "status": "healthy"},
+                ):
+                    pipeline.run_once()
 
             with self.session_local() as session:
                 reviews = session.execute(select(LLMDecisionReview)).scalars().all()
@@ -6039,7 +6225,23 @@ class TestTradingPipeline(TestCase):
                     session_factory=self.session_local,
                     llm_review_engine=engine,
                 )
-                pipeline.run_once()
+                eligible_summary = {
+                    "promotion_eligible_total": 1,
+                    "capital_stage_totals": {"shadow": 1},
+                    "dependency_quorum": {
+                        "decision": "allow",
+                        "reasons": [],
+                        "message": "ready",
+                    },
+                }
+                with patch(
+                    "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                    return_value=eligible_summary,
+                ), patch(
+                    "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                    return_value={"ready": True, "status": "healthy"},
+                ):
+                    pipeline.run_once()
 
             with self.session_local() as session:
                 reviews = session.execute(select(LLMDecisionReview)).scalars().all()
@@ -7065,7 +7267,23 @@ class TestTradingPipeline(TestCase):
                 llm_review_engine=CountingLLMReviewEngine(),
             )
 
-            pipeline.run_once()
+            eligible_summary = {
+                "promotion_eligible_total": 1,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            }
+            with patch(
+                "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                return_value=eligible_summary,
+            ), patch(
+                "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                return_value={"ready": True, "status": "healthy"},
+            ):
+                pipeline.run_once()
 
             with self.session_local() as session:
                 reviews = session.execute(select(LLMDecisionReview)).scalars().all()
@@ -7222,7 +7440,23 @@ class TestTradingPipeline(TestCase):
                 session_factory=self.session_local,
             )
 
-            pipeline.run_once()
+            eligible_summary = {
+                "promotion_eligible_total": 1,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            }
+            with patch(
+                "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                return_value=eligible_summary,
+            ), patch(
+                "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                return_value={"ready": True, "status": "healthy"},
+            ):
+                pipeline.run_once()
 
             with self.session_local() as session:
                 reviews = session.execute(select(LLMDecisionReview)).scalars().all()
@@ -7399,7 +7633,23 @@ class TestTradingPipeline(TestCase):
                 llm_review_engine=CountingLLMReviewEngine(),
             )
 
-            pipeline.run_once()
+            eligible_summary = {
+                "promotion_eligible_total": 1,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            }
+            with patch(
+                "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                return_value=eligible_summary,
+            ), patch(
+                "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                return_value={"ready": True, "status": "healthy"},
+            ):
+                pipeline.run_once()
 
             with self.session_local() as session:
                 reviews = session.execute(select(LLMDecisionReview)).scalars().all()
@@ -7697,7 +7947,23 @@ class TestTradingPipeline(TestCase):
                 session_factory=self.session_local,
             )
 
-            pipeline.run_once()
+            eligible_summary = {
+                "promotion_eligible_total": 1,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            }
+            with patch(
+                "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                return_value=eligible_summary,
+            ), patch(
+                "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                return_value={"ready": True, "status": "healthy"},
+            ):
+                pipeline.run_once()
 
             with self.session_local() as session:
                 llm_reviews = (

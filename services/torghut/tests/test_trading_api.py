@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from typing import Any
 from unittest import TestCase
 from unittest.mock import patch
@@ -1586,6 +1587,91 @@ class TestTradingApi(TestCase):
         self.assertIn(payload["forecast_service"]["authority"], {"empirical", "blocked"})
         self.assertIn(payload["lean_authority"]["authority"], {"empirical", "blocked"})
         self.assertIn(payload["empirical_jobs"]["authority"], {"empirical", "blocked"})
+
+    def test_trading_status_blocks_live_submission_on_critical_toggle_parity_divergence(
+        self,
+    ) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        original = {
+            "trading_enabled": settings.trading_enabled,
+            "trading_mode": settings.trading_mode,
+            "trading_autonomy_enabled": settings.trading_autonomy_enabled,
+            "trading_autonomy_allow_live_promotion": settings.trading_autonomy_allow_live_promotion,
+            "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
+        }
+        try:
+            settings.trading_enabled = True
+            settings.trading_mode = "live"
+            settings.trading_autonomy_enabled = False
+            settings.trading_autonomy_allow_live_promotion = False
+            settings.trading_kill_switch_enabled = True
+
+            scheduler = TradingScheduler()
+            app.state.trading_scheduler = scheduler
+
+            hypothesis_summary = {
+                "promotion_eligible_total": 1,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            }
+            dependency_quorum = SimpleNamespace(
+                decision="allow",
+                as_payload=lambda: {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            )
+
+            with patch(
+                "app.main._build_hypothesis_runtime_payload",
+                return_value=(
+                    {
+                        "registry_loaded": True,
+                        "registry_path": "test",
+                        "registry_errors": [],
+                        "dependency_quorum": hypothesis_summary["dependency_quorum"],
+                        "summary": hypothesis_summary,
+                        "items": [],
+                    },
+                    hypothesis_summary,
+                    dependency_quorum,
+                ),
+            ), patch(
+                "app.main._empirical_jobs_status",
+                return_value={"ready": True, "status": "healthy"},
+            ):
+                response = self.client.get("/trading/status")
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            gate = payload["live_submission_gate"]
+            self.assertFalse(gate["allowed"])
+            self.assertEqual(gate["reason"], "critical_toggle_parity_diverged")
+            self.assertIn(
+                "critical_toggle_parity_diverged",
+                gate["blocked_reasons"],
+            )
+            self.assertEqual(gate["critical_toggle_parity"]["status"], "diverged")
+        finally:
+            settings.trading_enabled = original["trading_enabled"]
+            settings.trading_mode = original["trading_mode"]
+            settings.trading_autonomy_enabled = original["trading_autonomy_enabled"]
+            settings.trading_autonomy_allow_live_promotion = original[
+                "trading_autonomy_allow_live_promotion"
+            ]
+            settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
+            if original_scheduler is None:
+                if hasattr(app.state, "trading_scheduler"):
+                    del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
 
     def test_trading_status_exposes_rejection_and_market_context_controls(self) -> None:
         original_scheduler = getattr(app.state, "trading_scheduler", None)
