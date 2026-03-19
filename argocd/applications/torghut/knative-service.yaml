@@ -394,6 +394,8 @@ spec:
               value: gpt-5.3-codex-spark
             - name: LLM_ALLOWED_PROMPT_VERSIONS
               value: v1
+            - name: LLM_ENABLED
+              value: "false"
             - name: LLM_ROLLOUT_STAGE
               value: stage3_controlled_live
             - name: LLM_SHADOW_MODE
@@ -423,9 +425,9 @@ spec:
             - name: LLM_TIMEOUT_SECONDS
               value: "20"
             - name: LLM_DSPY_RUNTIME_MODE
-              value: shadow
+              value: disabled
             - name: LLM_DSPY_ARTIFACT_HASH
-              value: df087a5e643d6478b1ebe51bf44ad2d0e2228825c1c0a8e9dc345729d6a3bbff
+              value: ""
             - name: LLM_DSPY_LIVE_RUNTIME_BLOCK_FAIL_MODE
               value: pass_through_reduced_size
             - name: LLM_DSPY_LIVE_RUNTIME_BLOCK_QTY_MULTIPLIER
