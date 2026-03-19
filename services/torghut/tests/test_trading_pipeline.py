@@ -897,15 +897,19 @@ class TestTradingPipeline(TestCase):
             )
             pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
 
-            pipeline.record_no_signal_batch(
-                SignalBatch(
-                    signals=[],
-                    cursor_at=datetime(2026, 3, 13, 13, 30, tzinfo=timezone.utc),
-                    cursor_seq=1,
-                    cursor_symbol="AAPL",
-                    no_signal_reason="no_signals_in_window",
+            with patch(
+                "app.trading.scheduler.pipeline._signal_bootstrap_grace_active",
+                return_value=True,
+            ):
+                pipeline.record_no_signal_batch(
+                    SignalBatch(
+                        signals=[],
+                        cursor_at=datetime(2026, 3, 13, 13, 30, tzinfo=timezone.utc),
+                        cursor_seq=1,
+                        cursor_symbol="AAPL",
+                        no_signal_reason="no_signals_in_window",
+                    )
                 )
-            )
 
             self.assertFalse(state.last_signal_continuity_actionable)
             self.assertFalse(state.signal_continuity_alert_active)
