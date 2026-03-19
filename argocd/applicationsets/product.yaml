@@ -262,7 +262,27 @@ spec:
                       - /spec/template/spec/containers/0/ports/0/protocol
                       - /spec/template/spec/containers/0/readinessProbe
                       - /spec/template/spec/enableServiceLinks
-                automation: auto
+                  - group: serving.knative.dev
+                    kind: Service
+                    namespace: torghut
+                    name: torghut-sim
+                    jsonPointers:
+                      - /spec/template/spec/containers/0/env
+                  - group: ""
+                    kind: ConfigMap
+                    namespace: torghut
+                    name: torghut-ta-sim-config
+                    jsonPointers:
+                      - /data
+                  - group: flink.apache.org
+                    kind: FlinkDeployment
+                    namespace: torghut
+                    name: torghut-ta-sim
+                    jsonPointers:
+                      - /spec/job/state
+                      - /spec/job/upgradeMode
+                      - /spec/restartNonce
+                automation: manual
                 enabled: "true"
               - name: torghut-forecast
                 path: argocd/applications/torghut-forecast
