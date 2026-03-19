@@ -1,7 +1,7 @@
 {
   "name": "@proompteng/temporal-bun-sdk",
   "description": "Temporal SDK for Bun with workers, client, replay tooling, and Temporal Cloud/TLS support.",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "license": "MIT",
   "homepage": "https://docs.proompteng.ai/docs/temporal-bun-sdk",
   "repository": {
