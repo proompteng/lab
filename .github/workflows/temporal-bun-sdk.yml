@@ -226,6 +226,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      issues: write
+      pull-requests: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -322,8 +324,11 @@ jobs:
           branch="release-please--branches--main--components--temporal-bun-sdk"
           pr_number=$(gh pr list --head "$branch" --state merged --limit 1 --json number --jq '.[0].number')
           if [[ -n "$pr_number" ]]; then
-            gh pr edit "$pr_number" --remove-label "autorelease: pending" --add-label "autorelease: tagged"
-            echo "Updated labels on release PR #$pr_number"
+            if gh pr edit "$pr_number" --remove-label "autorelease: pending" --add-label "autorelease: tagged"; then
+              echo "Updated labels on release PR #$pr_number"
+            else
+              echo "::warning::Failed to update labels on release PR #$pr_number"
+            fi
           else
             echo "No merged release PR found for $branch; skipping label update"
           fi
