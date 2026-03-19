@@ -80,6 +80,10 @@ spec:
             </warpstream_ingestion>
           </named_collections>
         </clickhouse>
+      config.d/posthog-kafka-scheduler.xml: |
+        <clickhouse>
+          <background_message_broker_schedule_pool_size>32</background_message_broker_schedule_pool_size>
+        </clickhouse>
       config.d/posthog-system-logs.xml: |
         <clickhouse>
           <logger replace="1">
