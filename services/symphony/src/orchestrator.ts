@@ -1197,22 +1197,22 @@ export const makeOrchestratorLayer = (logger: Logger) =>
           })
           if (!retryEntry) return
 
-          const candidates = yield* tracker.fetchCandidateIssues.pipe(
-            Effect.catchAll((error) =>
-              Effect.sync(() => {
-                orchestratorLogger.log('warn', 'retry_poll_failed', {
-                  issue_id: issueId,
-                  issue_identifier: retryEntry.identifier,
-                  ...toLogError(error),
-                })
-              }).pipe(Effect.zipRight(Effect.succeed<Issue[]>([]))),
-            ),
-          )
+          const candidatesResult = yield* tracker.fetchCandidateIssues.pipe(Effect.either)
 
-          if (candidates.length === 0) {
+          if (candidatesResult._tag === 'Left') {
+            const error = candidatesResult.left
+            yield* Effect.sync(() => {
+              orchestratorLogger.log('warn', 'retry_poll_failed', {
+                issue_id: issueId,
+                issue_identifier: retryEntry.identifier,
+                ...toLogError(error),
+              })
+            })
             yield* scheduleRetry(issueId, retryEntry.identifier, retryEntry.attempt + 1, 'failure', 'retry poll failed')
             return
           }
+
+          const candidates = candidatesResult.right
 
           const preDispatchHealth = yield* targetHealth.evaluatePreDispatch
           if (!preDispatchHealth.readyForDispatch) {
