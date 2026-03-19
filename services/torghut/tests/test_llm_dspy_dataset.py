@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from tempfile import TemporaryDirectory
 from unittest import TestCase
+from unittest.mock import patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -147,7 +148,9 @@ class TestLLMDSPyDatasetBuilder(TestCase):
                     second.dataset_path.read_text(encoding="utf-8"),
                 )
 
-    def test_build_dataset_artifacts_filters_torghut_equity_enabled_symbols(self) -> None:
+    def test_build_dataset_artifacts_filters_torghut_equity_enabled_symbols(
+        self,
+    ) -> None:
         now = datetime(2026, 2, 27, 9, 30, tzinfo=timezone.utc)
         with Session(self.engine) as session:
             enabled_strategy = self._create_strategy(
@@ -209,6 +212,61 @@ class TestLLMDSPyDatasetBuilder(TestCase):
                 assert isinstance(rows, list)
                 symbols = {str(row["decision"]["symbol"]) for row in rows}
                 self.assertEqual(symbols, {"AAPL", "MSFT"})
+
+    def test_build_dataset_artifacts_falls_back_to_static_symbols_when_enabled_universe_empty(
+        self,
+    ) -> None:
+        now = datetime(2026, 2, 27, 9, 30, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            disabled_strategy = self._create_strategy(
+                session,
+                name="disabled-strategy",
+                universe_symbols=["AAPL", "MSFT"],
+                enabled=False,
+            )
+            self._insert_reviewed_decision(
+                session=session,
+                strategy_id=str(disabled_strategy.id),
+                symbol="AAPL",
+                created_at=now - timedelta(hours=1),
+                verdict="approve",
+                include_market_context=True,
+            )
+            self._insert_reviewed_decision(
+                session=session,
+                strategy_id=str(disabled_strategy.id),
+                symbol="MSFT",
+                created_at=now - timedelta(hours=2),
+                verdict="approve",
+                include_market_context=True,
+            )
+
+            with (
+                TemporaryDirectory() as tmp,
+                patch(
+                    "app.trading.llm.dspy_compile.dataset.settings.trading_universe_static_fallback_symbols_raw",
+                    "AAPL,MSFT",
+                ),
+            ):
+                result = build_dspy_dataset_artifacts(
+                    session,
+                    repository="proompteng/lab",
+                    base="main",
+                    head="codex/dspy-dataset",
+                    artifact_path=tmp,
+                    dataset_window="P10D",
+                    universe_ref="torghut:equity:enabled",
+                    window_end=now,
+                )
+
+                self.assertEqual(result.total_rows, 2)
+                metadata_payload = json.loads(
+                    result.metadata_path.read_text(encoding="utf-8")
+                )
+                self.assertEqual(
+                    metadata_payload.get("filters", {}).get("symbolFilterMode"),
+                    "equity_enabled_static_fallback",
+                )
 
     def test_build_dataset_artifacts_rejects_empty_explicit_symbol_filter(self) -> None:
         now = datetime(2026, 2, 27, 9, 30, tzinfo=timezone.utc)

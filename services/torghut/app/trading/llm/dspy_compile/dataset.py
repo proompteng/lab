@@ -13,6 +13,7 @@ from typing import Any, Mapping, Sequence, cast
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ....config import settings
 from ....models import LLMDecisionReview, Strategy, TradeDecision, coerce_json_payload
 from .hashing import canonical_json, hash_payload
 
@@ -198,9 +199,23 @@ def _resolve_symbol_filter(*, session: Session, universe_ref: str) -> _UniverseF
         return _UniverseFilter(mode="explicit", symbols=parsed_symbols)
 
     if lowered == "torghut:equity:enabled":
+        enabled_symbols = _load_enabled_equity_universe_symbols(session)
+        if enabled_symbols:
+            return _UniverseFilter(mode="equity_enabled", symbols=enabled_symbols)
+
+        static_fallback_symbols = {
+            symbol.strip().upper()
+            for symbol in settings.trading_universe_static_fallback_symbols
+            if symbol.strip()
+        }
+        if static_fallback_symbols:
+            return _UniverseFilter(
+                mode="equity_enabled_static_fallback",
+                symbols=static_fallback_symbols,
+            )
         return _UniverseFilter(
             mode="equity_enabled",
-            symbols=_load_enabled_equity_universe_symbols(session),
+            symbols=enabled_symbols,
         )
 
     raise ValueError("universe_ref_unrecognized")

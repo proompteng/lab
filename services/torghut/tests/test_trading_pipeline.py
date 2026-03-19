@@ -6297,11 +6297,11 @@ class TestTradingPipeline(TestCase):
                 )
                 self.assertEqual(
                     reviews[0].response_json.get("llm_runtime", {}).get("subtype"),
-                    "dspy_live_runtime_gate",
+                    "policy_blocked",
                 )
                 self.assertEqual(
                     decisions[0].decision_json.get("llm_runtime", {}).get("subtype"),
-                    "dspy_live_runtime_gate",
+                    "policy_blocked",
                 )
                 self.assertEqual(len(executions), 0)
                 self.assertEqual(engine.review_calls, 0)
@@ -7087,6 +7087,152 @@ class TestTradingPipeline(TestCase):
                 "llm_dspy_live_runtime_block_qty_multiplier"
             ]
             config.settings.jangar_base_url = original["jangar_base_url"]
+
+    def test_pipeline_llm_shadow_bootstrap_artifact_keeps_live_submission_operational(
+        self,
+    ) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+            "llm_enabled": config.settings.llm_enabled,
+            "llm_fail_mode": config.settings.llm_fail_mode,
+            "llm_fail_mode_enforcement": config.settings.llm_fail_mode_enforcement,
+            "llm_shadow_mode": config.settings.llm_shadow_mode,
+            "llm_min_confidence": config.settings.llm_min_confidence,
+            "llm_allowed_models_raw": config.settings.llm_allowed_models_raw,
+            "llm_evaluation_report": config.settings.llm_evaluation_report,
+            "llm_effective_challenge_id": config.settings.llm_effective_challenge_id,
+            "llm_shadow_completed_at": config.settings.llm_shadow_completed_at,
+            "llm_model_version_lock": config.settings.llm_model_version_lock,
+            "llm_adjustment_approved": config.settings.llm_adjustment_approved,
+            "llm_dspy_runtime_mode": config.settings.llm_dspy_runtime_mode,
+            "llm_dspy_artifact_hash": config.settings.llm_dspy_artifact_hash,
+            "llm_dspy_program_name": config.settings.llm_dspy_program_name,
+            "llm_dspy_signature_version": config.settings.llm_dspy_signature_version,
+            "llm_rollout_stage": config.settings.llm_rollout_stage,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_live_enabled = True
+        config.settings.trading_autonomy_allow_live_promotion = True
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.llm_enabled = True
+        config.settings.llm_fail_mode = "veto"
+        config.settings.llm_fail_mode_enforcement = "strict_veto"
+        config.settings.llm_shadow_mode = True
+        config.settings.llm_min_confidence = 0.0
+        config.settings.llm_dspy_runtime_mode = "shadow"
+        config.settings.llm_dspy_artifact_hash = (
+            DSPyReviewRuntime.bootstrap_artifact_hash()
+        )
+        config.settings.llm_rollout_stage = "stage3"
+        _set_llm_guardrails(config)
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="demo",
+                    description="demo",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+                timeframe="1Min",
+            )
+
+            pipeline = TradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([signal]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="live",
+                session_factory=self.session_local,
+            )
+
+            pipeline.run_once()
+
+            with self.session_local() as session:
+                reviews = session.execute(select(LLMDecisionReview)).scalars().all()
+                decisions = session.execute(select(TradeDecision)).scalars().all()
+                executions = session.execute(select(Execution)).scalars().all()
+
+                self.assertEqual(len(reviews), 1)
+                self.assertNotEqual(reviews[0].verdict, "error")
+                self.assertNotEqual(
+                    reviews[0].rationale,
+                    "llm_dspy_live_runtime_gate_blocked",
+                )
+                dspy_payload = reviews[0].response_json.get("dspy")
+                self.assertIsInstance(dspy_payload, dict)
+                assert isinstance(dspy_payload, dict)
+                self.assertEqual(dspy_payload.get("artifact_source"), "bootstrap")
+                self.assertEqual(decisions[0].status, "submitted")
+                self.assertEqual(len(executions), 1)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_autonomy_allow_live_promotion = original[
+                "trading_autonomy_allow_live_promotion"
+            ]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
+            ]
+            config.settings.llm_enabled = original["llm_enabled"]
+            config.settings.llm_fail_mode = original["llm_fail_mode"]
+            config.settings.llm_fail_mode_enforcement = original[
+                "llm_fail_mode_enforcement"
+            ]
+            config.settings.llm_shadow_mode = original["llm_shadow_mode"]
+            config.settings.llm_min_confidence = original["llm_min_confidence"]
+            config.settings.llm_allowed_models_raw = original["llm_allowed_models_raw"]
+            config.settings.llm_evaluation_report = original["llm_evaluation_report"]
+            config.settings.llm_effective_challenge_id = original[
+                "llm_effective_challenge_id"
+            ]
+            config.settings.llm_shadow_completed_at = original[
+                "llm_shadow_completed_at"
+            ]
+            config.settings.llm_model_version_lock = original["llm_model_version_lock"]
+            config.settings.llm_adjustment_approved = original[
+                "llm_adjustment_approved"
+            ]
+            config.settings.llm_dspy_runtime_mode = original["llm_dspy_runtime_mode"]
+            config.settings.llm_dspy_artifact_hash = original["llm_dspy_artifact_hash"]
+            config.settings.llm_dspy_program_name = original["llm_dspy_program_name"]
+            config.settings.llm_dspy_signature_version = original[
+                "llm_dspy_signature_version"
+            ]
+            config.settings.llm_rollout_stage = original["llm_rollout_stage"]
 
     def test_pipeline_llm_dspy_runtime_reduced_sell_uses_seeded_simulation_inventory(
         self,

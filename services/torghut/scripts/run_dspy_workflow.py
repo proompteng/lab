@@ -19,6 +19,17 @@ def _default_base_url() -> str:
     return "http://jangar.jangar.svc.cluster.local"
 
 
+def _default_universe_ref() -> str:
+    symbols = settings.trading_universe_static_fallback_symbols
+    if symbols:
+        normalized_symbols = [
+            symbol.strip().upper() for symbol in symbols if symbol.strip()
+        ]
+        if normalized_symbols:
+            return "symbols:" + ",".join(normalized_symbols)
+    return "torghut:equity:enabled"
+
+
 def _build_lane_overrides(args: argparse.Namespace) -> dict[str, dict[str, str]]:
     artifact_root = args.artifact_root.strip().rstrip("/")
     dataset_ref = args.dataset_ref or f"{artifact_root}/dataset-build/dspy-dataset.json"
@@ -61,6 +72,18 @@ def _build_lane_overrides(args: argparse.Namespace) -> dict[str, dict[str, str]]
             "baselineArtifactRef": baseline_ref,
             "experimentName": args.gepa_experiment_name,
         }
+
+    observed_metrics = {
+        "schemaValidRate": args.schema_valid_rate,
+        "vetoAlignmentRate": args.veto_alignment_rate,
+        "falseVetoRate": args.false_veto_rate,
+        "fallbackRate": args.fallback_rate,
+        "latencyP95Ms": args.latency_p95_ms,
+    }
+    for key, value in observed_metrics.items():
+        if value is None:
+            continue
+        overrides["compile"][key] = str(value)
 
     return overrides
 
@@ -144,6 +167,12 @@ def parse_args() -> argparse.Namespace:
         "--base-url", default=_default_base_url(), help="Jangar base URL"
     )
     parser.add_argument(
+        "--workflow-mode",
+        choices=["local", "agentrun"],
+        default="local",
+        help="Execute DSPy lanes locally or via Jangar AgentRuns.",
+    )
+    parser.add_argument(
         "--auth-token",
         default=settings.jangar_api_key or "",
         help="Optional bearer token for Jangar /v1/agent-runs",
@@ -160,7 +189,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--universe-ref",
-        default="torghut:equity:enabled",
+        default=_default_universe_ref(),
         help="Universe selector reference",
     )
     parser.add_argument(
@@ -170,6 +199,36 @@ def parse_args() -> argparse.Namespace:
         "--metric-policy-ref", default=settings.llm_dspy_compile_metrics_policy_ref
     )
     parser.add_argument("--optimizer", default="miprov2")
+    parser.add_argument(
+        "--schema-valid-rate",
+        type=float,
+        default=None,
+        help="Optional observed schema-valid rate for compile/eval gating.",
+    )
+    parser.add_argument(
+        "--veto-alignment-rate",
+        type=float,
+        default=None,
+        help="Optional observed veto-alignment rate for compile/eval gating.",
+    )
+    parser.add_argument(
+        "--false-veto-rate",
+        type=float,
+        default=None,
+        help="Optional observed false-veto rate for compile/eval gating.",
+    )
+    parser.add_argument(
+        "--fallback-rate",
+        type=float,
+        default=None,
+        help="Optional observed fallback rate for compile/eval gating.",
+    )
+    parser.add_argument(
+        "--latency-p95-ms",
+        type=int,
+        default=None,
+        help="Optional observed p95 latency for compile/eval gating.",
+    )
     parser.add_argument(
         "--gate-policy-ref", default=settings.llm_dspy_compile_metrics_policy_ref
     )
@@ -236,6 +295,7 @@ def main() -> int:
                 priority_id=(args.priority_id.strip() if args.priority_id else None),
                 lane_parameter_overrides=lane_overrides,
                 include_gepa_experiment=bool(args.include_gepa_experiment),
+                execution_mode=args.workflow_mode,
                 namespace=args.namespace,
                 agent_name=args.agent_name,
                 vcs_ref_name=args.vcs_ref_name,
