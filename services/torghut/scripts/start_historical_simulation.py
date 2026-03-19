@@ -2052,12 +2052,10 @@ def _manual_argocd_application_sync_policy(
     manual_policy = _clone_json_mapping(current_sync_policy) or {}
     if _argocd_application_mode_from_sync_policy(manual_policy) == 'manual':
         return manual_policy
-    automated = _as_mapping(manual_policy.get('automated'))
-    manual_automated = dict(automated)
-    manual_automated['enabled'] = False
-    manual_automated['prune'] = False
-    manual_automated['selfHeal'] = False
-    manual_policy['automated'] = manual_automated
+    # Argo normalizes manual Applications by removing automated/retry keys
+    # instead of persisting an explicit automated.enabled=false shape.
+    manual_policy.pop('automated', None)
+    manual_policy.pop('retry', None)
     return manual_policy
 
 

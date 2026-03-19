@@ -8739,6 +8739,24 @@ class TestStartHistoricalSimulation(TestCase):
 
         self.assertEqual(manual_policy, policy)
 
+    def test_manual_argocd_application_sync_policy_strips_auto_only_fields(self) -> None:
+        policy = {
+            'automated': {'enabled': True, 'prune': True, 'selfHeal': True},
+            'retry': {
+                'limit': 5,
+                'backoff': {'duration': '5s', 'factor': 2, 'maxDuration': '3m'},
+                'refresh': True,
+            },
+            'syncOptions': ['CreateNamespace=true'],
+        }
+
+        manual_policy = start_historical_simulation._manual_argocd_application_sync_policy(policy)
+
+        self.assertEqual(
+            manual_policy,
+            {'syncOptions': ['CreateNamespace=true']},
+        )
+
     def test_prepare_argocd_for_run_pauses_root_and_applicationset(self) -> None:
         config = ArgocdAutomationConfig(
             manage_automation=True,
@@ -8850,18 +8868,12 @@ class TestStartHistoricalSimulation(TestCase):
             call(
                 config=config,
                 app_name='torghut',
-                desired_sync_policy={
-                    'automated': {'enabled': False, 'prune': False, 'selfHeal': False},
-                    'syncOptions': ['CreateNamespace=true'],
-                },
+                desired_sync_policy={'syncOptions': ['CreateNamespace=true']},
             ),
             call(
                 config=config,
                 app_name='root',
-                desired_sync_policy={
-                    'automated': {'enabled': False, 'prune': False, 'selfHeal': False},
-                    'syncOptions': ['CreateNamespace=true'],
-                },
+                desired_sync_policy={'syncOptions': ['CreateNamespace=true']},
             ),
         ])
         ignore_differences_mock.assert_called_once_with(
