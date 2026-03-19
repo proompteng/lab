@@ -34,6 +34,8 @@ resources:
   - load-balancer.yaml
   - ingressroute-kafka-ui-k8s-private.yaml
   - strimzi-kafka-cluster.yaml
+  - posthog-kafkauser.yaml
+  - posthog-topics.yaml
   - kafka-codex-username-secret.yaml
   - karapace.yaml
   - torghut-ws-kafkauser.yaml
