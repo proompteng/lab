@@ -31,6 +31,25 @@ data:
         regex         = "chi-torghut-clickhouse-.*"
         action        = "drop"
       }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+        regex         = "symphony-torghut"
+        action        = "drop"
+      }
+    }
+
+    discovery.kubernetes "symphony_torghut" {
+      role = "pod"
+
+      namespaces {
+        names = ["torghut"]
+      }
+
+      selectors {
+        role  = "pod"
+        label = "app.kubernetes.io/name=symphony-torghut"
+      }
     }
 
     discovery.kubernetes "torghut_endpoints" {
@@ -107,6 +126,30 @@ data:
       stage.static_labels {
         values = {
           job = "torghut",
+        }
+      }
+
+      forward_to = [loki.write.default.receiver]
+    }
+
+    loki.source.kubernetes "symphony_torghut" {
+      targets    = discovery.kubernetes.symphony_torghut.targets
+      forward_to = [loki.process.symphony_torghut.receiver]
+    }
+
+    loki.process "symphony_torghut" {
+      stage.labels {
+        values = {
+          namespace = "{{ .Labels.namespace }}",
+          pod       = "{{ .Labels.pod }}",
+          container = "{{ .Labels.container }}",
+        }
+      }
+
+      stage.static_labels {
+        values = {
+          app = "symphony-torghut",
+          job = "symphony-torghut",
         }
       }
 

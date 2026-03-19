@@ -1,6 +1,7 @@
 import { Effect } from 'effect'
 import type { ManagedRuntime } from 'effect/ManagedRuntime'
 
+import { finishSymphonySpan, startSymphonySpan } from './instrumentation'
 import { OrchestratorService } from './orchestrator'
 import type { Logger } from './logger'
 import type { RuntimeSnapshot } from './types'
@@ -13,6 +14,16 @@ export const parseIssueIdentifierPath = (pathname: string): IssueIdentifierParam
   if (!pathname.startsWith('/api/v1/')) return null
   const issueIdentifier = decodeURIComponent(pathname.replace('/api/v1/', ''))
   return issueIdentifier.length > 0 ? { issueIdentifier } : null
+}
+
+const resolveHttpRouteName = (request: Request, pathname: string) => {
+  if (request.method === 'GET' && pathname === '/livez') return 'symphony.http.livez'
+  if (request.method === 'GET' && pathname === '/readyz') return 'symphony.http.readyz'
+  if (request.method === 'GET' && pathname === '/') return 'symphony.http.dashboard'
+  if (request.method === 'GET' && pathname === '/api/v1/state') return 'symphony.http.state'
+  if (request.method === 'POST' && pathname === '/api/v1/refresh') return 'symphony.http.refresh'
+  if (request.method === 'GET' && pathname.startsWith('/api/v1/')) return 'symphony.http.issue_details'
+  return 'symphony.http.request'
 }
 
 const stringifyForHtml = (value: unknown): string => {
@@ -408,9 +419,26 @@ export class SymphonyHttpServer<R, E> {
     this.server = Bun.serve({
       hostname: host,
       port,
-      fetch: (request): Promise<Response> =>
-        (this.runtime.runPromise(handleRequestEffect(request) as never) as Promise<Response>).catch((error: unknown) =>
-          Response.json(
+      fetch: (request): Promise<Response> => {
+        const url = new URL(request.url)
+        const params =
+          request.method === 'GET' && url.pathname.startsWith('/api/v1/')
+            ? parseIssueIdentifierPath(url.pathname)
+            : null
+        const span = startSymphonySpan(resolveHttpRouteName(request, url.pathname), {
+          'http.method': request.method,
+          'http.route': url.pathname,
+          ...(params ? { 'issue.identifier': params.issueIdentifier } : {}),
+        })
+
+        const finishWithResponse = (response: Response) => {
+          span.setAttribute('http.status_code', response.status)
+          finishSymphonySpan(span)
+          return response
+        }
+
+        const finishWithError = (error: unknown) => {
+          const response = Response.json(
             {
               error: {
                 code: 'internal_error',
@@ -418,8 +446,17 @@ export class SymphonyHttpServer<R, E> {
               },
             },
             { status: 500 },
-          ),
-        ),
+          )
+          span.setAttribute('http.status_code', response.status)
+          finishSymphonySpan(span, error)
+          return response
+        }
+
+        return (this.runtime.runPromise(handleRequestEffect(request) as never) as Promise<Response>).then(
+          finishWithResponse,
+          finishWithError,
+        )
+      },
     })
     this.logger.log('info', 'http_server_started', { host, port: this.server.port })
     return this.server.port ?? port

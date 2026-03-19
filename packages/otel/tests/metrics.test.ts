@@ -41,6 +41,8 @@ test('metric reader exports counters and histograms with resource attributes', a
   counter.add(2, { env: 'test' })
   const histogram = meter.createHistogram('unit_histogram', { description: 'unit histogram', unit: 'ms' })
   histogram.record(5, { env: 'test' })
+  const gauge = meter.createGauge('unit_gauge', { description: 'unit gauge' })
+  gauge.set(7, { env: 'test' })
 
   await reader.forceFlush()
   await provider.shutdown()
@@ -51,6 +53,9 @@ test('metric reader exports counters and histograms with resource attributes', a
   const scopeMetrics = payload.scopeMetrics[0]
   expect(scopeMetrics.metrics.map((metric) => metric.name)).toContain('unit_counter')
   expect(scopeMetrics.metrics.map((metric) => metric.name)).toContain('unit_histogram')
+  expect(scopeMetrics.metrics.map((metric) => metric.name)).toContain('unit_gauge')
+  const gaugeMetric = scopeMetrics.metrics.find((metric) => metric.name === 'unit_gauge')
+  expect(gaugeMetric?.gauge?.dataPoints[0]?.asDouble).toBe(7)
 })
 
 test('metric reader skips instruments without data points', async () => {

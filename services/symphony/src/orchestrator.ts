@@ -21,6 +21,19 @@ import {
   type WorkflowError,
 } from './errors'
 import { IssueRunnerService } from './issue-runner'
+import {
+  finishSymphonySpan,
+  recordCandidateFetch,
+  recordCodexTokenUsage,
+  recordIssueDispatch,
+  recordIssueHandoff,
+  recordPollTick,
+  recordReconcileDuration,
+  recordWorkerOutcome,
+  startSymphonySpan,
+  updateRuntimeGauges,
+  withSymphonyEffectSpan,
+} from './instrumentation'
 import { LeaderElectionService } from './leader-election'
 import { TrackerService } from './linear-client'
 import { emptyPersistedSchedulerState, StateStoreService } from './state-store'
@@ -404,6 +417,21 @@ const toPersistedState = (state: OrchestratorState): PersistedSchedulerState => 
   ),
 })
 
+const syncStateMetrics = (
+  state: OrchestratorState,
+  options: {
+    targetHealthReady?: boolean
+    leaderState?: boolean
+    lastSuccessfulPollTimestampSeconds?: number
+  } = {},
+) => {
+  updateRuntimeGauges({
+    runningIssues: state.running.size,
+    retryQueueSize: state.retryAttempts.size,
+    ...options,
+  })
+}
+
 const applyTokenUsage = (state: OrchestratorState, running: RunningRuntimeEntry, usage: TokenUsageTotals): void => {
   const deltaInput = Math.max(0, usage.inputTokens - running.session.lastReportedInputTokens)
   const deltaOutput = Math.max(0, usage.outputTokens - running.session.lastReportedOutputTokens)
@@ -419,6 +447,7 @@ const applyTokenUsage = (state: OrchestratorState, running: RunningRuntimeEntry,
   state.codexTotals.inputTokens += deltaInput
   state.codexTotals.outputTokens += deltaOutput
   state.codexTotals.totalTokens += deltaTotal
+  recordCodexTokenUsage(deltaInput, deltaOutput, deltaTotal)
 }
 
 const interruptWorkerFiber = (fiber: Fiber.RuntimeFiber<void, never> | null) =>
@@ -538,6 +567,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
         detail: string,
       ) =>
         tracker.handoffIssue(issue.id, buildHandoffMessage(issue, config, detail), config.tracker.handoffState).pipe(
+          Effect.tap(() => Effect.sync(() => recordIssueHandoff(reason))),
           Effect.tap(() =>
             SynchronizedRef.modifyEffect(stateRef, (state) => {
               addRecentEvent(state, {
@@ -643,6 +673,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
               level: error ? 'warn' : 'info',
               reason: delayType,
             })
+            syncStateMetrics(state)
             return Effect.succeed([undefined, state] as const)
           })
 
@@ -673,6 +704,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             workspacePath: record.workspacePath,
             sessionId: null,
           })
+          syncStateMetrics(state)
           return Effect.succeed([undefined, state] as const)
         }).pipe(Effect.zipRight(persistStateBestEffort))
 
@@ -752,6 +784,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
         Effect.gen(function* () {
           const startedAtMs = Date.now()
           const startedAt = new Date(startedAtMs).toISOString()
+          recordIssueDispatch(normalizeState(issue.state))
 
           const existingRetry = yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
             state.claimed.add(issue.id)
@@ -796,6 +829,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
               workspacePath: null,
               sessionId: null,
             })
+            syncStateMetrics(state)
             return Effect.succeed([retry, state] as const)
           })
 
@@ -822,84 +856,92 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             if (running) {
               running.workerFiber = workerFiber
             }
+            syncStateMetrics(state)
             return Effect.succeed([undefined, state] as const)
           })
           yield* persistStateBestEffort
         })
 
       const reconcileRunningIssues = (config: SymphonyConfig) =>
-        Effect.gen(function* () {
-          const runningEntries = yield* SynchronizedRef.modifyEffect(stateRef, (state) =>
-            Effect.succeed([Array.from(state.running.values()), state] as const),
-          )
-          if (runningEntries.length === 0) return
+        (() => {
+          const startedAtMs = Date.now()
+          return withSymphonyEffectSpan(
+            'symphony.reconcile',
+            {},
+            Effect.gen(function* () {
+              const runningEntries = yield* SynchronizedRef.modifyEffect(stateRef, (state) =>
+                Effect.succeed([Array.from(state.running.values()), state] as const),
+              )
+              if (runningEntries.length === 0) return
 
-          const refreshed = yield* tracker.fetchIssueStatesByIds(runningEntries.map((entry) => entry.issueId)).pipe(
-            Effect.catchAll((error) =>
-              Effect.sync(() => {
-                orchestratorLogger.log('warn', 'running_state_refresh_failed', toLogError(error))
-              }).pipe(Effect.zipRight(Effect.succeed<Issue[]>([]))),
-            ),
-          )
-          if (refreshed.length === 0) return
+              const refreshed = yield* tracker.fetchIssueStatesByIds(runningEntries.map((entry) => entry.issueId)).pipe(
+                Effect.catchAll((error) =>
+                  Effect.sync(() => {
+                    orchestratorLogger.log('warn', 'running_state_refresh_failed', toLogError(error))
+                  }).pipe(Effect.zipRight(Effect.succeed<Issue[]>([]))),
+                ),
+              )
+              if (refreshed.length === 0) return
 
-          const refreshedById = new Map(refreshed.map((issue) => [issue.id, issue]))
-          const activeStates = new Set(config.tracker.activeStates.map((state) => normalizeState(state)))
-          const terminalStates = new Set(config.tracker.terminalStates.map((state) => normalizeState(state)))
+              const refreshedById = new Map(refreshed.map((issue) => [issue.id, issue]))
+              const activeStates = new Set(config.tracker.activeStates.map((state) => normalizeState(state)))
+              const terminalStates = new Set(config.tracker.terminalStates.map((state) => normalizeState(state)))
 
-          for (const running of runningEntries) {
-            const latest = refreshedById.get(running.issueId)
-            if (!latest) {
-              yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-                const current = state.running.get(running.issueId)
-                if (current) {
-                  current.stopReason = 'inactive'
+              for (const running of runningEntries) {
+                const latest = refreshedById.get(running.issueId)
+                if (!latest) {
+                  yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+                    const current = state.running.get(running.issueId)
+                    if (current) {
+                      current.stopReason = 'inactive'
+                    }
+                    return Effect.succeed([undefined, state] as const)
+                  })
+                  yield* interruptWorkerFiber(running.workerFiber)
+                  continue
                 }
-                return Effect.succeed([undefined, state] as const)
-              })
-              yield* interruptWorkerFiber(running.workerFiber)
-              continue
-            }
 
-            const nextState = normalizeState(latest.state)
-            if (terminalStates.has(nextState)) {
-              yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-                const current = state.running.get(running.issueId)
-                if (current) {
-                  current.issue = latest
-                  current.stopReason = 'terminal'
-                  current.terminalCleanupRequested = true
+                const nextState = normalizeState(latest.state)
+                if (terminalStates.has(nextState)) {
+                  yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+                    const current = state.running.get(running.issueId)
+                    if (current) {
+                      current.issue = latest
+                      current.stopReason = 'terminal'
+                      current.terminalCleanupRequested = true
+                    }
+                    return Effect.succeed([undefined, state] as const)
+                  })
+                  yield* interruptWorkerFiber(running.workerFiber)
+                  continue
                 }
-                return Effect.succeed([undefined, state] as const)
-              })
-              yield* interruptWorkerFiber(running.workerFiber)
-              continue
-            }
 
-            if (!activeStates.has(nextState)) {
-              yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-                const current = state.running.get(running.issueId)
-                if (current) {
-                  current.issue = latest
-                  current.stopReason = 'inactive'
+                if (!activeStates.has(nextState)) {
+                  yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+                    const current = state.running.get(running.issueId)
+                    if (current) {
+                      current.issue = latest
+                      current.stopReason = 'inactive'
+                    }
+                    return Effect.succeed([undefined, state] as const)
+                  })
+                  yield* interruptWorkerFiber(running.workerFiber)
+                  continue
                 }
-                return Effect.succeed([undefined, state] as const)
-              })
-              yield* interruptWorkerFiber(running.workerFiber)
-              continue
-            }
 
-            yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-              const current = state.running.get(running.issueId)
-              if (current) {
-                current.issue = latest
-                const record = ensureIssueRecord(state, current.issueId, current.identifier)
-                syncRecordFromRunning(record, current)
+                yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+                  const current = state.running.get(running.issueId)
+                  if (current) {
+                    current.issue = latest
+                    const record = ensureIssueRecord(state, current.issueId, current.identifier)
+                    syncRecordFromRunning(record, current)
+                  }
+                  return Effect.succeed([undefined, state] as const)
+                })
               }
-              return Effect.succeed([undefined, state] as const)
-            })
-          }
-        })
+            }),
+          ).pipe(Effect.ensuring(Effect.sync(() => recordReconcileDuration(Date.now() - startedAtMs))))
+        })()
 
       const reconcileStalledRuns = (config: SymphonyConfig) =>
         config.codex.stallTimeoutMs <= 0
@@ -936,6 +978,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
               level: leader.isLeader ? 'info' : 'warn',
               reason: leader.isLeader ? 'leader' : 'follower',
             })
+            syncStateMetrics(state, { leaderState: leader.isLeader })
             return Effect.succeed([undefined, state] as const)
           })
 
@@ -990,281 +1033,385 @@ export const makeOrchestratorLayer = (logger: Logger) =>
           yield* persistStateBestEffort
         })
 
-      const processPollTick = Effect.gen(function* () {
-        yield* Ref.set(pollQueuedRef, false)
+      const processPollTick = (() => {
+        const startedAtMs = Date.now()
+        const pollSpan = startSymphonySpan('symphony.poll_tick')
+        let finished = false
+        let pollResult = 'success'
 
-        const leader = yield* leaderElection.status
-        if (!leader.isLeader) {
-          yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-            addRecentEvent(state, {
-              at: new Date().toISOString(),
-              event: 'poll_skipped',
-              message: 'poll skipped because this replica is not leader',
-              level: 'warn',
-              reason: 'follower_not_leader',
-            })
-            return Effect.succeed([undefined, state] as const)
-          })
-          yield* persistStateBestEffort
-          return
-        }
-
-        const loaded = yield* workflow.current
-        const { config } = loaded
-        yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-          state.pollIntervalMs = config.pollingIntervalMs
-          state.maxConcurrentAgents = config.agent.maxConcurrentAgents
-          return Effect.succeed([undefined, state] as const)
-        })
-
-        yield* reconcileRunningIssues(config)
-
-        const validation = yield* Effect.either(validateDispatchConfigEffect(config))
-        if (validation._tag === 'Left') {
-          yield* Effect.sync(() => {
-            orchestratorLogger.log('error', 'dispatch_validation_failed', toLogError(validation.left))
-          })
-          yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-            addRecentError(state, {
-              at: new Date().toISOString(),
-              code: validation.left.code,
-              message: validation.left.message,
-              issueId: null,
-              issueIdentifier: null,
-              context: 'dispatch_validation',
-            })
-            addRecentEvent(state, {
-              at: new Date().toISOString(),
-              event: 'dispatch_skipped',
-              message: validation.left.message,
-              level: 'error',
-              reason: 'config_invalid',
-            })
-            return Effect.succeed([undefined, state] as const)
-          })
-          yield* persistStateBestEffort
-          return
-        }
-
-        const preDispatchHealth = yield* targetHealth.evaluatePreDispatch
-        if (!preDispatchHealth.readyForDispatch) {
-          const handoffReason = preDispatchHealth.openPromotionPr ? 'promotion_pr_open' : 'target_not_ready'
-          const blockedMessage = preDispatchHealth.openPromotionPr
-            ? 'dispatch paused because a promotion pull request is already open'
-            : preDispatchHealth.lastError
-              ? `dispatch paused: ${preDispatchHealth.lastError}`
-              : preDispatchHealth.checks
-                  .filter((check) => !check.ok)
-                  .map((check) => check.message)
-                  .join('; ') || 'dispatch paused because target health checks are failing'
-          yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-            addRecentEvent(state, {
-              at: new Date().toISOString(),
-              event: 'dispatch_paused',
-              message: blockedMessage,
-              level: 'warn',
-              reason: handoffReason,
-            })
-            return Effect.succeed([undefined, state] as const)
-          })
-          const issuesToHandoff = yield* tracker.fetchCandidateIssues.pipe(
-            Effect.catchAll((error) =>
-              Effect.sync(() => {
-                orchestratorLogger.log('error', 'candidate_fetch_failed_for_handoff', toLogError(error))
-              }).pipe(
-                Effect.zipRight(
-                  SynchronizedRef.modifyEffect(stateRef, (state) => {
-                    addRecentError(state, {
-                      at: new Date().toISOString(),
-                      code: error.code,
-                      message: error.message,
-                      issueId: null,
-                      issueIdentifier: null,
-                      context: 'candidate_fetch_handoff',
-                    })
-                    return Effect.succeed([undefined, state] as const)
-                  }),
-                ),
-                Effect.zipRight(Effect.succeed<Issue[]>([])),
-              ),
-            ),
-          )
-          yield* Effect.forEach(
-            issuesToHandoff,
-            (issue) => handoffSkippedIssue(issue, config, handoffReason, blockedMessage),
-            { concurrency: 1, discard: true },
-          )
-          yield* persistStateBestEffort
-          return
-        }
-
-        const issues = yield* tracker.fetchCandidateIssues.pipe(
-          Effect.catchAll((error) =>
-            Effect.sync(() => {
-              orchestratorLogger.log('error', 'candidate_fetch_failed', toLogError(error))
-            }).pipe(
-              Effect.zipRight(
-                SynchronizedRef.modifyEffect(stateRef, (state) => {
-                  addRecentError(state, {
-                    at: new Date().toISOString(),
-                    code: error.code,
-                    message: error.message,
-                    issueId: null,
-                    issueIdentifier: null,
-                    context: 'candidate_fetch',
-                  })
-                  return Effect.succeed([undefined, state] as const)
-                }),
-              ),
-              Effect.zipRight(Effect.succeed<Issue[]>([])),
-            ),
-          ),
-        )
-
-        if (issues.length === 0) {
-          yield* persistStateBestEffort
-          return
-        }
-
-        for (const issue of sortIssuesForDispatch(issues)) {
-          const currentState = yield* SynchronizedRef.get(stateRef)
-          const decision = evaluateDispatchIssue(issue, {
-            config,
-            runningIssues: Array.from(currentState.running.values()).map((entry) => entry.issue),
-            claimedIssueIds: currentState.claimed,
-          })
-
-          if (decision.eligible) {
-            yield* dispatchIssue(issue, null)
-            continue
+        const finishPoll = (error?: unknown) => {
+          if (!finished) {
+            finished = true
+            finishSymphonySpan(pollSpan, error)
+            recordPollTick(pollResult, Date.now() - startedAtMs)
           }
+        }
 
-          if (
-            decision.reason === 'no_slots' ||
-            decision.reason === 'manual_work_required' ||
-            decision.reason === 'blocked_issue' ||
-            decision.reason === 'non_active_state'
-          ) {
+        return Effect.gen(function* () {
+          yield* Ref.set(pollQueuedRef, false)
+
+          const leader = yield* leaderElection.status
+          if (!leader.isLeader) {
+            pollResult = 'follower_not_leader'
             yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
               addRecentEvent(state, {
                 at: new Date().toISOString(),
-                event: 'dispatch_skipped',
-                message: `issue ${issue.identifier} not dispatched: ${decision.reason}`,
-                issueId: issue.id,
-                issueIdentifier: issue.identifier,
+                event: 'poll_skipped',
+                message: 'poll skipped because this replica is not leader',
                 level: 'warn',
-                reason: decision.reason,
+                reason: 'follower_not_leader',
               })
+              syncStateMetrics(state, { leaderState: leader.isLeader })
               return Effect.succeed([undefined, state] as const)
             })
-            if (decision.reason === 'manual_work_required') {
-              yield* handoffSkippedIssue(
-                issue,
-                config,
-                'manual_work_required',
-                'the issue requires manual work outside the first-wave autonomous scope',
-              )
-            }
-            if (decision.reason === 'no_slots') {
-              break
-            }
-          }
-        }
-
-        yield* persistStateBestEffort
-      })
-
-      const processRetryDue = (issueId: string) =>
-        Effect.gen(function* () {
-          const leader = yield* leaderElection.status
-          if (!leader.isLeader) {
-            yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-              const current = state.retryAttempts.get(issueId)
-              if (current) {
-                current.fiber = null
-              }
-              return Effect.succeed([undefined, state] as const)
-            })
+            yield* persistStateBestEffort
             return
           }
 
-          const retryEntry = yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-            const current = state.retryAttempts.get(issueId) ?? null
-            if (current) {
-              state.retryAttempts.delete(issueId)
-            }
-            return Effect.succeed([current, state] as const)
+          const loaded = yield* workflow.current
+          const { config } = loaded
+          yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+            state.pollIntervalMs = config.pollingIntervalMs
+            state.maxConcurrentAgents = config.agent.maxConcurrentAgents
+            syncStateMetrics(state, { leaderState: leader.isLeader })
+            return Effect.succeed([undefined, state] as const)
           })
-          if (!retryEntry) return
 
-          const candidatesResult = yield* tracker.fetchCandidateIssues.pipe(Effect.either)
+          yield* withSymphonyEffectSpan('symphony.poll_tick.reconcile', {}, reconcileRunningIssues(config), {
+            parentSpan: pollSpan,
+          })
 
-          if (candidatesResult._tag === 'Left') {
-            const error = candidatesResult.left
+          const validation = yield* Effect.either(validateDispatchConfigEffect(config))
+          if (validation._tag === 'Left') {
+            pollResult = 'config_invalid'
             yield* Effect.sync(() => {
-              orchestratorLogger.log('warn', 'retry_poll_failed', {
-                issue_id: issueId,
-                issue_identifier: retryEntry.identifier,
-                ...toLogError(error),
-              })
+              orchestratorLogger.log('error', 'dispatch_validation_failed', toLogError(validation.left))
             })
-            yield* scheduleRetry(issueId, retryEntry.identifier, retryEntry.attempt + 1, 'failure', 'retry poll failed')
+            yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+              addRecentError(state, {
+                at: new Date().toISOString(),
+                code: validation.left.code,
+                message: validation.left.message,
+                issueId: null,
+                issueIdentifier: null,
+                context: 'dispatch_validation',
+              })
+              addRecentEvent(state, {
+                at: new Date().toISOString(),
+                event: 'dispatch_skipped',
+                message: validation.left.message,
+                level: 'error',
+                reason: 'config_invalid',
+              })
+              return Effect.succeed([undefined, state] as const)
+            })
+            yield* persistStateBestEffort
             return
           }
 
-          const candidates = candidatesResult.right
-
-          const preDispatchHealth = yield* targetHealth.evaluatePreDispatch
+          const preDispatchHealth = yield* withSymphonyEffectSpan(
+            'symphony.poll_tick.target_health',
+            {},
+            targetHealth.evaluatePreDispatch,
+            { parentSpan: pollSpan },
+          )
           if (!preDispatchHealth.readyForDispatch) {
-            const reason = preDispatchHealth.openPromotionPr
-              ? 'promotion pull request already open'
-              : preDispatchHealth.lastError || 'target health checks are failing'
-            yield* scheduleRetry(issueId, retryEntry.identifier, retryEntry.attempt + 1, 'failure', reason)
-            return
-          }
-
-          const issue = candidates.find((candidate) => candidate.id === issueId)
-          if (!issue) {
-            yield* releaseClaim(issueId, retryEntry.identifier, 'issue no longer active during retry dispatch')
-            return
-          }
-
-          const config = yield* workflow.config
-          const runtimeState = yield* SynchronizedRef.get(stateRef)
-          const claimedIssueIds = new Set(runtimeState.claimed)
-          claimedIssueIds.delete(issueId)
-          const decision = evaluateDispatchIssue(issue, {
-            config,
-            runningIssues: Array.from(runtimeState.running.values()).map((entry) => entry.issue),
-            claimedIssueIds,
-          })
-
-          if (!decision.eligible) {
-            const reason =
-              decision.reason === 'no_slots'
-                ? 'no available orchestrator slots'
-                : decision.reason === 'blocked_issue'
-                  ? 'issue blocked by active dependency'
-                  : `issue not dispatchable: ${decision.reason}`
-            yield* scheduleRetry(issueId, issue.identifier, retryEntry.attempt + 1, 'failure', reason)
+            pollResult = preDispatchHealth.openPromotionPr ? 'promotion_pr_open' : 'target_not_ready'
+            const handoffReason = preDispatchHealth.openPromotionPr ? 'promotion_pr_open' : 'target_not_ready'
+            const blockedMessage = preDispatchHealth.openPromotionPr
+              ? 'dispatch paused because a promotion pull request is already open'
+              : preDispatchHealth.lastError
+                ? `dispatch paused: ${preDispatchHealth.lastError}`
+                : preDispatchHealth.checks
+                    .filter((check) => !check.ok)
+                    .map((check) => check.message)
+                    .join('; ') || 'dispatch paused because target health checks are failing'
+            yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+              addRecentEvent(state, {
+                at: new Date().toISOString(),
+                event: 'dispatch_paused',
+                message: blockedMessage,
+                level: 'warn',
+                reason: handoffReason,
+              })
+              syncStateMetrics(state, { targetHealthReady: false, leaderState: leader.isLeader })
+              return Effect.succeed([undefined, state] as const)
+            })
+            const issuesToHandoff = yield* withSymphonyEffectSpan(
+              'symphony.poll_tick.candidate_fetch_handoff',
+              {},
+              tracker.fetchCandidateIssues.pipe(
+                Effect.tap(() => Effect.sync(() => recordCandidateFetch('success'))),
+                Effect.catchAll((error) =>
+                  Effect.sync(() => {
+                    recordCandidateFetch('error')
+                    orchestratorLogger.log('error', 'candidate_fetch_failed_for_handoff', toLogError(error))
+                  }).pipe(
+                    Effect.zipRight(
+                      SynchronizedRef.modifyEffect(stateRef, (state) => {
+                        addRecentError(state, {
+                          at: new Date().toISOString(),
+                          code: error.code,
+                          message: error.message,
+                          issueId: null,
+                          issueIdentifier: null,
+                          context: 'candidate_fetch_handoff',
+                        })
+                        return Effect.succeed([undefined, state] as const)
+                      }),
+                    ),
+                    Effect.zipRight(Effect.succeed<Issue[]>([])),
+                  ),
+                ),
+              ),
+              { parentSpan: pollSpan },
+            )
+            yield* Effect.forEach(
+              issuesToHandoff,
+              (issue) => handoffSkippedIssue(issue, config, handoffReason, blockedMessage),
+              { concurrency: 1, discard: true },
+            )
+            yield* persistStateBestEffort
             return
           }
 
           yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-            state.claimed.delete(issueId)
+            syncStateMetrics(state, { targetHealthReady: true, leaderState: leader.isLeader })
             return Effect.succeed([undefined, state] as const)
           })
-          yield* dispatchIssue(issue, retryEntry.attempt)
-        })
+
+          const issues = yield* withSymphonyEffectSpan(
+            'symphony.poll_tick.candidate_fetch',
+            {},
+            tracker.fetchCandidateIssues.pipe(
+              Effect.tap(() => Effect.sync(() => recordCandidateFetch('success'))),
+              Effect.catchAll((error) =>
+                Effect.sync(() => {
+                  recordCandidateFetch('error')
+                  orchestratorLogger.log('error', 'candidate_fetch_failed', toLogError(error))
+                }).pipe(
+                  Effect.zipRight(
+                    SynchronizedRef.modifyEffect(stateRef, (state) => {
+                      addRecentError(state, {
+                        at: new Date().toISOString(),
+                        code: error.code,
+                        message: error.message,
+                        issueId: null,
+                        issueIdentifier: null,
+                        context: 'candidate_fetch',
+                      })
+                      return Effect.succeed([undefined, state] as const)
+                    }),
+                  ),
+                  Effect.zipRight(Effect.succeed<Issue[]>([])),
+                ),
+              ),
+            ),
+            { parentSpan: pollSpan },
+          )
+
+          if (issues.length === 0) {
+            yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+              syncStateMetrics(state, {
+                targetHealthReady: true,
+                leaderState: leader.isLeader,
+                lastSuccessfulPollTimestampSeconds: Math.floor(Date.now() / 1000),
+              })
+              return Effect.succeed([undefined, state] as const)
+            })
+            yield* persistStateBestEffort
+            return
+          }
+
+          for (const issue of sortIssuesForDispatch(issues)) {
+            const currentState = yield* SynchronizedRef.get(stateRef)
+            const decision = evaluateDispatchIssue(issue, {
+              config,
+              runningIssues: Array.from(currentState.running.values()).map((entry) => entry.issue),
+              claimedIssueIds: currentState.claimed,
+            })
+
+            if (decision.eligible) {
+              yield* withSymphonyEffectSpan(
+                'symphony.poll_tick.dispatch',
+                { 'issue.identifier': issue.identifier, 'issue.id': issue.id, 'issue.state': issue.state },
+                dispatchIssue(issue, null),
+                { parentSpan: pollSpan },
+              )
+              continue
+            }
+
+            if (
+              decision.reason === 'no_slots' ||
+              decision.reason === 'manual_work_required' ||
+              decision.reason === 'blocked_issue' ||
+              decision.reason === 'non_active_state'
+            ) {
+              yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+                addRecentEvent(state, {
+                  at: new Date().toISOString(),
+                  event: 'dispatch_skipped',
+                  message: `issue ${issue.identifier} not dispatched: ${decision.reason}`,
+                  issueId: issue.id,
+                  issueIdentifier: issue.identifier,
+                  level: 'warn',
+                  reason: decision.reason,
+                })
+                return Effect.succeed([undefined, state] as const)
+              })
+              if (decision.reason === 'manual_work_required') {
+                yield* handoffSkippedIssue(
+                  issue,
+                  config,
+                  'manual_work_required',
+                  'the issue requires manual work outside the first-wave autonomous scope',
+                )
+              }
+              if (decision.reason === 'no_slots') {
+                pollResult = 'no_slots'
+                break
+              }
+            }
+          }
+
+          yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+            syncStateMetrics(state, {
+              targetHealthReady: true,
+              leaderState: leader.isLeader,
+              lastSuccessfulPollTimestampSeconds: Math.floor(Date.now() / 1000),
+            })
+            return Effect.succeed([undefined, state] as const)
+          })
+          yield* persistStateBestEffort
+        }).pipe(
+          Effect.tapError((error) =>
+            Effect.sync(() => {
+              pollResult = 'failed'
+              finishPoll(error)
+            }),
+          ),
+          Effect.ensuring(
+            Effect.sync(() => {
+              finishPoll()
+            }),
+          ),
+        )
+      })()
+
+      const processRetryDue = (issueId: string) =>
+        withSymphonyEffectSpan(
+          'symphony.retry_due',
+          { 'issue.id': issueId },
+          Effect.gen(function* () {
+            const leader = yield* leaderElection.status
+            if (!leader.isLeader) {
+              yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+                const current = state.retryAttempts.get(issueId)
+                if (current) {
+                  current.fiber = null
+                }
+                syncStateMetrics(state, { leaderState: leader.isLeader })
+                return Effect.succeed([undefined, state] as const)
+              })
+              return
+            }
+
+            const retryEntry = yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+              const current = state.retryAttempts.get(issueId) ?? null
+              if (current) {
+                state.retryAttempts.delete(issueId)
+              }
+              syncStateMetrics(state, { leaderState: leader.isLeader })
+              return Effect.succeed([current, state] as const)
+            })
+            if (!retryEntry) return
+
+            const candidatesResult = yield* tracker.fetchCandidateIssues.pipe(
+              Effect.tap(() => Effect.sync(() => recordCandidateFetch('success'))),
+              Effect.either,
+            )
+
+            if (candidatesResult._tag === 'Left') {
+              const error = candidatesResult.left
+              recordCandidateFetch('error')
+              yield* Effect.sync(() => {
+                orchestratorLogger.log('warn', 'retry_poll_failed', {
+                  issue_id: issueId,
+                  issue_identifier: retryEntry.identifier,
+                  ...toLogError(error),
+                })
+              })
+              yield* scheduleRetry(
+                issueId,
+                retryEntry.identifier,
+                retryEntry.attempt + 1,
+                'failure',
+                'retry poll failed',
+              )
+              return
+            }
+
+            const candidates = candidatesResult.right
+
+            const preDispatchHealth = yield* withSymphonyEffectSpan(
+              'symphony.retry_due.target_health',
+              { 'issue.id': issueId },
+              targetHealth.evaluatePreDispatch,
+            )
+            if (!preDispatchHealth.readyForDispatch) {
+              const reason = preDispatchHealth.openPromotionPr
+                ? 'promotion pull request already open'
+                : preDispatchHealth.lastError || 'target health checks are failing'
+              yield* scheduleRetry(issueId, retryEntry.identifier, retryEntry.attempt + 1, 'failure', reason)
+              return
+            }
+
+            const issue = candidates.find((candidate) => candidate.id === issueId)
+            if (!issue) {
+              yield* releaseClaim(issueId, retryEntry.identifier, 'issue no longer active during retry dispatch')
+              return
+            }
+
+            const config = yield* workflow.config
+            const runtimeState = yield* SynchronizedRef.get(stateRef)
+            const claimedIssueIds = new Set(runtimeState.claimed)
+            claimedIssueIds.delete(issueId)
+            const decision = evaluateDispatchIssue(issue, {
+              config,
+              runningIssues: Array.from(runtimeState.running.values()).map((entry) => entry.issue),
+              claimedIssueIds,
+            })
+
+            if (!decision.eligible) {
+              const reason =
+                decision.reason === 'no_slots'
+                  ? 'no available orchestrator slots'
+                  : decision.reason === 'blocked_issue'
+                    ? 'issue blocked by active dependency'
+                    : `issue not dispatchable: ${decision.reason}`
+              yield* scheduleRetry(issueId, issue.identifier, retryEntry.attempt + 1, 'failure', reason)
+              return
+            }
+
+            yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+              state.claimed.delete(issueId)
+              syncStateMetrics(state)
+              return Effect.succeed([undefined, state] as const)
+            })
+            yield* dispatchIssue(issue, retryEntry.attempt)
+          }),
+        )
 
       const processWorkerExit = (issueId: string, exit: Exit.Exit<string, unknown>) =>
         Effect.gen(function* () {
+          const completedAtMs = Date.now()
           const running = yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
             const current = state.running.get(issueId) ?? null
             if (current) {
               state.running.delete(issueId)
-              const runtimeSeconds = Math.max(0, Date.now() - current.startedAtMs) / 1_000
+              const runtimeSeconds = Math.max(0, completedAtMs - current.startedAtMs) / 1_000
               state.codexTotals.endedRuntimeSeconds += runtimeSeconds
+              syncStateMetrics(state)
             }
             return Effect.succeed([current, state] as const)
           })
@@ -1276,6 +1423,8 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             : running.stopReason !== 'running'
               ? running.stopReason
               : 'failed'
+          const durationMs = Math.max(0, completedAtMs - running.startedAtMs)
+          recordWorkerOutcome(reason, durationMs)
 
           const record = yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
             const existing = ensureIssueRecord(state, running.issueId, running.identifier)
@@ -1308,6 +1457,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                 level: 'info',
                 reason: 'terminal',
               })
+              syncStateMetrics(state)
               return Effect.succeed([undefined, state] as const)
             })
             if (running.terminalCleanupRequested) {
@@ -1343,6 +1493,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                 workspacePath: running.workspacePath || null,
                 sessionId: running.session.sessionId,
               })
+              syncStateMetrics(state)
               return Effect.succeed([undefined, state] as const)
             })
             yield* persistStateBestEffort
@@ -1507,7 +1658,9 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                       }).pipe(Effect.zipRight(Effect.succeed(emptyPersistedSchedulerState()))),
                     ),
                   )
-                  yield* SynchronizedRef.set(stateRef, hydrateStateFromPersisted(persisted, loaded.config))
+                  const restoredState = hydrateStateFromPersisted(persisted, loaded.config)
+                  syncStateMetrics(restoredState, { leaderState: false })
+                  yield* SynchronizedRef.set(stateRef, restoredState)
 
                   yield* leaderElection.start
 
@@ -1527,6 +1680,10 @@ export const makeOrchestratorLayer = (logger: Logger) =>
 
                   const currentLeader = yield* leaderElection.status
                   yield* Ref.set(seenLeaderStateRef, currentLeader.isLeader)
+                  yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+                    syncStateMetrics(state, { leaderState: currentLeader.isLeader })
+                    return Effect.succeed([undefined, state] as const)
+                  })
                   yield* Queue.offer(queue, { _tag: 'LeaderChanged', leader: currentLeader })
 
                   yield* startSchedulers

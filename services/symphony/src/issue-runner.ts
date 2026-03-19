@@ -3,6 +3,7 @@ import { Context, Effect, Layer } from 'effect'
 
 import { CodexProtocolError, ConfigError, toLogError, TrackerError, WorkspaceError, WorkflowError } from './errors'
 import { CodexSessionService, type CodexEvent } from './codex-app-session'
+import { finishSymphonySpan, startSymphonySpan, withSymphonyEffectSpan } from './instrumentation'
 import { TrackerService } from './linear-client'
 import type { Issue } from './types'
 import { normalizeState } from './utils'
@@ -117,96 +118,135 @@ export const makeIssueRunnerLayer = (logger: Logger) =>
         runAttempt: (issue, attempt, callbacks) =>
           Effect.scoped(
             Effect.gen(function* () {
-              const { definition, config } = yield* workflow.current
-              const runLogger = issueRunnerLogger.child({ issue_id: issue.id, issue_identifier: issue.identifier })
-              const workspaceInfo = yield* workspace.createForIssue(issue.identifier)
-              yield* callbacks.onWorkspacePath(workspaceInfo.path)
-              let lastIssue = issue
-
-              const dynamicTools =
-                config.tracker.kind === 'linear' && config.tracker.apiKey ? [LINEAR_GRAPHQL_TOOL] : []
-
-              const initialPrompt =
-                definition.promptTemplate.trim().length > 0
-                  ? renderPromptTemplate(definition.promptTemplate, { issue, attempt })
-                  : FALLBACK_PROMPT
-
-              const session = yield* codexSessions.createSession({
-                command: config.codex.command,
-                cwd: workspaceInfo.path,
-                approvalPolicy: config.codex.approvalPolicy,
-                threadSandbox: config.codex.threadSandbox,
-                turnSandboxPolicy: config.codex.turnSandboxPolicy,
-                readTimeoutMs: config.codex.readTimeoutMs,
-                turnTimeoutMs: config.codex.turnTimeoutMs,
-                title: `${issue.identifier}: ${issue.title}`,
-                dynamicTools,
-                logger: runLogger,
-                onEvent: callbacks.onEvent,
-                onToolCall: handleToolCall,
+              const runSpan = startSymphonySpan('symphony.worker_attempt', {
+                'issue.id': issue.id,
+                'issue.identifier': issue.identifier,
+                'issue.title': issue.title,
+                attempt: attempt ?? 'first-run',
               })
+              try {
+                const { definition, config } = yield* workflow.current
+                const runLogger = issueRunnerLogger.child({ issue_id: issue.id, issue_identifier: issue.identifier })
+                const workspaceInfo = yield* withSymphonyEffectSpan(
+                  'symphony.worker_attempt.workspace_create',
+                  { 'issue.identifier': issue.identifier },
+                  workspace.createForIssue(issue.identifier),
+                  { parentSpan: runSpan },
+                )
+                yield* callbacks.onWorkspacePath(workspaceInfo.path)
+                let lastIssue = issue
 
-              const hookContext = {
-                issueId: issue.id,
-                issueIdentifier: issue.identifier,
-                issueBranchName: issue.branchName,
-                issueTitle: issue.title,
-                issueState: issue.state,
-              }
+                const dynamicTools =
+                  config.tracker.kind === 'linear' && config.tracker.apiKey ? [LINEAR_GRAPHQL_TOOL] : []
 
-              yield* workspace.runBeforeRun(workspaceInfo.path, hookContext)
+                const initialPrompt =
+                  definition.promptTemplate.trim().length > 0
+                    ? renderPromptTemplate(definition.promptTemplate, { issue, attempt })
+                    : FALLBACK_PROMPT
 
-              const program = Effect.gen(function* () {
-                for (let turnNumber = 1; turnNumber <= config.agent.maxTurns; turnNumber += 1) {
-                  const prompt =
-                    turnNumber === 1
-                      ? initialPrompt
-                      : buildContinuationPrompt(lastIssue, turnNumber, config.agent.maxTurns)
-                  const outcome = yield* session.runTurn(prompt)
-                  if (outcome.status !== 'completed') {
-                    return yield* Effect.fail(
-                      new CodexProtocolError(
-                        'turn_failed',
-                        `turn ${outcome.turnId} ended with status ${outcome.status}`,
-                      ),
-                    )
-                  }
+                const session = yield* codexSessions.createSession({
+                  command: config.codex.command,
+                  cwd: workspaceInfo.path,
+                  approvalPolicy: config.codex.approvalPolicy,
+                  threadSandbox: config.codex.threadSandbox,
+                  turnSandboxPolicy: config.codex.turnSandboxPolicy,
+                  readTimeoutMs: config.codex.readTimeoutMs,
+                  turnTimeoutMs: config.codex.turnTimeoutMs,
+                  title: `${issue.identifier}: ${issue.title}`,
+                  dynamicTools,
+                  parentSpan: runSpan,
+                  logger: runLogger,
+                  onEvent: callbacks.onEvent,
+                  onToolCall: handleToolCall,
+                })
 
-                  const refreshed = yield* tracker.fetchIssueStatesByIds([lastIssue.id])
-                  if (refreshed.length === 0) {
-                    break
-                  }
-                  lastIssue = refreshed[0]
-
-                  const latestConfig = yield* workflow.config
-                  const activeStates = new Set(latestConfig.tracker.activeStates.map((state) => normalizeState(state)))
-                  if (!activeStates.has(normalizeState(lastIssue.state))) {
-                    break
-                  }
+                const hookContext = {
+                  issueId: issue.id,
+                  issueIdentifier: issue.identifier,
+                  issueBranchName: issue.branchName,
+                  issueTitle: issue.title,
+                  issueState: issue.state,
                 }
 
-                return workspaceInfo.path
-              })
+                yield* withSymphonyEffectSpan(
+                  'symphony.worker_attempt.before_run_hook',
+                  { 'issue.identifier': issue.identifier, 'workspace.path': workspaceInfo.path },
+                  workspace.runBeforeRun(workspaceInfo.path, hookContext),
+                  { parentSpan: runSpan },
+                )
 
-              return yield* program.pipe(
-                Effect.ensuring(
-                  workspace
-                    .runAfterRun(workspaceInfo.path, {
-                      issueId: lastIssue.id,
-                      issueIdentifier: lastIssue.identifier,
-                      issueBranchName: lastIssue.branchName,
-                      issueTitle: lastIssue.title,
-                      issueState: lastIssue.state,
-                    })
-                    .pipe(
-                      Effect.catchAll((error) =>
-                        Effect.sync(() => {
-                          runLogger.log('warn', 'workspace_after_run_failed', toLogError(error))
-                        }),
+                const result = yield* Effect.gen(function* () {
+                  for (let turnNumber = 1; turnNumber <= config.agent.maxTurns; turnNumber += 1) {
+                    const prompt =
+                      turnNumber === 1
+                        ? initialPrompt
+                        : buildContinuationPrompt(lastIssue, turnNumber, config.agent.maxTurns)
+                    const outcome = yield* withSymphonyEffectSpan(
+                      'symphony.worker_attempt.turn',
+                      {
+                        'issue.identifier': lastIssue.identifier,
+                        'workspace.path': workspaceInfo.path,
+                        'turn.number': turnNumber,
+                      },
+                      session.runTurn(prompt),
+                      { parentSpan: runSpan },
+                    )
+                    if (outcome.status !== 'completed') {
+                      return yield* Effect.fail(
+                        new CodexProtocolError(
+                          'turn_failed',
+                          `turn ${outcome.turnId} ended with status ${outcome.status}`,
+                        ),
+                      )
+                    }
+
+                    const refreshed = yield* withSymphonyEffectSpan(
+                      'symphony.worker_attempt.refresh_issue_state',
+                      { 'issue.identifier': lastIssue.identifier },
+                      tracker.fetchIssueStatesByIds([lastIssue.id]),
+                      { parentSpan: runSpan },
+                    )
+                    if (refreshed.length === 0) {
+                      break
+                    }
+                    lastIssue = refreshed[0]
+
+                    const latestConfig = yield* workflow.config
+                    const activeStates = new Set(
+                      latestConfig.tracker.activeStates.map((state) => normalizeState(state)),
+                    )
+                    if (!activeStates.has(normalizeState(lastIssue.state))) {
+                      break
+                    }
+                  }
+
+                  return workspaceInfo.path
+                }).pipe(
+                  Effect.ensuring(
+                    workspace
+                      .runAfterRun(workspaceInfo.path, {
+                        issueId: lastIssue.id,
+                        issueIdentifier: lastIssue.identifier,
+                        issueBranchName: lastIssue.branchName,
+                        issueTitle: lastIssue.title,
+                        issueState: lastIssue.state,
+                      })
+                      .pipe(
+                        Effect.catchAll((error) =>
+                          Effect.sync(() => {
+                            runLogger.log('warn', 'workspace_after_run_failed', toLogError(error))
+                          }),
+                        ),
                       ),
-                    ),
-                ),
-              )
+                  ),
+                )
+
+                finishSymphonySpan(runSpan)
+                return result
+              } catch (error) {
+                finishSymphonySpan(runSpan, error)
+                throw error
+              }
             }),
           ),
       } satisfies IssueRunnerServiceDefinition

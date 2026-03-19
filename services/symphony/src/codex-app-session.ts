@@ -22,8 +22,10 @@ import type {
   TurnStartParams,
   TurnStartResponse,
 } from '@proompteng/codex'
+import type { Span } from '@proompteng/otel/api'
 
 import { CodexProtocolError, toLogError } from './errors'
+import { withSymphonyEffectSpan } from './instrumentation'
 import type { Logger } from './logger'
 import type { TokenUsageTotals } from './types'
 
@@ -82,6 +84,7 @@ export type CodexSessionOptions = {
   turnTimeoutMs: number
   title: string
   dynamicTools: DynamicToolSpec[]
+  parentSpan?: Span
   logger: Logger
   onEvent: (event: CodexEvent) => Effect.Effect<void, never>
   onToolCall: (tool: string, args: unknown) => Effect.Effect<DynamicToolCallResponse, never>
@@ -371,7 +374,15 @@ export const makeCodexSessionLayer = (logger: Logger) =>
                 typeof raw.callId === 'string' ? raw.callId : typeof raw.id === 'string' ? raw.id : null
               const toolName = typeof raw.name === 'string' ? raw.name : 'unknown'
               const args = 'input' in raw ? raw.input : raw.arguments
-              const result = yield* options.onToolCall(toolName, args)
+              const result = yield* withSymphonyEffectSpan(
+                'symphony.codex.tool_call',
+                {
+                  'codex.tool.name': toolName,
+                  'codex.tool.call_id': toolCallId ?? 'unknown',
+                },
+                options.onToolCall(toolName, args),
+                { parentSpan: options.parentSpan },
+              )
               yield* writeMessage(child, { id, result: { ...result, callId: toolCallId } })
               return
             }
@@ -684,22 +695,27 @@ export const makeCodexSessionLayer = (logger: Logger) =>
           Effect.flatMap((ready) =>
             ready
               ? Effect.void
-              : request('initialize', {
-                  clientInfo: { name: 'symphony', version: '0.1.0' },
-                  capabilities: {
-                    experimentalApi: options.dynamicTools.length > 0,
-                  },
-                }).pipe(
-                  Effect.zipRight(writeMessage(child, { method: 'initialized', params: {} })),
-                  Effect.zipRight(Ref.set(readyRef, true)),
-                  Effect.zipRight(
-                    options.onEvent({
-                      event: 'session_started',
-                      timestamp: new Date().toISOString(),
-                      codexAppServerPid: String(child.pid ?? ''),
-                      message: 'codex app-server initialized',
-                    }),
+              : withSymphonyEffectSpan(
+                  'symphony.codex.initialize',
+                  { 'workspace.path': options.cwd },
+                  request('initialize', {
+                    clientInfo: { name: 'symphony', version: '0.1.0' },
+                    capabilities: {
+                      experimentalApi: options.dynamicTools.length > 0,
+                    },
+                  }).pipe(
+                    Effect.zipRight(writeMessage(child, { method: 'initialized', params: {} })),
+                    Effect.zipRight(Ref.set(readyRef, true)),
+                    Effect.zipRight(
+                      options.onEvent({
+                        event: 'session_started',
+                        timestamp: new Date().toISOString(),
+                        codexAppServerPid: String(child.pid ?? ''),
+                        message: 'codex app-server initialized',
+                      }),
+                    ),
                   ),
+                  { parentSpan: options.parentSpan },
                 ),
           ),
         )
@@ -725,7 +741,12 @@ export const makeCodexSessionLayer = (logger: Logger) =>
             persistExtendedHistory: false,
           }
 
-          const response = (yield* request('thread/start', params)) as ThreadStartResponse
+          const response = (yield* withSymphonyEffectSpan(
+            'symphony.codex.thread_start',
+            { 'workspace.path': options.cwd },
+            request('thread/start', params),
+            { parentSpan: options.parentSpan },
+          )) as ThreadStartResponse
           yield* Ref.set(threadIdRef, response.thread.id)
           return response.thread.id
         })
@@ -747,7 +768,15 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               collaborationMode: null,
             }
 
-            const response = (yield* request('turn/start', params)) as TurnStartResponse
+            const response = (yield* withSymphonyEffectSpan(
+              'symphony.codex.turn_start',
+              {
+                'workspace.path': options.cwd,
+                'thread.id': threadId,
+              },
+              request('turn/start', params),
+              { parentSpan: options.parentSpan },
+            )) as TurnStartResponse
             const turnId = response.turn.id
             const deferred = yield* Deferred.make<TurnOutcome, CodexProtocolError>()
             yield* SynchronizedRef.set(activeTurnRef, { threadId, turnId, deferred })

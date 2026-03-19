@@ -1,10 +1,14 @@
 import { DiagConsoleLogger, DiagLogLevel, diag } from './diag'
-import { type Counter, type Histogram, NoopMeterProvider } from './sdk-metrics'
-import { NoopTracerProvider, type Span, type SpanOptions, SpanStatusCode } from './sdk-trace'
+import { NoopMeterProvider } from './sdk-metrics'
+import { NoopTracerProvider, SpanStatusCode } from './sdk-trace'
+
+import type { Counter, Gauge, Histogram } from './sdk-metrics'
+import type { Span, SpanOptions } from './sdk-trace'
 
 type MeterLike = {
   createCounter: (name: string, options?: { description?: string; unit?: string }) => Counter
   createHistogram: (name: string, options?: { description?: string; unit?: string }) => Histogram
+  createGauge: (name: string, options?: { description?: string; unit?: string }) => Gauge
 }
 
 type TracerLike = {
@@ -41,4 +45,5 @@ export const trace = {
 }
 
 export { DiagConsoleLogger, DiagLogLevel, diag, SpanStatusCode }
-export type { Counter, Histogram }
+export type { Counter, Gauge, Histogram } from './sdk-metrics'
+export type { Span, SpanOptions } from './sdk-trace'

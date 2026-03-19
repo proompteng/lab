@@ -2,6 +2,8 @@ import process from 'node:process'
 
 import { Deferred, Effect } from 'effect'
 
+import './instrumentation'
+
 import { OrchestratorService } from './orchestrator'
 import { createLogger } from './logger'
 import { makeSymphonyRuntime } from './runtime'
