@@ -26,12 +26,24 @@ spec:
         - name: symphony
           image: registry.ide-newton.ts.net/lab/symphony
           imagePullPolicy: Always
-          command: ['bun', 'src/index.ts', '/etc/symphony/WORKFLOW.md']
+          command:
+            - sh
+            - -lc
+            - |
+              export HOME="${HOME:-/workspace/.codex-home}"
+              mkdir -p "$HOME/.codex"
+              if [ ! -f "$HOME/.codex/auth.json" ]; then
+                cp /var/run/codex-auth/auth.json "$HOME/.codex/auth.json"
+                chmod 600 "$HOME/.codex/auth.json"
+              fi
+              exec bun src/index.ts /etc/symphony/WORKFLOW.md
           ports:
             - name: http
               containerPort: 8080
               protocol: TCP
           env:
+            - name: HOME
+              value: /workspace/.codex-home
             - name: NODE_ENV
               value: production
             - name: LINEAR_API_KEY
@@ -86,7 +98,7 @@ spec:
               subPath: WORKFLOW.md
               readOnly: true
             - name: codex-auth
-              mountPath: /root/.codex/auth.json
+              mountPath: /var/run/codex-auth/auth.json
               subPath: auth.json
               readOnly: true
       volumes:
