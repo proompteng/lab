@@ -632,9 +632,14 @@ def _evaluate_trading_health_payload(
         empirical_jobs_status=empirical_jobs,
         dspy_runtime_status=dspy_runtime,
     )
+    live_mode = settings.trading_mode == "live"
     dependencies["empirical_jobs"] = {
-        "ok": bool(empirical_jobs.get("ready")),
-        "detail": str(empirical_jobs.get("status") or "unknown"),
+        "ok": bool(empirical_jobs.get("ready")) if live_mode else True,
+        "detail": (
+            str(empirical_jobs.get("status") or "unknown")
+            if live_mode
+            else "not_required_in_non_live_mode"
+        ),
         "authority": empirical_jobs.get("authority"),
     }
     dependencies["dspy_runtime"] = {
