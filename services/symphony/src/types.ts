@@ -71,6 +71,17 @@ export type ServerConfig = {
   port: number | null
 }
 
+export type PostHogConfig = {
+  enabled: boolean
+  host: string
+  apiKey: string | null
+  projectId: string | null
+  distinctId: string
+  requestTimeoutMs: number
+  flushAt: number
+  flushIntervalMs: number
+}
+
 export type InstanceConfig = {
   name: string
   namespace: string
@@ -131,6 +142,7 @@ export type SymphonyConfig = {
   agent: AgentConfig
   codex: CodexConfig
   server: ServerConfig
+  posthog: PostHogConfig
   instance: InstanceConfig
   target: TargetConfig
   release: ReleaseConfig
@@ -234,6 +246,14 @@ export type TargetSummary = {
   argocdApplication: string
   repo: string
   defaultBranch: string
+}
+
+export type PostHogSummary = {
+  enabled: boolean
+  host: string | null
+  projectId: string | null
+  distinctId: string
+  lastError: string | null
 }
 
 export type ReleaseSummary = {
@@ -356,6 +376,7 @@ export type RuntimeSnapshot = {
   workflow: WorkflowSummary
   targetHealth: TargetHealthSummary
   leader: LeaderSnapshot
+  telemetry: PostHogSummary
   recentEvents: RecentEvent[]
   recentErrors: RecentError[]
   capacity: CapacitySnapshot

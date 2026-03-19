@@ -219,6 +219,18 @@ const renderDashboard = (snapshot: RuntimeSnapshot) => {
           </table>
         </div>
         <div class="card">
+          <h3>Telemetry</h3>
+          <table>
+            <tbody>${renderKeyValueRows([
+              { key: 'enabled', value: String(snapshot.telemetry.enabled) },
+              { key: 'host', value: snapshot.telemetry.host },
+              { key: 'projectId', value: snapshot.telemetry.projectId },
+              { key: 'distinctId', value: snapshot.telemetry.distinctId },
+              { key: 'lastError', value: snapshot.telemetry.lastError },
+            ])}</tbody>
+          </table>
+        </div>
+        <div class="card">
           <h3>Policy</h3>
           <table>
             <tbody>${renderKeyValueRows([

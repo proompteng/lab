@@ -135,6 +135,11 @@ setInterval(() => {}, 1000)
   test('advertises experimentalApi when dynamic tools are enabled', async () => {
     const tempDir = await mkdtemp(path.join(tmpdir(), 'symphony-codex-capabilities-'))
     const scriptPath = path.join(tempDir, 'fake-codex-app-server.mjs')
+    const seenEvents: Array<{
+      event: string
+      prompt?: string | null
+      outputChoices?: Array<Record<string, unknown>> | null
+    }> = []
 
     await writeFile(
       scriptPath,
@@ -170,7 +175,14 @@ rl.on('line', (line) => {
     console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'turn-1' } } }))
     console.log(JSON.stringify({
       method: 'turn/completed',
-      params: { threadId: 'thread-1', turnId: 'turn-1' },
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        outputChoices: [{ role: 'assistant', content: 'done' }],
+        provider: 'codex',
+        model: 'gpt-5.4',
+        latency: 1.5,
+      },
     }))
   }
 })
@@ -201,7 +213,14 @@ rl.on('line', (line) => {
             title: 'dynamic tool turn',
             dynamicTools: [dynamicTool],
             logger: createStubLogger(),
-            onEvent: () => Effect.void,
+            onEvent: (event) =>
+              Effect.sync(() => {
+                seenEvents.push({
+                  event: event.event,
+                  prompt: event.prompt,
+                  outputChoices: event.outputChoices ?? null,
+                })
+              }),
             onToolCall: () =>
               Effect.succeed({
                 success: false,
@@ -219,6 +238,16 @@ rl.on('line', (line) => {
         status: 'completed',
         threadId: 'thread-1',
         turnId: 'turn-1',
+      })
+      expect(seenEvents).toContainEqual({
+        event: 'turn_started',
+        prompt: 'hello',
+        outputChoices: null,
+      })
+      expect(seenEvents).toContainEqual({
+        event: 'turn_completed',
+        prompt: undefined,
+        outputChoices: [{ role: 'assistant', content: 'done' }],
       })
     } finally {
       await rm(tempDir, { recursive: true, force: true })

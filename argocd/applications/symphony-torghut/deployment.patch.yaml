@@ -29,6 +29,16 @@ spec:
                   name: github-token-torghut
                   key: token
                   optional: true
+            - name: POSTHOG_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: symphony-posthog-torghut
+                  key: POSTHOG_API_KEY
+            - name: POSTHOG_PROJECT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: symphony-posthog-torghut
+                  key: POSTHOG_PROJECT_ID
             - name: SYMPHONY_LEADER_ELECTION_LEASE_NAME
               value: symphony-torghut-leader
       volumes:

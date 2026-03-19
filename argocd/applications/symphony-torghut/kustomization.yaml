@@ -19,6 +19,7 @@ resources:
   - codex-auth-sealedsecret.yaml
   - github-token-sealedsecret.yaml
   - linear-api-key-sealedsecret.yaml
+  - posthog-sealedsecret.yaml
   - target-argocd-role.yaml
   - target-argocd-rolebinding.yaml
 patches:
