@@ -41,14 +41,15 @@ If the question is "what should I trust right now?", start here:
    - `docs/torghut/design-system/v6/32-authoritative-alpha-readiness-and-empirical-promotion-closeout-2026-03-08.md`
    - `docs/torghut/design-system/v6/38-authoritative-empirical-promotion-evidence-contract-2026-03-09.md`
    - `docs/torghut/design-system/v6/39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md`
-
    - `docs/torghut/design-system/v6/40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md`
    - `docs/torghut/design-system/v6/41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md`
    - `docs/torghut/design-system/v6/42-torghut-quant-control-plane-and-profitability-program-2026-03-15.md`
    - `docs/torghut/design-system/v6/44-torghut-quant-plan-design-document-and-handoff-contract-2026-03-15.md`
    - `docs/agents/designs/49-jangar-control-plane-authority-ledger-and-expiry-watchdog-2026-03-19.md`
    - `docs/agents/designs/50-torghut-hypothesis-capital-governor-and-data-quorum-2026-03-19.md`
+   - `docs/agents/designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md`
    - `docs/agents/designs/52-jangar-rollout-epoch-witness-and-segment-circuit-breakers-2026-03-19.md`
+   - `docs/torghut/design-system/v6/50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
    - `docs/torghut/design-system/v6/51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
 
 4. options-lane current design source of truth:
@@ -61,22 +62,25 @@ The current highest-priority work is:
 
 1. replace optional/stale control-plane truth with the authority-ledger and expiry-watchdog contract in
    `docs/agents/designs/49-jangar-control-plane-authority-ledger-and-expiry-watchdog-2026-03-19.md`;
-2. make rollout truth depend on rollout-epoch acknowledgement and segment circuit breakers in
+2. replace optional and mixed control-plane truth with the execution-cell and collaboration-failover contract in
+   `docs/agents/designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md`;
+3. make rollout truth depend on rollout-epoch acknowledgement and segment circuit breakers in
    `docs/agents/designs/52-jangar-rollout-epoch-witness-and-segment-circuit-breakers-2026-03-19.md`;
-3. force capital-stage decisions through the hypothesis capital governor and data-quorum contract in
+4. force capital-stage decisions through the hypothesis capital governor, submission-parity council, and options
+   bootstrap escrow contracts in
    `docs/agents/designs/50-torghut-hypothesis-capital-governor-and-data-quorum-2026-03-19.md`;
-4. make non-shadow capital depend on expiring profit reservations, schema fitness, and simulation slot ownership in
+   and `docs/torghut/design-system/v6/50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`;
+5. make non-shadow capital depend on expiring profit reservations, schema fitness, and simulation slot ownership in
    `docs/torghut/design-system/v6/51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`;
-5. keep producer-authored freshness and proof bundles active by continuing the ledger direction defined in
+6. keep producer-authored freshness and proof bundles active by continuing the ledger direction defined in
    `docs/torghut/design-system/v6/39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md`;
-6. isolate control-plane failure domains with rollout-safe gates in
+7. isolate control-plane failure domains with rollout-safe gates in
    `docs/torghut/design-system/v6/40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md`;
-7. retain hypothesis-specific profitability guardrails from
+8. retain hypothesis-specific profitability guardrails from
    `docs/torghut/design-system/v6/41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md`,
    but make them subordinate to fresh data quorum and immutable evidence bundles;
-8. execute the merged control-plane/profitability program with the March 19 authority, epoch, governor, and reservation
-   contracts layered on
-   top of the March 15-16 design set.
+9. execute the merged control-plane/profitability program with the March 19 authority, execution-cell, epoch,
+   governor, council, reservation, and bootstrap-escrow contracts layered on top of the March 15-16 design set.
 
 This means the current next work is not:
 
@@ -128,7 +132,9 @@ These are still active contract docs rather than historical snapshots:
 - `docs/torghut/design-system/v6/44-torghut-quant-plan-design-document-and-handoff-contract-2026-03-15.md`
 - `docs/agents/designs/49-jangar-control-plane-authority-ledger-and-expiry-watchdog-2026-03-19.md`
 - `docs/agents/designs/50-torghut-hypothesis-capital-governor-and-data-quorum-2026-03-19.md`
+- `docs/agents/designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md`
 - `docs/agents/designs/52-jangar-rollout-epoch-witness-and-segment-circuit-breakers-2026-03-19.md`
+- `docs/torghut/design-system/v6/50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
 - `docs/torghut/design-system/v6/51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
 - `docs/torghut/design-system/v6/33-alpaca-options-market-data-and-technical-analysis-lane-2026-03-08.md`
 - `docs/torghut/design-system/v6/34-alpaca-options-lane-implementation-contract-set-2026-03-08.md`

@@ -19,21 +19,20 @@ Companion document:
 ## Executive summary
 
 The March 19 design pack correctly identified authority-ledger drift and profitability-governance contradictions, but
-the live runtime still exposes one more systemic problem: Jangar treats mixed failures as whole-swarm failures.
+the live runtime still exposes one more systemic problem: Jangar still has no authoritative distinction between
+service-level readiness, collaboration health, and canary-capable control-plane authority.
 
 Read-only evidence captured on `2026-03-19` shows:
 
-- `jangar-control-plane` and `torghut-quant` both remain `Frozen` even though `status.freeze.until` expired on
-  `2026-03-11`;
 - `http://jangar.jangar.svc.cluster.local/ready` still returns `status=ok` while
-  `/api/agents/control-plane/status` reports `has_execution_trust=false` and `dependency_quorum=allow`;
-- `services/jangar/src/server/control-plane-status.ts` still treats `phase == "Frozen"` as not ready even when
-  `freeze.until` is already in the past, while `services/jangar/src/server/supporting-primitives-controller.ts`
-  still drives unfreeze off local timers and stale run/status synthesis;
+  `agentsController.enabled=false` and `supportingController.enabled=false`;
+- `http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?namespace=agents` reports
+  `watch_reliability.status="healthy"` and `dependency_quorum.decision="allow"`, but the richer `execution_trust`
+  surface is still absent because it remains optional;
 - Huly collaboration is a hard dependency in practice, but the worker-scoped account probe and `find-all` query both
-  time out against `http://transactor.huly.svc.cluster.local`;
-- Torghut remains in a mixed state where core trading is up, but market-context freshness is down, quant materialized
-  metrics are empty, and options-lane pods fail on DB auth and image availability before steady-state.
+  time out against `http://transactor.huly.svc.cluster.local` even though `GET /api/v1/version` succeeds;
+- Torghut remains in a mixed state where core trading is up, but quant latest-store evidence is empty, the options lane
+  is materially red, and ClickHouse freshness guardrails are falling back under load.
 
 The selected architecture replaces "whole swarm frozen or healthy" with durable **Execution Cells**. Each cell owns a
 bounded failure domain, a durable lease, an evidence bundle, and a rollout policy. Schedules are preserved when a cell
@@ -47,31 +46,36 @@ on a stale swarm phase or a green deployment probe.
 
 Evidence captured during this plan run:
 
-- `kubectl -n agents get swarm jangar-control-plane torghut-quant -o jsonpath=...`
-  - `jangar-control-plane|Frozen|StageStaleness|2026-03-11T16:36:12.630Z|5|2026-03-11T15:48:11.742Z`
-  - `torghut-quant|Frozen|StageStaleness|2026-03-11T16:36:17.456Z|0|2026-03-11T15:48:13.974Z`
 - `curl -fsS http://jangar.jangar.svc.cluster.local/ready`
   - returned `{"status":"ok",...}`
-- `curl -fsS http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status`
-  - `database.status = "healthy"`
+  - `leaderElection.isLeader=true`
+  - `agentsController.enabled=false`
+  - `supportingController.enabled=false`
+- `curl -fsS "http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?namespace=agents"`
   - `watch_reliability.status = "healthy"`
-  - `rollout_health.status = "healthy"`
   - `dependency_quorum.decision = "allow"`
   - `execution_trust` field absent because the feature flag is still effectively optional
-- `kubectl -n torghut get events --sort-by=.lastTimestamp | tail -n 40`
-  - repeated liveness/readiness failures for `torghut-00153-deployment`
-  - `torghut-options-catalog` and `torghut-options-enricher` restarting
-  - `torghut-options-ta` in `ImagePullBackOff`
-  - `torghut-ws-options` restarting on failed probes
-- `kubectl -n agents logs pod/torghut-market-context-news-batch-5ggp2-job-bn6qg --tail=120`
-  - batch runner hit a `subprocess.TimeoutExpired` on `/usr/local/bin/codex-implement` and then crashed trying to
-    write bytes to stdout as text
+- `kubectl -n torghut get events --sort-by=.lastTimestamp | tail -n 35`
+  - repeated startup/readiness/liveness failures for `torghut-00153-deployment`
+  - `torghut-options-catalog` and `torghut-options-enricher` remain in restart backoff
+  - `torghut-options-ta` is still in `ImagePullBackOff`
+  - `torghut-ws-options` remains probe-unhealthy
+- `kubectl -n torghut get pod torghut-options-catalog-676574bcc9-wkqp5 -o json`
+  - `restartCount=871`
+  - `state.waiting.reason="CrashLoopBackOff"`
+- `kubectl -n torghut get pod torghut-options-ta-7987889f4f-zxl5g -o json`
+  - configured image digest is missing and the pod is stuck in `ImagePullBackOff`
+- `python3 skills/huly-api/scripts/huly-api.py --operation account-info ...`
+  - timed out on `GET /api/v1/account/c9b87368-e7a2-483f-885f-ff179e258950`
+- `python3 skills/huly-api/scripts/huly-api.py --operation list-channel-messages ...`
+  - timed out on `POST /api/v1/find-all/c9b87368-e7a2-483f-885f-ff179e258950`
 
 Interpretation:
 
-- Jangar still has stale-freeze authority drift.
+- Jangar can look service-ready while still lacking controller proof and collaboration proof for safe rollout.
 - Torghut still has live mixed-state failures that should not collapse into one global freeze.
-- The market-context batch path can fail before persisting a clean control-plane explanation.
+- Huly is not unreachable, but authenticated control-plane reads are hanging long enough to behave like an authority
+  fault for mission delivery.
 
 ### Source architecture and high-risk modules
 
@@ -132,14 +136,25 @@ Service-level read-only evidence still shows the necessary data-state:
   - `status = "degraded"`
   - `latestMetricsCount = 0`
   - `stages = []`
+- `curl -fsS http://torghut.torghut.svc.cluster.local/metrics`
+  - `torghut_trading_execution_clean_ratio 0.0`
+  - `torghut_trading_alpha_readiness_promotion_eligible_total 0`
+- `curl -fsS http://torghut-ws.torghut.svc.cluster.local:9090/metrics`
+  - `torghut_ws_desired_symbols_fetch_degraded 0`
+- `curl -fsS http://torghut-clickhouse-guardrails-exporter.torghut.svc.cluster.local:9108/metrics`
+  - one replica reports `nan` freshness timestamps
+  - `freshness_fallback_total` is elevated for both `ta_signals` and `ta_microbars`
 - `curl -fsS http://jangar.jangar.svc.cluster.local/api/torghut/trading/control-plane/quant/alerts?...`
   - open critical alerts for `metrics_pipeline_lag_seconds` across `1m`, `5m`, `15m`, `1h`, `1d`, `5d`, and `20d`
+- `kubectl -n torghut get pod torghut-db-1 -o json`
+  - Postgres is ready, but `restartCount=38`
 
 Interpretation:
 
 - schema-current is not enough to authorize rollout or capital;
 - freshness, ingestion, collaboration, and bootstrap need separate execution ownership;
-- a database-access gap in the control-plane identity should surface as evidence, not as silent trust loss.
+- a database-access gap in the control-plane identity should surface as evidence, not as silent trust loss;
+- healthy desired-symbol fetch and ready database pods are supporting signals, not substitutes for latest-store proof.
 
 ### Collaboration assessment
 
@@ -307,7 +322,7 @@ Behavior:
 
 That gives us bounded failure scope without losing auditability.
 
-### 5. Rollout predicates consume the cell graph
+### 5. Rollout predicates consume the cell graph and emit clearance leases
 
 Rollout and `/ready` must stop reasoning from a loose mix of rollout health, stale swarm phase, and optional trust.
 
@@ -327,6 +342,12 @@ Example mapping:
 - Torghut options changes depend on `torghut-options-bootstrap`, `torghut-market-context`, `torghut-quant-materialization`
 - Torghut quant-only changes need not block on options bootstrap when the changed hypotheses do not declare
   `options-data`
+
+The deployable view of this graph is a **clearance lease**:
+
+- a lease is valid only while every required hard cell is fresh;
+- the lease records the exact cell snapshot used for the decision;
+- Torghut and deployer tooling must treat a missing or expired lease as `observe` or `hold`, never as implicit canary.
 
 ### 6. Torghut submission parity plugs into the same cell graph
 
@@ -358,6 +379,8 @@ Deployer gates:
 - induce one stage-staleness drill and prove preserved schedules remain visible while dispatch is blocked;
 - induce one Huly timeout drill and prove the outbox captures the message plus replay state;
 - no rollout progression when any required `hard` cell is not healthy or recovering within policy;
+- no canary-capable lease when `latestMetricsCount == 0` or `torghut_trading_execution_clean_ratio < 0.75` for the
+  affected profitability lanes;
 - store and archive the cell snapshot used for every canary step.
 
 ## Rollout plan

@@ -6,9 +6,11 @@ Use this runbook for alerts tied to the Jangar quant control-plane (near-real-ti
 upstream Torghut trading signals. This covers data freshness, decision activity, execution quality proxies, and
 control-plane stream health.
 
-This runbook is aligned with the discover-stage architecture merge contract:
+This runbook is aligned with the current March 19 plan-stage architecture contracts:
 
 - `docs/torghut/design-system/v6/42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md`
+- `docs/torghut/design-system/v6/50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
+- `docs/agents/designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md`
 
 When running under scoped service accounts, treat unavailable cluster capabilities (`kubectl exec`, `kubectl logs` with target
 containers, or DB pod exec) as a controlled evidence gap and prioritize control-plane status surface checks instead.
@@ -59,6 +61,10 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
    - If `dependency_quorum.decision == "block"` or (`dependency_quorum.decision == "delay"` with `dependency_quorum.degradation_scope` that blocks capital progress), treat the affected control-plane segment as the active blocker and verify impact before disabling promotion.
    - If `dependency_quorum.degradation_scope` is set to `single_capability`, pause affected capital movement paths only and confirm other lanes remain evaluable before broad actions.
    - If a single hypothesis is `blocked` or `shadow`, do not disable the whole service by default; verify the specific blocker reasons and keep unaffected lanes observable.
+   - Treat `live_submission_gate.capital_stage` as configured intent, not sufficient clearance by itself. Before any canary progression, also require:
+     - `alpha_readiness_promotion_eligible_total > 0`
+     - non-empty quant latest-store evidence from Jangar
+     - healthy options bootstrap for options-dependent hypotheses
    - Per-lane blockers are now scoped via each hypothesis manifest dependency capabilities, so a degraded dependency (for example
      `jangar_dependency_delay`) should only affect hypotheses that explicitly require that capability.
    - Read segment output from `dependency_quorum.segments` to confirm impact: check each `segment`, `status`, `scope`, and `reasons` before rerouting incident response.
@@ -84,13 +90,33 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
    - Fail criteria:
      - `TorghutSignalsStaleDuringMarketHours`, `TorghutMicrobarsStaleDuringMarketHours`, `TorghutWSDesiredSymbolsFetchFailing`,
        or `TorghutClickHouseFreshnessQueryFallbacks` is firing.
-4. Validate market-context health on active symbols (not default symbol only).
+4. Validate quant latest-store evidence before any canary progression.
+   - `curl -fsS "http://127.0.0.1:8080/api/torghut/trading/control-plane/quant/health?account=paper&window=1d" | jq '{status, latestMetricsCount, emptyLatestStoreAlarm, metricsPipelineLagSeconds, stages, maxStageLagSeconds}'`
+   - Pass criteria:
+     - `latestMetricsCount > 0`
+     - `emptyLatestStoreAlarm == false`
+     - `status == "ok"` for the target window
+   - Hard stop criteria:
+     - `latestMetricsCount == 0`
+     - `emptyLatestStoreAlarm == true`
+     - stage list empty for the target canary window
+5. Validate market-context health on active symbols (not default symbol only).
    - `SYMS=$(kubectl cnpg psql -n torghut torghut-db -- -d torghut -At -c "select distinct symbol from trade_decisions where created_at >= now() - interval '1 day' and status in ('planned','submitted','accepted','filled') order by symbol limit 8;")`
    - `for s in $SYMS; do curl -fsS "http://127.0.0.1:8080/api/torghut/market-context/health?symbol=${s}" | jq '{symbol: .symbol, healthy: .healthy, reasons: .reasons}'; done`
-5. Check Jangar SSE health for control-plane dashboards.
+6. Validate options-lane bootstrap before enabling any options-dependent hypothesis.
+   - `kubectl -n torghut get pods | rg 'torghut-options-(catalog|enricher|ta)|torghut-ws-options'`
+   - Pass criteria:
+     - no `CrashLoopBackOff` on catalog or enricher
+     - no `ImagePullBackOff` on options TA
+     - no sustained restart churn on `torghut-ws-options`
+   - Hard stop criteria:
+     - image pull failures
+     - DB auth or bootstrap crashes
+     - missing readiness explanation from the options services
+7. Check Jangar SSE health for control-plane dashboards.
    - Review Jangar logs for `torghut-quant` stream errors.
    - Verify the quant control-plane UI connection in Jangar (`/torghut/control-plane`).
-6. Verify domain telemetry correlation continuity (PostHog contract, non-critical path).
+8. Verify domain telemetry correlation continuity (PostHog contract, non-critical path).
    - `curl -fsS "http://127.0.0.1:8081/trading/status" | jq '.control_plane_contract | {last_autonomy_recommendation_trace_id, domain_telemetry_event_total, domain_telemetry_dropped_total}'`
    - `curl -fsS "http://127.0.0.1:8081/trading/executions?limit=20" | jq '[.[] | {id, trade_decision_id, execution_correlation_id, execution_idempotency_key}]'`
    - Pass criteria:
@@ -100,12 +126,14 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
    - Fail criteria:
      - correlation IDs are absent on newly-created execution rows.
      - telemetry drops grow with reasons other than expected operational modes (for example `disabled` during planned disablement).
-7. Verify recovery gate thresholds before canary progression.
+9. Verify recovery gate thresholds before canary progression.
    - `curl -fsS "http://127.0.0.1:8081/metrics" | rg 'torghut_trading_(execution_clean_ratio|execution_reject_ratio|decision_reject_reason_total|llm_unavailable_reject_reason_total)'`
    - Acceptance thresholds for progression:
      - `torghut_trading_execution_clean_ratio >= 0.75`
      - `qty_below_min` share <= `0.03` of recent decisions
      - `llm_unavailable_*` reject share <= `0.02` of recent decisions
+     - `alpha_readiness_promotion_eligible_total > 0`
+     - quant latest-store evidence is non-empty for the target window
    - Hard rollback triggers:
      - clean ratio < `0.70` for 15 minutes
      - `qty_below_min` share > `0.05` for 30 minutes

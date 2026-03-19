@@ -19,6 +19,8 @@ The runtime on `2026-03-19` still allows contradictory profitability states:
 - `GET /trading/status` reports `live_submission_gate.allowed = true` and `capital_stage = "0.10x canary"`;
 - the same payload reports `hypotheses_total = 3`, `state_totals.shadow = 3`, and `promotion_eligible_total = 0`;
 - Jangar quant health reports `latestMetricsCount = 0` and no active materialization stages;
+- Torghut metrics report `execution_clean_ratio = 0.0`;
+- desired-symbol fetch is healthy while the latest-store is still empty, proving those are different readiness surfaces;
 - Jangar market-context health reports `overallState = "down"` with stale bundle freshness;
 - options-lane services fail before readiness because DB rate-bucket defaults are written during module import and the
   current credential for `torghut_app` is rejected;
@@ -49,6 +51,14 @@ Read-only evidence collected on `2026-03-19`:
   - `status = "degraded"`
   - `latestMetricsCount = 0`
   - `stages = []`
+- `curl -fsS http://torghut.torghut.svc.cluster.local/metrics`
+  - `torghut_trading_execution_clean_ratio 0.0`
+  - `torghut_trading_alpha_readiness_promotion_eligible_total 0`
+- `curl -fsS http://torghut-ws.torghut.svc.cluster.local:9090/metrics`
+  - `torghut_ws_desired_symbols_fetch_degraded 0`
+- `curl -fsS http://torghut-clickhouse-guardrails-exporter.torghut.svc.cluster.local:9108/metrics`
+  - one replica reports `nan` freshness timestamps
+  - `freshness_fallback_total` is elevated for both `ta_signals` and `ta_microbars`
 - `curl -fsS http://jangar.jangar.svc.cluster.local/api/torghut/trading/control-plane/quant/alerts?...`
   - critical open alerts for `metrics_pipeline_lag_seconds` across `1m`, `5m`, `15m`, `1h`, `1d`, `5d`, and `20d`
   - open warning alert for negative `sharpe_annualized`
@@ -57,12 +67,13 @@ Read-only evidence collected on `2026-03-19`:
   - `bundleFreshnessSeconds = 275280`
   - ClickHouse ingestion shows `clickhouse_query_failed`
   - fundamentals and news are stale; technicals and regime are `error`
-- `kubectl -n torghut logs pod/torghut-options-catalog-...`
-  - `password authentication failed for user "torghut_app"`
-- `kubectl -n torghut logs pod/torghut-options-enricher-...`
-  - same DB auth failure
-- `kubectl -n torghut get pod torghut-options-ta-... -o jsonpath=...`
+- `kubectl -n torghut get pod torghut-options-catalog-676574bcc9-wkqp5 -o json`
+  - `restartCount=871`
+  - `CrashLoopBackOff`
+- `kubectl -n torghut get pod torghut-options-ta-7987889f4f-zxl5g -o json`
   - image pull fails with digest `not found`
+- `kubectl -n torghut get pod torghut-db-1 -o json`
+  - Postgres is ready, but `restartCount=38`
 
 Interpretation:
 
@@ -70,6 +81,7 @@ Interpretation:
 - Current capital truth is too permissive because it is synthesized in multiple places.
 - Options-lane bootstrap failures are currently polluting profitability readiness through crashes instead of explicit
   cell state.
+- Healthy symbol-forwarder status alone is not enough to authorize canary capital while latest-store evidence is empty.
 
 ### Source architecture and test gaps
 
@@ -186,7 +198,7 @@ Inputs:
 - market-context health bundle
 - empirical-job status
 - DSPy runtime status
-- execution-cell inputs from Jangar
+- execution-cell inputs and clearance lease refs from Jangar
 - options bootstrap status
 
 Outputs:
@@ -234,6 +246,7 @@ Required baseline policy for all cells:
 
 - `promotion_eligible_total > 0`
 - `latestMetricsCount > 0`
+- `torghut_trading_execution_clean_ratio >= 0.75`
 - no open critical `metrics_pipeline_lag_seconds` alert for the evaluation window
 - `market_context.overallState != "down"`
 - no required execution cell in `blocked` state
@@ -327,6 +340,8 @@ Deployer gates:
 
 - no canary or live promotion while any required critical quant lag alert remains open;
 - no canary or live promotion while `market_context.overallState = "down"`;
+- no canary or live promotion while `torghut_trading_execution_clean_ratio < 0.75`;
+- no canary or live promotion while `latestMetricsCount = 0` for the target window;
 - options capital remains `observe` whenever `options_bootstrap_status != ready`;
 - one forced rollback from `0.10x canary` to `observe` or `quarantine` must persist the evidence bundle and council
   decision that triggered the rollback.
