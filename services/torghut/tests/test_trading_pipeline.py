@@ -5,14 +5,16 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from typing import Any
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models import Base, Execution, LLMDecisionReview, Strategy, TradeDecision
+from app import config
 from app.trading.decisions import DecisionEngine
 from app.trading.execution_adapters import SimulationExecutionAdapter
 from app.trading.execution import OrderExecutor
@@ -4201,6 +4203,47 @@ class TestTradingPipeline(TestCase):
             config.settings.llm_adjustment_approved = original[
                 "llm_adjustment_approved"
             ]
+
+    def test_maybe_record_lean_strategy_shadow_rolls_back_session_on_failure(self) -> None:
+        pipeline = object.__new__(TradingPipeline)
+        metrics = Mock()
+        pipeline.state = SimpleNamespace(metrics=metrics)
+        pipeline.lean_lane_manager = Mock()
+        pipeline.lean_lane_manager.record_strategy_shadow.side_effect = RuntimeError('boom')
+
+        session = Mock()
+        execution_client = Mock()
+        execution_client.evaluate_strategy_shadow.return_value = {
+            'run_id': 'run-1',
+            'parity_status': 'blocked_missing_empirical_authority',
+        }
+        decision = SimpleNamespace(
+            strategy_id='strategy-1',
+            symbol='AAPL',
+            action='buy',
+            qty=Decimal('1'),
+            order_type='market',
+            time_in_force='day',
+        )
+
+        original_enabled = config.settings.trading_lean_strategy_shadow_enabled
+        original_disable_switch = config.settings.trading_lean_lane_disable_switch
+        try:
+            config.settings.trading_lean_strategy_shadow_enabled = True
+            config.settings.trading_lean_lane_disable_switch = False
+            TradingPipeline._maybe_record_lean_strategy_shadow(
+                pipeline,
+                session=session,
+                decision=decision,
+                execution_client=execution_client,
+                selected_adapter_name='lean',
+            )
+        finally:
+            config.settings.trading_lean_strategy_shadow_enabled = original_enabled
+            config.settings.trading_lean_lane_disable_switch = original_disable_switch
+
+        session.rollback.assert_called_once()
+        metrics.record_lean_strategy_shadow.assert_any_call('error')
 
     def test_runtime_uncertainty_gate_records_uncertainty_sub_gate_action(self) -> None:
         pipeline = TradingPipeline(

@@ -67,7 +67,11 @@ class LeanLaneManager:
             row.config_json = coerce_json_payload(dict(config))
             row.reproducibility_hash = str(payload.get('reproducibility_hash') or '') or row.reproducibility_hash
         session.add(row)
-        session.commit()
+        try:
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
         session.refresh(row)
         return row
 
@@ -99,7 +103,11 @@ class LeanLaneManager:
         ):
             row.completed_at = datetime.now(timezone.utc)
         session.add(row)
-        session.commit()
+        try:
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
         session.refresh(row)
         return row
 
@@ -141,7 +149,11 @@ class LeanLaneManager:
             row.governance_json = coerce_json_payload(dict(cast(Mapping[str, Any], shadow_result.get('governance') or {})))
             row.disable_switch_active = settings.trading_lean_lane_disable_switch
         session.add(row)
-        session.commit()
+        try:
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
         session.refresh(row)
         return row
 
