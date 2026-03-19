@@ -1,4 +1,5 @@
 import { Context, Effect, Layer } from 'effect'
+import * as Cause from 'effect/Cause'
 import * as Duration from 'effect/Duration'
 import * as Exit from 'effect/Exit'
 import * as Fiber from 'effect/Fiber'
@@ -61,7 +62,7 @@ import type {
   TokenUsageTotals,
   WorkflowSummary,
 } from './types'
-import { normalizeState } from './utils'
+import { normalizeState, readPositiveNumber } from './utils'
 import { WorkflowService } from './workflow'
 import { WorkspaceService } from './workspace-manager'
 import type { Logger } from './logger'
@@ -128,6 +129,8 @@ const MAX_GLOBAL_EVENTS = 100
 const MAX_ISSUE_EVENTS = 50
 const MAX_RECENT_ERRORS = 50
 const MAX_RUN_HISTORY = 25
+const DEFAULT_ORCHESTRATOR_COMMAND_TIMEOUT_MS = 30_000
+const DEFAULT_POLL_TICK_TIMEOUT_MS = 45_000
 
 const buildTelemetrySessionId = (projectSlug: string | null, issueId: string) =>
   `symphony:${projectSlug ?? 'unknown'}:${issueId}`
@@ -543,6 +546,14 @@ export const makeOrchestratorLayer = (logger: Logger) =>
       const startedRef = yield* Ref.make(false)
       const pollQueuedRef = yield* Ref.make(false)
       const stallQueuedRef = yield* Ref.make(false)
+      const orchestratorCommandTimeoutMs = readPositiveNumber(
+        process.env.SYMPHONY_COMMAND_TIMEOUT_MS,
+        DEFAULT_ORCHESTRATOR_COMMAND_TIMEOUT_MS,
+      )
+      const pollTickTimeoutMs = readPositiveNumber(
+        process.env.SYMPHONY_POLL_TICK_TIMEOUT_MS,
+        DEFAULT_POLL_TICK_TIMEOUT_MS,
+      )
       const seenLeaderStateRef = yield* Ref.make<boolean | null>(null)
       const processorFiberRef = yield* Ref.make<Fiber.RuntimeFiber<void, never> | null>(null)
       const pollFiberRef = yield* Ref.make<Fiber.RuntimeFiber<void, never> | null>(null)
@@ -1366,7 +1377,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
           yield* persistStateBestEffort
         })
 
-      const processPollTick = (() => {
+      const processPollTick = () => {
         const startedAtMs = Date.now()
         const pollSpan = startSymphonySpan('symphony.poll_tick')
         let finished = false
@@ -1637,7 +1648,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             }),
           ),
         )
-      })()
+      }
 
       const processRetryDue = (issueId: string) =>
         withSymphonyEffectSpan(
@@ -1946,89 +1957,102 @@ export const makeOrchestratorLayer = (logger: Logger) =>
           )
         })
 
-      const handleCommand = (command: OrchestratorCommand) =>
-        Effect.matchEffect(
-          (() => {
-            switch (command._tag) {
-              case 'PollTick':
-                return processPollTick
-              case 'StallSweep':
-                return Ref.set(stallQueuedRef, false).pipe(
-                  Effect.zipRight(
-                    leaderElection.status.pipe(
-                      Effect.flatMap((leader) =>
-                        leader.isLeader
-                          ? workflow.config.pipe(Effect.flatMap((config) => reconcileStalledRuns(config)))
-                          : Effect.void,
-                      ),
-                    ),
+      const getCommandTimeoutMs = (command: OrchestratorCommand): number =>
+        command._tag === 'PollTick' ? pollTickTimeoutMs : orchestratorCommandTimeoutMs
+
+      const buildCommandEffect = (command: OrchestratorCommand) => {
+        switch (command._tag) {
+          case 'PollTick':
+            return processPollTick()
+          case 'StallSweep':
+            return Ref.set(stallQueuedRef, false).pipe(
+              Effect.zipRight(
+                leaderElection.status.pipe(
+                  Effect.flatMap((leader) =>
+                    leader.isLeader
+                      ? workflow.config.pipe(Effect.flatMap((config) => reconcileStalledRuns(config)))
+                      : Effect.void,
                   ),
-                )
-              case 'RetryDue':
-                return processRetryDue(command.issueId)
-              case 'LeaderChanged':
-                return handleLeaderChanged(command.leader)
-              case 'WorkspaceReady':
-                return SynchronizedRef.modifyEffect(stateRef, (state) => {
-                  const running = state.running.get(command.issueId)
-                  let telemetryEffect: Effect.Effect<void, never> = Effect.void
-                  if (running) {
-                    running.workspacePath = command.workspacePath
-                    const record = ensureIssueRecord(state, running.issueId, running.identifier)
-                    record.workspacePath = command.workspacePath
-                    syncRecordFromRunning(record, running)
-                    addRunHistory(record, {
-                      at: new Date().toISOString(),
-                      status: 'workspace_ready',
-                      attempt: running.retryAttempt,
-                      message: null,
-                      workspacePath: command.workspacePath,
-                      sessionId: running.session.sessionId,
-                    })
-                    addRecentEvent(state, {
-                      at: new Date().toISOString(),
-                      event: 'workspace_ready',
-                      message: command.workspacePath,
-                      issueId: running.issueId,
-                      issueIdentifier: running.identifier,
-                      level: 'info',
-                    })
-                    telemetryEffect = posthog.captureSpan({
-                      traceId: running.telemetry.traceId,
-                      sessionId: running.telemetry.sessionId,
-                      spanId: `${running.telemetry.traceId}:workspace-ready:${Date.now()}`,
-                      parentId: running.telemetry.rootSpanId,
-                      spanName: 'workspace_ready',
-                      outputState: {
-                        workspace_path: command.workspacePath,
-                      },
-                      properties: {
-                        issue_id: running.issueId,
-                        issue_identifier: running.identifier,
-                      },
-                    })
-                  }
-                  return Effect.succeed([telemetryEffect, state] as const)
-                }).pipe(
-                  Effect.flatMap((telemetryEffect) => telemetryEffect),
-                  Effect.zipRight(persistStateBestEffort),
-                )
-              case 'CodexEventReceived':
-                return handleCodexEvent(command.issueId, command.event)
-              case 'WorkerExited':
-                return processWorkerExit(command.issueId, command.exit)
-            }
-          })(),
-          {
-            onFailure: (error) =>
-              Effect.sync(() => {
-                orchestratorLogger.log('warn', 'orchestrator_command_failed', {
-                  command: command._tag,
-                  ...toLogError(error),
+                ),
+              ),
+            )
+          case 'RetryDue':
+            return processRetryDue(command.issueId)
+          case 'LeaderChanged':
+            return handleLeaderChanged(command.leader)
+          case 'WorkspaceReady':
+            return SynchronizedRef.modifyEffect(stateRef, (state) => {
+              const running = state.running.get(command.issueId)
+              let telemetryEffect: Effect.Effect<void, never> = Effect.void
+              if (running) {
+                running.workspacePath = command.workspacePath
+                const record = ensureIssueRecord(state, running.issueId, running.identifier)
+                record.workspacePath = command.workspacePath
+                syncRecordFromRunning(record, running)
+                addRunHistory(record, {
+                  at: new Date().toISOString(),
+                  status: 'workspace_ready',
+                  attempt: running.retryAttempt,
+                  message: null,
+                  workspacePath: command.workspacePath,
+                  sessionId: running.session.sessionId,
                 })
-              }),
-            onSuccess: () => Effect.void,
-          },
+                addRecentEvent(state, {
+                  at: new Date().toISOString(),
+                  event: 'workspace_ready',
+                  message: command.workspacePath,
+                  issueId: running.issueId,
+                  issueIdentifier: running.identifier,
+                  level: 'info',
+                })
+                telemetryEffect = posthog.captureSpan({
+                  traceId: running.telemetry.traceId,
+                  sessionId: running.telemetry.sessionId,
+                  spanId: `${running.telemetry.traceId}:workspace-ready:${Date.now()}`,
+                  parentId: running.telemetry.rootSpanId,
+                  spanName: 'workspace_ready',
+                  outputState: {
+                    workspace_path: command.workspacePath,
+                  },
+                  properties: {
+                    issue_id: running.issueId,
+                    issue_identifier: running.identifier,
+                  },
+                })
+              }
+              return Effect.succeed([telemetryEffect, state] as const)
+            }).pipe(
+              Effect.flatMap((telemetryEffect) => telemetryEffect),
+              Effect.zipRight(persistStateBestEffort),
+            )
+          case 'CodexEventReceived':
+            return handleCodexEvent(command.issueId, command.event)
+          case 'WorkerExited':
+            return processWorkerExit(command.issueId, command.exit)
+        }
+      }
+
+      const handleCommand = (command: OrchestratorCommand) =>
+        buildCommandEffect(command).pipe(
+          Effect.timeoutFail({
+            duration: Duration.millis(getCommandTimeoutMs(command)),
+            onTimeout: () =>
+              new OrchestratorError(
+                'runtime_unavailable',
+                `orchestrator command ${command._tag} timed out after ${getCommandTimeoutMs(command)}ms`,
+              ),
+          }),
+          Effect.catchAllCause((cause) => {
+            if (Cause.isInterruptedOnly(cause)) {
+              return Effect.void
+            }
+            return Effect.sync(() => {
+              orchestratorLogger.log('warn', 'orchestrator_command_failed', {
+                command: command._tag,
+                ...toLogError(Cause.squash(cause)),
+              })
+            })
+          }),
         )
 
       const startProcessor = Effect.forever(Queue.take(queue).pipe(Effect.flatMap(handleCommand))).pipe(

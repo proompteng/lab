@@ -16,12 +16,15 @@ import type {
   IssueRecord,
   SymphonyConfig,
 } from './types'
+import { readPositiveNumber } from './utils'
 import type { Logger } from './logger'
 
 const SERVICE_ACCOUNT_DIRECTORY = '/var/run/secrets/kubernetes.io/serviceaccount'
 const TOKEN_PATH = `${SERVICE_ACCOUNT_DIRECTORY}/token`
 const CA_PATH = `${SERVICE_ACCOUNT_DIRECTORY}/ca.crt`
 const ROLLBACK_BRANCH_PREFIX = 'codex/symphony-rollback-'
+const DEFAULT_GITHUB_REQUEST_TIMEOUT_MS = 15_000
+const DEFAULT_KUBERNETES_REQUEST_TIMEOUT_MS = 10_000
 
 type GitHubRepository = {
   owner: string
@@ -124,6 +127,7 @@ const requestKubernetes = (
   requestPath: string,
   token: string,
   ca: string,
+  timeoutMs: number,
 ): Effect.Effect<KubernetesResponse, OrchestratorError, never> =>
   Effect.tryPromise({
     try: () =>
@@ -159,7 +163,17 @@ const requestKubernetes = (
           },
         )
 
-        request.on('error', reject)
+        const timeout = setTimeout(() => {
+          request.destroy(new Error(`kubernetes request timed out after ${timeoutMs}ms`))
+        }, timeoutMs)
+
+        request.on('error', (error) => {
+          clearTimeout(timeout)
+          reject(error)
+        })
+        request.on('close', () => {
+          clearTimeout(timeout)
+        })
         request.end()
       }),
     catch: (error) => new OrchestratorError('runtime_unavailable', 'kubernetes request failed', error),
@@ -334,6 +348,14 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
     Effect.sync(() => {
       const deliveryLogger = logger.child({ component: 'delivery-service' })
       const githubToken = process.env.GH_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim() || null
+      const githubRequestTimeoutMs = readPositiveNumber(
+        process.env.SYMPHONY_GITHUB_REQUEST_TIMEOUT_MS,
+        DEFAULT_GITHUB_REQUEST_TIMEOUT_MS,
+      )
+      const kubernetesRequestTimeoutMs = readPositiveNumber(
+        process.env.SYMPHONY_KUBERNETES_REQUEST_TIMEOUT_MS,
+        DEFAULT_KUBERNETES_REQUEST_TIMEOUT_MS,
+      )
 
       const githubRequest = <T>(
         repo: string,
@@ -349,23 +371,32 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
         const requestUrl = new URL(`https://api.github.com${path}`)
         return Effect.tryPromise({
           try: async () => {
-            const response = await fetch(requestUrl, {
-              ...init,
-              headers: {
-                authorization: `Bearer ${githubToken}`,
-                accept: 'application/vnd.github+json',
-                'user-agent': 'symphony',
-                ...init.headers,
-              },
-            })
-            if (!response.ok) {
-              throw new OrchestratorError(
-                'runtime_unavailable',
-                `github request failed for ${repo}${path}: ${response.status}`,
-                await response.text(),
-              )
+            const controller = new AbortController()
+            const timeout = setTimeout(() => {
+              controller.abort(`github request timed out after ${githubRequestTimeoutMs}ms`)
+            }, githubRequestTimeoutMs)
+            const headers = new Headers(init.headers)
+            headers.set('authorization', `Bearer ${githubToken}`)
+            headers.set('accept', 'application/vnd.github+json')
+            headers.set('user-agent', 'symphony')
+
+            try {
+              const response = await fetch(requestUrl, {
+                ...init,
+                headers,
+                signal: controller.signal,
+              })
+              if (!response.ok) {
+                throw new OrchestratorError(
+                  'runtime_unavailable',
+                  `github request failed for ${repo}${path}: ${response.status}`,
+                  await response.text(),
+                )
+              }
+              return (await response.json()) as T
+            } finally {
+              clearTimeout(timeout)
             }
-            return (await response.json()) as T
           },
           catch: (error) =>
             error instanceof OrchestratorError
@@ -523,6 +554,7 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
               `/apis/argoproj.io/v1alpha1/namespaces/${argoNamespace}/applications/${config.target.argocdApplication}`,
               token,
               ca,
+              kubernetesRequestTimeoutMs,
             ).pipe(
               Effect.flatMap((response) => {
                 if (response.status !== 200) {
