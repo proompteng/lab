@@ -8,7 +8,6 @@ from yaml import safe_load
 
 from app.config import Settings
 from app.trading.llm.dspy_programs.runtime import DSPyReviewRuntime
-
 _CRITICAL_TRADING_TOGGLE_KEYS = {
     "TRADING_ENABLED",
     "TRADING_AUTONOMY_ENABLED",
@@ -146,13 +145,14 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertFalse(settings.trading_feature_flags_enabled)
         self.assertEqual(settings.trading_db_schema_graph_branch_tolerance, 1)
         self.assertTrue(settings.trading_db_schema_graph_allow_divergence_roots)
+        self.assertEqual(env.get("LLM_ENABLED"), "false")
+        self.assertFalse(settings.llm_enabled)
         self.assertEqual(settings.llm_rollout_stage, "stage3_controlled_live")
-        self.assertEqual(settings.llm_dspy_runtime_mode, "shadow")
+        self.assertEqual(env.get("LLM_DSPY_RUNTIME_MODE"), "disabled")
+        self.assertEqual(settings.llm_dspy_runtime_mode, "disabled")
         self.assertTrue(settings.llm_shadow_mode)
-        self.assertEqual(
-            settings.llm_dspy_artifact_hash,
-            DSPyReviewRuntime.bootstrap_artifact_hash(),
-        )
+        self.assertEqual(env.get("LLM_DSPY_ARTIFACT_HASH"), "")
+        self.assertEqual(settings.llm_dspy_artifact_hash, "")
         self.assertEqual(settings.llm_fail_mode, "veto")
         self.assertEqual(settings.llm_fail_mode_enforcement, "strict_veto")
         self.assertFalse(settings.llm_fail_open_live_approved)
@@ -290,6 +290,9 @@ class TestLiveConfigManifestContract(TestCase):
         )
         fail_open_env["LLM_DSPY_RUNTIME_MODE"] = "active"
         fail_open_env["LLM_SHADOW_MODE"] = "false"
+        fail_open_env["LLM_DSPY_ARTIFACT_HASH"] = (
+            DSPyReviewRuntime.bootstrap_artifact_hash()
+        )
         approved_settings = Settings(**fail_open_env)
         cutover_allowed, cutover_reasons = (
             approved_settings.llm_dspy_cutover_migration_guard()
