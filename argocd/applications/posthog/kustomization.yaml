@@ -11,10 +11,12 @@ resources:
   - pooler-posthog-db.yaml
   - serviceaccount-posthog.yaml
   - secret-posthog.yaml
+  - service-posthog-capture.yaml
   - service-posthog-events.yaml
   - service-posthog-web.yaml
   - service-ingestion-cdp-api.yaml
   - ingressroute-posthog.yaml
+  - deployment-posthog-capture.yaml
   - deployment-posthog-events.yaml
   - deployment-posthog-plugins.yaml
   - deployment-posthog-web.yaml

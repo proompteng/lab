@@ -12,6 +12,12 @@ spec:
     - websecure
   routes:
     - kind: Rule
+      priority: 100
+      match: Host(`posthog.proompteng.ai`) && (PathPrefix(`/batch`) || PathPrefix(`/e`) || PathPrefix(`/i/v0`) || PathPrefix(`/capture`))
+      services:
+        - name: posthog-capture
+          port: 3000
+    - kind: Rule
       match: Host(`posthog.proompteng.ai`)
       services:
         - name: posthog-web
