@@ -8,6 +8,7 @@ resources:
   - graf-mimir-rules.yaml
   - graf-graf-dashboard-configmap.yaml
   - graf-bumba-dashboard-configmap.yaml
+  - symphony-fleet-dashboard-configmap.yaml
   - codex-pipeline-dashboard-configmap.yaml
   - torghut-execution-recovery-dashboard-configmap.yaml
 

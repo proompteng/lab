@@ -330,6 +330,13 @@ const encodeMetric = (metric: ResourceMetrics['scopeMetrics'][number]['metrics']
   if (metric.unit) {
     writer.writeStringField(3, metric.unit)
   }
+  if (metric.gauge) {
+    const gaugeWriter = new ProtoWriter()
+    for (const dataPoint of metric.gauge.dataPoints) {
+      gaugeWriter.writeMessageField(1, encodeNumberDataPoint(dataPoint))
+    }
+    writer.writeMessageField(5, gaugeWriter.finish())
+  }
   if (metric.sum) {
     const sumWriter = new ProtoWriter()
     for (const dataPoint of metric.sum.dataPoints) {

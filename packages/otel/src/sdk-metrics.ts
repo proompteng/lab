@@ -13,6 +13,10 @@ export interface Histogram {
   record(value: number, attributes?: Attributes): void
 }
 
+export interface Gauge {
+  set(value: number, attributes?: Attributes): void
+}
+
 export enum AggregationTemporality {
   UNSPECIFIED = 'AGGREGATION_TEMPORALITY_UNSPECIFIED',
   DELTA = 'AGGREGATION_TEMPORALITY_DELTA',
@@ -30,11 +34,12 @@ export class Aggregation {
 export enum InstrumentType {
   COUNTER = 'counter',
   HISTOGRAM = 'histogram',
+  GAUGE = 'gauge',
 }
 
 export type MetricDataPoint = {
   attributes: ReturnType<typeof attributesToKeyValueList>
-  startTimeUnixNano: string
+  startTimeUnixNano?: string
   timeUnixNano: string
   asDouble?: number
   count?: string
@@ -49,6 +54,9 @@ export type Metric = {
   name: string
   description?: string
   unit?: string
+  gauge?: {
+    dataPoints: MetricDataPoint[]
+  }
   sum?: {
     aggregationTemporality: AggregationTemporality
     isMonotonic: boolean
@@ -316,11 +324,59 @@ class HistogramInstrument implements Histogram {
   }
 }
 
+class GaugeInstrument implements Gauge {
+  readonly #name: string
+  readonly #description?: string
+  readonly #unit?: string
+  readonly #records = new Map<string, { attributes: Attributes; value: number }>()
+
+  constructor(name: string, description?: string, unit?: string) {
+    this.#name = name
+    this.#description = description
+    this.#unit = unit
+  }
+
+  set(value: number, attributes?: Attributes): void {
+    if (!Number.isFinite(value)) {
+      return
+    }
+    const normalized = attributes ?? {}
+    const key = stableAttributesKey(normalized)
+    this.#records.set(key, { attributes: normalized, value })
+  }
+
+  collect(timeUnixNano: string): Metric | null {
+    if (this.#records.size === 0) {
+      return null
+    }
+    const dataPoints: MetricDataPoint[] = []
+    for (const record of this.#records.values()) {
+      dataPoints.push({
+        attributes: attributesToKeyValueList(record.attributes),
+        timeUnixNano,
+        asDouble: record.value,
+      })
+    }
+    if (dataPoints.length === 0) {
+      return null
+    }
+    return {
+      name: this.#name,
+      description: this.#description,
+      unit: this.#unit,
+      gauge: {
+        dataPoints,
+      },
+    }
+  }
+}
+
 class Meter {
   readonly #name: string
   readonly #version?: string
   readonly #counters = new Map<string, CounterInstrument>()
   readonly #histograms = new Map<string, HistogramInstrument>()
+  readonly #gauges = new Map<string, GaugeInstrument>()
 
   constructor(name: string, version?: string) {
     this.#name = name
@@ -347,6 +403,16 @@ class Meter {
     return histogram
   }
 
+  createGauge(name: string, options?: { description?: string; unit?: string }): Gauge {
+    const existing = this.#gauges.get(name)
+    if (existing) {
+      return existing
+    }
+    const gauge = new GaugeInstrument(name, options?.description, options?.unit)
+    this.#gauges.set(name, gauge)
+    return gauge
+  }
+
   collect(timeUnixNano: string): Metric[] {
     const metrics: Metric[] = []
     for (const counter of this.#counters.values()) {
@@ -357,6 +423,12 @@ class Meter {
     }
     for (const histogram of this.#histograms.values()) {
       const metric = histogram.collect(timeUnixNano)
+      if (metric) {
+        metrics.push(metric)
+      }
+    }
+    for (const gauge of this.#gauges.values()) {
+      const metric = gauge.collect(timeUnixNano)
       if (metric) {
         metrics.push(metric)
       }
@@ -437,6 +509,10 @@ class NoopHistogram implements Histogram {
   record(): void {}
 }
 
+class NoopGauge implements Gauge {
+  set(): void {}
+}
+
 class NoopMeter {
   createCounter(): Counter {
     return new NoopCounter()
@@ -444,6 +520,10 @@ class NoopMeter {
 
   createHistogram(): Histogram {
     return new NoopHistogram()
+  }
+
+  createGauge(): Gauge {
+    return new NoopGauge()
   }
 }
 

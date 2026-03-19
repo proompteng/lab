@@ -259,6 +259,82 @@ data:
                 Guardrails freshness checks are falling back from precise to low-memory mode.
                 This usually indicates ClickHouse query pressure or tight memory headroom.
               runbook_url: docs/torghut/design-system/v1/component-clickhouse-capacity-ttl-and-disk-guardrails.md
+      - name: symphony-fleet.rules
+        rules:
+          - alert: SymphonyNoLeader
+            expr: |
+              max by (instance) (
+                symphony_leader_state{
+                  instance=~"symphony|symphony-jangar|symphony-torghut"
+                }
+              ) != 1
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Symphony instance has no active leader
+              description: |
+                One Symphony instance has not reported an active leader for 5 minutes.
+                Dispatch and reconciliation for that lane are likely stalled.
+          - alert: SymphonyPollStalled
+            expr: |
+              time() - max by (instance) (
+                symphony_last_successful_poll_timestamp_seconds{
+                  instance=~"symphony|symphony-jangar|symphony-torghut"
+                }
+              ) > 300
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Symphony polling is stalled
+              description: |
+                A Symphony instance has not completed a successful poll tick for more than 5 minutes.
+          - alert: SymphonyRetryBacklogStuck
+            expr: |
+              max by (instance) (
+                symphony_retry_queue_size{
+                  instance=~"symphony|symphony-jangar|symphony-torghut"
+                }
+              ) > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: Symphony retry backlog is stuck
+              description: |
+                A Symphony instance has had retry work queued continuously for 15 minutes.
+          - alert: SymphonyWorkerFailuresHigh
+            expr: |
+              sum by (instance) (
+                increase(
+                  symphony_worker_outcomes_total{
+                    instance=~"symphony|symphony-jangar|symphony-torghut",
+                    outcome=~"failed|stalled"
+                  }[15m]
+                )
+              ) >= 3
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: Symphony worker failures are elevated
+              description: |
+                A Symphony instance has recorded at least 3 failed or stalled worker outcomes in the last 15 minutes.
+          - alert: SymphonyTargetHealthBlocked
+            expr: |
+              max by (instance) (
+                symphony_target_health_ready{
+                  instance=~"symphony|symphony-jangar|symphony-torghut"
+                }
+              ) == 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Symphony dispatch is blocked by target health
+              description: |
+                A Symphony instance has reported target health not ready for dispatch for 10 minutes.
       - name: torghut-ws.rules
         rules:
           - alert: TorghutWSForwarderDown

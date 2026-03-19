@@ -3,7 +3,26 @@ import http2 from 'node:http2'
 
 import { ExportResultCode } from '../src/core'
 import { OTLPTraceExporter } from '../src/exporter-trace-otlp-http'
-import { type SpanData, SpanKind, SpanStatusCode } from '../src/sdk-trace'
+import { Resource } from '../src/resources'
+import {
+  createSimpleSpanProcessor,
+  type SpanData,
+  type SpanExporter,
+  SpanKind,
+  SpanStatusCode,
+  TracerProvider,
+} from '../src/sdk-trace'
+
+class TestSpanExporter implements SpanExporter {
+  readonly exported: SpanData[] = []
+
+  export(spans: SpanData[], resultCallback: (result: { code: ExportResultCode; error?: Error }) => void): void {
+    this.exported.push(...spans)
+    resultCallback({ code: ExportResultCode.SUCCESS })
+  }
+
+  async shutdown(): Promise<void> {}
+}
 
 test('trace exporter emits OTLP resourceSpans payload', async () => {
   const requests: string[] = []
@@ -102,6 +121,30 @@ test('trace exporter emits protobuf payload when configured', async () => {
 
   expect(capturedContentType).toBe('application/x-protobuf')
   expect(capturedLength).toBeGreaterThan(0)
+})
+
+test('tracer preserves parent-child relationships', async () => {
+  const exporter = new TestSpanExporter()
+  const provider = new TracerProvider({
+    resource: new Resource({ 'service.name': 'otel-test' }),
+  })
+  provider.addSpanProcessor(createSimpleSpanProcessor(exporter))
+
+  const tracer = provider.getTracer('unit-test')
+  const parent = tracer.startSpan('parent-span')
+  const child = tracer.startSpan('child-span', { parentSpan: parent })
+  child.end()
+  parent.end()
+  await provider.forceFlush()
+  await provider.shutdown()
+
+  const parentSpan = exporter.exported.find((span) => span.name === 'parent-span')
+  const childSpan = exporter.exported.find((span) => span.name === 'child-span')
+
+  expect(parentSpan).toBeDefined()
+  expect(childSpan).toBeDefined()
+  expect(childSpan?.traceId).toBe(parentSpan?.traceId)
+  expect(childSpan?.parentSpanId).toBe(parentSpan?.spanId)
 })
 
 test('trace exporter sends gRPC payload', async () => {
