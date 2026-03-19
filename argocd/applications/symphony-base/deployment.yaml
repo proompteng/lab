@@ -32,7 +32,7 @@ spec:
             - |
               export HOME="${HOME:-/workspace/.codex-home}"
               mkdir -p "$HOME/.codex"
-              if [ ! -f "$HOME/.codex/auth.json" ]; then
+              if [ ! -f "$HOME/.codex/auth.json" ] || ! cmp -s /var/run/codex-auth/auth.json "$HOME/.codex/auth.json"; then
                 cp /var/run/codex-auth/auth.json "$HOME/.codex/auth.json"
                 chmod 600 "$HOME/.codex/auth.json"
               fi
