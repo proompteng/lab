@@ -237,6 +237,78 @@ class TestDecisionEngine(TestCase):
             settings.trading_fractional_equities_enabled = original_fractional
             settings.trading_allow_shorts = original_allow_shorts
 
+    def test_legacy_sell_without_inventory_below_one_share_is_skipped(self) -> None:
+        original_fractional = settings.trading_fractional_equities_enabled
+        original_allow_shorts = settings.trading_allow_shorts
+        settings.trading_fractional_equities_enabled = True
+        settings.trading_allow_shorts = True
+        try:
+            engine = DecisionEngine(price_fetcher=None)
+            strategy = Strategy(
+                name="small-short-sell",
+                description=None,
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=None,
+                max_position_pct_equity=None,
+                max_notional_per_trade=Decimal("50"),
+            )
+            signal = SignalEnvelope(
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": Decimal("0.1"), "signal": Decimal("1.0")},
+                    "rsi14": Decimal("80"),
+                    "price": Decimal("100"),
+                },
+                timeframe="1Min",
+            )
+
+            decisions = engine.evaluate(signal, [strategy], positions=None)
+
+            self.assertEqual(decisions, [])
+        finally:
+            settings.trading_fractional_equities_enabled = original_fractional
+            settings.trading_allow_shorts = original_allow_shorts
+
+    def test_legacy_buy_at_symbol_cap_is_skipped(self) -> None:
+        original_max_pct = settings.trading_max_position_pct_equity
+        settings.trading_max_position_pct_equity = 0.08
+        try:
+            engine = DecisionEngine(price_fetcher=None)
+            strategy = Strategy(
+                name="capped-buy",
+                description=None,
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=None,
+                max_position_pct_equity=Decimal("0.08"),
+                max_notional_per_trade=Decimal("100"),
+            )
+            signal = SignalEnvelope(
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                    "rsi14": Decimal("20"),
+                    "price": Decimal("100"),
+                },
+                timeframe="1Min",
+            )
+
+            decisions = engine.evaluate(
+                signal,
+                [strategy],
+                equity=Decimal("10000"),
+                positions=[{"symbol": "AAPL", "qty": "8", "market_value": "800"}],
+            )
+
+            self.assertEqual(decisions, [])
+        finally:
+            settings.trading_max_position_pct_equity = original_max_pct
+
     def test_legacy_sell_reducing_long_can_remain_fractional(self) -> None:
         original_fractional = settings.trading_fractional_equities_enabled
         original_allow_shorts = settings.trading_allow_shorts
@@ -405,6 +477,90 @@ class TestDecisionEngine(TestCase):
             "buy",
         )
         self.assertEqual(source_runtime[0].get("compiler_source"), "legacy_runtime")
+
+    def test_scheduler_runtime_skips_non_executable_fractional_short_entry(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        engine.strategy_runtime = StrategyRuntime(
+            registry=StrategyRegistry(
+                plugins={
+                    "sell_plugin": _SellPlugin(),
+                }
+            )
+        )
+        strategy = Strategy(
+            id=uuid.UUID("00000000-0000-0000-0000-000000000003"),
+            name="sell",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="sell_plugin",
+            universe_symbols=None,
+            max_position_pct_equity=None,
+            max_notional_per_trade=Decimal("50"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            symbol="AAPL",
+            payload={
+                "macd": {"macd": Decimal("0.1"), "signal": Decimal("1.0")},
+                "rsi14": Decimal("80"),
+                "price": 100,
+            },
+            timeframe="1Min",
+        )
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+            patch.object(settings, "trading_fractional_equities_enabled", True),
+            patch.object(settings, "trading_allow_shorts", True),
+        ):
+            decisions = engine.evaluate(signal, [strategy], positions=None)
+
+        self.assertEqual(decisions, [])
+
+    def test_scheduler_runtime_skips_buy_when_symbol_cap_is_exhausted(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        engine.strategy_runtime = StrategyRuntime(
+            registry=StrategyRegistry(
+                plugins={
+                    "buy_plugin": _BuyPlugin(),
+                }
+            )
+        )
+        strategy = Strategy(
+            id=uuid.UUID("00000000-0000-0000-0000-000000000004"),
+            name="buy",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="buy_plugin",
+            universe_symbols=None,
+            max_position_pct_equity=Decimal("0.08"),
+            max_notional_per_trade=Decimal("100"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            symbol="AAPL",
+            payload={
+                "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                "rsi14": Decimal("20"),
+                "price": 100,
+            },
+            timeframe="1Min",
+        )
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+            patch.object(settings, "trading_max_position_pct_equity", 0.08),
+        ):
+            decisions = engine.evaluate(
+                signal,
+                [strategy],
+                equity=Decimal("10000"),
+                positions=[{"symbol": "AAPL", "qty": "8", "market_value": "800"}],
+            )
+
+        self.assertEqual(decisions, [])
 
     def test_scheduler_runtime_does_not_fallback_to_legacy_when_runtime_returns_no_intents(
         self,

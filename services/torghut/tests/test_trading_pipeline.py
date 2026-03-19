@@ -1436,6 +1436,12 @@ class TestTradingPipeline(TestCase):
                     ),
                     False,
                 )
+                live_submission_gate = control_plane_snapshot.get("live_submission_gate")
+                assert isinstance(live_submission_gate, dict)
+                self.assertEqual(live_submission_gate.get("allowed"), False)
+                self.assertEqual(
+                    live_submission_gate.get("reason"), "live_promotion_disabled"
+                )
 
             self.assertEqual(alpaca_client.submitted, [])
             self.assertEqual(
@@ -1454,6 +1460,114 @@ class TestTradingPipeline(TestCase):
             ]
             config.settings.trading_kill_switch_enabled = original[
                 "trading_kill_switch_enabled"
+            ]
+
+    def test_live_submission_allows_autonomy_eligible_canary_without_static_flag(
+        self,
+    ) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_live_enabled": config.settings.trading_live_enabled,
+            "trading_autonomy_enabled": config.settings.trading_autonomy_enabled,
+            "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
+            "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_live_enabled = True
+        config.settings.trading_autonomy_enabled = True
+        config.settings.trading_autonomy_allow_live_promotion = False
+        config.settings.trading_kill_switch_enabled = False
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="live-canary-eligible",
+                    description="promotion-eligible live canary",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": 1.1, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+                timeframe="1Min",
+            )
+
+            alpaca_client = FakeAlpacaClient()
+            state = TradingState(
+                last_autonomy_promotion_eligible=True,
+                last_autonomy_promotion_action="promote",
+            )
+            pipeline = TradingPipeline(
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
+                ingestor=FakeIngestor([signal]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=alpaca_client,
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=state,
+                account_label="live",
+                session_factory=self.session_local,
+            )
+
+            pipeline.run_once()
+
+            with self.session_local() as session:
+                decision_rows = session.execute(select(TradeDecision)).scalars().all()
+                self.assertEqual(len(decision_rows), 1)
+                self.assertNotEqual(decision_rows[0].status, "blocked")
+                decision_json = decision_rows[0].decision_json
+                assert isinstance(decision_json, dict)
+                control_plane_snapshot = decision_json.get("control_plane_snapshot")
+                assert isinstance(control_plane_snapshot, dict)
+                live_submission_gate = control_plane_snapshot.get("live_submission_gate")
+                assert isinstance(live_submission_gate, dict)
+                self.assertEqual(live_submission_gate.get("allowed"), True)
+                self.assertEqual(
+                    live_submission_gate.get("reason"),
+                    "autonomy_promotion_eligible",
+                )
+
+            self.assertEqual(len(alpaca_client.submitted), 1)
+        finally:
+            config.settings.trading_enabled = original["trading_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_autonomy_enabled = original[
+                "trading_autonomy_enabled"
+            ]
+            config.settings.trading_autonomy_allow_live_promotion = original[
+                "trading_autonomy_allow_live_promotion"
+            ]
+            config.settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
+            config.settings.trading_universe_source = original[
+                "trading_universe_source"
+            ]
+            config.settings.trading_static_symbols_raw = original[
+                "trading_static_symbols_raw"
             ]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
@@ -6329,6 +6443,13 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(
                     reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked"
                 )
+                llm_runtime = reviews[0].response_json.get("llm_runtime", {})
+                self.assertEqual(
+                    llm_runtime.get("reject_reason"),
+                    "llm_runtime_fallback_policy_blocked",
+                )
+                self.assertEqual(llm_runtime.get("subtype"), "policy_blocked")
+                self.assertIsInstance(llm_runtime.get("primary_reason"), str)
                 self.assertEqual(len(executions), 0)
                 self.assertEqual(engine.review_calls, 0)
         finally:
@@ -6368,6 +6489,23 @@ class TestTradingPipeline(TestCase):
             ]
             config.settings.llm_rollout_stage = original["llm_rollout_stage"]
             config.settings.jangar_base_url = original["jangar_base_url"]
+
+    def test_classify_dspy_live_runtime_block_distinguishes_artifact_and_runtime_causes(
+        self,
+    ) -> None:
+        artifact = TradingPipeline._classify_dspy_live_runtime_block(
+            ("dspy_bootstrap_artifact_forbidden",)
+        )
+        runtime = TradingPipeline._classify_dspy_live_runtime_block(
+            ("dspy_live_readiness_error:TimeoutError",)
+        )
+
+        self.assertEqual(
+            artifact, ("llm_runtime_fallback_artifact_invalid", "artifact_invalid")
+        )
+        self.assertEqual(
+            runtime, ("llm_runtime_fallback_runtime_not_ready", "runtime_not_ready")
+        )
 
     def test_pipeline_llm_dspy_live_runtime_gate_blocks_malformed_artifact_hash(
         self,

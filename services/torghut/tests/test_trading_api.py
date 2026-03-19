@@ -2009,6 +2009,12 @@ class TestTradingApi(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertIn("jobs", payload)
+        self.assertEqual(payload["message"], "missing empirical jobs: foundation_router_parity, janus_event_car, janus_hgrm_reward")
+        self.assertEqual(payload["eligible_jobs"], ["benchmark_parity"])
+        self.assertEqual(
+            payload["missing_jobs"],
+            ["foundation_router_parity", "janus_event_car", "janus_hgrm_reward"],
+        )
         self.assertEqual(payload["jobs"]["benchmark_parity"]["authority"], "empirical")
         self.assertEqual(payload["jobs"]["benchmark_parity"]["job_run_id"], "job-benchmark-1")
 

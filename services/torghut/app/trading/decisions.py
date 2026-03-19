@@ -41,6 +41,7 @@ from .strategy_runtime import (
 )
 
 logger = logging.getLogger(__name__)
+_SHORT_ENTRY_BELOW_MIN_QTY_REASON = "short_entry_below_min_qty"
 
 
 @dataclass(frozen=True)
@@ -217,6 +218,14 @@ class DecisionEngine:
                 equity=equity,
                 positions=positions,
             )
+            if _skip_non_executable_decision_qty(qty=qty, sizing_meta=sizing_meta):
+                logger.debug(
+                    "Skipping non-executable aggregated decision symbol=%s action=%s reason=%s",
+                    intent.symbol,
+                    intent.direction,
+                    sizing_meta.get("reason"),
+                )
+                continue
             forecast_contract: dict[str, Any] | None = None
             forecast_audit: dict[str, Any] | None = None
             if self.forecast_router is not None:
@@ -372,6 +381,15 @@ class DecisionEngine:
             equity=equity,
             positions=positions,
         )
+        if _skip_non_executable_decision_qty(qty=qty, sizing_meta=sizing_meta):
+            logger.debug(
+                "Skipping non-executable legacy decision strategy_id=%s symbol=%s action=%s reason=%s",
+                strategy.id,
+                signal.symbol,
+                action,
+                sizing_meta.get("reason"),
+            )
+            return None
 
         return StrategyDecision(
             strategy_id=str(strategy.id),
@@ -745,6 +763,26 @@ def _resolve_qty(
     if notional_budget is None or notional_budget <= 0:
         return default_qty, {"method": "default_qty", "reason": "missing_budget"}
 
+    symbol_notional_cap = _resolve_symbol_notional_cap(
+        strategy_pcts=[optional_decimal(strategy.max_position_pct_equity)],
+        equity=equity,
+    )
+    current_value = _position_value_for_symbol(positions, symbol)
+    if (
+        action.strip().lower() == "buy"
+        and symbol_notional_cap is not None
+        and current_value is not None
+        and current_value >= symbol_notional_cap
+    ):
+        return Decimal("0"), {
+            "method": method,
+            "reason": "symbol_capacity_exhausted",
+            "notional_budget": str(notional_budget),
+            "price": str(price),
+            "current_value": str(current_value),
+            "symbol_notional_cap": str(symbol_notional_cap),
+        }
+
     requested_qty = notional_budget / price
     position_qty = _position_qty_for_symbol(positions, symbol)
     resolution = resolve_quantity_resolution(
@@ -764,6 +802,22 @@ def _resolve_qty(
         symbol, fractional_equities_enabled=resolution.fractional_allowed
     )
     if qty < min_qty:
+        position_qty = resolution.position_qty
+        entering_short = (
+            action.strip().lower() == "sell"
+            and not resolution.fractional_allowed
+            and (position_qty is None or position_qty <= 0)
+        )
+        if entering_short:
+            return Decimal("0"), {
+                "method": method,
+                "reason": _SHORT_ENTRY_BELOW_MIN_QTY_REASON,
+                "notional_budget": str(notional_budget),
+                "price": str(price),
+                "requested_qty": str(requested_qty),
+                "min_qty": str(min_qty),
+                "quantity_resolution": resolution.to_payload(),
+            }
         qty = min_qty
 
     return qty, {
@@ -793,6 +847,26 @@ def _resolve_qty_for_aggregated(
     if total_budget <= 0:
         return default_qty, {"method": "default_qty", "reason": "missing_budget"}
 
+    symbol_notional_cap = _resolve_symbol_notional_cap(
+        strategy_pcts=[optional_decimal(strategy.max_position_pct_equity) for strategy in strategies],
+        equity=equity,
+    )
+    current_value = _position_value_for_symbol(positions, symbol)
+    if (
+        action.strip().lower() == "buy"
+        and symbol_notional_cap is not None
+        and current_value is not None
+        and current_value >= symbol_notional_cap
+    ):
+        return Decimal("0"), {
+            "method": "aggregated_notional_budget",
+            "reason": "symbol_capacity_exhausted",
+            "notional_budget": str(total_budget),
+            "price": str(price),
+            "current_value": str(current_value),
+            "symbol_notional_cap": str(symbol_notional_cap),
+        }
+
     requested_qty = total_budget / price
     position_qty = _position_qty_for_symbol(positions, symbol)
     resolution = resolve_quantity_resolution(
@@ -812,12 +886,38 @@ def _resolve_qty_for_aggregated(
         symbol, fractional_equities_enabled=resolution.fractional_allowed
     )
     if qty < min_qty:
+        position_qty = resolution.position_qty
+        entering_short = (
+            action.strip().lower() == "sell"
+            and not resolution.fractional_allowed
+            and (position_qty is None or position_qty <= 0)
+        )
+        if entering_short:
+            return Decimal("0"), {
+                "method": "aggregated_notional_budget",
+                "reason": _SHORT_ENTRY_BELOW_MIN_QTY_REASON,
+                "notional_budget": str(total_budget),
+                "price": str(price),
+                "requested_qty": str(requested_qty),
+                "min_qty": str(min_qty),
+                "quantity_resolution": resolution.to_payload(),
+            }
         qty = min_qty
     return qty, {
         "method": "aggregated_notional_budget",
         "notional_budget": str(total_budget),
         "price": str(price),
         "quantity_resolution": resolution.to_payload(),
+    }
+
+
+def _skip_non_executable_decision_qty(
+    *, qty: Decimal, sizing_meta: Mapping[str, Any]
+) -> bool:
+    reason = str(sizing_meta.get("reason") or "").strip()
+    return qty <= 0 and reason in {
+        _SHORT_ENTRY_BELOW_MIN_QTY_REASON,
+        "symbol_capacity_exhausted",
     }
 
 
@@ -848,6 +948,55 @@ def _position_qty_for_symbol(
     if not matched:
         return Decimal("0")
     return current_qty
+
+
+def _position_value_for_symbol(
+    positions: Optional[list[dict[str, Any]]],
+    symbol: str,
+) -> Optional[Decimal]:
+    if positions is None:
+        return None
+    normalized_symbol = symbol.strip().upper()
+    current_value = Decimal("0")
+    matched = False
+    for position in positions:
+        if str(position.get("symbol") or "").strip().upper() != normalized_symbol:
+            continue
+        raw_value = (
+            position.get("market_value")
+            or position.get("current_value")
+            or position.get("notional")
+        )
+        if raw_value is None:
+            continue
+        try:
+            value = Decimal(str(raw_value))
+        except (ArithmeticError, ValueError):
+            continue
+        matched = True
+        current_value += abs(value)
+    if not matched:
+        return None
+    return current_value
+
+
+def _resolve_symbol_notional_cap(
+    *,
+    strategy_pcts: list[Optional[Decimal]],
+    equity: Optional[Decimal],
+) -> Optional[Decimal]:
+    if equity is None or equity <= 0:
+        return None
+    caps: list[Decimal] = []
+    global_pct = optional_decimal(settings.trading_max_position_pct_equity)
+    if global_pct is not None and global_pct > 0:
+        caps.append(equity * global_pct)
+    for pct in strategy_pcts:
+        if pct is not None and pct > 0:
+            caps.append(equity * pct)
+    if not caps:
+        return None
+    return min(caps)
 
 
 def _has_legacy_indicator_inputs(features: SignalFeatures) -> bool:

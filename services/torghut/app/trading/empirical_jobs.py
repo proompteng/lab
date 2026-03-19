@@ -425,9 +425,17 @@ def build_empirical_jobs_status(
             break
     jobs: dict[str, object] = {}
     fresh_and_eligible = True
+    eligible_jobs: list[str] = []
+    missing_jobs: list[str] = []
+    stale_jobs: list[str] = []
+    ineligible_jobs: list[str] = []
+    candidate_ids: set[str] = set()
+    dataset_snapshot_refs: set[str] = set()
     for job_type in EMPIRICAL_JOB_TYPES:
         row = latest_by_type.get(job_type)
         if row is None:
+            missing_jobs.append(job_type)
+            ineligible_jobs.append(job_type)
             jobs[job_type] = {
                 "status": "missing",
                 "authority": "blocked",
@@ -448,6 +456,8 @@ def build_empirical_jobs_status(
         truthful_reasons = empirical_artifact_truthfulness_reasons(payload)
         truthful = not truthful_reasons
         stale = created_at < cutoff or row.status not in {"completed", "success"}
+        dataset_snapshot_ref = _as_text(row.dataset_snapshot_ref)
+        candidate_id = _as_text(row.candidate_id)
         blocked_reasons = sorted(
             {
                 *truthful_reasons,
@@ -466,6 +476,23 @@ def build_empirical_jobs_status(
                 ),
             }
         )
+        if stale:
+            stale_jobs.append(job_type)
+        if candidate_id is not None:
+            candidate_ids.add(candidate_id)
+        if dataset_snapshot_ref is not None:
+            dataset_snapshot_refs.add(dataset_snapshot_ref)
+        job_ready = (
+            not stale
+            and truthful
+            and bool(row.promotion_authority_eligible)
+            and row.authority == "empirical"
+            and dataset_snapshot_ref is not None
+        )
+        if job_ready:
+            eligible_jobs.append(job_type)
+        else:
+            ineligible_jobs.append(job_type)
         jobs[job_type] = {
             "status": row.status,
             "authority": row.authority if truthful and row.authority == "empirical" else "blocked",
@@ -473,6 +500,7 @@ def build_empirical_jobs_status(
             "promotion_authority_eligible": bool(row.promotion_authority_eligible) and truthful,
             "persisted_promotion_authority_eligible": bool(row.promotion_authority_eligible),
             "dataset_snapshot_ref": row.dataset_snapshot_ref,
+            "candidate_id": row.candidate_id,
             "job_run_id": row.job_run_id,
             "created_at": created_at.isoformat(),
             "artifact_refs": list(cast(list[object], row.artifact_refs or [])),
@@ -487,11 +515,36 @@ def build_empirical_jobs_status(
             or row.authority != "empirical"
         ):
             fresh_and_eligible = False
+    status_blocked_reasons: list[str] = []
+    if len(candidate_ids) > 1:
+        fresh_and_eligible = False
+        status_blocked_reasons.append("candidate_id_mismatch")
+    if len(dataset_snapshot_refs) > 1:
+        fresh_and_eligible = False
+        status_blocked_reasons.append("dataset_snapshot_ref_mismatch")
+    if missing_jobs:
+        message = f"missing empirical jobs: {', '.join(sorted(missing_jobs))}"
+    elif stale_jobs:
+        message = f"stale empirical jobs: {', '.join(sorted(stale_jobs))}"
+    elif ineligible_jobs:
+        message = f"ineligible empirical jobs: {', '.join(sorted(ineligible_jobs))}"
+    elif status_blocked_reasons:
+        message = f"empirical job bundle invalid: {', '.join(status_blocked_reasons)}"
+    else:
+        message = "empirical jobs fresh"
     return {
         "ready": fresh_and_eligible,
         "status": "healthy" if fresh_and_eligible else "degraded",
         "authority": "empirical" if fresh_and_eligible else "blocked",
         "stale_after_seconds": stale_after_seconds,
+        "message": message,
+        "eligible_jobs": sorted(eligible_jobs),
+        "missing_jobs": sorted(missing_jobs),
+        "stale_jobs": sorted(stale_jobs),
+        "ineligible_jobs": sorted(set(ineligible_jobs)),
+        "candidate_ids": sorted(candidate_ids),
+        "dataset_snapshot_refs": sorted(dataset_snapshot_refs),
+        "blocked_reasons": status_blocked_reasons,
         "jobs": jobs,
     }
 

@@ -8,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.models import Base
 from app.trading.empirical_jobs import (
+    EMPIRICAL_JOB_TYPES,
     artifact_is_truthful,
     build_empirical_benchmark_parity_report,
     build_empirical_foundation_router_parity_report,
@@ -192,6 +193,12 @@ class TestEmpiricalJobs(TestCase):
 
         self.assertEqual(status["status"], "degraded")
         self.assertFalse(status["ready"])
+        self.assertEqual(status["message"], "missing empirical jobs: benchmark_parity, janus_event_car, janus_hgrm_reward")
+        self.assertEqual(status["eligible_jobs"], ["foundation_router_parity"])
+        self.assertEqual(
+            status["missing_jobs"],
+            ["benchmark_parity", "janus_event_car", "janus_hgrm_reward"],
+        )
         self.assertEqual(status["jobs"]["foundation_router_parity"]["authority"], "empirical")
         self.assertEqual(status["jobs"]["benchmark_parity"]["status"], "missing")
 
@@ -266,9 +273,78 @@ class TestEmpiricalJobs(TestCase):
 
         self.assertEqual(status["authority"], "blocked")
         self.assertFalse(status["ready"])
+        self.assertEqual(status["message"], "ineligible empirical jobs: janus_hgrm_reward")
+        self.assertEqual(status["eligible_jobs"], ["benchmark_parity", "foundation_router_parity", "janus_event_car"])
+        self.assertEqual(status["ineligible_jobs"], ["janus_hgrm_reward"])
         self.assertFalse(status["jobs"]["janus_hgrm_reward"]["truthful"])
         self.assertEqual(status["jobs"]["janus_hgrm_reward"]["authority"], "blocked")
         self.assertIn(
             "artifact_authority_not_authoritative",
             status["jobs"]["janus_hgrm_reward"]["blocked_reasons"],
+        )
+
+    def test_empirical_jobs_status_blocks_cross_job_lineage_mismatch(self) -> None:
+        payload = {
+            "schema_version": "benchmark-parity-report-v1",
+            "promotion_authority_eligible": True,
+            "artifact_authority": {
+                "provenance": "historical_market_replay",
+                "maturity": "empirically_validated",
+                "authoritative": True,
+                "placeholder": False,
+            },
+            "lineage": {
+                "dataset_snapshot_ref": "s3://datasets/snapshot-a.json",
+                "job_run_id": "job-benchmark-1",
+                "runtime_version_refs": ["services/torghut@sha256:abc"],
+                "model_refs": ["models/candidate@sha256:def"],
+            },
+        }
+        with self.session_local() as session:
+            for index, job_type in enumerate(EMPIRICAL_JOB_TYPES):
+                dataset_snapshot_ref = (
+                    "s3://datasets/snapshot-a.json"
+                    if index < 2
+                    else "s3://datasets/snapshot-b.json"
+                )
+                candidate_id = "cand-a" if index < 2 else "cand-b"
+                upsert_empirical_job_run(
+                    session=session,
+                    run_id="run-1",
+                    candidate_id=candidate_id,
+                    job_name=job_type,
+                    job_type=job_type,
+                    job_run_id=f"job-{job_type}",
+                    status="completed",
+                    authority="empirical",
+                    promotion_authority_eligible=True,
+                    dataset_snapshot_ref=dataset_snapshot_ref,
+                    artifact_refs=[f"s3://artifacts/{job_type}.json"],
+                    payload={
+                        **payload,
+                        "lineage": {
+                            **payload["lineage"],
+                            "dataset_snapshot_ref": dataset_snapshot_ref,
+                            "job_run_id": f"job-{job_type}",
+                        },
+                    },
+                )
+            session.commit()
+
+            status = build_empirical_jobs_status(session=session, stale_after_seconds=86400)
+
+        self.assertFalse(status["ready"])
+        self.assertEqual(status["status"], "degraded")
+        self.assertEqual(
+            status["message"],
+            "empirical job bundle invalid: candidate_id_mismatch, dataset_snapshot_ref_mismatch",
+        )
+        self.assertEqual(
+            status["blocked_reasons"],
+            ["candidate_id_mismatch", "dataset_snapshot_ref_mismatch"],
+        )
+        self.assertEqual(status["candidate_ids"], ["cand-a", "cand-b"])
+        self.assertEqual(
+            status["dataset_snapshot_refs"],
+            ["s3://datasets/snapshot-a.json", "s3://datasets/snapshot-b.json"],
         )
