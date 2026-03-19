@@ -69,6 +69,7 @@ from ..submission_council import (
     build_hypothesis_runtime_summary,
     build_live_submission_gate_payload,
     build_submission_gate_market_context_status,
+    load_quant_evidence_status,
 )
 from .pipeline_helpers import (
     _allocator_rejection_reasons,
@@ -980,12 +981,14 @@ class TradingPipeline:
         hypothesis_summary: Mapping[str, Any] | None = None,
         empirical_jobs_status: Mapping[str, Any] | None = None,
         dspy_runtime_status: Mapping[str, Any] | None = None,
+        quant_health_status: Mapping[str, Any] | None = None,
     ) -> dict[str, object]:
         if (
             session is None
             and hypothesis_summary is None
             and empirical_jobs_status is None
             and dspy_runtime_status is None
+            and quant_health_status is None
             and self._last_live_submission_gate is not None
         ):
             return dict(self._last_live_submission_gate)
@@ -1025,11 +1028,17 @@ class TradingPipeline:
                     "message": f"empirical job status unavailable: {type(exc).__name__}",
                 }
 
+        quant_status = quant_health_status
+        if quant_status is None:
+            quant_status = load_quant_evidence_status(account_label=self.account_label)
+
         gate = build_live_submission_gate_payload(
             self.state,
             hypothesis_summary=summary,
             empirical_jobs_status=empirical_status,
             dspy_runtime_status=dspy_runtime_status,
+            quant_health_status=quant_status,
+            quant_account_label=self.account_label,
         )
         self._last_live_submission_gate = dict(gate)
         return gate

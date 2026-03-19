@@ -66,8 +66,12 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
      - no capital-critical mismatch in `critical_toggle_parity_blocking_mismatches`
      - non-empty quant latest-store evidence from Jangar
      - healthy options bootstrap for options-dependent hypotheses
+   - `quant_evidence` is the Jangar-backed latest-store probe used by the shared gate. When it is required and not
+     healthy, the gate now demotes to `capital_state = "observe"` with one of:
+     `quant_latest_metrics_empty`, `quant_latest_store_alarm`, `quant_metrics_update_missing`,
+     `quant_pipeline_stages_missing`, or `quant_health_fetch_failed`.
    - If `live_submission_gate.reason = "critical_toggle_parity_diverged"` or
-     `alpha_readiness_not_promotion_eligible`, treat the gate as fail-closed and resolve the underlying config or
+     `alpha_readiness_not_promotion_eligible` or a `quant_*` blocker, treat the gate as fail-closed and resolve the underlying config or
      evidence gap before retrying canary progression.
    - Per-lane blockers are now scoped via each hypothesis manifest dependency capabilities, so a degraded dependency (for example
      `jangar_dependency_delay`) should only affect hypotheses that explicitly require that capability.

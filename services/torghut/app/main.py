@@ -68,6 +68,7 @@ from .trading.llm.evaluation import build_llm_evaluation_metrics
 from .trading.submission_council import (
     build_live_submission_gate_payload,
     build_shadow_first_toggle_parity,
+    load_quant_evidence_status,
     resolve_active_capital_stage,
 )
 from .trading.tca import build_tca_gate_inputs
@@ -624,11 +625,15 @@ def _evaluate_trading_health_payload(
         else {}
     )
     empirical_jobs = _empirical_jobs_status()
+    quant_evidence = load_quant_evidence_status(
+        account_label=settings.trading_account_label,
+    )
     live_submission_gate = _build_live_submission_gate_payload(
         scheduler.state,
         hypothesis_summary=hypothesis_summary,
         empirical_jobs_status=empirical_jobs,
         dspy_runtime_status=dspy_runtime,
+        quant_health_status=quant_evidence,
     )
     live_mode = settings.trading_mode == "live"
     dependencies["empirical_jobs"] = {
@@ -663,6 +668,12 @@ def _evaluate_trading_health_payload(
         "detail": str(live_submission_gate.get("reason") or "unknown"),
         "capital_stage": live_submission_gate.get("capital_stage"),
     }
+    dependencies["quant_evidence"] = {
+        "ok": bool(quant_evidence.get("ok", True)),
+        "detail": str(quant_evidence.get("reason") or "unknown"),
+        "required": bool(quant_evidence.get("required", False)),
+        "window": quant_evidence.get("window"),
+    }
     dependency_statuses = [
         cast(dict[str, object], checks).get("ok", True)
         for name, checks in dependencies.items()
@@ -680,6 +691,7 @@ def _evaluate_trading_health_payload(
             "dependencies": dependencies,
             "alpha_readiness": alpha_readiness,
             "live_submission_gate": live_submission_gate,
+            "quant_evidence": quant_evidence,
         },
         status_code,
     )
@@ -1609,6 +1621,9 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
     rejection_alert_status = scheduler.rejection_alert_status()
     active_simulation_context = active_simulation_runtime_context()
     empirical_jobs = _empirical_jobs_status()
+    quant_evidence = load_quant_evidence_status(
+        account_label=settings.trading_account_label,
+    )
     live_submission_gate = _build_live_submission_gate_payload(
         state,
         hypothesis_summary=hypothesis_summary,
@@ -1617,6 +1632,7 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
             dict[str, object],
             scheduler.llm_status().get("dspy_runtime", {}),
         ),
+        quant_health_status=quant_evidence,
     )
     return {
         "enabled": settings.trading_enabled,
@@ -1638,6 +1654,7 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
         },
         "running": state.running,
         "live_submission_gate": live_submission_gate,
+        "quant_evidence": quant_evidence,
         "last_run_at": state.last_run_at,
         "last_reconcile_at": state.last_reconcile_at,
         "last_error": state.last_error,
@@ -3045,12 +3062,14 @@ def _build_live_submission_gate_payload(
     hypothesis_summary: Mapping[str, Any] | None,
     empirical_jobs_status: Mapping[str, Any] | None = None,
     dspy_runtime_status: Mapping[str, Any] | None = None,
+    quant_health_status: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
     return build_live_submission_gate_payload(
         state,
         hypothesis_summary=hypothesis_summary,
         empirical_jobs_status=empirical_jobs_status,
         dspy_runtime_status=dspy_runtime_status,
+        quant_health_status=quant_health_status,
     )
 
 
