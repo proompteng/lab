@@ -288,11 +288,11 @@ jobs:
             artifacts/state/http/torghut-empirical-jobs.json \
             artifacts/state/http/torghut-empirical-jobs.status
           fetch_json \
-            'http://jangar.jangar.svc.cluster.local:8080/api/agents/control-plane/status?namespace=agents' \
+            'http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?namespace=agents' \
             artifacts/state/http/jangar-agents-status.json \
             artifacts/state/http/jangar-agents-status.status
           fetch_json \
-            'http://jangar.jangar.svc.cluster.local:8080/api/torghut/trading/control-plane/quant/health?account=paper&window=1d' \
+            'http://jangar.jangar.svc.cluster.local/api/torghut/trading/control-plane/quant/health?account=paper&window=1d' \
             artifacts/state/http/jangar-quant-health.json \
             artifacts/state/http/jangar-quant-health.status
 
@@ -504,7 +504,7 @@ jobs:
                 -H 'content-type: application/json' \
                 -H 'x-user: github-actions' \
                 --data @"${REQUEST_BODY}" \
-                http://jangar.jangar.svc.cluster.local:8080/api/torghut/simulation/runs || true
+                http://jangar.jangar.svc.cluster.local/api/torghut/simulation/runs || true
             )"
             printf '%s\n' "${HTTP_CODE}" > artifacts/replay/submit-response.status
             if [ "${HTTP_CODE}" = '202' ]; then
@@ -547,7 +547,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          STATUS_URL="http://jangar.jangar.svc.cluster.local:8080${{ steps.submit.outputs.status_path }}"
+          STATUS_URL="http://jangar.jangar.svc.cluster.local${{ steps.submit.outputs.status_path }}"
           mkdir -p artifacts/replay/history
           for attempt in $(seq 1 480); do
             HTTP_CODE="$(curl -sS -o artifacts/replay/run-status.json -w '%{http_code}' "${STATUS_URL}" || true)"
@@ -583,12 +583,12 @@ jobs:
           mkdir -p artifacts/replay
           if [ -n "${{ steps.submit.outputs.status_path }}" ]; then
             curl -sS \
-              "http://jangar.jangar.svc.cluster.local:8080${{ steps.submit.outputs.status_path }}" \
+              "http://jangar.jangar.svc.cluster.local${{ steps.submit.outputs.status_path }}" \
               > artifacts/replay/run-status-final.json || true
           fi
           if [ -n "${{ steps.submit.outputs.artifacts_path }}" ]; then
             curl -sS \
-              "http://jangar.jangar.svc.cluster.local:8080${{ steps.submit.outputs.artifacts_path }}" \
+              "http://jangar.jangar.svc.cluster.local${{ steps.submit.outputs.artifacts_path }}" \
               > artifacts/replay/run-artifacts.json || true
           fi
 
