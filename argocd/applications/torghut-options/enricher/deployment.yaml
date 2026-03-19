@@ -45,7 +45,7 @@ spec:
             - name: DB_DSN
               valueFrom:
                 secretKeyRef:
-                  name: torghut-options-db-app
+                  name: torghut-db-app
                   key: uri
             - name: ALPACA_OPTIONS_KEY_ID
               valueFrom:
