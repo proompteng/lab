@@ -7,6 +7,7 @@ import type { PostHogSummary } from './types'
 import { WorkflowService } from './workflow'
 
 const PROHIBITED_KEY_CHUNKS = ['api_key', 'authorization', 'password', 'secret', 'token']
+const ALLOWED_TOKEN_METRIC_KEYS = new Set(['$ai_input_tokens', '$ai_output_tokens', '$ai_time_to_first_token'])
 const MAX_ARRAY_ITEMS = 20
 const MAX_OBJECT_KEYS = 50
 const MAX_STRING_LENGTH = 8_000
@@ -87,7 +88,12 @@ const sanitizeValue = (value: unknown): unknown => {
       const normalizedKey = key.trim()
       if (normalizedKey.length === 0) continue
       const loweredKey = normalizedKey.toLowerCase()
-      if (PROHIBITED_KEY_CHUNKS.some((chunk) => loweredKey.includes(chunk))) continue
+      if (
+        PROHIBITED_KEY_CHUNKS.some((chunk) => loweredKey.includes(chunk)) &&
+        !ALLOWED_TOKEN_METRIC_KEYS.has(loweredKey)
+      ) {
+        continue
+      }
       sanitized[normalizedKey] = sanitizeValue(rawValue)
     }
     return sanitized

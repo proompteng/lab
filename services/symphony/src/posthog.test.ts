@@ -35,6 +35,30 @@ describe('posthog llm analytics property mapping', () => {
     expect('error' in properties).toBe(false)
   })
 
+  test('preserves documented ai token metrics while removing secret-like keys', () => {
+    const properties = buildGenerationCaptureProperties({
+      traceId: 'trace-1',
+      sessionId: 'session-1',
+      spanId: 'span-1',
+      spanName: 'codex_turn',
+      model: 'gpt-5-mini',
+      provider: 'openai',
+      input: [{ role: 'user', content: 'hello' }],
+      outputChoices: [{ role: 'assistant', content: 'hi' }],
+      inputTokens: 5,
+      outputTokens: 3,
+      timeToFirstTokenSeconds: 0.2,
+      properties: {
+        sessionToken: 'drop-me',
+      },
+    })
+
+    expect(properties.$ai_input_tokens).toBe(5)
+    expect(properties.$ai_output_tokens).toBe(3)
+    expect(properties.$ai_time_to_first_token).toBe(0.2)
+    expect('sessionToken' in properties).toBe(false)
+  })
+
   test('maps span errors to documented ai error fields', () => {
     const properties = buildSpanCaptureProperties({
       traceId: 'trace-1',
