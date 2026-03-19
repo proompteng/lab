@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { inspect } from 'node:util'
 import { $ } from 'bun'
@@ -22,21 +22,23 @@ const defaultOutputPath = resolve(repoRoot, 'argocd/applications/symphony/codex-
 const defaultNamespace = 'jangar'
 const defaultSecretName = 'codex-auth-symphony'
 const defaultSecretKey = 'auth.json'
+const defaultAuthPath = process.env.CODEX_AUTH ?? resolve(homedir(), '.codex/auth.json')
 
 const printUsage = (): never => {
   console.log(`Usage: bun run packages/scripts/src/symphony/generate-codex-auth-sealed-secret.ts [options]
 
-Seals a Codex API-key auth.json payload into a SealedSecret manifest for Symphony pods.
+Seals a local Codex auth.json payload into a SealedSecret manifest for Symphony pods.
 
 Options:
   --namespace <namespace>      Secret namespace (default: ${defaultNamespace})
   --secret-name <name>         Secret name (default: ${defaultSecretName})
   --secret-key <key>           Secret data key (default: ${defaultSecretKey})
+  --auth-path <path>           Local Codex auth.json path (default: ${defaultAuthPath})
   --output <path>              Output path (default: ${defaultOutputPath})
   -h, --help                   Show this help
 
 Environment:
-  OPENAI_API_KEY                               Required. Used to build {"auth_mode":"apikey",...}.
+  CODEX_AUTH                                   Optional fallback auth path.
   SEALED_SECRETS_CONTROLLER_NAME               Default: sealed-secrets
   SEALED_SECRETS_CONTROLLER_NAMESPACE          Default: sealed-secrets
 `)
@@ -47,6 +49,7 @@ const args = process.argv.slice(2)
 let namespace = defaultNamespace
 let secretName = defaultSecretName
 let secretKey = defaultSecretKey
+let authPath = defaultAuthPath
 let outputPath = defaultOutputPath
 
 for (let index = 0; index < args.length; index += 1) {
@@ -67,6 +70,11 @@ for (let index = 0; index < args.length; index += 1) {
       index += 1
       break
     }
+    case '--auth-path': {
+      authPath = resolve(args[index + 1] ?? fatal('Missing value for --auth-path'))
+      index += 1
+      break
+    }
     case '--output': {
       outputPath = resolve(args[index + 1] ?? fatal('Missing value for --output'))
       index += 1
@@ -83,11 +91,6 @@ for (let index = 0; index < args.length; index += 1) {
 
 const sealedControllerName = process.env.SEALED_SECRETS_CONTROLLER_NAME ?? 'sealed-secrets'
 const sealedControllerNamespace = process.env.SEALED_SECRETS_CONTROLLER_NAMESPACE ?? 'sealed-secrets'
-const apiKey = process.env.OPENAI_API_KEY?.trim()
-
-if (!apiKey) {
-  fatal('OPENAI_API_KEY is required')
-}
 
 const ensureCli = (binary: string) => {
   if (!Bun.which(binary)) {
@@ -101,25 +104,30 @@ const quote = (value: string) => `'${shellEscape(value)}'`
 ensureCli('kubectl')
 ensureCli('kubeseal')
 
-const tempDir = mkdtempSync(join(tmpdir(), 'symphony-codex-auth-'))
-const authPath = join(tempDir, 'auth.json')
-const secretManifestPath = join(tempDir, 'secret.yaml')
-
-const authPayload = JSON.stringify(
-  {
-    auth_mode: 'apikey',
-    OPENAI_API_KEY: apiKey,
-  },
-  null,
-  2,
-)
-
-writeFileSync(authPath, authPayload, { mode: 0o600 })
-
-const stats = statSync(authPath)
-if (!stats.isFile() || stats.size === 0) {
-  fatal(`Failed to create temporary auth payload at ${authPath}`)
+const validateAuthFile = (path: string) => {
+  let stats: ReturnType<typeof statSync>
+  try {
+    stats = statSync(path)
+  } catch (error) {
+    fatal(`Codex auth file does not exist: ${path}`, error)
+  }
+  if (!stats.isFile()) {
+    fatal(`Codex auth path is not a file: ${path}`)
+  }
+  try {
+    const payload = readFileSync(path)
+    if (payload.length === 0) {
+      fatal(`Codex auth file is empty: ${path}`)
+    }
+  } catch (error) {
+    fatal(`Failed to read Codex auth file: ${path}`, error)
+  }
 }
+
+validateAuthFile(authPath)
+
+const tempDir = mkdtempSync(join(tmpdir(), 'symphony-codex-auth-'))
+const secretManifestPath = join(tempDir, 'secret.yaml')
 
 const runKubectlCreate = async (): Promise<string> => {
   const command = [
