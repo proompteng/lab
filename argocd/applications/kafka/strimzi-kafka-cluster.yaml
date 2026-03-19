@@ -21,7 +21,7 @@ spec:
         port: 9093
         type: internal
         tls: false
-      - name: posthog-ingest
+      - name: phingest
         port: 9094
         type: internal
         tls: true
