@@ -21,6 +21,7 @@ const DEFAULT_LINEAR_ENDPOINT = 'https://api.linear.app/graphql'
 const DEFAULT_ACTIVE_STATES = ['Todo', 'In Progress']
 const DEFAULT_TERMINAL_STATES = ['Closed', 'Cancelled', 'Canceled', 'Duplicate', 'Done']
 const DEFAULT_BLOCKED_LABELS = ['manual-only', 'secret-rotation', 'cluster-recovery', 'cross-repo', 'db-migration']
+const DEFAULT_POSTHOG_HOST = 'http://posthog-events.posthog.svc.cluster.local:8000'
 
 const RawSectionSchema = Schema.Struct({
   tracker: Schema.optionalWith(
@@ -183,6 +184,14 @@ const normalizeConcurrencyMap = (value: unknown): Record<string, number> => {
 const readString = (value: unknown, fallback: string): string =>
   typeof value === 'string' && value.trim().length > 0 ? value.trim() : fallback
 
+const readBoolean = (value: string | undefined, fallback: boolean): boolean => {
+  if (value === undefined) return fallback
+  const normalized = value.trim().toLowerCase()
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false
+  return fallback
+}
+
 const normalizeManifestPaths = (value: unknown): string[] =>
   Array.isArray(value)
     ? value
@@ -295,6 +304,9 @@ const normalizeConfig = (
   const repo = readString(target.repo, 'proompteng/lab')
   const defaultBranch = readString(target.default_branch, 'main')
   const promotionBranchPrefix = readString(release.promotion_branch_prefix, `codex/${targetName}-release-`)
+  const posthogHost = (env.POSTHOG_HOST ?? '').trim() || DEFAULT_POSTHOG_HOST
+  const posthogProjectId = (env.POSTHOG_PROJECT_ID ?? '').trim() || null
+  const posthogDistinctId = (env.POSTHOG_DISTINCT_ID ?? '').trim() || `symphony:${instanceName}`
 
   return {
     workflowPath: path.resolve(workflowPath),
@@ -355,6 +367,16 @@ const normalizeConfig = (
     server: {
       host: typeof server.host === 'string' && server.host.trim().length > 0 ? server.host.trim() : '127.0.0.1',
       port: readNumber(server.port, Number.NaN) >= 0 ? readNumber(server.port, Number.NaN) : null,
+    },
+    posthog: {
+      enabled: readBoolean(env.POSTHOG_ENABLED, false),
+      host: posthogHost,
+      apiKey: (env.POSTHOG_API_KEY ?? '').trim() || null,
+      projectId: posthogProjectId,
+      distinctId: posthogDistinctId,
+      requestTimeoutMs: readPositiveNumber(env.POSTHOG_REQUEST_TIMEOUT_MS, 1_000),
+      flushAt: readPositiveNumber(env.POSTHOG_FLUSH_AT, 1),
+      flushIntervalMs: readPositiveNumber(env.POSTHOG_FLUSH_INTERVAL_MS, 1_000),
     },
     instance: {
       name: instanceName,
@@ -417,6 +439,36 @@ export const validateDispatchConfigEffect = (config: SymphonyConfig): Effect.Eff
     }
     if (!config.codex.command || config.codex.command.trim().length === 0) {
       return yield* Effect.fail(new ConfigError('invalid_codex_command', 'codex.command must be set'))
+    }
+    if (config.posthog.requestTimeoutMs <= 0) {
+      return yield* Effect.fail(
+        new ConfigError('invalid_posthog_request_timeout', 'POSTHOG_REQUEST_TIMEOUT_MS must be > 0'),
+      )
+    }
+    if (config.posthog.flushAt <= 0) {
+      return yield* Effect.fail(new ConfigError('invalid_posthog_flush_at', 'POSTHOG_FLUSH_AT must be > 0'))
+    }
+    if (config.posthog.flushIntervalMs <= 0) {
+      return yield* Effect.fail(
+        new ConfigError('invalid_posthog_flush_interval', 'POSTHOG_FLUSH_INTERVAL_MS must be > 0'),
+      )
+    }
+    if (config.posthog.enabled) {
+      if (!config.posthog.host) {
+        return yield* Effect.fail(new ConfigError('missing_posthog_host', 'POSTHOG_HOST is required'))
+      }
+      let parsed: URL
+      try {
+        parsed = new URL(config.posthog.host)
+      } catch (error) {
+        return yield* Effect.fail(new ConfigError('invalid_posthog_host', 'POSTHOG_HOST must be a valid URL', error))
+      }
+      if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) {
+        return yield* Effect.fail(new ConfigError('invalid_posthog_host', 'POSTHOG_HOST must be a valid http(s) URL'))
+      }
+      if (!config.posthog.apiKey) {
+        return yield* Effect.fail(new ConfigError('missing_posthog_api_key', 'POSTHOG_API_KEY is required'))
+      }
     }
   })
 

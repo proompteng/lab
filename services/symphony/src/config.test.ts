@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { toSymphonyConfig } from './config'
+import { toSymphonyConfig, validateDispatchConfig } from './config'
 
 describe('config normalization', () => {
   test('parses target, release, and health extensions', async () => {
@@ -97,5 +97,41 @@ describe('config normalization', () => {
     ])
     expect(config.health.preDispatch[0]?.application).toBe('jangar')
     expect(config.health.postDeploy[0]?.url).toBe('http://jangar.jangar.svc.cluster.local/health')
+  })
+
+  test('parses and validates posthog env settings', async () => {
+    const config = await toSymphonyConfig(
+      '/tmp/WORKFLOW.md',
+      {
+        tracker: {
+          kind: 'linear',
+          api_key: '$LINEAR_API_KEY',
+          project_slug: 'project-slug',
+        },
+      },
+      {
+        LINEAR_API_KEY: 'token',
+        POSTHOG_ENABLED: 'true',
+        POSTHOG_HOST: 'http://posthog-events.posthog.svc.cluster.local:8000',
+        POSTHOG_API_KEY: 'phc_demo',
+        POSTHOG_PROJECT_ID: '1',
+        POSTHOG_DISTINCT_ID: 'symphony:test',
+        POSTHOG_REQUEST_TIMEOUT_MS: '1500',
+        POSTHOG_FLUSH_AT: '2',
+        POSTHOG_FLUSH_INTERVAL_MS: '2500',
+      },
+    )
+
+    expect(config.posthog).toEqual({
+      enabled: true,
+      host: 'http://posthog-events.posthog.svc.cluster.local:8000',
+      apiKey: 'phc_demo',
+      projectId: '1',
+      distinctId: 'symphony:test',
+      requestTimeoutMs: 1500,
+      flushAt: 2,
+      flushIntervalMs: 2500,
+    })
+    expect(() => validateDispatchConfig(config)).not.toThrow()
   })
 })
