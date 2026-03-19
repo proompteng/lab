@@ -4,7 +4,10 @@
 
 Start here:
 
-- `docs/torghut/design-system/README.md` (v1 index)
+- `docs/torghut/design-system/current-source-of-truth-and-priority-guide-2026-03-09.md` (current authority map)
+- `docs/agents/designs/52-jangar-segment-authority-graph-and-promotion-certificate-fail-safe-2026-03-19.md` (cross-system current contract)
+- `docs/torghut/design-system/v6/51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md` (Torghut-local handoff)
+- `docs/torghut/design-system/README.md` (design-system index)
 - `docs/torghut/design-system/implementation-status-matrix-2026-02-21.md` (implementation completion audit)
 - `docs/torghut/design-system/v1/torghut-autonomous-trading-system.md` (single merged production design)
 - `docs/torghut/design-system/v1/overview.md` (system overview)

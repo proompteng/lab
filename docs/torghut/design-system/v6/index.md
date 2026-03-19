@@ -13,6 +13,7 @@
   - `52-torghut-profit-sleeves-segment-scoped-deallocation-and-evidence-decay-2026-03-19.md`
   - `50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
   - `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
+  - `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
   - `40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md`
   - `41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md`
   - `39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md`
@@ -22,11 +23,13 @@
 - `49-torghut-quant-source-of-truth-and-profit-circuit-handoff-2026-03-19.md`
 - `50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
 - `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
+- `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
 - Cross-system source of truth:
   - `docs/agents/designs/53-jangar-dependency-provenance-ledger-and-consumer-acknowledged-admission-2026-03-19.md`
   - `docs/agents/designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md`
-  - `docs/agents/designs/49-jangar-control-plane-execution-truth-spine-and-torghut-profit-circuit-2026-03-19.md`
   - `docs/agents/designs/52-jangar-rollout-epoch-witness-and-segment-circuit-breakers-2026-03-19.md`
+  - `docs/agents/designs/50-torghut-hypothesis-capital-governor-and-data-quorum-2026-03-19.md`
+  - `docs/agents/designs/52-jangar-segment-authority-graph-and-promotion-certificate-fail-safe-2026-03-19.md`
 - Discover stage merge anchor:
   - `42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md`
   - `42-torghut-quant-control-plane-and-profitability-program-2026-03-15.md`
@@ -94,6 +97,9 @@ Current source-state priority is narrower:
 - `docs/agents/designs/53-jangar-dependency-provenance-ledger-and-consumer-acknowledged-admission-2026-03-19.md`
   now turns segment health into durable control-plane truth with freshness, evidence refs, consumer acknowledgement,
   and replayable collaboration outbox semantics.
+- `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md` now replaces permissive local
+  live-gate truth with Jangar-issued promotion certificates, segment-local firebreaks, and explicit engineer/deployer
+  acceptance gates for options/data failures.
 - `40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md` now defines segment-local
   control-plane authority and scoped rollout semantics to prevent watch noise from becoming global rollout blockers.
 - `41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md` now defines multi-horizon profitability
@@ -184,7 +190,8 @@ This pack is positioned as the next architecture layer above:
 48. `49-torghut-quant-source-of-truth-and-profit-circuit-handoff-2026-03-19.md`
 49. `50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
 50. `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
-51. `52-torghut-profit-sleeves-segment-scoped-deallocation-and-evidence-decay-2026-03-19.md`
+51. `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
+52. `52-torghut-profit-sleeves-segment-scoped-deallocation-and-evidence-decay-2026-03-19.md`
 
 ## Recommended Build Order
 
@@ -234,6 +241,7 @@ This pack is positioned as the next architecture layer above:
 44. `49-torghut-quant-source-of-truth-and-profit-circuit-handoff-2026-03-19.md`
 45. `50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
 46. `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
+47. `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
 
 ## Why This Sequence
 
