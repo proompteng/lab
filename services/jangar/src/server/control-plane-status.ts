@@ -20,7 +20,7 @@ import {
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { parseNamespaceScopeEnv } from '~/server/namespace-scope'
 import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
-import { parseBooleanEnv, parseEnvStringList, parseOptionalNumber } from '~/server/agents-controller/env-config'
+import { parseEnvStringList, parseOptionalNumber } from '~/server/agents-controller/env-config'
 import type {
   DatabaseMigrationConsistency,
   DependencyQuorumConfidence,
@@ -47,7 +47,6 @@ const DEFAULT_WATCH_RELIABILITY_BLOCK_ERRORS = 6
 const DEFAULT_WATCH_RELIABILITY_BLOCK_RESTARTS = 3
 const DEFAULT_ROLLOUT_DEPLOYMENTS = ['agents', 'agents-controllers']
 const DEFAULT_EXECUTION_TRUST_SWARMS = ['jangar-control-plane', 'torghut-quant']
-const DEFAULT_EXECUTION_TRUST_ENABLED = false
 const DEFAULT_EXECUTION_TRUST_SUMMARY_LIMIT = 20
 const MAX_TOP_FAILURE_REASONS = 5
 const MAX_WORKFLOW_COLLECTION_ERROR_SAMPLE = 3
@@ -209,9 +208,9 @@ export type ControlPlaneStatus = {
   agentrun_ingestion: AgentRunIngestionStatus
   workflows: WorkflowsReliabilityStatus
   dependency_quorum: DependencyQuorumStatus
-  execution_trust?: ExecutionTrustStatus
-  swarms?: ExecutionTrustSwarm[]
-  stages?: ExecutionTrustStage[]
+  execution_trust: ExecutionTrustStatus
+  swarms: ExecutionTrustSwarm[]
+  stages: ExecutionTrustStage[]
   rollout_health: ControlPlaneRolloutHealth
   empirical_services: EmpiricalServicesStatus
   namespaces: NamespaceStatus[]
@@ -359,9 +358,6 @@ const parseDurationToMs = (value: string | null) => {
   return amount * 24 * 60 * 60 * 1000
 }
 
-const resolveExecutionTrustEnabled = () =>
-  parseBooleanEnv(process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST, DEFAULT_EXECUTION_TRUST_ENABLED)
-
 const resolveExecutionTrustSwarms = () => {
   const configured = parseEnvStringList('JANGAR_CONTROL_PLANE_EXECUTION_TRUST_SWARMS')
   if (configured.length > 0) return uniqueStrings(configured)
@@ -419,7 +415,7 @@ const buildExecutionTrustStage = (input: {
   stage: (typeof SWARM_STAGE_NAMES)[number]
   stageState: Record<string, unknown>
   nowMs: number
-  freezeActive: boolean
+  freezeState: 'active' | 'expired_unreconciled' | 'inactive'
 }) => {
   const configuredEveryRaw = asString(input.stageState['cadence'])
   const configuredEveryMs = parseDurationToMs(configuredEveryRaw)
@@ -444,21 +440,25 @@ const buildExecutionTrustStage = (input: {
         ? 'unknown'
         : 'high'
 
-  const phase = asString(input.stageState['phase']) ?? 'Unknown'
-  const frozen = phase.toLowerCase() === 'frozen'
-  const reason = input.freezeActive
-    ? `${input.stage} blocked by swarm freeze`
-    : frozen
-      ? `${input.stage} stage is frozen`
-      : stale
-        ? `${input.stage} stage is stale`
-        : latestFailureCount > 0
-          ? `${input.stage} consecutive failures`
-          : asString(input.stageState['phase']) === null
-            ? `${input.stage} phase missing`
-            : null
+  const rawPhase = asString(input.stageState['phase']) ?? 'Unknown'
+  const frozen = rawPhase.toLowerCase() === 'frozen'
+  const phase = input.freezeState === 'expired_unreconciled' && frozen ? 'Recovering' : rawPhase
+  const reason =
+    input.freezeState === 'active'
+      ? `${input.stage} blocked by swarm freeze`
+      : input.freezeState === 'expired_unreconciled'
+        ? `${input.stage} waiting for freeze reconciliation`
+        : frozen
+          ? `${input.stage} stage is frozen`
+          : stale
+            ? `${input.stage} stage is stale`
+            : latestFailureCount > 0
+              ? `${input.stage} consecutive failures`
+              : asString(input.stageState['phase']) === null
+                ? `${input.stage} phase missing`
+                : null
   const classReason =
-    frozen || input.freezeActive || stale
+    frozen || input.freezeState !== 'inactive' || stale
       ? 'blocked'
       : latestFailureCount > 0 || healthy === false
         ? 'degraded'
@@ -577,8 +577,15 @@ export const buildExecutionTrust = async ({
     const freezeUntil = asString(freezeRaw.until)
     const freezeUntilMs = parseDateMs(freezeUntil)
     const freezeActive = freezeUntilMs !== null && freezeUntilMs > nowMs
+    const freezeExpiredUnreconciled =
+      phase.toLowerCase() === 'frozen' && freezeUntilMs !== null && freezeUntilMs <= nowMs
     const freezeReason = asString(freezeRaw.reason) ?? null
-    const ready = phase.toLowerCase() !== 'frozen' && !freezeActive && phase.toLowerCase() !== 'disabled'
+    const projectedPhase = freezeExpiredUnreconciled ? 'Recovering' : phase
+    const ready =
+      projectedPhase.toLowerCase() !== 'frozen' &&
+      projectedPhase.toLowerCase() !== 'recovering' &&
+      !freezeActive &&
+      phase.toLowerCase() !== 'disabled'
     const observedGeneration = Number.isFinite(Number(status.observedGeneration ?? metadata.generation ?? null))
       ? Math.max(0, Number(status.observedGeneration ?? metadata.generation ?? 0))
       : null
@@ -626,6 +633,14 @@ export const buildExecutionTrust = async ({
         reason: freezeReason ? `swarm freeze active (${freezeReason})` : 'swarm freeze active',
         class: 'blocked',
       })
+    } else if (phase.toLowerCase() === 'frozen' && freezeUntilMs !== null && freezeUntilMs <= nowMs) {
+      snapshot.blockingWindows.push({
+        type: 'swarms',
+        scope: namespace,
+        name: swarmName,
+        reason: freezeReason ? `freeze expiry unreconciled (${freezeReason})` : 'freeze expiry unreconciled',
+        class: 'blocked',
+      })
     }
 
     for (const stage of SWARM_STAGE_NAMES) {
@@ -663,7 +678,7 @@ export const buildExecutionTrust = async ({
         stage,
         stageState: stageStateRaw,
         nowMs,
-        freezeActive,
+        freezeState: freezeActive ? 'active' : freezeExpiredUnreconciled ? 'expired_unreconciled' : 'inactive',
       })
       snapshot.stages.push(builtStage.stageData)
       if (builtStage.blockingClass) {
@@ -681,7 +696,7 @@ export const buildExecutionTrust = async ({
     snapshot.swarms.push({
       name: swarmName,
       namespace,
-      phase,
+      phase: projectedPhase,
       ready,
       updated_at: toIso(
         parseDateMs(asString(status.lastTransitionTime) ?? asString(status.updatedAt) ?? asString(status.observedAt)) ??
@@ -1826,6 +1841,10 @@ const buildDependencyQuorum = (input: {
     appendSegmentReason('control_runtime', reason, 'single_capability', 'medium')
   }
 
+  const addExecutionTrustReason = (reason: string, status: 'blocked' | 'degraded') => {
+    appendSegmentReason('freshness_authority', reason, 'global', status === 'blocked' ? 'low' : 'medium')
+  }
+
   const summarizeSegment = (
     segment: DependencyQuorumSegmentName,
     status: DependencyQuorumSegmentStatus,
@@ -1883,10 +1902,13 @@ const buildDependencyQuorum = (input: {
 
   if (input.executionTrust?.status === 'blocked') {
     blockReasons.push('execution_trust_blocked')
+    addExecutionTrustReason('execution_trust_blocked', 'blocked')
   } else if (input.executionTrust?.status === 'unknown') {
     blockReasons.push('execution_trust_unknown')
+    addExecutionTrustReason('execution_trust_unknown', 'blocked')
   } else if (input.executionTrust?.status === 'degraded') {
     delayReasons.push('execution_trust_degraded')
+    addExecutionTrustReason('execution_trust_degraded', 'degraded')
   }
 
   if (input.workflows.backoff_limit_exceeded_jobs >= input.degradedBackoffThreshold) {
@@ -2108,28 +2130,25 @@ export const buildControlPlaneStatus = async (
   )
   const watchReliabilityBlockErrorsThreshold = resolveWatchReliabilityBlockErrorsThreshold()
   const watchReliabilityBlockRestartsThreshold = resolveWatchReliabilityBlockRestartsThreshold()
-  const executionTrustEnabled = resolveExecutionTrustEnabled()
-  const executionTrust = executionTrustEnabled
-    ? await (deps.resolveExecutionTrust ?? buildExecutionTrust)({
-        namespace: options.namespace,
-        now,
-        swarms: resolveExecutionTrustSwarms(),
-        kube: createKubernetesClient(),
-        summaryLimit: resolveExecutionTrustSummaryLimit(),
-      }).catch(
-        (error: unknown): ExecutionTrustSnapshot => ({
-          executionTrust: {
-            status: 'unknown',
-            reason: `execution trust evaluation failed: ${normalizeMessage(error)}`,
-            last_evaluated_at: now.toISOString(),
-            blocking_windows: [],
-            evidence_summary: [],
-          },
-          swarms: [],
-          stages: [],
-        }),
-      )
-    : undefined
+  const executionTrust = await (deps.resolveExecutionTrust ?? buildExecutionTrust)({
+    namespace: options.namespace,
+    now,
+    swarms: resolveExecutionTrustSwarms(),
+    kube: createKubernetesClient(),
+    summaryLimit: resolveExecutionTrustSummaryLimit(),
+  }).catch(
+    (error: unknown): ExecutionTrustSnapshot => ({
+      executionTrust: {
+        status: 'unknown',
+        reason: `execution trust evaluation failed: ${normalizeMessage(error)}`,
+        last_evaluated_at: now.toISOString(),
+        blocking_windows: [],
+        evidence_summary: [],
+      },
+      swarms: [],
+      stages: [],
+    }),
+  )
 
   const workflows = await (deps.getWorkflowsReliabilityStatus ?? resolveWorkflowsReliabilityStatus)({
     now,
@@ -2185,9 +2204,7 @@ export const buildControlPlaneStatus = async (
     ...(empiricalServices.forecast.status === 'degraded' ? ['empirical:forecast'] : []),
     ...(empiricalServices.lean.status === 'degraded' ? ['empirical:lean'] : []),
     ...(empiricalServices.jobs.status === 'degraded' ? ['empirical:jobs'] : []),
-    ...(executionTrust?.executionTrust && executionTrust.executionTrust.status !== 'healthy'
-      ? ['execution_trust']
-      : []),
+    ...(executionTrust.executionTrust.status !== 'healthy' ? ['execution_trust'] : []),
   ]
 
   return {
@@ -2207,7 +2224,7 @@ export const buildControlPlaneStatus = async (
     },
     controllers: effectiveControllers,
     runtime_adapters: effectiveRuntimeAdapters,
-    ...(executionTrust ? { execution_trust: executionTrust.executionTrust } : {}),
+    execution_trust: executionTrust.executionTrust,
     database,
     grpc: grpcStatus,
     watch_reliability: {
@@ -2221,8 +2238,8 @@ export const buildControlPlaneStatus = async (
     },
     agentrun_ingestion: agentRunIngestion,
     rollout_health: rolloutHealth,
-    ...(executionTrust ? { swarms: executionTrust.swarms } : {}),
-    ...(executionTrust ? { stages: executionTrust.stages } : {}),
+    swarms: executionTrust.swarms,
+    stages: executionTrust.stages,
     workflows,
     dependency_quorum: dependencyQuorum,
     empirical_services: empiricalServices,

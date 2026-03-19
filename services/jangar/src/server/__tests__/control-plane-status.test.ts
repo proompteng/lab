@@ -410,9 +410,32 @@ describe('control-plane status', () => {
     },
   ]
 
+  const healthyExecutionTrust: ExecutionTrustStatus = {
+    status: 'healthy',
+    reason: 'execution trust is healthy.',
+    last_evaluated_at: '2026-01-20T00:20:00Z',
+    blocking_windows: [],
+    evidence_summary: [],
+  }
+
+  const healthyExecutionTrustSnapshot = {
+    executionTrust: healthyExecutionTrust,
+    swarms: [] as ExecutionTrustSwarm[],
+    stages: [] as ExecutionTrustStage[],
+  }
+
+  const buildStatus = (
+    options: Parameters<typeof buildControlPlaneStatus>[0],
+    deps: Parameters<typeof buildControlPlaneStatus>[1] = {},
+  ) =>
+    buildControlPlaneStatus(options, {
+      resolveExecutionTrust: async () => healthyExecutionTrustSnapshot,
+      ...deps,
+    })
+
   it('returns healthy summary when components are healthy', async () => {
     setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
-    const status = await buildControlPlaneStatus(
+    const status = await buildStatus(
       {
         namespace: 'agents',
         grpc: {
@@ -526,7 +549,7 @@ describe('control-plane status', () => {
       ],
     }
 
-    const status = await buildControlPlaneStatus(
+    const status = await buildStatus(
       {
         namespace: 'agents',
         grpc: {
@@ -639,7 +662,7 @@ describe('control-plane status', () => {
   it('keeps delay scope global when only control runtime degrades', async () => {
     setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
 
-    const status = await buildControlPlaneStatus(
+    const status = await buildStatus(
       {
         namespace: 'agents',
         grpc: {
@@ -691,7 +714,7 @@ describe('control-plane status', () => {
   it('blocks rollout quorum when empirical jobs are degraded', async () => {
     setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
 
-    const status = await buildControlPlaneStatus(
+    const status = await buildStatus(
       {
         namespace: 'agents',
         grpc: {
@@ -759,7 +782,7 @@ describe('control-plane status', () => {
     process.env.JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_RESTARTS = '2'
     setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
 
-    const status = await buildControlPlaneStatus(
+    const status = await buildStatus(
       {
         namespace: 'agents',
         grpc: {
@@ -850,7 +873,7 @@ describe('control-plane status', () => {
     process.env.JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_RESTARTS = '10'
     setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
 
-    const status = await buildControlPlaneStatus(
+    const status = await buildStatus(
       {
         namespace: 'agents',
         grpc: {
@@ -941,7 +964,7 @@ describe('control-plane status', () => {
     process.env.JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD = '3'
     setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
 
-    const status = await buildControlPlaneStatus(
+    const status = await buildStatus(
       {
         namespace: 'agents',
         grpc: {
@@ -1016,7 +1039,7 @@ describe('control-plane status', () => {
       }),
     })
 
-    const status = await buildControlPlaneStatus(
+    const status = await buildStatus(
       {
         namespace: 'agents',
         grpc: {
@@ -1084,7 +1107,7 @@ describe('control-plane status', () => {
       throw new Error('simulated kube client creation failure')
     })
     await expect(
-      buildControlPlaneStatus(
+      buildStatus(
         {
           namespace: 'agents',
           grpc: {
@@ -1113,7 +1136,7 @@ describe('control-plane status', () => {
   it('marks namespace degraded when migration consistency reports drift', async () => {
     setRolloutDeploymentList([healthyRolloutDeployment])
 
-    const status = await buildControlPlaneStatus(
+    const status = await buildStatus(
       {
         namespace: 'agents',
         grpc: {
@@ -1172,7 +1195,7 @@ describe('control-plane status', () => {
       agentRunIngestion: [],
     }
 
-    const status = await buildControlPlaneStatus(
+    const status = await buildStatus(
       {
         namespace: 'agents',
         grpc: {
@@ -1250,7 +1273,7 @@ describe('control-plane status', () => {
       },
     })
 
-    const status = await buildControlPlaneStatus(
+    const status = await buildStatus(
       {
         namespace: 'agents',
         grpc: {
@@ -1343,7 +1366,7 @@ describe('control-plane status', () => {
       },
     })
 
-    const status = await buildControlPlaneStatus(
+    const status = await buildStatus(
       {
         namespace: 'agents',
         grpc: {
@@ -1386,7 +1409,7 @@ describe('control-plane status', () => {
       (row) => row.component !== 'agents-controller' && row.component !== 'workflow-runtime',
     )
 
-    const status = await buildControlPlaneStatus(
+    const status = await buildStatus(
       {
         namespace: 'agents',
         grpc: {
@@ -1477,6 +1500,81 @@ describe('control-plane status', () => {
     expect(snapshot.stages.some((stage) => stage.phase === 'Frozen')).toBe(true)
   })
 
+  it('buildExecutionTrust blocks when freeze expiry is unreconciled', async () => {
+    kubeClientMocks.createKubernetesClient.mockReturnValue({
+      list: vi.fn(async () => ({
+        items: [
+          buildExecutionTrustSwarmResource({
+            phase: 'Frozen',
+            freezeReason: 'StageStaleness',
+            freezeUntil: '2026-01-20T00:05:00Z',
+            requirementsPending: 0,
+            requirementsLastSeen: '2026-01-20T00:19:00Z',
+            stageStates: {
+              discover: {
+                phase: 'Running',
+                healthy: true,
+                cadence: '1m',
+                lastRunTime: '2026-01-20T00:19:00Z',
+                consecutiveFailures: 0,
+              },
+              plan: {
+                phase: 'Running',
+                healthy: true,
+                cadence: '1m',
+                lastRunTime: '2026-01-20T00:19:00Z',
+                consecutiveFailures: 0,
+              },
+              implement: {
+                phase: 'Running',
+                healthy: true,
+                cadence: '1m',
+                lastRunTime: '2026-01-20T00:19:00Z',
+                consecutiveFailures: 0,
+              },
+              verify: {
+                phase: 'Running',
+                healthy: true,
+                cadence: '1m',
+                lastRunTime: '2026-01-20T00:19:00Z',
+                consecutiveFailures: 0,
+              },
+            },
+          }),
+        ],
+      })),
+    })
+
+    const snapshot = await buildExecutionTrust({
+      namespace: 'agents',
+      now: new Date('2026-01-20T00:20:00Z'),
+      swarms: ['jangar-control-plane'],
+      summaryLimit: 20,
+    })
+
+    expect(snapshot.executionTrust.status).toBe('blocked')
+    expect(snapshot.executionTrust.blocking_windows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'swarms',
+          name: 'jangar-control-plane',
+          reason: 'freeze expiry unreconciled (StageStaleness)',
+          class: 'blocked',
+        }),
+      ]),
+    )
+    expect(snapshot.swarms[0]).toMatchObject({
+      name: 'jangar-control-plane',
+      phase: 'Recovering',
+      ready: false,
+    })
+    expect(snapshot.stages[0]).toMatchObject({
+      stage: 'discover',
+      phase: 'Running',
+      last_failure_reason: 'discover waiting for freeze reconciliation',
+    })
+  })
+
   it('buildExecutionTrust marks degraded trust when requirements and stages are unhealthy', async () => {
     kubeClientMocks.createKubernetesClient.mockReturnValue({
       list: vi.fn(async () => ({
@@ -1556,10 +1654,10 @@ describe('control-plane status', () => {
     expect(snapshot.swarms[0]?.observed_generation).toBe(4)
   })
 
-  it('omits execution trust fields from status when flag is disabled', async () => {
+  it('always includes execution trust fields in status', async () => {
     setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
 
-    const status = await buildControlPlaneStatus(
+    const status = await buildStatus(
       {
         namespace: 'agents',
         grpc: {
@@ -1607,9 +1705,9 @@ describe('control-plane status', () => {
       },
     )
 
-    expect(status.execution_trust).toBeUndefined()
-    expect(status.swarms).toBeUndefined()
-    expect(status.stages).toBeUndefined()
+    expect(status.execution_trust).toEqual(healthyExecutionTrust)
+    expect(status.swarms).toEqual([])
+    expect(status.stages).toEqual([])
     expect(status.dependency_quorum).toMatchObject({
       decision: 'allow',
       reasons: [],
@@ -1617,11 +1715,10 @@ describe('control-plane status', () => {
     })
   })
 
-  it('adds execution trust to quorum and blocks on enabled blocked trust', async () => {
-    process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST = 'true'
+  it('adds execution trust to quorum segments and blocks on blocked trust', async () => {
     setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
 
-    const status = await buildControlPlaneStatus(
+    const status = await buildStatus(
       {
         namespace: 'agents',
         grpc: {
@@ -1682,6 +1779,17 @@ describe('control-plane status', () => {
       reasons: ['execution_trust_blocked'],
       message: 'Control-plane dependency quorum is blocked.',
     })
+    expect(status.dependency_quorum.segments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          segment: 'freshness_authority',
+          status: 'blocked',
+          scope: 'global',
+          confidence: 'low',
+          reasons: ['execution_trust_blocked'],
+        }),
+      ]),
+    )
     expect(status.namespaces[0]?.degraded_components ?? []).toContain('execution_trust')
   })
 })

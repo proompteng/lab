@@ -317,9 +317,9 @@ Control-plane status now includes an additive `agentrun_ingestion` block in
 - `untouched_run_count`
 - `oldest_untouched_age_seconds`
 
-Execution-trust gating can be enabled in `/api/agents/control-plane/status` via:
+Execution trust is now a mandatory part of `/api/agents/control-plane/status` and `/ready`.
+Tracked swarm selection and response fan-out remain configurable via:
 
-- `JANGAR_CONTROL_PLANE_EXECUTION_TRUST` (optional; default: `false`)
 - `JANGAR_CONTROL_PLANE_EXECUTION_TRUST_SWARMS` (optional comma list; default: `jangar-control-plane,torghut-quant`)
 - `JANGAR_CONTROL_PLANE_EXECUTION_TRUST_SUMMARY_LIMIT` (optional; default: `20`)
 
@@ -333,13 +333,15 @@ Rollout safety now also uses gate thresholds for watch stability and empirical j
   - `status` is now a hard block when `/api/agents/control-plane/status` reports `empirical_services.jobs.status === degraded`.
   - Forecast and LEAN degradation remain observable but do not block rollout.
 
-When enabled and trust is not healthy, the status payload includes:
+The status payload always includes:
 
 - `execution_trust`
 - `swarms`
 - `stages`
 
 `execution_trust.status` will be one of `healthy`, `degraded`, `blocked`, or `unknown`.
+If a swarm remains `Frozen` after `freeze.until` has passed, execution trust now reports
+`freeze expiry unreconciled` and keeps `/ready` non-200 until the authority state is reconciled.
 `/ready` returns `503` when execution trust is `degraded`, `blocked`, or `unknown`
 and includes the same `execution_trust` block in its response.
 

@@ -125,6 +125,15 @@ const baseStatus: ControlPlaneStatus = {
     deployments: [],
     message: 'healthy',
   },
+  execution_trust: {
+    status: 'healthy',
+    reason: 'execution trust is healthy.',
+    last_evaluated_at: '2026-01-20T00:00:00Z',
+    blocking_windows: [],
+    evidence_summary: [],
+  },
+  swarms: [],
+  stages: [],
   empirical_services: {
     forecast: {
       status: 'healthy',
