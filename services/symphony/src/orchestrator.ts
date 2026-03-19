@@ -2214,7 +2214,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                   },
                   posthog: {
                     enabled: false,
-                    host: 'http://posthog-events.posthog.svc.cluster.local:8000',
+                    host: 'http://posthog-capture.posthog.svc.cluster.local:3000',
                     apiKey: null,
                     projectId: null,
                     distinctId: 'symphony:symphony',

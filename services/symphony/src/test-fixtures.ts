@@ -72,7 +72,7 @@ export const makeTestConfig = (overrides: SymphonyConfigOverrides = {}): Symphon
   },
   posthog: {
     enabled: overrides.posthog?.enabled ?? false,
-    host: overrides.posthog?.host ?? 'http://posthog-events.posthog.svc.cluster.local:8000',
+    host: overrides.posthog?.host ?? 'http://posthog-capture.posthog.svc.cluster.local:3000',
     apiKey: overrides.posthog?.apiKey ?? null,
     projectId: overrides.posthog?.projectId ?? null,
     distinctId: overrides.posthog?.distinctId ?? 'symphony:symphony',
@@ -235,7 +235,7 @@ export const makeTestSnapshot = (): RuntimeSnapshot => ({
   },
   telemetry: {
     enabled: true,
-    host: 'http://posthog-events.posthog.svc.cluster.local:8000',
+    host: 'http://posthog-capture.posthog.svc.cluster.local:3000',
     projectId: '1',
     distinctId: 'symphony:symphony',
     lastError: null,
