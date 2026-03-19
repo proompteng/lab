@@ -1,11 +1,10 @@
 ---
 title: Temporal Bun SDK
-description: Learn how to build and operate Temporal workers with the Bun runtime using the @proompteng Temporal Bun SDK.
+description: Run Temporal workers and clients on Bun with replay tooling, Docker helpers, and Temporal Cloud/TLS support.
 ---
 
-`@proompteng/temporal-bun-sdk` is our Bun-first Temporal toolkit. It defaults to
-the same local dev assumptions as our services (namespace `default`, task queue
-`replay-fixtures`, gRPC port `7233`) while layering on:
+`@proompteng/temporal-bun-sdk` lets you run Temporal workers and clients on Bun
+without a native bridge. Out of the box, it includes:
 
 - Effect Schema-backed environment parsing with TLS, API key, and insecure-mode support.
 - Client and worker factories with built-in retries, payload codecs, and observability.
@@ -14,19 +13,19 @@ the same local dev assumptions as our services (namespace `default`, task queue
 - A `temporal-bun-worker` binary that boots a worker with the SDK's default workflows/activities.
 - Pure TypeScript/Effect runtime; legacy Zig bridge assets remain archived under `packages/temporal-bun-sdk/bruke`.
 
-## Documentation map
+## Start here
 
-This page is the top-level overview. The SDK now documents its feature set in
-four logical sections so teams can deep dive without wading through a single
-monolith:
+If you are evaluating the SDK for the first time, use this order:
 
-- **Architecture overview** - how workflows, workers, clients, and the CLI compose.
-- **Configuration and operations** - `loadTemporalConfig`, worker tuning, build IDs, TLS, and retries.
-- **Tutorials and recipes** - workflow/activity examples, updates/queries, and determinism helpers.
-- **CLI and tooling** - usage for `temporal-bun init|doctor|docker-build|replay` and proto regeneration.
-
-As new sub-pages come online they will be linked from this section; until then,
-the corresponding deep dives live below on this page.
+- **Install and scaffold** if you want a working project quickly.
+- **Configure your Temporal connection** if you need local, self-hosted, or Temporal Cloud settings.
+- **Temporal Cloud and TLS** if you need API key auth, custom CA bundles, or mTLS:
+  [Cloud and TLS guide](/docs/temporal-bun-sdk-cloud-tls).
+- **Comparison guide** if you are deciding between Bun and the official Node.js path:
+  [Bun SDK vs official TypeScript SDK](/docs/temporal-bun-sdk-comparison).
+- **Run a worker** and **Start and manage workflows from Bun** for the core APIs.
+- **Replay workflow histories** and **CLI quick reference** for operations and debugging.
+- **Architecture overview** only if you need the runtime model.
 
 ## Prerequisites
 
@@ -38,19 +37,35 @@ the corresponding deep dives live below on this page.
 
 ## Install and scaffold
 
+Choose the path that matches how you want to start.
+
+### Create a new worker project
+
+Generate a standalone Bun worker project:
+
+```bash
+bunx @proompteng/temporal-bun-sdk init my-worker
+cd my-worker
+bun install
+bun run dev
+```
+
+Run the scaffold command outside this monorepo. The generated project is meant
+to install the published npm package, not `workspace:*` dependencies.
+
+If `bun install` fails and the generated `package.json` pins
+`@proompteng/temporal-bun-sdk` to `^0.5.0`, repair it with:
+
+```bash
+bun add @proompteng/temporal-bun-sdk@0.7.0
+```
+
+### Add the SDK to an existing Bun project
+
 Add the SDK to an existing Bun workspace:
 
 ```bash
 bun add @proompteng/temporal-bun-sdk
-```
-
-To generate a new worker project, run the bundled CLI:
-
-```bash
-bunx temporal-bun init my-worker
-cd my-worker
-bun install
-bun run dev # runs the worker locally
 ```
 
 The template includes example workflows, activities, and Docker packaging
@@ -63,14 +78,11 @@ variables, normalizes paths, and enforces required values. Drop a `.env` file in
 your worker project and tailor the defaults as needed:
 
 ```bash
-TEMPORAL_HOST=temporal.proompteng.local
-TEMPORAL_GRPC_PORT=7233
+TEMPORAL_ADDRESS=127.0.0.1:7233
 TEMPORAL_NAMESPACE=default
 TEMPORAL_TASK_QUEUE=demo-worker
-TEMPORAL_API_KEY=your-cloud-api-key
-# Optional build-id override (otherwise derived automatically)
-# TEMPORAL_WORKER_BUILD_ID=demo-worker@1.2.3
-# Uncomment to enable mutual TLS
+# Add these when connecting to Temporal Cloud or a TLS-enabled cluster:
+# TEMPORAL_API_KEY=your-cloud-api-key
 # TEMPORAL_TLS_CERT_PATH=./certs/client.crt
 # TEMPORAL_TLS_KEY_PATH=./certs/client.key
 # TEMPORAL_TLS_CA_PATH=./certs/ca.pem
@@ -121,6 +133,9 @@ Environment variables supported by the config loader:
 `loadTemporalConfig()` returns typed values that the client and worker factories
 consume directly, so you never have to stitch addresses or TLS buffers together
 by hand.
+
+For a focused Cloud setup guide, including API key auth, custom CA bundles, and
+mTLS, see [Temporal Cloud and TLS](/docs/temporal-bun-sdk-cloud-tls).
 
 ## Worker build IDs and versioning
 
@@ -236,7 +251,7 @@ chain, validates the retry presets, spins up observability services, emits a
 log, increments a counter, and flushes the selected exporter:
 
 ```bash
-bunx temporal-bun doctor --log-format=json --metrics=file:/tmp/metrics.json
+bunx @proompteng/temporal-bun-sdk doctor --log-format=json --metrics=file:/tmp/metrics.json
 ```
 
 The command prints a success summary (including active interceptors and the
@@ -491,8 +506,9 @@ execution runs in read-only mode and rejects non-deterministic operations.
 
 ## CLI quick reference
 
-The `temporal-bun` CLI is available through `bunx temporal-bun <command>` once
-the package is installed.
+The `temporal-bun` CLI is available through `bunx @proompteng/temporal-bun-sdk <command>`
+before installation, or `bunx temporal-bun <command>` inside a project that
+already depends on the package.
 
 - `init [directory] [--force]` - scaffold a Bun worker project with example
   workflows, activities, Dockerfile, and scripts.
@@ -565,11 +581,11 @@ teams can copy/paste into new Bun workers.
 ## CLI and tooling reference
 
 | Command                     | Purpose                                               | Notes                                                                                           |
-| --------------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------- | ---------------- |
+| --------------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | `temporal-bun init`         | Scaffold a worker + Docker assets                     | Honors `--force` to overwrite existing files.                                                   |
 | `temporal-bun doctor`       | Load config, emit log + metrics, verify TLS           | Accepts `--log-format`, `--log-level`, `--metrics`, `--metrics-exporter`, `--metrics-endpoint`. |
 | `temporal-bun docker-build` | Build worker image                                    | Supports `--tag`, `--context`, and `--file`.                                                    |
-| `temporal-bun replay`       | Diff workflow determinism from JSON or live histories | Supports `--history-file`, `--execution`, `--source cli                                         | service | auto`, `--json`. |
+| `temporal-bun replay`       | Diff workflow determinism from JSON or live histories | Supports `--history-file`, `--execution`, `--source`, and `--json`; valid source values are `cli`, `service`, and `auto`. |
 
 Proto regeneration lives under `packages/temporal-bun-sdk/scripts/update-temporal-protos.ts`.
 Pass `--version <tag>` (or omit to use the latest release) and optionally
