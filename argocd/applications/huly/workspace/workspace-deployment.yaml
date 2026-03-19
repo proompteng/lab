@@ -14,6 +14,10 @@ spec:
       labels:
         app: workspace
     spec:
+      volumes:
+        - configMap:
+            name: huly-healthcheck-scripts
+          name: healthcheck-scripts
       containers:
         - env:
             - name: ACCOUNTS_URL
@@ -43,11 +47,6 @@ spec:
               value: "$(COCKROACH_DB_URL)?sslmode=require"
             - name: DB_URL
               value: "$(COCKROACH_DB_URL)?sslmode=require"
-            - name: MONGO_URL
-              valueFrom:
-                configMapKeyRef:
-                  name: huly-config
-                  key: MONGO_URL
             - name: SERVER_SECRET
               valueFrom:
                 secretKeyRef:
@@ -60,4 +59,24 @@ spec:
           resources:
             limits:
               memory: "512M"
+          startupProbe:
+            exec:
+              command:
+                - node
+                - /opt/huly-healthchecks/workspace-ready.js
+            failureThreshold: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            exec:
+              command:
+                - node
+                - /opt/huly-healthchecks/workspace-ready.js
+            failureThreshold: 3
+            periodSeconds: 10
+            timeoutSeconds: 5
+          volumeMounts:
+            - mountPath: /opt/huly-healthchecks
+              name: healthcheck-scripts
+              readOnly: true
       restartPolicy: Always

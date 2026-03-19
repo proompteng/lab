@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: huly-healthcheck-scripts
+data:
+  account-ready.js: |
+    ;(async () => {
+      const body = JSON.stringify({ method: 'workerHandshake', params: {} })
+
+      const response = await fetch('http://127.0.0.1:3000/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        signal: AbortSignal.timeout(3000),
+      }).catch((error) => {
+        console.error(`account workerHandshake probe failed: ${error.name}: ${error.message}`)
+        process.exit(1)
+      })
+
+      const payload = await response.text()
+      if (response.status >= 500) {
+        console.error(`account workerHandshake probe returned ${response.status}: ${payload}`)
+        process.exit(1)
+      }
+
+      console.log(`account workerHandshake probe returned ${response.status}`)
+    })()
+  transactor-ready.js: |
+    ;(async () => {
+      const workspaceId = '00000000-0000-0000-0000-000000000000'
+
+      const response = await fetch(`http://127.0.0.1:3333/api/v1/account/${workspaceId}`, {
+        signal: AbortSignal.timeout(3000),
+      }).catch((error) => {
+        console.error(`transactor account probe failed: ${error.name}: ${error.message}`)
+        process.exit(1)
+      })
+
+      const payload = await response.text()
+      if (response.status >= 500) {
+        console.error(`transactor account probe returned ${response.status}: ${payload}`)
+        process.exit(1)
+      }
+
+      console.log(`transactor account probe returned ${response.status}`)
+    })()
+  workspace-ready.js: |
+    ;(async () => {
+      const body = JSON.stringify({ method: 'workerHandshake', params: {} })
+
+      const response = await fetch('http://account/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        signal: AbortSignal.timeout(3000),
+      }).catch((error) => {
+        console.error(`workspace handshake probe failed: ${error.name}: ${error.message}`)
+        process.exit(1)
+      })
+
+      const payload = await response.text()
+      if (response.status >= 500) {
+        console.error(`workspace handshake probe returned ${response.status}: ${payload}`)
+        process.exit(1)
+      }
+
+      console.log(`workspace handshake probe returned ${response.status}`)
+    })()

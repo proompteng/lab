@@ -6,12 +6,14 @@ resources:
   - account/account-deployment.yaml
   - account/account-ingress.yaml
   - account/account-service.yaml
+  - cockroach/cockroach-account-migration-repair-job.yaml
   - cockroach/cockroach-bootstrap-job.yaml
   - cockroach/cockroach-cluster.yaml
   - collaborator/collaborator-deployment.yaml
   - collaborator/collaborator-ingress.yaml
   - collaborator/collaborator-service.yaml
   - config/config.yaml
+  - config/healthcheck-scripts-configmap.yaml
   - config/secret.yaml
   - elastic/elastic-deployment.yaml
   - elastic/elastic-persistentvolumeclaim.yaml

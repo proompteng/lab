@@ -1,0 +1,85 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    app.kubernetes.io/name: huly
+  name: huly-account-migration-repair
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      containers:
+        - command:
+            - /bin/sh
+            - -ec
+            - |
+              sql() {
+                cockroach sql --certs-dir=/cockroach/cockroach-certs --host=cockroach-public "$@"
+              }
+
+              wait_for_cluster() {
+                for i in $(seq 1 120); do
+                  if sql --execute="SELECT 1"; then
+                    return 0
+                  fi
+                  sleep 5
+                done
+                echo "cockroach cluster is not ready"
+                return 1
+              }
+
+              pending_count() {
+                sql --format=csv --execute="
+                  SELECT count(*)
+                  FROM defaultdb.global_account._account_applied_migrations
+                  WHERE identifier = 'account_db_v2_social_id_pk_change' AND applied_at IS NULL;
+                " | tail -n +2 | tr -d '[:space:]'
+              }
+
+              wait_for_cluster
+
+              sql --execute="
+                ALTER TABLE defaultdb.global_account.social_id
+                ADD COLUMN IF NOT EXISTS _id INT8 NOT NULL DEFAULT unique_rowid();
+              "
+
+              if [ "$(pending_count)" = "1" ]; then
+                echo "repairing account_db_v2_social_id_pk_change for CockroachDB"
+                sql --execute="ALTER TABLE defaultdb.global_account.otp DROP CONSTRAINT IF EXISTS otp_social_id_fk;"
+                sql --execute="ALTER TABLE defaultdb.global_account.social_id DROP CONSTRAINT IF EXISTS social_id_pk;"
+                sql --execute="ALTER TABLE defaultdb.global_account.social_id ADD CONSTRAINT social_id_pk PRIMARY KEY (_id);"
+                sql --execute="
+                  UPDATE defaultdb.global_account._account_applied_migrations
+                  SET applied_at = now(), last_processed_at = now()
+                  WHERE identifier = 'account_db_v2_social_id_pk_change' AND applied_at IS NULL;
+                "
+              else
+                echo "account_db_v2_social_id_pk_change already repaired or not present"
+              fi
+          image: cockroachdb/cockroach:v25.4.2
+          name: repair
+          volumeMounts:
+            - mountPath: /cockroach/cockroach-certs/
+              name: client-certs
+      restartPolicy: OnFailure
+      volumes:
+        - name: client-certs
+          projected:
+            sources:
+              - secret:
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+                  name: cockroach-node
+              - secret:
+                  items:
+                    - key: tls.crt
+                      path: client.root.crt
+                    - key: tls.key
+                      path: client.root.key
+                  name: cockroach-root
