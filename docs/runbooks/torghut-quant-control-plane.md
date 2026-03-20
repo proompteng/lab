@@ -6,11 +6,13 @@ Use this runbook for alerts tied to the Jangar quant control-plane (near-real-ti
 upstream Torghut trading signals. This covers data freshness, decision activity, execution quality proxies, and
 control-plane stream health.
 
-This runbook is aligned with the current March 19 plan-stage architecture contracts:
+This runbook is aligned with the current March 20 plan-stage architecture contracts:
 
 - `docs/torghut/design-system/v6/42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md`
 - `docs/torghut/design-system/v6/50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
 - `docs/agents/designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md`
+- `docs/agents/designs/54-jangar-admission-receipts-rollout-shadow-and-anti-entropy-reconciliation-2026-03-20.md`
+- `docs/torghut/design-system/v6/53-torghut-capital-leases-and-profit-trial-firebreaks-2026-03-20.md`
 
 When running under scoped service accounts, treat unavailable cluster capabilities (`kubectl exec`, `kubectl logs` with target
 containers, or DB pod exec) as a controlled evidence gap and prioritize control-plane status surface checks instead.
@@ -42,9 +44,13 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
 
 1. Confirm control-plane API health.
    - `kubectl -n agents port-forward svc/agents 8080:80`
+   - `curl -fsS "http://127.0.0.1:8080/ready" | jq .`
    - `curl -fsS "http://127.0.0.1:8080/api/agents/control-plane/status?namespace=agents" | jq .`
    - For lane-scoped health checks, include explicit strategy/account/window filters on Jangar quant health:
      `curl -fsS "http://127.0.0.1:8080/api/torghut/trading/control-plane/quant/health?strategy_id=<UUID>&account=paper&window=1d" | jq .`
+   - If `/ready` and `/api/agents/control-plane/status` disagree on whether promotion or controller authority is healthy,
+     treat that as an admission-receipt contradiction and block promotion until the more restrictive interpretation is
+     understood.
 2. Confirm Torghut trading pipeline is running.
    - `kubectl -n torghut get ksvc torghut`
    - `kubectl -n torghut port-forward svc/torghut 8081:80`
@@ -61,11 +67,15 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
    - If `dependency_quorum.decision == "block"` or (`dependency_quorum.decision == "delay"` with `dependency_quorum.degradation_scope` that blocks capital progress), treat the affected control-plane segment as the active blocker and verify impact before disabling promotion.
    - If `dependency_quorum.degradation_scope` is set to `single_capability`, pause affected capital movement paths only and confirm other lanes remain evaluable before broad actions.
    - If a single hypothesis is `blocked` or `shadow`, do not disable the whole service by default; verify the specific blocker reasons and keep unaffected lanes observable.
+   - If `live_submission_gate.allowed == true` while `alpha_readiness_promotion_eligible_total == 0`, or while
+     `critical_toggle_parity.status == "diverged"`, or while required quant/market-context evidence is stale, treat the
+     state as a capital-lease contradiction and block rollout until the most restrictive interpretation is satisfied.
    - `live_submission_gate` is now the shared scheduler/status decision surface. Any non-shadow capital requires:
      - `alpha_readiness_promotion_eligible_total > 0`
      - no capital-critical mismatch in `critical_toggle_parity_blocking_mismatches`
      - non-empty quant latest-store evidence from Jangar
      - healthy options bootstrap for options-dependent hypotheses
+     - a fresh capital lease once the March 20 architecture lands
    - `quant_evidence` is the Jangar-backed latest-store probe used by the shared gate. When it is required and not
      healthy, the gate now demotes to `capital_state = "observe"` with one of:
      `quant_latest_metrics_empty`, `quant_latest_store_alarm`, `quant_metrics_update_missing`,
@@ -121,6 +131,7 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
      - image pull failures
      - DB auth or bootstrap crashes
      - missing readiness explanation from the options services
+     - open options firebreak or expired options capital lease once the March 20 architecture lands
 7. Check Jangar SSE health for control-plane dashboards.
    - Review Jangar logs for `torghut-quant` stream errors.
    - Verify the quant control-plane UI connection in Jangar (`/torghut/control-plane`).
