@@ -154,6 +154,14 @@ The current highest-priority work is:
     fact-receipt, binding-contract, profit-certificate, capital-lease, falsification-ledger, settlement-exchange,
     authority-capsule, profit-clock, and profit-cohort contracts layered on top.
 
+## Supporting discover-stage rationale
+
+These March 20 documents remain useful as the evidence-backed discover bridge into the later session, cutover, and
+profit-cohort contracts above, but they are not the newest operator contract layer:
+
+- `docs/agents/designs/57-jangar-authority-capsules-and-route-parity-contract-2026-03-20.md`
+- `docs/torghut/design-system/v6/56-torghut-profit-clocks-and-lane-falsification-exchange-2026-03-20.md`
+
 This means the current next work is not:
 
 - "add a promotion lane";
@@ -179,6 +187,8 @@ These docs are still valuable, but mainly as dated rationale, proof, or closeout
 - `docs/torghut/design-system/v6/29-code-investigated-vnext-architecture-reset-2026-03-06.md`
 - `docs/torghut/design-system/v6/30-live-state-disposition-and-implementation-rollout-gates-2026-03-06.md`
 - `docs/torghut/design-system/v6/31-proven-autonomous-quant-llm-torghut-trading-system-2026-03-07.md`
+- `docs/agents/designs/57-jangar-authority-capsules-and-route-parity-contract-2026-03-20.md`
+- `docs/torghut/design-system/v6/56-torghut-profit-clocks-and-lane-falsification-exchange-2026-03-20.md`
 
 They should inform decisions, but they should not be treated as the single current operator checklist without checking
 the current contract docs above.

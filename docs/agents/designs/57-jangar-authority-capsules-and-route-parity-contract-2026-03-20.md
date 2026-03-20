@@ -20,6 +20,11 @@ Extends:
 - `55-jangar-rollout-fact-receipts-and-swarm-freeze-parity-2026-03-20.md`
 - `56-jangar-capability-receipts-and-consumer-binding-contract-2026-03-20.md`
 
+Follow-on docs:
+
+- `58-jangar-authority-capsule-cutover-and-freeze-expiry-repair-contract-2026-03-20.md`
+- `59-jangar-authority-session-bus-and-rollout-lease-contract-2026-03-20.md`
+
 ## Executive summary
 
 The decision is to make Jangar publish one compiled `authority capsule` per namespace and rollout epoch, then force
@@ -366,4 +371,3 @@ Deployer handoff:
 - do not accept manual interpretation of route differences once capsule projection is enabled;
 - rollback by restoring prior capsule-backed behavior or prior release digest, then confirm parity again before any
   new promotion.
-

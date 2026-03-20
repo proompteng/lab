@@ -53,6 +53,11 @@ If you are trying to decide which docs are current contract truth versus histori
 
 That guide is the canonical reading order for the current corpus.
 
+If you need the discover-stage rationale directly beneath that current stack, also read:
+
+- `docs/agents/designs/57-jangar-authority-capsules-and-route-parity-contract-2026-03-20.md`
+- `docs/torghut/design-system/v6/56-torghut-profit-clocks-and-lane-falsification-exchange-2026-03-20.md`
+
 ## Recommended entrypoint (single merged doc)
 
 - `docs/torghut/design-system/v1/torghut-autonomous-trading-system.md`

@@ -35,6 +35,9 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
   - `designs/50-torghut-hypothesis-capital-governor-and-data-quorum-2026-03-19.md`
   - `designs/52-jangar-segment-authority-graph-and-promotion-certificate-fail-safe-2026-03-19.md`
   - `../torghut/design-system/v6/51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
+- Discover-stage rationale feeding the current March 20 contract stack:
+  - `designs/57-jangar-authority-capsules-and-route-parity-contract-2026-03-20.md`
+  - `../torghut/design-system/v6/56-torghut-profit-clocks-and-lane-falsification-exchange-2026-03-20.md`
 - Security baseline: `threat-model.md`
 - RBAC requirements: `rbac-matrix.md`
 - Production bar (non-negotiables): `production-readiness-design.md`
@@ -182,6 +185,7 @@ For env and gRPC source-of-truth changes in this branch:
 - [designs/52-jangar-segment-authority-graph-and-promotion-certificate-fail-safe-2026-03-19.md](designs/52-jangar-segment-authority-graph-and-promotion-certificate-fail-safe-2026-03-19.md)
 - [designs/54-jangar-witness-mirror-quorum-and-promotion-veto-2026-03-20.md](designs/54-jangar-witness-mirror-quorum-and-promotion-veto-2026-03-20.md)
 - [designs/55-jangar-rollout-fact-receipts-and-swarm-freeze-parity-2026-03-20.md](designs/55-jangar-rollout-fact-receipts-and-swarm-freeze-parity-2026-03-20.md)
+- [designs/57-jangar-authority-capsules-and-route-parity-contract-2026-03-20.md](designs/57-jangar-authority-capsules-and-route-parity-contract-2026-03-20.md)
 - [designs/controller-finalizer-conventions.md](designs/controller-finalizer-conventions.md)
 - [designs/controller-kubectl-version-compat.md](designs/controller-kubectl-version-compat.md)
 - [designs/controller-namespace-scope-parse-validate.md](designs/controller-namespace-scope-parse-validate.md)

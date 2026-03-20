@@ -20,6 +20,11 @@ Extends:
 - `55-torghut-hypothesis-settlement-exchange-and-lane-capability-leases-2026-03-20.md`
 - `49-torghut-quant-source-of-truth-and-profit-circuit-handoff-2026-03-19.md`
 
+Follow-on docs:
+
+- `56-torghut-capability-leases-and-profit-clocks-2026-03-20.md`
+- `58-torghut-profit-cohort-auction-and-freshness-insurance-contract-2026-03-20.md`
+
 ## Executive summary
 
 The decision is to replace Torghut’s route-time live submission answers with durable `profit clocks` and a
@@ -378,4 +383,3 @@ Deployer handoff:
 - verify typed Jangar quant authority is being consumed before trusting any promotion answer;
 - rollback by restoring prior release behavior or prior clock compiler behavior, then confirm route/scheduler parity
   before any new promotion.
-

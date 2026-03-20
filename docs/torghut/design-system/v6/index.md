@@ -121,6 +121,9 @@ Current source-state priority is narrower:
 - `56-torghut-capability-leases-and-profit-clocks-2026-03-20.md` now defines the next profitability step: Torghut
   must consume typed Jangar capability leases, settle one lane-local profit clock per hypothesis/account window, and
   keep scheduler, `/readyz`, and `/trading/status` on the same lease digest.
+- `56-torghut-profit-clocks-and-lane-falsification-exchange-2026-03-20.md` records the discover-stage rationale that
+  led into the later capability-lease, reserve, and profit-cohort contracts by making route-time capital truth,
+  falsification, and replayable profit evidence explicit.
 - `58-torghut-profit-cohort-auction-and-freshness-insurance-contract-2026-03-20.md` now turns those profit clocks
   into a replayable economic control surface: every non-observe capital move must cite one profit cohort and one
   authority session, and degraded-mode upside must be spent from bounded freshness insurance rather than generic
@@ -134,6 +137,8 @@ Current source-state priority is narrower:
 - `docs/agents/designs/57-jangar-authority-capsules-and-readiness-class-separation-2026-03-20.md` now separates
   serving readiness from promotion authority, compiles durable capsules, and stops stale promotion state from
   deadlocking fresh control-plane rollouts.
+- `docs/agents/designs/57-jangar-authority-capsules-and-route-parity-contract-2026-03-20.md` records the
+  discover-stage route-parity decision that fed the later readiness-class, cutover, and authority-session contracts.
 - `docs/agents/designs/59-jangar-authority-session-bus-and-rollout-lease-contract-2026-03-20.md` now turns those
   capsules into one durable authority session and rollout-lease contract so `/ready`, status, deploy verification, and
   downstream consumers stop re-deriving control-plane truth per request.
@@ -251,6 +256,7 @@ This pack is positioned as the next architecture layer above:
 54. `54-torghut-capital-lease-receipts-and-profit-falsification-ledger-2026-03-20.md`
 55. `55-torghut-hypothesis-settlement-exchange-and-lane-capability-leases-2026-03-20.md`
 56. `56-torghut-capability-leases-and-profit-clocks-2026-03-20.md`
+57. `56-torghut-profit-clocks-and-lane-falsification-exchange-2026-03-20.md`
 57. `57-torghut-profit-reserves-forecast-calibration-escrow-and-probe-auction-contract-2026-03-20.md`
 58. `58-torghut-profit-cohort-auction-and-freshness-insurance-contract-2026-03-20.md`
 59. `59-torghut-lane-balance-sheet-and-dataset-seat-auction-contract-2026-03-20.md`
