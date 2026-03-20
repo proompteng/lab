@@ -363,9 +363,9 @@ export type ControlPlaneStatus = {
   agentrun_ingestion: AgentRunIngestionStatus
   rollout_health: ControlPlaneRolloutHealth
   empirical_services: EmpiricalServicesStatus
-  execution_trust?: ExecutionTrustStatus
-  swarms?: ExecutionTrustSwarm[]
-  stages?: ExecutionTrustStage[]
+  execution_trust: ExecutionTrustStatus
+  swarms: ExecutionTrustSwarm[]
+  stages: ExecutionTrustStage[]
   namespaces: NamespaceStatus[]
 }
 

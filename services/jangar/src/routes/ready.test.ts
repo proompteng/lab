@@ -37,7 +37,17 @@ describe('getReadyHandler', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     controlPlaneStatusMocks.buildExecutionTrust.mockReset()
-    delete process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST
+    controlPlaneStatusMocks.buildExecutionTrust.mockResolvedValue({
+      executionTrust: {
+        status: 'healthy',
+        reason: 'execution trust is healthy.',
+        last_evaluated_at: '2026-03-08T21:00:00Z',
+        blocking_windows: [],
+        evidence_summary: [],
+      },
+      swarms: [],
+      stages: [],
+    })
 
     agentsControllerMocks.getAgentsControllerHealth.mockReturnValue({
       enabled: true,
@@ -165,8 +175,7 @@ describe('getReadyHandler', () => {
     expect(body.status).toBe('degraded')
   })
 
-  it('returns 200 when execution trust is healthy and enabled', async () => {
-    process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST = 'true'
+  it('returns 200 when execution trust is healthy', async () => {
     controlPlaneStatusMocks.buildExecutionTrust.mockResolvedValue({
       executionTrust: {
         status: 'healthy',
@@ -192,7 +201,6 @@ describe('getReadyHandler', () => {
   })
 
   it('returns 503 when execution trust is blocked', async () => {
-    process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST = 'true'
     controlPlaneStatusMocks.buildExecutionTrust.mockResolvedValue({
       executionTrust: {
         status: 'blocked',
@@ -226,7 +234,6 @@ describe('getReadyHandler', () => {
   })
 
   it('returns 503 when any watched namespace reports blocked execution trust', async () => {
-    process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST = 'true'
     agentsControllerMocks.getAgentsControllerHealth.mockReturnValue({
       enabled: true,
       started: true,
@@ -300,17 +307,19 @@ describe('getReadyHandler', () => {
     ])
   })
 
-  it('skips execution trust check when the feature flag is disabled', async () => {
-    process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST = '0'
-
+  it('returns 503 when execution trust evaluation fails', async () => {
+    controlPlaneStatusMocks.buildExecutionTrust.mockRejectedValue(new Error('trust fetch failed'))
     const { getReadyHandler } = await import('./ready')
 
     const response = await getReadyHandler()
 
-    expect(response.status).toBe(200)
+    expect(response.status).toBe(503)
     const body = await response.json()
-    expect(body.status).toBe('ok')
-    expect(body.execution_trust).toBeUndefined()
-    expect(controlPlaneStatusMocks.buildExecutionTrust).not.toHaveBeenCalled()
+    expect(body.status).toBe('degraded')
+    expect(body.execution_trust).toMatchObject({
+      status: 'unknown',
+    })
+    expect(body.execution_trust.reason).toContain('execution trust check failed for namespace agents')
+    expect(controlPlaneStatusMocks.buildExecutionTrust).toHaveBeenCalledTimes(1)
   })
 })

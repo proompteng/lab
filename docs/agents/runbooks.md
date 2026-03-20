@@ -128,6 +128,7 @@ Confirm the workflow adapter is healthy and no Argo Workflows are required:
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.runtime_adapters'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.workflows'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.agentrun_ingestion'
+curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.execution_trust'
 kubectl api-resources --api-group=argoproj.io --no-headers || true
 kubectl -n agents get workflows.argoproj.io 2>/dev/null || true
 ```
@@ -139,6 +140,8 @@ Expected outcomes:
   `backoff_limit_exceeded_jobs`, and `top_failure_reasons`.
 - `agentrun_ingestion` reports the latest AgentRun watch/resync timestamps and stays `healthy` with
   `untouched_run_count: 0` during normal operation.
+- `execution_trust` is always present and stays `healthy`; if a swarm freeze TTL has expired without
+  reconciliation, it reports `freeze expiry unreconciled` and `/ready` should return `503`.
 - The Argo Workflows resource check returns empty output (no CRD or no workflows).
 
 ## Native workflow e2e proof
