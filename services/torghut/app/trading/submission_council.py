@@ -121,7 +121,7 @@ def _derive_quant_health_url(
     parsed = urlsplit(raw)
     if not parsed.scheme or not parsed.netloc:
         return None
-    path = parsed.path or ''
+    path = parsed.path if preserve_path else ''
     query = parsed.query if preserve_path else ''
     resolved_path = path if preserve_path and path else '/api/torghut/trading/control-plane/quant/health'
     return urlunsplit(
