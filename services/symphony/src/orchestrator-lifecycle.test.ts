@@ -4,6 +4,7 @@ import { Effect, Layer, ManagedRuntime } from 'effect'
 import * as Stream from 'effect/Stream'
 
 import { DeliveryService } from './delivery-service'
+import { TrackerError } from './errors'
 import { IssueRunnerService } from './issue-runner'
 import { createLogger } from './logger'
 import { LeaderElectionService } from './leader-election'
@@ -584,6 +585,7 @@ describe('orchestrator lifecycle', () => {
                   createdAt: '2026-03-16T03:00:10.000Z',
                   updatedAt: '2026-03-16T03:00:20.000Z',
                 },
+                lastError: null,
               }),
           }),
         ),
@@ -600,14 +602,27 @@ describe('orchestrator lifecycle', () => {
             const persistedIssue: IssueRecord = {
               issueIdentifier: candidateIssue.identifier,
               issueId: candidateIssue.id,
-              status: 'tracked',
+              status: 'running',
               workspacePath: '/workspace/symphony/ABC-1',
               attempts: { restartCount: 1, currentRetryAttempt: 0 },
-              running: null,
+              running: {
+                sessionId: 'thread-1-turn-2',
+                turnCount: 2,
+                state: 'In Progress',
+                startedAt: '2026-03-16T03:00:00.000Z',
+                lastEvent: 'turn_completed',
+                lastMessage: 'stale worker detail',
+                lastEventAt: '2026-03-16T03:00:05.000Z',
+                tokens: {
+                  inputTokens: 10,
+                  outputTokens: 5,
+                  totalTokens: 15,
+                },
+              },
               retry: null,
               logs: { codex_session_logs: [] },
               recentEvents: [],
-              lastError: null,
+              lastError: 'stale delivery error',
               tracked: { lastKnownState: 'In Progress' },
               runHistory: [],
               delivery: {
@@ -622,7 +637,7 @@ describe('orchestrator lifecycle', () => {
                 argo: null,
                 postDeploy: null,
                 rollbackPr: null,
-                lastError: null,
+                lastError: 'transient github refresh failed',
               },
               updatedAt: '2026-03-16T03:00:00.000Z',
             }
@@ -652,9 +667,115 @@ describe('orchestrator lifecycle', () => {
             const issue = yield* orchestrator.getIssueDetails(candidateIssue.identifier)
             expect(issue?.delivery?.stage).toBe('completed')
             expect(issue?.delivery?.postDeploy?.id).toBe(601)
+            expect(issue?.status).toBe('tracked')
+            expect(issue?.running).toBeNull()
+            expect(issue?.lastError).toBeNull()
+            expect(issue?.delivery?.lastError).toBeNull()
 
             const snapshot = yield* orchestrator.getSnapshot
             expect(snapshot.issues[0]?.delivery?.stage).toBe('completed')
+            expect(snapshot.issues[0]?.status).toBe('tracked')
+            expect(snapshot.counts.running).toBe(0)
+
+            yield* orchestrator.stop
+          }),
+        ),
+      )
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  test('retries transient candidate fetch failures before pausing dispatch', async () => {
+    const config = makeTestConfig({
+      pollingIntervalMs: 60_000,
+      health: { preDispatch: [], postDeploy: [] },
+    })
+
+    let fetchCandidateIssuesCalls = 0
+
+    const runtime = ManagedRuntime.make(
+      makeOrchestratorLayer(createLogger({ test: 'orchestrator-candidate-fetch-retry' })).pipe(
+        Layer.provide(
+          Layer.succeed(WorkflowService, {
+            current: Effect.succeed({
+              definition: { config: {}, promptTemplate: 'Work on {{issue.identifier}}' },
+              config,
+            }),
+            config: Effect.succeed(config),
+            reload: Effect.succeed({
+              definition: { config: {}, promptTemplate: 'Work on {{issue.identifier}}' },
+              config,
+            }),
+            changes: Stream.empty,
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(TrackerService, {
+            fetchCandidateIssues: Effect.try({
+              try: () => {
+                fetchCandidateIssuesCalls += 1
+                if (fetchCandidateIssuesCalls < 3) {
+                  throw new Error('Linear API request failed')
+                }
+                return [candidateIssue]
+              },
+              catch: (error) => new TrackerError('linear_api_request', 'Linear API request failed', error),
+            }),
+            fetchIssuesByStates: () => Effect.succeed([]),
+            fetchIssueStatesByIds: () => Effect.succeed([candidateIssue]),
+            executeLinearGraphql: () => Effect.succeed({}),
+            handoffIssue: () => Effect.void,
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(WorkspaceService, {
+            createForIssue: () => Effect.die('not used'),
+            runBeforeRun: () => Effect.void,
+            runAfterRun: () => Effect.void,
+            removeWorkspace: () => Effect.void,
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(IssueRunnerService, {
+            runAttempt: (_issue, _attempt, callbacks, _telemetryContext) =>
+              callbacks.onWorkspacePath('/workspace/symphony/ABC-1').pipe(Effect.zipRight(Effect.never)),
+          }),
+        ),
+        Layer.provide(posthogLayer),
+        Layer.provide(deliveryLayer),
+        Layer.provide(
+          Layer.succeed(LeaderElectionService, {
+            start: Effect.void,
+            stop: Effect.void,
+            status: Effect.succeed(leaderSnapshot),
+            changes: Stream.empty,
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(StateStoreService, {
+            load: Effect.succeed(emptyPersistedSchedulerState()),
+            save: () => Effect.void,
+            stateFilePath: Effect.succeed('/tmp/symphony-state.json'),
+          }),
+        ),
+        Layer.provide(Layer.succeed(TargetHealthService, { evaluatePreDispatch: Effect.succeed(targetHealthSummary) })),
+      ),
+    )
+
+    try {
+      await runtime.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const orchestrator = yield* OrchestratorService
+            yield* orchestrator.start
+            yield* orchestrator.triggerRefresh
+            yield* Effect.sleep(1_100)
+
+            const snapshot = yield* orchestrator.getSnapshot
+            expect(fetchCandidateIssuesCalls).toBe(3)
+            expect(snapshot.counts.running).toBe(1)
+            expect(snapshot.running[0]?.issueIdentifier).toBe('ABC-1')
 
             yield* orchestrator.stop
           }),
