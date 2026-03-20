@@ -123,11 +123,12 @@ def _derive_quant_health_url(
         return None
     path = parsed.path or ''
     query = parsed.query if preserve_path else ''
+    resolved_path = path if preserve_path and path else '/api/torghut/trading/control-plane/quant/health'
     return urlunsplit(
         (
             parsed.scheme,
             parsed.netloc,
-            path or '/api/torghut/trading/control-plane/quant/health',
+            resolved_path,
             query,
             '',
         )
