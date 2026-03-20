@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { request as httpsRequest } from 'node:https'
 import process from 'node:process'
 
-import { Context, Effect, Layer } from 'effect'
+import { Context, Effect, Layer, Ref } from 'effect'
 
 import { OrchestratorError, toLogError } from './errors'
 import type { HealthCheckConfig, TargetHealthCheckResult, TargetHealthSummary } from './types'
@@ -16,10 +16,27 @@ const CA_PATH = `${SERVICE_ACCOUNT_DIRECTORY}/ca.crt`
 const DEFAULT_GITHUB_REQUEST_TIMEOUT_MS = 15_000
 const DEFAULT_HTTP_CHECK_TIMEOUT_MS = 5_000
 const DEFAULT_KUBERNETES_REQUEST_TIMEOUT_MS = 10_000
+const DEFAULT_TRANSIENT_HEALTH_GRACE_MS = 120_000
 
 type KubernetesResponse = {
   status: number
   body: string
+}
+
+type TargetHealthMemory = {
+  lastReadyAtMs: number | null
+}
+
+const isTransientArgoObservation = (observed: string | null): boolean =>
+  observed === 'Synced/Progressing' || observed === 'OutOfSync/Healthy' || observed === 'OutOfSync/Progressing'
+
+const isTransientTargetCheckFailure = (check: TargetHealthCheckResult): boolean => {
+  if (check.ok) return false
+  if (check.type === 'http') return true
+  if (check.type === 'argocd_application') {
+    return isTransientArgoObservation(check.observed)
+  }
+  return false
 }
 
 const requestKubernetes = (
@@ -462,6 +479,7 @@ export const makeTargetHealthLayer = (logger: Logger) =>
     TargetHealthService,
     Effect.gen(function* () {
       const workflow = yield* WorkflowService
+      const memoryRef = yield* Ref.make<TargetHealthMemory>({ lastReadyAtMs: null })
       const targetLogger = logger.child({ component: 'target-health' })
       const githubRequestTimeoutMs = readPositiveNumber(
         process.env.SYMPHONY_GITHUB_REQUEST_TIMEOUT_MS,
@@ -474,6 +492,10 @@ export const makeTargetHealthLayer = (logger: Logger) =>
       const kubernetesRequestTimeoutMs = readPositiveNumber(
         process.env.SYMPHONY_KUBERNETES_REQUEST_TIMEOUT_MS,
         DEFAULT_KUBERNETES_REQUEST_TIMEOUT_MS,
+      )
+      const transientGraceMs = readPositiveNumber(
+        process.env.SYMPHONY_TRANSIENT_HEALTH_GRACE_MS,
+        DEFAULT_TRANSIENT_HEALTH_GRACE_MS,
       )
 
       return {
@@ -513,15 +535,45 @@ export const makeTargetHealthLayer = (logger: Logger) =>
               )
 
               const openPromotionPr = promotionPrCount > 0
-              const lastError = promotionPrCount < 0 ? 'failed to evaluate open promotion pull requests' : null
-
-              return {
+              const hardError = promotionPrCount < 0 ? 'failed to evaluate open promotion pull requests' : null
+              const summary = {
                 checkedAt,
-                readyForDispatch: checks.every((check) => check.ok) && !openPromotionPr && lastError === null,
+                readyForDispatch: checks.every((check) => check.ok) && !openPromotionPr && hardError === null,
                 openPromotionPr,
                 promotionPrCount: Math.max(0, promotionPrCount),
                 checks,
-                lastError,
+                lastError: hardError,
+              } satisfies TargetHealthSummary
+
+              if (summary.readyForDispatch) {
+                yield* Ref.set(memoryRef, { lastReadyAtMs: Date.parse(checkedAt) })
+                return summary
+              }
+
+              const memory = yield* Ref.get(memoryRef)
+              const allFailuresTransient =
+                !summary.openPromotionPr &&
+                summary.lastError === null &&
+                summary.checks.some((check) => !check.ok) &&
+                summary.checks.every((check) => check.ok || isTransientTargetCheckFailure(check))
+              const withinGraceWindow =
+                memory.lastReadyAtMs !== null && Date.now() - memory.lastReadyAtMs <= transientGraceMs
+
+              if (!allFailuresTransient || !withinGraceWindow) {
+                return summary
+              }
+
+              return {
+                ...summary,
+                readyForDispatch: true,
+                checks: summary.checks.map((check) =>
+                  check.ok
+                    ? check
+                    : {
+                        ...check,
+                        message: `transient observation: ${check.message}`,
+                      },
+                ),
               } satisfies TargetHealthSummary
             }),
           ),

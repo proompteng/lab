@@ -256,7 +256,8 @@ const parseReleaseContractFromPullRequest = (
   }
 }
 
-const deriveLastError = (observation: DeliveryObservation): string | null => {
+const deriveLastError = (stage: DeliveryStage, observation: DeliveryObservation): string | null => {
+  if (stage === 'completed' || stage === 'rolled_back') return null
   if (observation.rollbackPr?.state === 'open') return observation.lastError ?? 'rollback pull request is open'
   if (observation.rollbackPr?.state === 'merged') return null
   if (observation.postDeploy?.state === 'failure') return 'post-deploy verification failed'
@@ -728,9 +729,10 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
             rollbackPr,
             lastError: baseDelivery.lastError,
           }
+          const stage = deriveDeliveryStage(observation)
 
           return {
-            stage: deriveDeliveryStage(observation),
+            stage,
             updatedAt: new Date().toISOString(),
             codePr,
             requiredChecks,
@@ -741,7 +743,7 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
             argo,
             postDeploy,
             rollbackPr,
-            lastError: deriveLastError(observation),
+            lastError: deriveLastError(stage, observation),
           } satisfies DeliveryTransaction
         }).pipe(
           Effect.catchAll((error) => {

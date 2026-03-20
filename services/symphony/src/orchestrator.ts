@@ -16,9 +16,9 @@ import { evaluateDispatchIssue, sortIssuesForDispatch } from './dispatch-rules'
 import { createEmptyDeliveryTransaction, DeliveryService } from './delivery-service'
 import {
   OrchestratorError,
+  TrackerError,
   toLogError,
   type ConfigError,
-  type TrackerError,
   type WorkspaceError,
   type WorkflowError,
 } from './errors'
@@ -131,6 +131,10 @@ const MAX_RECENT_ERRORS = 50
 const MAX_RUN_HISTORY = 25
 const DEFAULT_ORCHESTRATOR_COMMAND_TIMEOUT_MS = 30_000
 const DEFAULT_POLL_TICK_TIMEOUT_MS = 45_000
+const DEFAULT_CANDIDATE_FETCH_RETRY_ATTEMPTS = 2
+const DEFAULT_CANDIDATE_FETCH_RETRY_INITIAL_DELAY_MS = 250
+const DEFAULT_CANDIDATE_FETCH_RETRY_MAX_DELAY_MS = 2_000
+const TERMINAL_DELIVERY_STAGES = new Set(['completed', 'rolled_back', 'failed'])
 
 const buildTelemetrySessionId = (projectSlug: string | null, issueId: string) =>
   `symphony:${projectSlug ?? 'unknown'}:${issueId}`
@@ -199,6 +203,16 @@ const pushBounded = <T>(items: T[], item: T, limit: number) => {
   items.push(item)
   if (items.length > limit) {
     items.splice(0, items.length - limit)
+  }
+}
+
+const hasGithubDeliveryAccess = (): boolean => Boolean(process.env.GH_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim())
+
+const clearStaleRuntimeFromRecord = (record: IssueRecord) => {
+  record.status = record.retry ? 'retrying' : 'tracked'
+  record.running = null
+  if (!record.retry && TERMINAL_DELIVERY_STAGES.has(record.delivery?.stage ?? '')) {
+    record.lastError = record.delivery?.lastError ?? null
   }
 }
 
@@ -327,7 +341,10 @@ const buildPolicySummary = (config: SymphonyConfig): PolicySummary => ({
   approvalPolicy: config.codex.approvalPolicy,
   threadSandbox: config.codex.threadSandbox,
   turnSandboxPolicy: config.codex.turnSandboxPolicy,
-  allowedTools: config.tracker.kind === 'linear' && config.tracker.apiKey ? ['linear_graphql'] : [],
+  allowedTools: [
+    ...(config.tracker.kind === 'linear' && config.tracker.apiKey ? ['linear_graphql'] : []),
+    ...(hasGithubDeliveryAccess() ? ['github_delivery'] : []),
+  ],
   workspaceRoot: config.workspaceRoot,
   pollIntervalMs: config.pollingIntervalMs,
   maxConcurrentAgents: config.agent.maxConcurrentAgents,
@@ -416,7 +433,7 @@ const hydrateStateFromPersisted = (persisted: PersistedSchedulerState, config: S
   state.recentErrors = [...persisted.recentErrors]
 
   for (const record of persisted.issues) {
-    state.issueRecords.set(record.issueId, {
+    const hydratedRecord: IssueRecord = {
       ...record,
       recentEvents: [...record.recentEvents],
       runHistory: [...record.runHistory],
@@ -435,7 +452,11 @@ const hydrateStateFromPersisted = (persisted: PersistedSchedulerState, config: S
             rollbackPr: record.delivery.rollbackPr ? { ...record.delivery.rollbackPr } : null,
           }
         : null,
-    })
+    }
+    if (hydratedRecord.status === 'running') {
+      clearStaleRuntimeFromRecord(hydratedRecord)
+    }
+    state.issueRecords.set(record.issueId, hydratedRecord)
   }
 
   for (const retry of persisted.retrying) {
@@ -940,7 +961,8 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                   issue_identifier: running.identifier,
                   call_id: event.toolCall.callId,
                   retry_attempt: running.retryAttempt ?? 0,
-                  span_kind: 'linear_graphql_tool_call',
+                  span_kind: 'dynamic_tool_call',
+                  tool_name: event.toolCall.name,
                 },
               }),
             )
@@ -1265,11 +1287,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                   trackedState !== null &&
                   (config.tracker.activeStates.includes(trackedState) || trackedState === config.tracker.handoffState)
                 const deliveryStage = record.delivery?.stage ?? 'coding'
-                return (
-                  activeOrHandoff ||
-                  !['completed', 'rolled_back', 'failed'].includes(deliveryStage) ||
-                  record.status !== 'tracked'
-                )
+                return activeOrHandoff || !TERMINAL_DELIVERY_STAGES.has(deliveryStage) || record.status !== 'tracked'
               }),
             ),
           )
@@ -1280,12 +1298,69 @@ export const makeOrchestratorLayer = (logger: Logger) =>
               const current = state.issueRecords.get(record.issueId)
               if (current) {
                 current.delivery = refreshed
+                if (
+                  TERMINAL_DELIVERY_STAGES.has(refreshed.stage) &&
+                  !state.running.has(record.issueId) &&
+                  !state.retryAttempts.has(record.issueId)
+                ) {
+                  clearStaleRuntimeFromRecord(current)
+                }
+                if (refreshed.stage === 'completed') {
+                  current.lastError = null
+                }
                 current.updatedAt = new Date().toISOString()
               }
               return Effect.succeed([undefined, state] as const)
             })
           }
         })
+
+      const fetchCandidateIssuesWithRetry = (
+        context: 'dispatch' | 'candidate_fetch_handoff' | 'retry_dispatch',
+      ): Effect.Effect<Issue[], ConfigError | WorkflowError | TrackerError, never> => {
+        const attempts = readPositiveNumber(
+          process.env.SYMPHONY_CANDIDATE_FETCH_RETRY_ATTEMPTS,
+          DEFAULT_CANDIDATE_FETCH_RETRY_ATTEMPTS,
+        )
+        const initialDelayMs = readPositiveNumber(
+          process.env.SYMPHONY_CANDIDATE_FETCH_RETRY_INITIAL_DELAY_MS,
+          DEFAULT_CANDIDATE_FETCH_RETRY_INITIAL_DELAY_MS,
+        )
+        const maxDelayMs = readPositiveNumber(
+          process.env.SYMPHONY_CANDIDATE_FETCH_RETRY_MAX_DELAY_MS,
+          DEFAULT_CANDIDATE_FETCH_RETRY_MAX_DELAY_MS,
+        )
+        const retrySchedule = Schedule.whileInput<unknown>(
+          (error) => error instanceof TrackerError && error.code === 'linear_api_request',
+        )(
+          Schedule.map(
+            Schedule.intersect(Schedule.recurs(Math.max(0, attempts)))(
+              Schedule.jitteredWith({ min: 0.8, max: 1.2 })(
+                Schedule.delayed(Schedule.exponential(Duration.millis(initialDelayMs), 2), (delay) =>
+                  Duration.min(delay, Duration.millis(maxDelayMs)),
+                ),
+              ),
+            ),
+            ([delay]) => delay,
+          ),
+        )
+
+        return tracker.fetchCandidateIssues.pipe(
+          Effect.tap(() => Effect.sync(() => recordCandidateFetch('success'))),
+          Effect.retry(
+            retrySchedule.pipe(
+              Schedule.tapInput((error) =>
+                Effect.sync(() => {
+                  orchestratorLogger.log('warn', 'candidate_fetch_retrying', {
+                    context,
+                    ...toLogError(error),
+                  })
+                }),
+              ),
+            ),
+          ),
+        )
+      }
 
       const reconcileStalledRuns = (config: SymphonyConfig) =>
         config.codex.stallTimeoutMs <= 0
@@ -1492,8 +1567,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             const issuesToHandoff = yield* withSymphonyEffectSpan(
               'symphony.poll_tick.candidate_fetch_handoff',
               {},
-              tracker.fetchCandidateIssues.pipe(
-                Effect.tap(() => Effect.sync(() => recordCandidateFetch('success'))),
+              fetchCandidateIssuesWithRetry('candidate_fetch_handoff').pipe(
                 Effect.catchAll((error) =>
                   Effect.sync(() => {
                     recordCandidateFetch('error')
@@ -1535,8 +1609,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
           const issues = yield* withSymphonyEffectSpan(
             'symphony.poll_tick.candidate_fetch',
             {},
-            tracker.fetchCandidateIssues.pipe(
-              Effect.tap(() => Effect.sync(() => recordCandidateFetch('success'))),
+            fetchCandidateIssuesWithRetry('dispatch').pipe(
               Effect.catchAll((error) =>
                 Effect.sync(() => {
                   recordCandidateFetch('error')
@@ -1678,10 +1751,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             })
             if (!retryEntry) return
 
-            const candidatesResult = yield* tracker.fetchCandidateIssues.pipe(
-              Effect.tap(() => Effect.sync(() => recordCandidateFetch('success'))),
-              Effect.either,
-            )
+            const candidatesResult = yield* fetchCandidateIssuesWithRetry('retry_dispatch').pipe(Effect.either)
 
             if (candidatesResult._tag === 'Left') {
               const error = candidatesResult.left
