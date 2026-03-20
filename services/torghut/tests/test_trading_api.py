@@ -40,6 +40,8 @@ from app.models import (
     ExecutionTCAMetric,
     LLMDecisionReview,
     Strategy,
+    StrategyHypothesisMetricWindow,
+    StrategyPromotionDecision,
     TradeDecision,
     VNextEmpiricalJobRun,
 )
@@ -1904,6 +1906,19 @@ class TestTradingApi(TestCase):
                     "window": "15m",
                     "capital_state": "observe",
                 },
+                "lineage_ref": {
+                    "status": "unverified",
+                    "candidate_id": None,
+                    "hypothesis_id": None,
+                    "dataset_snapshot_count": 0,
+                    "dataset_snapshot_id": None,
+                    "dataset_snapshot_ref": None,
+                    "dataset_snapshot_run_id": None,
+                    "strategy_hypothesis_count": 0,
+                    "strategy_hypothesis_id": None,
+                    "lane_id": None,
+                    "strategy_family": None,
+                },
                 "evaluated_tuples": [],
             }
 
@@ -1970,16 +1985,179 @@ class TestTradingApi(TestCase):
                 status_response = self.client.get("/trading/status")
                 health_response = self.client.get("/trading/health")
                 ready_response = self.client.get("/readyz")
+                runtime_response = self.client.get("/trading/profitability/runtime")
 
             self.assertEqual(status_response.status_code, 200)
             self.assertEqual(health_response.status_code, 503)
             self.assertEqual(ready_response.status_code, 503)
+            self.assertEqual(runtime_response.status_code, 200)
             self.assertEqual(status_response.json()["live_submission_gate"], shared_gate)
             self.assertEqual(health_response.json()["live_submission_gate"], shared_gate)
             self.assertEqual(ready_response.json()["live_submission_gate"], shared_gate)
+            self.assertEqual(
+                runtime_response.json()["live_submission_gate"],
+                shared_gate,
+            )
         finally:
             settings.trading_mode = original_mode
             settings.trading_enabled = original_enabled
+            if original_scheduler is None:
+                if hasattr(app.state, "trading_scheduler"):
+                    del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
+    def test_trading_status_blocks_live_submission_when_lineage_tables_are_empty(
+        self,
+    ) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        original = {
+            "trading_enabled": settings.trading_enabled,
+            "trading_mode": settings.trading_mode,
+            "trading_autonomy_enabled": settings.trading_autonomy_enabled,
+            "trading_autonomy_allow_live_promotion": settings.trading_autonomy_allow_live_promotion,
+            "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
+        }
+        try:
+            settings.trading_enabled = True
+            settings.trading_mode = "live"
+            settings.trading_autonomy_enabled = False
+            settings.trading_autonomy_allow_live_promotion = False
+            settings.trading_kill_switch_enabled = False
+
+            scheduler = TradingScheduler()
+            scheduler.state.last_market_context_freshness_seconds = 30
+            app.state.trading_scheduler = scheduler
+
+            with self.session_local() as session:
+                observed_at = datetime.now(timezone.utc)
+                session.add(
+                    StrategyHypothesisMetricWindow(
+                        run_id="run-1",
+                        candidate_id="cand-1",
+                        hypothesis_id="H-CONT-01",
+                        observed_stage="live",
+                        window_started_at=observed_at - timedelta(minutes=15),
+                        window_ended_at=observed_at,
+                        market_session_count=1,
+                        decision_count=1,
+                        trade_count=1,
+                        order_count=1,
+                        continuity_ok=True,
+                        drift_ok=True,
+                        dependency_quorum_decision="allow",
+                        capital_stage="0.10x canary",
+                    )
+                )
+                session.add(
+                    StrategyPromotionDecision(
+                        run_id="run-1",
+                        candidate_id="cand-1",
+                        hypothesis_id="H-CONT-01",
+                        promotion_target="live",
+                        state="0.10x canary",
+                        allowed=True,
+                        reason_summary="ready",
+                    )
+                )
+                session.commit()
+
+            registry_item = SimpleNamespace(
+                hypothesis_id="H-CONT-01",
+                model_dump=lambda mode="json": {
+                    "hypothesis_id": "H-CONT-01",
+                    "lane_id": "lane-cand-1",
+                    "strategy_family": "demo",
+                    "segment_dependencies": [],
+                },
+            )
+
+            with (
+                patch(
+                    "app.main._build_hypothesis_runtime_payload",
+                    return_value=(
+                        {
+                            "summary": {
+                                "promotion_eligible_total": 1,
+                                "capital_stage_totals": {"0.10x canary": 1},
+                                "dependency_quorum": {
+                                    "decision": "allow",
+                                    "reasons": [],
+                                    "message": "ready",
+                                },
+                            },
+                            "items": [
+                                {
+                                    "hypothesis_id": "H-CONT-01",
+                                    "promotion_eligible": True,
+                                    "capital_stage": "0.10x canary",
+                                    "reasons": [],
+                                    "segment_dependencies": [],
+                                }
+                            ],
+                        },
+                        {
+                            "promotion_eligible_total": 1,
+                            "capital_stage_totals": {"0.10x canary": 1},
+                            "dependency_quorum": {
+                                "decision": "allow",
+                                "reasons": [],
+                                "message": "ready",
+                            },
+                        },
+                        SimpleNamespace(
+                            decision="allow",
+                            as_payload=lambda: {
+                                "decision": "allow",
+                                "reasons": [],
+                                "message": "ready",
+                            },
+                        ),
+                    ),
+                ),
+                patch(
+                    "app.trading.submission_council.load_hypothesis_registry",
+                    return_value=SimpleNamespace(items=[registry_item]),
+                ),
+                patch(
+                    "app.main._empirical_jobs_status",
+                    return_value={"ready": True, "status": "healthy"},
+                ),
+                patch(
+                    "app.main.load_quant_evidence_status",
+                    return_value={
+                        "required": True,
+                        "ok": True,
+                        "status": "healthy",
+                        "reason": "ready",
+                        "blocking_reasons": [],
+                        "account": "paper",
+                        "window": "15m",
+                        "source_url": "http://jangar.test/api/torghut/trading/control-plane/quant/health?account=paper&window=15m",
+                    },
+                ),
+            ):
+                response = self.client.get("/trading/status")
+
+            self.assertEqual(response.status_code, 200)
+            gate = response.json()["live_submission_gate"]
+            self.assertFalse(gate["allowed"])
+            self.assertEqual(gate["capital_state"], "observe")
+            self.assertIn("dataset_snapshot_missing", gate["blocked_reasons"])
+            self.assertIn("strategy_hypothesis_missing", gate["blocked_reasons"])
+            self.assertEqual(gate["lineage_ref"]["status"], "missing")
+            self.assertEqual(gate["lineage_ref"]["dataset_snapshot_count"], 0)
+            self.assertEqual(gate["lineage_ref"]["strategy_hypothesis_count"], 0)
+        finally:
+            settings.trading_enabled = original["trading_enabled"]
+            settings.trading_mode = original["trading_mode"]
+            settings.trading_autonomy_enabled = original["trading_autonomy_enabled"]
+            settings.trading_autonomy_allow_live_promotion = original[
+                "trading_autonomy_allow_live_promotion"
+            ]
+            settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
             if original_scheduler is None:
                 if hasattr(app.state, "trading_scheduler"):
                     del app.state.trading_scheduler

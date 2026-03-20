@@ -158,6 +158,8 @@ spec:
               value: config/trading/hypotheses
             - name: TRADING_JANGAR_CONTROL_PLANE_STATUS_URL
               value: http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?namespace=agents
+            - name: TRADING_JANGAR_QUANT_HEALTH_URL
+              value: http://jangar.jangar.svc.cluster.local/api/torghut/trading/control-plane/quant/health
             - name: TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS
               value: "15"
             - name: TRADING_FORECAST_SERVICE_URL

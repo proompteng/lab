@@ -15,7 +15,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..models import StrategyHypothesisMetricWindow, StrategyPromotionDecision
+from ..models import (
+    StrategyHypothesis,
+    StrategyHypothesisMetricWindow,
+    StrategyPromotionDecision,
+    VNextDatasetSnapshot,
+)
 from .hypotheses import (
     compile_hypothesis_runtime_statuses,
     load_hypothesis_registry,
@@ -136,18 +141,10 @@ def _derive_quant_health_url(
 
 
 def resolve_quant_health_url() -> str | None:
-    for candidate, preserve_path in (
-        (settings.trading_jangar_quant_health_url, True),
-        (settings.trading_jangar_control_plane_status_url, False),
-        (settings.trading_market_context_url, False),
-    ):
-        resolved = _derive_quant_health_url(
-            candidate,
-            preserve_path=preserve_path,
-        )
-        if resolved:
-            return resolved
-    return None
+    return _derive_quant_health_url(
+        settings.trading_jangar_quant_health_url,
+        preserve_path=True,
+    )
 
 
 def _build_quant_health_request_url(
@@ -182,11 +179,11 @@ def load_quant_evidence_status(
     base_url = resolve_quant_health_url()
     if not base_url:
         return {
-            'required': False,
-            'ok': True,
-            'status': 'skipped',
+            'required': True,
+            'ok': False,
+            'status': 'unknown',
             'reason': 'quant_health_not_configured',
-            'blocking_reasons': [],
+            'blocking_reasons': ['quant_health_not_configured'],
             'account': account or None,
             'window': window,
             'source_url': None,
@@ -681,6 +678,142 @@ def _evaluate_certificate_candidates(
     return evaluated, valid
 
 
+def _default_lineage_ref(
+    *,
+    status: str = 'unverified',
+    candidate_id: str | None = None,
+    hypothesis_id: str | None = None,
+) -> dict[str, object]:
+    return {
+        'status': status,
+        'candidate_id': candidate_id,
+        'hypothesis_id': hypothesis_id,
+        'dataset_snapshot_count': 0,
+        'dataset_snapshot_id': None,
+        'dataset_snapshot_ref': None,
+        'dataset_snapshot_run_id': None,
+        'strategy_hypothesis_count': 0,
+        'strategy_hypothesis_id': None,
+        'lane_id': None,
+        'strategy_family': None,
+    }
+
+
+def _attach_lineage_refs(
+    session: Session,
+    *,
+    evaluated_rows: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    candidate_ids = sorted(
+        {
+            candidate_id
+            for row in evaluated_rows
+            if (candidate_id := _safe_text(row.get('candidate_id'))) is not None
+        }
+    )
+    hypothesis_ids = sorted(
+        {
+            hypothesis_id
+            for row in evaluated_rows
+            if (hypothesis_id := _safe_text(row.get('hypothesis_id'))) is not None
+        }
+    )
+
+    dataset_snapshots_by_candidate: dict[str, list[VNextDatasetSnapshot]] = {}
+    if candidate_ids:
+        dataset_rows = session.execute(
+            select(VNextDatasetSnapshot)
+            .where(VNextDatasetSnapshot.candidate_id.in_(candidate_ids))
+            .order_by(VNextDatasetSnapshot.created_at.desc())
+        ).scalars().all()
+        for row in dataset_rows:
+            candidate_id = _safe_text(row.candidate_id)
+            if candidate_id is None:
+                continue
+            dataset_snapshots_by_candidate.setdefault(candidate_id, []).append(row)
+
+    hypotheses_by_id: dict[str, list[StrategyHypothesis]] = {}
+    if hypothesis_ids:
+        hypothesis_rows = session.execute(
+            select(StrategyHypothesis)
+            .where(
+                StrategyHypothesis.hypothesis_id.in_(hypothesis_ids),
+                StrategyHypothesis.active.is_(True),
+            )
+            .order_by(StrategyHypothesis.created_at.desc())
+        ).scalars().all()
+        for row in hypothesis_rows:
+            hypothesis_id = _safe_text(row.hypothesis_id)
+            if hypothesis_id is None:
+                continue
+            hypotheses_by_id.setdefault(hypothesis_id, []).append(row)
+
+    attached_rows: list[dict[str, object]] = []
+    for row in evaluated_rows:
+        evaluated_row = dict(row)
+        candidate_id = _safe_text(evaluated_row.get('candidate_id'))
+        hypothesis_id = _safe_text(evaluated_row.get('hypothesis_id'))
+        reason_codes = list(
+            cast(Sequence[str], evaluated_row.get('reason_codes') or [])
+        )
+
+        dataset_rows = (
+            dataset_snapshots_by_candidate.get(candidate_id, [])
+            if candidate_id is not None
+            else []
+        )
+        hypothesis_rows = (
+            hypotheses_by_id.get(hypothesis_id, [])
+            if hypothesis_id is not None
+            else []
+        )
+
+        if candidate_id is not None and not dataset_rows:
+            reason_codes.append('dataset_snapshot_missing')
+        if hypothesis_id is not None and not hypothesis_rows:
+            reason_codes.append('strategy_hypothesis_missing')
+
+        dataset_row = dataset_rows[0] if dataset_rows else None
+        hypothesis_row = hypothesis_rows[0] if hypothesis_rows else None
+        lineage_missing = (
+            (candidate_id is not None and not dataset_rows)
+            or (hypothesis_id is not None and not hypothesis_rows)
+        )
+        lineage_ref = _default_lineage_ref(
+            status='missing' if lineage_missing else 'ready',
+            candidate_id=candidate_id,
+            hypothesis_id=hypothesis_id,
+        )
+        lineage_ref.update(
+            {
+                'dataset_snapshot_count': len(dataset_rows),
+                'dataset_snapshot_id': (
+                    str(dataset_row.id) if dataset_row is not None else None
+                ),
+                'dataset_snapshot_ref': (
+                    dataset_row.artifact_ref if dataset_row is not None else None
+                ),
+                'dataset_snapshot_run_id': (
+                    dataset_row.run_id if dataset_row is not None else None
+                ),
+                'strategy_hypothesis_count': len(hypothesis_rows),
+                'strategy_hypothesis_id': (
+                    str(hypothesis_row.id) if hypothesis_row is not None else None
+                ),
+                'lane_id': hypothesis_row.lane_id if hypothesis_row is not None else None,
+                'strategy_family': (
+                    hypothesis_row.strategy_family if hypothesis_row is not None else None
+                ),
+            }
+        )
+
+        evaluated_row['reason_codes'] = _normalize_reason_codes(reason_codes)
+        evaluated_row['lineage_ref'] = lineage_ref
+        attached_rows.append(evaluated_row)
+
+    return attached_rows
+
+
 def build_live_submission_gate_payload(
     state: object,
     *,
@@ -807,6 +940,7 @@ def build_live_submission_gate_payload(
                 'window': quant_evidence.get('window'),
                 'capital_state': settings.trading_mode,
             },
+            'lineage_ref': _default_lineage_ref(),
             'evaluated_tuples': [],
         }
 
@@ -846,6 +980,14 @@ def build_live_submission_gate_payload(
         window=_safe_text(quant_evidence.get('window')),
         account=_safe_text(quant_evidence.get('account')),
     )
+    if session is not None and evaluated_tuples:
+        evaluated_tuples = _attach_lineage_refs(
+            session,
+            evaluated_rows=evaluated_tuples,
+        )
+        valid_candidates = [
+            item for item in evaluated_tuples if not item.get('reason_codes')
+        ]
 
     if promotion_eligible_total > 0 and not valid_candidates:
         if not evaluated_tuples:
@@ -907,6 +1049,20 @@ def build_live_submission_gate_payload(
         'window': quant_evidence.get('window'),
         'capital_state': capital_state,
     }
+    lineage_ref = _default_lineage_ref(
+        status='missing' if evaluated_tuples else 'unverified',
+    )
+    if chosen_candidate is not None and isinstance(
+        chosen_candidate.get('lineage_ref'),
+        Mapping,
+    ):
+        lineage_ref = dict(
+            cast(Mapping[str, object], chosen_candidate.get('lineage_ref'))
+        )
+    elif evaluated_tuples and isinstance(evaluated_tuples[0].get('lineage_ref'), Mapping):
+        lineage_ref = dict(
+            cast(Mapping[str, object], evaluated_tuples[0].get('lineage_ref'))
+        )
 
     return {
         'allowed': allowed,
@@ -945,6 +1101,7 @@ def build_live_submission_gate_payload(
         },
         'market_context_ref': market_context_ref,
         'evidence_tuple': evidence_tuple,
+        'lineage_ref': lineage_ref,
         'evaluated_tuples': evaluated_tuples,
     }
 
