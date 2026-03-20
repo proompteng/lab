@@ -89,9 +89,9 @@ The current highest-priority work is:
 9. force submission parity and options bootstrap escrow through the Torghut plan contract in
    `docs/torghut/design-system/v6/50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`;
 10. force capital-stage decisions through the hypothesis capital governor, promotion-certificate, and data-quorum
-   contract in `docs/agents/designs/50-torghut-hypothesis-capital-governor-and-data-quorum-2026-03-19.md`;
+    contract in `docs/agents/designs/50-torghut-hypothesis-capital-governor-and-data-quorum-2026-03-19.md`;
 11. make admission truth durable with dependency provenance, consumer acknowledgement, and replayable collaboration in
-   `docs/agents/designs/53-jangar-dependency-provenance-ledger-and-consumer-acknowledged-admission-2026-03-19.md`;
+    `docs/agents/designs/53-jangar-dependency-provenance-ledger-and-consumer-acknowledged-admission-2026-03-19.md`;
 12. extend that control plane with the segment-authority-graph and promotion-certificate fail-safe in
     `docs/agents/designs/52-jangar-segment-authority-graph-and-promotion-certificate-fail-safe-2026-03-19.md`;
 13. make non-shadow capital depend on expiring profit reservations, schema fitness, and simulation slot ownership in
