@@ -71,6 +71,18 @@ class TestSubmissionCouncil(TestCase):
             state=capital_stage,
         )
 
+    def _healthy_quant_status(self) -> dict[str, object]:
+        return {
+            "required": True,
+            "ok": True,
+            "reason": "ready",
+            "blocking_reasons": [],
+            "account": "paper",
+            "window": "15m",
+            "status": "healthy",
+            "source_url": "http://jangar.test/api/torghut/trading/control-plane/quant/health?account=paper&window=15m",
+        }
+
     def test_build_live_submission_gate_payload_fails_closed_on_empty_quant_evidence(
         self,
     ) -> None:
@@ -143,16 +155,7 @@ class TestSubmissionCouncil(TestCase):
                 },
             },
             empirical_jobs_status={"ready": True, "status": "healthy"},
-            quant_health_status={
-                "required": False,
-                "ok": True,
-                "reason": "quant_health_not_configured",
-                "blocking_reasons": [],
-                "account": "paper",
-                "window": "15m",
-                "status": "skipped",
-                "source_url": None,
-            },
+            quant_health_status=self._healthy_quant_status(),
             promotion_certificate_evidence=[
                 {
                     "hypothesis_id": "H-CONT-01",
@@ -188,16 +191,7 @@ class TestSubmissionCouncil(TestCase):
                 },
             },
             empirical_jobs_status={"ready": True, "status": "healthy"},
-            quant_health_status={
-                "required": False,
-                "ok": True,
-                "reason": "quant_health_not_configured",
-                "blocking_reasons": [],
-                "account": "paper",
-                "window": "15m",
-                "status": "skipped",
-                "source_url": None,
-            },
+            quant_health_status=self._healthy_quant_status(),
             promotion_certificate_evidence=[],
         )
 
@@ -237,16 +231,7 @@ class TestSubmissionCouncil(TestCase):
                 ],
             },
             empirical_jobs_status={"ready": True, "status": "healthy"},
-            quant_health_status={
-                "required": False,
-                "ok": True,
-                "reason": "quant_health_not_configured",
-                "blocking_reasons": [],
-                "account": "paper",
-                "window": "15m",
-                "status": "skipped",
-                "source_url": None,
-            },
+            quant_health_status=self._healthy_quant_status(),
             promotion_certificate_evidence=[
                 {
                     "hypothesis_id": "H-CONT-01",
@@ -264,6 +249,49 @@ class TestSubmissionCouncil(TestCase):
         )
         self.assertIn("alpha_hypothesis_shadow_only", result["blocked_reasons"])
 
+    def test_build_live_submission_gate_payload_blocks_when_quant_health_is_not_configured(
+        self,
+    ) -> None:
+        result = build_live_submission_gate_payload(
+            SimpleNamespace(
+                last_autonomy_promotion_eligible=True,
+                last_autonomy_promotion_action="promote",
+                drift_live_promotion_eligible=False,
+                last_market_context_freshness_seconds=45,
+            ),
+            hypothesis_summary={
+                "promotion_eligible_total": 1,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            },
+            empirical_jobs_status={"ready": True, "status": "healthy"},
+            quant_health_status={
+                "required": True,
+                "ok": False,
+                "reason": "quant_health_not_configured",
+                "blocking_reasons": ["quant_health_not_configured"],
+                "account": "paper",
+                "window": "15m",
+                "status": "unknown",
+                "source_url": None,
+            },
+            promotion_certificate_evidence=[
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "metric_window": self._metric_window(),
+                    "promotion_decision": self._promotion_decision(),
+                }
+            ],
+        )
+
+        self.assertFalse(result["allowed"])
+        self.assertEqual(result["reason"], "quant_health_not_configured")
+        self.assertIn("quant_health_not_configured", result["blocked_reasons"])
+
     def test_resolve_quant_health_url_preserves_explicit_override_path(self) -> None:
         settings.trading_jangar_quant_health_url = (
             " https://jangar.example/custom/proxy/quant/health "
@@ -278,7 +306,9 @@ class TestSubmissionCouncil(TestCase):
             "https://jangar.example/custom/proxy/quant/health",
         )
 
-    def test_resolve_quant_health_url_rewrites_control_plane_status_fallback(self) -> None:
+    def test_resolve_quant_health_url_does_not_fallback_to_control_plane_status(
+        self,
+    ) -> None:
         settings.trading_jangar_quant_health_url = ""
         settings.trading_jangar_control_plane_status_url = (
             "https://jangar.example/api/agents/control-plane/status?namespace=agents"
@@ -287,19 +317,13 @@ class TestSubmissionCouncil(TestCase):
             "https://jangar.example/api/torghut/market-context/health?symbol=NVDA"
         )
 
-        self.assertEqual(
-            resolve_quant_health_url(),
-            "https://jangar.example/api/torghut/trading/control-plane/quant/health",
-        )
+        self.assertIsNone(resolve_quant_health_url())
 
-    def test_resolve_quant_health_url_rewrites_market_context_fallback(self) -> None:
+    def test_resolve_quant_health_url_does_not_fallback_to_market_context(self) -> None:
         settings.trading_jangar_quant_health_url = ""
         settings.trading_jangar_control_plane_status_url = ""
         settings.trading_market_context_url = (
             "https://jangar.example/api/torghut/market-context/health?symbol=NVDA"
         )
 
-        self.assertEqual(
-            resolve_quant_health_url(),
-            "https://jangar.example/api/torghut/trading/control-plane/quant/health",
-        )
+        self.assertIsNone(resolve_quant_health_url())

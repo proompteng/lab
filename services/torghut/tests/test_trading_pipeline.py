@@ -18,9 +18,11 @@ from app.models import (
     Execution,
     LLMDecisionReview,
     Strategy,
+    StrategyHypothesis,
     StrategyHypothesisMetricWindow,
     StrategyPromotionDecision,
     TradeDecision,
+    VNextDatasetSnapshot,
 )
 from app import config
 from app.trading.decisions import DecisionEngine
@@ -563,6 +565,7 @@ class TestTradingPipeline(TestCase):
         hypothesis_id: str = 'H-CONT-01',
         candidate_id: str = 'cand-1',
         capital_stage: str = '0.10x canary',
+        strategy_family: str = 'demo',
     ) -> None:
         evidence_at = datetime.now(timezone.utc)
         with self.session_local() as session:
@@ -595,7 +598,45 @@ class TestTradingPipeline(TestCase):
                     reason_summary='ready',
                 )
             )
+            session.add(
+                StrategyHypothesis(
+                    hypothesis_id=hypothesis_id,
+                    lane_id=f'lane-{candidate_id}',
+                    strategy_family=strategy_family,
+                    active=True,
+                )
+            )
+            session.add(
+                VNextDatasetSnapshot(
+                    run_id='run-1',
+                    candidate_id=candidate_id,
+                    dataset_id=f'dataset-{candidate_id}',
+                    source='historical_market_replay',
+                    dataset_version='run-1',
+                    artifact_ref=f's3://torghut/empirical/{candidate_id}',
+                )
+            )
             session.commit()
+
+    def _healthy_quant_status(self, *, account_label: str = 'live') -> dict[str, object]:
+        return {
+            'required': True,
+            'ok': True,
+            'status': 'healthy',
+            'reason': 'ready',
+            'blocking_reasons': [],
+            'account': account_label,
+            'window': '15m',
+            'source_url': (
+                'http://jangar.test/api/torghut/trading/control-plane/quant/health'
+                f'?account={account_label}&window=15m'
+            ),
+            'latest_metrics_count': 12,
+            'latest_metrics_updated_at': '2026-03-20T10:00:00Z',
+        }
+
+    def _healthy_live_quant_status(self) -> dict[str, object]:
+        return self._healthy_quant_status(account_label='live')
 
     def test_pipeline_empty_signal_batch_commits_cursor(self) -> None:
         from app import config
@@ -1479,6 +1520,9 @@ class TestTradingPipeline(TestCase):
             ), patch(
                 "app.trading.scheduler.pipeline.build_empirical_jobs_status",
                 return_value={"ready": True, "status": "healthy"},
+            ), patch(
+                "app.trading.scheduler.pipeline.load_quant_evidence_status",
+                return_value=self._healthy_quant_status(account_label='paper'),
             ):
                 pipeline.run_once()
 
@@ -1608,6 +1652,24 @@ class TestTradingPipeline(TestCase):
                         reason_summary="ready",
                     )
                 )
+                session.add(
+                    StrategyHypothesis(
+                        hypothesis_id="H-CONT-01",
+                        lane_id="lane-cand-1",
+                        strategy_family="live-canary-eligible",
+                        active=True,
+                    )
+                )
+                session.add(
+                    VNextDatasetSnapshot(
+                        run_id="run-1",
+                        candidate_id="cand-1",
+                        dataset_id="dataset-cand-1",
+                        source="historical_market_replay",
+                        dataset_version="run-1",
+                        artifact_ref="s3://torghut/empirical/cand-1",
+                    )
+                )
                 session.commit()
 
             signal = SignalEnvelope(
@@ -1647,6 +1709,9 @@ class TestTradingPipeline(TestCase):
             ), patch(
                 "app.trading.scheduler.pipeline.build_empirical_jobs_status",
                 return_value={"ready": True, "status": "healthy"},
+            ), patch(
+                "app.trading.scheduler.pipeline.load_quant_evidence_status",
+                return_value=self._healthy_live_quant_status(),
             ):
                 pipeline.run_once()
 
@@ -5990,6 +6055,9 @@ class TestTradingPipeline(TestCase):
             ), patch(
                 "app.trading.scheduler.pipeline.build_empirical_jobs_status",
                 return_value={"ready": True, "status": "healthy"},
+            ), patch(
+                "app.trading.scheduler.pipeline.load_quant_evidence_status",
+                return_value=self._healthy_live_quant_status(),
             ):
                 pipeline_live.run_once()
 
@@ -6307,6 +6375,9 @@ class TestTradingPipeline(TestCase):
                 ), patch(
                     "app.trading.scheduler.pipeline.build_empirical_jobs_status",
                     return_value={"ready": True, "status": "healthy"},
+                ), patch(
+                    "app.trading.scheduler.pipeline.load_quant_evidence_status",
+                    return_value=self._healthy_live_quant_status(),
                 ):
                     pipeline.run_once()
 
@@ -6480,10 +6551,13 @@ class TestTradingPipeline(TestCase):
                 "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
                 return_value=eligible_summary,
             ), patch(
-                    "app.trading.scheduler.pipeline.build_empirical_jobs_status",
-                    return_value={"ready": True, "status": "healthy"},
-                ):
-                    pipeline.run_once()
+                "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                return_value={"ready": True, "status": "healthy"},
+            ), patch(
+                "app.trading.scheduler.pipeline.load_quant_evidence_status",
+                return_value=self._healthy_live_quant_status(),
+            ):
+                pipeline.run_once()
 
             with self.session_local() as session:
                 reviews = session.execute(select(LLMDecisionReview)).scalars().all()
@@ -7528,6 +7602,9 @@ class TestTradingPipeline(TestCase):
             ), patch(
                 "app.trading.scheduler.pipeline.build_empirical_jobs_status",
                 return_value={"ready": True, "status": "healthy"},
+            ), patch(
+                "app.trading.scheduler.pipeline.load_quant_evidence_status",
+                return_value=self._healthy_live_quant_status(),
             ):
                 pipeline.run_once()
 
@@ -7702,6 +7779,9 @@ class TestTradingPipeline(TestCase):
             ), patch(
                 "app.trading.scheduler.pipeline.build_empirical_jobs_status",
                 return_value={"ready": True, "status": "healthy"},
+            ), patch(
+                "app.trading.scheduler.pipeline.load_quant_evidence_status",
+                return_value=self._healthy_live_quant_status(),
             ):
                 pipeline.run_once()
 
@@ -7896,6 +7976,9 @@ class TestTradingPipeline(TestCase):
             ), patch(
                 "app.trading.scheduler.pipeline.build_empirical_jobs_status",
                 return_value={"ready": True, "status": "healthy"},
+            ), patch(
+                "app.trading.scheduler.pipeline.load_quant_evidence_status",
+                return_value=self._healthy_live_quant_status(),
             ):
                 pipeline.run_once()
 
@@ -8211,6 +8294,9 @@ class TestTradingPipeline(TestCase):
             ), patch(
                 "app.trading.scheduler.pipeline.build_empirical_jobs_status",
                 return_value={"ready": True, "status": "healthy"},
+            ), patch(
+                "app.trading.scheduler.pipeline.load_quant_evidence_status",
+                return_value=self._healthy_live_quant_status(),
             ):
                 pipeline.run_once()
 

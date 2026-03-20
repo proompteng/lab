@@ -2270,6 +2270,30 @@ def trading_runtime_profitability(
     gate_rollback_attribution = _load_runtime_profitability_gate_rollback_attribution(
         scheduler.state
     )
+    tca_summary = _load_tca_summary(session)
+    market_context_status = scheduler.market_context_status()
+    hypothesis_payload, _hypothesis_summary, _dependency_quorum = (
+        _build_hypothesis_runtime_payload(
+            scheduler,
+            tca_summary=tca_summary,
+            market_context_status=market_context_status,
+        )
+    )
+    empirical_jobs = _empirical_jobs_status()
+    quant_evidence = load_quant_evidence_status(
+        account_label=settings.trading_account_label,
+    )
+    live_submission_gate = _build_live_submission_gate_payload(
+        scheduler.state,
+        session=session,
+        hypothesis_summary=hypothesis_payload,
+        empirical_jobs_status=empirical_jobs,
+        dspy_runtime_status=cast(
+            dict[str, object],
+            scheduler.llm_status().get('dspy_runtime', {}),
+        ),
+        quant_health_status=quant_evidence,
+    )
 
     caveats = [
         {
@@ -2315,6 +2339,7 @@ def trading_runtime_profitability(
         },
         "realized_pnl_summary": realized_pnl_summary,
         "gate_rollback_attribution": gate_rollback_attribution,
+        "live_submission_gate": live_submission_gate,
         "caveats": caveats,
     }
     return JSONResponse(status_code=200, content=jsonable_encoder(payload))

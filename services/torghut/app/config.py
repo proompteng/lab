@@ -1425,7 +1425,7 @@ class Settings(BaseSettings):
         default=None,
         alias="TRADING_JANGAR_QUANT_HEALTH_URL",
         description=(
-            "Optional Jangar quant health endpoint consumed by the shared live submission gate."
+            "Explicit Jangar quant health endpoint consumed by the shared live submission gate and live/sim lane authority."
         ),
     )
     trading_jangar_control_plane_timeout_seconds: float = Field(
