@@ -13,7 +13,15 @@ from typing import Any
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.models import Base, Execution, LLMDecisionReview, Strategy, TradeDecision
+from app.models import (
+    Base,
+    Execution,
+    LLMDecisionReview,
+    Strategy,
+    StrategyHypothesisMetricWindow,
+    StrategyPromotionDecision,
+    TradeDecision,
+)
 from app import config
 from app.trading.decisions import DecisionEngine
 from app.trading.execution_adapters import SimulationExecutionAdapter
@@ -548,6 +556,46 @@ class TestTradingPipeline(TestCase):
 
         for name, value in self._settings_snapshot.items():
             setattr(config.settings, name, value)
+
+    def _seed_promotion_certificate_evidence(
+        self,
+        *,
+        hypothesis_id: str = 'H-CONT-01',
+        candidate_id: str = 'cand-1',
+        capital_stage: str = '0.10x canary',
+    ) -> None:
+        evidence_at = datetime.now(timezone.utc)
+        with self.session_local() as session:
+            session.add(
+                StrategyHypothesisMetricWindow(
+                    run_id='run-1',
+                    candidate_id=candidate_id,
+                    hypothesis_id=hypothesis_id,
+                    observed_stage='live',
+                    window_started_at=evidence_at - timedelta(minutes=15),
+                    window_ended_at=evidence_at,
+                    market_session_count=1,
+                    decision_count=1,
+                    trade_count=1,
+                    order_count=1,
+                    continuity_ok=True,
+                    drift_ok=True,
+                    dependency_quorum_decision='allow',
+                    capital_stage=capital_stage,
+                )
+            )
+            session.add(
+                StrategyPromotionDecision(
+                    run_id='run-1',
+                    candidate_id=candidate_id,
+                    hypothesis_id=hypothesis_id,
+                    promotion_target='live',
+                    state=capital_stage,
+                    allowed=True,
+                    reason_summary='ready',
+                )
+            )
+            session.commit()
 
     def test_pipeline_empty_signal_batch_commits_cursor(self) -> None:
         from app import config
@@ -1462,7 +1510,8 @@ class TestTradingPipeline(TestCase):
                 assert isinstance(live_submission_gate, dict)
                 self.assertEqual(live_submission_gate.get("allowed"), False)
                 self.assertEqual(
-                    live_submission_gate.get("reason"), "live_promotion_disabled"
+                    live_submission_gate.get("reason"),
+                    "hypothesis_window_evidence_missing",
                 )
 
             self.assertEqual(alpaca_client.submitted, [])
@@ -1519,6 +1568,7 @@ class TestTradingPipeline(TestCase):
                 },
             }
             with self.session_local() as session:
+                evidence_at = datetime.now(timezone.utc)
                 strategy = Strategy(
                     name="live-canary-eligible",
                     description="promotion-eligible live canary",
@@ -1529,6 +1579,35 @@ class TestTradingPipeline(TestCase):
                     max_notional_per_trade=Decimal("1000"),
                 )
                 session.add(strategy)
+                session.add(
+                    StrategyHypothesisMetricWindow(
+                        run_id="run-1",
+                        candidate_id="cand-1",
+                        hypothesis_id="H-CONT-01",
+                        observed_stage="live",
+                        window_started_at=evidence_at - timedelta(minutes=15),
+                        window_ended_at=evidence_at,
+                        market_session_count=1,
+                        decision_count=1,
+                        trade_count=1,
+                        order_count=1,
+                        continuity_ok=True,
+                        drift_ok=True,
+                        dependency_quorum_decision="allow",
+                        capital_stage="0.10x canary",
+                    )
+                )
+                session.add(
+                    StrategyPromotionDecision(
+                        run_id="run-1",
+                        candidate_id="cand-1",
+                        hypothesis_id="H-CONT-01",
+                        promotion_target="live",
+                        state="0.10x canary",
+                        allowed=True,
+                        reason_summary="ready",
+                    )
+                )
                 session.commit()
 
             signal = SignalEnvelope(
@@ -1584,7 +1663,11 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(live_submission_gate.get("allowed"), True)
                 self.assertEqual(
                     live_submission_gate.get("reason"),
-                    "autonomy_promotion_eligible",
+                    "promotion_certificate_valid",
+                )
+                self.assertEqual(
+                    live_submission_gate.get("evidence_tuple", {}).get("hypothesis_id"),
+                    "H-CONT-01",
                 )
 
             self.assertEqual(len(alpaca_client.submitted), 1)
@@ -5900,6 +5983,7 @@ class TestTradingPipeline(TestCase):
                     "message": "ready",
                 },
             }
+            self._seed_promotion_certificate_evidence()
             with patch(
                 "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
                 return_value=eligible_summary,
@@ -6216,6 +6300,7 @@ class TestTradingPipeline(TestCase):
                         "message": "ready",
                     },
                 }
+                self._seed_promotion_certificate_evidence()
                 with patch(
                     "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
                     return_value=eligible_summary,
@@ -6387,13 +6472,14 @@ class TestTradingPipeline(TestCase):
                     "dependency_quorum": {
                         "decision": "allow",
                         "reasons": [],
-                        "message": "ready",
-                    },
-                }
-                with patch(
-                    "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
-                    return_value=eligible_summary,
-                ), patch(
+                "message": "ready",
+                },
+            }
+            self._seed_promotion_certificate_evidence()
+            with patch(
+                "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                return_value=eligible_summary,
+            ), patch(
                     "app.trading.scheduler.pipeline.build_empirical_jobs_status",
                     return_value={"ready": True, "status": "healthy"},
                 ):
@@ -6403,9 +6489,12 @@ class TestTradingPipeline(TestCase):
                 reviews = session.execute(select(LLMDecisionReview)).scalars().all()
                 executions = session.execute(select(Execution)).scalars().all()
                 self.assertEqual(len(reviews), 1)
-                self.assertEqual(reviews[0].verdict, "approve")
-                self.assertEqual(len(executions), 1)
-                self.assertEqual(engine.review_calls, 1)
+                self.assertEqual(reviews[0].verdict, "error")
+                self.assertEqual(
+                    reviews[0].rationale, "llm_dspy_live_runtime_gate_blocked"
+                )
+                self.assertEqual(len(executions), 0)
+                self.assertEqual(engine.review_calls, 0)
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
@@ -7429,9 +7518,10 @@ class TestTradingPipeline(TestCase):
                 "dependency_quorum": {
                     "decision": "allow",
                     "reasons": [],
-                    "message": "ready",
+                "message": "ready",
                 },
             }
+            self._seed_promotion_certificate_evidence()
             with patch(
                 "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
                 return_value=eligible_summary,
@@ -7602,9 +7692,10 @@ class TestTradingPipeline(TestCase):
                 "dependency_quorum": {
                     "decision": "allow",
                     "reasons": [],
-                    "message": "ready",
+                "message": "ready",
                 },
             }
+            self._seed_promotion_certificate_evidence()
             with patch(
                 "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
                 return_value=eligible_summary,
@@ -7795,9 +7886,10 @@ class TestTradingPipeline(TestCase):
                 "dependency_quorum": {
                     "decision": "allow",
                     "reasons": [],
-                    "message": "ready",
+                "message": "ready",
                 },
             }
+            self._seed_promotion_certificate_evidence()
             with patch(
                 "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
                 return_value=eligible_summary,
@@ -8112,6 +8204,7 @@ class TestTradingPipeline(TestCase):
                     "message": "ready",
                 },
             }
+            self._seed_promotion_certificate_evidence()
             with patch(
                 "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
                 return_value=eligible_summary,

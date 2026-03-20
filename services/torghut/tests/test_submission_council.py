@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest import TestCase
 
@@ -87,6 +88,26 @@ class TestSubmissionCouncil(TestCase):
                 "missing_update_alarm": False,
                 "source_url": "http://jangar.test/api/torghut/trading/control-plane/quant/health?account=paper&window=15m",
             },
+            promotion_certificate_evidence=[
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "metric_window": SimpleNamespace(
+                        id="window-1",
+                        candidate_id="cand-1",
+                        capital_stage="0.10x canary",
+                        window_ended_at=datetime(2026, 3, 20, 10, 0, tzinfo=timezone.utc),
+                        created_at=datetime(2026, 3, 20, 10, 0, tzinfo=timezone.utc),
+                        continuity_ok=True,
+                        drift_ok=True,
+                        dependency_quorum_decision="allow",
+                    ),
+                    "promotion_decision": SimpleNamespace(
+                        id="promo-1",
+                        candidate_id="cand-1",
+                        state="0.10x canary",
+                    ),
+                }
+            ],
         )
 
         self.assertFalse(result["allowed"])
@@ -95,7 +116,7 @@ class TestSubmissionCouncil(TestCase):
         self.assertIn("quant_latest_store_alarm", result["blocked_reasons"])
         self.assertEqual(result["quant_health_ref"]["window"], "15m")
 
-    def test_build_live_submission_gate_payload_keeps_quant_gate_optional_when_not_configured(
+    def test_build_live_submission_gate_payload_requires_valid_certificate_evidence(
         self,
     ) -> None:
         result = build_live_submission_gate_payload(
@@ -125,11 +146,142 @@ class TestSubmissionCouncil(TestCase):
                 "status": "skipped",
                 "source_url": None,
             },
+            promotion_certificate_evidence=[
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "metric_window": SimpleNamespace(
+                        id="window-1",
+                        candidate_id="cand-1",
+                        capital_stage="0.10x canary",
+                        window_ended_at=datetime(2026, 3, 20, 10, 0, tzinfo=timezone.utc),
+                        created_at=datetime(2026, 3, 20, 10, 0, tzinfo=timezone.utc),
+                        continuity_ok=True,
+                        drift_ok=True,
+                        dependency_quorum_decision="allow",
+                    ),
+                    "promotion_decision": SimpleNamespace(
+                        id="promo-1",
+                        candidate_id="cand-1",
+                        state="0.10x canary",
+                    ),
+                }
+            ],
         )
 
         self.assertTrue(result["allowed"])
         self.assertEqual(result["capital_state"], "0.10x canary")
-        self.assertEqual(result["reason_codes"], ["autonomy_promotion_eligible"])
+        self.assertEqual(result["reason_codes"], ["promotion_certificate_valid"])
+        self.assertEqual(result["evidence_tuple"]["hypothesis_id"], "H-CONT-01")
+        self.assertEqual(result["evidence_tuple"]["candidate_id"], "cand-1")
+
+    def test_build_live_submission_gate_payload_blocks_without_certificate_evidence(
+        self,
+    ) -> None:
+        result = build_live_submission_gate_payload(
+            SimpleNamespace(
+                last_autonomy_promotion_eligible=True,
+                last_autonomy_promotion_action="promote",
+                drift_live_promotion_eligible=False,
+                last_market_context_freshness_seconds=45,
+            ),
+            hypothesis_summary={
+                "promotion_eligible_total": 1,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            },
+            empirical_jobs_status={"ready": True, "status": "healthy"},
+            quant_health_status={
+                "required": False,
+                "ok": True,
+                "reason": "quant_health_not_configured",
+                "blocking_reasons": [],
+                "account": "paper",
+                "window": "15m",
+                "status": "skipped",
+                "source_url": None,
+            },
+            promotion_certificate_evidence=[],
+        )
+
+        self.assertFalse(result["allowed"])
+        self.assertEqual(result["capital_state"], "observe")
+        self.assertEqual(result["reason"], "promotion_certificate_missing")
+        self.assertIn("hypothesis_window_evidence_missing", result["blocked_reasons"])
+
+    def test_build_live_submission_gate_payload_blocks_when_hypothesis_runtime_item_is_shadow(
+        self,
+    ) -> None:
+        result = build_live_submission_gate_payload(
+            SimpleNamespace(
+                last_autonomy_promotion_eligible=True,
+                last_autonomy_promotion_action="promote",
+                drift_live_promotion_eligible=False,
+                last_market_context_freshness_seconds=45,
+            ),
+            hypothesis_summary={
+                "summary": {
+                    "promotion_eligible_total": 1,
+                    "capital_stage_totals": {"shadow": 1},
+                    "dependency_quorum": {
+                        "decision": "allow",
+                        "reasons": [],
+                        "message": "ready",
+                    },
+                },
+                "items": [
+                    {
+                        "hypothesis_id": "H-CONT-01",
+                        "promotion_eligible": False,
+                        "capital_stage": "shadow",
+                        "reasons": ["signal_continuity_alert_active"],
+                        "segment_dependencies": ["ta-core", "execution"],
+                    }
+                ],
+            },
+            empirical_jobs_status={"ready": True, "status": "healthy"},
+            quant_health_status={
+                "required": False,
+                "ok": True,
+                "reason": "quant_health_not_configured",
+                "blocking_reasons": [],
+                "account": "paper",
+                "window": "15m",
+                "status": "skipped",
+                "source_url": None,
+            },
+            promotion_certificate_evidence=[
+                {
+                    "hypothesis_id": "H-CONT-01",
+                    "metric_window": SimpleNamespace(
+                        id="window-1",
+                        candidate_id="cand-1",
+                        capital_stage="0.10x canary",
+                        window_ended_at=datetime(2026, 3, 20, 10, 0, tzinfo=timezone.utc),
+                        created_at=datetime(2026, 3, 20, 10, 0, tzinfo=timezone.utc),
+                        continuity_ok=True,
+                        drift_ok=True,
+                        dependency_quorum_decision="allow",
+                    ),
+                    "promotion_decision": SimpleNamespace(
+                        id="promo-1",
+                        candidate_id="cand-1",
+                        state="0.10x canary",
+                    ),
+                }
+            ],
+        )
+
+        self.assertFalse(result["allowed"])
+        self.assertEqual(result["capital_state"], "observe")
+        self.assertIn(
+            "alpha_hypothesis_not_promotion_eligible",
+            result["blocked_reasons"],
+        )
+        self.assertIn("alpha_hypothesis_shadow_only", result["blocked_reasons"])
 
     def test_resolve_quant_health_url_preserves_explicit_override_path(self) -> None:
         settings.trading_jangar_quant_health_url = (

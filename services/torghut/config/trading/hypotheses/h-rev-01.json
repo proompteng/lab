@@ -16,6 +16,13 @@
     "jangar_dependency_quorum",
     "market_context_freshness"
   ],
+  "segment_dependencies": [
+    "execution",
+    "empirical",
+    "llm-review",
+    "market-context",
+    "ta-core"
+  ],
   "expected_gross_edge_bps": "8",
   "max_allowed_slippage_bps": "12",
   "min_sample_count_for_live_canary": 30,

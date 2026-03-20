@@ -157,6 +157,7 @@ class HypothesisManifest(BaseModel):
     market_regimes: list[str] = Field(default_factory=list)
     required_feature_sets: list[str] = Field(default_factory=list)
     required_dependency_capabilities: list[str] = Field(default_factory=list)
+    segment_dependencies: list[str] = Field(default_factory=list)
     expected_gross_edge_bps: Decimal
     max_allowed_slippage_bps: Decimal
     min_sample_count_for_live_canary: int
@@ -172,6 +173,7 @@ class HypothesisManifest(BaseModel):
         'market_regimes',
         'required_feature_sets',
         'required_dependency_capabilities',
+        'segment_dependencies',
         'rollback_triggers',
         'promotion_gates',
         mode='before',
@@ -638,6 +640,7 @@ def compile_hypothesis_runtime_statuses(
                 'required_dependency_capabilities': list(
                     manifest.required_dependency_capabilities
                 ),
+                'segment_dependencies': list(manifest.segment_dependencies),
                 'observed': {
                     'signal_lag_seconds': signal_lag_seconds,
                     'no_signal_streak': no_signal_streak,
