@@ -10,6 +10,7 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `59-torghut-lane-balance-sheet-and-dataset-seat-auction-contract-2026-03-20.md`
   - `58-torghut-profit-cohort-auction-and-freshness-insurance-contract-2026-03-20.md`
   - `56-torghut-capability-leases-and-profit-clocks-2026-03-20.md`
   - `54-torghut-capital-lease-receipts-and-profit-falsification-ledger-2026-03-20.md`
@@ -31,6 +32,7 @@
 - `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
 - `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/60-jangar-recovery-ledger-and-consumer-attestation-contract-2026-03-20.md`
   - `docs/agents/designs/59-jangar-authority-session-bus-and-rollout-lease-contract-2026-03-20.md`
   - `docs/agents/designs/58-jangar-authority-capsule-cutover-and-freeze-expiry-repair-contract-2026-03-20.md`
   - `docs/agents/designs/57-jangar-authority-capsules-and-readiness-class-separation-2026-03-20.md`
@@ -123,6 +125,9 @@ Current source-state priority is narrower:
   into a replayable economic control surface: every non-observe capital move must cite one profit cohort and one
   authority session, and degraded-mode upside must be spent from bounded freshness insurance rather than generic
   optimism.
+- `59-torghut-lane-balance-sheet-and-dataset-seat-auction-contract-2026-03-20.md` now turns the March 20 live-state
+  evidence into lane-local balance sheets, dataset seats, and explicit freshness-bond probe capital so Torghut can
+  allocate scarce capital by evidence quality instead of one route-time blocked answer.
 - `docs/agents/designs/56-jangar-capability-receipts-and-consumer-binding-contract-2026-03-20.md` now defines the
   next control-plane step: typed capability receipts plus explicit binding sets that force `/ready`, deploy
   verification, and Torghut consumers to share the same receipt digest and freshness contract.
@@ -246,6 +251,9 @@ This pack is positioned as the next architecture layer above:
 54. `54-torghut-capital-lease-receipts-and-profit-falsification-ledger-2026-03-20.md`
 55. `55-torghut-hypothesis-settlement-exchange-and-lane-capability-leases-2026-03-20.md`
 56. `56-torghut-capability-leases-and-profit-clocks-2026-03-20.md`
+57. `57-torghut-profit-reserves-forecast-calibration-escrow-and-probe-auction-contract-2026-03-20.md`
+58. `58-torghut-profit-cohort-auction-and-freshness-insurance-contract-2026-03-20.md`
+59. `59-torghut-lane-balance-sheet-and-dataset-seat-auction-contract-2026-03-20.md`
 
 ## Recommended Build Order
 
