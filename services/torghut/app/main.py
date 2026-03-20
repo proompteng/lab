@@ -585,6 +585,7 @@ def _evaluate_trading_health_payload(
     }
 
     alpha_readiness: dict[str, object]
+    _hypothesis_payload: Mapping[str, object] = {}
     try:
         _hypothesis_payload, hypothesis_summary, _dependency_quorum = (
             _build_hypothesis_runtime_payload(

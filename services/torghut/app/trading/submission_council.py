@@ -88,26 +88,6 @@ def _safe_text(value: object) -> str | None:
     return text or None
 
 
-def _parse_datetime(value: object) -> datetime | None:
-    if isinstance(value, datetime):
-        parsed = value
-    elif isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return None
-        if text.endswith('Z'):
-            text = f'{text[:-1]}+00:00'
-        try:
-            parsed = datetime.fromisoformat(text)
-        except ValueError:
-            return None
-    else:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
-
-
 def _normalize_reason_codes(values: Sequence[object]) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
@@ -558,7 +538,7 @@ def _segment_summary(
         ['critical_toggle_parity_diverged'] if list(blocking_toggle_mismatches) else []
     )
     empirical_reasons = [] if empirical_ready is not False else ['empirical_jobs_not_ready']
-    llm_review_reasons = []
+    llm_review_reasons: list[str] = []
     if dspy_mode == 'active' and dspy_live_ready is False:
         llm_review_reasons.append('dspy_live_runtime_not_ready')
 
@@ -674,7 +654,7 @@ def _evaluate_certificate_candidates(
                     ]
                 )
 
-        evaluated_row = {
+        evaluated_row: dict[str, object] = {
             'hypothesis_id': hypothesis_id,
             'candidate_id': candidate_id,
             'strategy_id': manifest.get('strategy_family'),
@@ -845,8 +825,7 @@ def build_live_submission_gate_payload(
 
     evidence_rows = (
         [
-            dict(cast(Mapping[str, object], item))
-            for item in promotion_certificate_evidence
+            dict(item) for item in promotion_certificate_evidence
         ]
         if promotion_certificate_evidence is not None
         else _load_latest_certificate_evidence(
