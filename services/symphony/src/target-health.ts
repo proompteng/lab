@@ -23,6 +23,37 @@ type KubernetesResponse = {
   body: string
 }
 
+type ArgoResourceStatus = {
+  group?: string
+  kind?: string
+  namespace?: string
+  name?: string
+  status?: string | null
+}
+
+type ArgoSyncResultResource = {
+  group?: string
+  kind?: string
+  namespace?: string
+  name?: string
+  status?: string | null
+}
+
+type ArgoApplicationPayload = {
+  status?: {
+    sync?: { status?: string }
+    health?: { status?: string }
+    resources?: ArgoResourceStatus[]
+    operationState?: {
+      phase?: string
+      message?: string
+      syncResult?: {
+        resources?: ArgoSyncResultResource[]
+      }
+    }
+  }
+}
+
 type TargetHealthMemory = {
   lastReadyAtMs: number | null
 }
@@ -111,6 +142,41 @@ const parseJson = <T>(body: string, message: string) =>
     catch: (error) => new OrchestratorError('target_health_check_failed', message, error),
   })
 
+const buildArgoResourceKey = (resource: { group?: string; kind?: string; namespace?: string; name?: string }): string =>
+  `${resource.group ?? ''}|${resource.kind ?? ''}|${resource.namespace ?? ''}|${resource.name ?? ''}`
+
+const isIgnorableArgoUnsyncedResource = (resource: ArgoResourceStatus): boolean =>
+  resource.kind === 'Job' && resource.status == null
+
+export const isEffectivelySyncedAfterSuccessfulOperation = (payload: ArgoApplicationPayload): boolean => {
+  const healthStatus = payload.status?.health?.status ?? 'Unknown'
+  const syncStatus = payload.status?.sync?.status ?? 'Unknown'
+  const operationPhase = payload.status?.operationState?.phase ?? null
+  const operationMessage = payload.status?.operationState?.message ?? null
+
+  if (syncStatus === 'Synced') return true
+  if (syncStatus !== 'OutOfSync' || healthStatus !== 'Healthy') return false
+  if (operationPhase !== 'Succeeded') return false
+  if (!operationMessage?.startsWith('successfully synced')) return false
+
+  const syncResultResources =
+    payload.status?.operationState?.syncResult?.resources?.reduce<Map<string, string | null>>(
+      (accumulator, resource) => {
+        accumulator.set(buildArgoResourceKey(resource), resource.status ?? null)
+        return accumulator
+      },
+      new Map(),
+    ) ?? new Map<string, string | null>()
+
+  const unsyncedResources = (payload.status?.resources ?? []).filter(
+    (resource) => resource.status !== 'Synced' && !isIgnorableArgoUnsyncedResource(resource),
+  )
+
+  if (unsyncedResources.length === 0) return true
+
+  return unsyncedResources.every((resource) => syncResultResources.get(buildArgoResourceKey(resource)) === 'Synced')
+}
+
 const evaluateArgoApplicationCheck = (
   check: HealthCheckConfig,
   token: string,
@@ -143,24 +209,30 @@ const evaluateArgoApplicationCheck = (
           ),
         )
       }
-      return parseJson<{
-        status?: {
-          sync?: { status?: string }
-          health?: { status?: string }
-        }
-      }>(response.body, 'failed to parse argo application response')
+      return parseJson<ArgoApplicationPayload>(response.body, 'failed to parse argo application response')
     }),
     Effect.map((payload) => {
       const syncStatus = payload.status?.sync?.status ?? 'Unknown'
       const healthStatus = payload.status?.health?.status ?? 'Unknown'
-      const ok = syncStatus === expectedSync && healthStatus === expectedHealth
+      const effectivelySynced =
+        syncStatus === expectedSync ||
+        (expectedSync === 'Synced' &&
+          expectedHealth === 'Healthy' &&
+          isEffectivelySyncedAfterSuccessfulOperation(payload))
+      const ok = effectivelySynced && healthStatus === expectedHealth
+      const observed =
+        effectivelySynced && syncStatus !== expectedSync
+          ? `EffectiveSynced/${healthStatus}`
+          : `${syncStatus}/${healthStatus}`
       return {
         name: check.name,
         type: check.type,
         ok,
-        observed: `${syncStatus}/${healthStatus}`,
+        observed,
         message: ok
-          ? `${application} is ${syncStatus}/${healthStatus}`
+          ? effectivelySynced && syncStatus !== expectedSync
+            ? `${application} is effectively ${expectedSync}/${healthStatus} after a successful Argo sync`
+            : `${application} is ${syncStatus}/${healthStatus}`
           : `${application} expected ${expectedSync}/${expectedHealth} but was ${syncStatus}/${healthStatus}`,
       } satisfies TargetHealthCheckResult
     }),

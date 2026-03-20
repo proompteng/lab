@@ -243,11 +243,16 @@ spec:
                 namespace: torghut
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
-                # Keep torghut on client-side apply while recovering from manual kubectl-patch SSA ownership conflicts.
-                # Do not use RespectIgnoreDifferences here: it can prevent nested Knative Service env updates from applying.
+                # Torghut needs a custom sync policy because RespectIgnoreDifferences can block
+                # nested Knative Service env updates from applying. Keep the app on SSA so Argo
+                # does not rely on brittle client-side apply metadata for large Knative and
+                # WorkflowTemplate updates.
                 syncOptions:
                   - CreateNamespace=true
-                  - ServerSideApply=false
+                  - ServerSideApply=true
+                  - ApplyOutOfSyncOnly=true
+                  - PruneLast=true
+                  - ClientSideApplyMigration=false
                 ignoreDifferences:
                   - group: serving.knative.dev
                     kind: Service

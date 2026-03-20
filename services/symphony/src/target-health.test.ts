@@ -4,7 +4,11 @@ import { Effect, Layer, ManagedRuntime } from 'effect'
 import * as Stream from 'effect/Stream'
 
 import { createLogger } from './logger'
-import { makeTargetHealthLayer, TargetHealthService } from './target-health'
+import {
+  isEffectivelySyncedAfterSuccessfulOperation,
+  makeTargetHealthLayer,
+  TargetHealthService,
+} from './target-health'
 import { makeTestConfig } from './test-fixtures'
 import { WorkflowService } from './workflow'
 
@@ -97,5 +101,35 @@ describe('target health resilience', () => {
     } finally {
       await runtime.dispose()
     }
+  })
+
+  test('treats stale argo out-of-sync status as ready after a successful sync result', async () => {
+    const effective = isEffectivelySyncedAfterSuccessfulOperation({
+      status: {
+        sync: { status: 'OutOfSync' },
+        health: { status: 'Healthy' },
+        resources: [
+          { group: 'batch', kind: 'Job', namespace: 'torghut', name: 'torghut-whitepapers-bootstrap', status: null },
+          { group: 'serving.knative.dev', kind: 'Service', namespace: 'torghut', name: 'torghut', status: 'OutOfSync' },
+        ],
+        operationState: {
+          phase: 'Succeeded',
+          message: 'successfully synced (no more tasks)',
+          syncResult: {
+            resources: [
+              {
+                group: 'serving.knative.dev',
+                kind: 'Service',
+                namespace: 'torghut',
+                name: 'torghut',
+                status: 'Synced',
+              },
+            ],
+          },
+        },
+      },
+    })
+
+    expect(effective).toBe(true)
   })
 })
