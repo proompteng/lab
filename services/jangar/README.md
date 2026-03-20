@@ -341,9 +341,9 @@ The status payload always includes:
 
 `execution_trust.status` will be one of `healthy`, `degraded`, `blocked`, or `unknown`.
 If a swarm remains `Frozen` after `freeze.until` has passed, execution trust now reports
-`freeze expiry unreconciled` and keeps `/ready` non-200 until the authority state is reconciled.
-`/ready` returns `503` when execution trust is `degraded`, `blocked`, or `unknown`
-and includes the same `execution_trust` block in its response.
+`freeze expiry unreconciled` as a degraded repair state instead of an active hard stop.
+`/ready` returns `503` only when execution trust is `blocked` or `unknown`;
+degraded execution trust remains visible in the response body while the pod stays ready to serve.
 
 ## Control-plane cache freshness behavior
 

@@ -2280,7 +2280,7 @@ describe('supporting primitives controller', () => {
     expect(status.freeze).toBeTruthy()
   })
 
-  it('re-freezes when stale stage cadence indicates liveness loss after freeze expiry', async () => {
+  it('resumes schedules when stale stage evidence only predates freeze expiry', async () => {
     const applyStatus = vi.fn().mockResolvedValue({})
     const apply = vi.fn().mockResolvedValue({})
     const get = vi.fn().mockResolvedValue({
@@ -2358,13 +2358,17 @@ describe('supporting primitives controller', () => {
 
     await __test__.reconcileSwarm(kube, swarm, 'agents')
 
-    expect(apply).not.toHaveBeenCalled()
-    expect(deleteFn).toHaveBeenCalledTimes(4)
+    expect(apply).toHaveBeenCalledTimes(4)
+    expect(deleteFn).not.toHaveBeenCalled()
     const firstStatusCall = applyStatus.mock.calls[0]
     const status = (firstStatusCall?.[0] as { status?: Record<string, unknown> } | undefined)?.status ?? {}
-    expect(status.phase).toBe('Frozen')
+    expect(status.phase).toBe('Active')
     expect(status.freeze).toMatchObject({
-      reason: 'StageStaleness',
+      reason: 'NotFrozen',
+      evidence: {
+        stageStaleness: [],
+        triggers: [],
+      },
     })
   })
 

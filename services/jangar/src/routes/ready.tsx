@@ -132,7 +132,7 @@ export const getReadyHandler = async () => {
   const agentsControllerReady = activeControllerReplica
     ? isAgentRunIngestionReady(agentsController)
     : leaderElectionReady
-  const executionTrustReady = trust.status === 'healthy'
+  const executionTrustReady = trust.status !== 'blocked' && trust.status !== 'unknown'
   const ready = controllersOk && agentsControllerReady && executionTrustReady
 
   const body = JSON.stringify({

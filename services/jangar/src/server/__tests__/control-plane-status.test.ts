@@ -1500,7 +1500,7 @@ describe('control-plane status', () => {
     expect(snapshot.stages.some((stage) => stage.phase === 'Frozen')).toBe(true)
   })
 
-  it('buildExecutionTrust blocks when freeze expiry is unreconciled', async () => {
+  it('buildExecutionTrust degrades when freeze expiry is unreconciled', async () => {
     kubeClientMocks.createKubernetesClient.mockReturnValue({
       list: vi.fn(async () => ({
         items: [
@@ -1552,14 +1552,14 @@ describe('control-plane status', () => {
       summaryLimit: 20,
     })
 
-    expect(snapshot.executionTrust.status).toBe('blocked')
+    expect(snapshot.executionTrust.status).toBe('degraded')
     expect(snapshot.executionTrust.blocking_windows).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           type: 'swarms',
           name: 'jangar-control-plane',
           reason: 'freeze expiry unreconciled (StageStaleness)',
-          class: 'blocked',
+          class: 'degraded',
         }),
       ]),
     )

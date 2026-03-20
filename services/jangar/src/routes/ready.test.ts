@@ -200,6 +200,39 @@ describe('getReadyHandler', () => {
     })
   })
 
+  it('returns 200 when execution trust is degraded', async () => {
+    controlPlaneStatusMocks.buildExecutionTrust.mockResolvedValue({
+      executionTrust: {
+        status: 'degraded',
+        reason: 'execution trust degraded while freeze expiry repair is in progress',
+        last_evaluated_at: '2026-03-08T21:00:00Z',
+        blocking_windows: [
+          {
+            type: 'swarms',
+            scope: 'agents',
+            name: 'jangar-control-plane',
+            reason: 'freeze expiry unreconciled (StageStaleness)',
+            class: 'degraded',
+          },
+        ],
+        evidence_summary: ['freeze expiry unreconciled (StageStaleness)'],
+      },
+      swarms: [],
+      stages: [],
+    })
+
+    const { getReadyHandler } = await import('./ready')
+
+    const response = await getReadyHandler()
+
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body.status).toBe('ok')
+    expect(body.execution_trust).toMatchObject({
+      status: 'degraded',
+    })
+  })
+
   it('returns 503 when execution trust is blocked', async () => {
     controlPlaneStatusMocks.buildExecutionTrust.mockResolvedValue({
       executionTrust: {
