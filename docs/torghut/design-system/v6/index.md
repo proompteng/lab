@@ -10,6 +10,7 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `60-torghut-hypothesis-passports-and-capability-quote-auction-contract-2026-03-20.md`
   - `59-torghut-lane-balance-sheet-and-dataset-seat-auction-contract-2026-03-20.md`
   - `58-torghut-profit-cohort-auction-and-freshness-insurance-contract-2026-03-20.md`
   - `56-torghut-capability-leases-and-profit-clocks-2026-03-20.md`
@@ -32,6 +33,8 @@
 - `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
 - `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md`
+  - `60-torghut-hypothesis-passports-and-capability-quote-auction-contract-2026-03-20.md`
   - `docs/agents/designs/60-jangar-recovery-ledger-and-consumer-attestation-contract-2026-03-20.md`
   - `docs/agents/designs/59-jangar-authority-session-bus-and-rollout-lease-contract-2026-03-20.md`
   - `docs/agents/designs/58-jangar-authority-capsule-cutover-and-freeze-expiry-repair-contract-2026-03-20.md`
@@ -131,6 +134,9 @@ Current source-state priority is narrower:
 - `59-torghut-lane-balance-sheet-and-dataset-seat-auction-contract-2026-03-20.md` now turns the March 20 live-state
   evidence into lane-local balance sheets, dataset seats, and explicit freshness-bond probe capital so Torghut can
   allocate scarce capital by evidence quality instead of one route-time blocked answer.
+- `60-torghut-hypothesis-passports-and-capability-quote-auction-contract-2026-03-20.md` now adds the next
+  profitability layer: Torghut must settle one passport per lane, price capability quality explicitly, and allocate
+  only bounded probe capital when degraded-but-usable evidence still exists.
 - `docs/agents/designs/56-jangar-capability-receipts-and-consumer-binding-contract-2026-03-20.md` now defines the
   next control-plane step: typed capability receipts plus explicit binding sets that force `/ready`, deploy
   verification, and Torghut consumers to share the same receipt digest and freshness contract.
@@ -142,6 +148,9 @@ Current source-state priority is narrower:
 - `docs/agents/designs/59-jangar-authority-session-bus-and-rollout-lease-contract-2026-03-20.md` now turns those
   capsules into one durable authority session and rollout-lease contract so `/ready`, status, deploy verification, and
   downstream consumers stop re-deriving control-plane truth per request.
+- `docs/agents/designs/61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md` now closes the next
+  remaining gap above sessions and recovery ledgers by making runtime completeness a first-class control-plane subject
+  and binding consumers to passport ids that include both authority truth and executable runtime kits.
 - `docs/agents/designs/54-jangar-witness-mirror-quorum-and-promotion-veto-2026-03-20.md` now turns incomplete rollout
   evidence into a first-class veto by requiring fresh witness mirrors for rollout, stage health, and consumer
   acknowledgement before Jangar may emit promotion-friendly authority.
