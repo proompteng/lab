@@ -34,6 +34,8 @@ If the question is "what should I trust right now?", start here:
    - `docs/torghut/design-system/v1/historical-dataset-simulation.md`
    - `docs/torghut/design-system/v1/trading-day-simulation-automation.md`
 3. current autonomy/promotion contract source of truth:
+   - `docs/agents/designs/62-jangar-execution-receipts-and-stage-recovery-cells-contract-2026-03-20.md`
+   - `docs/torghut/design-system/v6/61-torghut-evidence-seats-and-profit-repair-exchange-contract-2026-03-20.md`
    - `docs/agents/designs/61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md`
    - `docs/torghut/design-system/v6/60-torghut-hypothesis-passports-and-capability-quote-auction-contract-2026-03-20.md`
    - `docs/torghut/design-system/v6/06-production-rollout-operations-and-governance.md`
@@ -85,78 +87,82 @@ If the question is "what should I trust right now?", start here:
 
 The current highest-priority work is:
 
-1. make Jangar runtime completeness and consumer-scoped stage admission explicit through runtime kits and admission
+1. make Jangar runtime completeness and stale-stage debt explicit through execution receipts and recovery cells in
+   `docs/agents/designs/62-jangar-execution-receipts-and-stage-recovery-cells-contract-2026-03-20.md`;
+2. turn Torghut mixed evidence into lane-scoped evidence seats and a bounded profit repair exchange in
+   `docs/torghut/design-system/v6/61-torghut-evidence-seats-and-profit-repair-exchange-contract-2026-03-20.md`;
+3. make Jangar runtime completeness and consumer-scoped stage admission explicit through runtime kits and admission
    passports in
    `docs/agents/designs/61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md`;
-2. turn Torghut lane gating into hypothesis passports and a capability quote auction in
+4. turn Torghut lane gating into hypothesis passports and a capability quote auction in
    `docs/torghut/design-system/v6/60-torghut-hypothesis-passports-and-capability-quote-auction-contract-2026-03-20.md`;
-3. retire stale freeze and rollout debt into a durable recovery ledger with consumer-scoped attestations in
+5. retire stale freeze and rollout debt into a durable recovery ledger with consumer-scoped attestations in
    `docs/agents/designs/60-jangar-recovery-ledger-and-consumer-attestation-contract-2026-03-20.md`;
-4. replace route-time lane gating with lane balance sheets and dataset-seat auctions in
+6. replace route-time lane gating with lane balance sheets and dataset-seat auctions in
    `docs/torghut/design-system/v6/59-torghut-lane-balance-sheet-and-dataset-seat-auction-contract-2026-03-20.md`;
-5. replace request-time control-plane truth with authority sessions and rollout leases in
+7. replace request-time control-plane truth with authority sessions and rollout leases in
    `docs/agents/designs/59-jangar-authority-session-bus-and-rollout-lease-contract-2026-03-20.md`;
-6. turn Jangar authority capsules into journaled, replayable cell-scoped truth in
+8. turn Jangar authority capsules into journaled, replayable cell-scoped truth in
    `docs/agents/designs/58-jangar-authority-journals-bounded-recovery-cells-and-replay-contract-2026-03-20.md`;
-7. repair cutover from broad status reduction to durable authority capsules and freeze-expiry workflows in
+9. repair cutover from broad status reduction to durable authority capsules and freeze-expiry workflows in
    `docs/agents/designs/58-jangar-authority-capsule-cutover-and-freeze-expiry-repair-contract-2026-03-20.md`;
-8. compile small Jangar authority capsules and reconcile stale swarm-freeze truth through
-   `docs/agents/designs/57-jangar-authority-capsules-freeze-reconciliation-and-consumer-slo-contract-2026-03-20.md`;
-9. replace route-local promotion truth with compiled admission receipts and rollout shadow in
-   `docs/agents/designs/54-jangar-admission-receipts-rollout-shadow-and-anti-entropy-reconciliation-2026-03-20.md`;
-10. collapse swarm freeze, stage failure, rollout health, and downstream freshness into one admission artifact through
-   `docs/agents/designs/55-jangar-rollout-fact-receipts-and-swarm-freeze-parity-2026-03-20.md`;
-11. bind every Jangar consumer to typed capability receipts and digest parity in
-   `docs/agents/designs/56-jangar-capability-receipts-and-consumer-binding-contract-2026-03-20.md`;
-12. separate serving readiness from promotion authority through durable capsules and readiness classes in
+10. compile small Jangar authority capsules and reconcile stale swarm-freeze truth through
+    `docs/agents/designs/57-jangar-authority-capsules-freeze-reconciliation-and-consumer-slo-contract-2026-03-20.md`;
+11. replace route-local promotion truth with compiled admission receipts and rollout shadow in
+    `docs/agents/designs/54-jangar-admission-receipts-rollout-shadow-and-anti-entropy-reconciliation-2026-03-20.md`;
+12. collapse swarm freeze, stage failure, rollout health, and downstream freshness into one admission artifact through
+    `docs/agents/designs/55-jangar-rollout-fact-receipts-and-swarm-freeze-parity-2026-03-20.md`;
+13. bind every Jangar consumer to typed capability receipts and digest parity in
+    `docs/agents/designs/56-jangar-capability-receipts-and-consumer-binding-contract-2026-03-20.md`;
+14. separate serving readiness from promotion authority through durable capsules and readiness classes in
     `docs/agents/designs/57-jangar-authority-capsules-and-readiness-class-separation-2026-03-20.md`;
-13. allocate Torghut capital through authority-session-bound profit cohorts and bounded freshness insurance in
+15. allocate Torghut capital through authority-session-bound profit cohorts and bounded freshness insurance in
     `docs/torghut/design-system/v6/58-torghut-profit-cohort-auction-and-freshness-insurance-contract-2026-03-20.md`;
-14. turn Torghut profit clocks into reserve records with forecast-calibration escrow and probe-class capital in
+16. turn Torghut profit clocks into reserve records with forecast-calibration escrow and probe-class capital in
     `docs/torghut/design-system/v6/57-torghut-profit-reserves-forecast-calibration-escrow-and-probe-auction-2026-03-20.md`;
-15. cut Torghut over from generic status-route gating to typed profit clocks and regime auctions in
+17. cut Torghut over from generic status-route gating to typed profit clocks and regime auctions in
     `docs/torghut/design-system/v6/57-torghut-profit-clock-cutover-and-regime-auction-contract-2026-03-20.md`;
-16. replace ephemeral live-capital answers with capital leases and profit-trial firebreaks in
+18. replace ephemeral live-capital answers with capital leases and profit-trial firebreaks in
     `docs/torghut/design-system/v6/53-torghut-capital-leases-and-profit-trial-firebreaks-2026-03-20.md`;
-17. allocate and revoke live capital through sleeve-scoped lease receipts and falsification events in
+19. allocate and revoke live capital through sleeve-scoped lease receipts and falsification events in
     `docs/torghut/design-system/v6/54-torghut-capital-lease-receipts-and-profit-falsification-ledger-2026-03-20.md`;
-18. settle Torghut hypothesis capital through lane capability leases and typed Jangar endpoint contracts in
+20. settle Torghut hypothesis capital through lane capability leases and typed Jangar endpoint contracts in
     `docs/torghut/design-system/v6/55-torghut-hypothesis-settlement-exchange-and-lane-capability-leases-2026-03-20.md`;
-19. replace URL-derived authority with typed capability leases and lane-local profit clocks in
+21. replace URL-derived authority with typed capability leases and lane-local profit clocks in
     `docs/torghut/design-system/v6/56-torghut-capability-leases-and-profit-clocks-2026-03-20.md`;
-20. move from coarse gate payloads to durable profit clocks and a lane-aware capital auction in
+22. move from coarse gate payloads to durable profit clocks and a lane-aware capital auction in
     `docs/torghut/design-system/v6/56-torghut-profit-clocks-and-capital-allocation-auction-2026-03-20.md`;
-21. make unknown or contradictory rollout evidence veto-capable through witness mirrors and promotion covenants in
+23. make unknown or contradictory rollout evidence veto-capable through witness mirrors and promotion covenants in
     `docs/agents/designs/54-jangar-witness-mirror-quorum-and-promotion-veto-2026-03-20.md`;
-22. make non-observe capital depend on a single cross-plane profit certificate plus lane-scoped options auth/bootstrap
+24. make non-observe capital depend on a single cross-plane profit certificate plus lane-scoped options auth/bootstrap
     isolation in
     `docs/torghut/design-system/v6/53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md`;
-23. replace whole-swarm failure coupling with execution cells and collaboration failover in
+25. replace whole-swarm failure coupling with execution cells and collaboration failover in
     `docs/agents/designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md`;
-24. make rollout truth depend on rollout-epoch acknowledgement and segment circuit breakers in
+26. make rollout truth depend on rollout-epoch acknowledgement and segment circuit breakers in
     `docs/agents/designs/52-jangar-rollout-epoch-witness-and-segment-circuit-breakers-2026-03-19.md`;
-25. force submission parity and options bootstrap escrow through the Torghut plan contract in
+27. force submission parity and options bootstrap escrow through the Torghut plan contract in
     `docs/torghut/design-system/v6/50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`;
-26. force capital-stage decisions through the hypothesis capital governor, promotion-certificate, and data-quorum
+28. force capital-stage decisions through the hypothesis capital governor, promotion-certificate, and data-quorum
     contract in `docs/agents/designs/50-torghut-hypothesis-capital-governor-and-data-quorum-2026-03-19.md`;
-27. make admission truth durable with dependency provenance, consumer acknowledgement, and replayable collaboration in
+29. make admission truth durable with dependency provenance, consumer acknowledgement, and replayable collaboration in
     `docs/agents/designs/53-jangar-dependency-provenance-ledger-and-consumer-acknowledged-admission-2026-03-19.md`;
-28. extend that control plane with the segment-authority-graph and promotion-certificate fail-safe in
+30. extend that control plane with the segment-authority-graph and promotion-certificate fail-safe in
     `docs/agents/designs/52-jangar-segment-authority-graph-and-promotion-certificate-fail-safe-2026-03-19.md`;
-29. make non-shadow capital depend on expiring profit reservations, schema fitness, and simulation slot ownership in
+31. make non-shadow capital depend on expiring profit reservations, schema fitness, and simulation slot ownership in
     `docs/torghut/design-system/v6/51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`;
-30. wire Torghut scheduler and status through the segment-firebreak handoff in
+32. wire Torghut scheduler and status through the segment-firebreak handoff in
     `docs/torghut/design-system/v6/51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`;
-31. make sleeve-level capital, deallocation, and evidence decay explicit in
+33. make sleeve-level capital, deallocation, and evidence decay explicit in
     `docs/torghut/design-system/v6/52-torghut-profit-sleeves-segment-scoped-deallocation-and-evidence-decay-2026-03-19.md`;
-32. keep producer-authored freshness and proof bundles active by continuing the ledger direction defined in
+34. keep producer-authored freshness and proof bundles active by continuing the ledger direction defined in
     `docs/torghut/design-system/v6/39-freshness-ledger-and-hypothesis-proof-mesh-2026-03-14.md`;
-33. isolate control-plane failure domains with rollout-safe gates in
+35. isolate control-plane failure domains with rollout-safe gates in
     `docs/torghut/design-system/v6/40-control-plane-resilience-and-safer-rollout-for-torghut-quant-2026-03-15.md`;
-34. retain hypothesis-specific profitability guardrails from
+36. retain hypothesis-specific profitability guardrails from
     `docs/torghut/design-system/v6/41-torghut-quant-profitability-and-guardrail-architecture-2026-03-15.md`,
     but make them subordinate to fresh data quorum, immutable evidence bundles, and lease revocation;
-35. execute the merged control-plane/profitability program with the March 15-16 base, the March 19 authority stack,
+37. execute the merged control-plane/profitability program with the March 15-16 base, the March 19 authority stack,
     and the March 20 readiness-class, session, journal, cutover, reserve, witness-quorum, admission-receipt,
     fact-receipt, binding-contract, profit-certificate, capital-lease, falsification-ledger, settlement-exchange,
     authority-capsule, runtime-kit, admission-passport, hypothesis-passport, capability-quote-auction, profit-clock,
@@ -207,6 +213,8 @@ These are still active contract docs rather than historical snapshots:
 
 - `docs/torghut/design-system/v1/historical-dataset-simulation.md`
 - `docs/torghut/design-system/v1/trading-day-simulation-automation.md`
+- `docs/agents/designs/62-jangar-execution-receipts-and-stage-recovery-cells-contract-2026-03-20.md`
+- `docs/torghut/design-system/v6/61-torghut-evidence-seats-and-profit-repair-exchange-contract-2026-03-20.md`
 - `docs/agents/designs/61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md`
 - `docs/torghut/design-system/v6/60-torghut-hypothesis-passports-and-capability-quote-auction-contract-2026-03-20.md`
 - `docs/torghut/design-system/v6/01-beyond-tsmom-system-architecture-and-latency-model.md`
