@@ -5,6 +5,8 @@
 Start here:
 
 - `docs/torghut/design-system/current-source-of-truth-and-priority-guide-2026-03-09.md` (current authority map)
+- `docs/agents/designs/60-jangar-recovery-ledger-and-consumer-attestation-contract-2026-03-20.md` (Jangar recovery-ledger and consumer-attestation contract)
+- `docs/torghut/design-system/v6/59-torghut-lane-balance-sheet-and-dataset-seat-auction-contract-2026-03-20.md` (Torghut lane-balance-sheet and dataset-seat auction contract)
 - `docs/agents/designs/59-jangar-authority-session-bus-and-rollout-lease-contract-2026-03-20.md` (Jangar authority-session and rollout-lease contract)
 - `docs/torghut/design-system/v6/58-torghut-profit-cohort-auction-and-freshness-insurance-contract-2026-03-20.md` (Torghut profit-cohort and freshness-insurance contract)
 - `docs/agents/designs/57-jangar-authority-capsules-and-readiness-class-separation-2026-03-20.md` (Jangar authority capsule and readiness-class contract)
