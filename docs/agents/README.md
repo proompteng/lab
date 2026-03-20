@@ -21,7 +21,9 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
   - `designs/54-jangar-witness-mirror-quorum-and-promotion-veto-2026-03-20.md`
   - `../torghut/design-system/v6/53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md`
   - `designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md`
+  - `designs/54-jangar-admission-receipts-rollout-shadow-and-anti-entropy-reconciliation-2026-03-20.md`
   - `../torghut/design-system/v6/50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
+  - `../torghut/design-system/v6/53-torghut-capital-leases-and-profit-trial-firebreaks-2026-03-20.md`
   - `designs/50-torghut-hypothesis-capital-governor-and-data-quorum-2026-03-19.md`
   - `designs/52-jangar-segment-authority-graph-and-promotion-certificate-fail-safe-2026-03-19.md`
   - `../torghut/design-system/v6/51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`

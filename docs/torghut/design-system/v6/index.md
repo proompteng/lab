@@ -11,6 +11,7 @@
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
   - `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md`
+  - `53-torghut-capital-leases-and-profit-trial-firebreaks-2026-03-20.md`
   - `52-torghut-profit-sleeves-segment-scoped-deallocation-and-evidence-decay-2026-03-19.md`
   - `50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
   - `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
@@ -26,7 +27,9 @@
 - `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
 - `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/54-jangar-admission-receipts-rollout-shadow-and-anti-entropy-reconciliation-2026-03-20.md`
   - `docs/agents/designs/54-jangar-witness-mirror-quorum-and-promotion-veto-2026-03-20.md`
+  - `docs/agents/designs/54-jangar-admission-receipts-rollout-shadow-and-anti-entropy-reconciliation-2026-03-20.md`
   - `docs/agents/designs/53-jangar-dependency-provenance-ledger-and-consumer-acknowledged-admission-2026-03-19.md`
   - `docs/agents/designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md`
   - `docs/agents/designs/52-jangar-rollout-epoch-witness-and-segment-circuit-breakers-2026-03-19.md`
@@ -99,6 +102,12 @@ Current source-state priority is narrower:
 - `docs/agents/designs/54-jangar-witness-mirror-quorum-and-promotion-veto-2026-03-20.md` now turns incomplete rollout
   evidence into a first-class veto by requiring fresh witness mirrors for rollout, stage health, and consumer
   acknowledgement before Jangar may emit promotion-friendly authority.
+- `53-torghut-capital-leases-and-profit-trial-firebreaks-2026-03-20.md` now moves the final live-capital authority
+  out of ephemeral gate payloads and into durable capital leases backed by Jangar admission receipts, profit-trial
+  evidence bundles, and typed bootstrap firebreaks.
+- `docs/agents/designs/54-jangar-admission-receipts-rollout-shadow-and-anti-entropy-reconciliation-2026-03-20.md`
+  now closes the remaining route/runtime contradiction by making Jangar compile authoritative admission receipts and a
+  rollout shadow that every readiness and promotion consumer must reuse.
 - `docs/agents/designs/52-jangar-rollout-epoch-witness-and-segment-circuit-breakers-2026-03-19.md` now extends the
   March 19 authority-ledger work by requiring consumer acknowledgement of rollout epochs and by turning Huly transport
   failures into explicit segment circuit breakers rather than implicit fatal preconditions.
