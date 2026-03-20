@@ -22,6 +22,7 @@ import { createIntegrationHarness, findTemporalCliUnavailableError, type Tempora
 const shouldRunIntegration = process.env.TEMPORAL_INTEGRATION_TESTS === '1'
 const describeIntegration = shouldRunIntegration ? describe : describe.skip
 const hookTimeoutMs = 60_000
+const scenarioTimeoutMs = 30_000
 
 const devServerDefaults: TemporalDevServerConfig = {
   address: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
@@ -77,7 +78,7 @@ describeIntegration('Temporal worker runtime integration', () => {
     }
   }, { timeout: hookTimeoutMs })
 
-  test('processes workflow tasks concurrently up to configured limit', async () => {
+  test('processes workflow tasks concurrently up to configured limit', { timeout: scenarioTimeoutMs }, async () => {
     if (cliUnavailable || !harness) {
       console.warn('[temporal-bun-sdk] worker runtime scenario skipped (workflow concurrency)')
       expect(true).toBeTrue()
@@ -230,7 +231,10 @@ describeIntegration('Temporal worker runtime integration', () => {
     expect(metrics.completedCount).toBeGreaterThanOrEqual(4)
   })
 
-  test('attaches sticky queue metadata and deployment options to workflow responses', async () => {
+  test(
+    'attaches sticky queue metadata and deployment options to workflow responses',
+    { timeout: scenarioTimeoutMs },
+    async () => {
     if (cliUnavailable || !harness) {
       console.warn('[temporal-bun-sdk] worker runtime scenario skipped (sticky queue metadata)')
       expect(true).toBeTrue()
@@ -398,7 +402,8 @@ describeIntegration('Temporal worker runtime integration', () => {
       expect(poll.taskQueue?.normalName ?? '').toBe(isStickyPoll ? result.taskQueue : '')
       expect(poll.deploymentOptions).toBeUndefined()
     }
-  })
+    },
+  )
 
   test('replays with sticky cache when workflow history omits start event', { timeout: 15_000 }, async () => {
     if (cliUnavailable || !harness) {
