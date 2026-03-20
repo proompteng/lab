@@ -10,6 +10,7 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `58-torghut-profit-cohort-auction-and-freshness-insurance-contract-2026-03-20.md`
   - `56-torghut-capability-leases-and-profit-clocks-2026-03-20.md`
   - `54-torghut-capital-lease-receipts-and-profit-falsification-ledger-2026-03-20.md`
   - `55-torghut-hypothesis-settlement-exchange-and-lane-capability-leases-2026-03-20.md`
@@ -30,10 +31,12 @@
 - `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
 - `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/59-jangar-authority-session-bus-and-rollout-lease-contract-2026-03-20.md`
+  - `docs/agents/designs/58-jangar-authority-capsule-cutover-and-freeze-expiry-repair-contract-2026-03-20.md`
   - `docs/agents/designs/57-jangar-authority-capsules-and-readiness-class-separation-2026-03-20.md`
+  - `docs/agents/designs/56-jangar-capability-receipts-and-consumer-binding-contract-2026-03-20.md`
   - `docs/agents/designs/55-jangar-rollout-fact-receipts-and-swarm-freeze-parity-2026-03-20.md`
   - `docs/agents/designs/54-jangar-admission-receipts-rollout-shadow-and-anti-entropy-reconciliation-2026-03-20.md`
-  - `docs/agents/designs/56-jangar-capability-receipts-and-consumer-binding-contract-2026-03-20.md`
   - `docs/agents/designs/54-jangar-witness-mirror-quorum-and-promotion-veto-2026-03-20.md`
   - `docs/agents/designs/53-jangar-dependency-provenance-ledger-and-consumer-acknowledged-admission-2026-03-19.md`
   - `docs/agents/designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md`
@@ -116,12 +119,19 @@ Current source-state priority is narrower:
 - `56-torghut-capability-leases-and-profit-clocks-2026-03-20.md` now defines the next profitability step: Torghut
   must consume typed Jangar capability leases, settle one lane-local profit clock per hypothesis/account window, and
   keep scheduler, `/readyz`, and `/trading/status` on the same lease digest.
+- `58-torghut-profit-cohort-auction-and-freshness-insurance-contract-2026-03-20.md` now turns those profit clocks
+  into a replayable economic control surface: every non-observe capital move must cite one profit cohort and one
+  authority session, and degraded-mode upside must be spent from bounded freshness insurance rather than generic
+  optimism.
 - `docs/agents/designs/56-jangar-capability-receipts-and-consumer-binding-contract-2026-03-20.md` now defines the
   next control-plane step: typed capability receipts plus explicit binding sets that force `/ready`, deploy
   verification, and Torghut consumers to share the same receipt digest and freshness contract.
 - `docs/agents/designs/57-jangar-authority-capsules-and-readiness-class-separation-2026-03-20.md` now separates
   serving readiness from promotion authority, compiles durable capsules, and stops stale promotion state from
   deadlocking fresh control-plane rollouts.
+- `docs/agents/designs/59-jangar-authority-session-bus-and-rollout-lease-contract-2026-03-20.md` now turns those
+  capsules into one durable authority session and rollout-lease contract so `/ready`, status, deploy verification, and
+  downstream consumers stop re-deriving control-plane truth per request.
 - `docs/agents/designs/54-jangar-witness-mirror-quorum-and-promotion-veto-2026-03-20.md` now turns incomplete rollout
   evidence into a first-class veto by requiring fresh witness mirrors for rollout, stage health, and consumer
   acknowledgement before Jangar may emit promotion-friendly authority.
