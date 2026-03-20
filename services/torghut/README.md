@@ -71,6 +71,10 @@ Optional migration-lineage controls:
   `TRADING_JANGAR_CONTROL_PLANE_STATUS_URL=http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?namespace=agents`.
   Torghut treats Jangar `dependency_quorum=delay|block` as additive promotion blockers and fails closed when the status
   payload is unavailable.
+- The live-submission gate also consumes Jangar quant latest-store health. Set
+  `TRADING_JANGAR_QUANT_HEALTH_URL` explicitly or let Torghut derive
+  `/api/torghut/trading/control-plane/quant/health` from `TRADING_JANGAR_CONTROL_PLANE_STATUS_URL` or
+  `TRADING_MARKET_CONTEXT_URL`; use `TRADING_JANGAR_QUANT_WINDOW` to align the expected freshness window.
 
 ## Whitepaper workflow (GitHub issue -> Kafka -> AgentRun)
 

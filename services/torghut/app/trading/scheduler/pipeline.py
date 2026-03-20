@@ -32,6 +32,7 @@ from ...snapshots import snapshot_account_and_positions
 from ...strategies import StrategyCatalog
 from ..autonomy.phase_manifest_contract import AUTONOMY_PHASE_ORDER
 from ..decisions import DecisionEngine
+from ..empirical_jobs import build_empirical_jobs_status
 from ..execution import OrderExecutor
 from ..execution_adapters import (
     ExecutionAdapter,
@@ -64,6 +65,12 @@ from ..risk import RiskEngine
 from ..tca import derive_adaptive_execution_policy
 from ..time_source import trading_now
 from ..universe import UniverseResolver
+from ..submission_council import (
+    build_hypothesis_runtime_summary,
+    build_live_submission_gate_payload,
+    build_submission_gate_market_context_status,
+    load_quant_evidence_status,
+)
 from .pipeline_helpers import (
     _allocator_rejection_reasons,
     _apply_projected_position_decision,
@@ -160,6 +167,7 @@ class TradingPipeline:
         self.market_context_client = MarketContextClient()
         self.lean_lane_manager = LeanLaneManager()
         self.llm_review_engine = llm_review_engine
+        self._last_live_submission_gate: dict[str, object] | None = None
 
     def run_once(self) -> None:
         with self.session_factory() as session:
@@ -943,45 +951,97 @@ class TradingPipeline:
             ),
         )
 
-    def _live_submission_gate(self) -> dict[str, object]:
-        if settings.trading_mode != "live":
-            return {
-                "allowed": True,
-                "reason": "non_live_mode",
-                "capital_stage": settings.trading_mode,
-                "configured_live_promotion": settings.trading_autonomy_allow_live_promotion,
-                "autonomy_promotion_eligible": self.state.last_autonomy_promotion_eligible,
-                "autonomy_promotion_action": self.state.last_autonomy_promotion_action,
-                "drift_live_promotion_eligible": self.state.drift_live_promotion_eligible,
-            }
-
-        evidence_eligible = bool(self.state.last_autonomy_promotion_eligible) or bool(
-            self.state.drift_live_promotion_eligible
-        )
-        if settings.trading_autonomy_allow_live_promotion or evidence_eligible:
-            return {
-                "allowed": True,
-                "reason": (
-                    "configured_live_promotion"
-                    if settings.trading_autonomy_allow_live_promotion
-                    else "autonomy_promotion_eligible"
-                ),
-                "capital_stage": "0.10x canary",
-                "configured_live_promotion": settings.trading_autonomy_allow_live_promotion,
-                "autonomy_promotion_eligible": self.state.last_autonomy_promotion_eligible,
-                "autonomy_promotion_action": self.state.last_autonomy_promotion_action,
-                "drift_live_promotion_eligible": self.state.drift_live_promotion_eligible,
-            }
-
-        return {
-            "allowed": False,
-            "reason": "live_promotion_disabled",
-            "capital_stage": "shadow",
-            "configured_live_promotion": settings.trading_autonomy_allow_live_promotion,
-            "autonomy_promotion_eligible": self.state.last_autonomy_promotion_eligible,
-            "autonomy_promotion_action": self.state.last_autonomy_promotion_action,
-            "drift_live_promotion_eligible": self.state.drift_live_promotion_eligible,
+    def _dspy_runtime_gate_status(self) -> dict[str, object]:
+        dspy_runtime_status: dict[str, object] = {
+            "mode": settings.llm_dspy_runtime_mode,
+            "artifact_hash": settings.llm_dspy_artifact_hash,
+            "live_ready": False,
+            "readiness_reasons": [],
         }
+        if not settings.llm_dspy_runtime_mode:
+            return dspy_runtime_status
+
+        try:
+            dspy_runtime = DSPyReviewRuntime.from_settings()
+            live_ready, readiness_reasons = dspy_runtime.evaluate_live_readiness()
+            dspy_runtime_status["live_ready"] = live_ready
+            dspy_runtime_status["readiness_reasons"] = list(readiness_reasons)
+        except DSPyRuntimeUnsupportedStateError as exc:
+            dspy_runtime_status["readiness_reasons"] = [str(exc)]
+        except Exception as exc:  # pragma: no cover - additive status surface only
+            dspy_runtime_status["readiness_reasons"] = [
+                f"dspy_status_error:{type(exc).__name__}"
+            ]
+        return dspy_runtime_status
+
+    def _live_submission_gate(
+        self,
+        *,
+        session: Session | None = None,
+        hypothesis_summary: Mapping[str, Any] | None = None,
+        empirical_jobs_status: Mapping[str, Any] | None = None,
+        dspy_runtime_status: Mapping[str, Any] | None = None,
+        quant_health_status: Mapping[str, Any] | None = None,
+    ) -> dict[str, object]:
+        if (
+            session is None
+            and hypothesis_summary is None
+            and empirical_jobs_status is None
+            and dspy_runtime_status is None
+            and quant_health_status is None
+            and self._last_live_submission_gate is not None
+        ):
+            return dict(self._last_live_submission_gate)
+
+        summary = hypothesis_summary
+        if summary is None and session is not None:
+            try:
+                summary = build_hypothesis_runtime_summary(
+                    session,
+                    state=self.state,
+                    market_context_status=build_submission_gate_market_context_status(
+                        self.state
+                    ),
+                )
+            except Exception as exc:  # pragma: no cover - additive runtime safety
+                summary = {
+                    "promotion_eligible_total": 0,
+                    "capital_stage_totals": {},
+                    "dependency_quorum": {
+                        "decision": "unknown",
+                        "reasons": ["alpha_readiness_unavailable"],
+                        "message": str(exc),
+                    },
+                }
+
+        empirical_status = empirical_jobs_status
+        if empirical_status is None and session is not None:
+            try:
+                empirical_status = build_empirical_jobs_status(
+                    session=session,
+                    stale_after_seconds=settings.trading_empirical_job_stale_after_seconds,
+                )
+            except Exception as exc:  # pragma: no cover - additive runtime safety
+                empirical_status = {
+                    "ready": False,
+                    "status": "degraded",
+                    "message": f"empirical job status unavailable: {type(exc).__name__}",
+                }
+
+        quant_status = quant_health_status
+        if quant_status is None:
+            quant_status = load_quant_evidence_status(account_label=self.account_label)
+
+        gate = build_live_submission_gate_payload(
+            self.state,
+            hypothesis_summary=summary,
+            empirical_jobs_status=empirical_status,
+            dspy_runtime_status=dspy_runtime_status,
+            quant_health_status=quant_status,
+            quant_account_label=self.account_label,
+        )
+        self._last_live_submission_gate = dict(gate)
+        return gate
 
     def _submission_capital_stage(self) -> str:
         gate = self._live_submission_gate()
@@ -1705,7 +1765,7 @@ class TradingPipeline:
                 decision.symbol,
             )
             return False
-        live_submission_gate = self._live_submission_gate()
+        live_submission_gate = self._live_submission_gate(session=session)
         if settings.trading_mode == "live" and not bool(
             live_submission_gate.get("allowed", False)
         ):

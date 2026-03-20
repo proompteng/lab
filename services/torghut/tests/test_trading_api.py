@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from typing import Any
 from unittest import TestCase
 from unittest.mock import patch
@@ -612,6 +613,75 @@ class TestTradingApi(TestCase):
             self.assertTrue(payload["dependencies"]["universe"]["ok"])
             self.assertEqual(payload["dependencies"]["universe"]["status"], "ok")
             self.assertEqual(payload["dependencies"]["universe"]["detail"], "jangar universe fresh")
+        finally:
+            settings.trading_enabled = original
+            settings.trading_mode = original_mode
+            settings.trading_universe_source = original_source
+
+    @patch("app.main.load_quant_evidence_status")
+    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
+    @patch(
+        "app.main.check_account_scope_invariants",
+        return_value={"account_scope_ready": True, "account_scope_errors": []},
+    )
+    @patch(
+        "app.main.check_schema_current",
+        return_value={
+            "schema_current": True,
+            "current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
+        },
+    )
+    def test_trading_health_treats_quant_evidence_as_informational_outside_live_mode(
+        self,
+        _mock_schema: object,
+        _mock_account_scope: object,
+        _mock_clickhouse: object,
+        _mock_alpaca: object,
+        mock_quant_evidence: object,
+    ) -> None:
+        original = settings.trading_enabled
+        original_mode = settings.trading_mode
+        original_source = settings.trading_universe_source
+        settings.trading_enabled = True
+        settings.trading_mode = "paper"
+        settings.trading_universe_source = "jangar"
+        try:
+            mock_quant_evidence.return_value = {
+                "required": True,
+                "ok": False,
+                "status": "unknown",
+                "reason": "quant_health_fetch_failed",
+                "blocking_reasons": ["quant_health_fetch_failed"],
+                "account": "paper",
+                "window": "15m",
+                "source_url": "https://jangar.example/custom/proxy/quant/health?account=paper&window=15m",
+            }
+            scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            scheduler.state.universe_source_status = "ok"
+            scheduler.state.universe_source_reason = "jangar_fetch_ok"
+            scheduler.state.universe_symbols_count = 2
+            scheduler.state.universe_cache_age_seconds = 0
+            app.state.trading_scheduler = scheduler
+
+            response = self.client.get("/trading/health")
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["status"], "ok")
+            self.assertTrue(payload["dependencies"]["quant_evidence"]["ok"])
+            self.assertEqual(
+                payload["dependencies"]["quant_evidence"]["detail"],
+                "not_required_in_non_live_mode",
+            )
+            self.assertFalse(payload["quant_evidence"]["ok"])
+            self.assertEqual(
+                payload["quant_evidence"]["reason"], "quant_health_fetch_failed"
+            )
         finally:
             settings.trading_enabled = original
             settings.trading_mode = original_mode
@@ -1586,6 +1656,202 @@ class TestTradingApi(TestCase):
         self.assertIn(payload["forecast_service"]["authority"], {"empirical", "blocked"})
         self.assertIn(payload["lean_authority"]["authority"], {"empirical", "blocked"})
         self.assertIn(payload["empirical_jobs"]["authority"], {"empirical", "blocked"})
+
+    def test_trading_status_blocks_live_submission_on_critical_toggle_parity_divergence(
+        self,
+    ) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        original = {
+            "trading_enabled": settings.trading_enabled,
+            "trading_mode": settings.trading_mode,
+            "trading_autonomy_enabled": settings.trading_autonomy_enabled,
+            "trading_autonomy_allow_live_promotion": settings.trading_autonomy_allow_live_promotion,
+            "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
+        }
+        try:
+            settings.trading_enabled = True
+            settings.trading_mode = "live"
+            settings.trading_autonomy_enabled = False
+            settings.trading_autonomy_allow_live_promotion = False
+            settings.trading_kill_switch_enabled = True
+
+            scheduler = TradingScheduler()
+            app.state.trading_scheduler = scheduler
+
+            hypothesis_summary = {
+                "promotion_eligible_total": 1,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            }
+            dependency_quorum = SimpleNamespace(
+                decision="allow",
+                as_payload=lambda: {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            )
+
+            with patch(
+                "app.main._build_hypothesis_runtime_payload",
+                return_value=(
+                    {
+                        "registry_loaded": True,
+                        "registry_path": "test",
+                        "registry_errors": [],
+                        "dependency_quorum": hypothesis_summary["dependency_quorum"],
+                        "summary": hypothesis_summary,
+                        "items": [],
+                    },
+                    hypothesis_summary,
+                    dependency_quorum,
+                ),
+            ), patch(
+                "app.main._empirical_jobs_status",
+                return_value={"ready": True, "status": "healthy"},
+            ):
+                response = self.client.get("/trading/status")
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            gate = payload["live_submission_gate"]
+            self.assertFalse(gate["allowed"])
+            self.assertEqual(gate["reason"], "critical_toggle_parity_diverged")
+            self.assertIn(
+                "critical_toggle_parity_diverged",
+                gate["blocked_reasons"],
+            )
+            self.assertEqual(gate["critical_toggle_parity"]["status"], "diverged")
+        finally:
+            settings.trading_enabled = original["trading_enabled"]
+            settings.trading_mode = original["trading_mode"]
+            settings.trading_autonomy_enabled = original["trading_autonomy_enabled"]
+            settings.trading_autonomy_allow_live_promotion = original[
+                "trading_autonomy_allow_live_promotion"
+            ]
+            settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
+            if original_scheduler is None:
+                if hasattr(app.state, "trading_scheduler"):
+                    del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
+    def test_trading_status_blocks_live_submission_when_quant_latest_store_is_empty(
+        self,
+    ) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        original = {
+            "trading_enabled": settings.trading_enabled,
+            "trading_mode": settings.trading_mode,
+            "trading_autonomy_enabled": settings.trading_autonomy_enabled,
+            "trading_autonomy_allow_live_promotion": settings.trading_autonomy_allow_live_promotion,
+            "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
+        }
+        try:
+            settings.trading_enabled = True
+            settings.trading_mode = "live"
+            settings.trading_autonomy_enabled = False
+            settings.trading_autonomy_allow_live_promotion = True
+            settings.trading_kill_switch_enabled = False
+
+            scheduler = TradingScheduler()
+            app.state.trading_scheduler = scheduler
+
+            hypothesis_summary = {
+                "promotion_eligible_total": 1,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            }
+            dependency_quorum = SimpleNamespace(
+                decision="allow",
+                as_payload=lambda: {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            )
+
+            with (
+                patch(
+                    "app.main._build_hypothesis_runtime_payload",
+                    return_value=(
+                        {
+                            "registry_loaded": True,
+                            "registry_path": "test",
+                            "registry_errors": [],
+                            "dependency_quorum": hypothesis_summary["dependency_quorum"],
+                            "summary": hypothesis_summary,
+                            "items": [],
+                        },
+                        hypothesis_summary,
+                        dependency_quorum,
+                    ),
+                ),
+                patch(
+                    "app.main._empirical_jobs_status",
+                    return_value={"ready": True, "status": "healthy"},
+                ),
+                patch(
+                    "app.main.load_quant_evidence_status",
+                    return_value={
+                        "required": True,
+                        "ok": False,
+                        "status": "degraded",
+                        "reason": "quant_latest_metrics_empty",
+                        "blocking_reasons": [
+                            "quant_latest_metrics_empty",
+                            "quant_latest_store_alarm",
+                        ],
+                        "account": "paper",
+                        "window": "15m",
+                        "source_url": "http://jangar.test/api/torghut/trading/control-plane/quant/health?account=paper&window=15m",
+                        "latest_metrics_count": 0,
+                        "latest_metrics_updated_at": None,
+                        "empty_latest_store_alarm": True,
+                        "missing_update_alarm": False,
+                        "metrics_pipeline_lag_seconds": None,
+                        "stage_count": 0,
+                        "max_stage_lag_seconds": 0,
+                        "stages": [],
+                    },
+                ),
+            ):
+                response = self.client.get("/trading/status")
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            gate = payload["live_submission_gate"]
+            self.assertFalse(gate["allowed"])
+            self.assertEqual(gate["reason"], "quant_latest_metrics_empty")
+            self.assertEqual(gate["capital_state"], "observe")
+            self.assertIn("quant_latest_store_alarm", gate["blocked_reasons"])
+            self.assertEqual(payload["quant_evidence"]["window"], "15m")
+            self.assertFalse(payload["quant_evidence"]["ok"])
+        finally:
+            settings.trading_enabled = original["trading_enabled"]
+            settings.trading_mode = original["trading_mode"]
+            settings.trading_autonomy_enabled = original["trading_autonomy_enabled"]
+            settings.trading_autonomy_allow_live_promotion = original[
+                "trading_autonomy_allow_live_promotion"
+            ]
+            settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
+            if original_scheduler is None:
+                if hasattr(app.state, "trading_scheduler"):
+                    del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
 
     def test_trading_status_exposes_rejection_and_market_context_controls(self) -> None:
         original_scheduler = getattr(app.state, "trading_scheduler", None)

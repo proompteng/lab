@@ -1421,6 +1421,13 @@ class Settings(BaseSettings):
             "Optional Jangar control-plane status endpoint used for hypothesis dependency quorum checks."
         ),
     )
+    trading_jangar_quant_health_url: Optional[str] = Field(
+        default=None,
+        alias="TRADING_JANGAR_QUANT_HEALTH_URL",
+        description=(
+            "Optional Jangar quant health endpoint consumed by the shared live submission gate."
+        ),
+    )
     trading_jangar_control_plane_timeout_seconds: float = Field(
         default=2.0,
         alias="TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS",
@@ -1430,6 +1437,13 @@ class Settings(BaseSettings):
         default=15,
         alias="TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS",
         description="Cache TTL for Jangar control-plane status used by hypothesis readiness.",
+    )
+    trading_jangar_quant_window: Literal["1m", "5m", "15m", "1h", "1d", "5d", "20d"] = (
+        Field(
+            default="15m",
+            alias="TRADING_JANGAR_QUANT_WINDOW",
+            description="Quant evaluation window used by the shared live submission gate.",
+        )
     )
     trading_market_context_url: Optional[str] = Field(
         default=None,
@@ -1535,9 +1549,7 @@ class Settings(BaseSettings):
     trading_alpaca_healthcheck_backoff_seconds: float = Field(
         default=0.25,
         alias="TRADING_ALPACA_HEALTHCHECK_BACKOFF_SECONDS",
-        description=(
-            "Base backoff in seconds between Alpaca readiness retries."
-        ),
+        description=("Base backoff in seconds between Alpaca readiness retries."),
     )
     trading_alpaca_healthcheck_last_good_ttl_seconds: int = Field(
         default=90,
@@ -1862,6 +1874,7 @@ class Settings(BaseSettings):
         for field_name in (
             "jangar_base_url",
             "trading_jangar_control_plane_status_url",
+            "trading_jangar_quant_health_url",
             "trading_market_context_url",
             "trading_lean_runner_url",
             "trading_forecast_service_url",
@@ -1920,8 +1933,13 @@ class Settings(BaseSettings):
             self.trading_forecast_router_policy_path = (
                 self.trading_forecast_router_policy_path.strip() or None
             )
-        if self.trading_forecast_service_url and not self.trading_forecast_router_provider_url:
-            self.trading_forecast_router_provider_url = self.trading_forecast_service_url
+        if (
+            self.trading_forecast_service_url
+            and not self.trading_forecast_router_provider_url
+        ):
+            self.trading_forecast_router_provider_url = (
+                self.trading_forecast_service_url
+            )
         if (
             self.trading_forecast_service_api_key
             and not self.trading_forecast_router_provider_api_key
