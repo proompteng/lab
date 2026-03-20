@@ -8,6 +8,8 @@ control-plane stream health.
 
 This runbook is aligned with the current March 20 plan-stage architecture contracts:
 
+- `docs/agents/designs/63-jangar-consumer-projections-and-latency-class-admission-contract-2026-03-20.md`
+- `docs/torghut/design-system/v6/62-torghut-lane-books-and-bounded-query-firebreak-contract-2026-03-20.md`
 - `docs/agents/designs/57-jangar-authority-capsules-and-readiness-class-separation-2026-03-20.md`
 - `docs/torghut/design-system/v6/56-torghut-capability-leases-and-profit-clocks-2026-03-20.md`
 - `docs/torghut/design-system/v6/42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md`
@@ -65,6 +67,9 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
    - `curl -fsS "http://127.0.0.1:8081/metrics" | rg 'torghut_trading_(hypothesis_state_total|hypothesis_capital_stage_total|alpha_readiness_hypotheses_total|alpha_readiness_promotion_eligible_total|alpha_readiness_rollback_required_total)'`
    - `kubectl cnpg psql -n torghut torghut-db -- -d torghut -c "select alpaca_account_label, status, count(*) from trade_decisions where created_at >= now() - interval '1 day' group by alpaca_account_label, status order by alpaca_account_label, status;"`
    - Treat account lanes independently; stale legacy lanes can hide active-lane degradation.
+   - If `quant_evidence.reason == "quant_health_fetch_failed"` while the typed Jangar quant-health route still returns a
+     bounded answer, treat that as consumer-projection drift or timeout budget failure, not immediate proof that the
+     quant-control runtime is down.
    - If `schema_graph_lineage_errors` is non-empty, treat as migration-lineage divergence and pause rollout promotion until migration governance review is complete.
    - If `dependency_quorum.decision == "block"` or (`dependency_quorum.decision == "delay"` with `dependency_quorum.degradation_scope` that blocks capital progress), treat the affected control-plane segment as the active blocker and verify impact before disabling promotion.
    - If `dependency_quorum.degradation_scope` is set to `single_capability`, pause affected capital movement paths only and confirm other lanes remain evaluable before broad actions.
@@ -110,6 +115,8 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
    - Fail criteria:
      - `TorghutSignalsStaleDuringMarketHours`, `TorghutMicrobarsStaleDuringMarketHours`, `TorghutWSDesiredSymbolsFetchFailing`,
        or `TorghutClickHouseFreshnessQueryFallbacks` is firing.
+     - treat `nan` freshness gauges as an invalid freshness surface and open or maintain the affected lane firebreak
+       once the March 20 lane-book contract lands; do not assume the gauges are safe to ignore.
 4. Validate quant latest-store evidence before any canary progression.
    - `curl -fsS "http://127.0.0.1:8080/api/torghut/trading/control-plane/quant/health?account=paper&window=1d" | jq '{status, latestMetricsCount, emptyLatestStoreAlarm, metricsPipelineLagSeconds, stages, maxStageLagSeconds}'`
    - Pass criteria:
