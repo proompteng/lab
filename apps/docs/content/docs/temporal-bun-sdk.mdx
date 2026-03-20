@@ -3,28 +3,7 @@ title: Temporal Bun SDK
 description: Run Temporal workers and clients on Bun with replay tooling, Docker helpers, and Temporal Cloud/TLS support.
 ---
 
-`@proompteng/temporal-bun-sdk` lets you run Temporal workers and clients on Bun.
-Out of the box, it includes:
-
-- Effect Schema-backed environment parsing with TLS, API key, and insecure-mode support.
-- Client and worker factories with built-in retries, payload codecs, and observability.
-- Effect Layer entry points for workers, clients, and CLI programs.
-- A `temporal-bun` CLI that scaffolds projects, validates config (`doctor`), builds Docker images, and replays histories.
-- A `temporal-bun-worker` binary that boots a worker with the SDK's default workflows/activities.
-
-## Start here
-
-If you are evaluating the SDK for the first time, use this order:
-
-- **Install and scaffold** if you want a working project quickly.
-- **Configure your Temporal connection** if you need local, self-hosted, or Temporal Cloud settings.
-- **Temporal Cloud and TLS** if you need API key auth, custom CA bundles, or mTLS:
-  [Cloud and TLS guide](/docs/temporal-bun-sdk-cloud-tls).
-- **Comparison guide** if you are deciding between Bun and the official Node.js path:
-  [Bun SDK vs official TypeScript SDK](/docs/temporal-bun-sdk-comparison).
-- **Run a worker** and **Start and manage workflows from Bun** for the core APIs.
-- **Replay workflow histories** and **CLI quick reference** for operations and debugging.
-- **Architecture overview** only if you need the runtime model.
+`@proompteng/temporal-bun-sdk` runs Temporal workers and clients on Bun.
 
 ## Prerequisites
 
@@ -34,13 +13,9 @@ If you are evaluating the SDK for the first time, use this order:
   administration and replaying live executions.
 - `docker` if you plan to build container images with the provided helpers.
 
-## Install and scaffold
+## Quickstart
 
-Choose the path that matches how you want to start.
-
-### Create a new worker project
-
-Generate a standalone Bun worker project:
+Create a new worker project outside another Bun workspace:
 
 ```bash
 bunx @proompteng/temporal-bun-sdk init my-worker
@@ -48,18 +23,34 @@ cd my-worker
 bun install
 ```
 
-Run the scaffold command outside this monorepo. The generated project is meant
-to install the published npm package, not `workspace:*` dependencies.
+Add `.env`:
 
-Then start Temporal locally, add a `.env`, and run the worker:
+```bash
+printf "TEMPORAL_ADDRESS=127.0.0.1:7233\nTEMPORAL_NAMESPACE=default\nTEMPORAL_TASK_QUEUE=hello-bun\n" > .env
+```
+
+Start Temporal:
 
 ```bash
 temporal server start-dev --headless
-printf "TEMPORAL_ADDRESS=127.0.0.1:7233\nTEMPORAL_NAMESPACE=default\nTEMPORAL_TASK_QUEUE=demo-worker\n" > .env
+```
+
+Start the worker:
+
+```bash
 bun run dev
 ```
 
-### Add the SDK to an existing Bun project
+Start a workflow in another shell:
+
+```bash
+temporal workflow start \
+  --task-queue hello-bun \
+  --type helloWorkflow \
+  --input '"Codex"'
+```
+
+## Add to an existing Bun project
 
 Add the SDK to an existing Bun workspace:
 
@@ -69,6 +60,14 @@ bun add @proompteng/temporal-bun-sdk
 
 The template includes example workflows, activities, and Docker packaging
 scripts that map one-to-one with the library's defaults.
+
+## Strict mode
+
+The generated worker defaults to `workflowGuards: 'warn'` so local setup works
+with `temporal server start-dev`.
+
+If you switch to strict mode, configure worker versioning and stable build IDs.
+See `Worker build IDs and versioning` below.
 
 ## Configure your Temporal connection
 

@@ -508,6 +508,7 @@ const main = async () => {
   const { worker } = await createWorker({
     activities,
     workflowsPath: fileURLToPath(new URL('./workflows/index.ts', import.meta.url)),
+    workflowGuards: 'warn',
   })
 
   const shutdown = async (signal: string) => {
