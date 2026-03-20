@@ -1575,6 +1575,88 @@ describe('control-plane status', () => {
     })
   })
 
+  it('buildExecutionTrust keeps expired frozen stages degraded while reconciliation is pending', async () => {
+    kubeClientMocks.createKubernetesClient.mockReturnValue({
+      list: vi.fn(async () => ({
+        items: [
+          buildExecutionTrustSwarmResource({
+            phase: 'Frozen',
+            freezeReason: 'StageStaleness',
+            freezeUntil: '2026-01-20T00:05:00Z',
+            requirementsPending: 5,
+            requirementsLastSeen: '2026-01-19T00:00:00Z',
+            stageStates: {
+              discover: {
+                phase: 'Frozen',
+                healthy: false,
+                cadence: '1h',
+                lastRunTime: '2026-01-19T00:00:00Z',
+                consecutiveFailures: 0,
+              },
+              plan: {
+                phase: 'Frozen',
+                healthy: false,
+                cadence: '1h',
+                lastRunTime: '2026-01-19T00:00:00Z',
+                consecutiveFailures: 0,
+              },
+              implement: {
+                phase: 'Frozen',
+                healthy: false,
+                cadence: '1h',
+                lastRunTime: '2026-01-19T00:00:00Z',
+                consecutiveFailures: 0,
+              },
+              verify: {
+                phase: 'Frozen',
+                healthy: false,
+                cadence: '1h',
+                lastRunTime: '2026-01-19T00:00:00Z',
+                consecutiveFailures: 0,
+              },
+            },
+          }),
+        ],
+      })),
+    })
+
+    const snapshot = await buildExecutionTrust({
+      namespace: 'agents',
+      now: new Date('2026-01-20T00:20:00Z'),
+      swarms: ['jangar-control-plane'],
+      summaryLimit: 20,
+    })
+
+    expect(snapshot.executionTrust.status).toBe('degraded')
+    expect(snapshot.executionTrust.blocking_windows.some((window) => window.class === 'blocked')).toBe(false)
+    expect(snapshot.executionTrust.blocking_windows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'swarms',
+          name: 'jangar-control-plane',
+          reason: 'freeze expiry unreconciled (StageStaleness)',
+          class: 'degraded',
+        }),
+        expect.objectContaining({
+          type: 'stages',
+          name: 'jangar-control-plane:discover',
+          reason: 'discover waiting for freeze reconciliation',
+          class: 'degraded',
+        }),
+      ]),
+    )
+    expect(snapshot.stages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stage: 'discover',
+          phase: 'Recovering',
+          stale: true,
+          last_failure_reason: 'discover waiting for freeze reconciliation',
+        }),
+      ]),
+    )
+  })
+
   it('buildExecutionTrust marks degraded trust when requirements and stages are unhealthy', async () => {
     kubeClientMocks.createKubernetesClient.mockReturnValue({
       list: vi.fn(async () => ({
