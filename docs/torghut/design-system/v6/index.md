@@ -10,6 +10,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `62-torghut-lane-books-and-bounded-query-firebreak-contract-2026-03-20.md`
+  - `docs/agents/designs/63-jangar-consumer-projections-and-latency-class-admission-contract-2026-03-20.md`
   - `61-torghut-evidence-seats-and-profit-repair-exchange-contract-2026-03-20.md`
   - `docs/agents/designs/62-jangar-execution-receipts-and-stage-recovery-cells-contract-2026-03-20.md`
   - `60-torghut-hypothesis-passports-and-capability-quote-auction-contract-2026-03-20.md`
@@ -35,6 +37,8 @@
 - `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
 - `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/63-jangar-consumer-projections-and-latency-class-admission-contract-2026-03-20.md`
+  - `62-torghut-lane-books-and-bounded-query-firebreak-contract-2026-03-20.md`
   - `docs/agents/designs/62-jangar-execution-receipts-and-stage-recovery-cells-contract-2026-03-20.md`
   - `61-torghut-evidence-seats-and-profit-repair-exchange-contract-2026-03-20.md`
   - `docs/agents/designs/61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md`
@@ -144,6 +148,12 @@ Current source-state priority is narrower:
 - `60-torghut-hypothesis-passports-and-capability-quote-auction-contract-2026-03-20.md` now adds the next
   profitability layer: Torghut must settle one passport per lane, price capability quality explicitly, and allocate
   only bounded probe capital when degraded-but-usable evidence still exists.
+- `61-torghut-evidence-seats-and-profit-repair-exchange-contract-2026-03-20.md` now makes the March 20 plan-stage
+  failure explicit: Torghut already has typed evidence surfaces, but it still prices them through one global route-time
+  gate instead of durable lane-local contracts.
+- `62-torghut-lane-books-and-bounded-query-firebreak-contract-2026-03-20.md` now turns the next gap into a concrete
+  architecture contract: every lane gets one durable lane book, expensive evidence paths open bounded firebreaks, and
+  status/readiness/scheduler must reuse the same ids.
 - `docs/agents/designs/56-jangar-capability-receipts-and-consumer-binding-contract-2026-03-20.md` now defines the
   next control-plane step: typed capability receipts plus explicit binding sets that force `/ready`, deploy
   verification, and Torghut consumers to share the same receipt digest and freshness contract.
@@ -161,6 +171,12 @@ Current source-state priority is narrower:
 - `docs/agents/designs/61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md` now closes the next
   remaining gap above sessions and recovery ledgers by making runtime completeness a first-class control-plane subject
   and binding consumers to passport ids that include both authority truth and executable runtime kits.
+- `docs/agents/designs/62-jangar-execution-receipts-and-stage-recovery-cells-contract-2026-03-20.md` now makes
+  runtime completeness and stale-stage debt durable enough to stop pretending rollout health implies stage executability.
+- `docs/agents/designs/63-jangar-consumer-projections-and-latency-class-admission-contract-2026-03-20.md` now takes
+  the next step: Jangar stops treating one generic route as the authority surface for every consumer and instead
+  compiles fast typed projections plus latency-class admissions for serving, Torghut quant, deploy verification, and
+  handoff paths.
 - `docs/agents/designs/54-jangar-witness-mirror-quorum-and-promotion-veto-2026-03-20.md` now turns incomplete rollout
   evidence into a first-class veto by requiring fresh witness mirrors for rollout, stage health, and consumer
   acknowledgement before Jangar may emit promotion-friendly authority.
@@ -280,6 +296,7 @@ This pack is positioned as the next architecture layer above:
 59. `58-torghut-profit-cohort-auction-and-freshness-insurance-contract-2026-03-20.md`
 60. `59-torghut-lane-balance-sheet-and-dataset-seat-auction-contract-2026-03-20.md`
 61. `61-torghut-evidence-seats-and-profit-repair-exchange-contract-2026-03-20.md`
+62. `62-torghut-lane-books-and-bounded-query-firebreak-contract-2026-03-20.md`
 
 ## Recommended Build Order
 
