@@ -21,8 +21,6 @@ spec:
         app: posthog
         release: "posthog"
     spec:
-      nodeSelector:
-        kubernetes.io/arch: amd64
       restartPolicy: Never
       containers:
       - name: migrate-job
