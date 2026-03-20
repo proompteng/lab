@@ -17,6 +17,8 @@ spec:
                 <replica>
                   <host>posthog-clickhouse.posthog.svc.cluster.local</host>
                   <port>9000</port>
+                  <user>posthog</user>
+                  <password from_env="CONFIGURATION_USERS_POSTHOG_PASSWORD" />
                 </replica>
               </shard>
             </posthog>
@@ -25,6 +27,8 @@ spec:
                 <replica>
                   <host>posthog-clickhouse.posthog.svc.cluster.local</host>
                   <port>9000</port>
+                  <user>posthog</user>
+                  <password from_env="CONFIGURATION_USERS_POSTHOG_PASSWORD" />
                 </replica>
               </shard>
             </posthog_single_shard>
@@ -33,6 +37,8 @@ spec:
                 <replica>
                   <host>posthog-clickhouse.posthog.svc.cluster.local</host>
                   <port>9000</port>
+                  <user>posthog</user>
+                  <password from_env="CONFIGURATION_USERS_POSTHOG_PASSWORD" />
                 </replica>
               </shard>
             </posthog_migrations>
@@ -41,6 +47,8 @@ spec:
                 <replica>
                   <host>posthog-clickhouse.posthog.svc.cluster.local</host>
                   <port>9000</port>
+                  <user>posthog</user>
+                  <password from_env="CONFIGURATION_USERS_POSTHOG_PASSWORD" />
                 </replica>
               </shard>
             </posthog_writable>
@@ -49,6 +57,8 @@ spec:
                 <replica>
                   <host>posthog-clickhouse.posthog.svc.cluster.local</host>
                   <port>9000</port>
+                  <user>posthog</user>
+                  <password from_env="CONFIGURATION_USERS_POSTHOG_PASSWORD" />
                 </replica>
               </shard>
             </posthog_primary_replica>
@@ -98,54 +108,60 @@ spec:
             <database>system</database>
             <table>query_log</table>
             <engine>Engine = MergeTree PARTITION BY event_date ORDER BY event_time TTL event_date + INTERVAL 3 DAY</engine>
-            <flush_interval_milliseconds>7500</flush_interval_milliseconds>
-            <max_size_rows>1048576</max_size_rows>
+            <flush_interval_milliseconds>15000</flush_interval_milliseconds>
+            <max_size_rows>262144</max_size_rows>
             <reserved_size_rows>8192</reserved_size_rows>
-            <buffer_size_rows_flush_threshold>524288</buffer_size_rows_flush_threshold>
+            <buffer_size_rows_flush_threshold>131072</buffer_size_rows_flush_threshold>
             <flush_on_crash>false</flush_on_crash>
           </query_log>
           <part_log replace="1">
             <database>system</database>
             <table>part_log</table>
-            <engine>Engine = MergeTree PARTITION BY event_date ORDER BY event_time TTL event_date + INTERVAL 3 DAY</engine>
-            <flush_interval_milliseconds>7500</flush_interval_milliseconds>
-            <max_size_rows>1048576</max_size_rows>
-            <reserved_size_rows>8192</reserved_size_rows>
-            <buffer_size_rows_flush_threshold>524288</buffer_size_rows_flush_threshold>
+            <engine>Engine = MergeTree PARTITION BY event_date ORDER BY event_time TTL event_date + INTERVAL 2 DAY</engine>
+            <flush_interval_milliseconds>15000</flush_interval_milliseconds>
+            <max_size_rows>131072</max_size_rows>
+            <reserved_size_rows>4096</reserved_size_rows>
+            <buffer_size_rows_flush_threshold>65536</buffer_size_rows_flush_threshold>
             <flush_on_crash>false</flush_on_crash>
           </part_log>
-          <trace_log replace="1">
-            <database>system</database>
-            <table>trace_log</table>
-            <engine>Engine = MergeTree PARTITION BY event_date ORDER BY event_time TTL event_date + INTERVAL 3 DAY</engine>
-            <flush_interval_milliseconds>7500</flush_interval_milliseconds>
-            <max_size_rows>1048576</max_size_rows>
-            <reserved_size_rows>8192</reserved_size_rows>
-            <buffer_size_rows_flush_threshold>524288</buffer_size_rows_flush_threshold>
-            <flush_on_crash>false</flush_on_crash>
-          </trace_log>
+          <trace_log remove="1" />
           <text_log replace="1">
             <level>warning</level>
             <database>system</database>
             <table>text_log</table>
-            <flush_interval_milliseconds>7500</flush_interval_milliseconds>
-            <max_size_rows>1048576</max_size_rows>
-            <reserved_size_rows>8192</reserved_size_rows>
-            <buffer_size_rows_flush_threshold>524288</buffer_size_rows_flush_threshold>
+            <flush_interval_milliseconds>15000</flush_interval_milliseconds>
+            <max_size_rows>131072</max_size_rows>
+            <reserved_size_rows>4096</reserved_size_rows>
+            <buffer_size_rows_flush_threshold>65536</buffer_size_rows_flush_threshold>
             <flush_on_crash>false</flush_on_crash>
-            <engine>Engine = MergeTree PARTITION BY event_date ORDER BY event_time TTL event_date + INTERVAL 3 DAY</engine>
+            <engine>Engine = MergeTree PARTITION BY event_date ORDER BY event_time TTL event_date + INTERVAL 1 DAY</engine>
           </text_log>
           <query_views_log replace="1">
             <database>system</database>
             <table>query_views_log</table>
-            <flush_interval_milliseconds>7500</flush_interval_milliseconds>
-            <max_size_rows>1048576</max_size_rows>
+            <flush_interval_milliseconds>15000</flush_interval_milliseconds>
+            <max_size_rows>262144</max_size_rows>
             <reserved_size_rows>8192</reserved_size_rows>
-            <buffer_size_rows_flush_threshold>524288</buffer_size_rows_flush_threshold>
+            <buffer_size_rows_flush_threshold>131072</buffer_size_rows_flush_threshold>
             <flush_on_crash>false</flush_on_crash>
             <engine>Engine = MergeTree PARTITION BY toYYYYMM(event_date) ORDER BY (event_date, event_time) TTL event_date + INTERVAL 3 DAY</engine>
           </query_views_log>
+          <metric_log remove="1" />
           <asynchronous_metric_log remove="1" />
+          <processors_profile_log remove="1" />
+          <!-- Keep background merges from exhausting the pod before foreground startup checks run. -->
+          <merges_mutations_memory_usage_to_ram_ratio>0.25</merges_mutations_memory_usage_to_ram_ratio>
+        </clickhouse>
+      users.d/posthog-profile-overrides.xml: |
+        <clickhouse>
+          <profiles>
+            <default>
+              <!-- Disable sampling profiler output; PostHog does not rely on system.trace_log in production. -->
+              <query_profiler_real_time_period_ns>0</query_profiler_real_time_period_ns>
+              <query_profiler_cpu_time_period_ns>0</query_profiler_cpu_time_period_ns>
+              <log_profile_events>0</log_profile_events>
+            </default>
+          </profiles>
         </clickhouse>
       config.d/posthog-crash-log.xml: |
         <clickhouse>
@@ -207,11 +223,11 @@ spec:
                       key: password
               resources:
                 requests:
-                  cpu: 1000m
-                  memory: 2Gi
-                limits:
                   cpu: 2000m
                   memory: 4Gi
+                limits:
+                  cpu: 4000m
+                  memory: 8Gi
     volumeClaimTemplates:
       - name: chi-data
         spec:
