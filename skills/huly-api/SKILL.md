@@ -39,6 +39,10 @@ Load credentials from the `huly-api` Kubernetes secret via AgentRun `spec.secret
 
 Use `scripts/huly-api.py`.
 
+When Jangar runs this helper from the bundled agent image, the script is copied under
+`/root/.codex/skills/huly-api/scripts/huly-api.py`. Local repo checkouts still use
+`skills/huly-api/scripts/huly-api.py`, and `HULY_API_SCRIPT_PATH` can override either layout for debugging.
+
 ### Mandatory channel interaction loop
 
 For every mission stage, run this in order:
