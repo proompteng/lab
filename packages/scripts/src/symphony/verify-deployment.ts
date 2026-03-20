@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import process from 'node:process'
 
+import { parseArgoApplicationStatus, type ArgoApplicationStatus as ArgoStatus } from '../shared/argo'
 import { ensureCli, fatal, repoRoot } from '../shared/cli'
 
 type CliOptions = {
@@ -26,12 +27,6 @@ type CommandResult = {
   stdout: string
   stderr: string
   exitCode: number
-}
-
-type ArgoStatus = {
-  syncStatus: string
-  healthStatus: string
-  revision: string
 }
 
 type ResolvedOptions = {
@@ -105,11 +100,6 @@ const runCommand = async (command: string, args: string[], allowFailure = false)
   }
 
   return { stdout, stderr, exitCode }
-}
-
-const parseArgoStatus = (output: string): ArgoStatus => {
-  const [syncStatus = 'unknown', healthStatus = 'unknown', revision = 'unknown'] = output.trim().split(/\s+/)
-  return { syncStatus, healthStatus, revision }
 }
 
 const validateExpectedRevisionMode = (mode: string | undefined): 'exact' | 'ancestor' => {
@@ -250,9 +240,9 @@ const verifyArgoHealth = async (options: ResolvedOptions) => {
       '-n',
       options.argoNamespace,
       '-o',
-      'jsonpath={.status.sync.status} {.status.health.status} {.status.sync.revision}',
+      'json',
     ])
-    const status = parseArgoStatus(statusOutput.stdout)
+    const status = parseArgoApplicationStatus(statusOutput.stdout)
     const revisionSatisfied = options.expectedRevision
       ? await isExpectedRevisionSatisfied(status.revision, options.expectedRevision, options.expectedRevisionMode)
       : true
@@ -270,6 +260,9 @@ const verifyArgoHealth = async (options: ResolvedOptions) => {
       )
     }
 
+    console.log(
+      `Attempt ${attempt}: sync=${status.syncStatus} health=${status.healthStatus} revision=${status.revision} desired=${status.desiredRevision}`,
+    )
     await sleep(options.healthIntervalSeconds)
   }
 }
