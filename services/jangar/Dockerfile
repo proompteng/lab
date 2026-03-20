@@ -598,6 +598,7 @@ WORKDIR /app
 COPY --from=jangar-deps-prod /app/node_modules ./node_modules
 COPY --from=jangar-pty /tmp/node-pty/build /app/node_modules/node-pty/build
 COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/node_modules/node-pty/prebuilds
+COPY skills/huly-api /app/skills/huly-api
 
 WORKDIR /app/services/jangar
 COPY --from=jangar-build /app/services/jangar/.output ./.output
@@ -623,6 +624,8 @@ COPY --from=jangar-build /app/services/jangar/scripts/codex-nats-soak.ts /usr/lo
 COPY --from=jangar-build /app/services/jangar/scripts/codex ./scripts/codex
 COPY --from=jangar-build /app/services/jangar/scripts/agent-providers /etc/agent-providers
 COPY skills/ /root/.codex/skills/
+# AgentRun auth mounts shadow /root/.codex at runtime, so keep the Huly helper
+# available under /app/skills for the codex runner and handoff preflight.
 RUN ln -sf /app/services/jangar/scripts/codex/codex-implement.ts /usr/local/bin/codex-implement \
   && chmod +x /usr/local/bin/agent-runner /usr/local/bin/codex-nats-publish /usr/local/bin/codex-nats-soak /app/services/jangar/scripts/codex/codex-implement.ts
 
