@@ -145,7 +145,7 @@ Notes:
 Do not blindly copy one cluster's logging profile into another. Start from the baseline above, then adapt:
 
 - PostHog-compatible baseline:
-  Keep `query_views_log` because PostHog makes heavy use of materialized views and migration/view diagnostics are useful during self-hosted recovery. We currently also keep `trace_log`, but only with a short TTL and bounded buffers. See [clickhouse-cluster.yaml](/Users/gregkonush/.codex/worktrees/4467/lab/argocd/applications/posthog/clickhouse-cluster.yaml).
+  Keep `query_views_log` because PostHog makes heavy use of materialized views and migration/view diagnostics are useful during self-hosted recovery. On 4-8Gi pods, prefer the stricter profile: disable `trace_log`, `metric_log`, and `processors_profile_log`, disable the sampling profilers in `users.d`, and leave `query_views_log` as the only extra retained system log beyond `text_log`, `query_log`, and `part_log`. See [clickhouse-cluster.yaml](/Users/gregkonush/.codex/worktrees/e1b4/lab/argocd/applications/posthog/clickhouse-cluster.yaml).
 - Torghut baseline:
   Prefer the stricter profile: disable `trace_log`, `metric_log`, `asynchronous_metric_log`, and `processors_profile_log`, keep `text_log` and `query_log` bounded, and keep `part_log` short. See [clickhouse-cluster.yaml](/Users/gregkonush/.codex/worktrees/4467/lab/argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml).
 

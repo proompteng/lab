@@ -44,6 +44,24 @@ spec:
               value: "redis://posthog-redis.posthog.svc.cluster.local:6379/"
             - name: CAPTURE_MODE
               value: "events"
+            - name: AI_S3_BUCKET
+              value: "posthog-ai-blobs"
+            - name: AI_S3_PREFIX
+              value: "llma/"
+            - name: AI_S3_ENDPOINT
+              value: "http://rook-ceph-rgw-objectstore.rook-ceph.svc:80"
+            - name: AI_S3_REGION
+              value: "us-east-1"
+            - name: AI_S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: posthog-ai-blobs
+                  key: AWS_ACCESS_KEY_ID
+            - name: AI_S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: posthog-ai-blobs
+                  key: AWS_SECRET_ACCESS_KEY
             - name: RUST_LOG
               value: "info,rdkafka=warn"
           readinessProbe:

@@ -28,7 +28,7 @@ spec:
       serviceAccountName: posthog
       containers:
       - name: posthog-events
-        image: "posthog/posthog:bf60774b71961a8674ca24ed1bd42bed4d670f72"
+        image: "posthog/posthog:7a6ab0d30c88a981a45491ac35f2b02d09d56c0f"
         command:
           - ./bin/docker-server
         imagePullPolicy: IfNotPresent
@@ -185,7 +185,7 @@ spec:
             {}
       initContainers:        
         - name: wait-for-service-dependencies
-          image: "posthog/posthog:bf60774b71961a8674ca24ed1bd42bed4d670f72"
+          image: "posthog/posthog:7a6ab0d30c88a981a45491ac35f2b02d09d56c0f"
           env:
             - name: POSTHOG_POSTGRES_HOST
               value: posthog-db-pooler
@@ -212,7 +212,7 @@ spec:
         
                         
         - name: wait-for-migrations
-          image: "posthog/posthog:bf60774b71961a8674ca24ed1bd42bed4d670f72"
+          image: "posthog/posthog:7a6ab0d30c88a981a45491ac35f2b02d09d56c0f"
           command:
             - /bin/sh
             - -c

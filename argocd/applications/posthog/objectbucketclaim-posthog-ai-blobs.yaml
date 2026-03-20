@@ -1,0 +1,10 @@
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: posthog-ai-blobs
+  namespace: posthog
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  bucketName: posthog-ai-blobs
+  storageClassName: rook-ceph-bucket

@@ -4,6 +4,7 @@ namespace: posthog
 resources:
   - postgres-cluster.yaml
   - redis.yaml
+  - objectbucketclaim-posthog-ai-blobs.yaml
   - clickhouse-secret.yaml
   - clickhouse-keeper.yaml
   - clickhouse-cluster.yaml
