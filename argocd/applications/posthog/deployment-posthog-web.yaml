@@ -194,7 +194,12 @@ spec:
           successThreshold: 1
           timeoutSeconds: 5
         resources:
-            {}
+          requests:
+            cpu: 1000m
+            memory: 2Gi
+          limits:
+            cpu: 2000m
+            memory: 4Gi
       initContainers:        
         - name: wait-for-service-dependencies
           image: "posthog/posthog:7a6ab0d30c88a981a45491ac35f2b02d09d56c0f"
