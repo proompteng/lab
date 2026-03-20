@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
+import { parseArgoApplicationStatus } from '../../shared/argo'
 import { __private } from '../verify-deployment'
 
 describe('verify-deployment', () => {
@@ -51,7 +52,14 @@ describe('verify-deployment', () => {
 
   it('waits while Argo revision is not the expected revision', () => {
     const waitReason = __private.getArgoWaitReason(
-      __private.parseArgoStatus('Synced Healthy abcdef0123456789abcdef0123456789abcdef01'),
+      parseArgoApplicationStatus(
+        JSON.stringify({
+          status: {
+            health: { status: 'Healthy' },
+            sync: { status: 'Synced', revision: 'abcdef0123456789abcdef0123456789abcdef01' },
+          },
+        }),
+      ),
       {
         argoApplication: 'jangar',
         argoNamespace: 'argocd',
@@ -77,7 +85,14 @@ describe('verify-deployment', () => {
 
   it('returns no wait reason for synced healthy expected revision', () => {
     const waitReason = __private.getArgoWaitReason(
-      __private.parseArgoStatus('Synced Healthy 0123456789abcdef0123456789abcdef01234567'),
+      parseArgoApplicationStatus(
+        JSON.stringify({
+          status: {
+            health: { status: 'Healthy' },
+            sync: { status: 'Synced', revision: '0123456789abcdef0123456789abcdef01234567' },
+          },
+        }),
+      ),
       {
         argoApplication: 'jangar',
         argoNamespace: 'argocd',
@@ -102,7 +117,14 @@ describe('verify-deployment', () => {
 
   it('returns no wait reason when ancestor revision is acceptable', () => {
     const waitReason = __private.getArgoWaitReason(
-      __private.parseArgoStatus('Synced Healthy abcdef0123456789abcdef0123456789abcdef01'),
+      parseArgoApplicationStatus(
+        JSON.stringify({
+          status: {
+            health: { status: 'Healthy' },
+            sync: { status: 'Synced', revision: 'abcdef0123456789abcdef0123456789abcdef01' },
+          },
+        }),
+      ),
       {
         argoApplication: 'jangar',
         argoNamespace: 'argocd',
@@ -123,5 +145,29 @@ describe('verify-deployment', () => {
     )
 
     expect(waitReason).toBeUndefined()
+  })
+
+  it('prefers the last deployed revision over the moving sync target', () => {
+    const status = parseArgoApplicationStatus(
+      JSON.stringify({
+        status: {
+          health: { status: 'Healthy' },
+          history: [{ revision: 'de84c71d8719cd781fe63e53e80cacd2642ea9e3' }],
+          operationState: {
+            phase: 'Succeeded',
+            syncResult: {
+              revision: 'de84c71d8719cd781fe63e53e80cacd2642ea9e3',
+            },
+          },
+          sync: {
+            status: 'Synced',
+            revision: 'd65e7094ab93b1a9a5ae002c1eccce2a0151fae8',
+          },
+        },
+      }),
+    )
+
+    expect(status.revision).toBe('de84c71d8719cd781fe63e53e80cacd2642ea9e3')
+    expect(status.desiredRevision).toBe('d65e7094ab93b1a9a5ae002c1eccce2a0151fae8')
   })
 })

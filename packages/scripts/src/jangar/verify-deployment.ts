@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import process from 'node:process'
 
+import { parseArgoApplicationStatus, type ArgoApplicationStatus as ArgoStatus } from '../shared/argo'
 import { ensureCli, fatal, repoRoot } from '../shared/cli'
 
 type CliOptions = {
@@ -27,12 +28,6 @@ type CommandResult = {
   stdout: string
   stderr: string
   exitCode: number
-}
-
-type ArgoStatus = {
-  syncStatus: string
-  healthStatus: string
-  revision: string
 }
 
 type ResolvedOptions = {
@@ -115,11 +110,6 @@ const runCommand = async (command: string, args: string[], allowFailure = false)
   }
 
   return { stdout, stderr, exitCode }
-}
-
-const parseArgoStatus = (output: string): ArgoStatus => {
-  const [syncStatus = 'unknown', healthStatus = 'unknown', revision = 'unknown'] = output.trim().split(/\s+/)
-  return { syncStatus, healthStatus, revision }
 }
 
 const getArgoWaitReason = (
@@ -281,15 +271,7 @@ const waitForArgoState = async (options: ResolvedOptions) => {
   for (let attempt = 1; attempt <= options.healthAttempts; attempt += 1) {
     const status = await runCommand(
       'kubectl',
-      [
-        '-n',
-        options.argoNamespace,
-        'get',
-        'application',
-        options.argoApplication,
-        '-o',
-        'jsonpath={.status.sync.status} {.status.health.status} {.status.sync.revision}',
-      ],
+      ['-n', options.argoNamespace, 'get', 'application', options.argoApplication, '-o', 'json'],
       true,
     )
 
@@ -303,12 +285,12 @@ const waitForArgoState = async (options: ResolvedOptions) => {
       continue
     }
 
-    const argoStatus = parseArgoStatus(status.stdout)
+    const argoStatus = parseArgoApplicationStatus(status.stdout)
     const revisionSatisfied =
       !options.expectedRevision ||
       (await isExpectedRevisionSatisfied(argoStatus.revision, options.expectedRevision, options.expectedRevisionMode))
     console.log(
-      `Attempt ${attempt}: sync=${argoStatus.syncStatus} health=${argoStatus.healthStatus} revision=${argoStatus.revision}`,
+      `Attempt ${attempt}: sync=${argoStatus.syncStatus} health=${argoStatus.healthStatus} revision=${argoStatus.revision} desired=${argoStatus.desiredRevision}`,
     )
 
     const waitReason = getArgoWaitReason(argoStatus, options, revisionSatisfied)
@@ -460,5 +442,4 @@ export const __private = {
   extractExpectedDigest,
   getArgoWaitReason,
   parseArgs,
-  parseArgoStatus,
 }
