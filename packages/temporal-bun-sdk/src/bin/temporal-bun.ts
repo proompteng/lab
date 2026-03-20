@@ -259,7 +259,7 @@ Options:
   --file <path>           Dockerfile path for docker-build (default: ./Dockerfile)
   --log-format <format>   Set TEMPORAL_LOG_FORMAT for doctor (json|pretty)
   --log-level <level>     Set TEMPORAL_LOG_LEVEL for doctor (debug|info|warn|error)
-  --metrics <spec>        Set metrics exporter spec for doctor (e.g., file:/tmp/metrics.json)
+  --metrics <spec>        Set metrics exporter spec for doctor (e.g., file:./metrics.json)
   --metrics-exporter <name>
                           Alternate way to set TEMPORAL_METRICS_EXPORTER
   --metrics-endpoint <url>
@@ -408,7 +408,7 @@ export type Template = {
   contents: string
 }
 
-const SCAFFOLD_SDK_VERSION = '^0.7.0'
+const SCAFFOLD_SDK_VERSION = '^0.7.1'
 
 export function projectTemplates(name: string): Template[] {
   return [
@@ -482,6 +482,20 @@ peer = true
         ']',
         '',
         'export default workflows',
+      ].join('\n'),
+    },
+    {
+      path: 'src/activities/index.ts',
+      contents: [
+        'export async function helloActivity(name = \'Temporal\') {',
+        '  return `Hello from activity, ${name}!`',
+        '}',
+        '',
+        'export const activities = {',
+        '  helloActivity,',
+        '}',
+        '',
+        'export default activities',
       ].join('\n'),
     },
     {

@@ -1,34 +1,28 @@
 # `@proompteng/temporal-bun-sdk`
 
-Run Temporal workers and clients on Bun with replay tooling, Docker helpers, and Temporal Cloud/TLS support. The SDK is implemented entirely in TypeScript, speaks gRPC over HTTP/2 using [Connect](https://connectrpc.com/), and executes workflows with the [Effect](https://effect.website/) runtime so you can avoid a native bridge.
+Run Temporal workers and clients on Bun.
 
 Full docs: <https://docs.proompteng.ai/docs/temporal-bun-sdk>
 
-## Fastest start
+## Quickstart
 
-Use this path if you want a working Bun worker as quickly as possible.
+Use this path if you want a working Bun worker in a new standalone project. Run it outside another Bun workspace or monorepo.
 
-1. Scaffold a new project in a clean directory:
+1. Create a new worker project:
 
    ```bash
-   cd /tmp
    bunx @proompteng/temporal-bun-sdk init hello-worker
    cd hello-worker
+   bun install
    ```
 
-2. Repair the generated SDK version for the current npm release:
-
-   ```bash
-   bun add @proompteng/temporal-bun-sdk@0.7.0
-   ```
-
-3. Start Temporal locally:
+2. Start Temporal locally:
 
    ```bash
    temporal server start-dev --headless
    ```
 
-4. Create a `.env` file:
+3. Create a `.env` file:
 
    ```env
    TEMPORAL_ADDRESS=127.0.0.1:7233
@@ -36,13 +30,13 @@ Use this path if you want a working Bun worker as quickly as possible.
    TEMPORAL_TASK_QUEUE=hello-bun
    ```
 
-5. Run the worker:
+4. Run the worker:
 
    ```bash
    bun run dev
    ```
 
-6. In another shell, start the example workflow:
+5. In another shell, start the example workflow:
 
    ```bash
    temporal workflow start \
@@ -53,7 +47,7 @@ Use this path if you want a working Bun worker as quickly as possible.
 
 You should see the worker pick up the workflow and complete it.
 
-## Install into an existing Bun project
+## Add To An Existing Bun Project
 
 ```bash
 bun add @proompteng/temporal-bun-sdk
@@ -62,12 +56,11 @@ bun add @proompteng/temporal-bun-sdk
 For Temporal Cloud, TLS, Docker, replay, and observability, use the full guide:
 <https://docs.proompteng.ai/docs/temporal-bun-sdk>
 
-## Why teams adopt it
+## Why Teams Adopt It
 
-- **Bun-native runtime** – run workers, activities, and clients directly on Bun.
+- **Runs directly on Bun** – workers, activities, and clients stay in one Bun-based project.
 - **Production path included** – TLS, Temporal Cloud, Docker packaging, retries, observability, and replay tooling are built in.
 - **Typed workflow surface** – workflows, queries, updates, signals, schedules, and Cloud/Operator RPCs are exposed with typed helpers.
-- **No native bridge required** – the runtime is pure TypeScript and uses generated protobuf stubs.
 - **CLI included** – `temporal-bun` scaffolds workers, validates config with `doctor`, builds Docker images, and replays histories.
 
 ## Prerequisites
@@ -479,7 +472,7 @@ bunx temporal-bun skill list
 bunx temporal-bun skill install temporal
 
 # install into a custom directory
-bunx temporal-bun skill install temporal --to /tmp/my-skills
+bunx temporal-bun skill install temporal --to ~/my-skills
 ```
 
 For direct scripting, use the exported API from `@proompteng/temporal-bun-sdk/skills`:
@@ -490,7 +483,7 @@ import { installBundledSkill, listBundledSkills } from '@proompteng/temporal-bun
 const skills = await listBundledSkills()
 await installBundledSkill({
   skillName: skills[0]?.name ?? 'temporal',
-  destinationDir: '/tmp/skills',
+  destinationDir: '/path/to/skills',
   force: true,
 })
 ```
