@@ -1,4 +1,6 @@
 import { spawn as spawnChild } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import process from 'node:process'
 
@@ -88,6 +90,9 @@ type HulyArtifactOperationResult =
 const DEFAULT_HULY_API_PATH = fileURLToPath(
   new URL('../../../../../skills/huly-api/scripts/huly-api.py', import.meta.url),
 )
+const WORKSPACE_HULY_API_PATH = '/workspace/lab/skills/huly-api/scripts/huly-api.py'
+const TMP_WORKSPACE_HULY_API_PATH = '/tmp/proompt-lab/skills/huly-api/scripts/huly-api.py'
+const BUNDLED_HULY_API_PATH = '/root/.codex/skills/huly-api/scripts/huly-api.py'
 const DEFAULT_PYTHON_BIN = 'python3'
 
 const runProcess = async (command: string, args: string[]): Promise<CommandResult> => {
@@ -383,7 +388,26 @@ export const upsertMission = async ({
 
 export const resolveHulyApiScriptPath = () => {
   const configured = process.env.HULY_API_SCRIPT_PATH?.trim()
-  return configured && configured.length > 0 ? configured : DEFAULT_HULY_API_PATH
+  if (configured && configured.length > 0) {
+    return configured
+  }
+
+  const cwdPath = join(process.cwd(), 'skills', 'huly-api', 'scripts', 'huly-api.py')
+  const candidates = [
+    DEFAULT_HULY_API_PATH,
+    cwdPath,
+    WORKSPACE_HULY_API_PATH,
+    TMP_WORKSPACE_HULY_API_PATH,
+    BUNDLED_HULY_API_PATH,
+  ]
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate
+    }
+  }
+
+  return DEFAULT_HULY_API_PATH
 }
 
 export const resolvePythonPath = () => {
