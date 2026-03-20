@@ -304,7 +304,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "7"
                 automation: manual
-                enabled: "true"
+                enabled: "false"
               - name: bilig
                 path: argocd/applications/bilig
                 namespace: bilig
