@@ -630,7 +630,8 @@ def _evaluate_trading_health_payload(
     )
     live_submission_gate = _build_live_submission_gate_payload(
         scheduler.state,
-        hypothesis_summary=hypothesis_summary,
+        session=session,
+        hypothesis_summary=_hypothesis_payload,
         empirical_jobs_status=empirical_jobs,
         dspy_runtime_status=dspy_runtime,
         quant_health_status=quant_evidence,
@@ -1634,7 +1635,8 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
     )
     live_submission_gate = _build_live_submission_gate_payload(
         state,
-        hypothesis_summary=hypothesis_summary,
+        session=session,
+        hypothesis_summary=hypothesis_payload,
         empirical_jobs_status=empirical_jobs,
         dspy_runtime_status=cast(
             dict[str, object],
@@ -3067,6 +3069,7 @@ def _build_hypothesis_runtime_payload(
 def _build_live_submission_gate_payload(
     state: object,
     *,
+    session: Session | None = None,
     hypothesis_summary: Mapping[str, Any] | None,
     empirical_jobs_status: Mapping[str, Any] | None = None,
     dspy_runtime_status: Mapping[str, Any] | None = None,
@@ -3074,6 +3077,7 @@ def _build_live_submission_gate_payload(
 ) -> dict[str, object]:
     return build_live_submission_gate_payload(
         state,
+        session=session,
         hypothesis_summary=hypothesis_summary,
         empirical_jobs_status=empirical_jobs_status,
         dspy_runtime_status=dspy_runtime_status,

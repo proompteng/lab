@@ -16,6 +16,12 @@
     "jangar_dependency_quorum",
     "signal_continuity"
   ],
+  "segment_dependencies": [
+    "execution",
+    "empirical",
+    "llm-review",
+    "ta-core"
+  ],
   "expected_gross_edge_bps": "6",
   "max_allowed_slippage_bps": "12",
   "min_sample_count_for_live_canary": 40,

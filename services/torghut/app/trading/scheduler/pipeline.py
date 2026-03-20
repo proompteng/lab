@@ -1039,6 +1039,7 @@ class TradingPipeline:
             dspy_runtime_status=dspy_runtime_status,
             quant_health_status=quant_status,
             quant_account_label=self.account_label,
+            session=session,
         )
         self._last_live_submission_gate = dict(gate)
         return gate

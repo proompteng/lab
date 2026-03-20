@@ -1853,6 +1853,139 @@ class TestTradingApi(TestCase):
             else:
                 app.state.trading_scheduler = original_scheduler
 
+    def test_live_submission_gate_matches_status_health_and_readyz(self) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        original_mode = settings.trading_mode
+        original_enabled = settings.trading_enabled
+        try:
+            settings.trading_enabled = True
+            settings.trading_mode = "live"
+            scheduler = TradingScheduler()
+            app.state.trading_scheduler = scheduler
+            shared_gate = {
+                "allowed": False,
+                "reason": "promotion_certificate_missing",
+                "blocked_reasons": [
+                    "promotion_certificate_missing",
+                    "hypothesis_window_evidence_missing",
+                ],
+                "certificate_id": None,
+                "capital_stage": "shadow",
+                "capital_state": "observe",
+                "issued_at": None,
+                "expires_at": None,
+                "reason_codes": [
+                    "promotion_certificate_missing",
+                    "hypothesis_window_evidence_missing",
+                ],
+                "segment_summary": {
+                    "segments": {
+                        "execution": {"state": "ok", "reason_codes": []},
+                        "empirical": {"state": "ok", "reason_codes": []},
+                        "llm-review": {"state": "ok", "reason_codes": []},
+                        "market-context": {"state": "ok", "reason_codes": []},
+                        "ta-core": {"state": "ok", "reason_codes": []},
+                    },
+                    "evaluated_hypotheses": [],
+                },
+                "quant_health_ref": {
+                    "account": "paper",
+                    "window": "15m",
+                    "status": "healthy",
+                    "source_url": "http://jangar.test/quant/health",
+                    "latest_metrics_updated_at": "2026-03-20T10:00:00Z",
+                },
+                "market_context_ref": {"last_freshness_seconds": 30},
+                "evidence_tuple": {
+                    "hypothesis_id": None,
+                    "candidate_id": None,
+                    "strategy_id": None,
+                    "account": "paper",
+                    "window": "15m",
+                    "capital_state": "observe",
+                },
+                "evaluated_tuples": [],
+            }
+
+            with (
+                patch(
+                    "app.main._build_hypothesis_runtime_payload",
+                    return_value=(
+                        {
+                            "registry_loaded": True,
+                            "registry_path": "test",
+                            "registry_errors": [],
+                            "dependency_quorum": {
+                                "decision": "allow",
+                                "reasons": [],
+                                "message": "ready",
+                            },
+                            "summary": {
+                                "promotion_eligible_total": 1,
+                                "capital_stage_totals": {"shadow": 1},
+                                "dependency_quorum": {
+                                    "decision": "allow",
+                                    "reasons": [],
+                                    "message": "ready",
+                                },
+                            },
+                            "items": [],
+                        },
+                        {
+                            "promotion_eligible_total": 1,
+                            "capital_stage_totals": {"shadow": 1},
+                            "dependency_quorum": {
+                                "decision": "allow",
+                                "reasons": [],
+                                "message": "ready",
+                            },
+                        },
+                        SimpleNamespace(
+                            decision="allow",
+                            as_payload=lambda: {
+                                "decision": "allow",
+                                "reasons": [],
+                                "message": "ready",
+                            },
+                        ),
+                    ),
+                ),
+                patch("app.main._empirical_jobs_status", return_value={"ready": True, "status": "healthy"}),
+                patch(
+                    "app.main.load_quant_evidence_status",
+                    return_value={
+                        "required": True,
+                        "ok": True,
+                        "status": "healthy",
+                        "reason": "ready",
+                        "blocking_reasons": [],
+                        "account": "paper",
+                        "window": "15m",
+                        "source_url": "http://jangar.test/quant/health",
+                        "latest_metrics_updated_at": "2026-03-20T10:00:00Z",
+                    },
+                ),
+                patch("app.main._build_live_submission_gate_payload", return_value=shared_gate),
+            ):
+                status_response = self.client.get("/trading/status")
+                health_response = self.client.get("/trading/health")
+                ready_response = self.client.get("/readyz")
+
+            self.assertEqual(status_response.status_code, 200)
+            self.assertEqual(health_response.status_code, 503)
+            self.assertEqual(ready_response.status_code, 503)
+            self.assertEqual(status_response.json()["live_submission_gate"], shared_gate)
+            self.assertEqual(health_response.json()["live_submission_gate"], shared_gate)
+            self.assertEqual(ready_response.json()["live_submission_gate"], shared_gate)
+        finally:
+            settings.trading_mode = original_mode
+            settings.trading_enabled = original_enabled
+            if original_scheduler is None:
+                if hasattr(app.state, "trading_scheduler"):
+                    del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
     def test_trading_status_exposes_rejection_and_market_context_controls(self) -> None:
         original_scheduler = getattr(app.state, "trading_scheduler", None)
         try:

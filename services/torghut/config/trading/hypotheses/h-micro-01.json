@@ -17,6 +17,11 @@
     "drift_governance",
     "feature_coverage"
   ],
+  "segment_dependencies": [
+    "execution",
+    "empirical",
+    "ta-core"
+  ],
   "expected_gross_edge_bps": "10",
   "max_allowed_slippage_bps": "8",
   "min_sample_count_for_live_canary": 60,
