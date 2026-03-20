@@ -10,6 +10,7 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `54-torghut-capital-lease-receipts-and-profit-falsification-ledger-2026-03-20.md`
   - `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md`
   - `53-torghut-capital-leases-and-profit-trial-firebreaks-2026-03-20.md`
   - `52-torghut-profit-sleeves-segment-scoped-deallocation-and-evidence-decay-2026-03-19.md`
@@ -27,7 +28,7 @@
 - `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
 - `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
 - Cross-system source of truth:
-  - `docs/agents/designs/54-jangar-admission-receipts-rollout-shadow-and-anti-entropy-reconciliation-2026-03-20.md`
+  - `docs/agents/designs/55-jangar-rollout-fact-receipts-and-swarm-freeze-parity-2026-03-20.md`
   - `docs/agents/designs/54-jangar-witness-mirror-quorum-and-promotion-veto-2026-03-20.md`
   - `docs/agents/designs/54-jangar-admission-receipts-rollout-shadow-and-anti-entropy-reconciliation-2026-03-20.md`
   - `docs/agents/designs/53-jangar-dependency-provenance-ledger-and-consumer-acknowledged-admission-2026-03-19.md`
@@ -99,6 +100,12 @@ Current source-state priority is narrower:
 - `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md` now makes the next step
   explicit: non-observe capital depends on one certificate that consumes Jangar witness quorum, Jangar market-context
   and quant evidence, toggle parity, and typed options auth/bootstrap escrow rather than local gate optimism.
+- `54-torghut-capital-lease-receipts-and-profit-falsification-ledger-2026-03-20.md` now turns that certificate into a
+  sleeve-level capital-allocation contract: every non-observe capital move depends on one lease id, every required
+  segment is queryable, and falsification events revoke leases deterministically instead of letting stale evidence ride.
+- `docs/agents/designs/55-jangar-rollout-fact-receipts-and-swarm-freeze-parity-2026-03-20.md` now removes the
+  remaining control-plane optimism gap by making `Swarm.status`, `/ready`, and Jangar control-plane status project the
+  same admission receipt rather than independently summarizing stale or partial truth.
 - `docs/agents/designs/54-jangar-witness-mirror-quorum-and-promotion-veto-2026-03-20.md` now turns incomplete rollout
   evidence into a first-class veto by requiring fresh witness mirrors for rollout, stage health, and consumer
   acknowledgement before Jangar may emit promotion-friendly authority.
@@ -210,6 +217,7 @@ This pack is positioned as the next architecture layer above:
 51. `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
 52. `52-torghut-profit-sleeves-segment-scoped-deallocation-and-evidence-decay-2026-03-19.md`
 53. `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md`
+54. `54-torghut-capital-lease-receipts-and-profit-falsification-ledger-2026-03-20.md`
 
 ## Recommended Build Order
 
