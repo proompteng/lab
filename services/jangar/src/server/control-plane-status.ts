@@ -458,15 +458,17 @@ const buildExecutionTrustStage = (input: {
                 ? `${input.stage} phase missing`
                 : null
   const classReason =
-    input.freezeState === 'active' || frozen || stale
+    input.freezeState === 'active'
       ? 'blocked'
       : input.freezeState === 'expired_unreconciled'
         ? 'degraded'
-        : latestFailureCount > 0 || healthy === false
-          ? 'degraded'
-          : healthy === null
-            ? 'unknown'
-            : null
+        : frozen || stale
+          ? 'blocked'
+          : latestFailureCount > 0 || healthy === false
+            ? 'degraded'
+            : healthy === null
+              ? 'unknown'
+              : null
 
   return {
     stageData: {
