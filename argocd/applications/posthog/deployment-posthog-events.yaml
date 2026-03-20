@@ -28,8 +28,6 @@ spec:
         release: "posthog"
         role: events
     spec:
-      nodeSelector:
-        kubernetes.io/arch: amd64
       serviceAccountName: posthog
       containers:
       - name: posthog-events

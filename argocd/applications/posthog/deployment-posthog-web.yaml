@@ -28,8 +28,6 @@ spec:
         release: "posthog"
         role: web
     spec:
-      nodeSelector:
-        kubernetes.io/arch: amd64
       serviceAccountName: posthog
       containers:
       - name: posthog-web
