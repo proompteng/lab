@@ -487,7 +487,7 @@ peer = true
     {
       path: 'src/activities/index.ts',
       contents: [
-        'export async function helloActivity(name = \'Temporal\') {',
+        "export async function helloActivity(name = 'Temporal') {",
         '  return `Hello from activity, ${name}!`',
         '}',
         '',
