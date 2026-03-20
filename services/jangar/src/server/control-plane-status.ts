@@ -458,13 +458,15 @@ const buildExecutionTrustStage = (input: {
                 ? `${input.stage} phase missing`
                 : null
   const classReason =
-    frozen || input.freezeState !== 'inactive' || stale
+    input.freezeState === 'active' || frozen || stale
       ? 'blocked'
-      : latestFailureCount > 0 || healthy === false
+      : input.freezeState === 'expired_unreconciled'
         ? 'degraded'
-        : healthy === null
-          ? 'unknown'
-          : null
+        : latestFailureCount > 0 || healthy === false
+          ? 'degraded'
+          : healthy === null
+            ? 'unknown'
+            : null
 
   return {
     stageData: {
@@ -639,7 +641,7 @@ export const buildExecutionTrust = async ({
         scope: namespace,
         name: swarmName,
         reason: freezeReason ? `freeze expiry unreconciled (${freezeReason})` : 'freeze expiry unreconciled',
-        class: 'blocked',
+        class: 'degraded',
       })
     }
 

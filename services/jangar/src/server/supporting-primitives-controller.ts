@@ -1260,7 +1260,11 @@ const collectStaleStageSignals = (
   status: Record<string, unknown>,
   runs: Record<string, unknown>[],
   nowMs: number,
+  options?: {
+    ignoreBeforeMs?: number | null
+  },
 ) => {
+  const ignoreBeforeMs = options?.ignoreBeforeMs ?? null
   const staleSignals = []
   for (const stageConfig of stageConfigs) {
     if (!stageConfig.enabled) continue
@@ -1277,6 +1281,9 @@ const collectStaleStageSignals = (
       .filter((value): value is number => value !== null)
       .reduce((left, right) => Math.max(left, right), Number.NEGATIVE_INFINITY)
     if (!Number.isFinite(lastRunMs) || lastRunMs <= 0) {
+      continue
+    }
+    if (ignoreBeforeMs !== null && lastRunMs <= ignoreBeforeMs) {
       continue
     }
     const ageMs = nowMs - lastRunMs
@@ -2207,7 +2214,11 @@ const reconcileSwarm = async (
   const existingFreezeAt = parseTimeOrNull(existingFreezeUntil)
   let freezeActive = existingFreezeAt !== null && existingFreezeAt > nowMs
   const freezeWasActive = freezeActive
-  const staleStageSignals = collectStaleStageSignals(stageConfigs, status, allRuns, nowMs)
+  const staleStageSignals = collectStaleStageSignals(stageConfigs, status, allRuns, nowMs, {
+    // Once a freeze has expired, historical stale-stage evidence should not immediately
+    // re-arm the same freeze before schedules and requirement dispatch have a chance to recover.
+    ignoreBeforeMs: existingFreezeAt !== null && existingFreezeAt <= nowMs ? existingFreezeAt : null,
+  })
   let freezeReason = existingFreezeReason ?? 'FreezeActive'
   let freezeUntil = existingFreezeUntil ?? undefined
   const failureWindowStartMs = existingFreezeAt !== null && existingFreezeAt <= nowMs ? existingFreezeAt : null

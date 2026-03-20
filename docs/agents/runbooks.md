@@ -141,7 +141,8 @@ Expected outcomes:
 - `agentrun_ingestion` reports the latest AgentRun watch/resync timestamps and stays `healthy` with
   `untouched_run_count: 0` during normal operation.
 - `execution_trust` is always present and stays `healthy`; if a swarm freeze TTL has expired without
-  reconciliation, it reports `freeze expiry unreconciled` and `/ready` should return `503`.
+  reconciliation, it reports `freeze expiry unreconciled` as a degraded repair signal while `/ready`
+  stays `200` unless execution trust escalates to `blocked` or `unknown`.
 - The Argo Workflows resource check returns empty output (no CRD or no workflows).
 
 ## Native workflow e2e proof
