@@ -3,15 +3,14 @@ title: Temporal Bun SDK
 description: Run Temporal workers and clients on Bun with replay tooling, Docker helpers, and Temporal Cloud/TLS support.
 ---
 
-`@proompteng/temporal-bun-sdk` lets you run Temporal workers and clients on Bun
-without a native bridge. Out of the box, it includes:
+`@proompteng/temporal-bun-sdk` lets you run Temporal workers and clients on Bun.
+Out of the box, it includes:
 
 - Effect Schema-backed environment parsing with TLS, API key, and insecure-mode support.
 - Client and worker factories with built-in retries, payload codecs, and observability.
 - Effect Layer entry points for workers, clients, and CLI programs.
 - A `temporal-bun` CLI that scaffolds projects, validates config (`doctor`), builds Docker images, and replays histories.
 - A `temporal-bun-worker` binary that boots a worker with the SDK's default workflows/activities.
-- Pure TypeScript/Effect runtime; legacy Zig bridge assets remain archived under `packages/temporal-bun-sdk/bruke`.
 
 ## Start here
 
@@ -47,17 +46,17 @@ Generate a standalone Bun worker project:
 bunx @proompteng/temporal-bun-sdk init my-worker
 cd my-worker
 bun install
-bun run dev
 ```
 
 Run the scaffold command outside this monorepo. The generated project is meant
 to install the published npm package, not `workspace:*` dependencies.
 
-If `bun install` fails and the generated `package.json` pins
-`@proompteng/temporal-bun-sdk` to `^0.5.0`, repair it with:
+Then start Temporal locally, add a `.env`, and run the worker:
 
 ```bash
-bun add @proompteng/temporal-bun-sdk@0.7.0
+temporal server start-dev --headless
+printf "TEMPORAL_ADDRESS=127.0.0.1:7233\nTEMPORAL_NAMESPACE=default\nTEMPORAL_TASK_QUEUE=demo-worker\n" > .env
+bun run dev
 ```
 
 ### Add the SDK to an existing Bun project
@@ -251,7 +250,7 @@ chain, validates the retry presets, spins up observability services, emits a
 log, increments a counter, and flushes the selected exporter:
 
 ```bash
-bunx @proompteng/temporal-bun-sdk doctor --log-format=json --metrics=file:/tmp/metrics.json
+bunx @proompteng/temporal-bun-sdk doctor --log-format=json --metrics=file:./metrics.json
 ```
 
 The command prints a success summary (including active interceptors and the
