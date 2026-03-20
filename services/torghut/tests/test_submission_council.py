@@ -51,6 +51,26 @@ class TestSubmissionCouncil(TestCase):
             "trading_market_context_url"
         ]
 
+    def _metric_window(self, capital_stage: str = "0.10x canary") -> SimpleNamespace:
+        observed_at = datetime.now(timezone.utc)
+        return SimpleNamespace(
+            id="window-1",
+            candidate_id="cand-1",
+            capital_stage=capital_stage,
+            window_ended_at=observed_at,
+            created_at=observed_at,
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+    def _promotion_decision(self, capital_stage: str = "0.10x canary") -> SimpleNamespace:
+        return SimpleNamespace(
+            id="promo-1",
+            candidate_id="cand-1",
+            state=capital_stage,
+        )
+
     def test_build_live_submission_gate_payload_fails_closed_on_empty_quant_evidence(
         self,
     ) -> None:
@@ -91,21 +111,8 @@ class TestSubmissionCouncil(TestCase):
             promotion_certificate_evidence=[
                 {
                     "hypothesis_id": "H-CONT-01",
-                    "metric_window": SimpleNamespace(
-                        id="window-1",
-                        candidate_id="cand-1",
-                        capital_stage="0.10x canary",
-                        window_ended_at=datetime(2026, 3, 20, 10, 0, tzinfo=timezone.utc),
-                        created_at=datetime(2026, 3, 20, 10, 0, tzinfo=timezone.utc),
-                        continuity_ok=True,
-                        drift_ok=True,
-                        dependency_quorum_decision="allow",
-                    ),
-                    "promotion_decision": SimpleNamespace(
-                        id="promo-1",
-                        candidate_id="cand-1",
-                        state="0.10x canary",
-                    ),
+                    "metric_window": self._metric_window(),
+                    "promotion_decision": self._promotion_decision(),
                 }
             ],
         )
@@ -149,21 +156,8 @@ class TestSubmissionCouncil(TestCase):
             promotion_certificate_evidence=[
                 {
                     "hypothesis_id": "H-CONT-01",
-                    "metric_window": SimpleNamespace(
-                        id="window-1",
-                        candidate_id="cand-1",
-                        capital_stage="0.10x canary",
-                        window_ended_at=datetime(2026, 3, 20, 10, 0, tzinfo=timezone.utc),
-                        created_at=datetime(2026, 3, 20, 10, 0, tzinfo=timezone.utc),
-                        continuity_ok=True,
-                        drift_ok=True,
-                        dependency_quorum_decision="allow",
-                    ),
-                    "promotion_decision": SimpleNamespace(
-                        id="promo-1",
-                        candidate_id="cand-1",
-                        state="0.10x canary",
-                    ),
+                    "metric_window": self._metric_window(),
+                    "promotion_decision": self._promotion_decision(),
                 }
             ],
         )
@@ -256,21 +250,8 @@ class TestSubmissionCouncil(TestCase):
             promotion_certificate_evidence=[
                 {
                     "hypothesis_id": "H-CONT-01",
-                    "metric_window": SimpleNamespace(
-                        id="window-1",
-                        candidate_id="cand-1",
-                        capital_stage="0.10x canary",
-                        window_ended_at=datetime(2026, 3, 20, 10, 0, tzinfo=timezone.utc),
-                        created_at=datetime(2026, 3, 20, 10, 0, tzinfo=timezone.utc),
-                        continuity_ok=True,
-                        drift_ok=True,
-                        dependency_quorum_decision="allow",
-                    ),
-                    "promotion_decision": SimpleNamespace(
-                        id="promo-1",
-                        candidate_id="cand-1",
-                        state="0.10x canary",
-                    ),
+                    "metric_window": self._metric_window(),
+                    "promotion_decision": self._promotion_decision(),
                 }
             ],
         )
@@ -295,4 +276,30 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(
             resolve_quant_health_url(),
             "https://jangar.example/custom/proxy/quant/health",
+        )
+
+    def test_resolve_quant_health_url_rewrites_control_plane_status_fallback(self) -> None:
+        settings.trading_jangar_quant_health_url = ""
+        settings.trading_jangar_control_plane_status_url = (
+            "https://jangar.example/api/agents/control-plane/status?namespace=agents"
+        )
+        settings.trading_market_context_url = (
+            "https://jangar.example/api/torghut/market-context/health?symbol=NVDA"
+        )
+
+        self.assertEqual(
+            resolve_quant_health_url(),
+            "https://jangar.example/api/torghut/trading/control-plane/quant/health",
+        )
+
+    def test_resolve_quant_health_url_rewrites_market_context_fallback(self) -> None:
+        settings.trading_jangar_quant_health_url = ""
+        settings.trading_jangar_control_plane_status_url = ""
+        settings.trading_market_context_url = (
+            "https://jangar.example/api/torghut/market-context/health?symbol=NVDA"
+        )
+
+        self.assertEqual(
+            resolve_quant_health_url(),
+            "https://jangar.example/api/torghut/trading/control-plane/quant/health",
         )

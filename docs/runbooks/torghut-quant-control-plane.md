@@ -8,6 +8,8 @@ control-plane stream health.
 
 This runbook is aligned with the current March 20 plan-stage architecture contracts:
 
+- `docs/agents/designs/57-jangar-authority-capsules-and-readiness-class-separation-2026-03-20.md`
+- `docs/torghut/design-system/v6/56-torghut-capability-leases-and-profit-clocks-2026-03-20.md`
 - `docs/torghut/design-system/v6/42-torghut-quant-control-plane-resilience-and-profitability-architecture-merge-contract-2026-03-15.md`
 - `docs/torghut/design-system/v6/50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
 - `docs/agents/designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md`
