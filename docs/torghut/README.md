@@ -25,7 +25,8 @@ Start here:
 
 - GitOps manifests: `argocd/applications/torghut/**`
   - Live and sim runtime manifests explicitly set `TRADING_JANGAR_QUANT_HEALTH_URL`; do not rely on route-time
-    derivation from other Jangar URLs.
+    derivation from other Jangar URLs, and keep it pointed at the typed
+    `/api/torghut/trading/control-plane/quant/health` surface.
 - TA replay procedure (concrete steps): `argocd/applications/torghut/README.md`
 - Historical simulation operations playbook: `docs/torghut/rollouts/historical-simulation-playbook.md`
 - Incident context (example): `docs/incidents/2025-12-20-longhorn-upgrade-kafka-failure.md`

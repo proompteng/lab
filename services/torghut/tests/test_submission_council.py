@@ -7,6 +7,7 @@ from unittest import TestCase
 from app.config import settings
 from app.trading.submission_council import (
     build_live_submission_gate_payload,
+    load_quant_evidence_status,
     resolve_quant_health_url,
 )
 
@@ -292,9 +293,9 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(result["reason"], "quant_health_not_configured")
         self.assertIn("quant_health_not_configured", result["blocked_reasons"])
 
-    def test_resolve_quant_health_url_preserves_explicit_override_path(self) -> None:
+    def test_resolve_quant_health_url_accepts_typed_endpoint_with_query(self) -> None:
         settings.trading_jangar_quant_health_url = (
-            " https://jangar.example/custom/proxy/quant/health "
+            " https://jangar.example/api/torghut/trading/control-plane/quant/health?window=1h "
         )
         settings.trading_jangar_control_plane_status_url = (
             "https://jangar.example/status"
@@ -303,8 +304,19 @@ class TestSubmissionCouncil(TestCase):
 
         self.assertEqual(
             resolve_quant_health_url(),
-            "https://jangar.example/custom/proxy/quant/health",
+            "https://jangar.example/api/torghut/trading/control-plane/quant/health?window=1h",
         )
+
+    def test_resolve_quant_health_url_rejects_wrong_endpoint_path(self) -> None:
+        settings.trading_jangar_quant_health_url = (
+            "https://jangar.example/api/agents/control-plane/status?namespace=agents"
+        )
+        settings.trading_jangar_control_plane_status_url = (
+            "https://jangar.example/status"
+        )
+        settings.trading_market_context_url = "https://jangar.example/market/context"
+
+        self.assertIsNone(resolve_quant_health_url())
 
     def test_resolve_quant_health_url_does_not_fallback_to_control_plane_status(
         self,
@@ -327,3 +339,24 @@ class TestSubmissionCouncil(TestCase):
         )
 
         self.assertIsNone(resolve_quant_health_url())
+
+    def test_load_quant_evidence_status_rejects_wrong_endpoint_authority(self) -> None:
+        settings.trading_jangar_quant_health_url = (
+            "https://jangar.example/api/agents/control-plane/status?namespace=agents"
+        )
+
+        status = load_quant_evidence_status(account_label="paper")
+
+        self.assertFalse(status["ok"])
+        self.assertEqual(status["reason"], "quant_health_invalid_endpoint")
+        self.assertEqual(
+            status["blocking_reasons"], ["quant_health_invalid_endpoint"]
+        )
+        self.assertEqual(
+            status["source_url"],
+            "https://jangar.example/api/agents/control-plane/status?namespace=agents",
+        )
+        self.assertIn(
+            "/api/torghut/trading/control-plane/quant/health",
+            str(status["message"]),
+        )

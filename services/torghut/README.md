@@ -74,8 +74,10 @@ Optional migration-lineage controls:
 - The live-submission gate also consumes Jangar quant latest-store health. Set
   `TRADING_JANGAR_QUANT_HEALTH_URL` explicitly in live and sim deployments; Torghut no longer derives the quant route
   from `TRADING_JANGAR_CONTROL_PLANE_STATUS_URL` or `TRADING_MARKET_CONTEXT_URL`. Missing or unreachable quant-health
-  wiring now clamps the shared live-submission gate to `observe`; use `TRADING_JANGAR_QUANT_WINDOW` to align the
-  expected freshness window.
+  wiring now clamps the shared live-submission gate to `observe`. Torghut also rejects
+  `TRADING_JANGAR_QUANT_HEALTH_URL` when it does not target the typed
+  `/api/torghut/trading/control-plane/quant/health` surface; use `TRADING_JANGAR_QUANT_WINDOW` to align the expected
+  freshness window.
 
 ## Whitepaper workflow (GitHub issue -> Kafka -> AgentRun)
 
