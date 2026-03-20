@@ -587,8 +587,10 @@ class TestTradingApi(TestCase):
         _mock_alpaca: object,
     ) -> None:
         original = settings.trading_enabled
+        original_mode = settings.trading_mode
         original_source = settings.trading_universe_source
         settings.trading_enabled = True
+        settings.trading_mode = "paper"
         settings.trading_universe_source = "jangar"
         try:
             scheduler = TradingScheduler()
@@ -612,6 +614,7 @@ class TestTradingApi(TestCase):
             self.assertEqual(payload["dependencies"]["universe"]["detail"], "jangar universe fresh")
         finally:
             settings.trading_enabled = original
+            settings.trading_mode = original_mode
             settings.trading_universe_source = original_source
 
     @patch(
@@ -638,9 +641,11 @@ class TestTradingApi(TestCase):
         _mock_contract: object,
     ) -> None:
         original = settings.trading_enabled
+        original_mode = settings.trading_mode
         original_cache_enabled = settings.trading_readiness_dependency_cache_enabled
         original_cache_ttl = settings.trading_readiness_dependency_cache_ttl_seconds
         settings.trading_enabled = True
+        settings.trading_mode = "paper"
         settings.trading_readiness_dependency_cache_enabled = True
         settings.trading_readiness_dependency_cache_ttl_seconds = 8
         try:
@@ -662,6 +667,7 @@ class TestTradingApi(TestCase):
             self.assertIn("checked_at", payload["dependencies"]["readiness_cache"])
         finally:
             settings.trading_enabled = original
+            settings.trading_mode = original_mode
             settings.trading_readiness_dependency_cache_enabled = original_cache_enabled
             settings.trading_readiness_dependency_cache_ttl_seconds = original_cache_ttl
 
@@ -689,9 +695,11 @@ class TestTradingApi(TestCase):
         _mock_contract: object,
     ) -> None:
         original = settings.trading_enabled
+        original_mode = settings.trading_mode
         original_cache_enabled = settings.trading_readiness_dependency_cache_enabled
         original_cache_ttl = settings.trading_readiness_dependency_cache_ttl_seconds
         settings.trading_enabled = True
+        settings.trading_mode = "paper"
         settings.trading_readiness_dependency_cache_enabled = True
         settings.trading_readiness_dependency_cache_ttl_seconds = 8
         try:
@@ -717,6 +725,7 @@ class TestTradingApi(TestCase):
             )
         finally:
             settings.trading_enabled = original
+            settings.trading_mode = original_mode
             settings.trading_readiness_dependency_cache_enabled = original_cache_enabled
             settings.trading_readiness_dependency_cache_ttl_seconds = original_cache_ttl
 
@@ -841,8 +850,10 @@ class TestTradingApi(TestCase):
         _mock_alpaca: object,
     ) -> None:
         original = settings.trading_enabled
+        original_mode = settings.trading_mode
         original_source = settings.trading_universe_source
         settings.trading_enabled = True
+        settings.trading_mode = "paper"
         settings.trading_universe_source = "jangar"
         try:
             scheduler = TradingScheduler()
@@ -868,6 +879,7 @@ class TestTradingApi(TestCase):
             )
         finally:
             settings.trading_enabled = original
+            settings.trading_mode = original_mode
             settings.trading_universe_source = original_source
 
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
@@ -1023,8 +1035,10 @@ class TestTradingApi(TestCase):
         _mock_contract: object,
     ) -> None:
         original = settings.trading_enabled
+        original_mode = settings.trading_mode
         original_source = settings.trading_universe_source
         settings.trading_enabled = True
+        settings.trading_mode = "paper"
         settings.trading_universe_source = "jangar"
         try:
             scheduler = TradingScheduler()
@@ -1051,6 +1065,7 @@ class TestTradingApi(TestCase):
             self.assertEqual(payload["dependencies"]["database"]["detail"], "ok")
         finally:
             settings.trading_enabled = original
+            settings.trading_mode = original_mode
             settings.trading_universe_source = original_source
 
     @patch(
@@ -1077,12 +1092,14 @@ class TestTradingApi(TestCase):
         _mock_contract: object,
     ) -> None:
         original = settings.trading_enabled
+        original_mode = settings.trading_mode
         original_cache_enabled = settings.trading_readiness_dependency_cache_enabled
         original_cache_ttl = settings.trading_readiness_dependency_cache_ttl_seconds
         original_stale_tolerance = (
             settings.trading_readiness_dependency_cache_stale_tolerance_seconds
         )
         settings.trading_enabled = True
+        settings.trading_mode = "paper"
         settings.trading_readiness_dependency_cache_enabled = True
         settings.trading_readiness_dependency_cache_ttl_seconds = 8
         settings.trading_readiness_dependency_cache_stale_tolerance_seconds = 20
@@ -1110,6 +1127,7 @@ class TestTradingApi(TestCase):
             self.assertLessEqual(cache["cache_age_seconds"], 28)
         finally:
             settings.trading_enabled = original
+            settings.trading_mode = original_mode
             settings.trading_readiness_dependency_cache_enabled = original_cache_enabled
             settings.trading_readiness_dependency_cache_ttl_seconds = original_cache_ttl
             settings.trading_readiness_dependency_cache_stale_tolerance_seconds = (
@@ -1141,6 +1159,7 @@ class TestTradingApi(TestCase):
         _mock_contract: object,
     ) -> None:
         original = settings.trading_enabled
+        original_mode = settings.trading_mode
         original_cache_enabled = settings.trading_readiness_dependency_cache_enabled
         original_cache_ttl = settings.trading_readiness_dependency_cache_ttl_seconds
         original_stale_tolerance = (
@@ -1148,6 +1167,7 @@ class TestTradingApi(TestCase):
         )
         original_source = settings.trading_universe_source
         settings.trading_enabled = True
+        settings.trading_mode = "paper"
         settings.trading_readiness_dependency_cache_enabled = True
         settings.trading_readiness_dependency_cache_ttl_seconds = 8
         settings.trading_readiness_dependency_cache_stale_tolerance_seconds = 20
@@ -1176,6 +1196,7 @@ class TestTradingApi(TestCase):
             self.assertFalse(payload["dependencies"]["readiness_cache"]["cache_stale"])
         finally:
             settings.trading_enabled = original
+            settings.trading_mode = original_mode
             settings.trading_readiness_dependency_cache_enabled = original_cache_enabled
             settings.trading_readiness_dependency_cache_ttl_seconds = original_cache_ttl
             settings.trading_readiness_dependency_cache_stale_tolerance_seconds = (
@@ -2009,6 +2030,12 @@ class TestTradingApi(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertIn("jobs", payload)
+        self.assertEqual(payload["message"], "missing empirical jobs: foundation_router_parity, janus_event_car, janus_hgrm_reward")
+        self.assertEqual(payload["eligible_jobs"], ["benchmark_parity"])
+        self.assertEqual(
+            payload["missing_jobs"],
+            ["foundation_router_parity", "janus_event_car", "janus_hgrm_reward"],
+        )
         self.assertEqual(payload["jobs"]["benchmark_parity"]["authority"], "empirical")
         self.assertEqual(payload["jobs"]["benchmark_parity"]["job_run_id"], "job-benchmark-1")
 

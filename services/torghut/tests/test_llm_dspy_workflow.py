@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
@@ -10,7 +11,13 @@ from unittest.mock import patch
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from app.models import Base, LLMDSPyWorkflowArtifact
+from app.models import (
+    Base,
+    LLMDSPyWorkflowArtifact,
+    LLMDecisionReview,
+    Strategy,
+    TradeDecision,
+)
 from app.trading.llm.dspy_compile import (
     build_compile_result,
     build_dspy_agentrun_payload,
@@ -151,6 +158,139 @@ class TestLLMDSPyWorkflow(TestCase):
             priority_id="  priority-7 ",
         )
         self.assertEqual(payload["parameters"]["priorityId"], "priority-7")
+
+    def test_orchestrate_dspy_workflow_local_mode_generates_artifacts_and_persists_manifest(
+        self,
+    ) -> None:
+        now = datetime(2026, 3, 19, 7, 30, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name="test-strategy",
+                description="workflow local mode test",
+                enabled=False,
+                base_timeframe="1m",
+                universe_type="equity",
+                universe_symbols=["AAPL", "MSFT"],
+            )
+            session.add(strategy)
+            session.commit()
+
+            decision = TradeDecision(
+                strategy_id=str(strategy.id),
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                timeframe="1m",
+                decision_json={"action": "buy", "qty": "1", "order_type": "market"},
+                rationale="test rationale",
+                decision_hash="decision-hash-aapl",
+                status="planned",
+                created_at=now - timedelta(hours=1),
+            )
+            session.add(decision)
+            session.flush()
+            session.add(
+                LLMDecisionReview(
+                    trade_decision_id=decision.id,
+                    model="gpt-5.4",
+                    prompt_version="v1",
+                    input_json={
+                        "decision": {"symbol": "AAPL", "action": "buy"},
+                        "market_context": {
+                            "contextVersion": "torghut.market-context.v1"
+                        },
+                    },
+                    response_json={"verdict": "approve", "rationale": "ok"},
+                    verdict="approve",
+                    confidence=Decimal("0.91"),
+                    adjusted_qty=None,
+                    adjusted_order_type=None,
+                    rationale="review rationale",
+                    risk_flags=["risk_a"],
+                    tokens_prompt=120,
+                    tokens_completion=80,
+                    created_at=now - timedelta(hours=1) + timedelta(seconds=1),
+                )
+            )
+            session.commit()
+
+            with (
+                TemporaryDirectory() as tmp,
+                patch(
+                    "app.trading.llm.dspy_compile.dataset.settings.trading_universe_static_fallback_symbols_raw",
+                    "AAPL,MSFT",
+                ),
+            ):
+                responses = orchestrate_dspy_agentrun_workflow(
+                    session,
+                    base_url="http://jangar.invalid",
+                    repository="proompteng/lab",
+                    base="main",
+                    head="codex/dspy-local",
+                    artifact_root=tmp,
+                    run_prefix="torghut-dspy-local",
+                    lane_parameter_overrides={
+                        "dataset-build": {
+                            "datasetWindow": "P30D",
+                            "universeRef": "torghut:equity:enabled",
+                            "windowEnd": now.isoformat().replace("+00:00", "Z"),
+                        },
+                        "compile": {
+                            "datasetRef": f"{tmp}/dataset-build/dspy-dataset.json",
+                            "metricPolicyRef": "config/trading/llm/dspy-metrics.yaml",
+                            "optimizer": "miprov2",
+                            "schemaValidRate": "0.999",
+                            "vetoAlignmentRate": "0.90",
+                            "falseVetoRate": "0.01",
+                            "fallbackRate": "0.01",
+                            "latencyP95Ms": "900",
+                        },
+                        "eval": {
+                            "compileResultRef": f"{tmp}/compile/dspy-compile-result.json",
+                            "gatePolicyRef": "config/trading/llm/dspy-metrics.yaml",
+                        },
+                        "promote": {
+                            "evalReportRef": f"{tmp}/eval/dspy-eval-report.json",
+                            "promotionTarget": "constrained_live",
+                            "approvalRef": "risk-committee",
+                        },
+                    },
+                    execution_mode="local",
+                )
+
+                self.assertEqual(responses["compile"]["mode"], "local")
+                self.assertTrue(
+                    (Path(tmp) / "dataset-build" / "dspy-dataset.json").exists()
+                )
+                self.assertTrue(
+                    (Path(tmp) / "compile" / "dspy-compile-result.json").exists()
+                )
+                self.assertTrue((Path(tmp) / "eval" / "dspy-eval-report.json").exists())
+                self.assertTrue(
+                    (Path(tmp) / "promote" / "dspy-promotion-record.json").exists()
+                )
+
+                rows = (
+                    session.execute(
+                        select(LLMDSPyWorkflowArtifact).order_by(
+                            LLMDSPyWorkflowArtifact.created_at.asc()
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                self.assertEqual(
+                    [row.lane for row in rows],
+                    ["dataset-build", "compile", "eval", "promote"],
+                )
+                compile_row = next(row for row in rows if row.lane == "compile")
+                eval_row = next(row for row in rows if row.lane == "eval")
+                self.assertEqual(compile_row.status, "succeeded")
+                self.assertTrue(bool(compile_row.artifact_hash))
+                self.assertEqual(eval_row.gate_compatibility, "pass")
+                self.assertEqual(
+                    compile_row.metadata_json.get("executor"),  # type: ignore[union-attr]
+                    "dspy_live",
+                )
 
     def test_sanitize_idempotency_key_replaces_invalid_chars(self) -> None:
         key = _sanitize_idempotency_key(" :torghut:dspy:run:2026-02-27T07:39:00Z: ")
@@ -417,7 +557,9 @@ class TestLLMDSPyWorkflow(TestCase):
             orchestration = metadata.get("orchestration") or {}
             self.assertIsInstance(orchestration, dict)
             assert isinstance(orchestration, dict)
-            self.assertIn("artifact_hash_missing", orchestration.get("gateFailures") or [])
+            self.assertIn(
+                "artifact_hash_missing", orchestration.get("gateFailures") or []
+            )
 
     def test_orchestrate_dspy_agentrun_workflow_promotes_with_falsey_eval_report_override(
         self,
@@ -773,7 +915,9 @@ class TestLLMDSPyWorkflow(TestCase):
             },
             {
                 "agentRun": {"id": "record-promote"},
-                "resource": {"metadata": {"name": "run-promote", "namespace": "agents"}},
+                "resource": {
+                    "metadata": {"name": "run-promote", "namespace": "agents"}
+                },
             },
         ]
 
@@ -868,7 +1012,9 @@ class TestLLMDSPyWorkflow(TestCase):
             alternate_eval_path = artifact_root / "alternate" / "dspy-eval-report.json"
             alternate_eval_path.parent.mkdir(parents=True, exist_ok=True)
             alternate_eval_path.write_text(
-                json.dumps({"createdAt": datetime.now(timezone.utc).isoformat()}, default=str),
+                json.dumps(
+                    {"createdAt": datetime.now(timezone.utc).isoformat()}, default=str
+                ),
                 encoding="utf-8",
             )
             _write_dspy_promotion_eval_snapshot(
@@ -995,7 +1141,8 @@ class TestLLMDSPyWorkflow(TestCase):
         with Session(self.engine) as session:
             row = session.execute(
                 select(LLMDSPyWorkflowArtifact).where(
-                    LLMDSPyWorkflowArtifact.run_key == "torghut-dspy-run-missing:promote"
+                    LLMDSPyWorkflowArtifact.run_key
+                    == "torghut-dspy-run-missing:promote"
                 )
             ).scalar_one()
             self.assertEqual(row.status, "blocked")
@@ -1338,7 +1485,8 @@ class TestLLMDSPyWorkflow(TestCase):
         with Session(self.engine) as session:
             row = session.execute(
                 select(LLMDSPyWorkflowArtifact).where(
-                    LLMDSPyWorkflowArtifact.run_key == "torghut-dspy-run-invalid:promote"
+                    LLMDSPyWorkflowArtifact.run_key
+                    == "torghut-dspy-run-invalid:promote"
                 )
             ).scalar_one()
             metadata = row.metadata_json or {}

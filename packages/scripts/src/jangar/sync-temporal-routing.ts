@@ -65,6 +65,35 @@ const defaultTaskQueue = 'jangar'
 const defaultReason = 'post-deploy temporal routing sync'
 const defaultBatchRetryDelayMs = 5_000
 const defaultBatchRetryAttempts = 5
+const defaultTemporalRetryDelayMs = 2_000
+const defaultTemporalRetryAttempts = 5
+const defaultTemporalRetryMaxDelayMs = 10_000
+
+const transientTemporalErrorPatterns = [
+  /context deadline exceeded/,
+  /deadline exceeded/,
+  /\bunavailable\b/,
+  /connection refused/,
+  /connection reset by peer/,
+  /connection reset/,
+  /broken pipe/,
+  /transport is closing/,
+  /server temporarily unavailable/,
+  /i\/o timeout/,
+  /\beof\b/,
+]
+
+const normalizeTemporalErrorMessage = (message: string): string => message.trim().toLowerCase().replace(/\s+/g, ' ')
+
+const isTransientTemporalConnectivityError = (message: string): boolean => {
+  const normalized = normalizeTemporalErrorMessage(message)
+  return transientTemporalErrorPatterns.some((pattern) => pattern.test(normalized))
+}
+
+const getTemporalRetryDelayMs = (attempt: number): number => {
+  const backoff = defaultTemporalRetryDelayMs * 2 ** Math.max(attempt - 1, 0)
+  return Math.min(backoff, defaultTemporalRetryMaxDelayMs)
+}
 
 const parseArgs = (argv: string[]): CliOptions => {
   const options: CliOptions = {}
@@ -158,22 +187,51 @@ const runTemporal = async (
   args: string[],
   allowFailure = false,
 ): Promise<CommandResult> => {
-  const subprocess = Bun.spawn(['temporal', '--address', options.address, '--namespace', options.namespace, ...args], {
-    stdout: 'pipe',
-    stderr: 'pipe',
-  })
+  let lastError: Error | undefined
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    subprocess.stdout ? new Response(subprocess.stdout).text() : Promise.resolve(''),
-    subprocess.stderr ? new Response(subprocess.stderr).text() : Promise.resolve(''),
-    subprocess.exited,
-  ])
+  for (let attempt = 1; attempt <= defaultTemporalRetryAttempts; attempt += 1) {
+    const subprocess = Bun.spawn(
+      ['temporal', '--address', options.address, '--namespace', options.namespace, ...args],
+      {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      },
+    )
 
-  if (exitCode !== 0 && !allowFailure) {
-    throw new Error(`Command failed (${exitCode}): temporal ${args.join(' ')}\n${stderr || stdout}`.trim())
+    const [stdout, stderr, exitCode] = await Promise.all([
+      subprocess.stdout ? new Response(subprocess.stdout).text() : Promise.resolve(''),
+      subprocess.stderr ? new Response(subprocess.stderr).text() : Promise.resolve(''),
+      subprocess.exited,
+    ])
+
+    if (exitCode === 0) {
+      return { stdout, stderr, exitCode }
+    }
+
+    const failureMessage = `Command failed (${exitCode}): temporal ${args.join(' ')}\n${stderr || stdout}`.trim()
+    lastError = new Error(failureMessage)
+
+    if (allowFailure || attempt === defaultTemporalRetryAttempts) {
+      break
+    }
+
+    const transientErrorSource = stderr || stdout || failureMessage
+    if (!isTransientTemporalConnectivityError(transientErrorSource)) {
+      break
+    }
+
+    const delayMs = getTemporalRetryDelayMs(attempt)
+    console.log(
+      `Temporal CLI transient failure (attempt ${attempt}/${defaultTemporalRetryAttempts}); retrying in ${delayMs}ms`,
+    )
+    await Bun.sleep(delayMs)
   }
 
-  return { stdout, stderr, exitCode }
+  if (lastError) {
+    throw lastError
+  }
+
+  throw new Error(`Command failed: temporal ${args.join(' ')}`)
 }
 
 const parseJson = <T>(json: string, label: string): T => {
@@ -415,6 +473,9 @@ if (import.meta.main) {
 
 export const __private = {
   parseArgs,
+  getTemporalRetryDelayMs,
+  isTransientTemporalConnectivityError,
+  runTemporal,
   stripDeploymentPrefix,
   extractVersionedPollerBuildIds,
   selectTargetBuildId,

@@ -1,0 +1,110 @@
+dataset_id: torghut-full-day-20260318-884bec35
+dataset_snapshot_ref: torghut-full-day-20260318-884bec35
+candidate_id: intraday_tsmom_v1@prod
+baseline_candidate_id: intraday_tsmom_v1@baseline
+strategy_spec_ref: strategy-specs/intraday_tsmom_v1@1.1.0.json
+model_refs:
+  - rules/intraday_tsmom_v1
+runtime_version_refs:
+  - services/torghut@sha256:884bec35f7d24ef34c51240e697aa996bc134385be9f6936aa170880fe2d601e
+  - services/torghut-forecast@sha256:884bec35f7d24ef34c51240e697aa996bc134385be9f6936aa170880fe2d601e
+
+cachePolicy: prefer_cache
+
+performance:
+  replayProfile: full_day
+  dumpFormat: jsonl.zst
+
+ta_restore:
+  mode: stateless
+
+window:
+  profile: us_equities_regular
+  trading_day: '2026-03-18'
+  timezone: America/New_York
+  start: '2026-03-18T13:30:00Z'
+  end: '2026-03-18T20:00:00Z'
+  min_coverage_minutes: 390
+  strict_coverage_ratio: 0.95
+
+kafka:
+  bootstrap_servers: kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
+  runtime_bootstrap_servers: kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
+  security_protocol: SASL_PLAINTEXT
+  sasl_mechanism: SCRAM-SHA-512
+  sasl_username: kafka-codex-credentials
+  sasl_password_env: TORGHUT_SIM_KAFKA_PASSWORD
+  runtime_security_protocol: SASL_PLAINTEXT
+  runtime_sasl_mechanism: SCRAM-SHA-512
+  runtime_sasl_username: kafka-codex-credentials
+  runtime_sasl_password_env: TORGHUT_SIM_KAFKA_PASSWORD
+  default_partitions: 8
+  replication_factor: 1
+
+clickhouse:
+  http_url: http://torghut-clickhouse.torghut.svc.cluster.local:8123
+  username: torghut
+  password_env: TORGHUT_CLICKHOUSE_PASSWORD
+  password_secret_name: torghut-clickhouse-auth
+  password_secret_key: torghut_password
+  secret_namespace: torghut
+  simulation_database: torghut_sim_2026_03_18_full_day_884bec35
+
+postgres:
+  admin_dsn: postgresql://postgres@torghut-db-rw.torghut.svc.cluster.local:5432/postgres
+  admin_dsn_password_env: TORGHUT_POSTGRES_ADMIN_PASSWORD
+  simulation_dsn: postgresql://torghut_app@torghut-db-rw.torghut.svc.cluster.local:5432/torghut_sim_2026_03_18_full_day_884bec35
+  simulation_dsn_password_env: TORGHUT_POSTGRES_PASSWORD
+  runtime_simulation_dsn: postgresql://torghut_app@torghut-db-rw.torghut.svc.cluster.local:5432/torghut_sim_2026_03_18_full_day_884bec35
+  runtime_simulation_dsn_password_env: TORGHUT_POSTGRES_PASSWORD
+  migrations_command: /opt/venv/bin/alembic upgrade heads
+
+runtime:
+  target_mode: dedicated_service
+  namespace: torghut
+  ta_configmap: torghut-ta-sim-config
+  ta_deployment: torghut-ta-sim
+  torghut_service: torghut-sim
+  torghut_forecast_service: torghut-forecast-sim
+  output_root: artifacts/torghut/simulations
+
+rollouts:
+  enabled: true
+  namespace: torghut
+  runtime_template: torghut-simulation-runtime-ready
+  activity_template: torghut-simulation-activity
+  teardown_template: torghut-simulation-teardown-clean
+  artifact_template: torghut-simulation-artifact-bundle
+
+replay:
+  pace_mode: max_throughput
+  acceleration: 1
+  max_sleep_seconds: 0
+  auto_offset_reset: earliest
+  flush_every_records: 50000
+  flush_timeout_seconds: 60
+  final_flush_timeout_seconds: 180
+  status_update_every_records: 25000
+  status_update_every_seconds: 30
+
+monitor:
+  timeout_seconds: 14400
+  poll_seconds: 30
+  min_trade_decisions: 1
+  min_executions: 1
+  min_execution_tca_metrics: 1
+  min_execution_order_events: 1
+  cursor_grace_seconds: 120
+
+argocd:
+  manage_automation: true
+  applicationset_name: product
+  applicationset_namespace: argocd
+  app_name: torghut
+  desired_mode_during_run: manual
+  restore_mode_after_run: previous
+  verify_timeout_seconds: 900
+
+reporting:
+  commission_bps: '0'
+  per_trade_fee: '0'

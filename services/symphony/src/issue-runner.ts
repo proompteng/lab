@@ -3,13 +3,16 @@ import { Context, Effect, Layer } from 'effect'
 
 import { CodexProtocolError, ConfigError, toLogError, TrackerError, WorkspaceError, WorkflowError } from './errors'
 import { CodexSessionService, type CodexEvent } from './codex-app-session'
+import { DeliveryService } from './delivery-service'
+import { finishSymphonySpan, startSymphonySpan, withSymphonyEffectSpan } from './instrumentation'
 import { TrackerService } from './linear-client'
+import type { Logger } from './logger'
+import { PostHogTelemetryService } from './posthog'
+import { renderPromptTemplate } from './template'
 import type { Issue } from './types'
 import { normalizeState } from './utils'
 import { WorkflowService } from './workflow'
 import { WorkspaceService } from './workspace-manager'
-import { renderPromptTemplate } from './template'
-import type { Logger } from './logger'
 
 const FALLBACK_PROMPT = 'You are working on an issue from Linear.'
 
@@ -27,6 +30,38 @@ const LINEAR_GRAPHQL_TOOL: DynamicToolSpec = {
   },
 }
 
+const GITHUB_DELIVERY_TOOL: DynamicToolSpec = {
+  name: 'github_delivery',
+  description: 'Execute first-class GitHub delivery operations using Symphony runtime credentials.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      action: {
+        type: 'string',
+        enum: [
+          'create_pull_request',
+          'get_pull_request',
+          'merge_pull_request',
+          'inspect_required_checks',
+          'get_workflow_run',
+        ],
+      },
+      repo: { type: 'string' },
+      title: { type: 'string' },
+      head: { type: 'string' },
+      base: { type: 'string' },
+      body: { type: 'string' },
+      draft: { type: 'boolean' },
+      number: { type: 'number' },
+      method: { type: 'string', enum: ['merge', 'squash', 'rebase'] },
+      headSha: { type: 'string' },
+      runId: { type: 'number' },
+    },
+    required: ['action'],
+    additionalProperties: true,
+  },
+}
+
 const buildContinuationPrompt = (issue: Issue, turnNumber: number, maxTurns: number): string =>
   [
     `Continue working on issue ${issue.identifier}: ${issue.title}.`,
@@ -35,9 +70,17 @@ const buildContinuationPrompt = (issue: Issue, turnNumber: number, maxTurns: num
     'If the issue is already complete or blocked, leave a concise handoff in the tracker/tooling available to you and stop.',
   ].join('\n')
 
+const hasGithubDeliveryAccess = (): boolean => Boolean(process.env.GH_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim())
+
 export type IssueRunnerCallbacks = {
   onEvent: (event: CodexEvent) => Effect.Effect<void, never>
   onWorkspacePath: (workspacePath: string) => Effect.Effect<void, never>
+}
+
+export type IssueRunTelemetryContext = {
+  sessionId: string
+  traceId: string
+  rootSpanId: string
 }
 
 export interface IssueRunnerServiceDefinition {
@@ -45,6 +88,7 @@ export interface IssueRunnerServiceDefinition {
     issue: Issue,
     attempt: number | null,
     callbacks: IssueRunnerCallbacks,
+    telemetryContext: IssueRunTelemetryContext,
   ) => Effect.Effect<string, WorkflowError | ConfigError | TrackerError | WorkspaceError | CodexProtocolError>
 }
 
@@ -59,20 +103,22 @@ export const makeIssueRunnerLayer = (logger: Logger) =>
     Effect.gen(function* () {
       const workflow = yield* WorkflowService
       const tracker = yield* TrackerService
+      const delivery = yield* DeliveryService
       const workspace = yield* WorkspaceService
       const codexSessions = yield* CodexSessionService
+      const posthog = yield* PostHogTelemetryService
       const issueRunnerLogger = logger.child({ component: 'issue-runner' })
 
       const handleToolCall = (toolName: string, args: unknown): Effect.Effect<DynamicToolCallResponse, never> =>
         Effect.gen(function* () {
-          if (toolName !== 'linear_graphql') {
+          if (toolName !== 'linear_graphql' && toolName !== 'github_delivery') {
             return {
               success: false,
               contentItems: [{ type: 'inputText', text: JSON.stringify({ error: 'unsupported_tool_call' }) }],
             } satisfies DynamicToolCallResponse
           }
 
-          if (typeof args === 'string') {
+          if (toolName === 'linear_graphql' && typeof args === 'string') {
             const response = yield* tracker.executeLinearGraphql(args).pipe(
               Effect.catchAll((error) =>
                 Effect.succeed({
@@ -88,18 +134,117 @@ export const makeIssueRunnerLayer = (logger: Logger) =>
           }
 
           const raw = args && typeof args === 'object' ? (args as Record<string, unknown>) : {}
-          const query = typeof raw.query === 'string' ? raw.query : ''
-          const variables =
-            raw.variables && typeof raw.variables === 'object' ? (raw.variables as Record<string, unknown>) : {}
+          if (toolName === 'linear_graphql') {
+            const query = typeof raw.query === 'string' ? raw.query : ''
+            const variables =
+              raw.variables && typeof raw.variables === 'object' ? (raw.variables as Record<string, unknown>) : {}
 
-          if (query.trim().length === 0) {
+            if (query.trim().length === 0) {
+              return {
+                success: false,
+                contentItems: [{ type: 'inputText', text: JSON.stringify({ error: 'invalid_query' }) }],
+              } satisfies DynamicToolCallResponse
+            }
+
+            const response = yield* tracker.executeLinearGraphql(query, variables).pipe(
+              Effect.catchAll((error) =>
+                Effect.succeed({
+                  error: error.message,
+                  code: error.code,
+                }),
+              ),
+            )
             return {
-              success: false,
-              contentItems: [{ type: 'inputText', text: JSON.stringify({ error: 'invalid_query' }) }],
+              success: !('error' in response),
+              contentItems: [{ type: 'inputText', text: JSON.stringify(response) }],
             } satisfies DynamicToolCallResponse
           }
 
-          const response = yield* tracker.executeLinearGraphql(query, variables).pipe(
+          if (!hasGithubDeliveryAccess()) {
+            return {
+              success: false,
+              contentItems: [{ type: 'inputText', text: JSON.stringify({ error: 'github_delivery_unavailable' }) }],
+            } satisfies DynamicToolCallResponse
+          }
+
+          const workflowResult = yield* Effect.either(workflow.current)
+          if (workflowResult._tag === 'Left') {
+            return {
+              success: false,
+              contentItems: [
+                {
+                  type: 'inputText',
+                  text: JSON.stringify({
+                    error: workflowResult.left.message,
+                    code: workflowResult.left.code,
+                  }),
+                },
+              ],
+            } satisfies DynamicToolCallResponse
+          }
+
+          const { config } = workflowResult.right
+          const repo = typeof raw.repo === 'string' && raw.repo.trim().length > 0 ? raw.repo.trim() : config.target.repo
+          const action = typeof raw.action === 'string' ? raw.action : ''
+
+          const response = yield* Effect.gen(function* () {
+            switch (action) {
+              case 'create_pull_request': {
+                const title = typeof raw.title === 'string' ? raw.title : ''
+                const head = typeof raw.head === 'string' ? raw.head : ''
+                const base = typeof raw.base === 'string' ? raw.base : ''
+                const body = typeof raw.body === 'string' ? raw.body : ''
+                if (!title || !head || !base) {
+                  return {
+                    error: 'invalid_input',
+                    detail: 'create_pull_request requires title, head, and base',
+                  }
+                }
+                return yield* delivery.createPullRequest({
+                  repo,
+                  title,
+                  head,
+                  base,
+                  body,
+                  draft: raw.draft === true,
+                })
+              }
+              case 'get_pull_request': {
+                if (typeof raw.number !== 'number') {
+                  return { error: 'invalid_input', detail: 'get_pull_request requires number' }
+                }
+                return yield* delivery.getPullRequest(repo, raw.number)
+              }
+              case 'merge_pull_request': {
+                if (typeof raw.number !== 'number') {
+                  return { error: 'invalid_input', detail: 'merge_pull_request requires number' }
+                }
+                return yield* delivery.mergePullRequest({
+                  repo,
+                  number: raw.number,
+                  method:
+                    raw.method === 'merge' || raw.method === 'rebase' || raw.method === 'squash'
+                      ? raw.method
+                      : 'squash',
+                })
+              }
+              case 'inspect_required_checks': {
+                const headSha = typeof raw.headSha === 'string' ? raw.headSha : ''
+                if (!headSha) {
+                  return { error: 'invalid_input', detail: 'inspect_required_checks requires headSha' }
+                }
+                return yield* delivery.inspectRequiredChecks(repo, headSha)
+              }
+              case 'get_workflow_run': {
+                if (typeof raw.runId !== 'number') {
+                  return { error: 'invalid_input', detail: 'get_workflow_run requires runId' }
+                }
+                return yield* delivery.getWorkflowRun(repo, raw.runId)
+              }
+              default:
+                return { error: 'unsupported_action', detail: action || null }
+            }
+          }).pipe(
             Effect.catchAll((error) =>
               Effect.succeed({
                 error: error.message,
@@ -107,6 +252,7 @@ export const makeIssueRunnerLayer = (logger: Logger) =>
               }),
             ),
           )
+
           return {
             success: !('error' in response),
             contentItems: [{ type: 'inputText', text: JSON.stringify(response) }],
@@ -114,99 +260,203 @@ export const makeIssueRunnerLayer = (logger: Logger) =>
         })
 
       return {
-        runAttempt: (issue, attempt, callbacks) =>
+        runAttempt: (issue, attempt, callbacks, telemetryContext) =>
           Effect.scoped(
             Effect.gen(function* () {
-              const { definition, config } = yield* workflow.current
-              const runLogger = issueRunnerLogger.child({ issue_id: issue.id, issue_identifier: issue.identifier })
-              const workspaceInfo = yield* workspace.createForIssue(issue.identifier)
-              yield* callbacks.onWorkspacePath(workspaceInfo.path)
-              let lastIssue = issue
-
-              const dynamicTools =
-                config.tracker.kind === 'linear' && config.tracker.apiKey ? [LINEAR_GRAPHQL_TOOL] : []
-
-              const initialPrompt =
-                definition.promptTemplate.trim().length > 0
-                  ? renderPromptTemplate(definition.promptTemplate, { issue, attempt })
-                  : FALLBACK_PROMPT
-
-              const session = yield* codexSessions.createSession({
-                command: config.codex.command,
-                cwd: workspaceInfo.path,
-                approvalPolicy: config.codex.approvalPolicy,
-                threadSandbox: config.codex.threadSandbox,
-                turnSandboxPolicy: config.codex.turnSandboxPolicy,
-                readTimeoutMs: config.codex.readTimeoutMs,
-                turnTimeoutMs: config.codex.turnTimeoutMs,
-                title: `${issue.identifier}: ${issue.title}`,
-                dynamicTools,
-                logger: runLogger,
-                onEvent: callbacks.onEvent,
-                onToolCall: handleToolCall,
+              const runSpan = startSymphonySpan('symphony.worker_attempt', {
+                'issue.id': issue.id,
+                'issue.identifier': issue.identifier,
+                'issue.title': issue.title,
+                attempt: attempt ?? 'first-run',
               })
 
-              const hookContext = {
-                issueId: issue.id,
-                issueIdentifier: issue.identifier,
-                issueBranchName: issue.branchName,
-                issueTitle: issue.title,
-                issueState: issue.state,
-              }
+              try {
+                const { definition, config } = yield* workflow.current
+                const runLogger = issueRunnerLogger.child({ issue_id: issue.id, issue_identifier: issue.identifier })
 
-              yield* workspace.runBeforeRun(workspaceInfo.path, hookContext)
+                const captureSpan = <A, E>(
+                  spanName: string,
+                  effect: Effect.Effect<A, E>,
+                  buildOutputState: (result: A) => Record<string, unknown> | null = () => null,
+                ): Effect.Effect<A, E> =>
+                  Effect.gen(function* () {
+                    const startedAtMs = Date.now()
+                    const exit = yield* Effect.exit(effect)
+                    const latencySeconds = Math.max(0, Date.now() - startedAtMs) / 1_000
 
-              const program = Effect.gen(function* () {
-                for (let turnNumber = 1; turnNumber <= config.agent.maxTurns; turnNumber += 1) {
-                  const prompt =
-                    turnNumber === 1
-                      ? initialPrompt
-                      : buildContinuationPrompt(lastIssue, turnNumber, config.agent.maxTurns)
-                  const outcome = yield* session.runTurn(prompt)
-                  if (outcome.status !== 'completed') {
-                    return yield* Effect.fail(
-                      new CodexProtocolError(
-                        'turn_failed',
-                        `turn ${outcome.turnId} ended with status ${outcome.status}`,
-                      ),
-                    )
-                  }
+                    if (exit._tag === 'Success') {
+                      yield* posthog.captureSpan({
+                        traceId: telemetryContext.traceId,
+                        sessionId: telemetryContext.sessionId,
+                        spanId: `${telemetryContext.traceId}:${spanName}:${startedAtMs}`,
+                        parentId: telemetryContext.rootSpanId,
+                        spanName,
+                        outputState: buildOutputState(exit.value),
+                        latencySeconds,
+                        properties: {
+                          issue_id: issue.id,
+                          issue_identifier: issue.identifier,
+                          retry_attempt: attempt ?? 0,
+                        },
+                      })
+                      return exit.value
+                    }
 
-                  const refreshed = yield* tracker.fetchIssueStatesByIds([lastIssue.id])
-                  if (refreshed.length === 0) {
-                    break
-                  }
-                  lastIssue = refreshed[0]
+                    const errorInfo = toLogError(exit.cause)
+                    yield* posthog.captureSpan({
+                      traceId: telemetryContext.traceId,
+                      sessionId: telemetryContext.sessionId,
+                      spanId: `${telemetryContext.traceId}:${spanName}:${startedAtMs}`,
+                      parentId: telemetryContext.rootSpanId,
+                      spanName,
+                      latencySeconds,
+                      error: {
+                        code: errorInfo.code,
+                        message: errorInfo.message,
+                      },
+                      properties: {
+                        issue_id: issue.id,
+                        issue_identifier: issue.identifier,
+                        retry_attempt: attempt ?? 0,
+                      },
+                    })
+                    return yield* Effect.failCause(exit.cause)
+                  })
 
-                  const latestConfig = yield* workflow.config
-                  const activeStates = new Set(latestConfig.tracker.activeStates.map((state) => normalizeState(state)))
-                  if (!activeStates.has(normalizeState(lastIssue.state))) {
-                    break
-                  }
+                const workspaceInfo = yield* withSymphonyEffectSpan(
+                  'symphony.worker_attempt.workspace_create',
+                  { 'issue.identifier': issue.identifier },
+                  captureSpan('workspace_create', workspace.createForIssue(issue.identifier), (result) => ({
+                    workspace_path: result.path,
+                    created_now: result.createdNow,
+                  })),
+                  { parentSpan: runSpan },
+                )
+                yield* callbacks.onWorkspacePath(workspaceInfo.path)
+                let lastIssue = issue
+
+                const dynamicTools = [
+                  ...(config.tracker.kind === 'linear' && config.tracker.apiKey ? [LINEAR_GRAPHQL_TOOL] : []),
+                  ...(hasGithubDeliveryAccess() ? [GITHUB_DELIVERY_TOOL] : []),
+                ]
+
+                const initialPrompt =
+                  definition.promptTemplate.trim().length > 0
+                    ? renderPromptTemplate(definition.promptTemplate, { issue, attempt })
+                    : FALLBACK_PROMPT
+
+                const session = yield* codexSessions.createSession({
+                  command: config.codex.command,
+                  cwd: workspaceInfo.path,
+                  approvalPolicy: config.codex.approvalPolicy,
+                  threadSandbox: config.codex.threadSandbox,
+                  turnSandboxPolicy: config.codex.turnSandboxPolicy,
+                  readTimeoutMs: config.codex.readTimeoutMs,
+                  turnTimeoutMs: config.codex.turnTimeoutMs,
+                  title: `${issue.identifier}: ${issue.title}`,
+                  dynamicTools,
+                  parentSpan: runSpan,
+                  logger: runLogger,
+                  onEvent: callbacks.onEvent,
+                  onToolCall: handleToolCall,
+                })
+
+                const hookContext = {
+                  issueId: issue.id,
+                  issueIdentifier: issue.identifier,
+                  issueBranchName: issue.branchName,
+                  issueTitle: issue.title,
+                  issueState: issue.state,
                 }
 
-                return workspaceInfo.path
-              })
+                yield* withSymphonyEffectSpan(
+                  'symphony.worker_attempt.before_run_hook',
+                  { 'issue.identifier': issue.identifier, 'workspace.path': workspaceInfo.path },
+                  captureSpan('before_run_hook', workspace.runBeforeRun(workspaceInfo.path, hookContext), () => ({
+                    workspace_path: workspaceInfo.path,
+                  })),
+                  { parentSpan: runSpan },
+                )
 
-              return yield* program.pipe(
-                Effect.ensuring(
-                  workspace
-                    .runAfterRun(workspaceInfo.path, {
-                      issueId: lastIssue.id,
-                      issueIdentifier: lastIssue.identifier,
-                      issueBranchName: lastIssue.branchName,
-                      issueTitle: lastIssue.title,
-                      issueState: lastIssue.state,
-                    })
-                    .pipe(
-                      Effect.catchAll((error) =>
-                        Effect.sync(() => {
-                          runLogger.log('warn', 'workspace_after_run_failed', toLogError(error))
+                const result = yield* Effect.gen(function* () {
+                  for (let turnNumber = 1; turnNumber <= config.agent.maxTurns; turnNumber += 1) {
+                    const prompt =
+                      turnNumber === 1
+                        ? initialPrompt
+                        : buildContinuationPrompt(lastIssue, turnNumber, config.agent.maxTurns)
+                    const outcome = yield* withSymphonyEffectSpan(
+                      'symphony.worker_attempt.turn',
+                      {
+                        'issue.identifier': lastIssue.identifier,
+                        'workspace.path': workspaceInfo.path,
+                        'turn.number': turnNumber,
+                      },
+                      session.runTurn(prompt),
+                      { parentSpan: runSpan },
+                    )
+                    if (outcome.status !== 'completed') {
+                      return yield* Effect.fail(
+                        new CodexProtocolError(
+                          'turn_failed',
+                          `turn ${outcome.turnId} ended with status ${outcome.status}`,
+                        ),
+                      )
+                    }
+
+                    const refreshed = yield* withSymphonyEffectSpan(
+                      'symphony.worker_attempt.refresh_issue_state',
+                      { 'issue.identifier': lastIssue.identifier },
+                      tracker.fetchIssueStatesByIds([lastIssue.id]),
+                      { parentSpan: runSpan },
+                    )
+                    if (refreshed.length === 0) {
+                      break
+                    }
+                    lastIssue = refreshed[0]
+
+                    const latestConfig = yield* workflow.config
+                    const activeStates = new Set(
+                      latestConfig.tracker.activeStates.map((state) => normalizeState(state)),
+                    )
+                    if (!activeStates.has(normalizeState(lastIssue.state))) {
+                      break
+                    }
+                  }
+
+                  return workspaceInfo.path
+                }).pipe(
+                  Effect.ensuring(
+                    withSymphonyEffectSpan(
+                      'symphony.worker_attempt.after_run_hook',
+                      { 'issue.identifier': lastIssue.identifier, 'workspace.path': workspaceInfo.path },
+                      captureSpan(
+                        'after_run_hook',
+                        workspace.runAfterRun(workspaceInfo.path, {
+                          issueId: lastIssue.id,
+                          issueIdentifier: lastIssue.identifier,
+                          issueBranchName: lastIssue.branchName,
+                          issueTitle: lastIssue.title,
+                          issueState: lastIssue.state,
                         }),
+                        () => ({ workspace_path: workspaceInfo.path }),
+                      ).pipe(
+                        Effect.catchAll((error) =>
+                          Effect.sync(() => {
+                            runLogger.log('warn', 'workspace_after_run_failed', toLogError(error))
+                          }),
+                        ),
                       ),
+                      { parentSpan: runSpan },
                     ),
-                ),
-              )
+                  ),
+                )
+
+                finishSymphonySpan(runSpan)
+                return result
+              } catch (error) {
+                finishSymphonySpan(runSpan, error)
+                throw error
+              }
             }),
           ),
       } satisfies IssueRunnerServiceDefinition

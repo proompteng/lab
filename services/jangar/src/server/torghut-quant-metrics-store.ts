@@ -305,7 +305,7 @@ export const getQuantLatestStoreStatus = async (
   const filters: Array<unknown> = []
   if (params.strategyId) filters.push(sql`strategy_id = ${params.strategyId}::uuid`)
   if (params.account) filters.push(sql`account = ${params.account}`)
-  if (params.window) filters.push(sql`window = ${params.window}`)
+  if (params.window) filters.push(sql`${sql.ref('window')} = ${params.window}`)
   const whereSql = filters.length > 0 ? sql`where ${sql.join(filters, sql` and `)}` : sql``
 
   const result = await sql<{ updated_at: Date | string | null; count: number | string | null }>`

@@ -108,6 +108,12 @@ export type SpanOptions = {
   attributes?: SpanAttributes
   startTime?: number
   kind?: SpanKind
+  parentSpan?: Span | SpanContext
+}
+
+export type SpanContext = {
+  traceId: string
+  spanId: string
 }
 
 export class Span {
@@ -195,6 +201,13 @@ export class Span {
     return !this.#ended
   }
 
+  spanContext(): SpanContext {
+    return {
+      traceId: this.#traceId,
+      spanId: this.#spanId,
+    }
+  }
+
   private toSpanData(endTimeUnixNano: string): SpanData {
     return {
       traceId: this.#traceId,
@@ -262,7 +275,8 @@ export class Tracer {
   }
 
   startSpan(name: string, options: SpanOptions = {}): Span {
-    const traceId = generateTraceId()
+    const parentContext = options.parentSpan instanceof Span ? options.parentSpan.spanContext() : options.parentSpan
+    const traceId = parentContext?.traceId ?? generateTraceId()
     const spanId = generateSpanId()
     return new Span({
       name,
@@ -271,6 +285,7 @@ export class Tracer {
       startTimeUnixNano: toUnixNano(options.startTime ?? Date.now()),
       traceId,
       spanId,
+      parentSpanId: parentContext?.spanId,
       resourceAttributes: this.#resourceAttributes,
       scope: this.#scope,
       processor: this.#processor,

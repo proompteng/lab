@@ -22,8 +22,10 @@ import type {
   TurnStartParams,
   TurnStartResponse,
 } from '@proompteng/codex'
+import type { Span } from '@proompteng/otel/api'
 
 import { CodexProtocolError, toLogError } from './errors'
+import { withSymphonyEffectSpan } from './instrumentation'
 import type { Logger } from './logger'
 import type { TokenUsageTotals } from './types'
 
@@ -38,6 +40,15 @@ type ActiveTurn = {
   deferred: Deferred.Deferred<TurnOutcome, CodexProtocolError>
 }
 
+type ToolCallTelemetry = {
+  name: string
+  callId: string | null
+  args: unknown
+  result: unknown
+  status: 'completed' | 'failed'
+  latencySeconds: number
+}
+
 type PendingTurnResolution =
   | {
       kind: 'outcome'
@@ -45,6 +56,15 @@ type PendingTurnResolution =
       threadId: string
       turnId: string
       message?: string | null
+      usage?: TokenUsageTotals | null
+      rateLimits?: RateLimitSnapshot | null
+      outputChoices?: Array<Record<string, unknown>> | null
+      provider?: string | null
+      model?: string | null
+      stream?: boolean | null
+      timeToFirstTokenSeconds?: number | null
+      latencySeconds?: number | null
+      rawParams?: unknown
     }
   | {
       kind: 'error'
@@ -52,6 +72,15 @@ type PendingTurnResolution =
       eventName: string
       threadId: string | null
       turnId: string
+      usage?: TokenUsageTotals | null
+      rateLimits?: RateLimitSnapshot | null
+      outputChoices?: Array<Record<string, unknown>> | null
+      provider?: string | null
+      model?: string | null
+      stream?: boolean | null
+      timeToFirstTokenSeconds?: number | null
+      latencySeconds?: number | null
+      rawParams?: unknown
     }
 
 export type CodexEvent = {
@@ -64,6 +93,15 @@ export type CodexEvent = {
   message?: string | null
   usage?: TokenUsageTotals | null
   rateLimits?: RateLimitSnapshot | null
+  prompt?: string | null
+  outputChoices?: Array<Record<string, unknown>> | null
+  provider?: string | null
+  model?: string | null
+  stream?: boolean | null
+  timeToFirstTokenSeconds?: number | null
+  latencySeconds?: number | null
+  rawParams?: unknown
+  toolCall?: ToolCallTelemetry | null
 }
 
 export type TurnOutcome = {
@@ -82,6 +120,7 @@ export type CodexSessionOptions = {
   turnTimeoutMs: number
   title: string
   dynamicTools: DynamicToolSpec[]
+  parentSpan?: Span
   logger: Logger
   onEvent: (event: CodexEvent) => Effect.Effect<void, never>
   onToolCall: (tool: string, args: unknown) => Effect.Effect<DynamicToolCallResponse, never>
@@ -217,6 +256,95 @@ const extractNotificationMessage = (value: unknown): string | null => {
   }
 
   return null
+}
+
+const extractObjectProperty = (value: unknown, keys: string[]): unknown => {
+  if (!value || typeof value !== 'object') return null
+  const raw = value as Record<string, unknown>
+  for (const key of keys) {
+    if (key in raw) return raw[key]
+  }
+  return null
+}
+
+const extractStringProperty = (value: unknown, keys: string[]): string | null => {
+  const candidate = extractObjectProperty(value, keys)
+  return typeof candidate === 'string' && candidate.trim().length > 0 ? candidate.trim() : null
+}
+
+const extractNumberProperty = (value: unknown, keys: string[]): number | null => {
+  const candidate = extractObjectProperty(value, keys)
+  return typeof candidate === 'number' && Number.isFinite(candidate) ? candidate : null
+}
+
+const extractBooleanProperty = (value: unknown, keys: string[]): boolean | null => {
+  const candidate = extractObjectProperty(value, keys)
+  return typeof candidate === 'boolean' ? candidate : null
+}
+
+const flattenContentText = (value: unknown): string | null => {
+  if (typeof value === 'string' && value.trim().length > 0) {
+    return value
+  }
+  if (Array.isArray(value)) {
+    const parts = value
+      .flatMap((item) => {
+        if (typeof item === 'string') return [item]
+        if (!item || typeof item !== 'object') return []
+        const raw = item as Record<string, unknown>
+        if (typeof raw.text === 'string') return [raw.text]
+        if (typeof raw.content === 'string') return [raw.content]
+        return []
+      })
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0)
+    return parts.length > 0 ? parts.join('\n') : null
+  }
+  if (value && typeof value === 'object') {
+    const raw = value as Record<string, unknown>
+    if (typeof raw.text === 'string' && raw.text.trim().length > 0) return raw.text
+    if (typeof raw.content === 'string' && raw.content.trim().length > 0) return raw.content
+  }
+  return null
+}
+
+const toOutputChoice = (value: unknown): Record<string, unknown> | null => {
+  if (typeof value === 'string' && value.trim().length > 0) {
+    return { role: 'assistant', content: value.trim() }
+  }
+  if (!value || typeof value !== 'object') return null
+
+  const raw = value as Record<string, unknown>
+  const role = typeof raw.role === 'string' && raw.role.trim().length > 0 ? raw.role.trim() : 'assistant'
+  const content =
+    flattenContentText(raw.content) ??
+    flattenContentText(raw.text) ??
+    flattenContentText(raw.output) ??
+    flattenContentText(raw.message)
+
+  if (!content) return null
+  return { role, content }
+}
+
+const extractOutputChoices = (value: unknown): Array<Record<string, unknown>> | null => {
+  const candidate =
+    extractObjectProperty(value, ['outputChoices', 'output_choices']) ??
+    extractObjectProperty(value, ['choices']) ??
+    extractObjectProperty(value, ['messages']) ??
+    extractObjectProperty(value, ['output'])
+
+  if (Array.isArray(candidate)) {
+    const choices = candidate
+      .map((item) => toOutputChoice(item))
+      .filter((item): item is Record<string, unknown> => item !== null)
+    return choices.length > 0 ? choices : null
+  }
+
+  const fallback =
+    toOutputChoice(candidate) ??
+    toOutputChoice(extractObjectProperty(value, ['message'])) ??
+    toOutputChoice(extractObjectProperty(value, ['response']))
+  return fallback ? [fallback] : null
 }
 
 const writeMessage = (
@@ -371,8 +499,38 @@ export const makeCodexSessionLayer = (logger: Logger) =>
                 typeof raw.callId === 'string' ? raw.callId : typeof raw.id === 'string' ? raw.id : null
               const toolName = typeof raw.name === 'string' ? raw.name : 'unknown'
               const args = 'input' in raw ? raw.input : raw.arguments
-              const result = yield* options.onToolCall(toolName, args)
+              const startedAtMs = Date.now()
+              const result = yield* withSymphonyEffectSpan(
+                'symphony.codex.tool_call',
+                {
+                  'codex.tool.name': toolName,
+                  'codex.tool.call_id': toolCallId ?? 'unknown',
+                },
+                options.onToolCall(toolName, args),
+                { parentSpan: options.parentSpan },
+              )
               yield* writeMessage(child, { id, result: { ...result, callId: toolCallId } })
+              yield* options.onEvent({
+                event: 'tool_call_completed',
+                timestamp: new Date().toISOString(),
+                codexAppServerPid: String(child.pid ?? ''),
+                threadId: extractThreadId(params),
+                turnId: extractTurnId(params),
+                sessionId:
+                  extractThreadId(params) && extractTurnId(params)
+                    ? `${extractThreadId(params)}-${extractTurnId(params)}`
+                    : null,
+                message: toolName,
+                rawParams: params,
+                toolCall: {
+                  name: toolName,
+                  callId: toolCallId,
+                  args,
+                  result,
+                  status: result.success ? 'completed' : 'failed',
+                  latencySeconds: Math.max(0, Date.now() - startedAtMs) / 1_000,
+                },
+              })
               return
             }
 
@@ -399,6 +557,7 @@ export const makeCodexSessionLayer = (logger: Logger) =>
           turnId: string,
           threadId: string,
           message?: string | null,
+          details: Partial<CodexEvent> = {},
         ) =>
           Effect.gen(function* () {
             const activeTurn = yield* SynchronizedRef.get(activeTurnRef)
@@ -414,10 +573,11 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               threadId,
               turnId,
               message: message ?? null,
+              ...details,
             })
           })
 
-        const failActiveTurn = (error: CodexProtocolError, eventName: string) =>
+        const failActiveTurn = (error: CodexProtocolError, eventName: string, details: Partial<CodexEvent> = {}) =>
           Effect.gen(function* () {
             const activeTurn = yield* SynchronizedRef.get(activeTurnRef)
             const timestamp = new Date().toISOString()
@@ -427,6 +587,7 @@ export const makeCodexSessionLayer = (logger: Logger) =>
                 timestamp,
                 codexAppServerPid: String(child.pid ?? ''),
                 message: error.message,
+                ...details,
               })
               return
             }
@@ -441,6 +602,7 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               threadId: activeTurn.threadId,
               turnId: activeTurn.turnId,
               message: error.message,
+              ...details,
             })
           })
 
@@ -461,11 +623,32 @@ export const makeCodexSessionLayer = (logger: Logger) =>
                 pendingResolution.turnId,
                 pendingResolution.threadId,
                 pendingResolution.message,
+                {
+                  usage: pendingResolution.usage,
+                  rateLimits: pendingResolution.rateLimits,
+                  outputChoices: pendingResolution.outputChoices,
+                  provider: pendingResolution.provider,
+                  model: pendingResolution.model,
+                  stream: pendingResolution.stream,
+                  timeToFirstTokenSeconds: pendingResolution.timeToFirstTokenSeconds,
+                  latencySeconds: pendingResolution.latencySeconds,
+                  rawParams: pendingResolution.rawParams,
+                },
               )
               return
             }
 
-            yield* failActiveTurn(pendingResolution.error, pendingResolution.eventName)
+            yield* failActiveTurn(pendingResolution.error, pendingResolution.eventName, {
+              usage: pendingResolution.usage,
+              rateLimits: pendingResolution.rateLimits,
+              outputChoices: pendingResolution.outputChoices,
+              provider: pendingResolution.provider,
+              model: pendingResolution.model,
+              stream: pendingResolution.stream,
+              timeToFirstTokenSeconds: pendingResolution.timeToFirstTokenSeconds,
+              latencySeconds: pendingResolution.latencySeconds,
+              rawParams: pendingResolution.rawParams,
+            })
           })
 
         const handleNotification = (method: string, params: unknown) =>
@@ -476,6 +659,23 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               params && typeof params === 'object' && 'rateLimits' in params
                 ? ((params as { rateLimits?: RateLimitSnapshot | null }).rateLimits ?? null)
                 : null
+            const outputChoices = extractOutputChoices(params)
+            const provider = extractStringProperty(params, ['provider', 'modelProvider', 'model_provider'])
+            const model = extractStringProperty(params, ['model', 'modelName', 'model_name'])
+            const stream = extractBooleanProperty(params, ['stream', 'isStream'])
+            const timeToFirstTokenSeconds = extractNumberProperty(params, ['timeToFirstToken', 'time_to_first_token'])
+            const latencySeconds = extractNumberProperty(params, ['latency', 'latencySeconds', 'durationSeconds'])
+            const eventDetails = {
+              usage,
+              rateLimits,
+              outputChoices,
+              provider,
+              model,
+              stream,
+              timeToFirstTokenSeconds,
+              latencySeconds,
+              rawParams: params,
+            } satisfies Partial<CodexEvent>
 
             if (method === 'error') {
               const message = extractNotificationMessage(params) ?? 'codex app-server reported an error'
@@ -490,10 +690,11 @@ export const makeCodexSessionLayer = (logger: Logger) =>
                   eventName: 'turn_ended_with_error',
                   threadId,
                   turnId,
+                  ...eventDetails,
                 })
                 return
               }
-              yield* failActiveTurn(error, 'turn_ended_with_error')
+              yield* failActiveTurn(error, 'turn_ended_with_error', eventDetails)
               return
             }
 
@@ -502,13 +703,14 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               const threadId = extractThreadId(params)
               const activeTurn = yield* SynchronizedRef.get(activeTurnRef)
               if (activeTurn && (!turnId || activeTurn.turnId === turnId)) {
-                yield* emitTurnOutcome('completed', activeTurn.turnId, activeTurn.threadId)
+                yield* emitTurnOutcome('completed', activeTurn.turnId, activeTurn.threadId, null, eventDetails)
               } else if (turnId && threadId) {
                 yield* enqueuePendingTurnResolution(turnId, {
                   kind: 'outcome',
                   status: 'completed',
                   threadId,
                   turnId,
+                  ...eventDetails,
                 })
               }
               return
@@ -519,13 +721,14 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               const threadId = extractThreadId(params)
               const activeTurn = yield* SynchronizedRef.get(activeTurnRef)
               if (activeTurn && (!turnId || activeTurn.turnId === turnId)) {
-                yield* emitTurnOutcome('failed', activeTurn.turnId, activeTurn.threadId)
+                yield* emitTurnOutcome('failed', activeTurn.turnId, activeTurn.threadId, null, eventDetails)
               } else if (turnId && threadId) {
                 yield* enqueuePendingTurnResolution(turnId, {
                   kind: 'outcome',
                   status: 'failed',
                   threadId,
                   turnId,
+                  ...eventDetails,
                 })
               }
               return
@@ -536,13 +739,14 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               const threadId = extractThreadId(params)
               const activeTurn = yield* SynchronizedRef.get(activeTurnRef)
               if (activeTurn && (!turnId || activeTurn.turnId === turnId)) {
-                yield* emitTurnOutcome('cancelled', activeTurn.turnId, activeTurn.threadId)
+                yield* emitTurnOutcome('cancelled', activeTurn.turnId, activeTurn.threadId, null, eventDetails)
               } else if (turnId && threadId) {
                 yield* enqueuePendingTurnResolution(turnId, {
                   kind: 'outcome',
                   status: 'cancelled',
                   threadId,
                   turnId,
+                  ...eventDetails,
                 })
               }
               return
@@ -559,8 +763,7 @@ export const makeCodexSessionLayer = (logger: Logger) =>
                   ? `${extractThreadId(params)}-${extractTurnId(params)}`
                   : null,
               message: extractNotificationMessage(params),
-              usage,
-              rateLimits,
+              ...eventDetails,
             })
           })
 
@@ -684,22 +887,27 @@ export const makeCodexSessionLayer = (logger: Logger) =>
           Effect.flatMap((ready) =>
             ready
               ? Effect.void
-              : request('initialize', {
-                  clientInfo: { name: 'symphony', version: '0.1.0' },
-                  capabilities: {
-                    experimentalApi: options.dynamicTools.length > 0,
-                  },
-                }).pipe(
-                  Effect.zipRight(writeMessage(child, { method: 'initialized', params: {} })),
-                  Effect.zipRight(Ref.set(readyRef, true)),
-                  Effect.zipRight(
-                    options.onEvent({
-                      event: 'session_started',
-                      timestamp: new Date().toISOString(),
-                      codexAppServerPid: String(child.pid ?? ''),
-                      message: 'codex app-server initialized',
-                    }),
+              : withSymphonyEffectSpan(
+                  'symphony.codex.initialize',
+                  { 'workspace.path': options.cwd },
+                  request('initialize', {
+                    clientInfo: { name: 'symphony', version: '0.1.0' },
+                    capabilities: {
+                      experimentalApi: options.dynamicTools.length > 0,
+                    },
+                  }).pipe(
+                    Effect.zipRight(writeMessage(child, { method: 'initialized', params: {} })),
+                    Effect.zipRight(Ref.set(readyRef, true)),
+                    Effect.zipRight(
+                      options.onEvent({
+                        event: 'session_started',
+                        timestamp: new Date().toISOString(),
+                        codexAppServerPid: String(child.pid ?? ''),
+                        message: 'codex app-server initialized',
+                      }),
+                    ),
                   ),
+                  { parentSpan: options.parentSpan },
                 ),
           ),
         )
@@ -725,7 +933,12 @@ export const makeCodexSessionLayer = (logger: Logger) =>
             persistExtendedHistory: false,
           }
 
-          const response = (yield* request('thread/start', params)) as ThreadStartResponse
+          const response = (yield* withSymphonyEffectSpan(
+            'symphony.codex.thread_start',
+            { 'workspace.path': options.cwd },
+            request('thread/start', params),
+            { parentSpan: options.parentSpan },
+          )) as ThreadStartResponse
           yield* Ref.set(threadIdRef, response.thread.id)
           return response.thread.id
         })
@@ -747,7 +960,15 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               collaborationMode: null,
             }
 
-            const response = (yield* request('turn/start', params)) as TurnStartResponse
+            const response = (yield* withSymphonyEffectSpan(
+              'symphony.codex.turn_start',
+              {
+                'workspace.path': options.cwd,
+                'thread.id': threadId,
+              },
+              request('turn/start', params),
+              { parentSpan: options.parentSpan },
+            )) as TurnStartResponse
             const turnId = response.turn.id
             const deferred = yield* Deferred.make<TurnOutcome, CodexProtocolError>()
             yield* SynchronizedRef.set(activeTurnRef, { threadId, turnId, deferred })
@@ -759,6 +980,7 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               turnId,
               sessionId: `${threadId}-${turnId}`,
               message: options.title,
+              prompt,
             })
             yield* applyPendingTurnResolution(turnId)
             return {

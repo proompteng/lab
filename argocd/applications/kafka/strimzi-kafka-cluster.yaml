@@ -21,6 +21,10 @@ spec:
         port: 9093
         type: internal
         tls: false
+      - name: phingest
+        port: 9094
+        type: internal
+        tls: true
     config:
       offsets.topic.replication.factor: 3
       transaction.state.log.replication.factor: 3

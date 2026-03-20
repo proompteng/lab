@@ -1,4 +1,5 @@
 import { Context, Effect, Layer } from 'effect'
+import * as Cause from 'effect/Cause'
 import * as Duration from 'effect/Duration'
 import * as Exit from 'effect/Exit'
 import * as Fiber from 'effect/Fiber'
@@ -12,17 +13,32 @@ import * as SynchronizedRef from 'effect/SynchronizedRef'
 import { validateDispatchConfigEffect } from './config'
 import type { CodexEvent } from './codex-app-session'
 import { evaluateDispatchIssue, sortIssuesForDispatch } from './dispatch-rules'
+import { createEmptyDeliveryTransaction, DeliveryService } from './delivery-service'
 import {
   OrchestratorError,
+  TrackerError,
   toLogError,
   type ConfigError,
-  type TrackerError,
   type WorkspaceError,
   type WorkflowError,
 } from './errors'
-import { IssueRunnerService } from './issue-runner'
+import { IssueRunnerService, type IssueRunTelemetryContext } from './issue-runner'
+import {
+  finishSymphonySpan,
+  recordCandidateFetch,
+  recordCodexTokenUsage,
+  recordIssueDispatch,
+  recordIssueHandoff,
+  recordPollTick,
+  recordReconcileDuration,
+  recordWorkerOutcome,
+  startSymphonySpan,
+  updateRuntimeGauges,
+  withSymphonyEffectSpan,
+} from './instrumentation'
 import { LeaderElectionService } from './leader-election'
 import { TrackerService } from './linear-client'
+import { PostHogTelemetryService } from './posthog'
 import { emptyPersistedSchedulerState, StateStoreService } from './state-store'
 import { TargetHealthService } from './target-health'
 import type {
@@ -46,12 +62,17 @@ import type {
   TokenUsageTotals,
   WorkflowSummary,
 } from './types'
-import { normalizeState } from './utils'
+import { normalizeState, readPositiveNumber } from './utils'
 import { WorkflowService } from './workflow'
 import { WorkspaceService } from './workspace-manager'
 import type { Logger } from './logger'
 
 type WorkerStopReason = 'running' | 'failed' | 'stalled' | 'terminal' | 'inactive' | 'leadership_lost'
+
+type TurnTelemetryBuffer = {
+  startedAt: string
+  prompt: string | null
+}
 
 type RunningRuntimeEntry = {
   issue: Issue
@@ -67,6 +88,9 @@ type RunningRuntimeEntry = {
   workerFiber: Fiber.RuntimeFiber<void, never> | null
   stopReason: WorkerStopReason
   terminalCleanupRequested: boolean
+  telemetry: IssueRunTelemetryContext & {
+    turns: Map<string, TurnTelemetryBuffer>
+  }
 }
 
 type RetryRuntimeEntry = {
@@ -105,6 +129,30 @@ const MAX_GLOBAL_EVENTS = 100
 const MAX_ISSUE_EVENTS = 50
 const MAX_RECENT_ERRORS = 50
 const MAX_RUN_HISTORY = 25
+const DEFAULT_ORCHESTRATOR_COMMAND_TIMEOUT_MS = 30_000
+const DEFAULT_POLL_TICK_TIMEOUT_MS = 45_000
+const DEFAULT_CANDIDATE_FETCH_RETRY_ATTEMPTS = 2
+const DEFAULT_CANDIDATE_FETCH_RETRY_INITIAL_DELAY_MS = 250
+const DEFAULT_CANDIDATE_FETCH_RETRY_MAX_DELAY_MS = 2_000
+const TERMINAL_DELIVERY_STAGES = new Set(['completed', 'rolled_back', 'failed'])
+
+const buildTelemetrySessionId = (projectSlug: string | null, issueId: string) =>
+  `symphony:${projectSlug ?? 'unknown'}:${issueId}`
+
+const buildTelemetryTraceId = (issueId: string, startedAtMs: number, attempt: number | null) =>
+  `symphony:${issueId}:${startedAtMs}:${attempt ?? 0}`
+
+const buildRootSpanId = (traceId: string) => `${traceId}:root`
+
+const extractErrorDetails = (value: unknown): Record<string, unknown> => {
+  if (value instanceof Error) {
+    return { message: value.message, name: value.name }
+  }
+  if (value && typeof value === 'object') {
+    return value as Record<string, unknown>
+  }
+  return { message: typeof value === 'string' ? value : JSON.stringify(value) }
+}
 
 const EMPTY_SESSION = (): LiveSession => ({
   sessionId: null,
@@ -158,6 +206,16 @@ const pushBounded = <T>(items: T[], item: T, limit: number) => {
   }
 }
 
+const hasGithubDeliveryAccess = (): boolean => Boolean(process.env.GH_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim())
+
+const clearStaleRuntimeFromRecord = (record: IssueRecord) => {
+  record.status = record.retry ? 'retrying' : 'tracked'
+  record.running = null
+  if (!record.retry && TERMINAL_DELIVERY_STAGES.has(record.delivery?.stage ?? '')) {
+    record.lastError = record.delivery?.lastError ?? null
+  }
+}
+
 const ensureIssueRecord = (state: OrchestratorState, issueId: string, issueIdentifier: string): IssueRecord => {
   const existing = state.issueRecords.get(issueId)
   if (existing) return existing
@@ -180,6 +238,7 @@ const ensureIssueRecord = (state: OrchestratorState, issueId: string, issueIdent
     lastError: null,
     tracked: {},
     runHistory: [],
+    delivery: createEmptyDeliveryTransaction(),
     updatedAt: new Date().toISOString(),
   }
   state.issueRecords.set(issueId, created)
@@ -263,13 +322,29 @@ const toIssueDetails = (record: IssueRecord): IssueDetails => ({
   lastError: record.lastError,
   tracked: { ...record.tracked },
   runHistory: [...record.runHistory],
+  delivery: record.delivery
+    ? {
+        ...record.delivery,
+        codePr: record.delivery.codePr ? { ...record.delivery.codePr } : null,
+        requiredChecks: record.delivery.requiredChecks ? { ...record.delivery.requiredChecks } : null,
+        build: record.delivery.build ? { ...record.delivery.build } : null,
+        releaseContract: record.delivery.releaseContract ? { ...record.delivery.releaseContract } : null,
+        promotionPr: record.delivery.promotionPr ? { ...record.delivery.promotionPr } : null,
+        argo: record.delivery.argo ? { ...record.delivery.argo } : null,
+        postDeploy: record.delivery.postDeploy ? { ...record.delivery.postDeploy } : null,
+        rollbackPr: record.delivery.rollbackPr ? { ...record.delivery.rollbackPr } : null,
+      }
+    : null,
 })
 
 const buildPolicySummary = (config: SymphonyConfig): PolicySummary => ({
   approvalPolicy: config.codex.approvalPolicy,
   threadSandbox: config.codex.threadSandbox,
   turnSandboxPolicy: config.codex.turnSandboxPolicy,
-  allowedTools: config.tracker.kind === 'linear' && config.tracker.apiKey ? ['linear_graphql'] : [],
+  allowedTools: [
+    ...(config.tracker.kind === 'linear' && config.tracker.apiKey ? ['linear_graphql'] : []),
+    ...(hasGithubDeliveryAccess() ? ['github_delivery'] : []),
+  ],
   workspaceRoot: config.workspaceRoot,
   pollIntervalMs: config.pollingIntervalMs,
   maxConcurrentAgents: config.agent.maxConcurrentAgents,
@@ -358,13 +433,30 @@ const hydrateStateFromPersisted = (persisted: PersistedSchedulerState, config: S
   state.recentErrors = [...persisted.recentErrors]
 
   for (const record of persisted.issues) {
-    state.issueRecords.set(record.issueId, {
+    const hydratedRecord: IssueRecord = {
       ...record,
       recentEvents: [...record.recentEvents],
       runHistory: [...record.runHistory],
       logs: { codex_session_logs: [...record.logs.codex_session_logs] },
       tracked: { ...record.tracked },
-    })
+      delivery: record.delivery
+        ? {
+            ...record.delivery,
+            codePr: record.delivery.codePr ? { ...record.delivery.codePr } : null,
+            requiredChecks: record.delivery.requiredChecks ? { ...record.delivery.requiredChecks } : null,
+            build: record.delivery.build ? { ...record.delivery.build } : null,
+            releaseContract: record.delivery.releaseContract ? { ...record.delivery.releaseContract } : null,
+            promotionPr: record.delivery.promotionPr ? { ...record.delivery.promotionPr } : null,
+            argo: record.delivery.argo ? { ...record.delivery.argo } : null,
+            postDeploy: record.delivery.postDeploy ? { ...record.delivery.postDeploy } : null,
+            rollbackPr: record.delivery.rollbackPr ? { ...record.delivery.rollbackPr } : null,
+          }
+        : null,
+    }
+    if (hydratedRecord.status === 'running') {
+      clearStaleRuntimeFromRecord(hydratedRecord)
+    }
+    state.issueRecords.set(record.issueId, hydratedRecord)
   }
 
   for (const retry of persisted.retrying) {
@@ -384,7 +476,7 @@ const hydrateStateFromPersisted = (persisted: PersistedSchedulerState, config: S
 }
 
 const toPersistedState = (state: OrchestratorState): PersistedSchedulerState => ({
-  version: 1,
+  version: 2,
   updatedAt: new Date().toISOString(),
   codexTotals: state.codexTotals,
   rateLimits: state.codexRateLimits,
@@ -404,6 +496,21 @@ const toPersistedState = (state: OrchestratorState): PersistedSchedulerState => 
   ),
 })
 
+const syncStateMetrics = (
+  state: OrchestratorState,
+  options: {
+    targetHealthReady?: boolean
+    leaderState?: boolean
+    lastSuccessfulPollTimestampSeconds?: number
+  } = {},
+) => {
+  updateRuntimeGauges({
+    runningIssues: state.running.size,
+    retryQueueSize: state.retryAttempts.size,
+    ...options,
+  })
+}
+
 const applyTokenUsage = (state: OrchestratorState, running: RunningRuntimeEntry, usage: TokenUsageTotals): void => {
   const deltaInput = Math.max(0, usage.inputTokens - running.session.lastReportedInputTokens)
   const deltaOutput = Math.max(0, usage.outputTokens - running.session.lastReportedOutputTokens)
@@ -419,6 +526,7 @@ const applyTokenUsage = (state: OrchestratorState, running: RunningRuntimeEntry,
   state.codexTotals.inputTokens += deltaInput
   state.codexTotals.outputTokens += deltaOutput
   state.codexTotals.totalTokens += deltaTotal
+  recordCodexTokenUsage(deltaInput, deltaOutput, deltaTotal)
 }
 
 const interruptWorkerFiber = (fiber: Fiber.RuntimeFiber<void, never> | null) =>
@@ -446,6 +554,8 @@ export const makeOrchestratorLayer = (logger: Logger) =>
       const tracker = yield* TrackerService
       const workspace = yield* WorkspaceService
       const issueRunner = yield* IssueRunnerService
+      const delivery = yield* DeliveryService
+      const posthog = yield* PostHogTelemetryService
       const leaderElection = yield* LeaderElectionService
       const stateStore = yield* StateStoreService
       const targetHealth = yield* TargetHealthService
@@ -457,6 +567,14 @@ export const makeOrchestratorLayer = (logger: Logger) =>
       const startedRef = yield* Ref.make(false)
       const pollQueuedRef = yield* Ref.make(false)
       const stallQueuedRef = yield* Ref.make(false)
+      const orchestratorCommandTimeoutMs = readPositiveNumber(
+        process.env.SYMPHONY_COMMAND_TIMEOUT_MS,
+        DEFAULT_ORCHESTRATOR_COMMAND_TIMEOUT_MS,
+      )
+      const pollTickTimeoutMs = readPositiveNumber(
+        process.env.SYMPHONY_POLL_TICK_TIMEOUT_MS,
+        DEFAULT_POLL_TICK_TIMEOUT_MS,
+      )
       const seenLeaderStateRef = yield* Ref.make<boolean | null>(null)
       const processorFiberRef = yield* Ref.make<Fiber.RuntimeFiber<void, never> | null>(null)
       const pollFiberRef = yield* Ref.make<Fiber.RuntimeFiber<void, never> | null>(null)
@@ -537,47 +655,118 @@ export const makeOrchestratorLayer = (logger: Logger) =>
         reason: 'manual_work_required' | 'promotion_pr_open' | 'target_not_ready',
         detail: string,
       ) =>
-        tracker.handoffIssue(issue.id, buildHandoffMessage(issue, config, detail), config.tracker.handoffState).pipe(
-          Effect.tap(() =>
-            SynchronizedRef.modifyEffect(stateRef, (state) => {
-              addRecentEvent(state, {
-                at: new Date().toISOString(),
-                event: 'issue_handed_off',
-                message: `issue ${issue.identifier} moved to ${config.tracker.handoffState}: ${detail}`,
-                issueId: issue.id,
-                issueIdentifier: issue.identifier,
-                level: 'warn',
-                reason,
-              })
-              return Effect.succeed([undefined, state] as const)
-            }),
-          ),
-          Effect.catchAll((error) =>
-            Effect.sync(() => {
-              orchestratorLogger.log('warn', 'issue_handoff_failed', {
-                issue_id: issue.id,
-                issue_identifier: issue.identifier,
-                handoff_state: config.tracker.handoffState,
-                reason,
-                ...toLogError(error),
-              })
-            }).pipe(
-              Effect.zipRight(
+        Effect.gen(function* () {
+          const startedAtMs = Date.now()
+          const sessionId = buildTelemetrySessionId(config.tracker.projectSlug, issue.id)
+          const traceId = buildTelemetryTraceId(issue.id, startedAtMs, 0)
+          const rootSpanId = buildRootSpanId(traceId)
+          yield* posthog.captureTrace({
+            traceId,
+            sessionId,
+            spanName: 'symphony_issue_handoff',
+            inputState: {
+              issue_id: issue.id,
+              issue_identifier: issue.identifier,
+              title: issue.title,
+              state: issue.state,
+              detail,
+              reason,
+            },
+            properties: {
+              issue_id: issue.id,
+              issue_identifier: issue.identifier,
+            },
+          })
+          return yield* tracker
+            .handoffIssue(issue.id, buildHandoffMessage(issue, config, detail), config.tracker.handoffState)
+            .pipe(
+              Effect.tap(() => Effect.sync(() => recordIssueHandoff(reason))),
+              Effect.tap(() =>
+                posthog.captureSpan({
+                  traceId,
+                  sessionId,
+                  spanId: rootSpanId,
+                  spanName: 'handoff',
+                  latencySeconds: Math.max(0, Date.now() - startedAtMs) / 1_000,
+                  outputState: {
+                    handoff_state: config.tracker.handoffState,
+                    detail,
+                    reason,
+                  },
+                  properties: {
+                    issue_id: issue.id,
+                    issue_identifier: issue.identifier,
+                  },
+                }),
+              ),
+              Effect.tap(() =>
                 SynchronizedRef.modifyEffect(stateRef, (state) => {
-                  addRecentError(state, {
+                  addRecentEvent(state, {
                     at: new Date().toISOString(),
-                    code: error.code,
-                    message: error.message,
+                    event: 'issue_handed_off',
+                    message: `issue ${issue.identifier} moved to ${config.tracker.handoffState}: ${detail}`,
                     issueId: issue.id,
                     issueIdentifier: issue.identifier,
-                    context: 'issue_handoff',
+                    level: 'warn',
+                    reason,
                   })
+                  const record = ensureIssueRecord(state, issue.id, issue.identifier)
+                  record.delivery = {
+                    ...(record.delivery ?? createEmptyDeliveryTransaction()),
+                    stage: 'handoff_required',
+                    updatedAt: new Date().toISOString(),
+                    lastError: detail,
+                  }
                   return Effect.succeed([undefined, state] as const)
                 }),
               ),
-            ),
-          ),
-        )
+              Effect.catchAll((error) =>
+                posthog
+                  .captureSpan({
+                    traceId,
+                    sessionId,
+                    spanId: rootSpanId,
+                    spanName: 'handoff',
+                    latencySeconds: Math.max(0, Date.now() - startedAtMs) / 1_000,
+                    error: extractErrorDetails(error),
+                    properties: {
+                      issue_id: issue.id,
+                      issue_identifier: issue.identifier,
+                      handoff_state: config.tracker.handoffState,
+                      reason,
+                    },
+                  })
+                  .pipe(
+                    Effect.zipRight(
+                      Effect.sync(() => {
+                        orchestratorLogger.log('warn', 'issue_handoff_failed', {
+                          issue_id: issue.id,
+                          issue_identifier: issue.identifier,
+                          handoff_state: config.tracker.handoffState,
+                          reason,
+                          ...toLogError(error),
+                        })
+                      }),
+                    ),
+                  )
+                  .pipe(
+                    Effect.zipRight(
+                      SynchronizedRef.modifyEffect(stateRef, (state) => {
+                        addRecentError(state, {
+                          at: new Date().toISOString(),
+                          code: error.code,
+                          message: error.message,
+                          issueId: issue.id,
+                          issueIdentifier: issue.identifier,
+                          context: 'issue_handoff',
+                        })
+                        return Effect.succeed([undefined, state] as const)
+                      }),
+                    ),
+                  ),
+              ),
+            )
+        })
 
       const scheduleRetry = (
         issueId: string,
@@ -585,6 +774,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
         attempt: number,
         delayType: 'continuation' | 'failure',
         error: string | null,
+        telemetryContext?: IssueRunTelemetryContext | null,
       ) =>
         Effect.gen(function* () {
           const config = yield* workflow.config
@@ -643,8 +833,31 @@ export const makeOrchestratorLayer = (logger: Logger) =>
               level: error ? 'warn' : 'info',
               reason: delayType,
             })
+            syncStateMetrics(state)
             return Effect.succeed([undefined, state] as const)
           })
+
+          if (telemetryContext) {
+            yield* posthog.captureSpan({
+              traceId: telemetryContext.traceId,
+              sessionId: telemetryContext.sessionId,
+              spanId: `${telemetryContext.traceId}:retry:${attempt}:${Date.now()}`,
+              parentId: telemetryContext.rootSpanId,
+              spanName: 'retry_wait',
+              outputState: {
+                due_at: new Date(dueAtMs).toISOString(),
+                delay_type: delayType,
+                error,
+              },
+              latencySeconds: delayMs / 1_000,
+              error,
+              properties: {
+                issue_id: issueId,
+                issue_identifier: identifier,
+                retry_attempt: attempt,
+              },
+            })
+          }
 
           yield* persistStateBestEffort
         })
@@ -673,6 +886,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             workspacePath: record.workspacePath,
             sessionId: null,
           })
+          syncStateMetrics(state)
           return Effect.succeed([undefined, state] as const)
         }).pipe(Effect.zipRight(persistStateBestEffort))
 
@@ -680,7 +894,10 @@ export const makeOrchestratorLayer = (logger: Logger) =>
         SynchronizedRef.modifyEffect(stateRef, (state) => {
           const running = state.running.get(issueId)
           if (!running) {
-            return Effect.succeed([false, state] as const)
+            return Effect.succeed([
+              { shouldPersist: false, telemetryEffects: [] as Array<Effect.Effect<void, never>> },
+              state,
+            ] as const)
           }
 
           running.session.codexAppServerPid = event.codexAppServerPid
@@ -704,6 +921,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
           syncRecordFromRunning(record, running)
 
           let shouldPersist = false
+          const telemetryEffects: Array<Effect.Effect<void, never>> = []
           if (event.message && event.message.trim().length > 0) {
             const recentEvent: RecentEvent = {
               at: event.timestamp,
@@ -718,12 +936,45 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             shouldPersist = true
           }
 
+          if (event.event === 'turn_started' && event.turnId) {
+            running.telemetry.turns.set(event.turnId, {
+              startedAt: event.timestamp,
+              prompt: event.prompt ?? null,
+            })
+          }
+
+          if (event.toolCall) {
+            const toolSpanId = `${running.telemetry.traceId}:tool:${event.toolCall.callId ?? Date.parse(event.timestamp)}`
+            telemetryEffects.push(
+              posthog.captureSpan({
+                traceId: running.telemetry.traceId,
+                sessionId: running.telemetry.sessionId,
+                spanId: toolSpanId,
+                parentId: running.telemetry.rootSpanId,
+                spanName: event.toolCall.name,
+                inputState: { args: event.toolCall.args },
+                outputState: { result: event.toolCall.result, status: event.toolCall.status },
+                latencySeconds: event.toolCall.latencySeconds,
+                error: event.toolCall.status === 'failed' ? extractErrorDetails(event.toolCall.result) : null,
+                properties: {
+                  issue_id: running.issueId,
+                  issue_identifier: running.identifier,
+                  call_id: event.toolCall.callId,
+                  retry_attempt: running.retryAttempt ?? 0,
+                  span_kind: 'dynamic_tool_call',
+                  tool_name: event.toolCall.name,
+                },
+              }),
+            )
+          }
+
           if (
             event.event === 'session_started' ||
             event.event === 'turn_started' ||
             event.event === 'turn_completed' ||
             event.event === 'turn_failed' ||
-            event.event === 'turn_cancelled'
+            event.event === 'turn_cancelled' ||
+            event.event === 'turn_ended_with_error'
           ) {
             addRunHistory(record, {
               at: event.timestamp,
@@ -732,7 +983,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                   ? 'succeeded'
                   : event.event === 'turn_started'
                     ? 'started'
-                    : event.event === 'turn_failed'
+                    : event.event === 'turn_failed' || event.event === 'turn_ended_with_error'
                       ? 'failed'
                       : event.event === 'turn_cancelled'
                         ? 'inactive'
@@ -745,13 +996,91 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             shouldPersist = true
           }
 
-          return Effect.succeed([shouldPersist, state] as const)
-        }).pipe(Effect.flatMap((shouldPersist) => (shouldPersist ? persistStateBestEffort : Effect.void)))
+          if (
+            event.event === 'turn_completed' ||
+            event.event === 'turn_failed' ||
+            event.event === 'turn_cancelled' ||
+            event.event === 'turn_ended_with_error'
+          ) {
+            const turnId = event.turnId ?? running.session.turnId ?? `${running.telemetry.traceId}:unknown-turn`
+            const turnBuffer = running.telemetry.turns.get(turnId) ?? null
+            if (turnBuffer) {
+              running.telemetry.turns.delete(turnId)
+            }
+            const derivedLatencySeconds =
+              event.latencySeconds ??
+              (turnBuffer ? Math.max(0, Date.parse(event.timestamp) - Date.parse(turnBuffer.startedAt)) / 1_000 : null)
+            const outputChoices =
+              event.outputChoices && event.outputChoices.length > 0
+                ? event.outputChoices
+                : [
+                    {
+                      role: 'assistant',
+                      content: event.message?.trim() || `Turn ${turnId} ended with ${event.event}`,
+                    },
+                  ]
+
+            telemetryEffects.push(
+              posthog.captureGeneration({
+                traceId: running.telemetry.traceId,
+                sessionId: running.telemetry.sessionId,
+                spanId: `${running.telemetry.traceId}:generation:${turnId}`,
+                spanName: 'codex_turn',
+                parentId: running.telemetry.rootSpanId,
+                model: event.model ?? 'unknown',
+                provider: event.provider ?? 'codex',
+                input: turnBuffer?.prompt ? [{ role: 'user', content: turnBuffer.prompt }] : [],
+                outputChoices,
+                inputTokens: event.usage?.inputTokens ?? null,
+                outputTokens: event.usage?.outputTokens ?? null,
+                latencySeconds: derivedLatencySeconds,
+                timeToFirstTokenSeconds: event.timeToFirstTokenSeconds ?? null,
+                stream: event.stream ?? null,
+                error:
+                  event.event === 'turn_completed'
+                    ? null
+                    : extractErrorDetails(event.rawParams ?? event.message ?? event.event),
+                properties: {
+                  issue_id: running.issueId,
+                  issue_identifier: running.identifier,
+                  retry_attempt: running.retryAttempt ?? 0,
+                  turn_id: turnId,
+                  thread_id: event.threadId ?? running.session.threadId,
+                  codex_session_id: running.session.sessionId,
+                  output_capture_mode:
+                    event.outputChoices && event.outputChoices.length > 0 ? 'captured' : 'summary_fallback',
+                  turn_status:
+                    event.event === 'turn_completed'
+                      ? 'completed'
+                      : event.event === 'turn_cancelled'
+                        ? 'cancelled'
+                        : 'failed',
+                },
+              }),
+            )
+          }
+
+          return Effect.succeed([{ shouldPersist, telemetryEffects }, state] as const)
+        }).pipe(
+          Effect.flatMap(({ shouldPersist, telemetryEffects }) =>
+            Effect.forEach(telemetryEffects, (effect) => effect, { concurrency: 1, discard: true }).pipe(
+              Effect.zipRight(shouldPersist ? persistStateBestEffort : Effect.void),
+            ),
+          ),
+        )
 
       const dispatchIssue = (issue: Issue, attempt: number | null) =>
         Effect.gen(function* () {
           const startedAtMs = Date.now()
           const startedAt = new Date(startedAtMs).toISOString()
+          recordIssueDispatch(normalizeState(issue.state))
+          const config = yield* workflow.config
+          const traceId = buildTelemetryTraceId(issue.id, startedAtMs, attempt)
+          const telemetryContext: IssueRunTelemetryContext = {
+            sessionId: buildTelemetrySessionId(config.tracker.projectSlug, issue.id),
+            traceId,
+            rootSpanId: buildRootSpanId(traceId),
+          }
 
           const existingRetry = yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
             state.claimed.add(issue.id)
@@ -774,6 +1103,10 @@ export const makeOrchestratorLayer = (logger: Logger) =>
               workerFiber: null,
               stopReason: 'running',
               terminalCleanupRequested: false,
+              telemetry: {
+                ...telemetryContext,
+                turns: new Map(),
+              },
             }
             state.running.set(issue.id, running)
 
@@ -796,6 +1129,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
               workspacePath: null,
               sessionId: null,
             })
+            syncStateMetrics(state)
             return Effect.succeed([retry, state] as const)
           })
 
@@ -803,13 +1137,46 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             yield* Fiber.interruptFork(existingRetry.fiber)
           }
 
+          yield* posthog.captureTrace({
+            traceId: telemetryContext.traceId,
+            sessionId: telemetryContext.sessionId,
+            spanName: 'symphony_issue_run',
+            inputState: {
+              issue_id: issue.id,
+              issue_identifier: issue.identifier,
+              title: issue.title,
+              description: issue.description,
+              priority: issue.priority,
+              state: issue.state,
+              branch_name: issue.branchName,
+              labels: issue.labels,
+              blocked_by: issue.blockedBy,
+              attempt: attempt ?? 0,
+              workflow_path: config.workflowPath,
+              target_repo: config.target.repo,
+              target_application: config.target.argocdApplication,
+              target_namespace: config.target.namespace,
+            },
+            properties: {
+              issue_id: issue.id,
+              issue_identifier: issue.identifier,
+              retry_attempt: attempt ?? 0,
+              service: 'symphony',
+            },
+          })
+
           const workerEffect = issueRunner
-            .runAttempt(issue, attempt, {
-              onEvent: (event) =>
-                Queue.offer(queue, { _tag: 'CodexEventReceived', issueId: issue.id, event }).pipe(Effect.asVoid),
-              onWorkspacePath: (workspacePath) =>
-                Queue.offer(queue, { _tag: 'WorkspaceReady', issueId: issue.id, workspacePath }).pipe(Effect.asVoid),
-            })
+            .runAttempt(
+              issue,
+              attempt,
+              {
+                onEvent: (event) =>
+                  Queue.offer(queue, { _tag: 'CodexEventReceived', issueId: issue.id, event }).pipe(Effect.asVoid),
+                onWorkspacePath: (workspacePath) =>
+                  Queue.offer(queue, { _tag: 'WorkspaceReady', issueId: issue.id, workspacePath }).pipe(Effect.asVoid),
+              },
+              telemetryContext,
+            )
             .pipe(
               Effect.exit,
               Effect.flatMap((exit) => Queue.offer(queue, { _tag: 'WorkerExited', issueId: issue.id, exit })),
@@ -822,84 +1189,178 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             if (running) {
               running.workerFiber = workerFiber
             }
+            syncStateMetrics(state)
             return Effect.succeed([undefined, state] as const)
           })
           yield* persistStateBestEffort
         })
 
       const reconcileRunningIssues = (config: SymphonyConfig) =>
-        Effect.gen(function* () {
-          const runningEntries = yield* SynchronizedRef.modifyEffect(stateRef, (state) =>
-            Effect.succeed([Array.from(state.running.values()), state] as const),
-          )
-          if (runningEntries.length === 0) return
+        (() => {
+          const startedAtMs = Date.now()
+          return withSymphonyEffectSpan(
+            'symphony.reconcile',
+            {},
+            Effect.gen(function* () {
+              const runningEntries = yield* SynchronizedRef.modifyEffect(stateRef, (state) =>
+                Effect.succeed([Array.from(state.running.values()), state] as const),
+              )
+              if (runningEntries.length === 0) return
 
-          const refreshed = yield* tracker.fetchIssueStatesByIds(runningEntries.map((entry) => entry.issueId)).pipe(
-            Effect.catchAll((error) =>
-              Effect.sync(() => {
-                orchestratorLogger.log('warn', 'running_state_refresh_failed', toLogError(error))
-              }).pipe(Effect.zipRight(Effect.succeed<Issue[]>([]))),
+              const refreshed = yield* tracker.fetchIssueStatesByIds(runningEntries.map((entry) => entry.issueId)).pipe(
+                Effect.catchAll((error) =>
+                  Effect.sync(() => {
+                    orchestratorLogger.log('warn', 'running_state_refresh_failed', toLogError(error))
+                  }).pipe(Effect.zipRight(Effect.succeed<Issue[]>([]))),
+                ),
+              )
+              if (refreshed.length === 0) return
+
+              const refreshedById = new Map(refreshed.map((issue) => [issue.id, issue]))
+              const activeStates = new Set(config.tracker.activeStates.map((state) => normalizeState(state)))
+              const terminalStates = new Set(config.tracker.terminalStates.map((state) => normalizeState(state)))
+
+              for (const running of runningEntries) {
+                const latest = refreshedById.get(running.issueId)
+                if (!latest) {
+                  yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+                    const current = state.running.get(running.issueId)
+                    if (current) {
+                      current.stopReason = 'inactive'
+                    }
+                    return Effect.succeed([undefined, state] as const)
+                  })
+                  yield* interruptWorkerFiber(running.workerFiber)
+                  continue
+                }
+
+                const nextState = normalizeState(latest.state)
+                if (terminalStates.has(nextState)) {
+                  yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+                    const current = state.running.get(running.issueId)
+                    if (current) {
+                      current.issue = latest
+                      current.stopReason = 'terminal'
+                      current.terminalCleanupRequested = true
+                    }
+                    return Effect.succeed([undefined, state] as const)
+                  })
+                  yield* interruptWorkerFiber(running.workerFiber)
+                  continue
+                }
+
+                if (!activeStates.has(nextState)) {
+                  yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+                    const current = state.running.get(running.issueId)
+                    if (current) {
+                      current.issue = latest
+                      current.stopReason = 'inactive'
+                    }
+                    return Effect.succeed([undefined, state] as const)
+                  })
+                  yield* interruptWorkerFiber(running.workerFiber)
+                  continue
+                }
+
+                yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+                  const current = state.running.get(running.issueId)
+                  if (current) {
+                    current.issue = latest
+                    const record = ensureIssueRecord(state, current.issueId, current.identifier)
+                    syncRecordFromRunning(record, current)
+                  }
+                  return Effect.succeed([undefined, state] as const)
+                })
+              }
+            }),
+          ).pipe(Effect.ensuring(Effect.sync(() => recordReconcileDuration(Date.now() - startedAtMs))))
+        })()
+
+      const reconcileDeliveryTransactions = (config: SymphonyConfig) =>
+        Effect.gen(function* () {
+          const records = yield* SynchronizedRef.get(stateRef).pipe(
+            Effect.map((state) =>
+              Array.from(state.issueRecords.values()).filter((record) => {
+                const trackedState =
+                  typeof record.tracked.lastKnownState === 'string' ? record.tracked.lastKnownState : null
+                const activeOrHandoff =
+                  trackedState !== null &&
+                  (config.tracker.activeStates.includes(trackedState) || trackedState === config.tracker.handoffState)
+                const deliveryStage = record.delivery?.stage ?? 'coding'
+                return activeOrHandoff || !TERMINAL_DELIVERY_STAGES.has(deliveryStage) || record.status !== 'tracked'
+              }),
             ),
           )
-          if (refreshed.length === 0) return
 
-          const refreshedById = new Map(refreshed.map((issue) => [issue.id, issue]))
-          const activeStates = new Set(config.tracker.activeStates.map((state) => normalizeState(state)))
-          const terminalStates = new Set(config.tracker.terminalStates.map((state) => normalizeState(state)))
-
-          for (const running of runningEntries) {
-            const latest = refreshedById.get(running.issueId)
-            if (!latest) {
-              yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-                const current = state.running.get(running.issueId)
-                if (current) {
-                  current.stopReason = 'inactive'
-                }
-                return Effect.succeed([undefined, state] as const)
-              })
-              yield* interruptWorkerFiber(running.workerFiber)
-              continue
-            }
-
-            const nextState = normalizeState(latest.state)
-            if (terminalStates.has(nextState)) {
-              yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-                const current = state.running.get(running.issueId)
-                if (current) {
-                  current.issue = latest
-                  current.stopReason = 'terminal'
-                  current.terminalCleanupRequested = true
-                }
-                return Effect.succeed([undefined, state] as const)
-              })
-              yield* interruptWorkerFiber(running.workerFiber)
-              continue
-            }
-
-            if (!activeStates.has(nextState)) {
-              yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-                const current = state.running.get(running.issueId)
-                if (current) {
-                  current.issue = latest
-                  current.stopReason = 'inactive'
-                }
-                return Effect.succeed([undefined, state] as const)
-              })
-              yield* interruptWorkerFiber(running.workerFiber)
-              continue
-            }
-
+          for (const record of records) {
+            const refreshed = yield* delivery.refreshIssueDelivery(record, config)
             yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-              const current = state.running.get(running.issueId)
+              const current = state.issueRecords.get(record.issueId)
               if (current) {
-                current.issue = latest
-                const record = ensureIssueRecord(state, current.issueId, current.identifier)
-                syncRecordFromRunning(record, current)
+                current.delivery = refreshed
+                if (
+                  TERMINAL_DELIVERY_STAGES.has(refreshed.stage) &&
+                  !state.running.has(record.issueId) &&
+                  !state.retryAttempts.has(record.issueId)
+                ) {
+                  clearStaleRuntimeFromRecord(current)
+                }
+                if (refreshed.stage === 'completed') {
+                  current.lastError = null
+                }
+                current.updatedAt = new Date().toISOString()
               }
               return Effect.succeed([undefined, state] as const)
             })
           }
         })
+
+      const fetchCandidateIssuesWithRetry = (
+        context: 'dispatch' | 'candidate_fetch_handoff' | 'retry_dispatch',
+      ): Effect.Effect<Issue[], ConfigError | WorkflowError | TrackerError, never> => {
+        const attempts = readPositiveNumber(
+          process.env.SYMPHONY_CANDIDATE_FETCH_RETRY_ATTEMPTS,
+          DEFAULT_CANDIDATE_FETCH_RETRY_ATTEMPTS,
+        )
+        const initialDelayMs = readPositiveNumber(
+          process.env.SYMPHONY_CANDIDATE_FETCH_RETRY_INITIAL_DELAY_MS,
+          DEFAULT_CANDIDATE_FETCH_RETRY_INITIAL_DELAY_MS,
+        )
+        const maxDelayMs = readPositiveNumber(
+          process.env.SYMPHONY_CANDIDATE_FETCH_RETRY_MAX_DELAY_MS,
+          DEFAULT_CANDIDATE_FETCH_RETRY_MAX_DELAY_MS,
+        )
+        const retrySchedule = Schedule.whileInput<unknown>(
+          (error) => error instanceof TrackerError && error.code === 'linear_api_request',
+        )(
+          Schedule.map(
+            Schedule.intersect(Schedule.recurs(Math.max(0, attempts)))(
+              Schedule.jitteredWith({ min: 0.8, max: 1.2 })(
+                Schedule.delayed(Schedule.exponential(Duration.millis(initialDelayMs), 2), (delay) =>
+                  Duration.min(delay, Duration.millis(maxDelayMs)),
+                ),
+              ),
+            ),
+            ([delay]) => delay,
+          ),
+        )
+
+        return tracker.fetchCandidateIssues.pipe(
+          Effect.tap(() => Effect.sync(() => recordCandidateFetch('success'))),
+          Effect.retry(
+            retrySchedule.pipe(
+              Schedule.tapInput((error) =>
+                Effect.sync(() => {
+                  orchestratorLogger.log('warn', 'candidate_fetch_retrying', {
+                    context,
+                    ...toLogError(error),
+                  })
+                }),
+              ),
+            ),
+          ),
+        )
+      }
 
       const reconcileStalledRuns = (config: SymphonyConfig) =>
         config.codex.stallTimeoutMs <= 0
@@ -936,6 +1397,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
               level: leader.isLeader ? 'info' : 'warn',
               reason: leader.isLeader ? 'leader' : 'follower',
             })
+            syncStateMetrics(state, { leaderState: leader.isLeader })
             return Effect.succeed([undefined, state] as const)
           })
 
@@ -990,281 +1452,388 @@ export const makeOrchestratorLayer = (logger: Logger) =>
           yield* persistStateBestEffort
         })
 
-      const processPollTick = Effect.gen(function* () {
-        yield* Ref.set(pollQueuedRef, false)
+      const processPollTick = () => {
+        const startedAtMs = Date.now()
+        const pollSpan = startSymphonySpan('symphony.poll_tick')
+        let finished = false
+        let pollResult = 'success'
 
-        const leader = yield* leaderElection.status
-        if (!leader.isLeader) {
-          yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-            addRecentEvent(state, {
-              at: new Date().toISOString(),
-              event: 'poll_skipped',
-              message: 'poll skipped because this replica is not leader',
-              level: 'warn',
-              reason: 'follower_not_leader',
-            })
-            return Effect.succeed([undefined, state] as const)
-          })
-          yield* persistStateBestEffort
-          return
-        }
-
-        const loaded = yield* workflow.current
-        const { config } = loaded
-        yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-          state.pollIntervalMs = config.pollingIntervalMs
-          state.maxConcurrentAgents = config.agent.maxConcurrentAgents
-          return Effect.succeed([undefined, state] as const)
-        })
-
-        yield* reconcileRunningIssues(config)
-
-        const validation = yield* Effect.either(validateDispatchConfigEffect(config))
-        if (validation._tag === 'Left') {
-          yield* Effect.sync(() => {
-            orchestratorLogger.log('error', 'dispatch_validation_failed', toLogError(validation.left))
-          })
-          yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-            addRecentError(state, {
-              at: new Date().toISOString(),
-              code: validation.left.code,
-              message: validation.left.message,
-              issueId: null,
-              issueIdentifier: null,
-              context: 'dispatch_validation',
-            })
-            addRecentEvent(state, {
-              at: new Date().toISOString(),
-              event: 'dispatch_skipped',
-              message: validation.left.message,
-              level: 'error',
-              reason: 'config_invalid',
-            })
-            return Effect.succeed([undefined, state] as const)
-          })
-          yield* persistStateBestEffort
-          return
-        }
-
-        const preDispatchHealth = yield* targetHealth.evaluatePreDispatch
-        if (!preDispatchHealth.readyForDispatch) {
-          const handoffReason = preDispatchHealth.openPromotionPr ? 'promotion_pr_open' : 'target_not_ready'
-          const blockedMessage = preDispatchHealth.openPromotionPr
-            ? 'dispatch paused because a promotion pull request is already open'
-            : preDispatchHealth.lastError
-              ? `dispatch paused: ${preDispatchHealth.lastError}`
-              : preDispatchHealth.checks
-                  .filter((check) => !check.ok)
-                  .map((check) => check.message)
-                  .join('; ') || 'dispatch paused because target health checks are failing'
-          yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-            addRecentEvent(state, {
-              at: new Date().toISOString(),
-              event: 'dispatch_paused',
-              message: blockedMessage,
-              level: 'warn',
-              reason: handoffReason,
-            })
-            return Effect.succeed([undefined, state] as const)
-          })
-          const issuesToHandoff = yield* tracker.fetchCandidateIssues.pipe(
-            Effect.catchAll((error) =>
-              Effect.sync(() => {
-                orchestratorLogger.log('error', 'candidate_fetch_failed_for_handoff', toLogError(error))
-              }).pipe(
-                Effect.zipRight(
-                  SynchronizedRef.modifyEffect(stateRef, (state) => {
-                    addRecentError(state, {
-                      at: new Date().toISOString(),
-                      code: error.code,
-                      message: error.message,
-                      issueId: null,
-                      issueIdentifier: null,
-                      context: 'candidate_fetch_handoff',
-                    })
-                    return Effect.succeed([undefined, state] as const)
-                  }),
-                ),
-                Effect.zipRight(Effect.succeed<Issue[]>([])),
-              ),
-            ),
-          )
-          yield* Effect.forEach(
-            issuesToHandoff,
-            (issue) => handoffSkippedIssue(issue, config, handoffReason, blockedMessage),
-            { concurrency: 1, discard: true },
-          )
-          yield* persistStateBestEffort
-          return
-        }
-
-        const issues = yield* tracker.fetchCandidateIssues.pipe(
-          Effect.catchAll((error) =>
-            Effect.sync(() => {
-              orchestratorLogger.log('error', 'candidate_fetch_failed', toLogError(error))
-            }).pipe(
-              Effect.zipRight(
-                SynchronizedRef.modifyEffect(stateRef, (state) => {
-                  addRecentError(state, {
-                    at: new Date().toISOString(),
-                    code: error.code,
-                    message: error.message,
-                    issueId: null,
-                    issueIdentifier: null,
-                    context: 'candidate_fetch',
-                  })
-                  return Effect.succeed([undefined, state] as const)
-                }),
-              ),
-              Effect.zipRight(Effect.succeed<Issue[]>([])),
-            ),
-          ),
-        )
-
-        if (issues.length === 0) {
-          yield* persistStateBestEffort
-          return
-        }
-
-        for (const issue of sortIssuesForDispatch(issues)) {
-          const currentState = yield* SynchronizedRef.get(stateRef)
-          const decision = evaluateDispatchIssue(issue, {
-            config,
-            runningIssues: Array.from(currentState.running.values()).map((entry) => entry.issue),
-            claimedIssueIds: currentState.claimed,
-          })
-
-          if (decision.eligible) {
-            yield* dispatchIssue(issue, null)
-            continue
+        const finishPoll = (error?: unknown) => {
+          if (!finished) {
+            finished = true
+            finishSymphonySpan(pollSpan, error)
+            recordPollTick(pollResult, Date.now() - startedAtMs)
           }
+        }
 
-          if (
-            decision.reason === 'no_slots' ||
-            decision.reason === 'manual_work_required' ||
-            decision.reason === 'blocked_issue' ||
-            decision.reason === 'non_active_state'
-          ) {
+        return Effect.gen(function* () {
+          yield* Ref.set(pollQueuedRef, false)
+
+          const leader = yield* leaderElection.status
+          if (!leader.isLeader) {
+            pollResult = 'follower_not_leader'
             yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
               addRecentEvent(state, {
                 at: new Date().toISOString(),
-                event: 'dispatch_skipped',
-                message: `issue ${issue.identifier} not dispatched: ${decision.reason}`,
-                issueId: issue.id,
-                issueIdentifier: issue.identifier,
+                event: 'poll_skipped',
+                message: 'poll skipped because this replica is not leader',
                 level: 'warn',
-                reason: decision.reason,
+                reason: 'follower_not_leader',
               })
+              syncStateMetrics(state, { leaderState: leader.isLeader })
               return Effect.succeed([undefined, state] as const)
             })
-            if (decision.reason === 'manual_work_required') {
-              yield* handoffSkippedIssue(
-                issue,
-                config,
-                'manual_work_required',
-                'the issue requires manual work outside the first-wave autonomous scope',
-              )
-            }
-            if (decision.reason === 'no_slots') {
-              break
-            }
-          }
-        }
-
-        yield* persistStateBestEffort
-      })
-
-      const processRetryDue = (issueId: string) =>
-        Effect.gen(function* () {
-          const leader = yield* leaderElection.status
-          if (!leader.isLeader) {
-            yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-              const current = state.retryAttempts.get(issueId)
-              if (current) {
-                current.fiber = null
-              }
-              return Effect.succeed([undefined, state] as const)
-            })
+            yield* persistStateBestEffort
             return
           }
 
-          const retryEntry = yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-            const current = state.retryAttempts.get(issueId) ?? null
-            if (current) {
-              state.retryAttempts.delete(issueId)
-            }
-            return Effect.succeed([current, state] as const)
+          const loaded = yield* workflow.current
+          const { config } = loaded
+          yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+            state.pollIntervalMs = config.pollingIntervalMs
+            state.maxConcurrentAgents = config.agent.maxConcurrentAgents
+            syncStateMetrics(state, { leaderState: leader.isLeader })
+            return Effect.succeed([undefined, state] as const)
           })
-          if (!retryEntry) return
 
-          const candidatesResult = yield* tracker.fetchCandidateIssues.pipe(Effect.either)
+          yield* withSymphonyEffectSpan('symphony.poll_tick.reconcile', {}, reconcileRunningIssues(config), {
+            parentSpan: pollSpan,
+          })
+          yield* withSymphonyEffectSpan(
+            'symphony.poll_tick.delivery_reconcile',
+            {},
+            reconcileDeliveryTransactions(config),
+            {
+              parentSpan: pollSpan,
+            },
+          )
 
-          if (candidatesResult._tag === 'Left') {
-            const error = candidatesResult.left
+          const validation = yield* Effect.either(validateDispatchConfigEffect(config))
+          if (validation._tag === 'Left') {
+            pollResult = 'config_invalid'
             yield* Effect.sync(() => {
-              orchestratorLogger.log('warn', 'retry_poll_failed', {
-                issue_id: issueId,
-                issue_identifier: retryEntry.identifier,
-                ...toLogError(error),
-              })
+              orchestratorLogger.log('error', 'dispatch_validation_failed', toLogError(validation.left))
             })
-            yield* scheduleRetry(issueId, retryEntry.identifier, retryEntry.attempt + 1, 'failure', 'retry poll failed')
+            yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+              addRecentError(state, {
+                at: new Date().toISOString(),
+                code: validation.left.code,
+                message: validation.left.message,
+                issueId: null,
+                issueIdentifier: null,
+                context: 'dispatch_validation',
+              })
+              addRecentEvent(state, {
+                at: new Date().toISOString(),
+                event: 'dispatch_skipped',
+                message: validation.left.message,
+                level: 'error',
+                reason: 'config_invalid',
+              })
+              return Effect.succeed([undefined, state] as const)
+            })
+            yield* persistStateBestEffort
             return
           }
 
-          const candidates = candidatesResult.right
-
-          const preDispatchHealth = yield* targetHealth.evaluatePreDispatch
+          const preDispatchHealth = yield* withSymphonyEffectSpan(
+            'symphony.poll_tick.target_health',
+            {},
+            targetHealth.evaluatePreDispatch,
+            { parentSpan: pollSpan },
+          )
           if (!preDispatchHealth.readyForDispatch) {
-            const reason = preDispatchHealth.openPromotionPr
-              ? 'promotion pull request already open'
-              : preDispatchHealth.lastError || 'target health checks are failing'
-            yield* scheduleRetry(issueId, retryEntry.identifier, retryEntry.attempt + 1, 'failure', reason)
-            return
-          }
-
-          const issue = candidates.find((candidate) => candidate.id === issueId)
-          if (!issue) {
-            yield* releaseClaim(issueId, retryEntry.identifier, 'issue no longer active during retry dispatch')
-            return
-          }
-
-          const config = yield* workflow.config
-          const runtimeState = yield* SynchronizedRef.get(stateRef)
-          const claimedIssueIds = new Set(runtimeState.claimed)
-          claimedIssueIds.delete(issueId)
-          const decision = evaluateDispatchIssue(issue, {
-            config,
-            runningIssues: Array.from(runtimeState.running.values()).map((entry) => entry.issue),
-            claimedIssueIds,
-          })
-
-          if (!decision.eligible) {
-            const reason =
-              decision.reason === 'no_slots'
-                ? 'no available orchestrator slots'
-                : decision.reason === 'blocked_issue'
-                  ? 'issue blocked by active dependency'
-                  : `issue not dispatchable: ${decision.reason}`
-            yield* scheduleRetry(issueId, issue.identifier, retryEntry.attempt + 1, 'failure', reason)
+            pollResult = preDispatchHealth.openPromotionPr ? 'promotion_pr_open' : 'target_not_ready'
+            const handoffReason = preDispatchHealth.openPromotionPr ? 'promotion_pr_open' : 'target_not_ready'
+            const blockedMessage = preDispatchHealth.openPromotionPr
+              ? 'dispatch paused because a promotion pull request is already open'
+              : preDispatchHealth.lastError
+                ? `dispatch paused: ${preDispatchHealth.lastError}`
+                : preDispatchHealth.checks
+                    .filter((check) => !check.ok)
+                    .map((check) => check.message)
+                    .join('; ') || 'dispatch paused because target health checks are failing'
+            yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+              addRecentEvent(state, {
+                at: new Date().toISOString(),
+                event: 'dispatch_paused',
+                message: blockedMessage,
+                level: 'warn',
+                reason: handoffReason,
+              })
+              syncStateMetrics(state, { targetHealthReady: false, leaderState: leader.isLeader })
+              return Effect.succeed([undefined, state] as const)
+            })
+            const issuesToHandoff = yield* withSymphonyEffectSpan(
+              'symphony.poll_tick.candidate_fetch_handoff',
+              {},
+              fetchCandidateIssuesWithRetry('candidate_fetch_handoff').pipe(
+                Effect.catchAll((error) =>
+                  Effect.sync(() => {
+                    recordCandidateFetch('error')
+                    orchestratorLogger.log('error', 'candidate_fetch_failed_for_handoff', toLogError(error))
+                  }).pipe(
+                    Effect.zipRight(
+                      SynchronizedRef.modifyEffect(stateRef, (state) => {
+                        addRecentError(state, {
+                          at: new Date().toISOString(),
+                          code: error.code,
+                          message: error.message,
+                          issueId: null,
+                          issueIdentifier: null,
+                          context: 'candidate_fetch_handoff',
+                        })
+                        return Effect.succeed([undefined, state] as const)
+                      }),
+                    ),
+                    Effect.zipRight(Effect.succeed<Issue[]>([])),
+                  ),
+                ),
+              ),
+              { parentSpan: pollSpan },
+            )
+            yield* Effect.forEach(
+              issuesToHandoff,
+              (issue) => handoffSkippedIssue(issue, config, handoffReason, blockedMessage),
+              { concurrency: 1, discard: true },
+            )
+            yield* persistStateBestEffort
             return
           }
 
           yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-            state.claimed.delete(issueId)
+            syncStateMetrics(state, { targetHealthReady: true, leaderState: leader.isLeader })
             return Effect.succeed([undefined, state] as const)
           })
-          yield* dispatchIssue(issue, retryEntry.attempt)
-        })
+
+          const issues = yield* withSymphonyEffectSpan(
+            'symphony.poll_tick.candidate_fetch',
+            {},
+            fetchCandidateIssuesWithRetry('dispatch').pipe(
+              Effect.catchAll((error) =>
+                Effect.sync(() => {
+                  recordCandidateFetch('error')
+                  orchestratorLogger.log('error', 'candidate_fetch_failed', toLogError(error))
+                }).pipe(
+                  Effect.zipRight(
+                    SynchronizedRef.modifyEffect(stateRef, (state) => {
+                      addRecentError(state, {
+                        at: new Date().toISOString(),
+                        code: error.code,
+                        message: error.message,
+                        issueId: null,
+                        issueIdentifier: null,
+                        context: 'candidate_fetch',
+                      })
+                      return Effect.succeed([undefined, state] as const)
+                    }),
+                  ),
+                  Effect.zipRight(Effect.succeed<Issue[]>([])),
+                ),
+              ),
+            ),
+            { parentSpan: pollSpan },
+          )
+
+          if (issues.length === 0) {
+            yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+              syncStateMetrics(state, {
+                targetHealthReady: true,
+                leaderState: leader.isLeader,
+                lastSuccessfulPollTimestampSeconds: Math.floor(Date.now() / 1000),
+              })
+              return Effect.succeed([undefined, state] as const)
+            })
+            yield* persistStateBestEffort
+            return
+          }
+
+          for (const issue of sortIssuesForDispatch(issues)) {
+            const currentState = yield* SynchronizedRef.get(stateRef)
+            const decision = evaluateDispatchIssue(issue, {
+              config,
+              runningIssues: Array.from(currentState.running.values()).map((entry) => entry.issue),
+              claimedIssueIds: currentState.claimed,
+            })
+
+            if (decision.eligible) {
+              yield* withSymphonyEffectSpan(
+                'symphony.poll_tick.dispatch',
+                { 'issue.identifier': issue.identifier, 'issue.id': issue.id, 'issue.state': issue.state },
+                dispatchIssue(issue, null),
+                { parentSpan: pollSpan },
+              )
+              continue
+            }
+
+            if (
+              decision.reason === 'no_slots' ||
+              decision.reason === 'manual_work_required' ||
+              decision.reason === 'blocked_issue' ||
+              decision.reason === 'non_active_state'
+            ) {
+              yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+                addRecentEvent(state, {
+                  at: new Date().toISOString(),
+                  event: 'dispatch_skipped',
+                  message: `issue ${issue.identifier} not dispatched: ${decision.reason}`,
+                  issueId: issue.id,
+                  issueIdentifier: issue.identifier,
+                  level: 'warn',
+                  reason: decision.reason,
+                })
+                return Effect.succeed([undefined, state] as const)
+              })
+              if (decision.reason === 'manual_work_required') {
+                yield* handoffSkippedIssue(
+                  issue,
+                  config,
+                  'manual_work_required',
+                  'the issue requires manual work outside the first-wave autonomous scope',
+                )
+              }
+              if (decision.reason === 'no_slots') {
+                pollResult = 'no_slots'
+                break
+              }
+            }
+          }
+
+          yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+            syncStateMetrics(state, {
+              targetHealthReady: true,
+              leaderState: leader.isLeader,
+              lastSuccessfulPollTimestampSeconds: Math.floor(Date.now() / 1000),
+            })
+            return Effect.succeed([undefined, state] as const)
+          })
+          yield* persistStateBestEffort
+        }).pipe(
+          Effect.tapError((error) =>
+            Effect.sync(() => {
+              pollResult = 'failed'
+              finishPoll(error)
+            }),
+          ),
+          Effect.ensuring(
+            Effect.sync(() => {
+              finishPoll()
+            }),
+          ),
+        )
+      }
+
+      const processRetryDue = (issueId: string) =>
+        withSymphonyEffectSpan(
+          'symphony.retry_due',
+          { 'issue.id': issueId },
+          Effect.gen(function* () {
+            const leader = yield* leaderElection.status
+            if (!leader.isLeader) {
+              yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+                const current = state.retryAttempts.get(issueId)
+                if (current) {
+                  current.fiber = null
+                }
+                syncStateMetrics(state, { leaderState: leader.isLeader })
+                return Effect.succeed([undefined, state] as const)
+              })
+              return
+            }
+
+            const retryEntry = yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+              const current = state.retryAttempts.get(issueId) ?? null
+              if (current) {
+                state.retryAttempts.delete(issueId)
+              }
+              syncStateMetrics(state, { leaderState: leader.isLeader })
+              return Effect.succeed([current, state] as const)
+            })
+            if (!retryEntry) return
+
+            const candidatesResult = yield* fetchCandidateIssuesWithRetry('retry_dispatch').pipe(Effect.either)
+
+            if (candidatesResult._tag === 'Left') {
+              const error = candidatesResult.left
+              recordCandidateFetch('error')
+              yield* Effect.sync(() => {
+                orchestratorLogger.log('warn', 'retry_poll_failed', {
+                  issue_id: issueId,
+                  issue_identifier: retryEntry.identifier,
+                  ...toLogError(error),
+                })
+              })
+              yield* scheduleRetry(
+                issueId,
+                retryEntry.identifier,
+                retryEntry.attempt + 1,
+                'failure',
+                'retry poll failed',
+              )
+              return
+            }
+
+            const candidates = candidatesResult.right
+
+            const preDispatchHealth = yield* withSymphonyEffectSpan(
+              'symphony.retry_due.target_health',
+              { 'issue.id': issueId },
+              targetHealth.evaluatePreDispatch,
+            )
+            if (!preDispatchHealth.readyForDispatch) {
+              const reason = preDispatchHealth.openPromotionPr
+                ? 'promotion pull request already open'
+                : preDispatchHealth.lastError || 'target health checks are failing'
+              yield* scheduleRetry(issueId, retryEntry.identifier, retryEntry.attempt + 1, 'failure', reason)
+              return
+            }
+
+            const issue = candidates.find((candidate) => candidate.id === issueId)
+            if (!issue) {
+              yield* releaseClaim(issueId, retryEntry.identifier, 'issue no longer active during retry dispatch')
+              return
+            }
+
+            const config = yield* workflow.config
+            const runtimeState = yield* SynchronizedRef.get(stateRef)
+            const claimedIssueIds = new Set(runtimeState.claimed)
+            claimedIssueIds.delete(issueId)
+            const decision = evaluateDispatchIssue(issue, {
+              config,
+              runningIssues: Array.from(runtimeState.running.values()).map((entry) => entry.issue),
+              claimedIssueIds,
+            })
+
+            if (!decision.eligible) {
+              const reason =
+                decision.reason === 'no_slots'
+                  ? 'no available orchestrator slots'
+                  : decision.reason === 'blocked_issue'
+                    ? 'issue blocked by active dependency'
+                    : `issue not dispatchable: ${decision.reason}`
+              yield* scheduleRetry(issueId, issue.identifier, retryEntry.attempt + 1, 'failure', reason)
+              return
+            }
+
+            yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+              state.claimed.delete(issueId)
+              syncStateMetrics(state)
+              return Effect.succeed([undefined, state] as const)
+            })
+            yield* dispatchIssue(issue, retryEntry.attempt)
+          }),
+        )
 
       const processWorkerExit = (issueId: string, exit: Exit.Exit<string, unknown>) =>
         Effect.gen(function* () {
+          const completedAtMs = Date.now()
           const running = yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
             const current = state.running.get(issueId) ?? null
             if (current) {
               state.running.delete(issueId)
-              const runtimeSeconds = Math.max(0, Date.now() - current.startedAtMs) / 1_000
+              const runtimeSeconds = Math.max(0, completedAtMs - current.startedAtMs) / 1_000
               state.codexTotals.endedRuntimeSeconds += runtimeSeconds
+              syncStateMetrics(state)
             }
             return Effect.succeed([current, state] as const)
           })
@@ -1276,6 +1845,9 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             : running.stopReason !== 'running'
               ? running.stopReason
               : 'failed'
+          const durationMs = Math.max(0, completedAtMs - running.startedAtMs)
+          recordWorkerOutcome(reason, durationMs)
+          const runtimeSeconds = durationMs / 1_000
 
           const record = yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
             const existing = ensureIssueRecord(state, running.issueId, running.identifier)
@@ -1284,6 +1856,28 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             existing.lastError = errorMessage
             syncRecordFromIssue(existing, running.issue)
             return Effect.succeed([existing, state] as const)
+          })
+
+          yield* posthog.captureSpan({
+            traceId: running.telemetry.traceId,
+            sessionId: running.telemetry.sessionId,
+            spanId: running.telemetry.rootSpanId,
+            spanName: 'symphony_issue_run',
+            latencySeconds: runtimeSeconds,
+            outputState: {
+              reason,
+              issue_state: running.issue.state,
+              workspace_path: running.workspacePath || null,
+              turn_count: running.session.turnCount,
+              last_event: running.session.lastCodexEvent,
+              total_tokens: running.session.codexTotalTokens,
+            },
+            error: reason === 'normal' || reason === 'terminal' ? null : { message: errorMessage, reason },
+            properties: {
+              issue_id: running.issueId,
+              issue_identifier: running.identifier,
+              retry_attempt: running.retryAttempt ?? 0,
+            },
           })
 
           if (reason === 'terminal') {
@@ -1308,18 +1902,55 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                 level: 'info',
                 reason: 'terminal',
               })
+              syncStateMetrics(state)
               return Effect.succeed([undefined, state] as const)
             })
             if (running.terminalCleanupRequested) {
+              const cleanupStartedAtMs = Date.now()
               yield* workspace.removeWorkspace(running.identifier).pipe(
-                Effect.catchAll((error) =>
-                  Effect.sync(() => {
-                    orchestratorLogger.log('warn', 'terminal_workspace_cleanup_failed', {
-                      issue_id: issueId,
+                Effect.tap(() =>
+                  posthog.captureSpan({
+                    traceId: running.telemetry.traceId,
+                    sessionId: running.telemetry.sessionId,
+                    spanId: `${running.telemetry.traceId}:terminal-cleanup:${cleanupStartedAtMs}`,
+                    parentId: running.telemetry.rootSpanId,
+                    spanName: 'terminal_cleanup',
+                    latencySeconds: Math.max(0, Date.now() - cleanupStartedAtMs) / 1_000,
+                    outputState: {
+                      workspace_identifier: running.identifier,
+                    },
+                    properties: {
+                      issue_id: running.issueId,
                       issue_identifier: running.identifier,
-                      ...toLogError(error),
-                    })
+                    },
                   }),
+                ),
+                Effect.catchAll((error) =>
+                  posthog
+                    .captureSpan({
+                      traceId: running.telemetry.traceId,
+                      sessionId: running.telemetry.sessionId,
+                      spanId: `${running.telemetry.traceId}:terminal-cleanup:${cleanupStartedAtMs}`,
+                      parentId: running.telemetry.rootSpanId,
+                      spanName: 'terminal_cleanup',
+                      latencySeconds: Math.max(0, Date.now() - cleanupStartedAtMs) / 1_000,
+                      error: extractErrorDetails(error),
+                      properties: {
+                        issue_id: running.issueId,
+                        issue_identifier: running.identifier,
+                      },
+                    })
+                    .pipe(
+                      Effect.zipRight(
+                        Effect.sync(() => {
+                          orchestratorLogger.log('warn', 'terminal_workspace_cleanup_failed', {
+                            issue_id: issueId,
+                            issue_identifier: running.identifier,
+                            ...toLogError(error),
+                          })
+                        }),
+                      ),
+                    ),
                 ),
               )
             }
@@ -1343,6 +1974,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                 workspacePath: running.workspacePath || null,
                 sessionId: running.session.sessionId,
               })
+              syncStateMetrics(state)
               return Effect.succeed([undefined, state] as const)
             })
             yield* persistStateBestEffort
@@ -1362,7 +1994,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
               })
               return Effect.succeed([undefined, state] as const)
             })
-            yield* scheduleRetry(issueId, running.identifier, 1, 'continuation', null)
+            yield* scheduleRetry(issueId, running.identifier, 1, 'continuation', null, running.telemetry)
             return
           }
 
@@ -1385,74 +2017,112 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             })
             return Effect.succeed([undefined, state] as const)
           })
-          yield* scheduleRetry(issueId, running.identifier, (running.retryAttempt ?? 0) + 1, 'failure', errorMessage)
+          yield* scheduleRetry(
+            issueId,
+            running.identifier,
+            (running.retryAttempt ?? 0) + 1,
+            'failure',
+            errorMessage,
+            running.telemetry,
+          )
         })
 
-      const handleCommand = (command: OrchestratorCommand) =>
-        Effect.matchEffect(
-          (() => {
-            switch (command._tag) {
-              case 'PollTick':
-                return processPollTick
-              case 'StallSweep':
-                return Ref.set(stallQueuedRef, false).pipe(
-                  Effect.zipRight(
-                    leaderElection.status.pipe(
-                      Effect.flatMap((leader) =>
-                        leader.isLeader
-                          ? workflow.config.pipe(Effect.flatMap((config) => reconcileStalledRuns(config)))
-                          : Effect.void,
-                      ),
-                    ),
+      const getCommandTimeoutMs = (command: OrchestratorCommand): number =>
+        command._tag === 'PollTick' ? pollTickTimeoutMs : orchestratorCommandTimeoutMs
+
+      const buildCommandEffect = (command: OrchestratorCommand) => {
+        switch (command._tag) {
+          case 'PollTick':
+            return processPollTick()
+          case 'StallSweep':
+            return Ref.set(stallQueuedRef, false).pipe(
+              Effect.zipRight(
+                leaderElection.status.pipe(
+                  Effect.flatMap((leader) =>
+                    leader.isLeader
+                      ? workflow.config.pipe(Effect.flatMap((config) => reconcileStalledRuns(config)))
+                      : Effect.void,
                   ),
-                )
-              case 'RetryDue':
-                return processRetryDue(command.issueId)
-              case 'LeaderChanged':
-                return handleLeaderChanged(command.leader)
-              case 'WorkspaceReady':
-                return SynchronizedRef.modifyEffect(stateRef, (state) => {
-                  const running = state.running.get(command.issueId)
-                  if (running) {
-                    running.workspacePath = command.workspacePath
-                    const record = ensureIssueRecord(state, running.issueId, running.identifier)
-                    record.workspacePath = command.workspacePath
-                    syncRecordFromRunning(record, running)
-                    addRunHistory(record, {
-                      at: new Date().toISOString(),
-                      status: 'workspace_ready',
-                      attempt: running.retryAttempt,
-                      message: null,
-                      workspacePath: command.workspacePath,
-                      sessionId: running.session.sessionId,
-                    })
-                    addRecentEvent(state, {
-                      at: new Date().toISOString(),
-                      event: 'workspace_ready',
-                      message: command.workspacePath,
-                      issueId: running.issueId,
-                      issueIdentifier: running.identifier,
-                      level: 'info',
-                    })
-                  }
-                  return Effect.succeed([undefined, state] as const)
-                }).pipe(Effect.zipRight(persistStateBestEffort))
-              case 'CodexEventReceived':
-                return handleCodexEvent(command.issueId, command.event)
-              case 'WorkerExited':
-                return processWorkerExit(command.issueId, command.exit)
-            }
-          })(),
-          {
-            onFailure: (error) =>
-              Effect.sync(() => {
-                orchestratorLogger.log('warn', 'orchestrator_command_failed', {
-                  command: command._tag,
-                  ...toLogError(error),
+                ),
+              ),
+            )
+          case 'RetryDue':
+            return processRetryDue(command.issueId)
+          case 'LeaderChanged':
+            return handleLeaderChanged(command.leader)
+          case 'WorkspaceReady':
+            return SynchronizedRef.modifyEffect(stateRef, (state) => {
+              const running = state.running.get(command.issueId)
+              let telemetryEffect: Effect.Effect<void, never> = Effect.void
+              if (running) {
+                running.workspacePath = command.workspacePath
+                const record = ensureIssueRecord(state, running.issueId, running.identifier)
+                record.workspacePath = command.workspacePath
+                syncRecordFromRunning(record, running)
+                addRunHistory(record, {
+                  at: new Date().toISOString(),
+                  status: 'workspace_ready',
+                  attempt: running.retryAttempt,
+                  message: null,
+                  workspacePath: command.workspacePath,
+                  sessionId: running.session.sessionId,
                 })
-              }),
-            onSuccess: () => Effect.void,
-          },
+                addRecentEvent(state, {
+                  at: new Date().toISOString(),
+                  event: 'workspace_ready',
+                  message: command.workspacePath,
+                  issueId: running.issueId,
+                  issueIdentifier: running.identifier,
+                  level: 'info',
+                })
+                telemetryEffect = posthog.captureSpan({
+                  traceId: running.telemetry.traceId,
+                  sessionId: running.telemetry.sessionId,
+                  spanId: `${running.telemetry.traceId}:workspace-ready:${Date.now()}`,
+                  parentId: running.telemetry.rootSpanId,
+                  spanName: 'workspace_ready',
+                  outputState: {
+                    workspace_path: command.workspacePath,
+                  },
+                  properties: {
+                    issue_id: running.issueId,
+                    issue_identifier: running.identifier,
+                  },
+                })
+              }
+              return Effect.succeed([telemetryEffect, state] as const)
+            }).pipe(
+              Effect.flatMap((telemetryEffect) => telemetryEffect),
+              Effect.zipRight(persistStateBestEffort),
+            )
+          case 'CodexEventReceived':
+            return handleCodexEvent(command.issueId, command.event)
+          case 'WorkerExited':
+            return processWorkerExit(command.issueId, command.exit)
+        }
+      }
+
+      const handleCommand = (command: OrchestratorCommand) =>
+        buildCommandEffect(command).pipe(
+          Effect.timeoutFail({
+            duration: Duration.millis(getCommandTimeoutMs(command)),
+            onTimeout: () =>
+              new OrchestratorError(
+                'runtime_unavailable',
+                `orchestrator command ${command._tag} timed out after ${getCommandTimeoutMs(command)}ms`,
+              ),
+          }),
+          Effect.catchAllCause((cause) => {
+            if (Cause.isInterruptedOnly(cause)) {
+              return Effect.void
+            }
+            return Effect.sync(() => {
+              orchestratorLogger.log('warn', 'orchestrator_command_failed', {
+                command: command._tag,
+                ...toLogError(Cause.squash(cause)),
+              })
+            })
+          }),
         )
 
       const startProcessor = Effect.forever(Queue.take(queue).pipe(Effect.flatMap(handleCommand))).pipe(
@@ -1507,7 +2177,9 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                       }).pipe(Effect.zipRight(Effect.succeed(emptyPersistedSchedulerState()))),
                     ),
                   )
-                  yield* SynchronizedRef.set(stateRef, hydrateStateFromPersisted(persisted, loaded.config))
+                  const restoredState = hydrateStateFromPersisted(persisted, loaded.config)
+                  syncStateMetrics(restoredState, { leaderState: false })
+                  yield* SynchronizedRef.set(stateRef, restoredState)
 
                   yield* leaderElection.start
 
@@ -1527,6 +2199,10 @@ export const makeOrchestratorLayer = (logger: Logger) =>
 
                   const currentLeader = yield* leaderElection.status
                   yield* Ref.set(seenLeaderStateRef, currentLeader.isLeader)
+                  yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+                    syncStateMetrics(state, { leaderState: currentLeader.isLeader })
+                    return Effect.succeed([undefined, state] as const)
+                  })
                   yield* Queue.offer(queue, { _tag: 'LeaderChanged', leader: currentLeader })
 
                   yield* startSchedulers
@@ -1574,6 +2250,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
           const state = yield* SynchronizedRef.get(stateRef)
           const leader = yield* leaderElection.status
           const workflowResult = yield* Effect.either(workflow.current)
+          const telemetrySummary = yield* posthog.summary
           const generatedAt = new Date().toISOString()
           const nowMs = Date.now()
           const running = Array.from(state.running.values())
@@ -1628,6 +2305,16 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                   server: {
                     host: '127.0.0.1',
                     port: null,
+                  },
+                  posthog: {
+                    enabled: false,
+                    host: 'http://posthog-capture.posthog.svc.cluster.local:3000',
+                    apiKey: null,
+                    projectId: null,
+                    distinctId: 'symphony:symphony',
+                    requestTimeoutMs: 1_000,
+                    flushAt: 1,
+                    flushIntervalMs: 1_000,
                   },
                   instance: {
                     name: 'symphony',
@@ -1705,9 +2392,33 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             ),
             targetHealth: preDispatchHealth,
             leader,
+            telemetry: telemetrySummary,
             recentEvents: [...state.recentEvents],
             recentErrors: [...state.recentErrors],
             capacity: buildCapacitySnapshot(state, config),
+            issues: Array.from(state.issueRecords.values())
+              .sort((left, right) => left.issueIdentifier.localeCompare(right.issueIdentifier))
+              .map((record) => ({
+                issueId: record.issueId,
+                issueIdentifier: record.issueIdentifier,
+                status: record.status,
+                trackedState: typeof record.tracked.lastKnownState === 'string' ? record.tracked.lastKnownState : null,
+                updatedAt: record.updatedAt,
+                lastError: record.lastError,
+                delivery: record.delivery
+                  ? {
+                      ...record.delivery,
+                      codePr: record.delivery.codePr ? { ...record.delivery.codePr } : null,
+                      requiredChecks: record.delivery.requiredChecks ? { ...record.delivery.requiredChecks } : null,
+                      build: record.delivery.build ? { ...record.delivery.build } : null,
+                      releaseContract: record.delivery.releaseContract ? { ...record.delivery.releaseContract } : null,
+                      promotionPr: record.delivery.promotionPr ? { ...record.delivery.promotionPr } : null,
+                      argo: record.delivery.argo ? { ...record.delivery.argo } : null,
+                      postDeploy: record.delivery.postDeploy ? { ...record.delivery.postDeploy } : null,
+                      rollbackPr: record.delivery.rollbackPr ? { ...record.delivery.rollbackPr } : null,
+                    }
+                  : null,
+              })),
           } satisfies RuntimeSnapshot
         }),
         getIssueDetails: (issueIdentifier) =>

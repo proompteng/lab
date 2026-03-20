@@ -19,6 +19,7 @@ from ..execution import OrderExecutor
 from ..execution_adapters import build_execution_adapter
 from ..firewall import OrderFirewall
 from ..ingest import ClickHouseSignalIngestor
+from ..llm.dspy_programs.runtime import DSPyReviewRuntime, DSPyRuntimeUnsupportedStateError
 from ..llm.guardrails import evaluate_llm_guardrails
 from ..market_context import MarketContextClient
 from ..order_feed import OrderFeedIngestor
@@ -105,6 +106,30 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
             effective_fail_mode=guardrails.effective_fail_mode,
             guardrail_reasons=guardrails.reasons,
         )
+        dspy_runtime_status: dict[str, object] = {
+            "mode": settings.llm_dspy_runtime_mode,
+            "artifact_hash": settings.llm_dspy_artifact_hash,
+            "live_ready": False,
+            "readiness_reasons": [],
+            "executor": None,
+            "artifact_source": None,
+        }
+        if settings.llm_dspy_runtime_mode:
+            try:
+                dspy_runtime = DSPyReviewRuntime.from_settings()
+                live_ready, readiness_reasons = dspy_runtime.evaluate_live_readiness()
+                dspy_runtime_status["live_ready"] = live_ready
+                dspy_runtime_status["readiness_reasons"] = list(readiness_reasons)
+                if live_ready:
+                    manifest = dspy_runtime._resolve_artifact_manifest()
+                    dspy_runtime_status["executor"] = manifest.executor
+                    dspy_runtime_status["artifact_source"] = manifest.source
+            except DSPyRuntimeUnsupportedStateError as exc:
+                dspy_runtime_status["readiness_reasons"] = [str(exc)]
+            except Exception as exc:  # pragma: no cover - additive status surface only
+                dspy_runtime_status["readiness_reasons"] = [
+                    f"dspy_status_error:{type(exc).__name__}"
+                ]
         return {
             "enabled": settings.llm_enabled,
             "rollout_stage": guardrails.rollout_stage,
@@ -127,6 +152,7 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
             ],
             "dspy_live_runtime_block_fail_mode": settings.llm_dspy_live_runtime_block_fail_mode,
             "dspy_live_runtime_block_qty_multiplier": settings.llm_dspy_live_runtime_block_qty_multiplier,
+            "dspy_runtime": dspy_runtime_status,
             "circuit": circuit_snapshot,
             "guardrails": {
                 "allow_requests": guardrails.allow_requests,

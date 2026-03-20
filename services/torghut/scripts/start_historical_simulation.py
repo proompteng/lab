@@ -147,6 +147,7 @@ DEFAULT_RUN_MONITOR_MIN_ORDER_EVENTS = 0
 DEFAULT_RUN_MONITOR_CURSOR_GRACE_SECONDS = 120
 DEFAULT_WARM_LANE_SIMULATION_DATABASE = 'torghut_sim_default'
 DEFAULT_SIMULATION_DUMP_FORMAT = 'jsonl.zst'
+DEFAULT_SIMULATION_DUMP_SORT_MEMORY_LIMIT = '512M'
 SUPPORTED_SIMULATION_DUMP_FORMATS = {
     'ndjson': '.ndjson',
     'jsonl.gz': '.jsonl.gz',
@@ -2051,12 +2052,10 @@ def _manual_argocd_application_sync_policy(
     manual_policy = _clone_json_mapping(current_sync_policy) or {}
     if _argocd_application_mode_from_sync_policy(manual_policy) == 'manual':
         return manual_policy
-    automated = _as_mapping(manual_policy.get('automated'))
-    manual_automated = dict(automated)
-    manual_automated['enabled'] = False
-    manual_automated['prune'] = False
-    manual_automated['selfHeal'] = False
-    manual_policy['automated'] = manual_automated
+    # Argo normalizes manual Applications by removing automated/retry keys
+    # instead of persisting an explicit automated.enabled=false shape.
+    manual_policy.pop('automated', None)
+    manual_policy.pop('retry', None)
     return manual_policy
 
 
@@ -2781,23 +2780,33 @@ def _materialize_deterministic_dump(
 ) -> str:
     _ensure_supported_binary('sort')
     sorted_path = _dump_sort_output_path(dump_path)
+    sort_memory_limit = (
+        _as_text(os.getenv('TORGHUT_SIM_DUMP_SORT_MEMORY_LIMIT'))
+        or DEFAULT_SIMULATION_DUMP_SORT_MEMORY_LIMIT
+    )
+    sort_command = [
+        'sort',
+        '-S',
+        sort_memory_limit,
+        '-T',
+        str(staged_path.parent),
+        '-t',
+        '\t',
+        '-k1,1n',
+        '-k2,2',
+        '-k3,3n',
+        '-k4,4n',
+        str(staged_path),
+    ]
     try:
         with sorted_path.open('w', encoding='utf-8') as sorted_handle:
             subprocess.run(
-                [
-                    'sort',
-                    '-t',
-                    '\t',
-                    '-k1,1n',
-                    '-k2,2',
-                    '-k3,3n',
-                    '-k4,4n',
-                    str(staged_path),
-                ],
+                sort_command,
                 check=True,
                 text=True,
                 stdout=sorted_handle,
                 stderr=subprocess.PIPE,
+                env={**os.environ, 'LC_ALL': 'C'},
             )
     except FileNotFoundError as exc:
         raise RuntimeError(f'command_missing: sort: {exc.filename}') from exc

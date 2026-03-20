@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: huly-healthcheck-scripts
+data:
+  account-ready.js: |
+    ;(async () => {
+      const body = JSON.stringify({ method: 'workerHandshake', params: {} })
+
+      const response = await fetch('http://127.0.0.1:3000/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        signal: AbortSignal.timeout(3000),
+      }).catch((error) => {
+        console.error(`account workerHandshake probe failed: ${error.name}: ${error.message}`)
+        process.exit(1)
+      })
+
+      const payload = await response.text()
+      if (response.status >= 500) {
+        console.error(`account workerHandshake probe returned ${response.status}: ${payload}`)
+        process.exit(1)
+      }
+
+      console.log(`account workerHandshake probe returned ${response.status}`)
+    })()
+  transactor-ready.js: |
+    ;(async () => {
+      const handshakeBody = JSON.stringify({
+        method: 'workerHandshake',
+        params: { region: 'DEFAULT', version: '0.7.375', operation: 'all', wsId: 'healthcheck' },
+      })
+
+      const versionResponse = await fetch('http://127.0.0.1:3333/api/v1/version', {
+        signal: AbortSignal.timeout(3000),
+      }).catch((error) => {
+        console.error(`transactor version probe failed: ${error.name}: ${error.message}`)
+        process.exit(1)
+      })
+
+      const versionPayload = await versionResponse.text()
+      if (versionResponse.status >= 500) {
+        console.error(`transactor version probe returned ${versionResponse.status}: ${versionPayload}`)
+        process.exit(1)
+      }
+
+      const accountResponse = await fetch('http://account/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: handshakeBody,
+        signal: AbortSignal.timeout(3000),
+      }).catch((error) => {
+        console.error(`transactor account probe failed: ${error.name}: ${error.message}`)
+        process.exit(1)
+      })
+
+      const accountPayload = await accountResponse.text()
+      if (accountResponse.status >= 500) {
+        console.error(`transactor account probe returned ${accountResponse.status}: ${accountPayload}`)
+        process.exit(1)
+      }
+
+      console.log(
+        `transactor probes returned version=${versionResponse.status} account=${accountResponse.status}`,
+      )
+    })()
+  workspace-ready.js: |
+    ;(async () => {
+      const body = JSON.stringify({ method: 'workerHandshake', params: {} })
+
+      const response = await fetch('http://account/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        signal: AbortSignal.timeout(3000),
+      }).catch((error) => {
+        console.error(`workspace handshake probe failed: ${error.name}: ${error.message}`)
+        process.exit(1)
+      })
+
+      const payload = await response.text()
+      if (response.status >= 500) {
+        console.error(`workspace handshake probe returned ${response.status}: ${payload}`)
+        process.exit(1)
+      }
+
+      console.log(`workspace handshake probe returned ${response.status}`)
+    })()

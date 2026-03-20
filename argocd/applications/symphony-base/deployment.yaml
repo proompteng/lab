@@ -63,10 +63,56 @@ spec:
                   name: github-token
                   key: token
                   optional: true
+            - name: POSTHOG_ENABLED
+              value: "true"
+            - name: POSTHOG_HOST
+              value: http://posthog-capture.posthog.svc.cluster.local:3000
+            - name: POSTHOG_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: symphony-posthog
+                  key: POSTHOG_API_KEY
+            - name: POSTHOG_PROJECT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: symphony-posthog
+                  key: POSTHOG_PROJECT_ID
+            - name: POSTHOG_REQUEST_TIMEOUT_MS
+              value: "1000"
+            - name: POSTHOG_FLUSH_AT
+              value: "1"
+            - name: POSTHOG_FLUSH_INTERVAL_MS
+              value: "1000"
             - name: SYMPHONY_LEADER_ELECTION_ENABLED
               value: "true"
             - name: SYMPHONY_LEADER_ELECTION_LEASE_NAME
               value: symphony-leader
+            - name: OTEL_SERVICE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['app.kubernetes.io/name']
+            - name: OTEL_SERVICE_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: OTEL_SERVICE_INSTANCE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
+            - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+              value: http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics
+            - name: OTEL_EXPORTER_OTLP_TRACES_TIMEOUT
+              value: "20000"
+            - name: OTEL_EXPORTER_OTLP_METRICS_TIMEOUT
+              value: "20000"
+            - name: OTEL_METRIC_EXPORT_INTERVAL
+              value: "15000"
+            - name: OTEL_METRIC_EXPORT_TIMEOUT
+              value: "20000"
+            - name: OTEL_LOGS_EXPORTER
+              value: none
           readinessProbe:
             httpGet:
               path: /readyz

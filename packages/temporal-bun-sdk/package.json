@@ -1,12 +1,26 @@
 {
   "name": "@proompteng/temporal-bun-sdk",
-  "version": "0.7.0",
+  "description": "Temporal SDK for Bun with workers, client, replay tooling, and Temporal Cloud/TLS support.",
+  "version": "0.7.1",
   "license": "MIT",
+  "homepage": "https://docs.proompteng.ai/docs/temporal-bun-sdk",
   "repository": {
     "type": "git",
     "url": "https://github.com/proompteng/lab.git",
     "directory": "packages/temporal-bun-sdk"
   },
+  "keywords": [
+    "temporal",
+    "bun",
+    "workflow",
+    "worker",
+    "client",
+    "durable-execution",
+    "temporal-cloud",
+    "grpc",
+    "typescript",
+    "effect"
+  ],
   "bin": {
     "temporal-bun": "./dist/src/bin/temporal-bun.js",
     "temporal-bun-skill": "./dist/src/bin/temporal-bun-skill.js",

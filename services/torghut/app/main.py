@@ -576,11 +576,6 @@ def _evaluate_trading_health_payload(
         and cache_age_seconds
         > settings.trading_readiness_dependency_cache_ttl_seconds
     )
-    dependency_statuses = [
-        cast(dict[str, object], checks).get("ok", True)
-        for name, checks in dependencies.items()
-        if name != "readiness_cache"
-    ]
     dependencies["readiness_cache"] = {
         "checked_at": checked_at.isoformat(),
         "cache_ttl_seconds": settings.trading_readiness_dependency_cache_ttl_seconds,
@@ -589,10 +584,6 @@ def _evaluate_trading_health_payload(
         "cache_age_seconds": cache_age_seconds,
         "cache_stale": cache_stale,
     }
-
-    overall_ok = scheduler_ok and all(bool(dep) for dep in dependency_statuses)
-    status = "ok" if overall_ok else "degraded"
-    status_code = 200 if overall_ok else 503
 
     alpha_readiness: dict[str, object]
     try:
@@ -626,6 +617,63 @@ def _evaluate_trading_health_payload(
                 "message": str(exc),
             },
         }
+        hypothesis_summary = {}
+
+    llm_status = scheduler.llm_status()
+    dspy_runtime = (
+        cast(dict[str, object], llm_status.get("dspy_runtime"))
+        if isinstance(llm_status.get("dspy_runtime"), dict)
+        else {}
+    )
+    empirical_jobs = _empirical_jobs_status()
+    live_submission_gate = _build_live_submission_gate_payload(
+        scheduler.state,
+        hypothesis_summary=hypothesis_summary,
+        empirical_jobs_status=empirical_jobs,
+        dspy_runtime_status=dspy_runtime,
+    )
+    live_mode = settings.trading_mode == "live"
+    dependencies["empirical_jobs"] = {
+        "ok": bool(empirical_jobs.get("ready")) if live_mode else True,
+        "detail": (
+            str(empirical_jobs.get("status") or "unknown")
+            if live_mode
+            else "not_required_in_non_live_mode"
+        ),
+        "authority": empirical_jobs.get("authority"),
+    }
+    dependencies["dspy_runtime"] = {
+        "ok": bool(dspy_runtime.get("live_ready", False))
+        if str(dspy_runtime.get("mode") or "").strip().lower() == "active"
+        else True,
+        "detail": (
+            "ready"
+            if bool(dspy_runtime.get("live_ready", False))
+            else ", ".join(
+                [
+                    str(item).strip()
+                    for item in cast(list[object], dspy_runtime.get("readiness_reasons") or [])
+                    if str(item).strip()
+                ]
+            )
+            or "not_ready"
+        ),
+        "artifact_hash": dspy_runtime.get("artifact_hash"),
+    }
+    dependencies["live_submission_gate"] = {
+        "ok": bool(live_submission_gate.get("allowed", False)),
+        "detail": str(live_submission_gate.get("reason") or "unknown"),
+        "capital_stage": live_submission_gate.get("capital_stage"),
+    }
+    dependency_statuses = [
+        cast(dict[str, object], checks).get("ok", True)
+        for name, checks in dependencies.items()
+        if name != "readiness_cache"
+    ]
+
+    overall_ok = scheduler_ok and all(bool(dep) for dep in dependency_statuses)
+    status = "ok" if overall_ok else "degraded"
+    status_code = 200 if overall_ok else 503
 
     return (
         {
@@ -633,6 +681,7 @@ def _evaluate_trading_health_payload(
             "scheduler": scheduler_payload,
             "dependencies": dependencies,
             "alpha_readiness": alpha_readiness,
+            "live_submission_gate": live_submission_gate,
         },
         status_code,
     )
@@ -1561,6 +1610,16 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
     shorting_metadata_status = scheduler.shorting_metadata_status()
     rejection_alert_status = scheduler.rejection_alert_status()
     active_simulation_context = active_simulation_runtime_context()
+    empirical_jobs = _empirical_jobs_status()
+    live_submission_gate = _build_live_submission_gate_payload(
+        state,
+        hypothesis_summary=hypothesis_summary,
+        empirical_jobs_status=empirical_jobs,
+        dspy_runtime_status=cast(
+            dict[str, object],
+            scheduler.llm_status().get("dspy_runtime", {}),
+        ),
+    )
     return {
         "enabled": settings.trading_enabled,
         "autonomy_enabled": settings.trading_autonomy_enabled,
@@ -1580,6 +1639,7 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
             "fallback_total": dict(state.metrics.execution_advisor_fallback_total),
         },
         "running": state.running,
+        "live_submission_gate": live_submission_gate,
         "last_run_at": state.last_run_at,
         "last_reconcile_at": state.last_reconcile_at,
         "last_error": state.last_error,
@@ -1681,7 +1741,7 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
         "hypotheses": hypothesis_payload,
         "forecast_service": _forecast_service_status(),
         "lean_authority": _lean_authority_status(),
-        "empirical_jobs": _empirical_jobs_status(),
+        "empirical_jobs": empirical_jobs,
         "simulation": {
             "enabled": settings.trading_simulation_enabled,
             "run_id": (active_simulation_context or {}).get("run_id") or settings.trading_simulation_run_id,
@@ -3018,6 +3078,92 @@ def _build_hypothesis_runtime_payload(
         summary,
         dependency_quorum,
     )
+
+
+def _build_live_submission_gate_payload(
+    state: object,
+    *,
+    hypothesis_summary: Mapping[str, Any] | None,
+    empirical_jobs_status: Mapping[str, Any] | None = None,
+    dspy_runtime_status: Mapping[str, Any] | None = None,
+) -> dict[str, object]:
+    summary: Mapping[str, Any] = hypothesis_summary or {}
+    dependency_quorum_payload: dict[str, Any] = (
+        dict(cast(Mapping[str, Any], summary.get("dependency_quorum")))
+        if isinstance(summary.get("dependency_quorum"), Mapping)
+        else {}
+    )
+    dependency_decision = (
+        str(dependency_quorum_payload.get("decision") or "").strip().lower() or "unknown"
+    )
+    promotion_eligible_total = _safe_int(summary.get("promotion_eligible_total"))
+    empirical_ready = (
+        bool(empirical_jobs_status.get("ready"))
+        if isinstance(empirical_jobs_status, Mapping)
+        else None
+    )
+    dspy_mode = (
+        str(dspy_runtime_status.get("mode") or "").strip().lower()
+        if isinstance(dspy_runtime_status, Mapping)
+        else ""
+    )
+    dspy_live_ready = (
+        bool(dspy_runtime_status.get("live_ready"))
+        if isinstance(dspy_runtime_status, Mapping) and dspy_mode == "active"
+        else None
+    )
+    configured_live_promotion = bool(settings.trading_autonomy_allow_live_promotion)
+    autonomy_promotion_eligible = bool(
+        getattr(state, "last_autonomy_promotion_eligible", False)
+    )
+    drift_live_promotion_eligible = bool(
+        getattr(state, "drift_live_promotion_eligible", False)
+    )
+    active_capital_stage = _resolve_active_capital_stage(summary)
+    if settings.trading_mode != "live":
+        return {
+            "allowed": True,
+            "reason": "non_live_mode",
+            "blocked_reasons": [],
+            "capital_stage": settings.trading_mode,
+            "configured_live_promotion": configured_live_promotion,
+            "autonomy_promotion_eligible": autonomy_promotion_eligible,
+            "drift_live_promotion_eligible": drift_live_promotion_eligible,
+            "promotion_eligible_total": promotion_eligible_total,
+            "dependency_quorum_decision": dependency_decision,
+            "empirical_jobs_ready": empirical_ready,
+            "dspy_live_ready": dspy_live_ready,
+        }
+
+    blocked_reasons: list[str] = []
+    if promotion_eligible_total <= 0:
+        blocked_reasons.append("alpha_readiness_not_promotion_eligible")
+    if empirical_ready is False:
+        blocked_reasons.append("empirical_jobs_not_ready")
+    if dspy_live_ready is False:
+        blocked_reasons.append("dspy_live_runtime_not_ready")
+    if dependency_decision != "allow":
+        blocked_reasons.append(f"dependency_quorum_{dependency_decision}")
+    if not configured_live_promotion and not autonomy_promotion_eligible and not drift_live_promotion_eligible:
+        blocked_reasons.append("live_promotion_disabled")
+
+    allowed = len(blocked_reasons) == 0
+    if allowed and active_capital_stage == "shadow":
+        active_capital_stage = "0.10x canary"
+
+    return {
+        "allowed": allowed,
+        "reason": "ready" if allowed else blocked_reasons[0],
+        "blocked_reasons": blocked_reasons,
+        "capital_stage": active_capital_stage,
+        "configured_live_promotion": configured_live_promotion,
+        "autonomy_promotion_eligible": autonomy_promotion_eligible,
+        "drift_live_promotion_eligible": drift_live_promotion_eligible,
+        "promotion_eligible_total": promotion_eligible_total,
+        "dependency_quorum_decision": dependency_decision,
+        "empirical_jobs_ready": empirical_ready,
+        "dspy_live_ready": dspy_live_ready,
+    }
 
 
 def _load_route_provenance_summary(session: Session) -> dict[str, object]:

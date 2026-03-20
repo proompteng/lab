@@ -231,9 +231,6 @@ class TradingPipeline:
             self.ingestor.commit_cursor(session, batch)
             return False
 
-        if self.state.signal_bootstrap_completed_at is None:
-            self.state.signal_bootstrap_completed_at = datetime.now(timezone.utc)
-
         if settings.trading_feature_quality_enabled:
             quality_thresholds = FeatureQualityThresholds(
                 max_required_null_rate=settings.trading_feature_max_required_null_rate,
@@ -776,7 +773,11 @@ class TradingPipeline:
     ) -> bool:
         if reason == "cursor_ahead_of_stream":
             return True
-        if reason == "no_signals_in_window" and _signal_bootstrap_grace_active(
+        if reason in {
+            "no_signals_in_window",
+            "cursor_tail_stable",
+            "empty_batch_advanced",
+        } and _signal_bootstrap_grace_active(
             self.state,
             grace_seconds=settings.trading_signal_bootstrap_grace_seconds,
         ):
@@ -880,6 +881,14 @@ class TradingPipeline:
                 return None
             return decision
         except Exception as exc:
+            try:
+                session.rollback()
+            except Exception:
+                logger.exception(
+                    "Decision handler rollback failed strategy_id=%s symbol=%s",
+                    decision.strategy_id,
+                    decision.symbol,
+                )
             logger.exception(
                 "Decision handling failed strategy_id=%s symbol=%s error=%s",
                 decision.strategy_id,
@@ -934,18 +943,59 @@ class TradingPipeline:
             ),
         )
 
-    def _submission_capital_stage(self) -> str:
+    def _live_submission_gate(self) -> dict[str, object]:
         if settings.trading_mode != "live":
-            return settings.trading_mode
-        if not settings.trading_autonomy_allow_live_promotion:
-            return "shadow"
-        return "0.10x canary"
+            return {
+                "allowed": True,
+                "reason": "non_live_mode",
+                "capital_stage": settings.trading_mode,
+                "configured_live_promotion": settings.trading_autonomy_allow_live_promotion,
+                "autonomy_promotion_eligible": self.state.last_autonomy_promotion_eligible,
+                "autonomy_promotion_action": self.state.last_autonomy_promotion_action,
+                "drift_live_promotion_eligible": self.state.drift_live_promotion_eligible,
+            }
+
+        evidence_eligible = bool(self.state.last_autonomy_promotion_eligible) or bool(
+            self.state.drift_live_promotion_eligible
+        )
+        if settings.trading_autonomy_allow_live_promotion or evidence_eligible:
+            return {
+                "allowed": True,
+                "reason": (
+                    "configured_live_promotion"
+                    if settings.trading_autonomy_allow_live_promotion
+                    else "autonomy_promotion_eligible"
+                ),
+                "capital_stage": "0.10x canary",
+                "configured_live_promotion": settings.trading_autonomy_allow_live_promotion,
+                "autonomy_promotion_eligible": self.state.last_autonomy_promotion_eligible,
+                "autonomy_promotion_action": self.state.last_autonomy_promotion_action,
+                "drift_live_promotion_eligible": self.state.drift_live_promotion_eligible,
+            }
+
+        return {
+            "allowed": False,
+            "reason": "live_promotion_disabled",
+            "capital_stage": "shadow",
+            "configured_live_promotion": settings.trading_autonomy_allow_live_promotion,
+            "autonomy_promotion_eligible": self.state.last_autonomy_promotion_eligible,
+            "autonomy_promotion_action": self.state.last_autonomy_promotion_action,
+            "drift_live_promotion_eligible": self.state.drift_live_promotion_eligible,
+        }
+
+    def _submission_capital_stage(self) -> str:
+        gate = self._live_submission_gate()
+        capital_stage = gate.get("capital_stage")
+        if isinstance(capital_stage, str) and capital_stage.strip():
+            return capital_stage
+        return settings.trading_mode
 
     def _submission_control_plane_snapshot(
         self,
         *,
         capital_stage: str | None = None,
     ) -> dict[str, object]:
+        gate = self._live_submission_gate()
         return {
             "active_revision": os.getenv("K_REVISION", "").strip() or None,
             "trading_enabled": settings.trading_enabled,
@@ -955,6 +1005,7 @@ class TradingPipeline:
             "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
             "trading_execution_adapter_policy": settings.trading_execution_adapter_policy,
             "capital_stage": capital_stage or self._submission_capital_stage(),
+            "live_submission_gate": gate,
         }
 
     def _decision_lifecycle_metadata(
@@ -1654,9 +1705,9 @@ class TradingPipeline:
                 decision.symbol,
             )
             return False
-        if (
-            settings.trading_mode == "live"
-            and not settings.trading_autonomy_allow_live_promotion
+        live_submission_gate = self._live_submission_gate()
+        if settings.trading_mode == "live" and not bool(
+            live_submission_gate.get("allowed", False)
         ):
             self._block_decision_submission(
                 session=session,
@@ -1665,12 +1716,14 @@ class TradingPipeline:
                 reason="capital_stage_shadow",
                 submission_stage="blocked_capital_stage_shadow",
                 capital_stage="shadow",
+                extra_metadata={"live_submission_gate": live_submission_gate},
             )
             logger.info(
-                "Decision held in shadow stage strategy_id=%s decision_id=%s symbol=%s",
+                "Decision held in shadow stage strategy_id=%s decision_id=%s symbol=%s gate_reason=%s",
                 decision.strategy_id,
                 decision_row.id,
                 decision.symbol,
+                live_submission_gate.get("reason"),
             )
             return False
         if not (
@@ -1877,6 +1930,14 @@ class TradingPipeline:
                 shadow_result=shadow_map,
             )
         except Exception as exc:
+            try:
+                session.rollback()
+            except Exception:
+                logger.exception(
+                    "LEAN strategy shadow rollback failed strategy_id=%s symbol=%s",
+                    decision.strategy_id,
+                    decision.symbol,
+                )
             logger.warning(
                 "LEAN strategy shadow evaluation failed strategy_id=%s symbol=%s error=%s",
                 decision.strategy_id,
@@ -2776,6 +2837,9 @@ class TradingPipeline:
         if settings.llm_dspy_runtime_mode == "active":
             gate_allowed, dspy_live_gate_reasons = settings.llm_dspy_live_runtime_gate()
             if not gate_allowed:
+                reject_reason, runtime_subtype = self._classify_dspy_live_runtime_block(
+                    dspy_live_gate_reasons
+                )
                 return self._handle_llm_dspy_live_runtime_block(
                     session=session,
                     decision=decision,
@@ -2783,13 +2847,18 @@ class TradingPipeline:
                     account=account,
                     positions=positions,
                     reason="llm_dspy_live_runtime_gate_blocked",
-                    reject_reason="llm_runtime_fallback",
+                    reject_reason=reject_reason,
                     risk_flags=list(dspy_live_gate_reasons),
                     response_payload_extra={
                         "llm_runtime": {
-                            "reject_reason": "llm_runtime_fallback",
-                            "subtype": "dspy_live_runtime_gate",
+                            "reject_reason": reject_reason,
+                            "subtype": runtime_subtype,
                             "error": "llm_dspy_live_runtime_gate_blocked",
+                            "primary_reason": (
+                                dspy_live_gate_reasons[0]
+                                if dspy_live_gate_reasons
+                                else "llm_dspy_live_runtime_gate_blocked"
+                            ),
                         }
                     },
                     policy_resolution=_build_llm_policy_resolution(
@@ -2813,6 +2882,9 @@ class TradingPipeline:
                 )
 
             if not dspy_live_ready:
+                reject_reason, runtime_subtype = self._classify_dspy_live_runtime_block(
+                    dspy_live_readiness_reasons
+                )
                 return self._handle_llm_dspy_live_runtime_block(
                     session=session,
                     decision=decision,
@@ -2820,13 +2892,18 @@ class TradingPipeline:
                     account=account,
                     positions=positions,
                     reason="llm_dspy_live_runtime_gate_blocked",
-                    reject_reason="llm_runtime_fallback",
+                    reject_reason=reject_reason,
                     risk_flags=list(dspy_live_readiness_reasons),
                     response_payload_extra={
                         "llm_runtime": {
-                            "reject_reason": "llm_runtime_fallback",
-                            "subtype": "dspy_live_runtime_gate",
+                            "reject_reason": reject_reason,
+                            "subtype": runtime_subtype,
                             "error": "llm_dspy_live_runtime_gate_blocked",
+                            "primary_reason": (
+                                dspy_live_readiness_reasons[0]
+                                if dspy_live_readiness_reasons
+                                else "llm_dspy_live_runtime_gate_blocked"
+                            ),
                         }
                     },
                     policy_resolution=_build_llm_policy_resolution(
@@ -2975,7 +3052,7 @@ class TradingPipeline:
         policy_resolution: Optional[dict[str, Any]] = None,
     ) -> tuple[StrategyDecision, Optional[str]]:
         block_fail_mode = settings.llm_dspy_live_runtime_block_fail_mode
-        if reject_reason == "llm_runtime_fallback":
+        if reject_reason.startswith("llm_runtime_fallback"):
             self.state.metrics.llm_runtime_fallback_total += 1
         effective_fail_mode = "veto" if block_fail_mode == "veto" else "pass_through"
         passthrough_decision = decision
@@ -3001,6 +3078,38 @@ class TradingPipeline:
             response_payload_extra=response_payload_extra,
             policy_resolution=policy_resolution,
         )
+
+    @staticmethod
+    def _classify_dspy_live_runtime_block(
+        reasons: Sequence[str] | tuple[str, ...],
+    ) -> tuple[str, str]:
+        normalized = tuple(str(reason).strip() for reason in reasons if str(reason).strip())
+        if any(
+            reason.startswith("dspy_live_readiness_error:")
+            or reason == "dspy_live_runtime_not_ready"
+            for reason in normalized
+        ):
+            return ("llm_runtime_fallback_runtime_not_ready", "runtime_not_ready")
+        if any(
+            "artifact" in reason or "manifest" in reason or "executor" in reason
+            for reason in normalized
+        ):
+            return ("llm_runtime_fallback_artifact_invalid", "artifact_invalid")
+        if any(
+            reason.startswith("dspy_live_")
+            or reason.startswith("dspy_jangar_")
+            or reason.startswith("llm_model_")
+            or reason.startswith("llm_shadow_")
+            or reason.startswith("llm_evaluation_")
+            or reason.startswith("llm_effective_")
+            or reason.startswith("llm_committee_")
+            or reason.startswith("dspy_cutover_")
+            or reason == "migration_guard_failed"
+            or "migration_guard" in reason
+            for reason in normalized
+        ):
+            return ("llm_runtime_fallback_policy_blocked", "policy_blocked")
+        return ("llm_runtime_fallback_runtime_not_ready", "runtime_not_ready")
 
     def _bounded_degraded_qty(
         self,

@@ -46,6 +46,7 @@ export const getQuantHealthHandler = async (request: Request) => {
     const updatedAt = latestStore.updatedAt
     const count = latestStore.count
     const lagSeconds = updatedAt ? Math.max(0, Math.floor((Date.now() - Date.parse(updatedAt)) / 1000)) : null
+    const emptyLatestStoreAlarm = count === 0
     const missingUpdateThresholdSeconds = Number.parseInt(
       process.env.JANGAR_TORGHUT_QUANT_HEALTH_MISSING_UPDATE_SECONDS ?? '15',
       10,
@@ -62,7 +63,8 @@ export const getQuantHealthHandler = async (request: Request) => {
       window: windowResult.value,
     })
     const maxStageLagSeconds = stages.reduce((max, stage) => Math.max(max, stage.lagSeconds), 0)
-    const overallState = stages.some((stage) => !stage.ok) || missingUpdateAlarm ? 'degraded' : 'ok'
+    const overallState =
+      stages.some((stage) => !stage.ok) || missingUpdateAlarm || emptyLatestStoreAlarm ? 'degraded' : 'ok'
     const runtime = getTorghutQuantRuntimeStatus()
 
     return jsonResponse({
@@ -71,6 +73,7 @@ export const getQuantHealthHandler = async (request: Request) => {
       asOf: nowIso,
       latestMetricsUpdatedAt: updatedAt,
       latestMetricsCount: count,
+      emptyLatestStoreAlarm,
       metricsPipelineLagSeconds: lagSeconds,
       missingUpdateAlarm,
       missingUpdateThresholdSeconds: Number.isFinite(missingUpdateThresholdSeconds)

@@ -39,7 +39,7 @@ spec:
         - name: allowMissingState
         - name: outputRoot
     container:
-      image: registry.ide-newton.ts.net/lab/torghut@sha256:0794ed3bc1e4ccf878010100c9e2eed4a738779d71d8087a654b81a2f6433462
+      image: registry.ide-newton.ts.net/lab/torghut@sha256:884bec35f7d24ef34c51240e697aa996bc134385be9f6936aa170880fe2d601e
       imagePullPolicy: Always
       env:
         - name: DB_DSN
@@ -83,16 +83,18 @@ spec:
           value: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
         - name: TORGHUT_SIM_CACHE_CEPH_REGION
           value: us-east-1
+        - name: TORGHUT_SIM_DUMP_SORT_MEMORY_LIMIT
+          value: 512M
       command:
         - /bin/bash
         - -lc
       resources:
         requests:
-          cpu: 500m
-          memory: 2Gi
+          cpu: 1
+          memory: 8Gi
         limits:
-          cpu: 2
-          memory: 4Gi
+          cpu: 4
+          memory: 16Gi
       args:
         - |
           set -euo pipefail

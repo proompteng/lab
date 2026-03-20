@@ -2,7 +2,17 @@ import type { RuntimeSnapshot, SymphonyConfig } from './types'
 
 type SymphonyConfigOverrides = Omit<
   Partial<SymphonyConfig>,
-  'tracker' | 'hooks' | 'worker' | 'agent' | 'codex' | 'server' | 'instance' | 'target' | 'release' | 'health'
+  | 'tracker'
+  | 'hooks'
+  | 'worker'
+  | 'agent'
+  | 'codex'
+  | 'server'
+  | 'posthog'
+  | 'instance'
+  | 'target'
+  | 'release'
+  | 'health'
 > & {
   tracker?: Partial<SymphonyConfig['tracker']>
   hooks?: Partial<SymphonyConfig['hooks']>
@@ -10,6 +20,7 @@ type SymphonyConfigOverrides = Omit<
   agent?: Partial<SymphonyConfig['agent']>
   codex?: Partial<SymphonyConfig['codex']>
   server?: Partial<SymphonyConfig['server']>
+  posthog?: Partial<SymphonyConfig['posthog']>
   instance?: Partial<SymphonyConfig['instance']>
   target?: Partial<SymphonyConfig['target']>
   release?: Partial<SymphonyConfig['release']>
@@ -58,6 +69,16 @@ export const makeTestConfig = (overrides: SymphonyConfigOverrides = {}): Symphon
   server: {
     host: overrides.server?.host ?? '127.0.0.1',
     port: overrides.server?.port ?? null,
+  },
+  posthog: {
+    enabled: overrides.posthog?.enabled ?? false,
+    host: overrides.posthog?.host ?? 'http://posthog-capture.posthog.svc.cluster.local:3000',
+    apiKey: overrides.posthog?.apiKey ?? null,
+    projectId: overrides.posthog?.projectId ?? null,
+    distinctId: overrides.posthog?.distinctId ?? 'symphony:symphony',
+    requestTimeoutMs: overrides.posthog?.requestTimeoutMs ?? 1_000,
+    flushAt: overrides.posthog?.flushAt ?? 1,
+    flushIntervalMs: overrides.posthog?.flushIntervalMs ?? 1_000,
   },
   instance: {
     name: overrides.instance?.name ?? 'symphony',
@@ -212,6 +233,13 @@ export const makeTestSnapshot = (): RuntimeSnapshot => ({
     lastSuccessAt: '2026-03-14T11:59:59.000Z',
     lastError: null,
   },
+  telemetry: {
+    enabled: true,
+    host: 'http://posthog-capture.posthog.svc.cluster.local:3000',
+    projectId: '1',
+    distinctId: 'symphony:symphony',
+    lastError: null,
+  },
   recentEvents: [
     {
       at: '2026-03-14T12:00:00.000Z',
@@ -241,4 +269,46 @@ export const makeTestSnapshot = (): RuntimeSnapshot => ({
     saturated: false,
     byState: [{ state: 'in progress', running: 1, limit: 10, saturated: false }],
   },
+  issues: [
+    {
+      issueId: 'issue-1',
+      issueIdentifier: 'ABC-1',
+      status: 'running',
+      trackedState: 'In Progress',
+      updatedAt: '2026-03-14T12:00:00.000Z',
+      lastError: null,
+      delivery: {
+        stage: 'checks_pending',
+        updatedAt: '2026-03-14T12:00:00.000Z',
+        codePr: {
+          number: 101,
+          url: 'https://github.com/proompteng/lab/pull/101',
+          branch: 'codex/proompt-336',
+          state: 'open',
+          title: 'feat(symphony): add delivery engine',
+          createdAt: '2026-03-14T11:30:00.000Z',
+          updatedAt: '2026-03-14T12:00:00.000Z',
+          mergedAt: null,
+          mergedCommitSha: null,
+        },
+        requiredChecks: {
+          state: 'pending',
+          headSha: 'abcdef0123456789abcdef0123456789abcdef01',
+          requiredCount: 3,
+          passingCount: 2,
+          failingCount: 0,
+          pendingCount: 1,
+          url: 'https://github.com/proompteng/lab/pull/101/checks',
+        },
+        mergedCommitSha: null,
+        build: null,
+        releaseContract: null,
+        promotionPr: null,
+        argo: null,
+        postDeploy: null,
+        rollbackPr: null,
+        lastError: null,
+      },
+    },
+  ],
 })

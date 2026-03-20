@@ -154,7 +154,7 @@ flags:
     name: Torghut Trading Fractional Equities Enabled
     description: Enables fractional equity quantities for long-side orders.
     type: BOOLEAN_FLAG_TYPE
-    enabled: false
+    enabled: true
   - key: torghut_trading_kill_switch_enabled
     name: Torghut Trading Kill Switch Enabled
     description: Enables kill switch checks before order submission.

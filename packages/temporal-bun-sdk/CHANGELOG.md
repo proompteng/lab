@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.1](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.7.0...temporal-bun-sdk-v0.7.1) (2026-03-19)
+
+### Bug Fixes
+
+* **temporal-bun-sdk:** harden ARC publish gate ([#4392](https://github.com/proompteng/lab/issues/4392)) ([dd06fac](https://github.com/proompteng/lab/commit/dd06facbd4f7c50caef34f6530db27971f84c6d6))
+* **temporal-bun-sdk:** repair scaffold and improve adoption docs ([#4612](https://github.com/proompteng/lab/issues/4612)) ([3926b09](https://github.com/proompteng/lab/commit/3926b095a7f064ac7ab8397fb63bf39a180c084d))
+* **temporal-bun-sdk:** use arc tailscale short host ([#4386](https://github.com/proompteng/lab/issues/4386)) ([7082cff](https://github.com/proompteng/lab/commit/7082cffd9dd8932339ef2b8dc1c9d7076dcb5927))
+
 ## [0.7.0](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.6.1...temporal-bun-sdk-v0.7.0) (2026-03-13)
 
 

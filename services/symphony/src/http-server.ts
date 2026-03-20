@@ -1,6 +1,7 @@
 import { Effect } from 'effect'
 import type { ManagedRuntime } from 'effect/ManagedRuntime'
 
+import { finishSymphonySpan, startSymphonySpan } from './instrumentation'
 import { OrchestratorService } from './orchestrator'
 import type { Logger } from './logger'
 import type { RuntimeSnapshot } from './types'
@@ -13,6 +14,16 @@ export const parseIssueIdentifierPath = (pathname: string): IssueIdentifierParam
   if (!pathname.startsWith('/api/v1/')) return null
   const issueIdentifier = decodeURIComponent(pathname.replace('/api/v1/', ''))
   return issueIdentifier.length > 0 ? { issueIdentifier } : null
+}
+
+const resolveHttpRouteName = (request: Request, pathname: string) => {
+  if (request.method === 'GET' && pathname === '/livez') return 'symphony.http.livez'
+  if (request.method === 'GET' && pathname === '/readyz') return 'symphony.http.readyz'
+  if (request.method === 'GET' && pathname === '/') return 'symphony.http.dashboard'
+  if (request.method === 'GET' && pathname === '/api/v1/state') return 'symphony.http.state'
+  if (request.method === 'POST' && pathname === '/api/v1/refresh') return 'symphony.http.refresh'
+  if (request.method === 'GET' && pathname.startsWith('/api/v1/')) return 'symphony.http.issue_details'
+  return 'symphony.http.request'
 }
 
 const stringifyForHtml = (value: unknown): string => {
@@ -100,6 +111,7 @@ const renderDashboard = (snapshot: RuntimeSnapshot) => {
     .join('')
 
   const stateLinkRows = [
+    ...snapshot.issues.map((row) => row.issueIdentifier),
     ...snapshot.running.map((row) => row.issueIdentifier),
     ...snapshot.retrying.map((row) => row.issueIdentifier),
   ]
@@ -108,6 +120,26 @@ const renderDashboard = (snapshot: RuntimeSnapshot) => {
     .map(
       (issueIdentifier) => `
         <li><a href="/api/v1/${encodeURIComponent(issueIdentifier)}">${escapeHtml(issueIdentifier)}</a></li>`,
+    )
+    .join('')
+
+  const deliveryRows = snapshot.issues
+    .map(
+      (row) => `
+        <tr>
+          <td><a href="/api/v1/${encodeURIComponent(row.issueIdentifier)}">${escapeHtml(row.issueIdentifier)}</a></td>
+          <td>${escapeHtml(row.status)}</td>
+          <td>${escapeHtml(row.delivery?.stage ?? 'coding')}</td>
+          <td>${escapeHtml(row.delivery?.codePr?.number ?? '')}</td>
+          <td>${escapeHtml(row.delivery?.requiredChecks?.state ?? '')}</td>
+          <td>${escapeHtml(row.delivery?.build?.state ?? '')}</td>
+          <td>${escapeHtml(row.delivery?.releaseContract?.digest ?? row.delivery?.releaseContract?.tag ?? '')}</td>
+          <td>${escapeHtml(row.delivery?.promotionPr?.number ?? '')}</td>
+          <td>${escapeHtml(row.delivery?.argo?.sync ?? '')}/${escapeHtml(row.delivery?.argo?.health ?? '')}</td>
+          <td>${escapeHtml(row.delivery?.postDeploy?.state ?? '')}</td>
+          <td>${escapeHtml(row.delivery?.rollbackPr?.number ?? '')}</td>
+          <td>${escapeHtml(row.delivery?.lastError ?? '')}</td>
+        </tr>`,
     )
     .join('')
 
@@ -208,6 +240,18 @@ const renderDashboard = (snapshot: RuntimeSnapshot) => {
           </table>
         </div>
         <div class="card">
+          <h3>Telemetry</h3>
+          <table>
+            <tbody>${renderKeyValueRows([
+              { key: 'enabled', value: String(snapshot.telemetry.enabled) },
+              { key: 'host', value: snapshot.telemetry.host },
+              { key: 'projectId', value: snapshot.telemetry.projectId },
+              { key: 'distinctId', value: snapshot.telemetry.distinctId },
+              { key: 'lastError', value: snapshot.telemetry.lastError },
+            ])}</tbody>
+          </table>
+        </div>
+        <div class="card">
           <h3>Policy</h3>
           <table>
             <tbody>${renderKeyValueRows([
@@ -302,6 +346,16 @@ const renderDashboard = (snapshot: RuntimeSnapshot) => {
               <tbody>${retryRows || '<tr><td colspan="4">Retry queue is empty.</td></tr>'}</tbody>
             </table>
           </div>
+        </div>
+      </div>
+
+      <div class="card table-card">
+        <h2>Delivery Transactions</h2>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Issue</th><th>Status</th><th>Stage</th><th>Code PR</th><th>Checks</th><th>Build</th><th>Release</th><th>Promotion PR</th><th>Argo</th><th>Post-Deploy</th><th>Rollback PR</th><th>Last Error</th></tr></thead>
+            <tbody>${deliveryRows || '<tr><td colspan="12">No tracked issues.</td></tr>'}</tbody>
+          </table>
         </div>
       </div>
 
@@ -408,9 +462,26 @@ export class SymphonyHttpServer<R, E> {
     this.server = Bun.serve({
       hostname: host,
       port,
-      fetch: (request): Promise<Response> =>
-        (this.runtime.runPromise(handleRequestEffect(request) as never) as Promise<Response>).catch((error: unknown) =>
-          Response.json(
+      fetch: (request): Promise<Response> => {
+        const url = new URL(request.url)
+        const params =
+          request.method === 'GET' && url.pathname.startsWith('/api/v1/')
+            ? parseIssueIdentifierPath(url.pathname)
+            : null
+        const span = startSymphonySpan(resolveHttpRouteName(request, url.pathname), {
+          'http.method': request.method,
+          'http.route': url.pathname,
+          ...(params ? { 'issue.identifier': params.issueIdentifier } : {}),
+        })
+
+        const finishWithResponse = (response: Response) => {
+          span.setAttribute('http.status_code', response.status)
+          finishSymphonySpan(span)
+          return response
+        }
+
+        const finishWithError = (error: unknown) => {
+          const response = Response.json(
             {
               error: {
                 code: 'internal_error',
@@ -418,8 +489,17 @@ export class SymphonyHttpServer<R, E> {
               },
             },
             { status: 500 },
-          ),
-        ),
+          )
+          span.setAttribute('http.status_code', response.status)
+          finishSymphonySpan(span, error)
+          return response
+        }
+
+        return (this.runtime.runPromise(handleRequestEffect(request) as never) as Promise<Response>).then(
+          finishWithResponse,
+          finishWithError,
+        )
+      },
     })
     this.logger.log('info', 'http_server_started', { host, port: this.server.port })
     return this.server.port ?? port

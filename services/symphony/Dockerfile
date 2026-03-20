@@ -9,6 +9,7 @@ ENV HUSKY=0
 
 COPY package.json bun.lock tsconfig.base.json ./
 COPY packages/codex/package.json ./packages/codex/package.json
+COPY packages/otel/package.json ./packages/otel/package.json
 COPY services/symphony/package.json ./services/symphony/package.json
 
 RUN --mount=type=cache,target=/root/.cache/bun \
@@ -16,10 +17,12 @@ RUN --mount=type=cache,target=/root/.cache/bun \
 
 FROM deps AS build
 COPY packages/codex ./packages/codex
+COPY packages/otel ./packages/otel
 COPY services/symphony ./services/symphony
 
-RUN bun --cwd packages/codex run build
-RUN bun --cwd services/symphony run tsc
+RUN bun run --cwd packages/codex build
+RUN bun run --cwd packages/otel build
+RUN bun run --cwd services/symphony tsc
 
 FROM oven/bun:${BUN_VERSION} AS runner
 ARG NODE_VERSION
@@ -57,12 +60,14 @@ RUN npm install -g "@openai/codex@${CODEX_VERSION}"
 
 COPY package.json bun.lock tsconfig.base.json ./
 COPY packages/codex/package.json ./packages/codex/package.json
+COPY packages/otel/package.json ./packages/otel/package.json
 COPY services/symphony/package.json ./services/symphony/package.json
 
 RUN --mount=type=cache,target=/root/.cache/bun \
   bun install --omit=dev --ignore-scripts --filter @proompteng/symphony
 
 COPY --from=build /app/packages/codex ./packages/codex
+COPY --from=build /app/packages/otel ./packages/otel
 COPY --from=build /app/services/symphony ./services/symphony
 
 WORKDIR /app/services/symphony

@@ -16,7 +16,7 @@ spec:
   template:
     metadata:
       annotations:
-        client.knative.dev/updateTimestamp: "2026-03-16T23:35:04Z"
+        client.knative.dev/updateTimestamp: "2026-03-19T05:46:43Z"
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/target: "80"
@@ -26,7 +26,7 @@ spec:
       containers:
         - name: user-container
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:0794ed3bc1e4ccf878010100c9e2eed4a738779d71d8087a654b81a2f6433462
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:884bec35f7d24ef34c51240e697aa996bc134385be9f6936aa170880fe2d601e
           ports:
             - name: http1
               containerPort: 8181
@@ -394,10 +394,12 @@ spec:
               value: gpt-5.3-codex-spark
             - name: LLM_ALLOWED_PROMPT_VERSIONS
               value: v1
+            - name: LLM_ENABLED
+              value: "false"
             - name: LLM_ROLLOUT_STAGE
               value: stage3_controlled_live
             - name: LLM_SHADOW_MODE
-              value: "false"
+              value: "true"
             - name: LLM_EVALUATION_REPORT
               value: torghut-llm-shadow-eval-2026-02-12
             - name: LLM_EFFECTIVE_CHALLENGE_ID
@@ -423,9 +425,9 @@ spec:
             - name: LLM_TIMEOUT_SECONDS
               value: "20"
             - name: LLM_DSPY_RUNTIME_MODE
-              value: active
+              value: disabled
             - name: LLM_DSPY_ARTIFACT_HASH
-              value: 373bb47d4588d86a6fcf682e8b127420305a27860ba91c3508448f037e4adca8
+              value: ""
             - name: LLM_DSPY_LIVE_RUNTIME_BLOCK_FAIL_MODE
               value: pass_through_reduced_size
             - name: LLM_DSPY_LIVE_RUNTIME_BLOCK_QTY_MULTIPLIER
@@ -462,9 +464,9 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.564.0-247-g07988543
+              value: v0.564.0-263-g54971ed88
             - name: TORGHUT_COMMIT
-              value: 079885430815f67d718057abfe9814a6ab79988b
+              value: 54971ed88c9d0b8b60d6271aff064615f3f2f903
           envFrom:
             - configMapRef:
                 name: torghut-autonomy-config
