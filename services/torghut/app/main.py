@@ -669,8 +669,16 @@ def _evaluate_trading_health_payload(
         "capital_stage": live_submission_gate.get("capital_stage"),
     }
     dependencies["quant_evidence"] = {
-        "ok": bool(quant_evidence.get("ok", True)),
-        "detail": str(quant_evidence.get("reason") or "unknown"),
+        "ok": (
+            bool(quant_evidence.get("ok", True))
+            if live_mode and bool(quant_evidence.get("required", False))
+            else True
+        ),
+        "detail": (
+            str(quant_evidence.get("reason") or "unknown")
+            if live_mode
+            else "not_required_in_non_live_mode"
+        ),
         "required": bool(quant_evidence.get("required", False)),
         "window": quant_evidence.get("window"),
     }

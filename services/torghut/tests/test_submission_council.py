@@ -4,7 +4,10 @@ from types import SimpleNamespace
 from unittest import TestCase
 
 from app.config import settings
-from app.trading.submission_council import build_live_submission_gate_payload
+from app.trading.submission_council import (
+    build_live_submission_gate_payload,
+    resolve_quant_health_url,
+)
 
 
 class TestSubmissionCouncil(TestCase):
@@ -15,6 +18,9 @@ class TestSubmissionCouncil(TestCase):
             "trading_autonomy_enabled": settings.trading_autonomy_enabled,
             "trading_autonomy_allow_live_promotion": settings.trading_autonomy_allow_live_promotion,
             "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
+            "trading_jangar_quant_health_url": settings.trading_jangar_quant_health_url,
+            "trading_jangar_control_plane_status_url": settings.trading_jangar_control_plane_status_url,
+            "trading_market_context_url": settings.trading_market_context_url,
         }
         settings.trading_enabled = True
         settings.trading_mode = "live"
@@ -33,6 +39,15 @@ class TestSubmissionCouncil(TestCase):
         ]
         settings.trading_kill_switch_enabled = self._settings_snapshot[
             "trading_kill_switch_enabled"
+        ]
+        settings.trading_jangar_quant_health_url = self._settings_snapshot[
+            "trading_jangar_quant_health_url"
+        ]
+        settings.trading_jangar_control_plane_status_url = self._settings_snapshot[
+            "trading_jangar_control_plane_status_url"
+        ]
+        settings.trading_market_context_url = self._settings_snapshot[
+            "trading_market_context_url"
         ]
 
     def test_build_live_submission_gate_payload_fails_closed_on_empty_quant_evidence(
@@ -115,3 +130,17 @@ class TestSubmissionCouncil(TestCase):
         self.assertTrue(result["allowed"])
         self.assertEqual(result["capital_state"], "0.10x canary")
         self.assertEqual(result["reason_codes"], ["autonomy_promotion_eligible"])
+
+    def test_resolve_quant_health_url_preserves_explicit_override_path(self) -> None:
+        settings.trading_jangar_quant_health_url = (
+            " https://jangar.example/custom/proxy/quant/health "
+        )
+        settings.trading_jangar_control_plane_status_url = (
+            "https://jangar.example/status"
+        )
+        settings.trading_market_context_url = "https://jangar.example/market/context"
+
+        self.assertEqual(
+            resolve_quant_health_url(),
+            "https://jangar.example/custom/proxy/quant/health",
+        )

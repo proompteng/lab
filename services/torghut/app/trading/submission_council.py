@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from threading import Lock
 from typing import Any, cast
-from urllib.parse import urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 from sqlalchemy.orm import Session
@@ -68,34 +68,67 @@ def _safe_bool(value: object) -> bool | None:
     return None
 
 
-def _derive_quant_health_url(value: str | None) -> str | None:
+def _derive_quant_health_url(
+    value: str | None,
+    *,
+    preserve_path: bool = False,
+) -> str | None:
     raw = (value or "").strip()
     if not raw:
         return None
     parsed = urlsplit(raw)
     if not parsed.scheme or not parsed.netloc:
         return None
+    path = parsed.path or ""
+    query = parsed.query if preserve_path else ""
     return urlunsplit(
         (
             parsed.scheme,
             parsed.netloc,
-            "/api/torghut/trading/control-plane/quant/health",
-            "",
+            path or "/api/torghut/trading/control-plane/quant/health",
+            query,
             "",
         )
     )
 
 
 def resolve_quant_health_url() -> str | None:
-    for candidate in (
-        settings.trading_jangar_quant_health_url,
-        settings.trading_jangar_control_plane_status_url,
-        settings.trading_market_context_url,
+    for candidate, preserve_path in (
+        (settings.trading_jangar_quant_health_url, True),
+        (settings.trading_jangar_control_plane_status_url, False),
+        (settings.trading_market_context_url, False),
     ):
-        resolved = _derive_quant_health_url(candidate)
+        resolved = _derive_quant_health_url(
+            candidate,
+            preserve_path=preserve_path,
+        )
         if resolved:
             return resolved
     return None
+
+
+def _build_quant_health_request_url(
+    base_url: str,
+    *,
+    account: str,
+    window: str,
+) -> str:
+    parsed = urlsplit(base_url)
+    query_params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    if account:
+        query_params["account"] = account
+    if window:
+        query_params["window"] = window
+    query = urlencode(query_params)
+    return urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            query,
+            "",
+        )
+    )
 
 
 def load_quant_evidence_status(
@@ -116,8 +149,11 @@ def load_quant_evidence_status(
             "source_url": None,
         }
 
-    query = urlencode({"account": account, "window": window})
-    request_url = f"{base_url}?{query}" if query else base_url
+    request_url = _build_quant_health_request_url(
+        base_url,
+        account=account,
+        window=window,
+    )
     ttl_seconds = max(0, int(settings.trading_jangar_control_plane_cache_ttl_seconds))
     now = datetime.now(timezone.utc)
 
