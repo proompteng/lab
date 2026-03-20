@@ -18,6 +18,8 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
 - Fast Jangar/Torghut live analysis workflow: `designs/jangar-torghut-live-analysis-playbook.md`
 - Autonomous Jangar/Torghut production system design: `designs/autonomous-jangar-torghut-production-system.md`
 - Current Jangar/Torghut architecture contracts:
+  - `designs/54-jangar-witness-mirror-quorum-and-promotion-veto-2026-03-20.md`
+  - `../torghut/design-system/v6/53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md`
   - `designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md`
   - `../torghut/design-system/v6/50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
   - `designs/50-torghut-hypothesis-capital-governor-and-data-quorum-2026-03-19.md`
@@ -168,6 +170,7 @@ For env and gRPC source-of-truth changes in this branch:
 - [designs/50-torghut-hypothesis-capital-governor-and-data-quorum-2026-03-19.md](designs/50-torghut-hypothesis-capital-governor-and-data-quorum-2026-03-19.md)
 - [designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md](designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md)
 - [designs/52-jangar-segment-authority-graph-and-promotion-certificate-fail-safe-2026-03-19.md](designs/52-jangar-segment-authority-graph-and-promotion-certificate-fail-safe-2026-03-19.md)
+- [designs/54-jangar-witness-mirror-quorum-and-promotion-veto-2026-03-20.md](designs/54-jangar-witness-mirror-quorum-and-promotion-veto-2026-03-20.md)
 - [designs/controller-finalizer-conventions.md](designs/controller-finalizer-conventions.md)
 - [designs/controller-kubectl-version-compat.md](designs/controller-kubectl-version-compat.md)
 - [designs/controller-namespace-scope-parse-validate.md](designs/controller-namespace-scope-parse-validate.md)
