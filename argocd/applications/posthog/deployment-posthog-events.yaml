@@ -8,6 +8,11 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "2"
 spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   selector:
     matchLabels:
         app: posthog
@@ -82,6 +87,8 @@ spec:
           value: '1'
         - name: POSTHOG_SKIP_MIGRATION_CHECKS
           value: 'true'
+        - name: NGINX_UNIT_APP_PROCESSES
+          value: "2"
         # PostHog app settings        
         - name: SECRET_KEY
           valueFrom:
@@ -176,13 +183,18 @@ spec:
             path: /_readyz?role=events
             port: 8000
             scheme: HTTP
-          failureThreshold: 24
+          failureThreshold: 60
           initialDelaySeconds: 0
           periodSeconds: 10
           successThreshold: 1
-          timeoutSeconds: 5
+          timeoutSeconds: 10
         resources:
-            {}
+          requests:
+            cpu: 1000m
+            memory: 2Gi
+          limits:
+            cpu: 2000m
+            memory: 4Gi
       initContainers:        
         - name: wait-for-service-dependencies
           image: "posthog/posthog:7a6ab0d30c88a981a45491ac35f2b02d09d56c0f"

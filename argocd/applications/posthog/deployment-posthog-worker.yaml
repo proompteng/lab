@@ -8,6 +8,11 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "2"
 spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   selector:
     matchLabels:
         app: posthog
@@ -75,6 +80,8 @@ spec:
           value: self_managed
         - name: SENTRY_DSN
           value: 
+        - name: WEB_CONCURRENCY
+          value: "8"
         - name: PRIMARY_DB
           value: clickhouse        
         - name: SECRET_KEY
@@ -138,7 +145,12 @@ spec:
         - name: CAPTURE_INTERNAL_METRICS
           value: "true"
         resources:
-            {}
+          requests:
+            cpu: 1000m
+            memory: 2Gi
+          limits:
+            cpu: 2000m
+            memory: 8Gi
       initContainers:        
         - name: wait-for-service-dependencies
           image: "posthog/posthog:7a6ab0d30c88a981a45491ac35f2b02d09d56c0f"
