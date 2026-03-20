@@ -10,6 +10,7 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md`
   - `52-torghut-profit-sleeves-segment-scoped-deallocation-and-evidence-decay-2026-03-19.md`
   - `50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
   - `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
@@ -25,6 +26,7 @@
 - `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
 - `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/54-jangar-witness-mirror-quorum-and-promotion-veto-2026-03-20.md`
   - `docs/agents/designs/53-jangar-dependency-provenance-ledger-and-consumer-acknowledged-admission-2026-03-19.md`
   - `docs/agents/designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md`
   - `docs/agents/designs/52-jangar-rollout-epoch-witness-and-segment-circuit-breakers-2026-03-19.md`
@@ -91,6 +93,12 @@ Current source-state priority is narrower:
 - `52-torghut-profit-sleeves-segment-scoped-deallocation-and-evidence-decay-2026-03-19.md` now makes that capital
   contract hypothesis-local: each sleeve carries segment requirements, evidence expiry, overlap caps, and typed
   alert-driven deallocation.
+- `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md` now makes the next step
+  explicit: non-observe capital depends on one certificate that consumes Jangar witness quorum, Jangar market-context
+  and quant evidence, toggle parity, and typed options auth/bootstrap escrow rather than local gate optimism.
+- `docs/agents/designs/54-jangar-witness-mirror-quorum-and-promotion-veto-2026-03-20.md` now turns incomplete rollout
+  evidence into a first-class veto by requiring fresh witness mirrors for rollout, stage health, and consumer
+  acknowledgement before Jangar may emit promotion-friendly authority.
 - `docs/agents/designs/52-jangar-rollout-epoch-witness-and-segment-circuit-breakers-2026-03-19.md` now extends the
   March 19 authority-ledger work by requiring consumer acknowledgement of rollout epochs and by turning Huly transport
   failures into explicit segment circuit breakers rather than implicit fatal preconditions.
@@ -192,6 +200,7 @@ This pack is positioned as the next architecture layer above:
 50. `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
 51. `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
 52. `52-torghut-profit-sleeves-segment-scoped-deallocation-and-evidence-decay-2026-03-19.md`
+53. `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md`
 
 ## Recommended Build Order
 
@@ -242,6 +251,7 @@ This pack is positioned as the next architecture layer above:
 45. `50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
 46. `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
 47. `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
+48. `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md`
 
 ## Why This Sequence
 
