@@ -10,6 +10,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `61-torghut-evidence-seats-and-profit-repair-exchange-contract-2026-03-20.md`
+  - `docs/agents/designs/62-jangar-execution-receipts-and-stage-recovery-cells-contract-2026-03-20.md`
   - `60-torghut-hypothesis-passports-and-capability-quote-auction-contract-2026-03-20.md`
   - `59-torghut-lane-balance-sheet-and-dataset-seat-auction-contract-2026-03-20.md`
   - `58-torghut-profit-cohort-auction-and-freshness-insurance-contract-2026-03-20.md`
@@ -33,6 +35,8 @@
 - `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
 - `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/62-jangar-execution-receipts-and-stage-recovery-cells-contract-2026-03-20.md`
+  - `61-torghut-evidence-seats-and-profit-repair-exchange-contract-2026-03-20.md`
   - `docs/agents/designs/61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md`
   - `60-torghut-hypothesis-passports-and-capability-quote-auction-contract-2026-03-20.md`
   - `docs/agents/designs/60-jangar-recovery-ledger-and-consumer-attestation-contract-2026-03-20.md`
@@ -134,6 +138,9 @@ Current source-state priority is narrower:
 - `59-torghut-lane-balance-sheet-and-dataset-seat-auction-contract-2026-03-20.md` now turns the March 20 live-state
   evidence into lane-local balance sheets, dataset seats, and explicit freshness-bond probe capital so Torghut can
   allocate scarce capital by evidence quality instead of one route-time blocked answer.
+- `61-torghut-evidence-seats-and-profit-repair-exchange-contract-2026-03-20.md` now turns mixed March 20 evidence
+  into replayable lane-scoped seats plus a bounded profit-repair exchange, and it makes immutable dataset and signal
+  evidence a prerequisite for degraded-mode capital.
 - `60-torghut-hypothesis-passports-and-capability-quote-auction-contract-2026-03-20.md` now adds the next
   profitability layer: Torghut must settle one passport per lane, price capability quality explicitly, and allocate
   only bounded probe capital when degraded-but-usable evidence still exists.
@@ -148,6 +155,9 @@ Current source-state priority is narrower:
 - `docs/agents/designs/59-jangar-authority-session-bus-and-rollout-lease-contract-2026-03-20.md` now turns those
   capsules into one durable authority session and rollout-lease contract so `/ready`, status, deploy verification, and
   downstream consumers stop re-deriving control-plane truth per request.
+- `docs/agents/designs/62-jangar-execution-receipts-and-stage-recovery-cells-contract-2026-03-20.md` now makes the
+  next control-plane step explicit: rollout health no longer counts as execution proof on its own, and stale-stage
+  debt plus runtime completeness become durable receipt and recovery-cell contracts.
 - `docs/agents/designs/61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md` now closes the next
   remaining gap above sessions and recovery ledgers by making runtime completeness a first-class control-plane subject
   and binding consumers to passport ids that include both authority truth and executable runtime kits.
@@ -266,9 +276,10 @@ This pack is positioned as the next architecture layer above:
 55. `55-torghut-hypothesis-settlement-exchange-and-lane-capability-leases-2026-03-20.md`
 56. `56-torghut-capability-leases-and-profit-clocks-2026-03-20.md`
 57. `56-torghut-profit-clocks-and-lane-falsification-exchange-2026-03-20.md`
-57. `57-torghut-profit-reserves-forecast-calibration-escrow-and-probe-auction-contract-2026-03-20.md`
-58. `58-torghut-profit-cohort-auction-and-freshness-insurance-contract-2026-03-20.md`
-59. `59-torghut-lane-balance-sheet-and-dataset-seat-auction-contract-2026-03-20.md`
+58. `57-torghut-profit-reserves-forecast-calibration-escrow-and-probe-auction-contract-2026-03-20.md`
+59. `58-torghut-profit-cohort-auction-and-freshness-insurance-contract-2026-03-20.md`
+60. `59-torghut-lane-balance-sheet-and-dataset-seat-auction-contract-2026-03-20.md`
+61. `61-torghut-evidence-seats-and-profit-repair-exchange-contract-2026-03-20.md`
 
 ## Recommended Build Order
 

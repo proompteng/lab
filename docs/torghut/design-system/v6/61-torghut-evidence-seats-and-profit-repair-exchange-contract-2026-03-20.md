@@ -44,6 +44,11 @@ The live evidence from `2026-03-20` shows why:
   - returns `ok=true`;
   - confirms head `0025_widen_lean_shadow_parity_status`;
   - also reports migration-fork warnings that need to remain visible in trading contracts.
+- `services/torghut/app/trading/autonomy/lane.py`
+  - still persists `ResearchRun.dataset_snapshot_ref` from `strategy_config_path`;
+  - still persists `VNextDatasetSnapshot.artifact_ref` from run-scoped artifact payloads.
+- `services/torghut/app/trading/autonomy/evidence.py`
+  - still treats continuity largely as row presence across research tables.
 
 The tradeoff is more additive state and stricter capital admission. I am keeping that trade because Torghut is no
 longer failing from lack of any evidence. It is failing from mixing fresh and stale evidence into one coarse answer.
@@ -100,15 +105,24 @@ The current source tree keeps too much trading truth in mutable route-time compo
   - `resolve_quant_health_url()` still falls back from the explicit quant-health URL to generic control-plane or
     market-context URLs;
   - `build_live_submission_gate_payload(...)` still settles one shared gate and one certificate id.
-- `services/torghut/app/trading/hypotheses.py`
-  - computes useful per-hypothesis blocker reasons;
-  - still reduces Jangar truth to coarse dependency quorum payloads.
+- `services/torghut/app/trading/autonomy/lane.py`
+  - still stores dataset truth through mutable local paths and run-scoped artifact refs;
+  - cannot yet guarantee that promotion evidence refers to one immutable dataset object.
+- `services/torghut/app/trading/autonomy/evidence.py`
+  - validates continuity by checking that research rows exist;
+  - does not yet prove that the referenced artifacts, ClickHouse batches, and promotion evidence are immutable and
+    mutually consistent.
 - `services/torghut/app/trading/scheduler/pipeline.py`
   - reuses shared mutable runtime state when building decisions and status surfaces;
   - does not persist seat ids that can be replayed later.
 - `services/torghut/app/main.py`
   - exposes `/readyz`, `/trading/status`, and `/trading/health`;
   - does not project one durable evidence-seat or exchange id across all three surfaces.
+- `services/torghut/app/options_lane/repository.py`
+  - still overwrites watermarks in place on success;
+  - cannot yet preserve why a contract was ranked, skipped, or starved as append-only profitability evidence.
+- `docs/torghut/design-system/v3/full-loop/05-dataset-feature-versioning-spec.md`
+  - already promises a stronger immutable dataset and feature registry than the current source implements.
 
 Architectural test gaps:
 
@@ -116,6 +130,8 @@ Architectural test gaps:
 - no parity test proves `/readyz`, `/trading/status`, and `/trading/health` expose the same seat ids;
 - no regression proves forecast degradation clips only forecast-dependent hypotheses while continuation-style lanes stay
   in bounded probe or shadow states.
+- no regression proves mutable dataset paths are rejected once immutable seats become authoritative;
+- no regression proves options observations are append-only rather than just current-state watermarks.
 
 ### Database, schema, freshness, and consistency evidence
 
@@ -134,7 +150,9 @@ Torghut already has enough persistence to carry richer economic truth.
 Interpretation:
 
 - the system already knows enough to price evidence quality honestly;
-- it does not yet persist that pricing as a contract the runtime and status surfaces can share.
+- it does not yet persist that pricing as a contract the runtime and status surfaces can share;
+- the next architecture move must therefore be content-addressed evidence and append-only settlement, not more route
+  composition.
 
 ## Alternatives considered
 
@@ -204,6 +222,10 @@ Add additive persistence:
   - `seat_kind` (`quant_health`, `market_context`, `forecast`, `simulation`, `empirical_jobs`, `schema_lineage`)
   - `source_ref`
   - `source_url`
+  - `content_hash`
+  - `manifest_ref`
+  - `signal_batch_id`
+  - `schema_signature`
   - `freshness_seconds`
   - `quality_score`
   - `status` (`fresh`, `stale`, `missing`, `degraded`)
@@ -217,6 +239,18 @@ Rules:
 - seats are lane-scoped and hypothesis-scoped, not portfolio-global;
 - the typed quant-health route becomes the only valid source for `quant_health` seats after shadow parity;
 - migration-lineage warnings and stale forecast readiness become explicit seat reasons instead of hidden route details.
+
+Add append-only observation history:
+
+- `trading_options_observation_events`
+  - `observation_event_id`
+  - `contract_symbol`
+  - `event_kind` (`ranked`, `skipped`, `snapshot_succeeded`, `snapshot_failed`, `provider_silent`, `watermark_advanced`)
+  - `payload_json`
+  - `observed_at`
+
+This lets Torghut separate provider silence from control-plane failure and reuse options evidence in the same exchange
+spine as equity lanes.
 
 ### 2. Profit repair exchange
 
@@ -270,6 +304,10 @@ Engineer acceptance gates:
 2. Add parity coverage proving `/readyz`, `/trading/status`, and `/trading/health` expose the same
    `evidence_seat_id` and `profit_repair_exchange_id` values.
 3. Add lane-scoped tests proving forecast `503` failures degrade only forecast-dependent hypotheses.
+4. Add regression coverage proving mutable dataset paths and missing content hashes are rejected once immutable seats
+   are authoritative.
+5. Add append-only repository coverage proving options observations preserve ranking and snapshot history instead of
+   only the latest watermark.
 
 Deployer acceptance gates:
 

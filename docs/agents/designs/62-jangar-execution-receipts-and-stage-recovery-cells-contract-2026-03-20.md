@@ -209,6 +209,7 @@ Rules:
 
 - every execution class is compiled independently;
 - helper-path presence, required secrets, binaries, and mount contracts are part of the receipt;
+- receipts are refreshed by lightweight shadow rehearsals on the promoted revision before rollout widening;
 - receipt ids are stable enough to be cited by routes, launchers, and deploy verification.
 
 ### 2. Stage recovery cells
@@ -268,7 +269,8 @@ Deployer acceptance gates:
 
 Rollout plan:
 
-1. shadow-write receipts and recovery cells while existing reducers remain authoritative;
+1. shadow-write receipts and recovery cells while existing reducers remain authoritative.
+   Rehearse the required execution classes on the promoted revision before widening rollout.
 2. project ids on status routes and deploy verification without enforcing them;
 3. enforce `handoff`, `plan`, `implement`, and `verify` classes first;
 4. enforce serving-class receipts only after shadow parity is stable.
