@@ -111,40 +111,19 @@ describe('torghut quant metrics helpers', () => {
     expect(route.routeFallbackRatio).toBeCloseTo(0.25, 6)
   })
 
-  it('prefers low-memory ta freshness metadata when available', async () => {
-    const queryJson = vi
-      .fn()
-      .mockResolvedValueOnce([{ as_of_ms: 1772834348000 }])
-      .mockResolvedValueOnce([{ as_of: '2026-03-06T21:59:08.000Z' }])
+  it('uses the latest ta_signals row instead of aggregate freshness probes', async () => {
+    const queryJson = vi.fn().mockResolvedValueOnce([{ latest: '2026-03-06T21:59:08.000Z' }])
 
     const freshness = await __private.queryLatestTaSignalFreshness({ queryJson })
 
     expect(freshness).toEqual({
       asOf: '2026-03-06T21:59:08.000Z',
-      source: 'ta_signals.system.parts.partition_scoped_event_ts',
+      source: 'ta_signals.latest_row_event_ts',
     })
-    expect(queryJson).toHaveBeenCalledTimes(2)
-    expect(queryJson.mock.calls[0]?.[0]).toContain('FROM system.parts')
-    expect(queryJson.mock.calls[1]?.[0]).toContain('WHERE event_ts >= {partition_start:DateTime}')
-    expect(queryJson.mock.calls[1]?.[1]).toEqual({
-      partition_start: new Date('2026-03-06T00:00:00.000Z'),
-      partition_end: new Date('2026-03-07T00:00:00.000Z'),
-    })
-  })
-
-  it('falls back to the precise ta_signals aggregate when metadata lookup fails', async () => {
-    const queryJson = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('memory limit exceeded'))
-      .mockResolvedValueOnce([{ as_of: '2026-03-06T21:59:08.000Z' }])
-
-    const freshness = await __private.queryLatestTaSignalFreshness({ queryJson })
-
-    expect(freshness).toEqual({
-      asOf: '2026-03-06T21:59:08.000Z',
-      source: 'ta_signals.event_ts',
-    })
-    expect(queryJson).toHaveBeenCalledTimes(2)
-    expect(queryJson.mock.calls[1]?.[0]).toContain('SELECT max(event_ts) as as_of')
+    expect(queryJson).toHaveBeenCalledTimes(1)
+    expect(queryJson.mock.calls[0]?.[0]).toContain('SELECT event_ts as latest')
+    expect(queryJson.mock.calls[0]?.[0]).toContain('FROM ta_signals')
+    expect(queryJson.mock.calls[0]?.[0]).toContain('ORDER BY event_ts DESC, symbol DESC, seq DESC')
+    expect(queryJson.mock.calls[0]?.[0]).toContain('LIMIT 1')
   })
 })
