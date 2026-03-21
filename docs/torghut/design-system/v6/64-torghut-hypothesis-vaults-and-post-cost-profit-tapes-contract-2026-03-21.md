@@ -13,6 +13,10 @@ Companion doc:
 
 - `docs/agents/designs/65-jangar-recovery-warrants-and-runtime-proof-cells-contract-2026-03-21.md`
 
+Merged program:
+
+- `docs/torghut/design-system/v6/65-torghut-quant-proof-ledger-cutover-program-and-handoff-contract-2026-03-21.md`
+
 Extends:
 
 - `63-torghut-profit-windows-and-evidence-escrow-contract-2026-03-21.md`
