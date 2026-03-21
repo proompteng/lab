@@ -217,11 +217,13 @@ describe('runCodexImplementation', () => {
   let workdir: string
   let remoteDir: string
   let eventPath: string
+  let hulyApiScriptPath: string
 
   beforeEach(async () => {
     workdir = await mkdtemp(join(tmpdir(), 'codex-impl-test-'))
     remoteDir = await mkdtemp(join(tmpdir(), 'codex-impl-remote-'))
     eventPath = join(workdir, 'event.json')
+    hulyApiScriptPath = join(workdir, 'skills', 'huly-api', 'scripts', 'huly-api.py')
     delete process.env.OUTPUT_PATH
     delete process.env.JSON_OUTPUT_PATH
     delete process.env.AGENT_OUTPUT_PATH
@@ -254,6 +256,11 @@ describe('runCodexImplementation', () => {
     process.env.CHANNEL_SCRIPT = ''
     process.env.CODEX_SKIP_PR_CHECK = '1'
     process.env.CODEX_NATS_SOAK_REQUIRED = 'false'
+    process.env.HULY_API_BASE_URL = 'https://huly.example.test'
+    process.env.HULY_API_SCRIPT_PATH = hulyApiScriptPath
+
+    await mkdir(join(workdir, 'skills', 'huly-api', 'scripts'), { recursive: true })
+    await writeFile(hulyApiScriptPath, '#!/usr/bin/env python3\nprint("ok")\n', 'utf8')
 
     const payload = {
       prompt: 'Implementation prompt',
