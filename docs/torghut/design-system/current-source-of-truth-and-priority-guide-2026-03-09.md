@@ -34,9 +34,8 @@ If the question is "what should I trust right now?", start here:
    - `docs/torghut/design-system/v1/historical-dataset-simulation.md`
    - `docs/torghut/design-system/v1/trading-day-simulation-automation.md`
 3. current autonomy/promotion contract source of truth:
-   - `docs/torghut/design-system/v6/65-torghut-quant-proof-ledger-cutover-program-and-handoff-contract-2026-03-21.md`
-   - `docs/agents/designs/65-jangar-recovery-warrants-and-runtime-proof-cells-contract-2026-03-21.md`
-   - `docs/torghut/design-system/v6/64-torghut-hypothesis-vaults-and-post-cost-profit-tapes-contract-2026-03-21.md`
+   - `docs/agents/designs/65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`
+   - `docs/torghut/design-system/v6/64-torghut-profit-window-cutover-and-escrow-enforcement-contract-2026-03-21.md`
    - `docs/agents/designs/64-jangar-recovery-epochs-and-backlog-seats-contract-2026-03-21.md`
    - `docs/agents/designs/64-jangar-recovery-warrants-and-rollout-cohorts-contract-2026-03-21.md`
    - `docs/torghut/design-system/v6/63-torghut-profit-windows-and-evidence-escrow-contract-2026-03-21.md`
@@ -96,42 +95,30 @@ If the question is "what should I trust right now?", start here:
 
 The current highest-priority work is:
 
-Priority override for `2026-03-21`:
-
-- execute the merged proof-ledger cutover program and handoff contract in
-  `docs/torghut/design-system/v6/65-torghut-quant-proof-ledger-cutover-program-and-handoff-contract-2026-03-21.md`;
-- make stale-freeze release and downstream admission depend on `docs/agents/designs/64-jangar-recovery-warrants-and-rollout-cohorts-contract-2026-03-21.md`;
-- move final Torghut profitability authority to regime-scoped opportunity books and evidence-drift warrants in
-  `docs/torghut/design-system/v6/63-torghut-opportunity-books-and-evidence-drift-warrants-contract-2026-03-21.md`.
-
-These join, rather than replace, the numbered March 21 and March 20 contract stack below.
-
-1. execute the merged cross-plane cutover program, validation matrix, and engineer/deployer handoff in
-   `docs/torghut/design-system/v6/65-torghut-quant-proof-ledger-cutover-program-and-handoff-contract-2026-03-21.md`;
-2. bind Jangar rollout and launch authority to sealed recovery warrants, runtime proof cells, and projection watermarks
-   in `docs/agents/designs/65-jangar-recovery-warrants-and-runtime-proof-cells-contract-2026-03-21.md`;
-3. bind Torghut promotion and rollback authority to local mirrors, hypothesis vaults, and settled post-cost profit
-   tapes in `docs/torghut/design-system/v6/64-torghut-hypothesis-vaults-and-post-cost-profit-tapes-contract-2026-03-21.md`;
-4. bind Jangar runnable work to durable recovery epochs and backlog seats so stale runtime debt cannot relaunch after
+1. cut Jangar over to shadow-compiled, sealed recovery epochs and enforce backlog-seat ownership before rollout in
+   `docs/agents/designs/65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`;
+2. cut Torghut over to lane-local profit windows and escrow enforcement with typed quant-route parity in
+   `docs/torghut/design-system/v6/64-torghut-profit-window-cutover-and-escrow-enforcement-contract-2026-03-21.md`;
+3. bind Jangar runnable work to durable recovery epochs and backlog seats so stale runtime debt cannot relaunch after
    cutover in `docs/agents/designs/64-jangar-recovery-epochs-and-backlog-seats-contract-2026-03-21.md`;
-5. bind Torghut lane authority to profit windows funded by explicit evidence escrows in
+4. bind Torghut lane authority to profit windows funded by explicit evidence escrows in
    `docs/torghut/design-system/v6/63-torghut-profit-windows-and-evidence-escrow-contract-2026-03-21.md`;
-6. make Jangar runtime completeness and consumer-facing authority explicit through projections and latency classes in
+5. make Jangar runtime completeness and consumer-facing authority explicit through projections and latency classes in
    `docs/agents/designs/63-jangar-consumer-projections-and-latency-class-admission-contract-2026-03-20.md`;
-7. turn Torghut route-time gates into lane books and bounded query firebreaks in
+6. turn Torghut route-time gates into lane books and bounded query firebreaks in
    `docs/torghut/design-system/v6/62-torghut-lane-books-and-bounded-query-firebreak-contract-2026-03-20.md`;
-8. make Jangar runtime completeness and stale-stage debt explicit through execution receipts and recovery cells in
+7. make Jangar runtime completeness and stale-stage debt explicit through execution receipts and recovery cells in
    `docs/agents/designs/62-jangar-execution-receipts-and-stage-recovery-cells-contract-2026-03-20.md`;
-9. turn Torghut mixed evidence into lane-scoped evidence seats and a bounded profit repair exchange in
+8. turn Torghut mixed evidence into lane-scoped evidence seats and a bounded profit repair exchange in
    `docs/torghut/design-system/v6/61-torghut-evidence-seats-and-profit-repair-exchange-contract-2026-03-20.md`;
-10. make Jangar runtime completeness and consumer-scoped stage admission explicit through runtime kits and admission
-    passports in
-    `docs/agents/designs/61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md`;
-11. turn Torghut lane gating into hypothesis passports and a capability quote auction in
-    `docs/torghut/design-system/v6/60-torghut-hypothesis-passports-and-capability-quote-auction-contract-2026-03-20.md`;
-12. retire stale freeze and rollout debt into a durable recovery ledger with consumer-scoped attestations in
-    `docs/agents/designs/60-jangar-recovery-ledger-and-consumer-attestation-contract-2026-03-20.md`;
-13. replace route-time lane gating with lane balance sheets and dataset-seat auctions in
+9. make Jangar runtime completeness and consumer-scoped stage admission explicit through runtime kits and admission
+   passports in
+   `docs/agents/designs/61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md`;
+10. turn Torghut lane gating into hypothesis passports and a capability quote auction in
+   `docs/torghut/design-system/v6/60-torghut-hypothesis-passports-and-capability-quote-auction-contract-2026-03-20.md`;
+11. retire stale freeze and rollout debt into a durable recovery ledger with consumer-scoped attestations in
+   `docs/agents/designs/60-jangar-recovery-ledger-and-consumer-attestation-contract-2026-03-20.md`;
+12. replace route-time lane gating with lane balance sheets and dataset-seat auctions in
     `docs/torghut/design-system/v6/59-torghut-lane-balance-sheet-and-dataset-seat-auction-contract-2026-03-20.md`;
 14. replace request-time control-plane truth with authority sessions and rollout leases in
     `docs/agents/designs/59-jangar-authority-session-bus-and-rollout-lease-contract-2026-03-20.md`;

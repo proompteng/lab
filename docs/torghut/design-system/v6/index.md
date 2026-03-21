@@ -10,11 +10,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
-  - `65-torghut-quant-proof-ledger-cutover-program-and-handoff-contract-2026-03-21.md`
-  - `65-torghut-opportunity-books-and-source-freshness-warrant-contract-2026-03-21.md`
-  - `docs/agents/designs/66-jangar-recovery-release-lanes-and-rollout-proof-fence-contract-2026-03-21.md`
-  - `64-torghut-hypothesis-vaults-and-post-cost-profit-tapes-contract-2026-03-21.md`
-  - `docs/agents/designs/65-jangar-recovery-warrants-and-runtime-proof-cells-contract-2026-03-21.md`
+  - `64-torghut-profit-window-cutover-and-escrow-enforcement-contract-2026-03-21.md`
+  - `docs/agents/designs/65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`
   - `63-torghut-profit-windows-and-evidence-escrow-contract-2026-03-21.md`
   - `docs/agents/designs/64-jangar-recovery-epochs-and-backlog-seats-contract-2026-03-21.md`
   - `62-torghut-lane-books-and-bounded-query-firebreak-contract-2026-03-20.md`
@@ -44,11 +41,8 @@
 - `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
 - `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
 - Cross-system source of truth:
-  - `65-torghut-quant-proof-ledger-cutover-program-and-handoff-contract-2026-03-21.md`
-  - `docs/agents/designs/66-jangar-recovery-release-lanes-and-rollout-proof-fence-contract-2026-03-21.md`
-  - `65-torghut-opportunity-books-and-source-freshness-warrant-contract-2026-03-21.md`
-  - `docs/agents/designs/65-jangar-recovery-warrants-and-runtime-proof-cells-contract-2026-03-21.md`
-  - `64-torghut-hypothesis-vaults-and-post-cost-profit-tapes-contract-2026-03-21.md`
+  - `docs/agents/designs/65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`
+  - `64-torghut-profit-window-cutover-and-escrow-enforcement-contract-2026-03-21.md`
   - `docs/agents/designs/64-jangar-recovery-epochs-and-backlog-seats-contract-2026-03-21.md`
   - `63-torghut-profit-windows-and-evidence-escrow-contract-2026-03-21.md`
   - `docs/agents/designs/63-jangar-consumer-projections-and-latency-class-admission-contract-2026-03-20.md`
@@ -171,24 +165,15 @@ Current source-state priority is narrower:
 - `63-torghut-profit-windows-and-evidence-escrow-contract-2026-03-21.md` now takes the next step: lane authority is
   bound to explicit windows and funded escrows so stale-but-truthful evidence, schema warnings, and query-cost debt do
   not collapse the whole portfolio into one route-time answer.
-- `65-torghut-quant-proof-ledger-cutover-program-and-handoff-contract-2026-03-21.md` now makes the current March 21
-  architecture stack operational as one cross-plane program: Jangar rollout proof and Torghut profit authority now
-  share one cutover order, one validation matrix, and one engineer/deployer handoff contract.
+- `64-torghut-profit-window-cutover-and-escrow-enforcement-contract-2026-03-21.md` now defines the next plan-stage
+  move: lane windows stay the authority model, but cutover is phased through typed quant-route parity, session-aware
+  escrow semantics, and lane-by-lane enforcement instead of one portfolio-wide switch.
 - `docs/agents/designs/64-jangar-recovery-epochs-and-backlog-seats-contract-2026-03-21.md` now turns the remaining
   control-plane gap into a concrete rollout contract: serving, stage dispatch, and deploy verification must agree on
   one active recovery epoch, and queued work bound to retired epochs must be superseded before launch.
-- `65-torghut-opportunity-books-and-source-freshness-warrant-contract-2026-03-21.md` now takes the plan-stage step
-  beyond profit windows: Torghut prices source freshness, simulation debt, and retrieval-cost debt explicitly through
-  warrants and serves profitability from materialized opportunity books instead of heavyweight route-time reducers.
-- `docs/agents/designs/66-jangar-recovery-release-lanes-and-rollout-proof-fence-contract-2026-03-21.md` now turns
-  recovery epochs into a rollout-safe release system: backlog launch and rollout widening must both cite sealed
-  release lanes and passing proof fences before new work or new traffic is allowed.
-- `64-torghut-hypothesis-vaults-and-post-cost-profit-tapes-contract-2026-03-21.md` now turns those funded windows into
-  settled economic authority: each lane/account pair carries a vault, each closed window settles into a post-cost tape,
-  and Torghut consumes local authority mirrors instead of live remote fetches on the hot path.
-- `docs/agents/designs/65-jangar-recovery-warrants-and-runtime-proof-cells-contract-2026-03-21.md` now turns rollout
-  health into stronger proof: every launch-capable execution class needs a sealed warrant, required runtime proof cells,
-  and fresh projection watermarks before Jangar may advertise safe authority or widen rollout.
+- `docs/agents/designs/65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md` now
+  turns that design into the current implementation plan: shadow compile first, then seal and reseat, then make
+  dispatch and rollout fail closed on retired or unsealed backlog truth.
 - `docs/agents/designs/56-jangar-capability-receipts-and-consumer-binding-contract-2026-03-20.md` now defines the
   next control-plane step: typed capability receipts plus explicit binding sets that force `/ready`, deploy
   verification, and Torghut consumers to share the same receipt digest and freshness contract.
