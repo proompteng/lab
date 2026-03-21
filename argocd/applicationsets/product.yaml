@@ -265,6 +265,12 @@ spec:
                   - group: serving.knative.dev
                     kind: Service
                     namespace: torghut
+                    name: torghut
+                    jsonPointers:
+                      - /spec/template/spec/containers/0/env/170/value
+                  - group: serving.knative.dev
+                    kind: Service
+                    namespace: torghut
                     name: torghut-sim
                     jsonPointers:
                       - /spec/template/spec/containers/0/env
