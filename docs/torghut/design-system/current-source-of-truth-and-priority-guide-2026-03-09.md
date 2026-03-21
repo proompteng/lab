@@ -35,7 +35,9 @@ If the question is "what should I trust right now?", start here:
    - `docs/torghut/design-system/v1/trading-day-simulation-automation.md`
 3. current autonomy/promotion contract source of truth:
    - `docs/agents/designs/64-jangar-recovery-epochs-and-backlog-seats-contract-2026-03-21.md`
+   - `docs/agents/designs/64-jangar-recovery-warrants-and-rollout-cohorts-contract-2026-03-21.md`
    - `docs/torghut/design-system/v6/63-torghut-profit-windows-and-evidence-escrow-contract-2026-03-21.md`
+   - `docs/torghut/design-system/v6/63-torghut-opportunity-books-and-evidence-drift-warrants-contract-2026-03-21.md`
    - `docs/agents/designs/63-jangar-consumer-projections-and-latency-class-admission-contract-2026-03-20.md`
    - `docs/torghut/design-system/v6/62-torghut-lane-books-and-bounded-query-firebreak-contract-2026-03-20.md`
    - `docs/agents/designs/62-jangar-execution-receipts-and-stage-recovery-cells-contract-2026-03-20.md`
@@ -90,6 +92,14 @@ If the question is "what should I trust right now?", start here:
 ## Current priority, not historical priority
 
 The current highest-priority work is:
+
+Priority override for `2026-03-21`:
+
+- make stale-freeze release and downstream admission depend on `docs/agents/designs/64-jangar-recovery-warrants-and-rollout-cohorts-contract-2026-03-21.md`;
+- move final Torghut profitability authority to regime-scoped opportunity books and evidence-drift warrants in
+  `docs/torghut/design-system/v6/63-torghut-opportunity-books-and-evidence-drift-warrants-contract-2026-03-21.md`.
+
+These join, rather than replace, the numbered March 21 and March 20 contract stack below.
 
 1. bind Jangar runnable work to durable recovery epochs and backlog seats so stale runtime debt cannot relaunch after
    cutover in `docs/agents/designs/64-jangar-recovery-epochs-and-backlog-seats-contract-2026-03-21.md`;
@@ -224,6 +234,10 @@ the current contract docs above.
 
 These are still active contract docs rather than historical snapshots:
 
+- `docs/agents/designs/64-jangar-recovery-epochs-and-backlog-seats-contract-2026-03-21.md`
+- `docs/agents/designs/64-jangar-recovery-warrants-and-rollout-cohorts-contract-2026-03-21.md`
+- `docs/torghut/design-system/v6/63-torghut-profit-windows-and-evidence-escrow-contract-2026-03-21.md`
+- `docs/torghut/design-system/v6/63-torghut-opportunity-books-and-evidence-drift-warrants-contract-2026-03-21.md`
 - `docs/torghut/design-system/v1/historical-dataset-simulation.md`
 - `docs/torghut/design-system/v1/trading-day-simulation-automation.md`
 - `docs/agents/designs/62-jangar-execution-receipts-and-stage-recovery-cells-contract-2026-03-20.md`
