@@ -149,16 +149,42 @@ const hulyApiMocks = vi.hoisted(() => ({
       missionId: string
       stage?: string
       status?: string
+      channelMessage?: {
+        messageId?: string
+      }
       issue?: {
+        issueId?: string
         issueIdentifier?: string
+        issueTitle?: string
+        issueNumber?: number
+        projectId?: string
+        projectIdentifier?: string
+      }
+      document?: {
+        documentId?: string
+        documentTitle?: string
+        teamspaceId?: string
       }
     }>
   >(async ({ missionId, stage, status, channel }) => ({
     missionId,
     stage,
     status,
+    channelMessage: {
+      messageId: `mission-msg-${missionId.slice(0, 8)}`,
+    },
     issue: {
+      issueId: `issue-${missionId.slice(0, 8)}`,
       issueIdentifier: `MISSION-${missionId.slice(0, 8)}-${channel.includes('TORGHUT') ? 'OK' : 'GEN'}`,
+      issueTitle: 'Mission Issue',
+      issueNumber: 42,
+      projectId: 'project-default',
+      projectIdentifier: 'DefaultProject',
+    },
+    document: {
+      documentId: `doc-${missionId.slice(0, 8)}`,
+      documentTitle: 'Mission Document',
+      teamspaceId: 'PROOMPTENG',
     },
   })),
 }))
@@ -310,8 +336,21 @@ describe('runCodexImplementation', () => {
       missionId,
       stage,
       status,
+      channelMessage: {
+        messageId: `mission-msg-${missionId.slice(0, 8)}`,
+      },
       issue: {
+        issueId: `issue-${missionId.slice(0, 8)}`,
         issueIdentifier: `MISSION-${missionId.slice(0, 8)}-${channel.includes('TORGHUT') ? 'OK' : 'GEN'}`,
+        issueTitle: 'Mission Issue',
+        issueNumber: 42,
+        projectId: 'project-default',
+        projectIdentifier: 'DefaultProject',
+      },
+      document: {
+        documentId: `doc-${missionId.slice(0, 8)}`,
+        documentTitle: 'Mission Document',
+        teamspaceId: 'PROOMPTENG',
       },
     }))
     pushCodexEventsToLokiMock.mockReset()
@@ -905,16 +944,24 @@ describe('runCodexImplementation', () => {
       hulyArtifacts?: {
         latestPeerMessageId?: string
         replyMessageId?: string
+        ownerMessageId?: string
+        missionMessageId?: string
         missionId?: string
         missionStatus?: string
+        missionIssueId?: string
+        missionDocumentId?: string
         ownerUpdateMessage?: string
         releaseNote?: string
       }
     }
     expect(notify.hulyArtifacts?.latestPeerMessageId).toBe('msg-latest')
     expect(notify.hulyArtifacts?.replyMessageId).toBeDefined()
+    expect(notify.hulyArtifacts?.ownerMessageId).toBeDefined()
+    expect(notify.hulyArtifacts?.missionMessageId).toBe('mission-msg-00gc1i45')
     expect(notify.hulyArtifacts?.missionId).toBe('00gc1i45')
     expect(notify.hulyArtifacts?.missionStatus).toBe('completed')
+    expect(notify.hulyArtifacts?.missionIssueId).toBe('issue-00gc1i45')
+    expect(notify.hulyArtifacts?.missionDocumentId).toBe('doc-00gc1i45')
     expect(notify.hulyArtifacts?.ownerUpdateMessage).toContain('Update on owner/repo#42: implementation is completed.')
     expect(notify.hulyArtifacts?.releaseNote).toContain('Rollback path:')
     expect(notify.hulyArtifacts?.releaseNote).toContain('Owner-facing status: merge-ready')
@@ -980,11 +1027,21 @@ describe('runCodexImplementation', () => {
       hulyArtifacts?: {
         ownerUpdateMessage?: string
         releaseNote?: string
+        missionIssueId?: string
+        missionIssueTitle?: string
+        missionProjectIdentifier?: string
+        missionDocumentId?: string
+        missionDocumentTitle?: string
       }
     }
     expect(notify.hulyArtifacts?.ownerUpdateMessage).toContain(
       'Acceptance criteria: create issue/chat/doc artifacts; complete handoff.',
     )
+    expect(notify.hulyArtifacts?.missionIssueId).toBe('issue-00gc1i45')
+    expect(notify.hulyArtifacts?.missionIssueTitle).toBe('Mission Issue')
+    expect(notify.hulyArtifacts?.missionProjectIdentifier).toBe('DefaultProject')
+    expect(notify.hulyArtifacts?.missionDocumentId).toBe('doc-00gc1i45')
+    expect(notify.hulyArtifacts?.missionDocumentTitle).toBe('Mission Document')
     expect(notify.hulyArtifacts?.releaseNote).toContain(
       'Requirement provenance: ID 00gc1i45, signal torghut-to-jangar-e2e-1772433239, source torghut-quant, target jangar-control-plane.',
     )

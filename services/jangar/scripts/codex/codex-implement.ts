@@ -174,10 +174,19 @@ type HulyArtifactsForNotify = {
   latestPeerMessageId?: string
   replyMessageId?: string
   ownerMessageId?: string
+  missionMessageId?: string
   missionId?: string
   missionStatus?: string
   missionStage?: string
   missionIssue?: string
+  missionIssueId?: string
+  missionIssueTitle?: string
+  missionIssueNumber?: number
+  missionProjectId?: string
+  missionProjectIdentifier?: string
+  missionDocumentId?: string
+  missionDocumentTitle?: string
+  missionDocumentTeamspaceId?: string
   ownerUpdateMessage?: string
   releaseNote?: string
   prelaunchFailure?: HulyRequirementArtifacts['prelaunchFailure']
@@ -648,10 +657,19 @@ const collectHulyArtifactsForNotify = (artifacts?: HulyRequirementArtifacts): Hu
     latestPeerMessageId: artifacts.latestPeerMessageId,
     replyMessageId: artifacts.replyMessage?.messageId,
     ownerMessageId: artifacts.ownerMessage?.messageId,
+    missionMessageId: artifacts.mission?.channelMessage?.messageId,
     missionId: artifacts.mission?.missionId,
     missionStatus: artifacts.mission?.status,
     missionStage: artifacts.mission?.stage,
     missionIssue: artifacts.mission?.issue?.issueIdentifier,
+    missionIssueId: artifacts.mission?.issue?.issueId,
+    missionIssueTitle: artifacts.mission?.issue?.issueTitle,
+    missionIssueNumber: artifacts.mission?.issue?.issueNumber,
+    missionProjectId: artifacts.mission?.issue?.projectId,
+    missionProjectIdentifier: artifacts.mission?.issue?.projectIdentifier,
+    missionDocumentId: artifacts.mission?.document?.documentId,
+    missionDocumentTitle: artifacts.mission?.document?.documentTitle,
+    missionDocumentTeamspaceId: artifacts.mission?.document?.teamspaceId,
     ownerUpdateMessage: artifacts.ownerUpdateMessage,
     releaseNote: artifacts.releaseNote,
     prelaunchFailure: artifacts.prelaunchFailure,
@@ -814,6 +832,12 @@ const buildHulyArtifactsFromRun = async ({
         expectedActorEnvKey: workerContext.expectedActorEnvKey,
         requireExpectedActorId: true,
       })
+      logger.info('Huly post-channel-message completed', {
+        channel: activeChannel,
+        purpose: 'thread-reply',
+        messageId: normalizeNullableStringValue(artifacts.replyMessage.messageId),
+        replyToMessageId: latestPeerMessageId,
+      })
     } catch (error) {
       logger.warn('Failed to post Huly reply message for requirement handoff', error)
       throw error
@@ -829,6 +853,11 @@ const buildHulyArtifactsFromRun = async ({
       tokenEnvKey: workerContext.tokenEnvKey,
       expectedActorEnvKey: workerContext.expectedActorEnvKey,
       requireExpectedActorId: true,
+    })
+    logger.info('Huly post-channel-message completed', {
+      channel: activeChannel,
+      purpose: 'owner-update',
+      messageId: normalizeNullableStringValue(artifacts.ownerMessage.messageId),
     })
   } catch (error) {
     logger.warn('Failed to post Huly owner update for requirement handoff', error)
@@ -851,6 +880,16 @@ const buildHulyArtifactsFromRun = async ({
       tokenEnvKey: workerContext.tokenEnvKey,
       expectedActorEnvKey: workerContext.expectedActorEnvKey,
       requireExpectedActorId: true,
+    })
+    logger.info('Huly upsert-mission completed', {
+      channel: activeChannel,
+      missionId: artifacts.mission.missionId,
+      stage: artifacts.mission.stage,
+      status: artifacts.mission.status,
+      messageId: normalizeNullableStringValue(artifacts.mission.channelMessage?.messageId),
+      issueId: normalizeNullableStringValue(artifacts.mission.issue?.issueId),
+      issueIdentifier: normalizeNullableStringValue(artifacts.mission.issue?.issueIdentifier),
+      documentId: normalizeNullableStringValue(artifacts.mission.document?.documentId),
     })
   } catch (error) {
     logger.warn('Failed to upsert Huly mission for requirement handoff', error)

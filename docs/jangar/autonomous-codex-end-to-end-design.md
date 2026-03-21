@@ -262,6 +262,9 @@ Minimum fields required to attach enrichment:
   "hulyArtifacts": {
     "channel": "huly://virtual-workers/channels/general",
     "missionId": "00gc1i45",
+    "missionMessageId": "msg-abc123",
+    "missionIssueId": "tracker:issue:abc123",
+    "missionDocumentId": "document:abc123",
     "ownerUpdateMessage": "Update on proompteng/lab#1234: implementation is completed. ...",
     "releaseNote": "Design document: docs/agents/designs/autonomous-jangar-torghut-production-system.md | docs/agents/swarm-end-to-end-runbook.md.\nWhat shipped: ..."
   }
