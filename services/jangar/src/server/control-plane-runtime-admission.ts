@@ -63,6 +63,13 @@ const resolveWorktree = (value?: string) => {
 
 const normalizeCandidate = (value: string | undefined | null) => value?.trim() ?? ''
 
+const resolveHulyBaseUrl = (configuredValue?: string) =>
+  configuredValue?.trim() ||
+  process.env.HULY_API_BASE_URL?.trim() ||
+  process.env.HULY_BASE_URL?.trim() ||
+  process.env.hulyApiBaseUrl?.trim() ||
+  ''
+
 export const resolveHulyApiScriptPathCandidates = ({
   worktree,
   configuredPath,
@@ -388,8 +395,7 @@ export const buildRuntimeAdmissionSnapshot = (input: RuntimeAdmissionInput = {})
   const pythonRef =
     input.pythonBin?.trim() || process.env.PYTHON_BIN?.trim() || process.env.PYTHON?.trim() || DEFAULT_PYTHON_BIN
   const resolvedPythonPath = resolveCommandCandidate(pythonRef)
-  const hulyApiBaseUrl =
-    input.hulyApiBaseUrl?.trim() || process.env.HULY_API_BASE_URL?.trim() || process.env.hulyApiBaseUrl?.trim() || ''
+  const hulyApiBaseUrl = resolveHulyBaseUrl(input.hulyApiBaseUrl)
   const hulyApiCandidates = resolveHulyApiScriptPathCandidates({
     worktree,
     configuredPath: input.hulyApiScriptPath?.trim() || process.env.HULY_API_SCRIPT_PATH?.trim(),
@@ -444,7 +450,7 @@ export const buildRuntimeAdmissionSnapshot = (input: RuntimeAdmissionInput = {})
       }),
       buildConfigComponent({
         componentKind: 'service_url',
-        componentRef: 'HULY_API_BASE_URL',
+        componentRef: 'HULY_API_BASE_URL|HULY_BASE_URL',
         required: true,
         value: hulyApiBaseUrl,
         reasonCode: 'runtime_kit_component_missing:huly_api_base_url',
