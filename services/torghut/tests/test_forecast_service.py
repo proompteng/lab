@@ -85,7 +85,7 @@ class TestForecastService(TestCase):
         self.assertTrue(payload["promotion_authority_eligible"])
         self.assertTrue(payload["artifact_authority"]["authoritative"])
 
-    def test_readyz_fails_closed_when_registry_has_only_stale_calibration(self) -> None:
+    def test_readyz_keeps_service_routable_when_registry_has_only_stale_calibration(self) -> None:
         with TemporaryDirectory() as tmpdir:
             manifest_path = f"{tmpdir}/registry.json"
             with open(manifest_path, "w", encoding="utf-8") as handle:
@@ -115,9 +115,12 @@ class TestForecastService(TestCase):
             client = TestClient(forecast_service.app)
             response = client.get("/readyz")
 
-        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["authority_status"], "degraded")
+        self.assertEqual(payload["authority_reason"], "calibration_stale")
 
-    def test_readyz_honors_as_of_for_replay_freshness(self) -> None:
+    def test_calibration_report_honors_as_of_for_replay_freshness(self) -> None:
         with TemporaryDirectory() as tmpdir:
             manifest_path = f"{tmpdir}/registry.json"
             with open(manifest_path, "w", encoding="utf-8") as handle:
@@ -145,11 +148,17 @@ class TestForecastService(TestCase):
             settings.trading_forecast_calibration_stale_after_seconds = 60
 
             client = TestClient(forecast_service.app)
-            stale_response = client.get("/readyz")
-            replay_response = client.get("/readyz?asOf=2026-03-06T00:00:30Z")
+            stale_response = client.post("/v1/calibration/report")
+            replay_response = client.post(
+                "/v1/calibration/report?asOf=2026-03-06T00:00:30Z"
+            )
 
-        self.assertEqual(stale_response.status_code, 503)
+        self.assertEqual(stale_response.status_code, 200)
         self.assertEqual(replay_response.status_code, 200)
+        self.assertFalse(stale_response.json()["promotion_authority_eligible"])
+        self.assertEqual(stale_response.json()["authority_status"], "degraded")
+        self.assertTrue(replay_response.json()["promotion_authority_eligible"])
+        self.assertEqual(replay_response.json()["authority_status"], "empirical")
 
     def test_forecast_rejects_future_calibration_for_replay_reference(self) -> None:
         with TemporaryDirectory() as tmpdir:

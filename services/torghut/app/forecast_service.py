@@ -147,12 +147,19 @@ class RegistrySnapshot:
     def readiness(self, *, reference_time: datetime | None = None) -> tuple[bool, str]:
         if not self.models:
             return False, "registry_empty"
-        if not any(
+        return True, "ready"
+
+    def authority_status(
+        self, *, reference_time: datetime | None = None
+    ) -> tuple[str, str]:
+        if not self.models:
+            return "blocked", "registry_empty"
+        if any(
             entry.promotion_authority_eligible(reference_time=reference_time)
             for entry in self.models.values()
         ):
-            return False, "calibration_stale"
-        return True, "ready"
+            return "empirical", "ready"
+        return "degraded", "calibration_stale"
 
 
 class ForecastRegistry:
@@ -400,11 +407,61 @@ def _forecast_payload(request: ForecastRequest, entry: RegistryModelEntry) -> di
     }
 
 
+def _freshness_seconds(
+    *, updated_at: datetime | None, reference_time: datetime | None = None
+) -> int | None:
+    if updated_at is None:
+        return None
+    effective_time = (
+        reference_time.astimezone(timezone.utc)
+        if reference_time is not None
+        else _utc_now()
+    )
+    age = effective_time - updated_at
+    if age < timedelta(0):
+        return 0
+    return int(age.total_seconds())
+
+
+def _next_stale_at(
+    *, updated_at: datetime | None, stale_after_seconds: int
+) -> str | None:
+    if updated_at is None:
+        return None
+    return (
+        updated_at + timedelta(seconds=max(stale_after_seconds, 1))
+    ).astimezone(timezone.utc).isoformat()
+
+
 def _calibration_report(
     snapshot: RegistrySnapshot, *, reference_time: datetime | None = None
 ) -> dict[str, Any]:
+    stale_after_seconds = max(
+        settings.trading_forecast_calibration_stale_after_seconds, 1
+    )
     models: list[dict[str, Any]] = []
+    freshness_values: list[int] = []
+    next_stale_values: list[str] = []
+    promotion_authority_eligible = False
     for entry in snapshot.models.values():
+        freshness_seconds = _freshness_seconds(
+            updated_at=entry.calibration_updated_at,
+            reference_time=reference_time,
+        )
+        next_stale_at = _next_stale_at(
+            updated_at=entry.calibration_updated_at,
+            stale_after_seconds=stale_after_seconds,
+        )
+        model_eligible = entry.promotion_authority_eligible(
+            reference_time=reference_time
+        )
+        if freshness_seconds is not None:
+            freshness_values.append(freshness_seconds)
+        if next_stale_at is not None:
+            next_stale_values.append(next_stale_at)
+        promotion_authority_eligible = (
+            promotion_authority_eligible or model_eligible
+        )
         models.append(
             {
                 "model_family": entry.model_family,
@@ -414,18 +471,28 @@ def _calibration_report(
                 "calibration_updated_at": entry.calibration_updated_at.isoformat()
                 if entry.calibration_updated_at is not None
                 else None,
-                "promotion_authority_eligible": entry.promotion_authority_eligible(
-                    reference_time=reference_time
-                ),
+                "promotion_authority_eligible": model_eligible,
+                "freshness_seconds": freshness_seconds,
+                "stale_after_seconds": stale_after_seconds,
+                "next_stale_at": next_stale_at,
             }
         )
     ready, reason = snapshot.readiness(reference_time=reference_time)
+    authority_status, authority_reason = snapshot.authority_status(
+        reference_time=reference_time
+    )
     return {
         "schema_version": "torghut-forecast-calibration-report.v1",
         "registry_ref": snapshot.registry_ref,
         "generated_at": (reference_time or _utc_now()).astimezone(timezone.utc).isoformat(),
         "status": "ready" if ready else "degraded",
         "reason": reason,
+        "authority_status": authority_status,
+        "authority_reason": authority_reason,
+        "promotion_authority_eligible": promotion_authority_eligible,
+        "freshness_seconds": min(freshness_values) if freshness_values else None,
+        "stale_after_seconds": stale_after_seconds,
+        "next_stale_at": min(next_stale_values) if next_stale_values else None,
         "models": models,
     }
 
@@ -440,6 +507,9 @@ def readyz(asOf: str | None = None) -> dict[str, Any]:
     snapshot = _registry.snapshot()
     reference_time = _parse_datetime(asOf)
     ready, reason = snapshot.readiness(reference_time=reference_time)
+    authority_status, authority_reason = snapshot.authority_status(
+        reference_time=reference_time
+    )
     if not ready:
         raise HTTPException(
             status_code=503,
@@ -447,12 +517,16 @@ def readyz(asOf: str | None = None) -> dict[str, Any]:
                 "status": "degraded",
                 "service": "torghut-forecast",
                 "reason": reason,
+                "authority_status": authority_status,
+                "authority_reason": authority_reason,
                 "registry_ref": snapshot.registry_ref,
             },
         )
     return {
         "status": "ok",
         "service": "torghut-forecast",
+        "authority_status": authority_status,
+        "authority_reason": authority_reason,
         "registry_ref": snapshot.registry_ref,
     }
 

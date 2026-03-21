@@ -177,6 +177,7 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertTrue(settings.trading_forecast_service_require_healthy)
         self.assertEqual(settings.trading_empirical_job_stale_after_seconds, 86400)
+        self.assertEqual(settings.trading_empirical_job_warn_after_seconds, 43200)
         self.assertEqual(
             settings.trading_forecast_service_allowed_model_families,
             {"chronos", "moment", "financial_tsfm"},

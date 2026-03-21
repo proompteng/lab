@@ -21,7 +21,7 @@ from inngest.fast_api import serve as inngest_fastapi_serve
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .alpaca_client import TorghutAlpacaClient
 from .config import settings
@@ -626,6 +626,8 @@ def _evaluate_trading_health_payload(
         else {}
     )
     empirical_jobs = _empirical_jobs_status()
+    forecast_service = _forecast_service_status()
+    quant_evidence = _quant_evidence_status()
     live_submission_gate = _build_live_submission_gate_payload(
         scheduler.state,
         hypothesis_summary=hypothesis_summary,
@@ -641,6 +643,13 @@ def _evaluate_trading_health_payload(
             else "not_required_in_non_live_mode"
         ),
         "authority": empirical_jobs.get("authority"),
+    }
+    dependencies["forecast_service"] = {
+        "ok": bool(forecast_service.get("serving_ok", False)),
+        "detail": str(forecast_service.get("message") or "unknown"),
+        "authority": forecast_service.get("authority_status"),
+        "calibration_status": forecast_service.get("calibration_status"),
+        "next_stale_at": forecast_service.get("next_stale_at"),
     }
     dependencies["dspy_runtime"] = {
         "ok": bool(dspy_runtime.get("live_ready", False))
@@ -665,6 +674,30 @@ def _evaluate_trading_health_payload(
         "detail": str(live_submission_gate.get("reason") or "unknown"),
         "capital_stage": live_submission_gate.get("capital_stage"),
     }
+    dependencies["quant_evidence"] = {
+        "ok": bool(quant_evidence.get("ok", False)) if live_mode else True,
+        "detail": str(quant_evidence.get("reason") or quant_evidence.get("status") or "unknown"),
+        "required": quant_evidence.get("required"),
+        "window": quant_evidence.get("window"),
+    }
+    decision_runtime_reasons: list[str] = []
+    for dependency_name in ("postgres", "clickhouse", "alpaca", "universe", "forecast_service"):
+        dependency_payload = cast(
+            Mapping[str, object],
+            dependencies.get(dependency_name, {}),
+        )
+        if not bool(dependency_payload.get("ok", False)):
+            decision_runtime_reasons.append(f"{dependency_name}_degraded")
+    decision_runtime_ok = scheduler_ok and not decision_runtime_reasons
+    decision_runtime = {
+        "ok": decision_runtime_ok,
+        "status": "healthy" if decision_runtime_ok else "degraded",
+        "message": "ok" if decision_runtime_ok else ", ".join(decision_runtime_reasons),
+        "reasons": decision_runtime_reasons,
+        "forecast_fallback_mode": settings.trading_forecast_service_fail_mode,
+        "forecast_authority_status": forecast_service.get("authority_status"),
+        "live_submission_gated": not bool(live_submission_gate.get("allowed", False)),
+    }
     dependency_statuses = [
         cast(dict[str, object], checks).get("ok", True)
         for name, checks in dependencies.items()
@@ -681,6 +714,9 @@ def _evaluate_trading_health_payload(
             "scheduler": scheduler_payload,
             "dependencies": dependencies,
             "alpha_readiness": alpha_readiness,
+            "decision_runtime": decision_runtime,
+            "forecast_authority": forecast_service,
+            "quant_evidence": quant_evidence,
             "live_submission_gate": live_submission_gate,
         },
         status_code,
@@ -2232,19 +2268,6 @@ def trading_runtime_profitability(
 
     window_end = datetime.now(timezone.utc)
     window_start = window_end - timedelta(hours=RUNTIME_PROFITABILITY_LOOKBACK_HOURS)
-    decisions, decision_total = _load_runtime_profitability_decisions(
-        session, window_start
-    )
-    executions, execution_total, fallback_reason_totals = (
-        _load_runtime_profitability_executions(session, window_start)
-    )
-    realized_pnl_summary = _load_runtime_profitability_realized_pnl_summary(
-        session, window_start
-    )
-    gate_rollback_attribution = _load_runtime_profitability_gate_rollback_attribution(
-        scheduler.state
-    )
-
     caveats = [
         {
             "code": "evidence_only_no_profitability_certainty",
@@ -2259,6 +2282,53 @@ def trading_runtime_profitability(
             ),
         },
     ]
+    warnings: list[dict[str, str]] = []
+    decisions: list[dict[str, object]] = []
+    decision_total = 0
+    executions: list[dict[str, object]] = []
+    execution_total = 0
+    fallback_reason_totals: dict[str, int] = {}
+    realized_pnl_summary: dict[str, object] = {
+        "tca_sample_count": 0,
+        "realized_pnl_proxy_notional": "0",
+        "shortfall_notional_total": "0",
+        "avg_realized_shortfall_bps": None,
+        "adverse_excursion_proxy_bps_p95": None,
+        "adverse_excursion_proxy_bps_max": None,
+        "by_symbol": [],
+    }
+    gate_rollback_attribution: dict[str, object] = {}
+    operator_surface_status = "ok"
+    try:
+        decisions, decision_total = _load_runtime_profitability_decisions(
+            session, window_start
+        )
+        executions, execution_total, fallback_reason_totals = (
+            _load_runtime_profitability_executions(session, window_start)
+        )
+        realized_pnl_summary = _load_runtime_profitability_realized_pnl_summary(
+            session, window_start
+        )
+        gate_rollback_attribution = _load_runtime_profitability_gate_rollback_attribution(
+            scheduler.state
+        )
+    except Exception as exc:  # pragma: no cover - operator hardening
+        operator_surface_status = "degraded"
+        logger.exception("Runtime profitability endpoint degraded")
+        warnings.append(
+            {
+                "code": "runtime_profitability_partial_failure",
+                "message": str(exc),
+            }
+        )
+        caveats.append(
+            {
+                "code": "runtime_profitability_partial_failure",
+                "message": (
+                    "One or more runtime profitability inputs failed to load; response contains bounded fallback values."
+                ),
+            }
+        )
     tca_samples = _safe_int(realized_pnl_summary.get("tca_sample_count", 0))
     if decision_total == 0 and execution_total == 0 and tca_samples == 0:
         caveats.append(
@@ -2289,6 +2359,8 @@ def trading_runtime_profitability(
         },
         "realized_pnl_summary": realized_pnl_summary,
         "gate_rollback_attribution": gate_rollback_attribution,
+        "operator_surface_status": operator_surface_status,
+        "warnings": warnings,
         "caveats": caveats,
     }
     return JSONResponse(status_code=200, content=jsonable_encoder(payload))
@@ -2667,6 +2739,174 @@ def _http_json_request(
     return {"ok": True, "payload": cast(dict[str, object], payload)}
 
 
+def _augment_url_query(url: str, params: Mapping[str, str | None]) -> str:
+    parsed = urlsplit(url)
+    query_pairs = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    for key, value in params.items():
+        if value is None:
+            continue
+        normalized = str(value).strip()
+        if not normalized or key in query_pairs:
+            continue
+        query_pairs[key] = normalized
+    return urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            urlencode(query_pairs),
+            parsed.fragment,
+        )
+    )
+
+
+def _control_plane_status_request() -> dict[str, object]:
+    endpoint = (settings.trading_jangar_control_plane_status_url or "").strip()
+    if not endpoint:
+        return {
+            "ok": False,
+            "endpoint": None,
+            "detail": "jangar_control_plane_status_url_missing",
+        }
+    account_label = (settings.trading_account_label or "").strip()
+    window = f"{max(1, int(settings.trading_autonomy_signal_lookback_minutes))}m"
+    requested_url = _augment_url_query(
+        endpoint,
+        {
+            "account": account_label or None,
+            "window": window,
+        },
+    )
+    response = _http_json_request(
+        url=requested_url,
+        timeout_seconds=max(settings.trading_jangar_control_plane_cache_ttl_seconds, 1),
+    )
+    return {
+        **response,
+        "endpoint": requested_url,
+        "account": account_label or None,
+        "window": window,
+    }
+
+
+def _fallback_quant_health_url() -> str | None:
+    base_url = (os.getenv("JANGAR_BASE_URL", "") or "").strip().rstrip("/")
+    if not base_url:
+        return None
+    account_label = (settings.trading_account_label or "").strip()
+    window = f"{max(1, int(settings.trading_autonomy_signal_lookback_minutes))}m"
+    return (
+        f"{base_url}/api/torghut/trading/control-plane/quant/health"
+        f"?{urlencode({'account': account_label, 'window': window})}"
+    )
+
+
+def _quant_evidence_status() -> dict[str, object]:
+    live_required = settings.trading_mode == "live"
+    control_plane = _control_plane_status_request()
+    endpoint = cast(str | None, control_plane.get("endpoint"))
+    payload = (
+        cast(dict[str, object], control_plane.get("payload"))
+        if control_plane.get("ok") and isinstance(control_plane.get("payload"), dict)
+        else {}
+    )
+    quant_payload = (
+        cast(dict[str, object], payload.get("quant_evidence"))
+        if isinstance(payload.get("quant_evidence"), dict)
+        else {}
+    )
+
+    if not quant_payload:
+        fallback_url = _fallback_quant_health_url()
+        if fallback_url:
+            fallback = _http_json_request(
+                url=fallback_url,
+                timeout_seconds=max(settings.trading_jangar_control_plane_cache_ttl_seconds, 1),
+            )
+            endpoint = fallback_url
+            if fallback.get("ok") and isinstance(fallback.get("payload"), dict):
+                quant_payload = cast(dict[str, object], fallback.get("payload"))
+            elif not control_plane.get("ok"):
+                control_plane = fallback
+
+    if not quant_payload:
+        detail = str(control_plane.get("detail") or "quant_health_payload_missing")
+        return {
+            "required": live_required,
+            "ok": False,
+            "status": "unknown",
+            "reason": "quant_health_fetch_failed",
+            "blocking_reasons": ["quant_health_fetch_failed"],
+            "account": control_plane.get("account") or settings.trading_account_label,
+            "window": control_plane.get("window")
+            or f"{max(1, int(settings.trading_autonomy_signal_lookback_minutes))}m",
+            "source_url": endpoint,
+            "message": detail,
+            "http_status": control_plane.get("status_code"),
+            "latest_metrics_count": None,
+            "latest_metrics_updated_at": None,
+            "empty_latest_store_alarm": None,
+            "missing_update_alarm": None,
+            "metrics_pipeline_lag_seconds": None,
+            "stage_count": None,
+            "max_stage_lag_seconds": None,
+            "stages": [],
+            "as_of": None,
+        }
+
+    latest_metrics_count = quant_payload.get("latestMetricsCount")
+    latest_metrics_updated_at = quant_payload.get("latestMetricsUpdatedAt")
+    empty_latest_store_alarm = bool(quant_payload.get("emptyLatestStoreAlarm"))
+    missing_update_alarm = bool(quant_payload.get("missingUpdateAlarm"))
+    pipeline_lag = quant_payload.get("metricsPipelineLagSeconds")
+    stages = (
+        list(cast(list[object], quant_payload.get("stages")))
+        if isinstance(quant_payload.get("stages"), list)
+        else []
+    )
+    stage_failures: list[Mapping[object, object]] = []
+    for stage in stages:
+        if not isinstance(stage, Mapping):
+            continue
+        stage_mapping = cast(Mapping[object, object], stage)
+        if bool(stage_mapping.get("ok", False)):
+            continue
+        stage_failures.append(stage_mapping)
+    status_value = str(quant_payload.get("status") or "unknown").strip().lower() or "unknown"
+    blocking_reasons: list[str] = []
+    if status_value != "ok":
+        blocking_reasons.append(f"quant_health_status_{status_value}")
+    if empty_latest_store_alarm:
+        blocking_reasons.append("quant_health_latest_store_empty")
+    if missing_update_alarm:
+        blocking_reasons.append("quant_health_missing_update_alarm")
+    if stage_failures:
+        blocking_reasons.append("quant_health_pipeline_stage_failed")
+
+    ok = len(blocking_reasons) == 0
+    return {
+        "required": live_required,
+        "ok": ok,
+        "status": status_value,
+        "reason": None if ok else blocking_reasons[0],
+        "blocking_reasons": blocking_reasons,
+        "account": control_plane.get("account") or settings.trading_account_label,
+        "window": control_plane.get("window")
+        or f"{max(1, int(settings.trading_autonomy_signal_lookback_minutes))}m",
+        "source_url": endpoint,
+        "message": str(quant_payload.get("message") or "ok"),
+        "latest_metrics_count": latest_metrics_count,
+        "latest_metrics_updated_at": latest_metrics_updated_at,
+        "empty_latest_store_alarm": empty_latest_store_alarm,
+        "missing_update_alarm": missing_update_alarm,
+        "metrics_pipeline_lag_seconds": pipeline_lag,
+        "stage_count": len(stages),
+        "max_stage_lag_seconds": quant_payload.get("maxStageLagSeconds"),
+        "stages": stages,
+        "as_of": quant_payload.get("asOf"),
+    }
+
+
 def _forecast_service_status() -> dict[str, object]:
     endpoint = settings.trading_forecast_service_url or ""
     if not endpoint:
@@ -2710,20 +2950,32 @@ def _forecast_service_status() -> dict[str, object]:
         and str(cast(dict[str, object], item).get("model_family") or "").strip()
     )
     healthy = bool(ready.get("ok"))
-    authority = "empirical" if healthy and eligible_models else "blocked"
+    authority_status = (
+        str(calibration_payload.get("authority_status") or "").strip().lower() or "blocked"
+    )
+    authority = "empirical" if authority_status == "empirical" else "blocked"
     return {
         "configured": True,
         "endpoint": endpoint,
         "status": "healthy" if healthy else "degraded",
+        "serving_ok": healthy,
         "authority": authority,
+        "authority_status": authority_status,
         "message": (
             "ok"
             if healthy
             else str(ready.get("detail") or "forecast service readiness failed")
         ),
         "calibration_status": str(calibration_payload.get("status") or "unknown"),
+        "authority_reason": calibration_payload.get("authority_reason"),
         "registry_ref": calibration_payload.get("registry_ref"),
         "promotion_authority_eligible_models": eligible_models,
+        "promotion_authority_eligible": bool(
+            calibration_payload.get("promotion_authority_eligible", False)
+        ),
+        "freshness_seconds": calibration_payload.get("freshness_seconds"),
+        "stale_after_seconds": calibration_payload.get("stale_after_seconds"),
+        "next_stale_at": calibration_payload.get("next_stale_at"),
         "allowed_model_families": sorted(
             settings.trading_forecast_service_allowed_model_families
         ),
@@ -2795,12 +3047,15 @@ def _empirical_jobs_status() -> dict[str, object]:
             return build_empirical_jobs_status(
                 session=session,
                 stale_after_seconds=settings.trading_empirical_job_stale_after_seconds,
+                warn_after_seconds=settings.trading_empirical_job_warn_after_seconds,
             )
     except Exception as exc:
         return {
             "status": "degraded",
             "authority": "blocked",
             "stale_after_seconds": settings.trading_empirical_job_stale_after_seconds,
+            "warning_after_seconds": settings.trading_empirical_job_warn_after_seconds,
+            "warning_jobs": [],
             "jobs": {},
             "message": f"empirical job status unavailable: {type(exc).__name__}",
         }

@@ -7,6 +7,7 @@ from decimal import Decimal
 from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
+from urllib.error import URLError
 
 from app.config import settings
 from app.trading.features import normalize_feature_vector_v3
@@ -195,6 +196,66 @@ class TestForecastRouterV5(TestCase):
         self.assertEqual(captured['timeout'], 7)
         self.assertEqual(result.contract.model_family, 'chronos')
         self.assertEqual(result.contract.point_forecast, Decimal('0.12'))
+
+    def test_router_falls_back_to_baseline_when_all_http_providers_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_path = Path(tmpdir) / 'router-policy.json'
+            policy_path.write_text(
+                json.dumps(
+                    {
+                        'routes': [
+                            {
+                                'symbol_glob': '*',
+                                'horizon': '*',
+                                'regime': '*',
+                                'preferred_model_family': 'chronos',
+                                'candidate_fallbacks': ['moment'],
+                                'min_calibration_score': '0.80',
+                                'max_inference_latency_ms': 400,
+                                'disable_refinement': True,
+                            }
+                        ]
+                    }
+                ),
+                encoding='utf-8',
+            )
+            signal = _signal()
+            feature_vector = normalize_feature_vector_v3(signal)
+            with (
+                patch.object(settings, 'trading_forecast_router_provider_mode', 'http'),
+                patch.object(settings, 'trading_forecast_router_provider_url', 'http://forecast.test'),
+                patch.object(settings, 'trading_forecast_router_provider_api_key', None),
+                patch.object(settings, 'trading_forecast_service_url', None),
+                patch.object(settings, 'trading_forecast_service_api_key', None),
+                patch.object(settings, 'trading_forecast_service_timeout_seconds', 7),
+                patch.object(
+                    settings,
+                    'trading_forecast_service_allowed_model_families_raw',
+                    'chronos,moment',
+                ),
+                patch('app.trading.forecasting.urlopen', side_effect=URLError('connection refused')),
+            ):
+                router = build_default_forecast_router(
+                    policy_path=str(policy_path),
+                    refinement_enabled=False,
+                )
+                first = router.route_and_forecast(
+                    feature_vector=feature_vector,
+                    horizon='1Min',
+                    event_ts=signal.event_ts,
+                )
+                second = router.route_and_forecast(
+                    feature_vector=feature_vector,
+                    horizon='1Min',
+                    event_ts=signal.event_ts,
+                )
+
+        self.assertEqual(first.contract.model_family, 'baseline')
+        self.assertTrue(first.contract.fallback.applied)
+        self.assertEqual(first.contract.fallback.reason, 'provider_error')
+        self.assertEqual(second.contract.model_family, 'baseline')
+        self.assertTrue(second.contract.fallback.applied)
+        self.assertEqual(second.contract.fallback.reason, 'provider_error')
 
     def test_router_is_deterministic_for_same_input(self) -> None:
         router = build_default_forecast_router(policy_path=None, refinement_enabled=True)

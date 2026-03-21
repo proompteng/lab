@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from unittest import TestCase
 
 from sqlalchemy import create_engine
@@ -348,3 +349,61 @@ class TestEmpiricalJobs(TestCase):
             status["dataset_snapshot_refs"],
             ["s3://datasets/snapshot-a.json", "s3://datasets/snapshot-b.json"],
         )
+
+    def test_empirical_jobs_status_warns_before_stale_cutoff(self) -> None:
+        payload = {
+            "schema_version": "benchmark-parity-report-v1",
+            "promotion_authority_eligible": True,
+            "artifact_authority": {
+                "provenance": "historical_market_replay",
+                "maturity": "empirically_validated",
+                "authoritative": True,
+                "placeholder": False,
+            },
+            "lineage": {
+                "dataset_snapshot_ref": "s3://datasets/snapshot.json",
+                "runtime_version_refs": ["services/torghut@sha256:abc"],
+                "model_refs": ["models/candidate@sha256:def"],
+            },
+        }
+        with self.session_local() as session:
+            for job_type in EMPIRICAL_JOB_TYPES:
+                record = upsert_empirical_job_run(
+                    session=session,
+                    run_id="run-1",
+                    candidate_id="cand-1",
+                    job_name=job_type,
+                    job_type=job_type,
+                    job_run_id=f"job-{job_type}",
+                    status="completed",
+                    authority="empirical",
+                    promotion_authority_eligible=True,
+                    dataset_snapshot_ref="s3://datasets/snapshot.json",
+                    artifact_refs=[f"s3://artifacts/{job_type}.json"],
+                    payload={
+                        **payload,
+                        "lineage": {
+                            **payload["lineage"],
+                            "job_run_id": f"job-{job_type}",
+                        },
+                    },
+                )
+                record.created_at = datetime.now(timezone.utc) - timedelta(hours=13)
+            session.commit()
+
+            status = build_empirical_jobs_status(
+                session=session,
+                stale_after_seconds=86400,
+                warn_after_seconds=43200,
+            )
+
+        self.assertTrue(status["ready"])
+        self.assertEqual(status["status"], "warning")
+        self.assertEqual(
+            status["message"],
+            "empirical jobs nearing staleness: benchmark_parity, foundation_router_parity, janus_event_car, janus_hgrm_reward",
+        )
+        self.assertEqual(status["warning_after_seconds"], 43200)
+        self.assertEqual(status["warning_jobs"], list(EMPIRICAL_JOB_TYPES))
+        self.assertTrue(status["jobs"]["benchmark_parity"]["warning"])
+        self.assertGreaterEqual(status["jobs"]["benchmark_parity"]["age_seconds"], 13 * 60 * 60)

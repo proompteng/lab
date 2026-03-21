@@ -624,6 +624,11 @@ class Settings(BaseSettings):
         alias="TRADING_EMPIRICAL_JOB_STALE_AFTER_SECONDS",
         description="Freshness budget for empirical parity and Janus workflow outputs.",
     )
+    trading_empirical_job_warn_after_seconds: int = Field(
+        default=43200,
+        alias="TRADING_EMPIRICAL_JOB_WARN_AFTER_SECONDS",
+        description="Warning threshold for empirical job freshness before the hard stale budget is exceeded.",
+    )
     trading_forecast_router_refinement_enabled: bool = Field(
         default=True,
         alias="TRADING_FORECAST_ROUTER_REFINEMENT_ENABLED",

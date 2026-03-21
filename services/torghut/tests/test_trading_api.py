@@ -70,6 +70,54 @@ class TestTradingApi(TestCase):
     def setUp(self) -> None:
         _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
         _ALPACA_HEALTH_STATE.clear()
+        self._forecast_service_status_patcher = patch(
+            "app.main._forecast_service_status",
+            return_value={
+                "configured": True,
+                "endpoint": "http://forecast.test",
+                "status": "healthy",
+                "serving_ok": True,
+                "authority": "empirical",
+                "authority_status": "empirical",
+                "message": "ok",
+                "calibration_status": "ready",
+                "authority_reason": "ready",
+                "registry_ref": "s3://torghut-forecast/registry/test.json",
+                "promotion_authority_eligible_models": ["chronos"],
+                "promotion_authority_eligible": True,
+                "freshness_seconds": 30,
+                "stale_after_seconds": 86400,
+                "next_stale_at": "2026-03-21T00:00:00+00:00",
+                "allowed_model_families": ["chronos"],
+                "require_healthy": True,
+                "fail_mode": "allow_operational_fallback",
+            },
+        )
+        self._quant_evidence_status_patcher = patch(
+            "app.main._quant_evidence_status",
+            return_value={
+                "required": True,
+                "ok": True,
+                "status": "ok",
+                "reason": None,
+                "blocking_reasons": [],
+                "account": "paper",
+                "window": "15m",
+                "source_url": "http://jangar.test/api/agents/control-plane/status",
+                "message": "ok",
+                "latest_metrics_count": 1,
+                "latest_metrics_updated_at": "2026-03-20T00:00:00+00:00",
+                "empty_latest_store_alarm": False,
+                "missing_update_alarm": False,
+                "metrics_pipeline_lag_seconds": 1,
+                "stage_count": 1,
+                "max_stage_lag_seconds": 1,
+                "stages": [],
+                "as_of": "2026-03-20T00:00:00+00:00",
+            },
+        )
+        self._forecast_service_status_patcher.start()
+        self._quant_evidence_status_patcher.start()
         engine = create_engine(
             "sqlite+pysqlite:///:memory:",
             future=True,
@@ -179,6 +227,8 @@ class TestTradingApi(TestCase):
             session.commit()
 
     def tearDown(self) -> None:
+        self._forecast_service_status_patcher.stop()
+        self._quant_evidence_status_patcher.stop()
         _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
         _ALPACA_HEALTH_STATE.clear()
         app.dependency_overrides.clear()
@@ -608,6 +658,8 @@ class TestTradingApi(TestCase):
             self.assertTrue(payload["dependencies"]["postgres"]["ok"])
             self.assertTrue(payload["dependencies"]["clickhouse"]["ok"])
             self.assertTrue(payload["dependencies"]["alpaca"]["ok"])
+            self.assertTrue(payload["decision_runtime"]["ok"])
+            self.assertEqual(payload["forecast_authority"]["authority_status"], "empirical")
             self.assertIn("universe", payload["dependencies"])
             self.assertTrue(payload["dependencies"]["universe"]["ok"])
             self.assertEqual(payload["dependencies"]["universe"]["status"], "ok")
@@ -2036,6 +2088,8 @@ class TestTradingApi(TestCase):
             payload["missing_jobs"],
             ["foundation_router_parity", "janus_event_car", "janus_hgrm_reward"],
         )
+        self.assertEqual(payload["warning_after_seconds"], 43200)
+        self.assertEqual(payload["warning_jobs"], [])
         self.assertEqual(payload["jobs"]["benchmark_parity"]["authority"], "empirical")
         self.assertEqual(payload["jobs"]["benchmark_parity"]["job_run_id"], "job-benchmark-1")
 
@@ -2436,6 +2490,30 @@ class TestTradingApi(TestCase):
             self.assertEqual(payload["realized_pnl_summary"]["tca_sample_count"], 0)
             caveat_codes = {item["code"] for item in payload["caveats"]}
             self.assertIn("empty_window_no_runtime_evidence", caveat_codes)
+        finally:
+            if original_scheduler is None:
+                if hasattr(app.state, "trading_scheduler"):
+                    del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
+    @patch(
+        "app.main._load_runtime_profitability_gate_rollback_attribution",
+        side_effect=RuntimeError("gate artifact unreadable"),
+    )
+    def test_trading_runtime_profitability_endpoint_returns_bounded_warning_on_loader_failure(
+        self,
+        _mock_gate_rollback: object,
+    ) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        try:
+            app.state.trading_scheduler = TradingScheduler()
+            response = self.client.get("/trading/profitability/runtime")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["operator_surface_status"], "degraded")
+            warning_codes = {item["code"] for item in payload["warnings"]}
+            self.assertIn("runtime_profitability_partial_failure", warning_codes)
         finally:
             if original_scheduler is None:
                 if hasattr(app.state, "trading_scheduler"):

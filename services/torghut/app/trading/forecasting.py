@@ -5,6 +5,8 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
+import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -489,6 +491,11 @@ class HttpForecastAdapter:
         self._base_url = base_url.rstrip('/')
         self._timeout_seconds = max(timeout_seconds, 1)
         self._api_key = (api_key or '').strip() or None
+        self._circuit_lock = threading.Lock()
+        self._circuit_failures = 0
+        self._circuit_open_until = 0.0
+        self._circuit_failure_threshold = 2
+        self._circuit_cooldown_seconds = 30.0
 
     def forecast(
         self,
@@ -496,6 +503,8 @@ class HttpForecastAdapter:
         feature_vector: FeatureVectorV3,
         horizon: str,
     ) -> ForecastAdapterOutput:
+        if self._circuit_is_open():
+            raise RuntimeError('forecast_provider_circuit_open')
         payload = {
             'symbol': feature_vector.symbol,
             'horizon': horizon,
@@ -505,16 +514,39 @@ class HttpForecastAdapter:
             'normalization_hash': feature_vector.normalization_hash,
             'values': dict(feature_vector.values),
         }
-        raw = _post_forecast_request(
-            base_url=self._base_url,
-            timeout_seconds=self._timeout_seconds,
-            api_key=self._api_key,
-            payload=payload,
-        )
-        return _coerce_http_forecast_output(
-            response=raw,
-            requested_model_family=self.model_family,
-        )
+        try:
+            raw = _post_forecast_request(
+                base_url=self._base_url,
+                timeout_seconds=self._timeout_seconds,
+                api_key=self._api_key,
+                payload=payload,
+            )
+            output = _coerce_http_forecast_output(
+                response=raw,
+                requested_model_family=self.model_family,
+            )
+        except Exception:
+            self._record_circuit_failure()
+            raise
+        self._reset_circuit()
+        return output
+
+    def _circuit_is_open(self) -> bool:
+        with self._circuit_lock:
+            return self._circuit_open_until > time.monotonic()
+
+    def _record_circuit_failure(self) -> None:
+        with self._circuit_lock:
+            self._circuit_failures += 1
+            if self._circuit_failures >= self._circuit_failure_threshold:
+                self._circuit_open_until = (
+                    time.monotonic() + self._circuit_cooldown_seconds
+                )
+
+    def _reset_circuit(self) -> None:
+        with self._circuit_lock:
+            self._circuit_failures = 0
+            self._circuit_open_until = 0.0
 
 
 def _post_forecast_request(
@@ -878,7 +910,13 @@ class ForecastRouterV5:
             score = self.calibration_store.score(route_key=route_key, model_family=family)
             if score < route.min_calibration_score:
                 continue
-            output = adapter.forecast(feature_vector=feature_vector, horizon=horizon)
+            try:
+                output = adapter.forecast(
+                    feature_vector=feature_vector,
+                    horizon=horizon,
+                )
+            except Exception:
+                continue
             if output.interval.is_valid() and output.inference_latency_ms <= route.max_inference_latency_ms:
                 return family, output
 

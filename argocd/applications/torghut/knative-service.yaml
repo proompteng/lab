@@ -487,11 +487,11 @@ spec:
               port: 8181
           resources:
             requests:
-              cpu: 100m
-              memory: 128Mi
+              cpu: 250m
+              memory: 384Mi
             limits:
-              cpu: 500m
-              memory: 512Mi
+              cpu: "1"
+              memory: 1Gi
           volumeMounts:
             - name: strategy-config
               mountPath: /etc/torghut

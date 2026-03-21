@@ -410,9 +410,16 @@ def build_empirical_jobs_status(
     *,
     session: Session,
     stale_after_seconds: int,
+    warn_after_seconds: int | None = None,
 ) -> dict[str, object]:
     now = datetime.now(tz=timezone.utc)
-    cutoff = now - timedelta(seconds=max(stale_after_seconds, 1))
+    stale_after_seconds = max(stale_after_seconds, 1)
+    warning_after_seconds = max(
+        min(warn_after_seconds or stale_after_seconds, stale_after_seconds),
+        1,
+    )
+    cutoff = now - timedelta(seconds=stale_after_seconds)
+    warning_cutoff = now - timedelta(seconds=warning_after_seconds)
     rows = session.execute(
         select(VNextEmpiricalJobRun).order_by(VNextEmpiricalJobRun.created_at.desc())
     ).scalars()
@@ -428,6 +435,7 @@ def build_empirical_jobs_status(
     eligible_jobs: list[str] = []
     missing_jobs: list[str] = []
     stale_jobs: list[str] = []
+    warning_jobs: list[str] = []
     ineligible_jobs: list[str] = []
     candidate_ids: set[str] = set()
     dataset_snapshot_refs: set[str] = set()
@@ -452,10 +460,12 @@ def build_empirical_jobs_status(
             if created_at_raw.tzinfo is not None
             else created_at_raw.replace(tzinfo=timezone.utc)
         )
+        age_seconds = max(0, int((now - created_at).total_seconds()))
         payload = _as_dict(row.payload_json)
         truthful_reasons = empirical_artifact_truthfulness_reasons(payload)
         truthful = not truthful_reasons
         stale = created_at < cutoff or row.status not in {"completed", "success"}
+        freshness_warning = not stale and created_at < warning_cutoff
         dataset_snapshot_ref = _as_text(row.dataset_snapshot_ref)
         candidate_id = _as_text(row.candidate_id)
         blocked_reasons = sorted(
@@ -478,6 +488,8 @@ def build_empirical_jobs_status(
         )
         if stale:
             stale_jobs.append(job_type)
+        elif freshness_warning:
+            warning_jobs.append(job_type)
         if candidate_id is not None:
             candidate_ids.add(candidate_id)
         if dataset_snapshot_ref is not None:
@@ -504,7 +516,9 @@ def build_empirical_jobs_status(
             "job_run_id": row.job_run_id,
             "created_at": created_at.isoformat(),
             "artifact_refs": list(cast(list[object], row.artifact_refs or [])),
+            "age_seconds": age_seconds,
             "stale": stale,
+            "warning": freshness_warning,
             "truthful": truthful,
             "blocked_reasons": blocked_reasons,
         }
@@ -530,17 +544,24 @@ def build_empirical_jobs_status(
         message = f"ineligible empirical jobs: {', '.join(sorted(ineligible_jobs))}"
     elif status_blocked_reasons:
         message = f"empirical job bundle invalid: {', '.join(status_blocked_reasons)}"
+    elif warning_jobs:
+        message = f"empirical jobs nearing staleness: {', '.join(sorted(warning_jobs))}"
     else:
         message = "empirical jobs fresh"
+    status = "healthy" if fresh_and_eligible else "degraded"
+    if fresh_and_eligible and warning_jobs:
+        status = "warning"
     return {
         "ready": fresh_and_eligible,
-        "status": "healthy" if fresh_and_eligible else "degraded",
+        "status": status,
         "authority": "empirical" if fresh_and_eligible else "blocked",
         "stale_after_seconds": stale_after_seconds,
+        "warning_after_seconds": warning_after_seconds,
         "message": message,
         "eligible_jobs": sorted(eligible_jobs),
         "missing_jobs": sorted(missing_jobs),
         "stale_jobs": sorted(stale_jobs),
+        "warning_jobs": sorted(warning_jobs),
         "ineligible_jobs": sorted(set(ineligible_jobs)),
         "candidate_ids": sorted(candidate_ids),
         "dataset_snapshot_refs": sorted(dataset_snapshot_refs),
