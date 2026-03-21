@@ -19,6 +19,11 @@ import { dirname, join } from 'node:path'
 import process from 'node:process'
 import { Effect } from 'effect'
 
+import {
+  buildRuntimeAdmissionSnapshot,
+  findAdmissionPassport,
+  resolveAdmissionPassportConsumerClass,
+} from '../../src/server/control-plane-runtime-admission'
 import { runCli } from './lib/cli'
 import { pushCodexEventsToLoki, type RunCodexSessionResult, runCodexSession } from './lib/codex-runner'
 import {
@@ -150,6 +155,17 @@ type HulyRequirementArtifacts = {
   mission?: HulyUpsertMissionResult
   ownerUpdateMessage?: string
   releaseNote?: string
+  prelaunchFailure?: {
+    operation: 'huly_preflight'
+    consumerClass: string
+    passportDecision: string
+    passportId: string
+    reasonCodes: string[]
+    runtimeKitId: string
+    runtimeKitClass: string
+    runtimeKitDecision: string
+    checkedPaths?: string[]
+  }
 }
 
 type HulyArtifactsForNotify = {
@@ -164,6 +180,7 @@ type HulyArtifactsForNotify = {
   missionIssue?: string
   ownerUpdateMessage?: string
   releaseNote?: string
+  prelaunchFailure?: HulyRequirementArtifacts['prelaunchFailure']
 }
 
 const asStringMap = (value: Record<string, string | number | boolean> | undefined): Record<string, string> => {
@@ -637,7 +654,71 @@ const collectHulyArtifactsForNotify = (artifacts?: HulyRequirementArtifacts): Hu
     missionIssue: artifacts.mission?.issue?.issueIdentifier,
     ownerUpdateMessage: artifacts.ownerUpdateMessage,
     releaseNote: artifacts.releaseNote,
+    prelaunchFailure: artifacts.prelaunchFailure,
   }
+}
+
+const parseCheckedPaths = (value: string | null | undefined) => {
+  if (!value || !value.startsWith('checked_paths=[') || !value.endsWith(']')) {
+    return undefined
+  }
+  const content = value.slice('checked_paths=['.length, -1)
+  const paths = content
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+  return paths.length > 0 ? paths : undefined
+}
+
+const buildHulyPrelaunchFailure = ({
+  stage,
+}: {
+  stage: string
+}): HulyRequirementArtifacts['prelaunchFailure'] | undefined => {
+  const runtimeAdmission = buildRuntimeAdmissionSnapshot()
+  const consumerClass = resolveAdmissionPassportConsumerClass(stage)
+  const passport = findAdmissionPassport({
+    admissionPassports: runtimeAdmission.admissionPassports,
+    consumerClass,
+  })
+  if (!passport || (passport.decision !== 'block' && passport.decision !== 'hold')) {
+    return undefined
+  }
+
+  const runtimeKitId = passport.required_runtime_kits[0]
+  const runtimeKit = runtimeAdmission.runtimeKits.find((kit) => kit.runtime_kit_id === runtimeKitId)
+  if (!runtimeKit) {
+    return undefined
+  }
+
+  const helperComponent = runtimeKit.components.find((component) => component.component_kind === 'python_helper')
+
+  return {
+    operation: 'huly_preflight',
+    consumerClass,
+    passportDecision: passport.decision,
+    passportId: passport.admission_passport_id,
+    reasonCodes: passport.reason_codes,
+    runtimeKitId: runtimeKit.runtime_kit_id,
+    runtimeKitClass: runtimeKit.kit_class,
+    runtimeKitDecision: runtimeKit.decision,
+    checkedPaths: parseCheckedPaths(helperComponent?.evidence_ref),
+  }
+}
+
+const buildHulyPrelaunchFailureMessage = (failure: NonNullable<HulyRequirementArtifacts['prelaunchFailure']>) => {
+  const checkedPaths =
+    failure.checkedPaths && failure.checkedPaths.length > 0 ? ` checked_paths=[${failure.checkedPaths.join(', ')}]` : ''
+  const passportDecision = failure.passportDecision === 'block' ? 'blocked' : failure.passportDecision
+  return (
+    [
+      `passport=${passportDecision}`,
+      `consumer=${failure.consumerClass}`,
+      `runtime_kit=${failure.runtimeKitId}`,
+      `runtime_kit_decision=${failure.runtimeKitDecision}`,
+      `reason_codes=${failure.reasonCodes.join(',') || 'unknown'}`,
+    ].join(' ') + checkedPaths
+  )
 }
 
 const buildHulyArtifactsFromRun = async ({
@@ -3473,156 +3554,6 @@ export const runCodexImplementation = async (eventPath: string) => {
     })
   }
 
-  const hulyWorkerContext = resolveHulyWorkerContext(requirementMetadata)
-  let hulyArtifacts: HulyRequirementArtifacts | undefined
-  const hulyAccessMessage = `Hi team, I am starting ${stage} for ${repository}#${issueNumber} and will post progress here.`
-
-  if (!isBatchTask && crossSwarmHulyChannel) {
-    try {
-      const listResult = await listChannelMessages({
-        channel: crossSwarmHulyChannel,
-        workerId: hulyWorkerContext.workerId,
-        workerIdentity: hulyWorkerContext.workerIdentity,
-        requireWorkerToken: true,
-        tokenEnvKey: hulyWorkerContext.tokenEnvKey,
-        expectedActorEnvKey: hulyWorkerContext.expectedActorEnvKey,
-        requireExpectedActorId: true,
-      })
-
-      const accessResult = await verifyChatAccess({
-        channel: crossSwarmHulyChannel,
-        message: hulyAccessMessage,
-        workerId: hulyWorkerContext.workerId,
-        workerIdentity: hulyWorkerContext.workerIdentity,
-        requireWorkerToken: true,
-        tokenEnvKey: hulyWorkerContext.tokenEnvKey,
-        expectedActorEnvKey: hulyWorkerContext.expectedActorEnvKey,
-        requireExpectedActorId: true,
-      })
-
-      const actorId =
-        normalizeNullableStringValue(accessResult.actorId) || normalizeNullableStringValue(accessResult.expectedActorId)
-      const latestPeerMessage = resolveLatestPeerMessage(listResult, actorId ?? undefined)
-
-      hulyArtifacts = {
-        activeChannel: crossSwarmHulyChannel,
-        actorId: actorId ?? undefined,
-        latestPeerMessageId: latestPeerMessage?.messageId,
-        latestPeerMessage: latestPeerMessage?.message,
-        verification: accessResult,
-        listMessages: listResult,
-      }
-    } catch (error) {
-      logger.warn('Failed Huly cross-swarm initialization for implementation handoff', error)
-      throw error
-    }
-  }
-
-  const systemPromptPath = normalizeOptionalString(sanitizeNullableString(process.env.CODEX_SYSTEM_PROMPT_PATH))
-  const payloadSystemPrompt = normalizeOptionalString(sanitizeNullableString(event.systemPrompt))
-  const expectedSystemPromptHash = normalizeOptionalString(
-    sanitizeNullableString(process.env.CODEX_SYSTEM_PROMPT_EXPECTED_HASH),
-  )?.toLowerCase()
-  const systemPromptRequired = parseBoolean(process.env.CODEX_SYSTEM_PROMPT_REQUIRED, Boolean(expectedSystemPromptHash))
-  let systemPromptSource: 'path' | 'payload' | undefined
-  let systemPrompt: string | undefined
-  if (systemPromptPath && (await pathExists(systemPromptPath))) {
-    try {
-      const content = await readFile(systemPromptPath, 'utf8')
-      if (content.trim().length > 0) {
-        systemPromptSource = 'path'
-        systemPrompt = content
-      } else {
-        logger.warn('System prompt file was empty; ignoring', { systemPromptPath })
-      }
-    } catch (error) {
-      logger.warn('Failed to read system prompt file; ignoring', { systemPromptPath }, error)
-    }
-  }
-  if (!systemPrompt && payloadSystemPrompt) {
-    systemPromptSource = 'payload'
-    systemPrompt = payloadSystemPrompt
-  }
-  const systemPromptHash = systemPrompt ? sha256Hex(systemPrompt) : undefined
-  if (systemPromptRequired && !systemPrompt) {
-    throw new Error(
-      `System prompt is required but was not loaded (path=${systemPromptPath ?? 'unset'}, source=${payloadSystemPrompt ? 'payload-available' : 'none'})`,
-    )
-  }
-  if (expectedSystemPromptHash) {
-    if (!systemPromptHash) {
-      throw new Error(
-        `System prompt hash verification failed: expected ${expectedSystemPromptHash}, but no system prompt was loaded`,
-      )
-    }
-    if (systemPromptHash.toLowerCase() !== expectedSystemPromptHash) {
-      throw new Error(
-        `System prompt hash mismatch: expected ${expectedSystemPromptHash}, got ${systemPromptHash.toLowerCase()}`,
-      )
-    }
-  }
-  if (systemPrompt && systemPromptHash) {
-    logger.info('System prompt configured', {
-      source: systemPromptSource,
-      systemPromptLength: systemPrompt.length,
-      systemPromptHash,
-    })
-  }
-
-  const natsSoakRequired =
-    (process.env.CODEX_NATS_SOAK_REQUIRED ?? 'true').trim().toLowerCase() !== 'false' &&
-    (process.env.CODEX_NATS_SOAK_REQUIRED ?? 'true').trim() !== '0'
-
-  const shouldRequireMemories =
-    !isBatchTask && stage === 'implementation' && ((iteration ?? 1) >= 2 || (iterationCycle ?? 1) >= 2)
-  const memoryNamespace = `codex:${repository}:${issueNumber}`
-  const memoryQuery = `issue ${issueNumber} ${issueTitle || repository} codex run summary`
-  const memorySoak = await fetchJangarMemories({
-    logger,
-    required: shouldRequireMemories,
-    namespace: memoryNamespace,
-    query: memoryQuery,
-    limit: 12,
-  })
-  const memoryContextBlock = formatMemoryContextBlock(memorySoak)
-  if (memoryContextBlock) {
-    prompt = `${memoryContextBlock}\n\n${prompt}`
-  }
-
-  const natsContext = await fetchNatsContext({
-    logger,
-    required: natsSoakRequired,
-    outputPath: natsContextPath,
-  })
-  const natsContextBlock = formatNatsContextBlock(natsContext)
-  if (natsContextBlock) {
-    prompt = `${natsContextBlock}\n\n${prompt}`
-  }
-  const maxPromptChars = parsePositiveIntEnv(process.env.CODEX_MAX_PROMPT_CHARS, DEFAULT_MAX_PROMPT_CHARS)
-  prompt = fitPromptToBudget({
-    prompt,
-    maxChars: maxPromptChars,
-    logger,
-    label: 'initial',
-  })
-
-  await ensureEmptyFile(outputPath)
-  await ensureEmptyFile(jsonOutputPath)
-  await ensureEmptyFile(agentOutputPath)
-  await ensureEmptyFile(runtimeLogPath)
-
-  if (process.env.CODEX_SKIP_RUN_STARTED !== '1') {
-    const attrs = enrichRunNatsAttrs({ stage, iteration, iterationCycle }, requirementMetadata)
-    if (systemPromptHash) {
-      attrs.systemPromptHash = systemPromptHash
-    }
-    await publishNatsEvent(logger, {
-      kind: 'run-started',
-      content: `${stage} started`,
-      attrs,
-    })
-  }
-
   const normalizedIssueNumber = issueNumber
   const disableResume = parseBoolean(process.env.CODEX_DISABLE_RESUME, false)
   const supportsResume = stage === 'implementation' && !disableResume
@@ -3630,10 +3561,181 @@ export const runCodexImplementation = async (eventPath: string) => {
   let resumeSessionId: string | undefined
   let capturedSessionId: string | undefined
   let runSucceeded = false
-  let lastAssistantMessage: string | null = null
+  let prNumber: number | null = null
   let prUrl: string | null = null
+  const hulyWorkerContext = resolveHulyWorkerContext(requirementMetadata)
+  let hulyArtifacts: HulyRequirementArtifacts | undefined
+  let lastAssistantMessage: string | null = null
+  let memorySoak: MemoryContextPayload | null = null
+  let natsContext: NatsContextPayload | null = null
+  const hulyAccessMessage = `Hi team, I am starting ${stage} for ${repository}#${issueNumber} and will post progress here.`
 
   try {
+    if (!isBatchTask && crossSwarmHulyChannel) {
+      hulyArtifacts = {
+        activeChannel: crossSwarmHulyChannel,
+      }
+
+      try {
+        const prelaunchFailure = buildHulyPrelaunchFailure({ stage })
+        if (prelaunchFailure) {
+          hulyArtifacts.prelaunchFailure = prelaunchFailure
+          lastAssistantMessage = buildHulyPrelaunchFailureMessage(prelaunchFailure)
+          throw new Error(`Huly collaboration launch refused before runtime initialization: ${lastAssistantMessage}`)
+        }
+
+        const listResult = await listChannelMessages({
+          channel: crossSwarmHulyChannel,
+          workerId: hulyWorkerContext.workerId,
+          workerIdentity: hulyWorkerContext.workerIdentity,
+          requireWorkerToken: true,
+          tokenEnvKey: hulyWorkerContext.tokenEnvKey,
+          expectedActorEnvKey: hulyWorkerContext.expectedActorEnvKey,
+          requireExpectedActorId: true,
+        })
+
+        const accessResult = await verifyChatAccess({
+          channel: crossSwarmHulyChannel,
+          message: hulyAccessMessage,
+          workerId: hulyWorkerContext.workerId,
+          workerIdentity: hulyWorkerContext.workerIdentity,
+          requireWorkerToken: true,
+          tokenEnvKey: hulyWorkerContext.tokenEnvKey,
+          expectedActorEnvKey: hulyWorkerContext.expectedActorEnvKey,
+          requireExpectedActorId: true,
+        })
+
+        const actorId =
+          normalizeNullableStringValue(accessResult.actorId) ||
+          normalizeNullableStringValue(accessResult.expectedActorId)
+        const latestPeerMessage = resolveLatestPeerMessage(listResult, actorId ?? undefined)
+
+        hulyArtifacts = {
+          ...hulyArtifacts,
+          activeChannel: crossSwarmHulyChannel,
+          actorId: actorId ?? undefined,
+          latestPeerMessageId: latestPeerMessage?.messageId,
+          latestPeerMessage: latestPeerMessage?.message,
+          verification: accessResult,
+          listMessages: listResult,
+        }
+      } catch (error) {
+        if (!lastAssistantMessage) {
+          lastAssistantMessage = error instanceof Error ? error.message : String(error)
+        }
+        logger.warn('Failed Huly cross-swarm initialization for implementation handoff', error)
+        throw error
+      }
+    }
+
+    const systemPromptPath = normalizeOptionalString(sanitizeNullableString(process.env.CODEX_SYSTEM_PROMPT_PATH))
+    const payloadSystemPrompt = normalizeOptionalString(sanitizeNullableString(event.systemPrompt))
+    const expectedSystemPromptHash = normalizeOptionalString(
+      sanitizeNullableString(process.env.CODEX_SYSTEM_PROMPT_EXPECTED_HASH),
+    )?.toLowerCase()
+    const systemPromptRequired = parseBoolean(
+      process.env.CODEX_SYSTEM_PROMPT_REQUIRED,
+      Boolean(expectedSystemPromptHash),
+    )
+    let systemPromptSource: 'path' | 'payload' | undefined
+    let systemPrompt: string | undefined
+    if (systemPromptPath && (await pathExists(systemPromptPath))) {
+      try {
+        const content = await readFile(systemPromptPath, 'utf8')
+        if (content.trim().length > 0) {
+          systemPromptSource = 'path'
+          systemPrompt = content
+        } else {
+          logger.warn('System prompt file was empty; ignoring', { systemPromptPath })
+        }
+      } catch (error) {
+        logger.warn('Failed to read system prompt file; ignoring', { systemPromptPath }, error)
+      }
+    }
+    if (!systemPrompt && payloadSystemPrompt) {
+      systemPromptSource = 'payload'
+      systemPrompt = payloadSystemPrompt
+    }
+    const systemPromptHash = systemPrompt ? sha256Hex(systemPrompt) : undefined
+    if (systemPromptRequired && !systemPrompt) {
+      throw new Error(
+        `System prompt is required but was not loaded (path=${systemPromptPath ?? 'unset'}, source=${payloadSystemPrompt ? 'payload-available' : 'none'})`,
+      )
+    }
+    if (expectedSystemPromptHash) {
+      if (!systemPromptHash) {
+        throw new Error(
+          `System prompt hash verification failed: expected ${expectedSystemPromptHash}, but no system prompt was loaded`,
+        )
+      }
+      if (systemPromptHash.toLowerCase() !== expectedSystemPromptHash) {
+        throw new Error(
+          `System prompt hash mismatch: expected ${expectedSystemPromptHash}, got ${systemPromptHash.toLowerCase()}`,
+        )
+      }
+    }
+    if (systemPrompt && systemPromptHash) {
+      logger.info('System prompt configured', {
+        source: systemPromptSource,
+        systemPromptLength: systemPrompt.length,
+        systemPromptHash,
+      })
+    }
+
+    const natsSoakRequired =
+      (process.env.CODEX_NATS_SOAK_REQUIRED ?? 'true').trim().toLowerCase() !== 'false' &&
+      (process.env.CODEX_NATS_SOAK_REQUIRED ?? 'true').trim() !== '0'
+
+    const shouldRequireMemories =
+      !isBatchTask && stage === 'implementation' && ((iteration ?? 1) >= 2 || (iterationCycle ?? 1) >= 2)
+    const memoryNamespace = `codex:${repository}:${issueNumber}`
+    const memoryQuery = `issue ${issueNumber} ${issueTitle || repository} codex run summary`
+    memorySoak = await fetchJangarMemories({
+      logger,
+      required: shouldRequireMemories,
+      namespace: memoryNamespace,
+      query: memoryQuery,
+      limit: 12,
+    })
+    const memoryContextBlock = formatMemoryContextBlock(memorySoak)
+    if (memoryContextBlock) {
+      prompt = `${memoryContextBlock}\n\n${prompt}`
+    }
+
+    natsContext = await fetchNatsContext({
+      logger,
+      required: natsSoakRequired,
+      outputPath: natsContextPath,
+    })
+    const natsContextBlock = formatNatsContextBlock(natsContext)
+    if (natsContextBlock) {
+      prompt = `${natsContextBlock}\n\n${prompt}`
+    }
+    const maxPromptChars = parsePositiveIntEnv(process.env.CODEX_MAX_PROMPT_CHARS, DEFAULT_MAX_PROMPT_CHARS)
+    prompt = fitPromptToBudget({
+      prompt,
+      maxChars: maxPromptChars,
+      logger,
+      label: 'initial',
+    })
+
+    await ensureEmptyFile(outputPath)
+    await ensureEmptyFile(jsonOutputPath)
+    await ensureEmptyFile(agentOutputPath)
+    await ensureEmptyFile(runtimeLogPath)
+
+    if (process.env.CODEX_SKIP_RUN_STARTED !== '1') {
+      const attrs = enrichRunNatsAttrs({ stage, iteration, iterationCycle }, requirementMetadata)
+      if (systemPromptHash) {
+        attrs.systemPromptHash = systemPromptHash
+      }
+      await publishNatsEvent(logger, {
+        kind: 'run-started',
+        content: `${stage} started`,
+        attrs,
+      })
+    }
+
     if (supportsResume) {
       resumeContext = await loadResumeMetadata({
         worktree,
@@ -3934,7 +4036,7 @@ export const runCodexImplementation = async (eventPath: string) => {
 
     const prNumberRaw = await readOptionalTextFile(prNumberPath, logger)
     const prUrlRaw = await readOptionalTextFile(prUrlPath, logger)
-    let prNumber = prNumberRaw ? parseOptionalPrNumber(prNumberRaw) : null
+    prNumber = prNumberRaw ? parseOptionalPrNumber(prNumberRaw) : null
     prUrl = prUrlRaw ? prUrlRaw : null
     if (!isBatchTask) {
       const pullRequestsEnabled = parseBoolean(process.env.VCS_PULL_REQUESTS_ENABLED, false)
@@ -4055,7 +4157,7 @@ export const runCodexImplementation = async (eventPath: string) => {
     const hulyDecision = 'completed' as const
     const natsDecision = 'pass'
 
-    if (!isBatchTask && hulyArtifacts && crossSwarmHulyChannel) {
+    if (!isBatchTask && hulyArtifacts && crossSwarmHulyChannel && !hulyArtifacts.prelaunchFailure) {
       hulyArtifacts = await buildHulyArtifactsFromRun({
         artifacts: hulyArtifacts,
         logger,
@@ -4199,7 +4301,7 @@ export const runCodexImplementation = async (eventPath: string) => {
     }
   } finally {
     if (!runSucceeded) {
-      if (!isBatchTask && crossSwarmHulyChannel && hulyArtifacts) {
+      if (!isBatchTask && crossSwarmHulyChannel && hulyArtifacts && !hulyArtifacts.prelaunchFailure) {
         const summary = extractSummary(lastAssistantMessage)
         const tests = extractTests(lastAssistantMessage)
         const gaps = extractKnownGaps(lastAssistantMessage)
@@ -4227,6 +4329,24 @@ export const runCodexImplementation = async (eventPath: string) => {
         }
       }
 
+      const failureMissingItems = hulyArtifacts?.prelaunchFailure?.reasonCodes.length
+        ? hulyArtifacts.prelaunchFailure.reasonCodes
+        : ['unknown_failure']
+      const failureGapAttrs: Record<string, unknown> = {
+        stage,
+        missingItems: failureMissingItems,
+        suggestedFixes: [],
+        iteration,
+        iterationCycle,
+      }
+      if (hulyArtifacts?.prelaunchFailure) {
+        failureGapAttrs.passportDecision = hulyArtifacts.prelaunchFailure.passportDecision
+        failureGapAttrs.passportId = hulyArtifacts.prelaunchFailure.passportId
+        failureGapAttrs.runtimeKitClass = hulyArtifacts.prelaunchFailure.runtimeKitClass
+        failureGapAttrs.runtimeKitDecision = hulyArtifacts.prelaunchFailure.runtimeKitDecision
+        failureGapAttrs.runtimeKitId = hulyArtifacts.prelaunchFailure.runtimeKitId
+      }
+
       if (!isBatchTask) {
         await postProgressComment({
           logger,
@@ -4243,17 +4363,81 @@ export const runCodexImplementation = async (eventPath: string) => {
       }
       await publishNatsEvent(logger, {
         kind: 'run-gaps',
-        content: 'Run failed before emitting gaps; inspect logs and artifacts.',
-        attrs: enrichRunNatsAttrs(
-          { stage, missingItems: ['unknown_failure'], suggestedFixes: [], iteration, iterationCycle },
-          requirementMetadata,
-        ),
+        content:
+          hulyArtifacts?.prelaunchFailure != null
+            ? `Pre-launch runtime passport refused: ${buildHulyPrelaunchFailureMessage(hulyArtifacts.prelaunchFailure)}`
+            : 'Run failed before emitting gaps; inspect logs and artifacts.',
+        attrs: enrichRunNatsAttrs(failureGapAttrs, requirementMetadata),
       })
       await publishNatsEvent(logger, {
         kind: 'run-outcome',
         content: `${stage} failed`,
-        attrs: enrichRunNatsAttrs({ stage, decision: 'fail', iteration, iterationCycle }, requirementMetadata),
+        attrs: enrichRunNatsAttrs(
+          {
+            stage,
+            decision: 'fail',
+            iteration,
+            iterationCycle,
+            passportDecision: hulyArtifacts?.prelaunchFailure?.passportDecision,
+            passportId: hulyArtifacts?.prelaunchFailure?.passportId,
+          },
+          requirementMetadata,
+        ),
       })
+
+      try {
+        const failureLogExcerpt = await collectLogExcerpts(
+          {
+            outputPath,
+            jsonOutputPath,
+            agentOutputPath,
+            runtimeLogPath,
+            statusPath,
+          },
+          logger,
+        )
+        const failureNotifyPayload = buildNotifyPayload({
+          repository,
+          issueNumber,
+          baseBranch,
+          headBranch,
+          prompt,
+          stage,
+          outputPath,
+          jsonOutputPath,
+          agentOutputPath,
+          runtimeLogPath,
+          statusPath,
+          patchPath,
+          archivePath,
+          notifyPath,
+          manifestPath,
+          headShaPath,
+          commitShaPath,
+          prNumberPath,
+          prUrlPath,
+          sessionId: capturedSessionId,
+          lastAssistantMessage:
+            lastAssistantMessage ??
+            (hulyArtifacts?.prelaunchFailure
+              ? `Pre-launch runtime passport refused: ${buildHulyPrelaunchFailureMessage(hulyArtifacts.prelaunchFailure)}`
+              : `${stage} failed before a final assistant response was captured.`),
+          logExcerpt: failureLogExcerpt,
+          prNumber,
+          prUrl,
+          contextSoak: natsContext,
+          memorySoak,
+          iteration,
+          iterationCycle,
+          iterations,
+          requirementMetadata,
+          hulyArtifacts,
+        })
+        await ensureFileDirectory(notifyPath)
+        await writeFile(notifyPath, JSON.stringify(failureNotifyPayload, null, 2), 'utf8')
+      } catch (error) {
+        logger.warn('Failed to persist notify payload for failed run artifacts', error)
+      }
     }
     await ensureNotifyPlaceholder(notifyPath, logger)
     try {

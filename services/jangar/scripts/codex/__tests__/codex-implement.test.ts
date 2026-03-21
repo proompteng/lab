@@ -791,6 +791,63 @@ describe('runCodexImplementation', () => {
     expect(notify.hulyArtifacts?.channel).toBe('huly://swarm-bridge/issues/TORGHUT-REQ-TAKES-PRECEDENCE')
   }, 40_000)
 
+  it('captures blocked prelaunch passport evidence before Huly initialization when the helper path is missing', async () => {
+    process.env.HULY_API_SCRIPT_PATH = '/tmp/missing-huly-api.py'
+
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'validate blocked prelaunch passport evidence',
+      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772433239',
+      swarmRequirementId: '00gc1i45',
+      swarmRequirementSignal: 'torghut-to-jangar-e2e-1772433239',
+      swarmRequirementSource: 'torghut-quant',
+      swarmRequirementTarget: 'jangar-control-plane',
+      swarmRequirementDescription: 'Block launch before Huly calls when the helper runtime component is missing.',
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await expect(runCodexImplementation(eventPath)).rejects.toThrow(
+      /Huly collaboration launch refused before runtime initialization: passport=blocked/,
+    )
+
+    expect(runCodexSessionMock).not.toHaveBeenCalled()
+    expect(listChannelMessagesMock).not.toHaveBeenCalled()
+    expect(verifyChatAccessMock).not.toHaveBeenCalled()
+    expect(postChannelMessageMock).not.toHaveBeenCalled()
+    expect(upsertMissionMock).not.toHaveBeenCalled()
+
+    const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
+    const notify = JSON.parse(notifyRaw) as {
+      last_assistant_message?: string | null
+      hulyArtifacts?: {
+        prelaunchFailure?: {
+          operation?: string
+          consumerClass?: string
+          passportDecision?: string
+          runtimeKitClass?: string
+          runtimeKitDecision?: string
+          reasonCodes?: string[]
+          checkedPaths?: string[]
+        }
+      }
+    }
+    expect(notify.last_assistant_message).toContain('passport=blocked')
+    expect(notify.hulyArtifacts?.prelaunchFailure).toMatchObject({
+      operation: 'huly_preflight',
+      consumerClass: 'swarm_implement',
+      passportDecision: 'block',
+      runtimeKitClass: 'collaboration',
+      runtimeKitDecision: 'blocked',
+      reasonCodes: expect.arrayContaining(['runtime_kit_component_missing:huly_api_script']),
+      checkedPaths: ['/tmp/missing-huly-api.py'],
+    })
+  }, 40_000)
+
   it('creates Huly reply, owner update, and mission artifacts for completed cross-swarm runs', async () => {
     const payload = {
       prompt: 'Implementation prompt',
@@ -2005,7 +2062,7 @@ exit 1
     await mkdir(join(resumeSourceDir, 'metadata'), { recursive: true })
     await mkdir(join(resumeSourceDir, 'files', 'src'), { recursive: true })
     await writeFile(join(resumeSourceDir, 'metadata', 'manifest.json'), JSON.stringify(manifest), 'utf8')
-    await writeFile(join(resumeSourceDir, 'files', 'src', 'real.ts'), 'console.log(\"resume\");\n', 'utf8')
+    await writeFile(join(resumeSourceDir, 'files', 'src', 'real.ts'), 'console.log("resume");\n', 'utf8')
 
     const archivePath = join(workdir, '.codex-implementation-changes.tar.gz')
     await new Promise<void>((resolve, reject) => {

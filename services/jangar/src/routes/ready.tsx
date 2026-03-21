@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 
 import type { ExecutionTrustStatus } from '~/data/agents-control-plane'
 import { assessAgentRunIngestion, getAgentsControllerHealth } from '~/server/agents-controller'
+import { buildRuntimeAdmissionSnapshot, findAdmissionPassport } from '~/server/control-plane-runtime-admission'
 import { getLeaderElectionStatus } from '~/server/leader-election'
 import { getOrchestrationControllerHealth } from '~/server/orchestration-controller'
 import { getSupportingControllerHealth } from '~/server/supporting-primitives-controller'
@@ -121,6 +122,14 @@ export const getReadyHandler = async () => {
   const supportingController = getSupportingControllerHealth()
   const namespaces = agentsController.namespaces?.length ? agentsController.namespaces : ['agents']
   const trust = await executionTrustStatus(namespaces)
+  const runtimeAdmission = buildRuntimeAdmissionSnapshot({
+    now: new Date(),
+    executionTrust: trust,
+  })
+  const servingPassport = findAdmissionPassport({
+    admissionPassports: runtimeAdmission.admissionPassports,
+    consumerClass: 'serving',
+  })
 
   const controllersOk =
     isControllerHealthReady(agentsController) &&
@@ -132,8 +141,9 @@ export const getReadyHandler = async () => {
   const agentsControllerReady = activeControllerReplica
     ? isAgentRunIngestionReady(agentsController)
     : leaderElectionReady
-  const executionTrustReady = trust.status !== 'blocked' && trust.status !== 'unknown'
-  const ready = controllersOk && agentsControllerReady && executionTrustReady
+  const servingPassportReady =
+    servingPassport !== undefined && servingPassport.decision !== 'block' && servingPassport.decision !== 'hold'
+  const ready = controllersOk && agentsControllerReady && servingPassportReady
 
   const body = JSON.stringify({
     status: ready ? 'ok' : 'degraded',
@@ -143,6 +153,9 @@ export const getReadyHandler = async () => {
     orchestrationController,
     supportingController,
     execution_trust: trust,
+    runtime_kits: runtimeAdmission.runtimeKits,
+    admission_passports: runtimeAdmission.admissionPassports,
+    serving_passport_id: runtimeAdmission.servingPassportId,
   })
 
   const headers: Record<string, string> = {
