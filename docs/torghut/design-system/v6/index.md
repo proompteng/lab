@@ -10,6 +10,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `63-torghut-profit-windows-and-evidence-escrow-contract-2026-03-21.md`
+  - `docs/agents/designs/64-jangar-recovery-epochs-and-backlog-seats-contract-2026-03-21.md`
   - `62-torghut-lane-books-and-bounded-query-firebreak-contract-2026-03-20.md`
   - `docs/agents/designs/63-jangar-consumer-projections-and-latency-class-admission-contract-2026-03-20.md`
   - `61-torghut-evidence-seats-and-profit-repair-exchange-contract-2026-03-20.md`
@@ -37,6 +39,8 @@
 - `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
 - `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/64-jangar-recovery-epochs-and-backlog-seats-contract-2026-03-21.md`
+  - `63-torghut-profit-windows-and-evidence-escrow-contract-2026-03-21.md`
   - `docs/agents/designs/63-jangar-consumer-projections-and-latency-class-admission-contract-2026-03-20.md`
   - `62-torghut-lane-books-and-bounded-query-firebreak-contract-2026-03-20.md`
   - `docs/agents/designs/62-jangar-execution-receipts-and-stage-recovery-cells-contract-2026-03-20.md`
@@ -154,6 +158,12 @@ Current source-state priority is narrower:
 - `62-torghut-lane-books-and-bounded-query-firebreak-contract-2026-03-20.md` now turns the next gap into a concrete
   architecture contract: every lane gets one durable lane book, expensive evidence paths open bounded firebreaks, and
   status/readiness/scheduler must reuse the same ids.
+- `63-torghut-profit-windows-and-evidence-escrow-contract-2026-03-21.md` now takes the next step: lane authority is
+  bound to explicit windows and funded escrows so stale-but-truthful evidence, schema warnings, and query-cost debt do
+  not collapse the whole portfolio into one route-time answer.
+- `docs/agents/designs/64-jangar-recovery-epochs-and-backlog-seats-contract-2026-03-21.md` now turns the remaining
+  control-plane gap into a concrete rollout contract: serving, stage dispatch, and deploy verification must agree on
+  one active recovery epoch, and queued work bound to retired epochs must be superseded before launch.
 - `docs/agents/designs/56-jangar-capability-receipts-and-consumer-binding-contract-2026-03-20.md` now defines the
   next control-plane step: typed capability receipts plus explicit binding sets that force `/ready`, deploy
   verification, and Torghut consumers to share the same receipt digest and freshness contract.
