@@ -28,6 +28,7 @@ TEAMSPACE_CLASS = 'document:class:Teamspace'
 DOCUMENT_CLASS = 'document:class:Document'
 CHANNEL_CLASS = 'chunter:class:Channel'
 CHAT_MESSAGE_CLASS = 'chunter:class:ChatMessage'
+THREAD_MESSAGE_CLASS = 'chunter:class:ThreadMessage'
 
 TX_CREATE_CLASS = 'core:class:TxCreateDoc'
 TX_UPDATE_CLASS = 'core:class:TxUpdateDoc'
@@ -909,6 +910,24 @@ def resolve_channel(context: HulyContext, channel_ref: str) -> dict[str, Any]:
     return channels[0]
 
 
+def resolve_chat_message(context: HulyContext, message_ref: str) -> dict[str, Any]:
+    message_ref = message_ref.strip()
+    if not message_ref:
+        raise RuntimeError('reply target message id is required')
+
+    for class_name in (THREAD_MESSAGE_CLASS, CHAT_MESSAGE_CLASS):
+        messages = find_all(
+            context=context,
+            class_name=class_name,
+            query={'_id': message_ref},
+            options={'limit': 1},
+        )
+        if messages:
+            return messages[0]
+
+    raise RuntimeError(f'unable to resolve chat message "{message_ref}"')
+
+
 def latest_issue_number(context: HulyContext, project_id: str) -> int:
     issues = find_all(
         context=context,
@@ -1460,15 +1479,40 @@ def post_channel_message(
     attached_to = reply_parent_id or channel_id
     attached_to_class = reply_parent_class if reply_parent_id else CHANNEL_CLASS
     collection = 'replies' if reply_parent_id else 'messages'
+    message_class = CHAT_MESSAGE_CLASS
 
     message_id = new_id()
     attributes = {
         'message': message,
         'attachments': 0,
     }
+    if reply_parent_id:
+        parent_message = resolve_chat_message(context, reply_parent_id)
+        parent_message_class = str(parent_message.get('_class') or '').strip() or reply_parent_class
+        thread_root_id = reply_parent_id
+        thread_root_class = parent_message_class
+
+        if parent_message_class == THREAD_MESSAGE_CLASS:
+            thread_root_id = str(parent_message.get('attachedTo') or '').strip()
+            thread_root_class = str(parent_message.get('attachedToClass') or '').strip()
+            object_id = str(parent_message.get('objectId') or '').strip()
+            object_class = str(parent_message.get('objectClass') or '').strip()
+        else:
+            object_id = str(parent_message.get('attachedTo') or '').strip()
+            object_class = str(parent_message.get('attachedToClass') or '').strip()
+
+        if not thread_root_id or not thread_root_class or not object_id or not object_class:
+            raise RuntimeError(f'chat message "{reply_parent_id}" is missing thread metadata')
+
+        message_class = THREAD_MESSAGE_CLASS
+        attached_to = thread_root_id
+        attached_to_class = thread_root_class
+        attributes['objectId'] = object_id
+        attributes['objectClass'] = object_class
+
     tx = create_tx_create_doc(
         actor_id=context.actor_id,
-        object_class=CHAT_MESSAGE_CLASS,
+        object_class=message_class,
         object_space=channel_id,
         object_id=message_id,
         attached_to=attached_to,

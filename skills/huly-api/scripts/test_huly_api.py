@@ -119,10 +119,17 @@ class HulyApiFormattingTests(unittest.TestCase):
         called = {}
 
         original_resolve_channel = module.resolve_channel
+        original_resolve_chat_message = module.resolve_chat_message
         original_create_tx_create_doc = module.create_tx_create_doc
         original_submit_tx = module.submit_tx
 
         module.resolve_channel = lambda ctx, ref: {'_id': 'channel-1', 'name': 'general'}
+        module.resolve_chat_message = lambda ctx, ref: {
+            '_id': 'msg-parent-1',
+            '_class': module.CHAT_MESSAGE_CLASS,
+            'attachedTo': 'channel-1',
+            'attachedToClass': module.CHANNEL_CLASS,
+        }
         module.create_tx_create_doc = lambda **kwargs: called.setdefault('tx', kwargs) or {'_id': 'tx-1'}
         module.submit_tx = lambda **kwargs: {}
 
@@ -136,13 +143,70 @@ class HulyApiFormattingTests(unittest.TestCase):
             self.assertEqual(result['action'], 'created')
         finally:
             module.resolve_channel = original_resolve_channel
+            module.resolve_chat_message = original_resolve_chat_message
             module.create_tx_create_doc = original_create_tx_create_doc
             module.submit_tx = original_submit_tx
 
+        self.assertEqual(called['tx']['object_class'], module.THREAD_MESSAGE_CLASS)
         self.assertEqual(called['tx']['attached_to'], 'msg-parent-1')
         self.assertEqual(called['tx']['attached_to_class'], module.CHAT_MESSAGE_CLASS)
         self.assertEqual(called['tx']['collection'], 'replies')
+        self.assertEqual(called['tx']['attributes']['objectId'], 'channel-1')
+        self.assertEqual(called['tx']['attributes']['objectClass'], module.CHANNEL_CLASS)
         self.assertEqual(result['replyToMessageId'], 'msg-parent-1')
+        self.assertEqual(result['replyToMessageClass'], module.CHAT_MESSAGE_CLASS)
+        self.assertEqual(result['collection'], 'replies')
+
+    def test_post_channel_message_reuses_thread_root_when_replying_to_thread_message(self):
+        module = self.module
+        context = module.HulyContext(
+            base_url='https://example.com',
+            collaborator_base_url='https://collaborator.example.com',
+            token='token',
+            token_source='test',
+            workspace_id='workspace-1',
+            actor_id='actor-1',
+            timeout_seconds=30,
+        )
+        called = {}
+
+        original_resolve_channel = module.resolve_channel
+        original_resolve_chat_message = module.resolve_chat_message
+        original_create_tx_create_doc = module.create_tx_create_doc
+        original_submit_tx = module.submit_tx
+
+        module.resolve_channel = lambda ctx, ref: {'_id': 'channel-1', 'name': 'general'}
+        module.resolve_chat_message = lambda ctx, ref: {
+            '_id': 'reply-1',
+            '_class': module.THREAD_MESSAGE_CLASS,
+            'attachedTo': 'msg-parent-1',
+            'attachedToClass': module.CHAT_MESSAGE_CLASS,
+            'objectId': 'channel-1',
+            'objectClass': module.CHANNEL_CLASS,
+        }
+        module.create_tx_create_doc = lambda **kwargs: called.setdefault('tx', kwargs) or {'_id': 'tx-1'}
+        module.submit_tx = lambda **kwargs: {}
+
+        try:
+            result = module.post_channel_message(
+                context=context,
+                channel_ref='general',
+                message='follow-up reply',
+                reply_to_message_id='reply-1',
+            )
+            self.assertEqual(result['action'], 'created')
+        finally:
+            module.resolve_channel = original_resolve_channel
+            module.resolve_chat_message = original_resolve_chat_message
+            module.create_tx_create_doc = original_create_tx_create_doc
+            module.submit_tx = original_submit_tx
+
+        self.assertEqual(called['tx']['object_class'], module.THREAD_MESSAGE_CLASS)
+        self.assertEqual(called['tx']['attached_to'], 'msg-parent-1')
+        self.assertEqual(called['tx']['attached_to_class'], module.CHAT_MESSAGE_CLASS)
+        self.assertEqual(called['tx']['attributes']['objectId'], 'channel-1')
+        self.assertEqual(called['tx']['attributes']['objectClass'], module.CHANNEL_CLASS)
+        self.assertEqual(result['replyToMessageId'], 'reply-1')
         self.assertEqual(result['replyToMessageClass'], module.CHAT_MESSAGE_CLASS)
         self.assertEqual(result['collection'], 'replies')
 
