@@ -13,6 +13,10 @@ Companion doc:
 
 - `docs/torghut/design-system/v6/64-torghut-hypothesis-vaults-and-post-cost-profit-tapes-contract-2026-03-21.md`
 
+Merged program:
+
+- `docs/torghut/design-system/v6/65-torghut-quant-proof-ledger-cutover-program-and-handoff-contract-2026-03-21.md`
+
 Extends:
 
 - `64-jangar-recovery-epochs-and-backlog-seats-contract-2026-03-21.md`
