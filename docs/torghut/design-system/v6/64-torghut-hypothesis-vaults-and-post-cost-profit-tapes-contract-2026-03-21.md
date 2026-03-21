@@ -34,6 +34,10 @@ The March 21, 2026 evidence is explicit:
   - reports `quant_evidence.reason="quant_health_fetch_failed"` even though the typed Jangar quant-health route is
     reachable separately;
   - proves Torghut is still flattening multiple authority failures into one route-time answer.
+- `GET http://torghut.torghut.svc.cluster.local/trading/decisions?limit=5` at `2026-03-21T00:30:07Z`
+  - returns persisted decisions from `2026-03-19T20:11:43Z` through `2026-03-19T20:13:44Z`;
+  - while `/trading/status` still reports `last_decision_at=null`;
+  - proves route-time status and persisted decision truth are already drifting.
 - `GET http://jangar.jangar.svc.cluster.local/api/torghut/trading/control-plane/quant/health?account=paper&window=1d`
   at `2026-03-21T00:30:34Z`
   - returns `status="degraded"`;
@@ -57,7 +61,20 @@ The March 21, 2026 evidence is explicit:
     `torghut_clickhouse_guardrails_ta_microbars_max_window_end_seconds` as `nan` on one replica;
   - shows `torghut_clickhouse_guardrails_freshness_fallback_total{table="ta_signals"} 829`;
   - shows `torghut_clickhouse_guardrails_freshness_fallback_total{table="ta_microbars"} 1944`;
+  - shows `torghut_clickhouse_guardrails_last_scrape_success 0`;
   - proves freshness debt is replica-local and persistent enough to become lane-local economic evidence.
+- authenticated read-only ClickHouse queries against `torghut-clickhouse` at `2026-03-21T00:32:45Z`
+  - show `ta_signals.max(event_ts)=2026-03-20 20:59:00`, `lag_seconds=12825`, `rows_24h=76738`;
+  - show `system.replicas.is_readonly=0` for both `ta_signals` and `ta_microbars`;
+  - prove the issue is stale or expensive authority, not read-only replica state.
+- authenticated read-only ClickHouse freshness query against `ta_microbars` at `2026-03-21T00:32:46Z`
+  - fails with `MEMORY_LIMIT_EXCEEDED`;
+  - proves naive full-table freshness reads are not safe authority inputs for promotion.
+- `kubectl logs -n torghut pod/torghut-forecast-7ff6d8658b-d2vg4 --tail=120` at `2026-03-21T00:30:26Z`
+  - shows repeated `GET /healthz -> 200`;
+  - shows repeated `GET /readyz -> 503`;
+  - proves forecast evidence is partially alive and therefore needs lane-local economic treatment rather than a
+    portfolio-wide binary interpretation.
 - `GET http://torghut.torghut.svc.cluster.local/trading/executions?limit=5` at `2026-03-21T00:31:31Z`
   - returns newest visible rows from `2026-03-14`;
   - shows `execution_correlation_id=null` and `execution_idempotency_key=null` on those rows;
@@ -139,6 +156,8 @@ The current source tree still keeps too much trading authority in synchronous re
 - tests:
   - `services/torghut/tests/test_submission_council.py` and `services/torghut/tests/test_hypotheses.py` prove the
     endpoint-wiring and timeout guardrails are correct;
+  - there is no executable parity test keeping `/trading/status.last_decision_at` aligned with the persisted decisions
+    surface;
   - there are no executable tests for `profit_window`, `evidence_escrow`, `hypothesis_vault`, or `profit_tape`
     persistence parity because those objects do not exist in runtime code yet.
 
@@ -368,19 +387,27 @@ Engineer-stage minimum validation:
 
 1. regression proving `/trading/status`, `/readyz`, scheduler, and promotion code surface the same
    `hypothesis_vault_id` and `latest_profit_tape_id`;
-2. regression proving a typed quant-health route result with `latestMetricsCount=0` and `emptyLatestStoreAlarm=true`
+2. regression proving `/trading/status.last_decision_at` matches the newest persisted decision row once mirrors and
+   tapes are authoritative;
+3. regression proving a typed quant-health route result with `latestMetricsCount=0` and `emptyLatestStoreAlarm=true`
    produces an underfunded or partial vault rather than a generic route-time ambiguity;
-3. regression proving stale empirical jobs remain visible as expired inputs and cannot fund `canary` or `live`;
-4. regression proving route-time Jangar fetches are removed from the hot path once mirrors are authoritative;
-5. regression proving new execution settlement rows include correlation and idempotency keys before tapes are allowed
+4. regression proving stale empirical jobs remain visible as expired inputs and cannot fund `canary` or `live`;
+5. regression proving `torghut_clickhouse_guardrails_last_scrape_success=0`, `nan` freshness gauges, or
+   `MEMORY_LIMIT_EXCEEDED` freshness reads demote only affected vaults and never fund `repair_probe`, `canary`, or
+   `live`;
+6. regression proving forecast `readyz=503` demotes only hypotheses that require that forecast capability;
+7. regression proving route-time Jangar fetches are removed from the hot path once mirrors are authoritative;
+8. regression proving new execution settlement rows include correlation and idempotency keys before tapes are allowed
    to fund capital progression.
 
 Deployer-stage acceptance gates:
 
 1. shadow-write mirrors, vaults, and tapes for one full market session before enforcement;
 2. show stable parity between mirrors and the old live fetch path during shadow mode;
-3. keep `canary` and `live` blocked until one full session of settled tapes proves hypothesis-local eligibility;
-4. treat any mismatch between gate payload and settled tape authority as a rollback trigger during cutover.
+3. keep `repair_probe`, `canary`, and `live` blocked whenever freshness receipts are `nan`, exporter scrape success is
+   `0`, or direct bounded freshness reads still fail;
+4. keep `canary` and `live` blocked until one full session of settled tapes proves hypothesis-local eligibility;
+5. treat any mismatch between gate payload and settled tape authority as a rollback trigger during cutover.
 
 ## Rollout plan
 

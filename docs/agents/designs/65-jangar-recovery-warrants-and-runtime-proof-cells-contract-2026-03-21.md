@@ -28,6 +28,12 @@ Torghut and deploy verification can tell which authority digest they are actuall
 
 The March 21, 2026 evidence is explicit:
 
+- `kubectl get swarm -n agents` at `2026-03-21T00:30:24Z`
+  - shows both `jangar-control-plane` and `torghut-quant` in `PHASE=Frozen`, `MODE=lights-out`, `READY=False`;
+  - proves the human-facing swarm phase already says "do not launch."
+- `kubectl get schedules.schedules.proompteng.ai -n agents` at `2026-03-21T00:30:25Z`
+  - still shows both swarms' discover, plan, implement, and verify schedules `Active`;
+  - proves frozen swarm state and launchable cadence are still allowed to diverge.
 - `GET http://jangar.jangar.svc.cluster.local/ready` at `2026-03-21T00:30:01Z`
   - returns HTTP `200`;
   - reports `execution_trust.status="degraded"`;
@@ -93,6 +99,12 @@ This document succeeds when:
 
 The live cluster is no longer a simple outage story. It is a proof-of-authority story.
 
+- `kubectl get swarm -n agents`
+  - proves the operator-facing swarm contract already says both swarms are frozen;
+  - therefore any subsequent launch must be backed by a stronger explicit admission object, not by old queue behavior.
+- `kubectl get schedules.schedules.proompteng.ai -n agents`
+  - proves schedule cadence remains active even while the swarms are frozen;
+  - therefore launch safety cannot be inferred from swarm phase or schedule phase independently.
 - `/ready`
   - proves serving is available and leader election is healthy;
   - also proves execution trust remains degraded because the backlog and freeze surfaces are stale.
@@ -323,17 +335,20 @@ Engineer-stage minimum validation:
 
 1. migration tests for warrants, proof cells, and projection watermarks;
 2. regression proving a missing helper asset yields a broken proof cell and blocks new launches;
-3. restart and leader-change regression proving warrants survive process restart and are not rebuilt from timers alone;
-4. parity regression proving `/ready`, `/api/agents/control-plane/status`, launchers, and deploy verification expose the
+3. regression proving a `Frozen` swarm with `Active` schedules still emits no sealable stage warrant and launches no new
+   stage or requirement work;
+4. restart and leader-change regression proving warrants survive process restart and are not rebuilt from timers alone;
+5. parity regression proving `/ready`, `/api/agents/control-plane/status`, launchers, and deploy verification expose the
    same active warrant ids;
-5. regression proving healthy rollout cannot overwrite broken warrant state when proof cells fail.
+6. regression proving healthy rollout cannot overwrite broken warrant state when proof cells fail.
 
 Deployer-stage acceptance gates:
 
 1. shadow-write warrants, proof cells, and watermarks for at least two full stage cadences before enforcement;
 2. show all required proof cells healthy for the active serving and stage warrants before widening rollout;
-3. prove no new jobs launch against a superseded or broken warrant during one full promotion cycle;
-4. keep rollout blocked if deploy verification digest parity and warrant parity disagree.
+3. prove no `Frozen` swarm has any active sealable stage warrant during one full promotion cycle;
+4. prove no new jobs launch against a superseded or broken warrant during one full promotion cycle;
+5. keep rollout blocked if deploy verification digest parity and warrant parity disagree.
 
 ## Rollout plan
 
