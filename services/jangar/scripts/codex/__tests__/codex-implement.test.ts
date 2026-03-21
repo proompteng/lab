@@ -752,6 +752,8 @@ describe('runCodexImplementation', () => {
     expect(verifyChatAccessMock).toHaveBeenCalledTimes(1)
     expect(verifyChatAccessMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        message:
+          "Starting implementation for owner/repo#42. I'll post concrete progress, blockers, and handoff details here.",
         requireExpectedActorId: true,
         tokenEnvKey: 'HULY_API_TOKEN_ELISE_NOVAK_JANGAR_ENGINEER',
         expectedActorEnvKey: 'HULY_EXPECTED_ACTOR_ID_ELISE_NOVAK_JANGAR_ENGINEER',
@@ -768,11 +770,11 @@ describe('runCodexImplementation', () => {
             workerIdentity?: string
           }
         | undefined
-      return args?.message?.startsWith('Thanks for the note:')
+      return args?.message?.startsWith('I picked up the point about')
     })
     expect(replyCall).toBeDefined()
-    expect(replyCall?.[0]?.message).toContain('Thanks for the note:')
-    expect(replyCall?.[0]?.message).toContain('Update for #42: implementation is complete.')
+    expect(replyCall?.[0]?.message).toContain('I picked up the point about')
+    expect(replyCall?.[0]?.message).toContain('For #42, implementation is complete.')
     expect(replyCall?.[0]?.replyToMessageId).toBe('msg-latest')
     expect(upsertMissionMock).toHaveBeenCalledTimes(1)
     const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')

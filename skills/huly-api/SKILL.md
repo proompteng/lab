@@ -120,7 +120,7 @@ python3 skills/huly-api/scripts/huly-api.py --operation post-channel-message --m
 python3 skills/huly-api/scripts/huly-api.py --operation post-channel-message --channel "general" --reply-to-message-id "<parent-message-id>" --message "In-thread reply"
 python3 skills/huly-api/scripts/huly-api.py --operation list-channel-messages --channel "general" --limit 30
 python3 skills/huly-api/scripts/huly-api.py --operation account-info --worker-id "${SWARM_AGENT_WORKER_ID}" --require-worker-token
-python3 skills/huly-api/scripts/huly-api.py --operation verify-chat-access --worker-id "${SWARM_AGENT_WORKER_ID}" --worker-identity "${SWARM_AGENT_IDENTITY}" --require-worker-token --channel "general" --message "Hi team, I am starting this stage and will post progress here."
+python3 skills/huly-api/scripts/huly-api.py --operation verify-chat-access --worker-id "${SWARM_AGENT_WORKER_ID}" --worker-identity "${SWARM_AGENT_IDENTITY}" --require-worker-token --channel "general" --message "Starting this stage now. I will post concrete progress, blockers, and next actions here."
 ```
 
 ### Raw HTTP mode (debug)
@@ -141,6 +141,7 @@ python3 skills/huly-api/scripts/huly-api.py --operation http --method GET --path
 - Run `verify-chat-access` before autonomous delivery stages with a worker-authored `--message`.
 - Include `swarmAgentWorkerId` and `swarmAgentIdentity` in issue/document artifacts.
 - Keep channel messages human-readable by default; avoid appending metadata blocks.
+- Do not greet or reintroduce yourself in every update; lead with the decision, progress, blocker, or next action.
   - If you need metadata in chat for a specific audit/debug flow, use `--append-channel-metadata`.
   - `upsert-mission` automatically infers these fields from `--worker-id/--worker-identity` (or
     `SWARM_AGENT_WORKER_ID`/`SWARM_AGENT_IDENTITY`) if explicit `--swarm-agent-worker-id`/

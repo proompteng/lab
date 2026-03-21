@@ -364,10 +364,10 @@ const buildHulyReplyMessage = ({
   gaps?: string[]
 }) => {
   const lines = [
-    `Thanks for the note: "${summarizeText(message, 100)}".`,
+    `I picked up the point about "${summarizeText(message, 100)}".`,
     decision === 'completed'
-      ? `Update for #${issueNumber}: ${stage} is complete.`
-      : `Update for #${issueNumber}: ${stage} is currently blocked.`,
+      ? `For #${issueNumber}, ${stage} is complete.`
+      : `For #${issueNumber}, ${stage} is blocked right now.`,
     objective ? `I kept the work focused on ${summarizeText(objective, 160)}.` : '',
     prUrl ? `PR: ${prUrl}.` : '',
     tests && tests.length > 0 ? `Validation: ${tests.join(', ')}.` : '',
@@ -3352,7 +3352,7 @@ export const runCodexImplementation = async (eventPath: string) => {
 
   const hulyWorkerContext = resolveHulyWorkerContext(requirementMetadata)
   let hulyArtifacts: HulyRequirementArtifacts | undefined
-  const hulyAccessMessage = `Hi team, I am starting ${stage} for ${repository}#${issueNumber} and will post progress here.`
+  const hulyAccessMessage = `Starting ${stage} for ${repository}#${issueNumber}. I'll post concrete progress, blockers, and handoff details here.`
 
   if (!isBatchTask && crossSwarmHulyChannel) {
     try {
