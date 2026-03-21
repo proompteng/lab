@@ -693,6 +693,11 @@ describe('runCodexImplementation', () => {
   }, 40_000)
 
   it('uses environment fallback channel resolution for Huly handoff', async () => {
+    delete process.env.hulyChannel
+    delete process.env.HULY_CHANNEL
+    delete process.env.HULY_CHANNEL_NAME
+    delete process.env.hulyChannelUrl
+    delete process.env.HULY_CHANNEL_URL
     process.env.hulyChannelName = 'huly://swarm-bridge/issues/TORGHUT-ENV-TEST-1'
 
     const payload = {
@@ -721,6 +726,69 @@ describe('runCodexImplementation', () => {
     const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
     const notify = JSON.parse(notifyRaw) as { hulyArtifacts?: { channel?: string } }
     expect(notify.hulyArtifacts?.channel).toBe('huly://swarm-bridge/issues/TORGHUT-ENV-TEST-1')
+  }, 40_000)
+
+  it('accepts plain Huly channel names from HULY_CHANNEL fallback', async () => {
+    process.env.HULY_CHANNEL = 'general'
+
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'Validate plain HULY_CHANNEL fallback',
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    expect(listChannelMessagesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'general',
+      }),
+    )
+    expect(verifyChatAccessMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'general',
+      }),
+    )
+    const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
+    const notify = JSON.parse(notifyRaw) as { hulyArtifacts?: { channel?: string } }
+    expect(notify.hulyArtifacts?.channel).toBe('general')
+  }, 40_000)
+
+  it('prefers explicit requirement channels over HULY_CHANNEL fallbacks', async () => {
+    process.env.HULY_CHANNEL = 'general'
+
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'Validate explicit Huly requirement channel precedence',
+      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-REQ-TAKES-PRECEDENCE',
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    expect(listChannelMessagesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'huly://swarm-bridge/issues/TORGHUT-REQ-TAKES-PRECEDENCE',
+      }),
+    )
+    expect(verifyChatAccessMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'huly://swarm-bridge/issues/TORGHUT-REQ-TAKES-PRECEDENCE',
+      }),
+    )
+    const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
+    const notify = JSON.parse(notifyRaw) as { hulyArtifacts?: { channel?: string } }
+    expect(notify.hulyArtifacts?.channel).toBe('huly://swarm-bridge/issues/TORGHUT-REQ-TAKES-PRECEDENCE')
   }, 40_000)
 
   it('creates Huly reply, owner update, and mission artifacts for completed cross-swarm runs', async () => {

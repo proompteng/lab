@@ -271,15 +271,25 @@ const isHulyRequirementChannel = (channel: string | undefined | null) => {
 
 const resolveHulyChannelFromCandidate = (value: string | null | undefined) => {
   const normalized = normalizeNullableStringValue(value)
-  if (normalized && isHulyRequirementChannel(normalized)) {
+  if (!normalized) {
+    return undefined
+  }
+  if (isHulyRequirementChannel(normalized)) {
     return normalized
   }
-  return undefined
+  // Huly channel names/ids like "general" or "chunter:space:General" are valid
+  // runtime inputs, but explicit non-Huly transports must stay fail-closed.
+  if (normalized.includes('://')) {
+    return undefined
+  }
+  return normalized
 }
 
 const resolveActiveHulyChannel = (requirementMetadata: RequirementMetadata) => {
   const candidates = [
     requirementMetadata.channel,
+    process.env.hulyChannel,
+    process.env.HULY_CHANNEL,
     process.env.hulyChannelName,
     process.env.HULY_CHANNEL_NAME,
     process.env.hulyChannelUrl,
