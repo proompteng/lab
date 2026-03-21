@@ -8,6 +8,8 @@ control-plane stream health.
 
 This runbook is aligned with the current March 21 architecture contracts:
 
+- `docs/agents/designs/65-jangar-recovery-warrants-and-runtime-proof-cells-contract-2026-03-21.md`
+- `docs/torghut/design-system/v6/64-torghut-hypothesis-vaults-and-post-cost-profit-tapes-contract-2026-03-21.md`
 - `docs/agents/designs/64-jangar-recovery-epochs-and-backlog-seats-contract-2026-03-21.md`
 - `docs/torghut/design-system/v6/63-torghut-profit-windows-and-evidence-escrow-contract-2026-03-21.md`
 - `docs/agents/designs/63-jangar-consumer-projections-and-latency-class-admission-contract-2026-03-20.md`
@@ -72,6 +74,9 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
    - If `quant_evidence.reason == "quant_health_fetch_failed"` while the typed Jangar quant-health route still returns a
      bounded answer, treat that as consumer-projection drift or timeout budget failure, not immediate proof that the
      quant-control runtime is down.
+   - Once the March 21 warrant and profit-tape contracts land, treat a missing `recovery_warrant_id`,
+     `hypothesis_vault_id`, or `latest_profit_tape_id` on an otherwise healthy route as an authority contradiction.
+     The correct action is to hold rollout and re-establish parity, not to trust the older route-time reducer.
    - Once the March 21 recovery-epoch contract lands, treat any runnable stage or requirement work that still points at
      a retired `recovery_epoch_id` as a hard rollout block. The correct action is backlog supersession or quarantine,
      not another retry.
@@ -135,6 +140,9 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
      - `latestMetricsCount == 0`
      - `emptyLatestStoreAlarm == true`
      - stage list empty for the target canary window
+   - Once the March 21 profit-tape contract lands, any active vault whose latest settled tape records
+     `quant_latest_metrics_empty`, `quant_latest_store_alarm`, or `quant_pipeline_stages_missing` must remain at
+     `observe` or `quarantine`. Do not manually widen capital around the tape outcome.
 5. Validate market-context health on active symbols (not default symbol only).
    - `SYMS=$(kubectl cnpg psql -n torghut torghut-db -- -d torghut -At -c "select distinct symbol from trade_decisions where created_at >= now() - interval '1 day' and status in ('planned','submitted','accepted','filled') order by symbol limit 8;")`
    - `for s in $SYMS; do curl -fsS "http://127.0.0.1:8080/api/torghut/market-context/health?symbol=${s}" | jq '{symbol: .symbol, healthy: .healthy, reasons: .reasons}'; done`
