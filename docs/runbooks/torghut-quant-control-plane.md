@@ -6,8 +6,10 @@ Use this runbook for alerts tied to the Jangar quant control-plane (near-real-ti
 upstream Torghut trading signals. This covers data freshness, decision activity, execution quality proxies, and
 control-plane stream health.
 
-This runbook is aligned with the current March 20 plan-stage architecture contracts:
+This runbook is aligned with the current March 21 architecture contracts:
 
+- `docs/agents/designs/64-jangar-recovery-epochs-and-backlog-seats-contract-2026-03-21.md`
+- `docs/torghut/design-system/v6/63-torghut-profit-windows-and-evidence-escrow-contract-2026-03-21.md`
 - `docs/agents/designs/63-jangar-consumer-projections-and-latency-class-admission-contract-2026-03-20.md`
 - `docs/torghut/design-system/v6/62-torghut-lane-books-and-bounded-query-firebreak-contract-2026-03-20.md`
 - `docs/agents/designs/57-jangar-authority-capsules-and-readiness-class-separation-2026-03-20.md`
@@ -70,10 +72,16 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
    - If `quant_evidence.reason == "quant_health_fetch_failed"` while the typed Jangar quant-health route still returns a
      bounded answer, treat that as consumer-projection drift or timeout budget failure, not immediate proof that the
      quant-control runtime is down.
+   - Once the March 21 recovery-epoch contract lands, treat any runnable stage or requirement work that still points at
+     a retired `recovery_epoch_id` as a hard rollout block. The correct action is backlog supersession or quarantine,
+     not another retry.
    - If `schema_graph_lineage_errors` is non-empty, treat as migration-lineage divergence and pause rollout promotion until migration governance review is complete.
    - If `dependency_quorum.decision == "block"` or (`dependency_quorum.decision == "delay"` with `dependency_quorum.degradation_scope` that blocks capital progress), treat the affected control-plane segment as the active blocker and verify impact before disabling promotion.
    - If `dependency_quorum.degradation_scope` is set to `single_capability`, pause affected capital movement paths only and confirm other lanes remain evaluable before broad actions.
    - If a single hypothesis is `blocked` or `shadow`, do not disable the whole service by default; verify the specific blocker reasons and keep unaffected lanes observable.
+   - Once the March 21 profit-window contract lands, evaluate live/canary eligibility per `profit_window_id`, not per
+     one shared route-time gate. A partially funded window may justify bounded `repair_probe` only when its lane policy
+     explicitly allows that gap; it never justifies portfolio-wide live promotion.
    - If `live_submission_gate.allowed == true` while `alpha_readiness_promotion_eligible_total == 0`, or while
      `critical_toggle_parity.status == "diverged"`, or while required quant/market-context evidence is stale, treat the
      state as a capital-lease contradiction and block rollout until the most restrictive interpretation is satisfied.
