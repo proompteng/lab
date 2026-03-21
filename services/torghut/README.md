@@ -60,6 +60,7 @@ Optional migration-lineage controls:
   - `hypotheses.registry_loaded`, `hypotheses.registry_errors`, and `hypotheses.items`
   - per-hypothesis `state`, `capital_stage`, `promotion_eligible`, `rollback_required`, and blocker `reasons`
   - `control_plane_contract.alpha_readiness_*` summary counts for blocked, shadow, canary-live, and scaled-live lanes
+  - `last_decision_at` from the newest persisted `trade_decisions.created_at` row so status recency matches stored decision truth after restarts
 - `GET /trading/health` includes an additive `alpha_readiness` block summarizing readiness totals and Jangar quorum state.
 - `GET /metrics` exports:
   - `torghut_trading_hypothesis_state_total`
