@@ -7,6 +7,7 @@ import { buildRuntimeAdmissionSnapshot } from '~/server/control-plane-runtime-ad
 const HULY_API_SCRIPT_PATH = fileURLToPath(
   new URL('../../../../../skills/huly-api/scripts/huly-api.py', import.meta.url),
 )
+const REPO_ROOT = fileURLToPath(new URL('../../../../../', import.meta.url))
 
 const ORIGINAL_ENV = { ...process.env }
 
@@ -31,7 +32,7 @@ describe('buildRuntimeAdmissionSnapshot', () => {
     process.env.HULY_BASE_URL = 'https://huly.example.test'
 
     const snapshot = buildRuntimeAdmissionSnapshot({
-      worktree: '/workspace/lab',
+      worktree: REPO_ROOT,
       pythonBin: process.execPath,
       hulyApiScriptPath: HULY_API_SCRIPT_PATH,
     })
