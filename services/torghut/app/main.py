@@ -1634,6 +1634,7 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
     quant_evidence = load_quant_evidence_status(
         account_label=settings.trading_account_label,
     )
+    last_decision_at = _load_last_decision_at(session)
     live_submission_gate = _build_live_submission_gate_payload(
         state,
         session=session,
@@ -1666,6 +1667,7 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
         "running": state.running,
         "live_submission_gate": live_submission_gate,
         "quant_evidence": quant_evidence,
+        "last_decision_at": last_decision_at,
         "last_run_at": state.last_run_at,
         "last_reconcile_at": state.last_reconcile_at,
         "last_error": state.last_error,
@@ -3056,6 +3058,20 @@ def _tca_row_payload(row: ExecutionTCAMetric | None) -> dict[str, object] | None
 
 def _load_tca_summary(session: Session) -> dict[str, object]:
     return build_tca_gate_inputs(session=session)
+
+
+def _ensure_utc_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _load_last_decision_at(session: Session) -> datetime | None:
+    return _ensure_utc_datetime(
+        session.execute(select(func.max(TradeDecision.created_at))).scalar_one()
+    )
 
 
 def _build_hypothesis_runtime_payload(
