@@ -8,6 +8,8 @@ control-plane stream health.
 
 This runbook is aligned with the current March 21 architecture contracts:
 
+- `docs/agents/designs/65-jangar-recovery-warrants-and-runtime-proof-cells-contract-2026-03-21.md`
+- `docs/torghut/design-system/v6/64-torghut-hypothesis-vaults-and-post-cost-profit-tapes-contract-2026-03-21.md`
 - `docs/agents/designs/64-jangar-recovery-epochs-and-backlog-seats-contract-2026-03-21.md`
 - `docs/torghut/design-system/v6/63-torghut-profit-windows-and-evidence-escrow-contract-2026-03-21.md`
 - `docs/agents/designs/63-jangar-consumer-projections-and-latency-class-admission-contract-2026-03-20.md`
@@ -64,6 +66,7 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
    - `curl -fsS "http://127.0.0.1:8081/trading/status" | jq .`
    - `curl -fsS "http://127.0.0.1:8081/trading/status" | jq '{dependency_quorum: .hypotheses.dependency_quorum, alpha_readiness: .control_plane_contract | {alpha_readiness_hypotheses_total, alpha_readiness_blocked_total, alpha_readiness_shadow_total, alpha_readiness_canary_live_total, alpha_readiness_scaled_live_total, alpha_readiness_dependency_quorum_decision}}'`
    - `curl -fsS "http://127.0.0.1:8081/trading/status" | jq '.hypotheses.items[] | {hypothesis_id, state, capital_stage, promotion_eligible, rollback_required, reasons}'`
+   - `curl -fsS "http://127.0.0.1:8081/trading/decisions?limit=5" | jq '[.[] | {created_at, symbol, status}]'`
    - `curl -fsS "http://127.0.0.1:8081/metrics" | rg '^torghut_trading_'`
    - `curl -fsS "http://127.0.0.1:8081/metrics" | rg 'torghut_trading_(signal_continuity_actionable|signal_continuity_alert_active|signal_actionable_staleness_total|signal_expected_staleness_total|universe_fail_safe_reason_total|universe_symbols_count|universe_cache_age_seconds)'`
    - `curl -fsS "http://127.0.0.1:8081/metrics" | rg 'torghut_trading_(hypothesis_state_total|hypothesis_capital_stage_total|alpha_readiness_hypotheses_total|alpha_readiness_promotion_eligible_total|alpha_readiness_rollback_required_total)'`
@@ -72,6 +75,11 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
    - If `quant_evidence.reason == "quant_health_fetch_failed"` while the typed Jangar quant-health route still returns a
      bounded answer, treat that as consumer-projection drift or timeout budget failure, not immediate proof that the
      quant-control runtime is down.
+   - If `/trading/status.last_decision_at` is `null` or stale while `/trading/decisions` still returns recent rows,
+     treat that as projection drift and block rollout until status, persistence, and settled tape lineage agree.
+   - Once the March 21 warrant and profit-tape contracts land, treat a missing `recovery_warrant_id`,
+     `hypothesis_vault_id`, or `latest_profit_tape_id` on an otherwise healthy route as an authority contradiction.
+     The correct action is to hold rollout and re-establish parity, not to trust the older route-time reducer.
    - Once the March 21 recovery-epoch contract lands, treat any runnable stage or requirement work that still points at
      a retired `recovery_epoch_id` as a hard rollout block. The correct action is backlog supersession or quarantine,
      not another retry.
@@ -111,10 +119,12 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
    - `curl -fsS http://127.0.0.1:19090/metrics | rg '^torghut_ws_desired_symbols_fetch_(degraded|failures_total|success_total|last_.*_ts_seconds)'`
    - `kubectl -n torghut port-forward svc/torghut-clickhouse-guardrails-exporter 19108:9108`
    - `curl -fsS http://127.0.0.1:19108/metrics | rg '^torghut_clickhouse_guardrails_(ta_signals_max_event_ts_seconds|ta_microbars_max_window_end_seconds|freshness_low_memory_mode|freshness_fallback_total)'`
+   - `curl -fsS http://127.0.0.1:19108/metrics | rg '^torghut_clickhouse_guardrails_last_scrape_success'`
    - Pass criteria:
      - `torghut_ws_desired_symbols_fetch_degraded` is `0`.
      - `increase(torghut_ws_desired_symbols_fetch_failures_total[15m]) == 0` (or failure bursts are short and self-healed).
      - `increase(torghut_clickhouse_guardrails_freshness_fallback_total[15m]) == 0` under normal steady state.
+     - `torghut_clickhouse_guardrails_last_scrape_success == 1`.
      - `time() - max(torghut_clickhouse_guardrails_ta_signals_max_event_ts_seconds) < 900` and
        `time() - max(torghut_clickhouse_guardrails_ta_microbars_max_window_end_seconds) < 300` in market hours.
      - `max_over_time(torghut_trading_signal_continuity_actionable{service="torghut"}[5m]) == 0` unless there is an acknowledged incident.
@@ -123,6 +133,7 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
    - Fail criteria:
      - `TorghutSignalsStaleDuringMarketHours`, `TorghutMicrobarsStaleDuringMarketHours`, `TorghutWSDesiredSymbolsFetchFailing`,
        or `TorghutClickHouseFreshnessQueryFallbacks` is firing.
+     - `torghut_clickhouse_guardrails_last_scrape_success != 1`.
      - treat `nan` freshness gauges as an invalid freshness surface and open or maintain the affected lane firebreak
        once the March 20 lane-book contract lands; do not assume the gauges are safe to ignore.
 4. Validate quant latest-store evidence before any canary progression.
@@ -135,6 +146,9 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
      - `latestMetricsCount == 0`
      - `emptyLatestStoreAlarm == true`
      - stage list empty for the target canary window
+   - Once the March 21 profit-tape contract lands, any active vault whose latest settled tape records
+     `quant_latest_metrics_empty`, `quant_latest_store_alarm`, or `quant_pipeline_stages_missing` must remain at
+     `observe` or `quarantine`. Do not manually widen capital around the tape outcome.
 5. Validate market-context health on active symbols (not default symbol only).
    - `SYMS=$(kubectl cnpg psql -n torghut torghut-db -- -d torghut -At -c "select distinct symbol from trade_decisions where created_at >= now() - interval '1 day' and status in ('planned','submitted','accepted','filled') order by symbol limit 8;")`
    - `for s in $SYMS; do curl -fsS "http://127.0.0.1:8080/api/torghut/market-context/health?symbol=${s}" | jq '{symbol: .symbol, healthy: .healthy, reasons: .reasons}'; done`
