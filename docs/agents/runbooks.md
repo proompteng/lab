@@ -129,6 +129,9 @@ curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.workflows'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.agentrun_ingestion'
 curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.execution_trust'
+curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.runtime_kits'
+curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | jq '.admission_passports'
+curl -fsS http://localhost:8080/ready | jq '{status, serving_passport_id, runtime_kits, admission_passports}'
 kubectl api-resources --api-group=argoproj.io --no-headers || true
 kubectl -n agents get workflows.argoproj.io 2>/dev/null || true
 ```
@@ -143,7 +146,33 @@ Expected outcomes:
 - `execution_trust` is always present and stays `healthy`; if a swarm freeze TTL has expired without
   reconciliation, it reports `freeze expiry unreconciled` as a degraded repair signal while `/ready`
   stays `200` unless execution trust escalates to `blocked` or `unknown`.
+- `runtime_kits` always includes `serving` and `collaboration` classes with stable `runtime_kit_id`,
+  `component_digest`, `decision`, and `reason_codes` fields.
+- `admission_passports` always includes `serving`, `swarm_plan`, `swarm_implement`, and `swarm_verify`
+  consumers, and `/ready.serving_passport_id` matches the `serving` passport from control-plane status.
+- If collaboration is degraded or blocked because a runtime helper is missing, `/ready` stays `200` as
+  long as the `serving` passport is still `allow` or `degrade`; the blocked `swarm_*` passport surfaces
+  the missing component in `reason_codes`.
 - The Argo Workflows resource check returns empty output (no CRD or no workflows).
+
+If a cross-swarm stage refuses launch before Huly initialization, verify the passport debt first:
+
+```bash
+curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | \
+  jq '.admission_passports[] | select(.consumer_class=="swarm_implement")'
+curl -fsS http://localhost:8080/api/agents/control-plane/status?namespace=agents | \
+  jq '.runtime_kits[] | select(.kit_class=="collaboration")'
+```
+
+Expected outcomes:
+
+- a blocked or held `swarm_implement` passport cites the collaboration `runtime_kit_id` in
+  `required_runtime_kits`.
+- the collaboration runtime kit points at the missing component through `reason_codes` and
+  `components[].evidence_ref` (for example `runtime_kit_component_missing:huly_api_script` with the
+  checked helper paths).
+- rollback is runtime-local: restore the missing helper/config in the admitted image or revert the
+  change that introduced the incompatible runtime contract, then redeploy and re-check the same passport ids.
 
 ## Native workflow e2e proof
 
