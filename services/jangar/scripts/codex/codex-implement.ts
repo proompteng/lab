@@ -148,6 +148,8 @@ type HulyRequirementArtifacts = {
   replyMessage?: HulyPostChannelMessageResult
   ownerMessage?: HulyPostChannelMessageResult
   mission?: HulyUpsertMissionResult
+  ownerUpdateMessage?: string
+  releaseNote?: string
 }
 
 type HulyArtifactsForNotify = {
@@ -160,6 +162,8 @@ type HulyArtifactsForNotify = {
   missionStatus?: string
   missionStage?: string
   missionIssue?: string
+  ownerUpdateMessage?: string
+  releaseNote?: string
 }
 
 const asStringMap = (value: Record<string, string | number | boolean> | undefined): Record<string, string> => {
@@ -387,6 +391,37 @@ const buildHulyReplyMessage = ({
   return lines.filter((line) => line.length > 0).join(' ')
 }
 
+const resolveOwnerFacingStatus = (decision: 'completed' | 'failed') =>
+  decision === 'completed' ? 'merge-ready pending deployer rollout verification' : 'blocked pending follow-up'
+
+const buildRollbackPath = ({
+  decision,
+  repository,
+  issueNumber,
+  stage,
+  requirementMetadata,
+  prUrl,
+}: {
+  decision: 'completed' | 'failed'
+  repository: string
+  issueNumber: string
+  stage: string
+  requirementMetadata: RequirementMetadata
+  prUrl?: string | null
+}) => {
+  const requirementRef = requirementMetadata.signal ?? requirementMetadata.id ?? `${repository}#${issueNumber}`
+
+  if (decision !== 'completed') {
+    return `No production rollback is required yet; fix the blocker, rerun ${stage}, and re-validate ${requirementRef}`
+  }
+
+  if (prUrl) {
+    return `If the merged change regresses, revert ${prUrl} and rerun cross-swarm validation for ${requirementRef}`
+  }
+
+  return `If the merged change regresses, revert the implementation change set for ${repository}#${issueNumber} and rerun cross-swarm validation for ${requirementRef}`
+}
+
 const buildOwnerUpdateMessage = ({
   decision,
   issueNumber,
@@ -429,6 +464,63 @@ const buildOwnerUpdateMessage = ({
   return lines.filter((line) => line.length > 0).join(' ')
 }
 
+const buildReleaseNote = ({
+  decision,
+  issueNumber,
+  repository,
+  requirementMetadata,
+  runSummary,
+  tests,
+  prUrl,
+  stage,
+  gaps,
+}: {
+  decision: 'completed' | 'failed'
+  repository: string
+  issueNumber: string
+  stage: string
+  requirementMetadata: RequirementMetadata
+  runSummary?: string | null
+  tests?: string[]
+  gaps?: string[]
+  prUrl?: string | null
+}) => {
+  const requirementProvenance = [
+    requirementMetadata.id ? `ID ${requirementMetadata.id}` : '',
+    requirementMetadata.signal ? `signal ${requirementMetadata.signal}` : '',
+    requirementMetadata.source ? `source ${requirementMetadata.source}` : '',
+    requirementMetadata.target ? `target ${requirementMetadata.target}` : '',
+  ]
+    .filter((entry) => entry.length > 0)
+    .join(', ')
+
+  const whatShipped = [
+    `${stage} is ${decision === 'completed' ? 'complete' : 'blocked'}`,
+    requirementMetadata.objective ? `Objective: ${summarizeText(requirementMetadata.objective, 200)}` : '',
+    runSummary ? `Summary: ${summarizeText(runSummary, 220)}` : '',
+  ]
+    .filter((entry) => entry.length > 0)
+    .join(' ')
+
+  const lines = [
+    `Design document: ${GOVERNING_DESIGN_DOCUMENT}.`,
+    requirementProvenance ? `Requirement provenance: ${requirementProvenance}.` : '',
+    `What shipped: ${whatShipped}.`,
+    prUrl ? `PR: ${prUrl}.` : '',
+    tests && tests.length > 0
+      ? `Validation results: ${tests.join('; ')}.`
+      : 'Validation results: no explicit test list in the final run output.',
+    gaps && gaps.length > 0 ? `Key risks: ${gaps.join('; ')}.` : 'Key risks: none identified.',
+    `Rollback path: ${buildRollbackPath({ decision, repository, issueNumber, stage, requirementMetadata, prUrl })}.`,
+    `Owner-facing status: ${resolveOwnerFacingStatus(decision)}.`,
+    requirementMetadata.acceptance && requirementMetadata.acceptance.length > 0
+      ? `Acceptance criteria: ${requirementMetadata.acceptance.join('; ')}.`
+      : '',
+  ]
+
+  return lines.filter((line) => line.length > 0).join('\n')
+}
+
 const buildMissionDetails = ({
   requirementMetadata,
   repository,
@@ -437,6 +529,7 @@ const buildMissionDetails = ({
   tests,
   gaps,
   summary,
+  releaseNote,
 }: {
   repository: string
   issueNumber: string
@@ -445,6 +538,7 @@ const buildMissionDetails = ({
   tests?: string[]
   gaps?: string[]
   summary?: string | null
+  releaseNote: string
 }) => {
   const details = [
     `- Repository: ${repository}`,
@@ -484,6 +578,8 @@ const buildMissionDetails = ({
   if (requirementMetadata.acceptance && requirementMetadata.acceptance.length > 0) {
     details.push(`- Acceptance criteria: ${requirementMetadata.acceptance.join('; ')}`)
   }
+
+  details.push('', 'Release note:', releaseNote)
 
   return details.join('\n')
 }
@@ -539,6 +635,8 @@ const collectHulyArtifactsForNotify = (artifacts?: HulyRequirementArtifacts): Hu
     missionStatus: artifacts.mission?.status,
     missionStage: artifacts.mission?.stage,
     missionIssue: artifacts.mission?.issue?.issueIdentifier,
+    ownerUpdateMessage: artifacts.ownerUpdateMessage,
+    releaseNote: artifacts.releaseNote,
   }
 }
 
@@ -578,6 +676,28 @@ const buildHulyArtifactsFromRun = async ({
   latestPeerMessage?: string
 }): Promise<HulyRequirementArtifacts> => {
   const decisionSuffix = decision === 'completed' ? 'implementation completed' : 'implementation failed'
+  const ownerUpdateMessage = buildOwnerUpdateMessage({
+    decision,
+    repository,
+    issueNumber,
+    stage,
+    requirementMetadata,
+    runSummary,
+    tests,
+    prUrl,
+    gaps,
+  })
+  const releaseNote = buildReleaseNote({
+    decision,
+    repository,
+    issueNumber,
+    stage,
+    requirementMetadata,
+    runSummary,
+    tests,
+    prUrl,
+    gaps,
+  })
   const details = buildMissionDetails({
     repository,
     issueNumber,
@@ -586,7 +706,10 @@ const buildHulyArtifactsFromRun = async ({
     tests,
     gaps,
     summary: runSummary,
+    releaseNote,
   })
+  artifacts.ownerUpdateMessage = ownerUpdateMessage
+  artifacts.releaseNote = releaseNote
 
   if (includeReplyMessage && latestPeerMessageId && latestPeerMessage) {
     const replyMessage = buildHulyReplyMessage({
@@ -616,17 +739,6 @@ const buildHulyArtifactsFromRun = async ({
     }
   }
 
-  const ownerUpdateMessage = buildOwnerUpdateMessage({
-    decision,
-    repository,
-    issueNumber,
-    stage,
-    requirementMetadata,
-    runSummary,
-    tests,
-    prUrl,
-    gaps,
-  })
   try {
     artifacts.ownerMessage = await postChannelMessage({
       channel: activeChannel,
@@ -1242,6 +1354,7 @@ type CodexNotifyPayload = {
   fallbackUsed?: boolean | null
   fallbackReason?: string | null
   attemptCount?: number | null
+  hulyArtifacts?: HulyArtifactsForNotify
 }
 
 const MAX_NOTIFY_LOG_CHARS = 12_000

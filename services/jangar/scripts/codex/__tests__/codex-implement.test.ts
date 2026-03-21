@@ -850,12 +850,17 @@ describe('runCodexImplementation', () => {
         replyMessageId?: string
         missionId?: string
         missionStatus?: string
+        ownerUpdateMessage?: string
+        releaseNote?: string
       }
     }
     expect(notify.hulyArtifacts?.latestPeerMessageId).toBe('msg-latest')
     expect(notify.hulyArtifacts?.replyMessageId).toBeDefined()
     expect(notify.hulyArtifacts?.missionId).toBe('00gc1i45')
     expect(notify.hulyArtifacts?.missionStatus).toBe('completed')
+    expect(notify.hulyArtifacts?.ownerUpdateMessage).toContain('Update on owner/repo#42: implementation is completed.')
+    expect(notify.hulyArtifacts?.releaseNote).toContain('Rollback path:')
+    expect(notify.hulyArtifacts?.releaseNote).toContain('Owner-facing status: merge-ready')
   }, 40_000)
 
   it('captures acceptance criteria from cross-swarm payload and includes release-note fields in owner update', async () => {
@@ -906,8 +911,27 @@ describe('runCodexImplementation', () => {
 
     const missionDetails = upsertMissionMock.mock.calls[0]?.[0]
     expect(missionDetails?.details).toContain('Acceptance criteria: create issue/chat/doc artifacts; complete handoff')
+    expect(missionDetails?.details).toContain('Release note:')
+    expect(missionDetails?.details).toContain('Design document:')
+    expect(missionDetails?.details).toContain('Rollback path:')
+    expect(missionDetails?.details).toContain('Owner-facing status: merge-ready pending deployer rollout verification.')
     expect(missionDetails?.message).toContain('Validation results:')
     expect(missionDetails?.message).toContain('Update on owner/repo#42: implementation is completed.')
+
+    const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
+    const notify = JSON.parse(notifyRaw) as {
+      hulyArtifacts?: {
+        ownerUpdateMessage?: string
+        releaseNote?: string
+      }
+    }
+    expect(notify.hulyArtifacts?.ownerUpdateMessage).toContain(
+      'Acceptance criteria: create issue/chat/doc artifacts; complete handoff.',
+    )
+    expect(notify.hulyArtifacts?.releaseNote).toContain(
+      'Requirement provenance: ID 00gc1i45, signal torghut-to-jangar-e2e-1772433239, source torghut-quant, target jangar-control-plane.',
+    )
+    expect(notify.hulyArtifacts?.releaseNote).toContain('Rollback path:')
   }, 40_000)
 
   it('posts failure Huly mission handoff artifacts when implementation fails', async () => {
