@@ -95,6 +95,19 @@ const TMP_WORKSPACE_HULY_API_PATH = '/tmp/proompt-lab/skills/huly-api/scripts/hu
 const BUNDLED_HULY_API_PATH = '/root/.codex/skills/huly-api/scripts/huly-api.py'
 const DEFAULT_PYTHON_BIN = 'python3'
 
+const formatMissingHulyApiScriptError = (candidates: string[]) => {
+  const checkedPaths = candidates.join(', ')
+  return new Error(
+    `runtime_missing_component:huly_api_script checked_paths=[${checkedPaths}] ` +
+      'The AgentRun auth mount can shadow /root/.codex, so the helper must also exist in the runtime workspace/image.',
+  )
+}
+
+const resolveDefaultHulyApiScriptCandidates = () => {
+  const cwdPath = join(process.cwd(), 'skills', 'huly-api', 'scripts', 'huly-api.py')
+  return [DEFAULT_HULY_API_PATH, cwdPath, WORKSPACE_HULY_API_PATH, TMP_WORKSPACE_HULY_API_PATH, BUNDLED_HULY_API_PATH]
+}
+
 const runProcess = async (command: string, args: string[]): Promise<CommandResult> => {
   return await new Promise<CommandResult>((resolve, reject) => {
     const proc = spawnChild(command, args, {
@@ -389,17 +402,13 @@ export const upsertMission = async ({
 export const resolveHulyApiScriptPath = () => {
   const configured = process.env.HULY_API_SCRIPT_PATH?.trim()
   if (configured && configured.length > 0) {
+    if (!existsSync(configured)) {
+      throw formatMissingHulyApiScriptError([configured])
+    }
     return configured
   }
 
-  const cwdPath = join(process.cwd(), 'skills', 'huly-api', 'scripts', 'huly-api.py')
-  const candidates = [
-    DEFAULT_HULY_API_PATH,
-    cwdPath,
-    WORKSPACE_HULY_API_PATH,
-    TMP_WORKSPACE_HULY_API_PATH,
-    BUNDLED_HULY_API_PATH,
-  ]
+  const candidates = resolveDefaultHulyApiScriptCandidates()
 
   for (const candidate of candidates) {
     if (existsSync(candidate)) {
@@ -407,7 +416,7 @@ export const resolveHulyApiScriptPath = () => {
     }
   }
 
-  return DEFAULT_HULY_API_PATH
+  throw formatMissingHulyApiScriptError(candidates)
 }
 
 export const resolvePythonPath = () => {
