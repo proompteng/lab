@@ -43,6 +43,7 @@ _LIVE_SUBMISSION_BLOCKING_TOGGLE_MISMATCHES = frozenset(
         'TRADING_MODE',
     }
 )
+_TYPED_QUANT_HEALTH_PATH = '/api/torghut/trading/control-plane/quant/health'
 _QUANT_HEALTH_CACHE_LOCK = Lock()
 _QUANT_HEALTH_CACHE: dict[str, object] = {}
 _STALE_SEGMENT_STATES = frozenset({'stale', 'down', 'degraded', 'error', 'blocked'})
@@ -128,7 +129,19 @@ def _derive_quant_health_url(
         return None
     path = parsed.path if preserve_path else ''
     query = parsed.query if preserve_path else ''
-    resolved_path = path if preserve_path and path else '/api/torghut/trading/control-plane/quant/health'
+    if preserve_path and path:
+        normalized_path = path if path.startswith('/') else f'/{path}'
+        normalized_path = (
+            normalized_path.rstrip('/') if normalized_path != '/' else normalized_path
+        )
+        if not (
+            normalized_path == _TYPED_QUANT_HEALTH_PATH
+            or normalized_path.endswith(_TYPED_QUANT_HEALTH_PATH)
+        ):
+            return None
+        resolved_path = normalized_path
+    else:
+        resolved_path = _TYPED_QUANT_HEALTH_PATH
     return urlunsplit(
         (
             parsed.scheme,
@@ -176,7 +189,23 @@ def load_quant_evidence_status(
 ) -> dict[str, object]:
     window = settings.trading_jangar_quant_window
     account = (account_label or settings.trading_account_label or '').strip()
+    configured_url = _safe_text(settings.trading_jangar_quant_health_url)
     base_url = resolve_quant_health_url()
+    if configured_url is not None and not base_url:
+        return {
+            'required': True,
+            'ok': False,
+            'status': 'unknown',
+            'reason': 'quant_health_invalid_endpoint',
+            'blocking_reasons': ['quant_health_invalid_endpoint'],
+            'account': account or None,
+            'window': window,
+            'source_url': configured_url,
+            'message': (
+                'TRADING_JANGAR_QUANT_HEALTH_URL must target the typed '
+                f'{_TYPED_QUANT_HEALTH_PATH} surface'
+            ),
+        }
     if not base_url:
         return {
             'required': True,
