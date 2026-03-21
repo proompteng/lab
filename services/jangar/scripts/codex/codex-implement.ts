@@ -302,6 +302,48 @@ const summarizeText = (value: string | undefined, max = 260) => {
   return `${trimmed.slice(0, max)}…`
 }
 
+const buildSwarmChannelMessage = ({
+  repository,
+  issueNumber,
+  stage,
+  decision,
+  summary,
+  description,
+  objective,
+  acceptance,
+  prUrl,
+  tests,
+  gaps,
+}: {
+  repository: string
+  issueNumber: string
+  stage: string
+  decision?: 'completed' | 'failed'
+  summary?: string | null
+  description?: string
+  objective?: string
+  acceptance?: string[]
+  prUrl?: string | null
+  tests?: string[]
+  gaps?: string[]
+}) => {
+  const context = [summary, description, objective]
+    .map((candidate) => normalizeNullableStringValue(candidate))
+    .find((candidate): candidate is string => Boolean(candidate))
+
+  const lines = [
+    `${repository}#${issueNumber}`,
+    decision ? `${stage}: ${decision}` : `stage: ${stage}`,
+    context ? summarizeText(context, 400) : '',
+    prUrl ? `PR: ${prUrl}` : '',
+    tests && tests.length > 0 ? `Tests: ${tests.join('; ')}` : '',
+    gaps && gaps.length > 0 ? `Gaps: ${gaps.join('; ')}` : '',
+    acceptance && acceptance.length > 0 ? `Acceptance: ${acceptance.join('; ')}` : '',
+  ]
+
+  return lines.filter((line) => line.length > 0).join('\n')
+}
+
 const truncatePromptSegment = (value: string, maxChars: number) => {
   const normalized = value.trim()
   if (normalized.length <= maxChars) {
@@ -342,81 +384,6 @@ const resolveLatestPeerMessage = (
   }
 
   return { messageId: String(fallback.messageId), message: String(fallback.message) }
-}
-
-const buildHulyReplyMessage = ({
-  message,
-  objective,
-  decision,
-  issueNumber,
-  stage,
-  prUrl,
-  tests,
-  gaps,
-}: {
-  message: string
-  objective?: string
-  decision: 'completed' | 'failed'
-  issueNumber: string
-  stage: string
-  prUrl?: string | null
-  tests?: string[]
-  gaps?: string[]
-}) => {
-  const lines = [
-    `I picked up the point about "${summarizeText(message, 100)}".`,
-    decision === 'completed'
-      ? `For #${issueNumber}, ${stage} is complete.`
-      : `For #${issueNumber}, ${stage} is blocked right now.`,
-    objective ? `I kept the work focused on ${summarizeText(objective, 160)}.` : '',
-    prUrl ? `PR: ${prUrl}.` : '',
-    tests && tests.length > 0 ? `Validation: ${tests.join(', ')}.` : '',
-    gaps && gaps.length > 0 ? `Current risk: ${gaps.join('; ')}.` : '',
-  ]
-
-  return lines.filter((line) => line.length > 0).join(' ')
-}
-
-const buildOwnerUpdateMessage = ({
-  decision,
-  issueNumber,
-  repository,
-  requirementMetadata,
-  runSummary,
-  tests,
-  prUrl,
-  stage,
-  gaps,
-}: {
-  decision: 'completed' | 'failed'
-  repository: string
-  issueNumber: string
-  stage: string
-  requirementMetadata: RequirementMetadata
-  runSummary?: string | null
-  tests?: string[]
-  gaps?: string[]
-  prUrl?: string | null
-}) => {
-  const ownerStatus = decision === 'completed' ? 'completed' : 'blocked pending follow-up'
-  const lines = [
-    `Update on ${repository}#${issueNumber}: ${stage} is ${ownerStatus}.`,
-    requirementMetadata.objective ? `Objective: ${summarizeText(requirementMetadata.objective, 200)}.` : '',
-    runSummary ? `Summary: ${summarizeText(runSummary, 220)}.` : '',
-    prUrl ? `PR: ${prUrl}.` : '',
-    tests && tests.length > 0
-      ? `Validation results: ${tests.join('; ')}.`
-      : 'Validation results: no explicit test list in the final run output.',
-    gaps && gaps.length > 0 ? `Key risks: ${gaps.join('; ')}.` : 'Key risks: none identified.',
-    requirementMetadata.acceptance && requirementMetadata.acceptance.length > 0
-      ? `Acceptance criteria: ${requirementMetadata.acceptance.join('; ')}.`
-      : '',
-    decision === 'completed'
-      ? 'Next step: deployer rollout verification in cluster.'
-      : 'Next step: address blocker, rerun implementation, then re-verify rollout.',
-  ]
-
-  return lines.filter((line) => line.length > 0).join(' ')
 }
 
 const buildMissionDetails = ({
@@ -579,12 +546,15 @@ const buildHulyArtifactsFromRun = async ({
   })
 
   if (includeReplyMessage && latestPeerMessageId && latestPeerMessage) {
-    const replyMessage = buildHulyReplyMessage({
-      message: latestPeerMessage,
-      objective: requirementMetadata.objective,
-      decision,
+    const replyMessage = buildSwarmChannelMessage({
+      repository,
       issueNumber,
       stage,
+      decision,
+      summary: runSummary,
+      description: requirementMetadata.description,
+      objective: requirementMetadata.objective,
+      acceptance: requirementMetadata.acceptance,
       prUrl,
       tests,
       gaps,
@@ -606,15 +576,17 @@ const buildHulyArtifactsFromRun = async ({
     }
   }
 
-  const ownerUpdateMessage = buildOwnerUpdateMessage({
-    decision,
+  const ownerUpdateMessage = buildSwarmChannelMessage({
     repository,
     issueNumber,
     stage,
-    requirementMetadata,
-    runSummary,
-    tests,
+    decision,
+    summary: runSummary,
+    description: requirementMetadata.description,
+    objective: requirementMetadata.objective,
+    acceptance: requirementMetadata.acceptance,
     prUrl,
+    tests,
     gaps,
   })
   try {
@@ -3352,7 +3324,14 @@ export const runCodexImplementation = async (eventPath: string) => {
 
   const hulyWorkerContext = resolveHulyWorkerContext(requirementMetadata)
   let hulyArtifacts: HulyRequirementArtifacts | undefined
-  const hulyAccessMessage = `Starting ${stage} for ${repository}#${issueNumber}. I'll post concrete progress, blockers, and handoff details here.`
+  const hulyAccessMessage = buildSwarmChannelMessage({
+    repository,
+    issueNumber,
+    stage,
+    description: requirementMetadata.description,
+    objective: requirementMetadata.objective,
+    acceptance: requirementMetadata.acceptance,
+  })
 
   if (!isBatchTask && crossSwarmHulyChannel) {
     try {
