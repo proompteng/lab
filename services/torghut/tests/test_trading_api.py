@@ -567,6 +567,34 @@ class TestTradingApi(TestCase):
         self.assertEqual(float(tca_summary["avg_realized_shortfall_bps"]), 1.2)
         self.assertEqual(float(tca_summary["avg_divergence_bps"]), 0.7)
 
+    def test_trading_status_reports_latest_persisted_decision_timestamp(self) -> None:
+        with self.session_local() as session:
+            strategy = session.execute(select(Strategy)).scalars().first()
+            assert strategy is not None
+            latest_created_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+            session.add(
+                TradeDecision(
+                    strategy_id=strategy.id,
+                    alpaca_account_label="paper",
+                    symbol="MSFT",
+                    timeframe="5Min",
+                    decision_json={"action": "sell", "qty": "2"},
+                    rationale="latest",
+                    status="planned",
+                    created_at=latest_created_at,
+                )
+            )
+            session.commit()
+
+        response = self.client.get("/trading/status")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(
+            datetime.fromisoformat(payload["last_decision_at"]),
+            latest_created_at,
+        )
+
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
     @patch(

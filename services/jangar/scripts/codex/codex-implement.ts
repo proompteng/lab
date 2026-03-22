@@ -342,6 +342,48 @@ const summarizeText = (value: string | undefined, max = 260) => {
   return `${trimmed.slice(0, max)}…`
 }
 
+const buildSwarmChannelMessage = ({
+  repository,
+  issueNumber,
+  stage,
+  decision,
+  summary,
+  description,
+  objective,
+  acceptance,
+  prUrl,
+  tests,
+  gaps,
+}: {
+  repository: string
+  issueNumber: string
+  stage: string
+  decision?: 'completed' | 'failed'
+  summary?: string | null
+  description?: string
+  objective?: string
+  acceptance?: string[]
+  prUrl?: string | null
+  tests?: string[]
+  gaps?: string[]
+}) => {
+  const context = [summary, description, objective]
+    .map((candidate) => normalizeNullableStringValue(candidate))
+    .find((candidate): candidate is string => Boolean(candidate))
+
+  const lines = [
+    `${repository}#${issueNumber}`,
+    decision ? `${stage}: ${decision}` : `stage: ${stage}`,
+    context ? summarizeText(context, 400) : '',
+    prUrl ? `PR: ${prUrl}` : '',
+    tests && tests.length > 0 ? `Tests: ${tests.join('; ')}` : '',
+    gaps && gaps.length > 0 ? `Gaps: ${gaps.join('; ')}` : '',
+    acceptance && acceptance.length > 0 ? `Acceptance: ${acceptance.join('; ')}` : '',
+  ]
+
+  return lines.filter((line) => line.length > 0).join('\n')
+}
+
 const truncatePromptSegment = (value: string, maxChars: number) => {
   const normalized = value.trim()
   if (normalized.length <= maxChars) {
@@ -811,12 +853,15 @@ const buildHulyArtifactsFromRun = async ({
   artifacts.releaseNote = releaseNote
 
   if (includeReplyMessage && latestPeerMessageId && latestPeerMessage) {
-    const replyMessage = buildHulyReplyMessage({
-      message: latestPeerMessage,
-      objective: requirementMetadata.objective,
-      decision,
+    const replyMessage = buildSwarmChannelMessage({
+      repository,
       issueNumber,
       stage,
+      decision,
+      summary: runSummary,
+      description: requirementMetadata.description,
+      objective: requirementMetadata.objective,
+      acceptance: requirementMetadata.acceptance,
       prUrl,
       tests,
       gaps,

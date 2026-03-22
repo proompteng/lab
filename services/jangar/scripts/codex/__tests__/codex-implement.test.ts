@@ -7,6 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runCodexImplementation } from '../codex-implement'
 import type { PushCodexEventsToLokiOptions, RunCodexSessionOptions, RunCodexSessionResult } from '../lib/codex-runner'
 
+const defaultAssistantMessage = [
+  'Summary:',
+  '- implementation completed via Codex run.',
+  '',
+  'Tests:',
+  '- bun run lint:argocd',
+].join('\n')
+
 const utilMocks = vi.hoisted(() => ({
   pathExists: vi.fn<(path: string) => Promise<boolean>>(async (path) => !path.includes('missing')),
   parseBoolean: vi.fn<(value: string | undefined, fallback: boolean) => boolean>((value, fallback) => {
@@ -49,7 +57,7 @@ vi.mock('../codex-progress-comment', () => progressCommentMocks)
 
 const runnerMocks = vi.hoisted(() => ({
   runCodexSession: vi.fn<(options: RunCodexSessionOptions) => Promise<RunCodexSessionResult>>(async () => ({
-    agentMessages: ['done'],
+    agentMessages: [defaultAssistantMessage],
     sessionId: 'session-xyz',
     exitCode: 0,
     forcedTermination: false,
@@ -311,7 +319,7 @@ describe('runCodexImplementation', () => {
 
     runCodexSessionMock.mockReset()
     runCodexSessionMock.mockImplementation(async () => ({
-      agentMessages: ['done'],
+      agentMessages: [defaultAssistantMessage],
       sessionId: 'session-xyz',
       exitCode: 0,
       forcedTermination: false,
@@ -416,7 +424,7 @@ describe('runCodexImplementation', () => {
     expect(startBody).toContain('- Issue: #42')
     expect(completedBody).toContain('Phase: completed')
     expect(completedBody).toContain('### Last assistant message')
-    expect(completedBody).toContain('done')
+    expect(completedBody).toContain('implementation completed via Codex run.')
   }, 40_000)
 
   it('includes cross-swarm provenance in progress comments', async () => {
@@ -923,6 +931,7 @@ describe('runCodexImplementation', () => {
     expect(verifyChatAccessMock).toHaveBeenCalledTimes(1)
     expect(verifyChatAccessMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        message: 'owner/repo#42\nstage: implementation\nPost-merge validation from torghut to jangar.',
         requireExpectedActorId: true,
         tokenEnvKey: 'HULY_API_TOKEN_ELISE_NOVAK_JANGAR_ENGINEER',
         expectedActorEnvKey: 'HULY_EXPECTED_ACTOR_ID_ELISE_NOVAK_JANGAR_ENGINEER',
@@ -939,11 +948,12 @@ describe('runCodexImplementation', () => {
             workerIdentity?: string
           }
         | undefined
-      return args?.message?.startsWith('Thanks for the note:')
+      return args?.replyToMessageId === 'msg-latest'
     })
     expect(replyCall).toBeDefined()
-    expect(replyCall?.[0]?.message).toContain('Thanks for the note:')
-    expect(replyCall?.[0]?.message).toContain('Update for #42: implementation is complete.')
+    expect(replyCall?.[0]?.message).toContain('owner/repo#42')
+    expect(replyCall?.[0]?.message).toContain('implementation: completed')
+    expect(replyCall?.[0]?.message).toContain('implementation completed via Codex run.')
     expect(replyCall?.[0]?.replyToMessageId).toBe('msg-latest')
     expect(upsertMissionMock).toHaveBeenCalledTimes(1)
     const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
@@ -1008,17 +1018,17 @@ describe('runCodexImplementation', () => {
         | {
             channel: string
             message: string
+            replyToMessageId?: string
             workerId?: string
             workerIdentity?: string
           }
         | undefined
-      return args?.message?.startsWith('Update on owner/repo#42:')
+      return !args?.replyToMessageId
     })
-    expect(ownerMessageCall?.[0]?.message).toContain('Update on owner/repo#42: implementation is completed.')
-    expect(ownerMessageCall?.[0]?.message).toContain('Validation results:')
-    expect(ownerMessageCall?.[0]?.message).toContain(
-      'Acceptance criteria: create issue/chat/doc artifacts; complete handoff.',
-    )
+    expect(ownerMessageCall?.[0]?.message).toContain('owner/repo#42')
+    expect(ownerMessageCall?.[0]?.message).toContain('implementation: completed')
+    expect(ownerMessageCall?.[0]?.message).toContain('Tests: bun run lint:argocd')
+    expect(ownerMessageCall?.[0]?.message).toContain('Acceptance: create issue/chat/doc artifacts; complete handoff')
 
     const missionDetails = upsertMissionMock.mock.calls[0]?.[0]
     expect(missionDetails?.details).toContain('Acceptance criteria: create issue/chat/doc artifacts; complete handoff')
