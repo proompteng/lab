@@ -157,16 +157,42 @@ const hulyApiMocks = vi.hoisted(() => ({
       missionId: string
       stage?: string
       status?: string
+      channelMessage?: {
+        messageId?: string
+      }
       issue?: {
+        issueId?: string
         issueIdentifier?: string
+        issueTitle?: string
+        issueNumber?: number
+        projectId?: string
+        projectIdentifier?: string
+      }
+      document?: {
+        documentId?: string
+        documentTitle?: string
+        teamspaceId?: string
       }
     }>
   >(async ({ missionId, stage, status, channel }) => ({
     missionId,
     stage,
     status,
+    channelMessage: {
+      messageId: `mission-msg-${missionId.slice(0, 8)}`,
+    },
     issue: {
+      issueId: `issue-${missionId.slice(0, 8)}`,
       issueIdentifier: `MISSION-${missionId.slice(0, 8)}-${channel.includes('TORGHUT') ? 'OK' : 'GEN'}`,
+      issueTitle: 'Mission Issue',
+      issueNumber: 42,
+      projectId: 'project-default',
+      projectIdentifier: 'DefaultProject',
+    },
+    document: {
+      documentId: `doc-${missionId.slice(0, 8)}`,
+      documentTitle: 'Mission Document',
+      teamspaceId: 'PROOMPTENG',
     },
   })),
 }))
@@ -199,11 +225,13 @@ describe('runCodexImplementation', () => {
   let workdir: string
   let remoteDir: string
   let eventPath: string
+  let hulyApiScriptPath: string
 
   beforeEach(async () => {
     workdir = await mkdtemp(join(tmpdir(), 'codex-impl-test-'))
     remoteDir = await mkdtemp(join(tmpdir(), 'codex-impl-remote-'))
     eventPath = join(workdir, 'event.json')
+    hulyApiScriptPath = join(workdir, 'skills', 'huly-api', 'scripts', 'huly-api.py')
     delete process.env.OUTPUT_PATH
     delete process.env.JSON_OUTPUT_PATH
     delete process.env.AGENT_OUTPUT_PATH
@@ -236,6 +264,11 @@ describe('runCodexImplementation', () => {
     process.env.CHANNEL_SCRIPT = ''
     process.env.CODEX_SKIP_PR_CHECK = '1'
     process.env.CODEX_NATS_SOAK_REQUIRED = 'false'
+    process.env.HULY_API_BASE_URL = 'https://huly.example.test'
+    process.env.HULY_API_SCRIPT_PATH = hulyApiScriptPath
+
+    await mkdir(join(workdir, 'skills', 'huly-api', 'scripts'), { recursive: true })
+    await writeFile(hulyApiScriptPath, '#!/usr/bin/env python3\nprint("ok")\n', 'utf8')
 
     const payload = {
       prompt: 'Implementation prompt',
@@ -318,8 +351,21 @@ describe('runCodexImplementation', () => {
       missionId,
       stage,
       status,
+      channelMessage: {
+        messageId: `mission-msg-${missionId.slice(0, 8)}`,
+      },
       issue: {
+        issueId: `issue-${missionId.slice(0, 8)}`,
         issueIdentifier: `MISSION-${missionId.slice(0, 8)}-${channel.includes('TORGHUT') ? 'OK' : 'GEN'}`,
+        issueTitle: 'Mission Issue',
+        issueNumber: 42,
+        projectId: 'project-default',
+        projectIdentifier: 'DefaultProject',
+      },
+      document: {
+        documentId: `doc-${missionId.slice(0, 8)}`,
+        documentTitle: 'Mission Document',
+        teamspaceId: 'PROOMPTENG',
       },
     }))
     pushCodexEventsToLokiMock.mockReset()
@@ -701,6 +747,11 @@ describe('runCodexImplementation', () => {
   }, 40_000)
 
   it('uses environment fallback channel resolution for Huly handoff', async () => {
+    delete process.env.hulyChannel
+    delete process.env.HULY_CHANNEL
+    delete process.env.HULY_CHANNEL_NAME
+    delete process.env.hulyChannelUrl
+    delete process.env.HULY_CHANNEL_URL
     process.env.hulyChannelName = 'huly://swarm-bridge/issues/TORGHUT-ENV-TEST-1'
 
     const payload = {
@@ -729,6 +780,126 @@ describe('runCodexImplementation', () => {
     const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
     const notify = JSON.parse(notifyRaw) as { hulyArtifacts?: { channel?: string } }
     expect(notify.hulyArtifacts?.channel).toBe('huly://swarm-bridge/issues/TORGHUT-ENV-TEST-1')
+  }, 40_000)
+
+  it('accepts plain Huly channel names from HULY_CHANNEL fallback', async () => {
+    process.env.HULY_CHANNEL = 'general'
+
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'Validate plain HULY_CHANNEL fallback',
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    expect(listChannelMessagesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'general',
+      }),
+    )
+    expect(verifyChatAccessMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'general',
+      }),
+    )
+    const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
+    const notify = JSON.parse(notifyRaw) as { hulyArtifacts?: { channel?: string } }
+    expect(notify.hulyArtifacts?.channel).toBe('general')
+  }, 40_000)
+
+  it('prefers explicit requirement channels over HULY_CHANNEL fallbacks', async () => {
+    process.env.HULY_CHANNEL = 'general'
+
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'Validate explicit Huly requirement channel precedence',
+      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-REQ-TAKES-PRECEDENCE',
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await runCodexImplementation(eventPath)
+
+    expect(listChannelMessagesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'huly://swarm-bridge/issues/TORGHUT-REQ-TAKES-PRECEDENCE',
+      }),
+    )
+    expect(verifyChatAccessMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'huly://swarm-bridge/issues/TORGHUT-REQ-TAKES-PRECEDENCE',
+      }),
+    )
+    const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
+    const notify = JSON.parse(notifyRaw) as { hulyArtifacts?: { channel?: string } }
+    expect(notify.hulyArtifacts?.channel).toBe('huly://swarm-bridge/issues/TORGHUT-REQ-TAKES-PRECEDENCE')
+  }, 40_000)
+
+  it('captures blocked prelaunch passport evidence before Huly initialization when the helper path is missing', async () => {
+    process.env.HULY_API_SCRIPT_PATH = '/tmp/missing-huly-api.py'
+
+    const payload = {
+      prompt: 'Implementation prompt',
+      repository: 'owner/repo',
+      issueNumber: 42,
+      base: 'main',
+      head: 'codex/issue-42',
+      issueTitle: 'Title',
+      objective: 'validate blocked prelaunch passport evidence',
+      swarmRequirementChannel: 'huly://swarm-bridge/issues/TORGHUT-1772433239',
+      swarmRequirementId: '00gc1i45',
+      swarmRequirementSignal: 'torghut-to-jangar-e2e-1772433239',
+      swarmRequirementSource: 'torghut-quant',
+      swarmRequirementTarget: 'jangar-control-plane',
+      swarmRequirementDescription: 'Block launch before Huly calls when the helper runtime component is missing.',
+    }
+    await writeFile(eventPath, JSON.stringify(payload))
+
+    await expect(runCodexImplementation(eventPath)).rejects.toThrow(
+      /Huly collaboration launch refused before runtime initialization: passport=blocked/,
+    )
+
+    expect(runCodexSessionMock).not.toHaveBeenCalled()
+    expect(listChannelMessagesMock).not.toHaveBeenCalled()
+    expect(verifyChatAccessMock).not.toHaveBeenCalled()
+    expect(postChannelMessageMock).not.toHaveBeenCalled()
+    expect(upsertMissionMock).not.toHaveBeenCalled()
+
+    const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
+    const notify = JSON.parse(notifyRaw) as {
+      last_assistant_message?: string | null
+      hulyArtifacts?: {
+        prelaunchFailure?: {
+          operation?: string
+          consumerClass?: string
+          passportDecision?: string
+          runtimeKitClass?: string
+          runtimeKitDecision?: string
+          reasonCodes?: string[]
+          checkedPaths?: string[]
+        }
+      }
+    }
+    expect(notify.last_assistant_message).toContain('passport=blocked')
+    expect(notify.hulyArtifacts?.prelaunchFailure).toMatchObject({
+      operation: 'huly_preflight',
+      consumerClass: 'swarm_implement',
+      passportDecision: 'block',
+      runtimeKitClass: 'collaboration',
+      runtimeKitDecision: 'blocked',
+      reasonCodes: expect.arrayContaining(['runtime_kit_component_missing:huly_api_script']),
+      checkedPaths: ['/tmp/missing-huly-api.py'],
+    })
   }, 40_000)
 
   it('creates Huly reply, owner update, and mission artifacts for completed cross-swarm runs', async () => {
@@ -790,14 +961,27 @@ describe('runCodexImplementation', () => {
       hulyArtifacts?: {
         latestPeerMessageId?: string
         replyMessageId?: string
+        ownerMessageId?: string
+        missionMessageId?: string
         missionId?: string
         missionStatus?: string
+        missionIssueId?: string
+        missionDocumentId?: string
+        ownerUpdateMessage?: string
+        releaseNote?: string
       }
     }
     expect(notify.hulyArtifacts?.latestPeerMessageId).toBe('msg-latest')
     expect(notify.hulyArtifacts?.replyMessageId).toBeDefined()
+    expect(notify.hulyArtifacts?.ownerMessageId).toBeDefined()
+    expect(notify.hulyArtifacts?.missionMessageId).toBe('mission-msg-00gc1i45')
     expect(notify.hulyArtifacts?.missionId).toBe('00gc1i45')
     expect(notify.hulyArtifacts?.missionStatus).toBe('completed')
+    expect(notify.hulyArtifacts?.missionIssueId).toBe('issue-00gc1i45')
+    expect(notify.hulyArtifacts?.missionDocumentId).toBe('doc-00gc1i45')
+    expect(notify.hulyArtifacts?.ownerUpdateMessage).toContain('Update on owner/repo#42: implementation is completed.')
+    expect(notify.hulyArtifacts?.releaseNote).toContain('Rollback path:')
+    expect(notify.hulyArtifacts?.releaseNote).toContain('Owner-facing status: merge-ready')
   }, 40_000)
 
   it('captures acceptance criteria from cross-swarm payload and includes release-note fields in owner update', async () => {
@@ -848,8 +1032,37 @@ describe('runCodexImplementation', () => {
 
     const missionDetails = upsertMissionMock.mock.calls[0]?.[0]
     expect(missionDetails?.details).toContain('Acceptance criteria: create issue/chat/doc artifacts; complete handoff')
-    expect(missionDetails?.message).toContain('Tests: bun run lint:argocd')
-    expect(missionDetails?.message).toContain('owner/repo#42')
+    expect(missionDetails?.details).toContain('Release note:')
+    expect(missionDetails?.details).toContain('Design document:')
+    expect(missionDetails?.details).toContain('Rollback path:')
+    expect(missionDetails?.details).toContain('Owner-facing status: merge-ready pending deployer rollout verification.')
+    expect(missionDetails?.message).toContain('Validation results:')
+    expect(missionDetails?.message).toContain('Update on owner/repo#42: implementation is completed.')
+
+    const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
+    const notify = JSON.parse(notifyRaw) as {
+      hulyArtifacts?: {
+        ownerUpdateMessage?: string
+        releaseNote?: string
+        missionIssueId?: string
+        missionIssueTitle?: string
+        missionProjectIdentifier?: string
+        missionDocumentId?: string
+        missionDocumentTitle?: string
+      }
+    }
+    expect(notify.hulyArtifacts?.ownerUpdateMessage).toContain(
+      'Acceptance criteria: create issue/chat/doc artifacts; complete handoff.',
+    )
+    expect(notify.hulyArtifacts?.missionIssueId).toBe('issue-00gc1i45')
+    expect(notify.hulyArtifacts?.missionIssueTitle).toBe('Mission Issue')
+    expect(notify.hulyArtifacts?.missionProjectIdentifier).toBe('DefaultProject')
+    expect(notify.hulyArtifacts?.missionDocumentId).toBe('doc-00gc1i45')
+    expect(notify.hulyArtifacts?.missionDocumentTitle).toBe('Mission Document')
+    expect(notify.hulyArtifacts?.releaseNote).toContain(
+      'Requirement provenance: ID 00gc1i45, signal torghut-to-jangar-e2e-1772433239, source torghut-quant, target jangar-control-plane.',
+    )
+    expect(notify.hulyArtifacts?.releaseNote).toContain('Rollback path:')
   }, 40_000)
 
   it('posts failure Huly mission handoff artifacts when implementation fails', async () => {
@@ -1923,7 +2136,7 @@ exit 1
     await mkdir(join(resumeSourceDir, 'metadata'), { recursive: true })
     await mkdir(join(resumeSourceDir, 'files', 'src'), { recursive: true })
     await writeFile(join(resumeSourceDir, 'metadata', 'manifest.json'), JSON.stringify(manifest), 'utf8')
-    await writeFile(join(resumeSourceDir, 'files', 'src', 'real.ts'), 'console.log(\"resume\");\n', 'utf8')
+    await writeFile(join(resumeSourceDir, 'files', 'src', 'real.ts'), 'console.log("resume");\n', 'utf8')
 
     const archivePath = join(workdir, '.codex-implementation-changes.tar.gz')
     await new Promise<void>((resolve, reject) => {

@@ -8,7 +8,11 @@ vi.mock('node:fs', () => ({
   existsSync: fsMocks.existsSync,
 }))
 
-import { resolveHulyApiScriptPath } from '../lib/huly-api-client'
+import {
+  isRuntimeMissingComponentError,
+  resolveHulyApiScriptPath,
+  RuntimeMissingComponentError,
+} from '../lib/huly-api-client'
 
 const existsSyncMock = fsMocks.existsSync
 const ORIGINAL_ENV = { ...process.env }
@@ -42,8 +46,16 @@ describe('resolveHulyApiScriptPath', () => {
   it('throws a typed error when an explicit HULY_API_SCRIPT_PATH override is missing', () => {
     process.env.HULY_API_SCRIPT_PATH = '/custom/tools/huly-api.py'
 
-    expect(() => resolveHulyApiScriptPath()).toThrow(/runtime_missing_component:huly_api_script/)
-    expect(() => resolveHulyApiScriptPath()).toThrow(/custom\/tools\/huly-api.py/)
+    try {
+      resolveHulyApiScriptPath()
+      throw new Error('expected missing helper error')
+    } catch (error) {
+      expect(error).toBeInstanceOf(RuntimeMissingComponentError)
+      expect(isRuntimeMissingComponentError(error)).toBe(true)
+      expect((error as RuntimeMissingComponentError).componentKind).toBe('python_helper')
+      expect((error as RuntimeMissingComponentError).reasonCode).toBe('runtime_kit_component_missing')
+      expect((error as RuntimeMissingComponentError).checkedPaths).toEqual(['/custom/tools/huly-api.py'])
+    }
   })
 
   it('prefers the source-relative helper path when it is available', () => {
@@ -60,6 +72,17 @@ describe('resolveHulyApiScriptPath', () => {
   })
 
   it('throws a typed error when no helper path exists in the runtime', () => {
-    expect(() => resolveHulyApiScriptPath()).toThrow(/runtime_missing_component:huly_api_script/)
+    try {
+      resolveHulyApiScriptPath()
+      throw new Error('expected missing helper error')
+    } catch (error) {
+      expect(error).toBeInstanceOf(RuntimeMissingComponentError)
+      expect((error as RuntimeMissingComponentError).checkedPaths).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('/skills/huly-api/scripts/huly-api.py'),
+          '/app/skills/huly-api/scripts/huly-api.py',
+        ]),
+      )
+    }
   })
 })

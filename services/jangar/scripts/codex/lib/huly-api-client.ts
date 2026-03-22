@@ -1,8 +1,8 @@
 import { spawn as spawnChild } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import process from 'node:process'
+
+import { resolveHulyApiScriptPathCandidates } from '../../../src/server/control-plane-runtime-admission'
 
 interface CommandResult {
   exitCode: number
@@ -87,26 +87,30 @@ type HulyArtifactOperationResult =
   | HulyPostChannelMessageResult
   | HulyUpsertMissionResult
 
-const DEFAULT_HULY_API_PATH = fileURLToPath(
-  new URL('../../../../../skills/huly-api/scripts/huly-api.py', import.meta.url),
-)
-const WORKSPACE_HULY_API_PATH = '/workspace/lab/skills/huly-api/scripts/huly-api.py'
-const TMP_WORKSPACE_HULY_API_PATH = '/tmp/proompt-lab/skills/huly-api/scripts/huly-api.py'
-const BUNDLED_HULY_API_PATH = '/root/.codex/skills/huly-api/scripts/huly-api.py'
 const DEFAULT_PYTHON_BIN = 'python3'
 
-const formatMissingHulyApiScriptError = (candidates: string[]) => {
-  const checkedPaths = candidates.join(', ')
-  return new Error(
-    `runtime_missing_component:huly_api_script checked_paths=[${checkedPaths}] ` +
-      'The AgentRun auth mount can shadow /root/.codex, so the helper must also exist in the runtime workspace/image.',
-  )
+export class RuntimeMissingComponentError extends Error {
+  code = 'runtime_missing_component' as const
+  reasonCode = 'runtime_kit_component_missing' as const
+  componentKind = 'python_helper' as const
+  componentRef = 'skills/huly-api/scripts/huly-api.py' as const
+  checkedPaths: string[]
+
+  constructor(candidates: string[]) {
+    const checkedPaths = candidates.join(', ')
+    super(
+      `runtime_missing_component:huly_api_script checked_paths=[${checkedPaths}] ` +
+        'The AgentRun auth mount can shadow /root/.codex, so the helper must also exist in the runtime workspace/image.',
+    )
+    this.name = 'RuntimeMissingComponentError'
+    this.checkedPaths = candidates
+  }
 }
 
-const resolveDefaultHulyApiScriptCandidates = () => {
-  const cwdPath = join(process.cwd(), 'skills', 'huly-api', 'scripts', 'huly-api.py')
-  return [DEFAULT_HULY_API_PATH, cwdPath, WORKSPACE_HULY_API_PATH, TMP_WORKSPACE_HULY_API_PATH, BUNDLED_HULY_API_PATH]
-}
+const formatMissingHulyApiScriptError = (candidates: string[]) => new RuntimeMissingComponentError(candidates)
+
+export const isRuntimeMissingComponentError = (error: unknown): error is RuntimeMissingComponentError =>
+  error instanceof RuntimeMissingComponentError
 
 const runProcess = async (command: string, args: string[]): Promise<CommandResult> => {
   return await new Promise<CommandResult>((resolve, reject) => {
@@ -408,7 +412,7 @@ export const resolveHulyApiScriptPath = () => {
     return configured
   }
 
-  const candidates = resolveDefaultHulyApiScriptCandidates()
+  const candidates = resolveHulyApiScriptPathCandidates()
 
   for (const candidate of candidates) {
     if (existsSync(candidate)) {
