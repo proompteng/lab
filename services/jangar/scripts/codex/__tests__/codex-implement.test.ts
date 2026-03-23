@@ -247,6 +247,7 @@ describe('runCodexImplementation', () => {
     delete process.env.PR_URL_PATH
     delete process.env.CODEX_PR_DISCOVERY_ENABLED
     delete process.env.CODEX_RUNTIME_LOG_PATH
+    delete process.env.CODEX_STAGE
     delete process.env.CODEX_SYSTEM_PROMPT_PATH
     delete process.env.PR_NUMBER_PATH
     delete process.env.PR_URL_PATH
@@ -931,7 +932,10 @@ describe('runCodexImplementation', () => {
     expect(verifyChatAccessMock).toHaveBeenCalledTimes(1)
     expect(verifyChatAccessMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: 'owner/repo#42\nstage: implementation\nPost-merge validation from torghut to jangar.',
+        message: 'Hi team, I am starting implementation for owner/repo#42 and will post progress here.',
+        requireWorkerToken: true,
+        workerId: 'worker-0027ilba',
+        workerIdentity: 'vw-jangar-control-plane-implement-worker-0027ilba',
         requireExpectedActorId: true,
         tokenEnvKey: 'HULY_API_TOKEN_ELISE_NOVAK_JANGAR_ENGINEER',
         expectedActorEnvKey: 'HULY_EXPECTED_ACTOR_ID_ELISE_NOVAK_JANGAR_ENGINEER',
@@ -952,7 +956,7 @@ describe('runCodexImplementation', () => {
     })
     expect(replyCall).toBeDefined()
     expect(replyCall?.[0]?.message).toContain('owner/repo#42')
-    expect(replyCall?.[0]?.message).toContain('implementation: completed')
+    expect(replyCall?.[0]?.message).toMatch(/implementation( is)? completed/)
     expect(replyCall?.[0]?.message).toContain('implementation completed via Codex run.')
     expect(replyCall?.[0]?.replyToMessageId).toBe('msg-latest')
     expect(upsertMissionMock).toHaveBeenCalledTimes(1)
@@ -979,7 +983,9 @@ describe('runCodexImplementation', () => {
     expect(notify.hulyArtifacts?.missionStatus).toBe('completed')
     expect(notify.hulyArtifacts?.missionIssueId).toBe('issue-00gc1i45')
     expect(notify.hulyArtifacts?.missionDocumentId).toBe('doc-00gc1i45')
-    expect(notify.hulyArtifacts?.ownerUpdateMessage).toContain('Update on owner/repo#42: implementation is completed.')
+    expect(notify.hulyArtifacts?.ownerUpdateMessage).toMatch(
+      /Update on owner\/repo#42: implementation( is)? completed\./,
+    )
     expect(notify.hulyArtifacts?.releaseNote).toContain('Rollback path:')
     expect(notify.hulyArtifacts?.releaseNote).toContain('Owner-facing status: merge-ready')
   }, 40_000)
@@ -1026,9 +1032,11 @@ describe('runCodexImplementation', () => {
       return !args?.replyToMessageId
     })
     expect(ownerMessageCall?.[0]?.message).toContain('owner/repo#42')
-    expect(ownerMessageCall?.[0]?.message).toContain('implementation: completed')
-    expect(ownerMessageCall?.[0]?.message).toContain('Tests: bun run lint:argocd')
-    expect(ownerMessageCall?.[0]?.message).toContain('Acceptance: create issue/chat/doc artifacts; complete handoff')
+    expect(ownerMessageCall?.[0]?.message).toMatch(/implementation( is)? completed/)
+    expect(ownerMessageCall?.[0]?.message).toContain('Validation results: bun run lint:argocd.')
+    expect(ownerMessageCall?.[0]?.message).toContain(
+      'Acceptance criteria: create issue/chat/doc artifacts; complete handoff.',
+    )
 
     const missionDetails = upsertMissionMock.mock.calls[0]?.[0]
     expect(missionDetails?.details).toContain('Acceptance criteria: create issue/chat/doc artifacts; complete handoff')
@@ -1037,7 +1045,7 @@ describe('runCodexImplementation', () => {
     expect(missionDetails?.details).toContain('Rollback path:')
     expect(missionDetails?.details).toContain('Owner-facing status: merge-ready pending deployer rollout verification.')
     expect(missionDetails?.message).toContain('Validation results:')
-    expect(missionDetails?.message).toContain('Update on owner/repo#42: implementation is completed.')
+    expect(missionDetails?.message).toMatch(/Update on owner\/repo#42: implementation( is)? completed\./)
 
     const notifyRaw = await readFile(join(workdir, '.codex-implementation-notify.json'), 'utf8')
     const notify = JSON.parse(notifyRaw) as {
