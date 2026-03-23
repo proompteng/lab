@@ -1,6 +1,7 @@
 import type { Pool } from 'pg'
 import { resolveClickHouseClient, type ClickHouseClient } from './clickhouse'
 import type { QuantMetric, QuantMetricQuality, QuantMetricStatus, QuantWindow } from './torghut-quant-contract'
+import { buildLatestTaEventTsQuery } from './torghut-ta'
 import { computeWindowBoundsUtc } from './torghut-quant-windows'
 import {
   listTorghutTradingFilledExecutions,
@@ -16,7 +17,7 @@ const LATEST_TA_SIGNAL_ERROR_LOG_COOLDOWN_MS = 5 * 60_000
 
 type LatestTaSignalFreshness = {
   asOf: string
-  source: 'ta_signals.system.parts.partition_scoped_event_ts' | 'ta_signals.event_ts'
+  source: 'ta_signals.latest_row_event_ts'
 }
 
 let latestTaSignalFreshnessCache: LatestTaSignalFreshness | null = null
@@ -50,20 +51,6 @@ const asRecord = (value: unknown): Record<string, unknown> | null => {
 }
 
 const describeError = (error: unknown) => (error instanceof Error ? error.message : String(error))
-
-const toIsoFromEpochMs = (value: unknown) => {
-  const epochMs = toNumber(value)
-  if (epochMs === null || epochMs <= 0) return null
-  const asOf = new Date(epochMs)
-  if (Number.isNaN(asOf.getTime())) return null
-  return asOf.toISOString()
-}
-
-const startOfUtcDay = (value: Date) => {
-  const start = new Date(value)
-  start.setUTCHours(0, 0, 0, 0)
-  return start
-}
 
 const secondsBetween = (nowMs: number, asOfIso: string) => {
   const asOfMs = Date.parse(asOfIso)
@@ -129,64 +116,13 @@ export const listTorghutStrategyAccounts = async (params: {
 }
 
 const queryLatestTaSignalFreshness = async (client: ClickHouseClient): Promise<LatestTaSignalFreshness | null> => {
-  try {
-    const metadataRows = await client.queryJson<{ as_of_ms: number | string | null }>(
-      `
-        SELECT nullIf(toUnixTimestamp(max(max_time)) * 1000, 0) AS as_of_ms
-        FROM system.parts
-        WHERE active
-          AND database = currentDatabase()
-          AND table = 'ta_signals'
-      `,
-    )
-
-    const metadataAsOf = toIsoFromEpochMs(metadataRows[0]?.as_of_ms)
-    if (metadataAsOf) {
-      const partitionStart = startOfUtcDay(new Date(metadataAsOf))
-      const partitionEnd = new Date(partitionStart)
-      partitionEnd.setUTCDate(partitionEnd.getUTCDate() + 1)
-
-      const scopedRows = await client.queryJson<{ as_of: string | null }>(
-        `
-          SELECT max(event_ts) as as_of
-          FROM ta_signals
-          WHERE event_ts >= {partition_start:DateTime}
-            AND event_ts < {partition_end:DateTime}
-        `,
-        {
-          partition_start: partitionStart,
-          partition_end: partitionEnd,
-        },
-      )
-
-      const asOf = scopedRows[0]?.as_of
-      if (!asOf) return null
-      return {
-        asOf: new Date(asOf).toISOString(),
-        source: 'ta_signals.system.parts.partition_scoped_event_ts',
-      }
-    }
-    return null
-  } catch (metadataError) {
-    try {
-      const rows = await client.queryJson<{ as_of: string | null }>(
-        `
-          SELECT max(event_ts) as as_of
-          FROM ta_signals
-        `,
-      )
-
-      const asOf = rows[0]?.as_of
-      if (!asOf) return null
-      return {
-        asOf: new Date(asOf).toISOString(),
-        source: 'ta_signals.event_ts',
-      }
-    } catch (preciseError) {
-      throw new Error(
-        `Latest ta_signals freshness query failed (metadata=${describeError(metadataError)}; precise=${describeError(preciseError)})`,
-      )
-    }
+  const { query } = buildLatestTaEventTsQuery({ table: 'ta_signals' })
+  const rows = await client.queryJson<{ latest: string | null }>(query)
+  const asOf = rows[0]?.latest
+  if (!asOf) return null
+  return {
+    asOf: new Date(asOf).toISOString(),
+    source: 'ta_signals.latest_row_event_ts',
   }
 }
 
