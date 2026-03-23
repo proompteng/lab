@@ -10,7 +10,9 @@ const mockClickHouseClient = (queryJson: ReturnType<typeof vi.fn>): ClickHouseCl
 
 describe('queryLatestTaTableEventTs', () => {
   it('uses a symbol-scoped latest-row query for ta_signals', async () => {
-    const queryJson = vi.fn<ClickHouseClient['queryJson']>().mockResolvedValueOnce([{ latest: '2025-03-19 12:34:56.789' }])
+    const queryJson = vi
+      .fn<ClickHouseClient['queryJson']>()
+      .mockResolvedValueOnce([{ latest: '2025-03-19 12:34:56.789' }])
 
     const latest = await queryLatestTaTableEventTs({
       client: mockClickHouseClient(queryJson),
@@ -31,7 +33,9 @@ describe('queryLatestTaTableEventTs', () => {
   })
 
   it('uses a symbol-scoped latest-row query for ta_microbars', async () => {
-    const queryJson = vi.fn<ClickHouseClient['queryJson']>().mockResolvedValueOnce([{ latest: '2025-03-18 23:59:59.999' }])
+    const queryJson = vi
+      .fn<ClickHouseClient['queryJson']>()
+      .mockResolvedValueOnce([{ latest: '2025-03-18 23:59:59.999' }])
 
     const latest = await queryLatestTaTableEventTs({
       client: mockClickHouseClient(queryJson),

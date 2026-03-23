@@ -166,9 +166,8 @@ export const buildLatestTaEventTsQuery = (params: {
   table: 'ta_microbars' | 'ta_signals'
   symbol?: string
 }): { query: string; queryParams?: ClickHouseParams } => {
-  const orderBy =
-    params.table === 'ta_signals' ? 'event_ts DESC, symbol DESC, seq DESC' : 'event_ts DESC, symbol DESC'
-  const queryParams = params.symbol ? { symbol: params.symbol } satisfies ClickHouseParams : undefined
+  const orderBy = params.table === 'ta_signals' ? 'event_ts DESC, symbol DESC, seq DESC' : 'event_ts DESC, symbol DESC'
+  const queryParams = params.symbol ? ({ symbol: params.symbol } satisfies ClickHouseParams) : undefined
   const whereClause = params.symbol ? '\n      WHERE symbol = {symbol:String}' : ''
 
   return {
