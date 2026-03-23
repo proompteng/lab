@@ -258,9 +258,22 @@ Minimum fields required to attach enrichment:
     "agent": "string",
     "runtime": "string",
     "status": "string"
+  },
+  "hulyArtifacts": {
+    "channel": "huly://virtual-workers/channels/general",
+    "missionId": "00gc1i45",
+    "missionMessageId": "msg-abc123",
+    "missionIssueId": "tracker:issue:abc123",
+    "missionDocumentId": "document:abc123",
+    "ownerUpdateMessage": "Update on proompteng/lab#1234: implementation is completed. ...",
+    "releaseNote": "Design document: docs/agents/designs/autonomous-jangar-torghut-production-system.md | docs/agents/swarm-end-to-end-runbook.md.\nWhat shipped: ..."
   }
 }
 ```
+
+When a run is launched from a Huly-backed cross-swarm requirement, `hulyArtifacts.ownerUpdateMessage` and
+`hulyArtifacts.releaseNote` carry the reusable handoff text that release and owner flows can repost without scraping
+chat or mission documents.
 
 ### 9.2 Run-Complete Payload (POST /api/codex/run-complete)
 

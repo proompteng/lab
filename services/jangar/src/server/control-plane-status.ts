@@ -21,7 +21,9 @@ import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { parseNamespaceScopeEnv } from '~/server/namespace-scope'
 import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 import { parseEnvStringList, parseOptionalNumber } from '~/server/agents-controller/env-config'
+import { buildRuntimeAdmissionSnapshot, type RuntimeAdmissionSnapshot } from '~/server/control-plane-runtime-admission'
 import type {
+  AdmissionPassportStatus,
   DatabaseMigrationConsistency,
   DependencyQuorumConfidence,
   DependencyQuorumSegment,
@@ -32,6 +34,7 @@ import type {
   ExecutionTrustSwarm,
   ExecutionTrustStage,
   ExecutionTrustStatus,
+  RuntimeKitStatus,
   WorkflowsReliabilityStatus,
 } from '~/data/agents-control-plane'
 
@@ -206,6 +209,9 @@ export type ControlPlaneStatus = {
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
   agentrun_ingestion: AgentRunIngestionStatus
+  runtime_kits: RuntimeKitStatus[]
+  admission_passports: AdmissionPassportStatus[]
+  serving_passport_id: string | null
   workflows: WorkflowsReliabilityStatus
   dependency_quorum: DependencyQuorumStatus
   execution_trust: ExecutionTrustStatus
@@ -234,6 +240,7 @@ export type ControlPlaneStatusDeps = {
   getWorkflowsReliabilityStatus?: (input: WorkflowsReliabilityStatusInput) => Promise<WorkflowsReliabilityStatus>
   resolveEmpiricalServices?: () => Promise<EmpiricalServicesStatus>
   resolveExecutionTrust?: (input: ExecutionTrustInput) => Promise<ExecutionTrustSnapshot>
+  resolveRuntimeAdmission?: (input: { now: Date; executionTrust: ExecutionTrustStatus }) => RuntimeAdmissionSnapshot
 }
 
 export type ExecutionTrustSnapshot = {
@@ -2163,6 +2170,10 @@ export const buildControlPlaneStatus = async (
     kube: createKubernetesClient(),
   })
   const empiricalServices = await (deps.resolveEmpiricalServices ?? resolveEmpiricalServices)()
+  const runtimeAdmission = (deps.resolveRuntimeAdmission ?? buildRuntimeAdmissionSnapshot)({
+    now,
+    executionTrust: executionTrust.executionTrust,
+  })
 
   const isWorkflowsDataUnknown = workflows.data_confidence === 'unknown'
   const isWorkflowsDataDegraded = workflows.data_confidence === 'degraded'
@@ -2209,6 +2220,9 @@ export const buildControlPlaneStatus = async (
     ...(empiricalServices.lean.status === 'degraded' ? ['empirical:lean'] : []),
     ...(empiricalServices.jobs.status === 'degraded' ? ['empirical:jobs'] : []),
     ...(executionTrust.executionTrust.status !== 'healthy' ? ['execution_trust'] : []),
+    ...runtimeAdmission.runtimeKits
+      .filter((kit) => kit.decision !== 'healthy')
+      .map((kit) => `runtime_kit:${kit.kit_class}`),
   ]
 
   return {
@@ -2241,6 +2255,9 @@ export const buildControlPlaneStatus = async (
       streams: watchReliability.streams,
     },
     agentrun_ingestion: agentRunIngestion,
+    runtime_kits: runtimeAdmission.runtimeKits,
+    admission_passports: runtimeAdmission.admissionPassports,
+    serving_passport_id: runtimeAdmission.servingPassportId,
     rollout_health: rolloutHealth,
     swarms: executionTrust.swarms,
     stages: executionTrust.stages,

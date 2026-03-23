@@ -222,6 +222,64 @@ export type ExecutionTrustStage = {
   data_confidence: 'high' | 'degraded' | 'unknown'
 }
 
+export type RuntimeKitClass = 'serving' | 'collaboration'
+
+export type RuntimeKitDecision = 'healthy' | 'degraded' | 'blocked' | 'unknown'
+
+export type RuntimeKitComponentKind = 'python_helper' | 'binary' | 'workspace_path' | 'config_file' | 'service_url'
+
+export type RuntimeKitComponentStatus = {
+  component_kind: RuntimeKitComponentKind
+  component_ref: string
+  required: boolean
+  present: boolean
+  digest: string | null
+  reason_code: string | null
+  evidence_ref: string | null
+}
+
+export type RuntimeKitStatus = {
+  runtime_kit_id: string
+  kit_class: RuntimeKitClass
+  subject_ref: string
+  image_ref: string
+  workspace_contract_version: string
+  component_digest: string
+  decision: RuntimeKitDecision
+  observed_at: string
+  fresh_until: string
+  producer_revision: string
+  reason_codes: string[]
+  components: RuntimeKitComponentStatus[]
+}
+
+export type AdmissionPassportConsumerClass = 'serving' | 'swarm_plan' | 'swarm_implement' | 'swarm_verify'
+
+export type AdmissionPassportDecision = 'allow' | 'degrade' | 'hold' | 'block'
+
+export type AdmissionPassportSubjectStatus = {
+  subject_kind: 'authority' | 'runtime_kit'
+  subject_ref: string
+  required: boolean
+  decision: AdmissionPassportDecision
+  evidence_ref: string | null
+}
+
+export type AdmissionPassportStatus = {
+  admission_passport_id: string
+  consumer_class: AdmissionPassportConsumerClass
+  authority_session_id: string
+  recovery_case_set_digest: string
+  runtime_kit_set_digest: string
+  decision: AdmissionPassportDecision
+  reason_codes: string[]
+  required_subjects: AdmissionPassportSubjectStatus[]
+  required_runtime_kits: string[]
+  issued_at: string
+  fresh_until: string
+  producer_revision: string
+}
+
 export type DependencyQuorumDecision = 'allow' | 'delay' | 'block' | 'unknown'
 
 export type DependencyQuorumSegmentStatus = 'healthy' | 'degraded' | 'blocked'
@@ -361,6 +419,9 @@ export type ControlPlaneStatus = {
   grpc: GrpcStatus
   watch_reliability: ControlPlaneWatchReliability
   agentrun_ingestion: AgentRunIngestionStatus
+  runtime_kits: RuntimeKitStatus[]
+  admission_passports: AdmissionPassportStatus[]
+  serving_passport_id: string | null
   rollout_health: ControlPlaneRolloutHealth
   empirical_services: EmpiricalServicesStatus
   execution_trust: ExecutionTrustStatus
