@@ -10,11 +10,13 @@ import type {
   ControlPlaneHeartbeatStoreGetInput,
 } from '~/server/control-plane-heartbeat-store'
 import type {
+  AdmissionPassportStatus,
+  ControlPlaneWatchReliability,
+  DatabaseMigrationConsistency,
   ExecutionTrustStage,
   ExecutionTrustStatus,
   ExecutionTrustSwarm,
-  ControlPlaneWatchReliability,
-  DatabaseMigrationConsistency,
+  RuntimeKitStatus,
   WorkflowsReliabilityStatus,
 } from '~/data/agents-control-plane'
 import { getRegisteredMigrationNames } from '~/server/kysely-migrations'
@@ -424,12 +426,75 @@ describe('control-plane status', () => {
     stages: [] as ExecutionTrustStage[],
   }
 
+  const buildRuntimeKit = (overrides: Partial<RuntimeKitStatus> = {}): RuntimeKitStatus => ({
+    runtime_kit_id: 'runtime-kit:serving:1',
+    kit_class: 'serving',
+    subject_ref: 'jangar:/ready',
+    image_ref: 'runtime:local',
+    workspace_contract_version: 'shadow-v1',
+    component_digest: 'digest-serving',
+    decision: 'healthy',
+    observed_at: '2026-01-20T00:00:00Z',
+    fresh_until: '2026-01-20T00:05:00Z',
+    producer_revision: 'shadow-v1',
+    reason_codes: [],
+    components: [],
+    ...overrides,
+  })
+
+  const buildAdmissionPassport = (overrides: Partial<AdmissionPassportStatus> = {}): AdmissionPassportStatus => ({
+    admission_passport_id: 'passport:serving:1',
+    consumer_class: 'serving',
+    authority_session_id: 'authority-session:1',
+    recovery_case_set_digest: 'recovery-1',
+    runtime_kit_set_digest: 'runtime-1',
+    decision: 'allow',
+    reason_codes: [],
+    required_subjects: [],
+    required_runtime_kits: ['runtime-kit:serving:1'],
+    issued_at: '2026-01-20T00:00:00Z',
+    fresh_until: '2026-01-20T00:05:00Z',
+    producer_revision: 'shadow-v1',
+    ...overrides,
+  })
+
+  const buildRuntimeAdmissionSnapshot = (
+    overrides: Partial<{
+      runtimeKits: RuntimeKitStatus[]
+      admissionPassports: AdmissionPassportStatus[]
+      servingPassportId: string | null
+    }> = {},
+  ) => ({
+    runtimeKits: overrides.runtimeKits ?? [
+      buildRuntimeKit(),
+      buildRuntimeKit({
+        runtime_kit_id: 'runtime-kit:collaboration:1',
+        kit_class: 'collaboration',
+        subject_ref: 'jangar:codex:huly-collaboration',
+        component_digest: 'digest-collaboration',
+      }),
+    ],
+    admissionPassports: overrides.admissionPassports ?? [
+      buildAdmissionPassport(),
+      buildAdmissionPassport({
+        admission_passport_id: 'passport:swarm_implement:1',
+        consumer_class: 'swarm_implement',
+        runtime_kit_set_digest: 'runtime-2',
+        required_runtime_kits: ['runtime-kit:collaboration:1'],
+      }),
+    ],
+    servingPassportId: overrides.servingPassportId ?? 'passport:serving:1',
+  })
+
+  const healthyRuntimeAdmissionSnapshot = buildRuntimeAdmissionSnapshot()
+
   const buildStatus = (
     options: Parameters<typeof buildControlPlaneStatus>[0],
     deps: Parameters<typeof buildControlPlaneStatus>[1] = {},
   ) =>
     buildControlPlaneStatus(options, {
       resolveExecutionTrust: async () => healthyExecutionTrustSnapshot,
+      resolveRuntimeAdmission: () => healthyRuntimeAdmissionSnapshot,
       ...deps,
     })
 
@@ -489,6 +554,9 @@ describe('control-plane status', () => {
     expect(status.service).toBe('jangar')
     expect(status.controllers).toHaveLength(3)
     expect(status.runtime_adapters).toHaveLength(4)
+    expect(status.runtime_kits).toEqual(healthyRuntimeAdmissionSnapshot.runtimeKits)
+    expect(status.admission_passports).toEqual(healthyRuntimeAdmissionSnapshot.admissionPassports)
+    expect(status.serving_passport_id).toBe('passport:serving:1')
     expect(status.workflows).toEqual({
       active_job_runs: 0,
       recent_failed_jobs: 0,
@@ -527,6 +595,99 @@ describe('control-plane status', () => {
     expect(status.empirical_services.forecast.authoritative).toBe(true)
     expect(status.empirical_services.lean.authoritative).toBe(true)
     expect(status.empirical_services.jobs.authoritative).toBe(true)
+  })
+
+  it('surfaces blocked collaboration runtime kits without changing the serving passport id', async () => {
+    setRolloutDeploymentList([healthyRolloutDeployment, healthyAgentsControllersRolloutDeployment])
+
+    const status = await buildStatus(
+      {
+        namespace: 'agents',
+        grpc: {
+          enabled: true,
+          address: '127.0.0.1:50051',
+          status: 'healthy',
+          message: '',
+        },
+      },
+      {
+        now: () => new Date('2026-01-20T00:00:00Z'),
+        getHeartbeat: createHeartbeatResolver(),
+        getAgentsControllerHealth: () => healthyController,
+        getSupportingControllerHealth: () => healthyController,
+        getOrchestrationControllerHealth: () => healthyController,
+        resolveTemporalAdapter: async () => buildTemporalAdapter(),
+        checkDatabase: async () => buildDatabaseStatus(),
+        getWatchReliabilitySummary: () => watchReliabilityHealthy,
+        getWorkflowsReliabilityStatus: async () => buildWorkflowsReliabilityStatus(),
+        resolveEmpiricalServices: async () => ({
+          forecast: {
+            status: 'healthy',
+            endpoint: 'http://torghut-forecast/readyz',
+            message: 'forecast service ready',
+            authoritative: true,
+          },
+          lean: {
+            status: 'healthy',
+            endpoint: 'http://torghut-lean-runner/readyz',
+            message: 'LEAN runner ready',
+            authoritative: true,
+          },
+          jobs: {
+            status: 'healthy',
+            endpoint: 'http://torghut/trading/empirical-jobs',
+            message: 'empirical jobs fresh',
+            authoritative: true,
+            eligible_jobs: [],
+            stale_jobs: [],
+          },
+        }),
+        resolveRuntimeAdmission: () =>
+          buildRuntimeAdmissionSnapshot({
+            runtimeKits: [
+              buildRuntimeKit(),
+              buildRuntimeKit({
+                runtime_kit_id: 'runtime-kit:collaboration:2',
+                kit_class: 'collaboration',
+                subject_ref: 'jangar:codex:huly-collaboration',
+                component_digest: 'digest-collaboration',
+                decision: 'blocked',
+                reason_codes: ['runtime_kit_component_missing:huly_api_script'],
+              }),
+            ],
+            admissionPassports: [
+              buildAdmissionPassport(),
+              buildAdmissionPassport({
+                admission_passport_id: 'passport:swarm_implement:2',
+                consumer_class: 'swarm_implement',
+                runtime_kit_set_digest: 'runtime-2',
+                decision: 'block',
+                reason_codes: ['runtime_kit_component_missing:huly_api_script'],
+                required_runtime_kits: ['runtime-kit:collaboration:2'],
+              }),
+            ],
+          }),
+      },
+    )
+
+    expect(status.serving_passport_id).toBe('passport:serving:1')
+    expect(status.runtime_kits).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kit_class: 'collaboration',
+          decision: 'blocked',
+        }),
+      ]),
+    )
+    expect(status.admission_passports).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          consumer_class: 'swarm_implement',
+          decision: 'block',
+        }),
+      ]),
+    )
+    expect(status.namespaces[0]?.degraded_components ?? []).toContain('runtime_kit:collaboration')
   })
 
   it('marks degraded components when controllers or database fail', async () => {

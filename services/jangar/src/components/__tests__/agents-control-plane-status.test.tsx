@@ -118,6 +118,9 @@ const baseStatus: ControlPlaneStatus = {
     untouched_run_count: 0,
     oldest_untouched_age_seconds: null,
   },
+  runtime_kits: [],
+  admission_passports: [],
+  serving_passport_id: null,
   rollout_health: {
     status: 'healthy',
     observed_deployments: 0,
