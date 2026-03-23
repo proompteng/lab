@@ -931,7 +931,10 @@ describe('runCodexImplementation', () => {
     expect(verifyChatAccessMock).toHaveBeenCalledTimes(1)
     expect(verifyChatAccessMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: 'owner/repo#42\nstage: implementation\nPost-merge validation from torghut to jangar.',
+        message: 'Hi team, I am starting implementation for owner/repo#42 and will post progress here.',
+        requireWorkerToken: true,
+        workerId: 'worker-0027ilba',
+        workerIdentity: 'vw-jangar-control-plane-implement-worker-0027ilba',
         requireExpectedActorId: true,
         tokenEnvKey: 'HULY_API_TOKEN_ELISE_NOVAK_JANGAR_ENGINEER',
         expectedActorEnvKey: 'HULY_EXPECTED_ACTOR_ID_ELISE_NOVAK_JANGAR_ENGINEER',
@@ -952,7 +955,7 @@ describe('runCodexImplementation', () => {
     })
     expect(replyCall).toBeDefined()
     expect(replyCall?.[0]?.message).toContain('owner/repo#42')
-    expect(replyCall?.[0]?.message).toContain('implementation: completed')
+    expect(replyCall?.[0]?.message).toContain('implementation is completed')
     expect(replyCall?.[0]?.message).toContain('implementation completed via Codex run.')
     expect(replyCall?.[0]?.replyToMessageId).toBe('msg-latest')
     expect(upsertMissionMock).toHaveBeenCalledTimes(1)
@@ -1026,7 +1029,7 @@ describe('runCodexImplementation', () => {
       return !args?.replyToMessageId
     })
     expect(ownerMessageCall?.[0]?.message).toContain('owner/repo#42')
-    expect(ownerMessageCall?.[0]?.message).toContain('implementation: completed')
+    expect(ownerMessageCall?.[0]?.message).toContain('implementation is completed')
     expect(ownerMessageCall?.[0]?.message).toContain('Tests: bun run lint:argocd')
     expect(ownerMessageCall?.[0]?.message).toContain('Acceptance: create issue/chat/doc artifacts; complete handoff')
 
