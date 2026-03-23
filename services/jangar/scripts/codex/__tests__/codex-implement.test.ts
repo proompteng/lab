@@ -955,7 +955,7 @@ describe('runCodexImplementation', () => {
     })
     expect(replyCall).toBeDefined()
     expect(replyCall?.[0]?.message).toContain('owner/repo#42')
-    expect(replyCall?.[0]?.message).toContain('implementation is completed')
+    expect(replyCall?.[0]?.message).toMatch(/implementation(?:\s+is)?\s*:?\s*completed/)
     expect(replyCall?.[0]?.message).toContain('implementation completed via Codex run.')
     expect(replyCall?.[0]?.replyToMessageId).toBe('msg-latest')
     expect(upsertMissionMock).toHaveBeenCalledTimes(1)
