@@ -1002,35 +1002,9 @@ def build_execution_adapter(
     """Build the primary execution adapter from runtime settings."""
 
     alpaca_adapter = AlpacaExecutionAdapter(firewall=order_firewall, read_client=alpaca_client)
-    simulation_enabled = settings.trading_simulation_enabled or settings.trading_execution_adapter == 'simulation'
-    if simulation_enabled:
-        bootstrap_servers = (
-            settings.trading_simulation_order_updates_bootstrap_servers
-            or settings.trading_order_feed_bootstrap_servers
-        )
-        return SimulationExecutionAdapter(
-            bootstrap_servers=bootstrap_servers,
-            security_protocol=(
-                settings.trading_simulation_order_updates_security_protocol
-                or settings.trading_order_feed_security_protocol
-            ),
-            sasl_mechanism=(
-                settings.trading_simulation_order_updates_sasl_mechanism
-                or settings.trading_order_feed_sasl_mechanism
-            ),
-            sasl_username=(
-                settings.trading_simulation_order_updates_sasl_username
-                or settings.trading_order_feed_sasl_username
-            ),
-            sasl_password=(
-                settings.trading_simulation_order_updates_sasl_password
-                or settings.trading_order_feed_sasl_password
-            ),
-            topic=settings.trading_simulation_order_updates_topic,
-            account_label=settings.trading_account_label,
-            simulation_run_id=settings.trading_simulation_run_id,
-            dataset_id=settings.trading_simulation_dataset_id,
-        )
+    simulation_adapter = _build_simulation_execution_adapter()
+    if simulation_adapter is not None:
+        return simulation_adapter
 
     if settings.trading_execution_adapter != 'lean':
         return alpaca_adapter
@@ -1067,6 +1041,19 @@ def build_execution_adapter(
     )
 
 
+def build_simple_execution_adapter(
+    *,
+    alpaca_client: TorghutAlpacaClient,
+    order_firewall: OrderFirewall,
+) -> ExecutionAdapter:
+    """Build the direct-submit adapter used by the simple execution lane."""
+
+    simulation_adapter = _build_simulation_execution_adapter()
+    if simulation_adapter is not None:
+        return simulation_adapter
+    return AlpacaExecutionAdapter(firewall=order_firewall, read_client=alpaca_client)
+
+
 def adapter_enabled_for_symbol(symbol: str, *, allowlist: set[str] | None = None) -> bool:
     """Return whether LEAN should be used for execution routing."""
 
@@ -1079,6 +1066,42 @@ def adapter_enabled_for_symbol(symbol: str, *, allowlist: set[str] | None = None
     if settings.trading_lean_lane_disable_switch:
         return False
     return True
+
+
+def _build_simulation_execution_adapter() -> SimulationExecutionAdapter | None:
+    simulation_enabled = (
+        settings.trading_simulation_enabled
+        or settings.trading_execution_adapter == 'simulation'
+    )
+    if not simulation_enabled:
+        return None
+    bootstrap_servers = (
+        settings.trading_simulation_order_updates_bootstrap_servers
+        or settings.trading_order_feed_bootstrap_servers
+    )
+    return SimulationExecutionAdapter(
+        bootstrap_servers=bootstrap_servers,
+        security_protocol=(
+            settings.trading_simulation_order_updates_security_protocol
+            or settings.trading_order_feed_security_protocol
+        ),
+        sasl_mechanism=(
+            settings.trading_simulation_order_updates_sasl_mechanism
+            or settings.trading_order_feed_sasl_mechanism
+        ),
+        sasl_username=(
+            settings.trading_simulation_order_updates_sasl_username
+            or settings.trading_order_feed_sasl_username
+        ),
+        sasl_password=(
+            settings.trading_simulation_order_updates_sasl_password
+            or settings.trading_order_feed_sasl_password
+        ),
+        topic=settings.trading_simulation_order_updates_topic,
+        account_label=settings.trading_account_label,
+        simulation_run_id=settings.trading_simulation_run_id,
+        dataset_id=settings.trading_simulation_dataset_id,
+    )
 
 
 def _resolve_simulated_fill_price(

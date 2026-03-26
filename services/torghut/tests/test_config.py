@@ -737,15 +737,24 @@ class TestConfig(TestCase):
                 "sasl_plain_password": "secret",
             },
         )
-        self.assertEqual(
-            settings.trading_simulation_order_updates_kafka_security_kwargs,
-            {
-                "security_protocol": "SASL_PLAINTEXT",
-                "sasl_mechanism": "SCRAM-SHA-512",
-                "sasl_plain_username": "user",
-                "sasl_plain_password": "secret",
-            },
+
+    def test_simple_pipeline_settings_are_supported(self) -> None:
+        settings = Settings(
+            TRADING_ENABLED=False,
+            TRADING_UNIVERSE_SOURCE="static",
+            TRADING_PIPELINE_MODE="simple",
+            TRADING_SIMPLE_MAX_NOTIONAL_PER_ORDER=250.0,
+            TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL=750.0,
+            TRADING_SIMPLE_SUBMIT_ENABLED=True,
+            TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED=True,
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
         )
+
+        self.assertEqual(settings.trading_pipeline_mode, "simple")
+        self.assertEqual(settings.trading_simple_max_notional_per_order, 250.0)
+        self.assertEqual(settings.trading_simple_max_notional_per_symbol, 750.0)
+        self.assertTrue(settings.trading_simple_submit_enabled)
+        self.assertTrue(settings.trading_simple_order_feed_telemetry_enabled)
 
     def test_parses_signal_staleness_critical_reasons(self) -> None:
         settings = Settings(

@@ -185,6 +185,8 @@ class TestTradingApi(TestCase):
         _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
         _ALPACA_HEALTH_STATE.clear()
         app.dependency_overrides.clear()
+        if hasattr(app.state, "trading_scheduler"):
+            delattr(app.state, "trading_scheduler")
 
     def test_trading_decisions_endpoint(self) -> None:
         response = self.client.get("/trading/decisions?symbol=AAPL")
@@ -594,6 +596,51 @@ class TestTradingApi(TestCase):
             datetime.fromisoformat(payload["last_decision_at"]),
             latest_created_at,
         )
+
+    def test_trading_status_surfaces_simple_lane_fields(self) -> None:
+        original_pipeline_mode = settings.trading_pipeline_mode
+        original_trading_enabled = settings.trading_enabled
+        original_trading_mode = settings.trading_mode
+        original_simple_submit_enabled = settings.trading_simple_submit_enabled
+        original_kill_switch_enabled = settings.trading_kill_switch_enabled
+
+        settings.trading_pipeline_mode = "simple"
+        settings.trading_enabled = True
+        settings.trading_mode = "live"
+        settings.trading_simple_submit_enabled = True
+        settings.trading_kill_switch_enabled = False
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.metrics.orders_submitted_total = 7
+            scheduler.state.metrics.decision_reject_reason_total = {
+                "broker_submit_failed": 2,
+                "capital_stage_shadow": 9,
+            }
+            app.state.trading_scheduler = scheduler
+
+            response = self.client.get("/trading/status")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+
+            self.assertEqual(payload["pipeline_mode"], "simple")
+            self.assertEqual(payload["execution_lane"], "simple")
+            self.assertTrue(payload["live_submission_gate"]["allowed"])
+            self.assertEqual(payload["simple_lane_orders_submitted_total"], 7)
+            self.assertEqual(
+                payload["simple_lane_reject_reason_totals"],
+                {"broker_submit_failed": 2},
+            )
+            self.assertTrue(payload["simple_lane_status"]["enabled"])
+            self.assertEqual(
+                payload["simple_lane_status"]["allowed_reject_reasons"][0],
+                "broker_precheck_failed",
+            )
+        finally:
+            settings.trading_pipeline_mode = original_pipeline_mode
+            settings.trading_enabled = original_trading_enabled
+            settings.trading_mode = original_trading_mode
+            settings.trading_simple_submit_enabled = original_simple_submit_enabled
+            settings.trading_kill_switch_enabled = original_kill_switch_enabled
 
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})

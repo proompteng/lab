@@ -1373,6 +1373,31 @@ class Settings(BaseSettings):
     trading_kill_switch_enabled: bool = Field(
         default=True, alias="TRADING_KILL_SWITCH_ENABLED"
     )
+    trading_pipeline_mode: Literal["legacy", "simple"] = Field(
+        default="legacy",
+        alias="TRADING_PIPELINE_MODE",
+        description="Select the order-submission pipeline implementation.",
+    )
+    trading_simple_max_notional_per_order: Optional[float] = Field(
+        default=None,
+        alias="TRADING_SIMPLE_MAX_NOTIONAL_PER_ORDER",
+        description="Simple-lane max notional cap per submitted order.",
+    )
+    trading_simple_max_notional_per_symbol: Optional[float] = Field(
+        default=None,
+        alias="TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL",
+        description="Simple-lane absolute exposure cap per symbol.",
+    )
+    trading_simple_submit_enabled: bool = Field(
+        default=False,
+        alias="TRADING_SIMPLE_SUBMIT_ENABLED",
+        description="Allow the simple lane to submit live broker orders.",
+    )
+    trading_simple_order_feed_telemetry_enabled: bool = Field(
+        default=False,
+        alias="TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED",
+        description="In simple mode, keep Kafka order-feed ingestion only as optional telemetry.",
+    )
     trading_emergency_stop_enabled: bool = Field(
         default=False,
         alias="TRADING_EMERGENCY_STOP_ENABLED",
@@ -1805,7 +1830,9 @@ class Settings(BaseSettings):
         return ",".join([item.strip() for item in raw.split(",") if item.strip()])
 
     @staticmethod
-    def _validate_non_negative_value(value: float, message: str) -> None:
+    def _validate_non_negative_value(value: float | None, message: str) -> None:
+        if value is None:
+            return
         if value < 0:
             raise ValueError(message)
 
@@ -2194,7 +2221,7 @@ class Settings(BaseSettings):
             )
 
     def _validate_allocator_scalar_settings(self) -> None:
-        checks: list[tuple[float, str]] = [
+        checks: list[tuple[float | None, str]] = [
             (
                 self.trading_allocator_default_budget_multiplier,
                 "TRADING_ALLOCATOR_DEFAULT_BUDGET_MULTIPLIER must be >= 0",
@@ -2242,6 +2269,14 @@ class Settings(BaseSettings):
             (
                 self.trading_planned_decision_timeout_seconds,
                 "TRADING_PLANNED_DECISION_TIMEOUT_SECONDS must be >= 0",
+            ),
+            (
+                self.trading_simple_max_notional_per_order,
+                "TRADING_SIMPLE_MAX_NOTIONAL_PER_ORDER must be >= 0",
+            ),
+            (
+                self.trading_simple_max_notional_per_symbol,
+                "TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL must be >= 0",
             ),
             (
                 self.trading_readiness_dependency_cache_stale_tolerance_seconds,

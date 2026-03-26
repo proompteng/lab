@@ -8,7 +8,7 @@ import tempfile
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import Mock, patch
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -50,6 +50,7 @@ from app.trading.ingest import SignalBatch
 from app.trading.reconcile import Reconciler
 from app.trading.risk import RiskEngine
 from app.trading.scheduler.pipeline import TradingPipeline
+from app.trading.scheduler.simple_pipeline import SimpleTradingPipeline
 from app.trading.scheduler.pipeline_helpers import (
     _apply_projected_position_decision,
     _build_dspy_lineage,
@@ -523,6 +524,13 @@ class TestTradingPipeline(TestCase):
                 "trading_execution_adapter",
                 "trading_allow_shorts",
                 "trading_fractional_equities_enabled",
+                "trading_pipeline_mode",
+                "trading_simple_submit_enabled",
+                "trading_simple_max_notional_per_order",
+                "trading_simple_max_notional_per_symbol",
+                "trading_simple_order_feed_telemetry_enabled",
+                "trading_universe_static_fallback_enabled",
+                "trading_universe_static_fallback_symbols_raw",
                 "trading_market_context_fail_mode",
                 "llm_enabled",
                 "llm_min_confidence",
@@ -690,6 +698,252 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
+
+    def test_simple_pipeline_submits_live_order_without_shadow_gate_and_persists_lane_metadata(
+        self,
+    ) -> None:
+        from app import config
+
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_live_enabled = True
+        config.settings.trading_pipeline_mode = "simple"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_autonomy_allow_live_promotion = False
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_universe_static_fallback_enabled = True
+        config.settings.trading_universe_static_fallback_symbols_raw = "AAPL"
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="simple-live",
+                description="simple live lane",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            ingest_ts=datetime(2026, 3, 26, 13, 30, 5, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Min",
+            seq=1,
+            payload={
+                "feature_schema_version": "3.0.0",
+                "macd": {"macd": 1.2, "signal": 0.5},
+                "rsi14": 25,
+                "price": 100,
+            },
+        )
+
+        alpaca_client = FakeAlpacaClient()
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([signal]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+        pipeline.run_once()
+
+        self.assertEqual(len(alpaca_client.submitted), 1)
+        with self.session_local() as session:
+            decision = session.execute(select(TradeDecision)).scalar_one()
+            execution = session.execute(select(Execution)).scalar_one()
+            decision_json = cast(dict[str, Any], decision.decision_json)
+            params = cast(dict[str, Any], decision_json.get("params"))
+            control_plane = cast(dict[str, Any], decision_json.get("control_plane_snapshot"))
+            execution_audit = cast(dict[str, Any], execution.execution_audit_json)
+            self.assertEqual(decision.status, "submitted")
+            self.assertEqual(params.get("execution_lane"), "simple")
+            self.assertEqual(params.get("submit_path"), "direct_alpaca")
+            self.assertEqual(control_plane.get("execution_lane"), "simple")
+            self.assertEqual(control_plane.get("pipeline_mode"), "simple")
+            self.assertEqual(execution_audit.get("execution_lane"), "simple")
+            self.assertEqual(execution_audit.get("submit_path"), "direct_alpaca")
+
+    def test_simple_pipeline_reconcile_updates_execution_status(self) -> None:
+        from app import config
+
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_pipeline_mode = "simple"
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_universe_static_fallback_enabled = True
+        config.settings.trading_universe_static_fallback_symbols_raw = "AAPL"
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="simple-reconcile",
+                description="simple reconcile lane",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            ingest_ts=datetime(2026, 3, 26, 13, 30, 5, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Min",
+            seq=1,
+            payload={
+                "feature_schema_version": "3.0.0",
+                "macd": {"macd": 1.2, "signal": 0.5},
+                "rsi14": 25,
+                "price": 100,
+            },
+        )
+
+        alpaca_client = FakeAlpacaClient()
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([signal]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+        pipeline.run_once()
+        updates = pipeline.reconcile()
+
+        self.assertEqual(updates, 1)
+        with self.session_local() as session:
+            execution = session.execute(select(Execution)).scalar_one()
+            self.assertEqual(execution.status, "filled")
+
+    def test_simple_pipeline_uses_client_order_id_for_idempotency(self) -> None:
+        from app import config
+
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_pipeline_mode = "simple"
+        config.settings.trading_universe_source = "jangar"
+        config.settings.trading_universe_static_fallback_enabled = True
+        config.settings.trading_universe_static_fallback_symbols_raw = "AAPL"
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="simple-idempotency",
+                description="simple idempotency",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            ingest_ts=datetime(2026, 3, 26, 13, 30, 5, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Min",
+            seq=1,
+            payload={
+                "feature_schema_version": "3.0.0",
+                "macd": {"macd": 1.2, "signal": 0.5},
+                "rsi14": 25,
+                "price": 100,
+            },
+        )
+
+        alpaca_client = FakeAlpacaClient()
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([signal]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+        pipeline.run_once()
+        pipeline.run_once()
+
+        self.assertEqual(len(alpaca_client.submitted), 1)
+        with self.session_local() as session:
+            self.assertEqual(session.query(Execution).count(), 1)
+
+    def test_simple_pipeline_blocks_shorts_when_asset_is_not_shortable(self) -> None:
+        from app import config
+
+        class _ShortBlockedClient(FakeAlpacaClient):
+            def get_account(self) -> dict[str, str | bool]:
+                account = super().get_account()
+                account["shorting_enabled"] = True
+                return account
+
+            def get_asset(self, symbol_or_asset_id: str) -> dict[str, str | bool]:
+                return {
+                    "symbol": symbol_or_asset_id,
+                    "tradable": True,
+                    "shortable": False,
+                }
+
+        config.settings.trading_allow_shorts = True
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=_ShortBlockedClient(),
+            order_firewall=OrderFirewall(_ShortBlockedClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy-1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="sell",
+            qty=Decimal("1"),
+            rationale="shortability-check",
+            params={"price": "100"},
+        )
+
+        reason = pipeline._simple_shortability_reason(decision=decision, positions=[])
+
+        self.assertEqual(reason, "shorting_not_allowed_for_asset")
 
     def test_execution_routing_uses_lean_for_all_symbols(self) -> None:
         from app import config

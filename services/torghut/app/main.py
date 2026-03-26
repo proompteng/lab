@@ -1646,10 +1646,13 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
         ),
         quant_health_status=quant_evidence,
     )
+    simple_lane_reject_reason_totals = _simple_lane_reject_reason_totals(state)
     return {
         "enabled": settings.trading_enabled,
         "autonomy_enabled": settings.trading_autonomy_enabled,
         "mode": settings.trading_mode,
+        "pipeline_mode": settings.trading_pipeline_mode,
+        "execution_lane": settings.trading_pipeline_mode,
         "kill_switch_enabled": settings.trading_kill_switch_enabled,
         "build": {
             "version": BUILD_VERSION,
@@ -1668,6 +1671,22 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
         "live_submission_gate": live_submission_gate,
         "quant_evidence": quant_evidence,
         "last_decision_at": last_decision_at,
+        "simple_lane_status": {
+            "enabled": settings.trading_pipeline_mode == "simple",
+            "submit_enabled": settings.trading_simple_submit_enabled,
+            "order_feed_telemetry_enabled": (
+                settings.trading_simple_order_feed_telemetry_enabled
+            ),
+            "max_notional_per_order": settings.trading_simple_max_notional_per_order,
+            "max_notional_per_symbol": settings.trading_simple_max_notional_per_symbol,
+            "allowed_reject_reasons": sorted(_SIMPLE_LANE_ALLOWED_REJECT_REASONS),
+        },
+        "simple_lane_reject_reason_totals": simple_lane_reject_reason_totals,
+        "simple_lane_orders_submitted_total": (
+            state.metrics.orders_submitted_total
+            if settings.trading_pipeline_mode == "simple"
+            else 0
+        ),
         "last_run_at": state.last_run_at,
         "last_reconcile_at": state.last_reconcile_at,
         "last_error": state.last_error,
@@ -3117,6 +3136,47 @@ def _build_live_submission_gate_payload(
     dspy_runtime_status: Mapping[str, Any] | None = None,
     quant_health_status: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
+    if settings.trading_pipeline_mode == "simple":
+        if settings.trading_mode != "live":
+            return {
+                "allowed": True,
+                "reason": "non_live_mode",
+                "blocked_reasons": [],
+                "capital_stage": settings.trading_mode,
+                "configured_live_promotion": settings.trading_simple_submit_enabled,
+                "autonomy_promotion_eligible": False,
+                "drift_live_promotion_eligible": False,
+                "promotion_eligible_total": 0,
+                "dependency_quorum_decision": "informational_only",
+                "empirical_jobs_ready": None,
+                "dspy_live_ready": None,
+            }
+        blocked_reasons: list[str] = []
+        if not settings.trading_enabled:
+            blocked_reasons.append("trading_disabled")
+        if settings.trading_kill_switch_enabled:
+            blocked_reasons.append("kill_switch_enabled")
+        if not settings.trading_simple_submit_enabled:
+            blocked_reasons.append("simple_submit_disabled")
+        if settings.trading_emergency_stop_enabled and bool(
+            getattr(state, "emergency_stop_active", False)
+        ):
+            blocked_reasons.append(
+                str(getattr(state, "emergency_stop_reason", "") or "emergency_stop_active")
+            )
+        return {
+            "allowed": len(blocked_reasons) == 0,
+            "reason": "ready" if not blocked_reasons else blocked_reasons[0],
+            "blocked_reasons": blocked_reasons,
+            "capital_stage": "live" if not blocked_reasons else "shadow",
+            "configured_live_promotion": settings.trading_simple_submit_enabled,
+            "autonomy_promotion_eligible": False,
+            "drift_live_promotion_eligible": False,
+            "promotion_eligible_total": 0,
+            "dependency_quorum_decision": "informational_only",
+            "empirical_jobs_ready": None,
+            "dspy_live_ready": None,
+        }
     return build_live_submission_gate_payload(
         state,
         session=session,
@@ -3125,6 +3185,33 @@ def _build_live_submission_gate_payload(
         dspy_runtime_status=dspy_runtime_status,
         quant_health_status=quant_health_status,
     )
+
+
+_SIMPLE_LANE_ALLOWED_REJECT_REASONS = {
+    "kill_switch_enabled",
+    "invalid_qty_increment",
+    "qty_below_min_after_clamp",
+    "insufficient_buying_power",
+    "max_notional_exceeded",
+    "max_symbol_exposure_exceeded",
+    "shorting_not_allowed_for_asset",
+    "broker_precheck_failed",
+    "broker_submit_failed",
+}
+
+
+def _simple_lane_reject_reason_totals(state: object) -> dict[str, int]:
+    metrics = getattr(state, "metrics", None)
+    totals = getattr(metrics, "decision_reject_reason_total", {})
+    if not isinstance(totals, Mapping):
+        return {}
+    payload: dict[str, int] = {}
+    for key, value in cast(Mapping[object, Any], totals).items():
+        normalized = str(key)
+        if normalized not in _SIMPLE_LANE_ALLOWED_REJECT_REASONS:
+            continue
+        payload[normalized] = int(value)
+    return payload
 
 
 def _load_route_provenance_summary(session: Session) -> dict[str, object]:
