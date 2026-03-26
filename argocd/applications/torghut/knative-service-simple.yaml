@@ -142,4 +142,4 @@ spec:
       volumes:
         - name: strategies-config
           configMap:
-            name: torghut-strategies
+            name: torghut-strategy-config
