@@ -2211,14 +2211,23 @@ class Settings(BaseSettings):
         self._normalize_correlation_group_notional_caps()
 
     def _validate_trading_source_settings(self) -> None:
-        if (
+        trading_active = (
             self.trading_enabled
             or self.trading_autonomy_enabled
             or self.trading_mode == "live"
-        ) and self.trading_universe_source != "jangar":
-            raise ValueError(
-                "TRADING_UNIVERSE_SOURCE must be 'jangar' when trading or autonomy is enabled"
-            )
+        )
+        if not trading_active:
+            return
+        if self.trading_universe_source == "jangar":
+            return
+        if (
+            self.trading_pipeline_mode == "simple"
+            and self.trading_universe_source == "static"
+        ):
+            return
+        raise ValueError(
+            "TRADING_UNIVERSE_SOURCE must be 'jangar' unless TRADING_PIPELINE_MODE=simple"
+        )
 
     def _validate_allocator_scalar_settings(self) -> None:
         checks: list[tuple[float | None, str]] = [
