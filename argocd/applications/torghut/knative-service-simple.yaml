@@ -85,7 +85,7 @@ spec:
             - name: TRADING_PIPELINE_MODE
               value: simple
             - name: TRADING_SIMPLE_SUBMIT_ENABLED
-              value: "false"
+              value: "true"
             - name: TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED
               value: "false"
             - name: TRADING_KILL_SWITCH_ENABLED
