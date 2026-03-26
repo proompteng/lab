@@ -98,6 +98,13 @@ const replaceSingle = (source: string, pattern: RegExp, replacement: string, lab
   return source.replace(pattern, replacement)
 }
 
+const replaceIfPresent = (source: string, pattern: RegExp, replacement: string): string => {
+  if (!pattern.test(source)) {
+    return source
+  }
+  return source.replace(pattern, replacement)
+}
+
 const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 const upsertKnativeRolloutTimestamp = (source: string, rolloutTimestamp: string): string => {
@@ -130,17 +137,15 @@ const updateTorghutManifest = (options: UpdateManifestsOptions) => {
     `$1${imageRef}`,
     'user-container image reference',
   )
-  updated = replaceSingle(
+  updated = replaceIfPresent(
     updated,
     /(- name:\s*TORGHUT_VERSION\s*\n\s*value:\s*)([^\n]+)/,
     `$1${options.version}`,
-    'TORGHUT_VERSION',
   )
-  updated = replaceSingle(
+  updated = replaceIfPresent(
     updated,
     /(- name:\s*TORGHUT_COMMIT\s*\n\s*value:\s*)([^\n]+)/,
     `$1${options.commit}`,
-    'TORGHUT_COMMIT',
   )
   updated = updated.replace(/^\s*serving\.knative\.dev\/lastModifier:\s*[^\n]+\n/gm, '')
 

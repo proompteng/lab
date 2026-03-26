@@ -65,11 +65,6 @@ spec:
       containers:
         - name: user-container
           image: registry.ide-newton.ts.net/lab/torghut@sha256:1111111111111111111111111111111111111111111111111111111111111111
-          env:
-            - name: TORGHUT_VERSION
-              value: old-version
-            - name: TORGHUT_COMMIT
-              value: old-commit
 `,
     'utf8',
   )
@@ -249,8 +244,8 @@ describe('update-manifests', () => {
       'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
     expect(simpleServiceManifest).not.toContain('serving.knative.dev/lastModifier:')
-    expect(simpleServiceManifest).toContain('value: v0.600.0')
-    expect(simpleServiceManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
+    expect(simpleServiceManifest).not.toContain('TORGHUT_VERSION')
+    expect(simpleServiceManifest).not.toContain('TORGHUT_COMMIT')
     expect(simulationServiceManifest).toContain('client.knative.dev/updateTimestamp: "2026-02-21T04:00:00Z"')
     expect(simulationServiceManifest).toContain('value: v0.600.0')
     expect(simulationServiceManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
