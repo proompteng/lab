@@ -47,7 +47,6 @@ jobs:
 
           allowed_paths=(
             'argocd/applications/torghut/knative-service.yaml'
-            'argocd/applications/torghut/knative-service-simple.yaml'
             'argocd/applications/torghut/db-migrations-job.yaml'
           )
 

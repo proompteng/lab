@@ -10,7 +10,6 @@ resources:
   - autonomy-gate-policy-configmap.yaml
   - db-migrations-job.yaml
   - knative-service.yaml
-  - knative-service-simple.yaml
   - knative-service-sim.yaml
   - tailscale-service.yaml
   - ingressroute-flink-k8s-private.yaml

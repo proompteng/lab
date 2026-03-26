@@ -80,6 +80,12 @@ spec:
             - name: CLICKHOUSE_TIMEOUT_SECONDS
               value: "10"
             - name: TRADING_ENABLED
+              value: "true"
+            - name: TRADING_PIPELINE_MODE
+              value: simple
+            - name: TRADING_SIMPLE_SUBMIT_ENABLED
+              value: "true"
+            - name: TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED
               value: "false"
             - name: TRADING_KILL_SWITCH_ENABLED
               value: "false"
@@ -163,7 +169,7 @@ spec:
             - name: TRADING_ORDER_FEED_TOPIC_V2
               value: torghut.trade-updates.v2
             - name: TRADING_EXECUTION_ADAPTER
-              value: lean
+              value: alpaca
             - name: TRADING_EXECUTION_FALLBACK_ADAPTER
               value: alpaca
             - name: TRADING_EXECUTION_ADAPTER_POLICY
