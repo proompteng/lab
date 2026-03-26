@@ -91,25 +91,19 @@ spec:
               value: "false"
             - name: TRADING_FEATURE_FLAGS_ENABLED
               value: "false"
-            - name: TRADING_FEATURE_FLAGS_URL
-              value: http://feature-flags.feature-flags.svc.cluster.local:8013
-            - name: TRADING_FEATURE_FLAGS_TIMEOUT_MS
-              value: "500"
-            - name: TRADING_FEATURE_FLAGS_NAMESPACE
-              value: default
-            - name: TRADING_FEATURE_FLAGS_ENTITY_ID
-              value: torghut
             - name: TRADING_MULTI_ACCOUNT_ENABLED
               value: "false"
-            - name: TRADING_DB_SCHEMA_GRAPH_BRANCH_TOLERANCE
-              value: "1"
-            - name: TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS
-              value: "true"
             - name: TRADING_MODE
               value: live
+            - name: TRADING_STRATEGY_RUNTIME_MODE
+              value: scheduler_v3
+            - name: TRADING_STRATEGY_SCHEDULER_ENABLED
+              value: "true"
             - name: TRADING_AUTONOMY_ENABLED
               value: "false"
             - name: TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION
+              value: "false"
+            - name: TRADING_EVIDENCE_CONTINUITY_ENABLED
               value: "false"
             - name: TRADING_ACCOUNT_LABEL
               value: PA3SX7FYNUTF
@@ -128,49 +122,11 @@ spec:
               value: "15"
             - name: TRADING_PLANNED_DECISION_TIMEOUT_SECONDS
               value: "600"
-            - name: TRADING_SIGNAL_NO_SIGNAL_STREAK_ALERT_THRESHOLD
-              value: "2"
-            - name: TRADING_SIGNAL_STALE_LAG_ALERT_SECONDS
-              value: "300"
-            - name: TRADING_SIGNAL_CONTINUITY_RECOVERY_CYCLES
-              value: "2"
-            - name: TRADING_SIGNAL_STALENESS_ALERT_CRITICAL_REASONS
-              value: cursor_ahead_of_stream,no_signals_in_window,universe_source_unavailable
-            - name: TRADING_SIGNAL_MARKET_CLOSED_EXPECTED_REASONS
-              value: no_signals_in_window,cursor_tail_stable,empty_batch_advanced
-            - name: TRADING_HYPOTHESIS_REGISTRY_PATH
-              value: config/trading/hypotheses
-            - name: TRADING_JANGAR_CONTROL_PLANE_STATUS_URL
-              value: http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?namespace=agents
-            - name: TRADING_JANGAR_QUANT_HEALTH_URL
-              value: http://jangar.jangar.svc.cluster.local/api/torghut/trading/control-plane/quant/health
-            - name: TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS
-              value: "15"
-            - name: TRADING_FORECAST_SERVICE_URL
-              value: http://torghut-forecast.torghut.svc.cluster.local:8089
-            - name: TRADING_FORECAST_SERVICE_TIMEOUT_SECONDS
-              value: "5"
-            - name: TRADING_FORECAST_SERVICE_REQUIRE_HEALTHY
-              value: "true"
-            - name: TRADING_FORECAST_SERVICE_ALLOWED_MODEL_FAMILIES
-              value: chronos,moment,financial_tsfm
-            - name: TRADING_FORECAST_SERVICE_FAIL_MODE
-              value: allow_operational_fallback
-            - name: TRADING_EMPIRICAL_JOB_STALE_AFTER_SECONDS
-              value: "86400"
-            - name: TRADING_FORECAST_ROUTER_PROVIDER_MODE
-              value: http
-            - name: TRADING_FORECAST_ROUTER_PROVIDER_URL
-              value: http://torghut-forecast.torghut.svc.cluster.local:8089
             - name: TRADING_POLL_MS
               value: "5000"
             - name: TRADING_RECONCILE_MS
               value: "15000"
-            - name: TRADING_ORDER_FEED_TOPIC_V2
-              value: torghut.trade-updates.v2
             - name: TRADING_EXECUTION_ADAPTER
-              value: alpaca
-            - name: TRADING_EXECUTION_FALLBACK_ADAPTER
               value: alpaca
             - name: TRADING_EXECUTION_ADAPTER_POLICY
               value: all
@@ -182,34 +138,6 @@ spec:
               value: "false"
             - name: TRADING_CRYPTO_LIVE_ENABLED
               value: "false"
-            - name: TRADING_LEAN_RUNNER_URL
-              value: http://torghut-lean-runner.torghut.svc.cluster.local:8088
-            - name: TRADING_LEAN_RUNNER_TIMEOUT_SECONDS
-              value: "5"
-            - name: TRADING_LEAN_RUNNER_HEALTHCHECK_ENABLED
-              value: "true"
-            - name: TRADING_LEAN_RUNNER_HEALTHCHECK_TIMEOUT_SECONDS
-              value: "2"
-            - name: TRADING_LEAN_RUNNER_REQUIRE_HEALTHY
-              value: "true"
-            - name: TRADING_LEAN_BACKTEST_ENABLED
-              value: "true"
-            - name: TRADING_LEAN_SHADOW_EXECUTION_ENABLED
-              value: "true"
-            - name: TRADING_LEAN_STRATEGY_SHADOW_ENABLED
-              value: "true"
-            - name: TRADING_LEAN_LIVE_CANARY_ENABLED
-              value: "true"
-            - name: TRADING_LEAN_LIVE_CANARY_CRYPTO_ONLY
-              value: "false"
-            - name: TRADING_LEAN_LIVE_CANARY_SYMBOLS
-              value: BTC/USD,ETH/USD,SOL/USD
-            - name: TRADING_LEAN_LIVE_CANARY_FALLBACK_RATIO_LIMIT
-              value: "0.25"
-            - name: TRADING_LEAN_LIVE_CANARY_HARD_ROLLBACK_ENABLED
-              value: "true"
-            - name: TRADING_LEAN_LANE_DISABLE_SWITCH
-              value: "false"
             - name: TRADING_STRATEGY_CONFIG_PATH
               value: /etc/torghut/strategies.yaml
             - name: TRADING_STRATEGY_CONFIG_MODE
@@ -218,44 +146,12 @@ spec:
               value: "10"
             - name: TRADING_UNIVERSE_SOURCE
               value: jangar
-            - name: TRADING_UNIVERSE_REQUIRE_NON_EMPTY_JANGAR
-              value: "true"
             - name: TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED
               value: "true"
             - name: TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS
               value: AAPL,AMAT,AMD,AVGO,GOOG,INTC,META,MSFT,NVDA,QQQ,SPY,TSLA
-            - name: TRADING_UNIVERSE_MAX_STALE_SECONDS
-              value: "900"
-            - name: JANGAR_SYMBOLS_URL
-              value: http://jangar.jangar.svc.cluster.local/api/torghut/symbols?assetClass=equity
-            - name: JANGAR_BASE_URL
-              value: http://jangar.jangar.svc.cluster.local
-            - name: JANGAR_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: jangar-api
-                  key: apiKey
-                  optional: true
             - name: POSTHOG_ENABLED
               value: "false"
-            - name: POSTHOG_HOST
-              value: http://posthog-events.posthog.svc.cluster.local:8000
-            - name: POSTHOG_TIMEOUT_SECONDS
-              value: "1.0"
-            - name: POSTHOG_DISTINCT_ID
-              value: torghut-service
-            - name: POSTHOG_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: torghut-posthog
-                  key: POSTHOG_API_KEY
-                  optional: true
-            - name: POSTHOG_PROJECT_ID
-              valueFrom:
-                secretKeyRef:
-                  name: torghut-posthog
-                  key: POSTHOG_PROJECT_ID
-                  optional: true
             - name: WHITEPAPER_WORKFLOW_ENABLED
               value: "true"
             - name: WHITEPAPER_KAFKA_ENABLED
@@ -362,104 +258,12 @@ spec:
               value: "300"
             - name: WHITEPAPER_EMBEDDING_BATCH_SIZE
               value: "32"
-            - name: TRADING_MARKET_CONTEXT_URL
-              value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/
-            - name: TRADING_MARKET_CONTEXT_TIMEOUT_SECONDS
-              value: "300"
-            - name: TRADING_MARKET_CONTEXT_REQUIRED
-              value: "false"
-            - name: TRADING_MARKET_CONTEXT_FAIL_MODE
-              value: shadow_only
-            - name: TRADING_MARKET_CONTEXT_MIN_QUALITY
-              value: "0.55"
-            - name: TRADING_MARKET_CONTEXT_MAX_STALENESS_SECONDS
-              value: "300"
-            - name: TRADING_MARKET_CONTEXT_ALLOW_DEGRADED_LAST_GOOD
-              value: "true"
-            - name: TRADING_MARKET_CONTEXT_FUNDAMENTALS_DEGRADED_MAX_STALENESS_SECONDS
-              value: "86400"
-            - name: TRADING_MARKET_CONTEXT_NEWS_DEGRADED_MAX_STALENESS_SECONDS
-              value: "1800"
-            - name: TRADING_ALLOCATOR_REGIME_LOW_CONFIDENCE_THRESHOLD
-              value: "0.60"
-            - name: TRADING_ALLOCATOR_REGIME_LOW_CONFIDENCE_MULTIPLIER
-              value: "0.70"
             - name: TRADING_EMERGENCY_STOP_ENABLED
-              value: "true"
-            - name: TRADING_ROLLBACK_SIGNAL_LAG_SECONDS_LIMIT
-              value: "600"
-            - name: TRADING_ROLLBACK_AUTONOMY_FAILURE_STREAK_LIMIT
-              value: "3"
-            - name: TRADING_ROLLBACK_FALLBACK_RATIO_LIMIT
-              value: "0.25"
-            - name: TRADING_ROLLBACK_MAX_DRAWDOWN_LIMIT
-              value: "0.08"
-            - name: LLM_MODEL
-              value: gpt-5.3-codex-spark
-            - name: LLM_MODEL_VERSION_LOCK
-              value: gpt-5.3-codex-spark
-            - name: LLM_ALLOWED_MODELS
-              value: gpt-5.3-codex-spark
-            - name: LLM_ALLOWED_PROMPT_VERSIONS
-              value: v1
+              value: "false"
             - name: LLM_ENABLED
               value: "false"
-            - name: LLM_ROLLOUT_STAGE
-              value: stage3_controlled_live
-            - name: LLM_SHADOW_MODE
-              value: "true"
-            - name: LLM_EVALUATION_REPORT
-              value: torghut-llm-shadow-eval-2026-02-12
-            - name: LLM_EFFECTIVE_CHALLENGE_ID
-              value: torghut-llm-mrm-review-2026-02-12
-            - name: LLM_SHADOW_COMPLETED_AT
-              value: 2026-02-12T06:45:00Z
-            - name: LLM_FAIL_MODE
-              value: veto
-            - name: LLM_FAIL_MODE_ENFORCEMENT
-              value: strict_veto
-            - name: LLM_FAIL_OPEN_LIVE_APPROVED
-              value: "false"
-            - name: LLM_ABSTAIN_FAIL_MODE
-              value: veto
-            - name: LLM_ESCALATE_FAIL_MODE
-              value: veto
-            - name: LLM_QUALITY_FAIL_MODE
-              value: veto
-            - name: LLM_ADJUSTMENT_ALLOWED
-              value: "false"
-            - name: LLM_TOKEN_BUDGET_MAX
-              value: "1200"
-            - name: LLM_TIMEOUT_SECONDS
-              value: "20"
             - name: LLM_DSPY_RUNTIME_MODE
               value: disabled
-            - name: LLM_DSPY_ARTIFACT_HASH
-              value: ""
-            - name: LLM_DSPY_LIVE_RUNTIME_BLOCK_FAIL_MODE
-              value: pass_through_reduced_size
-            - name: LLM_DSPY_LIVE_RUNTIME_BLOCK_QTY_MULTIPLIER
-              value: "0.5"
-            - name: LLM_DSPY_PROGRAM_NAME
-              value: trade-review-committee-v1
-            - name: LLM_DSPY_SIGNATURE_VERSION
-              value: v1
-            - name: LLM_DSPY_TIMEOUT_SECONDS
-              value: "8"
-            - name: LLM_DSPY_COMPILE_METRICS_POLICY_REF
-              value: config/trading/llm/dspy-metrics.yaml
-            - name: LLM_DSPY_SECRET_BINDING_REF
-              value: codex-github-token
-            - name: LLM_DSPY_AGENTRUN_TTL_SECONDS
-              value: "14400"
-            - name: LLM_CIRCUIT_MAX_ERRORS
-              value: "3"
-            - name: LLM_CIRCUIT_WINDOW_SECONDS
-              value: "300"
-            - name: LLM_CIRCUIT_COOLDOWN_SECONDS
-              value: "600"
-            - name: LLM_ADJUSTMENT_APPROVED
-              value: "false"
             - name: TA_CLICKHOUSE_URL
               value: http://torghut-clickhouse.torghut.svc.cluster.local:8123
             - name: TA_CLICKHOUSE_USERNAME
@@ -475,9 +279,6 @@ spec:
               value: v0.566.0-65-g5ff7f5794
             - name: TORGHUT_COMMIT
               value: 5ff7f5794f4ec2baba7370bbbc5ab091e554f19f
-          envFrom:
-            - configMapRef:
-                name: torghut-autonomy-config
           livenessProbe:
             httpGet:
               path: /healthz
@@ -504,9 +305,6 @@ spec:
             - name: strategy-config
               mountPath: /etc/torghut
               readOnly: true
-            - name: autonomy-gate-policy
-              mountPath: /etc/torghut/autonomy
-              readOnly: true
             - name: whitepapers-config
               mountPath: /etc/torghut/whitepapers-config
               readOnly: true
@@ -517,9 +315,6 @@ spec:
         - name: strategy-config
           configMap:
             name: torghut-strategy-config
-        - name: autonomy-gate-policy
-          configMap:
-            name: torghut-autonomy-gate-policy
         - name: whitepapers-config
           configMap:
             name: torghut-whitepapers

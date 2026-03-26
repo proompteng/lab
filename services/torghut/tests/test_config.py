@@ -29,13 +29,25 @@ class _MockFlagResponse:
 
 
 class TestConfig(TestCase):
-    def test_rejects_static_universe_when_trading_enabled(self) -> None:
+    def test_rejects_static_universe_when_trading_enabled_in_legacy_mode(self) -> None:
         with self.assertRaises(ValidationError):
             Settings(
                 TRADING_ENABLED=True,
                 TRADING_UNIVERSE_SOURCE="static",
                 DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
             )
+
+    def test_allows_static_universe_when_simple_pipeline_is_live(self) -> None:
+        settings = Settings(
+            TRADING_ENABLED=True,
+            TRADING_MODE="live",
+            TRADING_PIPELINE_MODE="simple",
+            TRADING_SIMPLE_SUBMIT_ENABLED=True,
+            TRADING_UNIVERSE_SOURCE="static",
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        self.assertEqual(settings.trading_pipeline_mode, "simple")
+        self.assertEqual(settings.trading_universe_source, "static")
 
     def test_allows_static_universe_when_trading_and_autonomy_disabled(self) -> None:
         settings = Settings(
@@ -1001,6 +1013,8 @@ class TestConfig(TestCase):
             "trading_lean_live_canary_crypto_only",
             "trading_lean_lane_disable_switch",
             "trading_lean_live_canary_hard_rollback_enabled",
+            "trading_simple_submit_enabled",
+            "trading_simple_order_feed_telemetry_enabled",
         }
         self.assertEqual(
             set(FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD),
