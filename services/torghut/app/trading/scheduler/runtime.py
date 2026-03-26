@@ -16,7 +16,7 @@ from ...observability import capture_posthog_event
 from ...strategies import StrategyCatalog
 from ..decisions import DecisionEngine
 from ..execution import OrderExecutor
-from ..execution_adapters import build_execution_adapter
+from ..execution_adapters import build_execution_adapter, build_simple_execution_adapter
 from ..firewall import OrderFirewall
 from ..ingest import ClickHouseSignalIngestor
 from ..llm.dspy_programs.runtime import DSPyReviewRuntime, DSPyRuntimeUnsupportedStateError
@@ -32,6 +32,7 @@ from ..time_source import trading_time_status
 from ..universe import UniverseResolver
 from .governance import TradingSchedulerGovernanceMixin
 from .pipeline import TradingPipeline
+from .simple_pipeline import SimpleTradingPipeline
 from .pipeline_helpers import _build_llm_policy_resolution
 from .state import TradingState
 
@@ -265,12 +266,20 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
             base_url=lane.base_url,
         )
         order_firewall = OrderFirewall(alpaca_client)
-        execution_adapter = build_execution_adapter(
-            alpaca_client=alpaca_client, order_firewall=order_firewall
-        )
+        pipeline_cls: type[TradingPipeline] = TradingPipeline
+        if settings.trading_pipeline_mode == "simple":
+            execution_adapter = build_simple_execution_adapter(
+                alpaca_client=alpaca_client,
+                order_firewall=order_firewall,
+            )
+            pipeline_cls = SimpleTradingPipeline
+        else:
+            execution_adapter = build_execution_adapter(
+                alpaca_client=alpaca_client, order_firewall=order_firewall
+            )
         executor = OrderExecutor()
         executor.prime_shorting_metadata_cache(alpaca_client)
-        return TradingPipeline(
+        return pipeline_cls(
             alpaca_client=alpaca_client,
             order_firewall=order_firewall,
             ingestor=ClickHouseSignalIngestor(account_label=lane.label),

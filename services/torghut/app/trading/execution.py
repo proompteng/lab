@@ -278,6 +278,22 @@ class OrderExecutor:
         )
         if advice_provenance is not None:
             order_payload["_execution_advice_provenance"] = advice_provenance
+        execution_metadata = _extract_execution_metadata(
+            decision,
+            decision_row=decision_row,
+        )
+        if execution_metadata is not None:
+            existing_audit = order_payload.get("_execution_audit")
+            audit_payload = (
+                {
+                    str(key): value
+                    for key, value in cast(Mapping[object, Any], existing_audit).items()
+                }
+                if isinstance(existing_audit, Mapping)
+                else {}
+            )
+            audit_payload.update(execution_metadata)
+            order_payload["_execution_audit"] = audit_payload
         execution = sync_order_to_db(
             session,
             order_payload,
@@ -333,6 +349,22 @@ class OrderExecutor:
         )
         if advice_provenance is not None:
             existing_payload["_execution_advice_provenance"] = advice_provenance
+        execution_metadata = _extract_execution_metadata(
+            decision,
+            decision_row=decision_row,
+        )
+        if execution_metadata is not None:
+            existing_audit = existing_payload.get("_execution_audit")
+            audit_payload = (
+                {
+                    str(key): value
+                    for key, value in cast(Mapping[object, Any], existing_audit).items()
+                }
+                if isinstance(existing_audit, Mapping)
+                else {}
+            )
+            audit_payload.update(execution_metadata)
+            existing_payload["_execution_audit"] = audit_payload
         route_expected, route_actual, fallback_reason, fallback_count = (
             resolve_order_route_metadata(
                 expected_adapter=execution_expected_adapter,
@@ -1466,6 +1498,32 @@ def _extract_execution_advice_provenance(
                 ).items()
             }
     return None
+
+
+def _extract_execution_metadata(
+    decision: StrategyDecision,
+    *,
+    decision_row: Optional[TradeDecision] = None,
+) -> dict[str, Any] | None:
+    persisted_params: Mapping[str, Any] = {}
+    if decision_row is not None:
+        decision_json = _coerce_json(decision_row.decision_json)
+        params_value = decision_json.get("params")
+        if isinstance(params_value, Mapping):
+            persisted_params = cast(Mapping[str, Any], params_value)
+
+    execution_lane = persisted_params.get("execution_lane") or decision.params.get(
+        "execution_lane"
+    )
+    submit_path = persisted_params.get("submit_path") or decision.params.get(
+        "submit_path"
+    )
+    metadata: dict[str, Any] = {}
+    if execution_lane is not None:
+        metadata["execution_lane"] = str(execution_lane)
+    if submit_path is not None:
+        metadata["submit_path"] = str(submit_path)
+    return metadata or None
 
 
 def _apply_execution_status(
