@@ -8,14 +8,6 @@ from yaml import safe_load
 
 from app.config import Settings
 from app.trading.llm.dspy_programs.runtime import DSPyReviewRuntime
-_CRITICAL_TRADING_TOGGLE_KEYS = {
-    "TRADING_ENABLED",
-    "TRADING_AUTONOMY_ENABLED",
-    "TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION",
-    "TRADING_KILL_SWITCH_ENABLED",
-    "TRADING_MODE",
-    "TRADING_EXECUTION_ADAPTER_POLICY",
-}
 
 
 def _repo_root() -> Path:
@@ -29,11 +21,18 @@ def _manifest_bool(env: dict[str, object], key: str) -> bool:
     return str(raw).strip().lower() == "true"
 
 
-def _load_torghut_knative_env() -> dict[str, object]:
+def _load_torghut_knative_manifest() -> dict[str, object]:
     manifest_path = (
         _repo_root() / "argocd" / "applications" / "torghut" / "knative-service.yaml"
     )
     manifest = safe_load(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict):
+        raise AssertionError("knative-service.yaml did not parse to a mapping")
+    return manifest
+
+
+def _load_torghut_knative_env() -> dict[str, object]:
+    manifest = _load_torghut_knative_manifest()
     containers = (
         manifest.get("spec", {})
         .get("template", {})
@@ -58,21 +57,6 @@ def _load_torghut_knative_env() -> dict[str, object]:
             raw_value = item["value"]
             env[name] = raw_value if isinstance(raw_value, str) else str(raw_value)
     return env
-
-
-def _load_torghut_autonomy_config_env() -> dict[str, object]:
-    manifest_path = (
-        _repo_root() / "argocd" / "applications" / "torghut" / "autonomy-configmap.yaml"
-    )
-    manifest = safe_load(manifest_path.read_text(encoding="utf-8"))
-    data = manifest.get("data")
-    if not isinstance(data, dict):
-        raise AssertionError("autonomy-configmap.yaml missing data map")
-    return {
-        str(name): value if isinstance(value, str) else str(value)
-        for name, value in data.items()
-        if isinstance(name, str)
-    }
 
 
 def _load_torghut_lean_runner_env() -> dict[str, object]:
@@ -137,50 +121,28 @@ class TestLiveConfigManifestContract(TestCase):
         settings = Settings(**env)
 
         self.assertEqual(settings.trading_mode, "live")
-        self.assertEqual(env.get("TRADING_DB_SCHEMA_GRAPH_BRANCH_TOLERANCE"), "1")
-        self.assertEqual(
-            env.get("TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS"),
-            "true",
-        )
+        self.assertEqual(settings.trading_pipeline_mode, "simple")
+        self.assertEqual(settings.trading_universe_source, "jangar")
+        self.assertEqual(env.get("TRADING_STRATEGY_SCHEDULER_ENABLED"), "true")
+        self.assertFalse(settings.trading_autonomy_enabled)
+        self.assertFalse(settings.trading_autonomy_allow_live_promotion)
+        self.assertFalse(settings.trading_evidence_continuity_enabled)
+        self.assertFalse(settings.trading_emergency_stop_enabled)
         self.assertFalse(settings.trading_feature_flags_enabled)
-        self.assertEqual(settings.trading_db_schema_graph_branch_tolerance, 1)
-        self.assertTrue(settings.trading_db_schema_graph_allow_divergence_roots)
+        self.assertFalse(settings.trading_execution_advisor_enabled)
+        self.assertFalse(settings.trading_execution_advisor_live_apply_enabled)
         self.assertEqual(env.get("LLM_ENABLED"), "false")
         self.assertFalse(settings.llm_enabled)
-        self.assertEqual(settings.llm_rollout_stage, "stage3_controlled_live")
         self.assertEqual(env.get("LLM_DSPY_RUNTIME_MODE"), "disabled")
         self.assertEqual(settings.llm_dspy_runtime_mode, "disabled")
-        self.assertTrue(settings.llm_shadow_mode)
-        self.assertEqual(env.get("LLM_DSPY_ARTIFACT_HASH"), "")
-        self.assertEqual(settings.llm_dspy_artifact_hash, "")
-        self.assertEqual(settings.llm_fail_mode, "veto")
-        self.assertEqual(settings.llm_fail_mode_enforcement, "strict_veto")
-        self.assertFalse(settings.llm_fail_open_live_approved)
         self.assertFalse(settings.posthog_enabled)
         self.assertTrue(settings.trading_fractional_equities_enabled)
         self.assertTrue(settings.trading_universe_static_fallback_enabled)
-        self.assertEqual(
-            settings.trading_hypothesis_registry_path,
-            "config/trading/hypotheses",
-        )
-        self.assertEqual(
-            settings.trading_jangar_control_plane_status_url,
-            "http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?namespace=agents",
-        )
-        self.assertEqual(
-            settings.trading_jangar_control_plane_cache_ttl_seconds,
-            15,
-        )
-        self.assertEqual(
-            settings.trading_forecast_service_url,
-            "http://torghut-forecast.torghut.svc.cluster.local:8089",
-        )
-        self.assertTrue(settings.trading_forecast_service_require_healthy)
-        self.assertEqual(settings.trading_empirical_job_stale_after_seconds, 86400)
-        self.assertEqual(
-            settings.trading_forecast_service_allowed_model_families,
-            {"chronos", "moment", "financial_tsfm"},
-        )
+        self.assertIsNone(settings.trading_jangar_control_plane_status_url)
+        self.assertIsNone(settings.trading_jangar_quant_health_url)
+        self.assertIsNone(settings.trading_forecast_service_url)
+        self.assertIsNone(settings.trading_lean_runner_url)
+        self.assertIsNone(settings.trading_market_context_url)
         self.assertEqual(
             set(settings.trading_universe_static_fallback_symbols),
             {
@@ -198,42 +160,38 @@ class TestLiveConfigManifestContract(TestCase):
                 "TSLA",
             },
         )
-        self.assertEqual(
-            env.get("TRADING_HYPOTHESIS_REGISTRY_PATH"),
-            "config/trading/hypotheses",
-        )
-        self.assertEqual(
-            env.get("TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS"),
-            "15",
-        )
-        self.assertFalse(settings.llm_live_fail_open_requested_for_stage("stage3"))
-        self.assertEqual(settings.llm_effective_fail_mode_for_current_rollout(), "veto")
-        cutover_allowed, cutover_reasons = settings.llm_dspy_cutover_migration_guard()
-        self.assertTrue(cutover_allowed)
-        self.assertEqual(cutover_reasons, ())
+        self.assertNotIn("TRADING_FEATURE_FLAGS_URL", env)
+        self.assertNotIn("TRADING_FORECAST_SERVICE_URL", env)
+        self.assertNotIn("TRADING_LEAN_RUNNER_URL", env)
+        self.assertNotIn("TRADING_MARKET_CONTEXT_URL", env)
+        self.assertNotIn("TRADING_JANGAR_CONTROL_PLANE_STATUS_URL", env)
+        self.assertNotIn("JANGAR_BASE_URL", env)
 
-    def test_critical_live_toggles_have_single_gitops_source(self) -> None:
-        knative_env = _load_torghut_knative_env()
-        autonomy_env = _load_torghut_autonomy_config_env()
-        duplicated = sorted(
-            _CRITICAL_TRADING_TOGGLE_KEYS.intersection(knative_env).intersection(
-                autonomy_env
-            )
+    def test_live_manifest_does_not_import_autonomy_env_from(self) -> None:
+        manifest = _load_torghut_knative_manifest()
+        containers = (
+            manifest.get("spec", {})
+            .get("template", {})
+            .get("spec", {})
+            .get("containers", [])
         )
-        self.assertEqual(duplicated, [])
+        self.assertTrue(containers)
+        first_container = containers[0]
+        env_from = first_container.get("envFrom", [])
+        self.assertEqual(env_from, [])
 
-    def test_manifest_shadow_first_profile_is_enforced(self) -> None:
-        env = {
-            **_load_torghut_autonomy_config_env(),
-            **_load_torghut_knative_env(),
-        }
+    def test_manifest_simple_lane_profile_is_enforced(self) -> None:
+        env = _load_torghut_knative_env()
         self.assertTrue(_manifest_bool(env, "TRADING_ENABLED"))
         self.assertEqual(env.get("TRADING_MODE"), "live")
+        self.assertEqual(env.get("TRADING_PIPELINE_MODE"), "simple")
+        self.assertEqual(env.get("TRADING_UNIVERSE_SOURCE"), "jangar")
         self.assertFalse(_manifest_bool(env, "TRADING_AUTONOMY_ENABLED"))
         self.assertFalse(
             _manifest_bool(env, "TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION")
         )
         self.assertFalse(_manifest_bool(env, "TRADING_KILL_SWITCH_ENABLED"))
+        self.assertFalse(_manifest_bool(env, "TRADING_EMERGENCY_STOP_ENABLED"))
         self.assertEqual(env.get("TRADING_EXECUTION_ADAPTER_POLICY"), "all")
 
     def test_manifest_rollout_toggles_disable_execution_advisor(self) -> None:
