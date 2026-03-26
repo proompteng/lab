@@ -11,6 +11,7 @@ import { execGit } from '../shared/git'
 const defaultRegistry = 'registry.ide-newton.ts.net'
 const defaultRepository = 'lab/torghut'
 const defaultManifestPath = 'argocd/applications/torghut/knative-service.yaml'
+const defaultSimpleManifestPath = 'argocd/applications/torghut/knative-service-simple.yaml'
 const defaultSimulationManifestPath = 'argocd/applications/torghut/knative-service-sim.yaml'
 const defaultMigrationManifestPath = 'argocd/applications/torghut/db-migrations-job.yaml'
 const defaultLeanRunnerManifestPath = 'argocd/applications/torghut/lean-runner-deployment.yaml'
@@ -37,6 +38,7 @@ type UpdateManifestsOptions = {
   commit: string
   rolloutTimestamp: string
   manifestPath?: string
+  simpleManifestPath?: string
   simulationManifestPath?: string
   migrationManifestPath?: string
   leanRunnerManifestPath?: string
@@ -62,6 +64,7 @@ type CliOptions = {
   commit?: string
   rolloutTimestamp?: string
   manifestPath?: string
+  simpleManifestPath?: string
   simulationManifestPath?: string
   migrationManifestPath?: string
   leanRunnerManifestPath?: string
@@ -237,6 +240,10 @@ const updateVersionedDeploymentManifest = (
 
 const updateTorghutManifests = (options: UpdateManifestsOptions) => {
   const service = updateTorghutManifest(options)
+  const simpleService = updateTorghutManifest({
+    ...options,
+    manifestPath: options.simpleManifestPath ?? defaultSimpleManifestPath,
+  })
   const simulationService = updateTorghutManifest({
     ...options,
     manifestPath: options.simulationManifestPath ?? defaultSimulationManifestPath,
@@ -310,6 +317,7 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
   )
   const changedPaths = [
     service,
+    simpleService,
     simulationService,
     migration,
     leanRunner,
@@ -351,6 +359,7 @@ Options:
   --commit <sha40>
   --rollout-timestamp <ISO8601>
   --manifest-path <path>
+  --simple-manifest-path <path>
   --simulation-manifest-path <path>
   --migration-manifest-path <path>
   --lean-runner-manifest-path <path>
@@ -405,6 +414,9 @@ Options:
         break
       case '--manifest-path':
         options.manifestPath = value
+        break
+      case '--simple-manifest-path':
+        options.simpleManifestPath = value
         break
       case '--simulation-manifest-path':
         options.simulationManifestPath = value
@@ -481,6 +493,7 @@ export const main = (cliOptions?: CliOptions) => {
     commit,
     rolloutTimestamp,
     manifestPath: parsed.manifestPath ?? process.env.TORGHUT_MANIFEST_PATH,
+    simpleManifestPath: parsed.simpleManifestPath ?? process.env.TORGHUT_SIMPLE_MANIFEST_PATH,
     simulationManifestPath: parsed.simulationManifestPath ?? process.env.TORGHUT_SIMULATION_MANIFEST_PATH,
     migrationManifestPath: parsed.migrationManifestPath ?? process.env.TORGHUT_MIGRATION_MANIFEST_PATH,
     leanRunnerManifestPath: parsed.leanRunnerManifestPath ?? process.env.TORGHUT_LEAN_RUNNER_MANIFEST_PATH,

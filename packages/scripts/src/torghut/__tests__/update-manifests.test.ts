@@ -9,6 +9,7 @@ import { __private } from '../update-manifests'
 const createFixture = () => {
   const dir = mkdtempSync(join(tmpdir(), 'torghut-manifests-test-'))
   const serviceManifestPath = join(dir, 'knative-service.yaml')
+  const simpleServiceManifestPath = join(dir, 'knative-service-simple.yaml')
   const simulationServiceManifestPath = join(dir, 'knative-service-sim.yaml')
   const migrationManifestPath = join(dir, 'db-migrations-job.yaml')
   const leanRunnerManifestPath = join(dir, 'lean-runner-deployment.yaml')
@@ -30,6 +31,30 @@ kind: Service
 metadata:
   annotations:
     serving.knative.dev/creator: system:serviceaccount:argocd:argocd-application-controller
+    serving.knative.dev/lastModifier: admin
+spec:
+  template:
+    metadata:
+      annotations:
+        client.knative.dev/updateTimestamp: "2025-01-01T00:00:00Z"
+    spec:
+      containers:
+        - name: user-container
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:1111111111111111111111111111111111111111111111111111111111111111
+          env:
+            - name: TORGHUT_VERSION
+              value: old-version
+            - name: TORGHUT_COMMIT
+              value: old-commit
+`,
+    'utf8',
+  )
+  writeFileSync(
+    simpleServiceManifestPath,
+    `apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  annotations:
     serving.knative.dev/lastModifier: admin
 spec:
   template:
@@ -134,6 +159,7 @@ spec:
   return {
     dir,
     serviceManifestPath,
+    simpleServiceManifestPath,
     simulationServiceManifestPath,
     migrationManifestPath,
     leanRunnerManifestPath,
@@ -175,6 +201,7 @@ describe('update-manifests', () => {
       commit: '1234567890abcdef1234567890abcdef12345678',
       rolloutTimestamp: '2026-02-21T04:00:00Z',
       manifestPath: relative(repoRoot, fixture.serviceManifestPath),
+      simpleManifestPath: relative(repoRoot, fixture.simpleServiceManifestPath),
       simulationManifestPath: relative(repoRoot, fixture.simulationServiceManifestPath),
       migrationManifestPath: relative(repoRoot, fixture.migrationManifestPath),
       leanRunnerManifestPath: relative(repoRoot, fixture.leanRunnerManifestPath),
@@ -192,6 +219,7 @@ describe('update-manifests', () => {
     })
 
     const serviceManifest = readFileSync(fixture.serviceManifestPath, 'utf8')
+    const simpleServiceManifest = readFileSync(fixture.simpleServiceManifestPath, 'utf8')
     const simulationServiceManifest = readFileSync(fixture.simulationServiceManifestPath, 'utf8')
     const migrationManifest = readFileSync(fixture.migrationManifestPath, 'utf8')
     const leanRunnerManifest = readFileSync(fixture.leanRunnerManifestPath, 'utf8')
@@ -216,6 +244,13 @@ describe('update-manifests', () => {
     expect(serviceManifest).not.toContain('serving.knative.dev/lastModifier:')
     expect(serviceManifest).toContain('value: v0.600.0')
     expect(serviceManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
+    expect(simpleServiceManifest).toContain('client.knative.dev/updateTimestamp: "2026-02-21T04:00:00Z"')
+    expect(simpleServiceManifest).toContain(
+      'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
+    )
+    expect(simpleServiceManifest).not.toContain('serving.knative.dev/lastModifier:')
+    expect(simpleServiceManifest).toContain('value: v0.600.0')
+    expect(simpleServiceManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
     expect(simulationServiceManifest).toContain('client.knative.dev/updateTimestamp: "2026-02-21T04:00:00Z"')
     expect(simulationServiceManifest).toContain('value: v0.600.0')
     expect(simulationServiceManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
@@ -249,7 +284,7 @@ describe('update-manifests', () => {
     expect(result.imageRef).toBe(
       'registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
-    expect(result.changedPaths.length).toBe(15)
+    expect(result.changedPaths.length).toBe(16)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })
@@ -263,6 +298,7 @@ describe('update-manifests', () => {
       commit: 'abcdefabcdefabcdefabcdefabcdefabcdefabcd',
       rolloutTimestamp: '2026-02-21T05:00:00Z',
       manifestPath: relative(repoRoot, fixture.serviceManifestPath),
+      simpleManifestPath: relative(repoRoot, fixture.simpleServiceManifestPath),
       simulationManifestPath: relative(repoRoot, fixture.simulationServiceManifestPath),
       migrationManifestPath: relative(repoRoot, fixture.migrationManifestPath),
       leanRunnerManifestPath: relative(repoRoot, fixture.leanRunnerManifestPath),
