@@ -221,7 +221,6 @@ jobs:
           set -euo pipefail
           if git diff --quiet -- \
             argocd/applications/torghut/knative-service.yaml \
-            argocd/applications/torghut/knative-service-simple.yaml \
             argocd/applications/torghut/knative-service-sim.yaml \
             argocd/applications/torghut/db-migrations-job.yaml \
             argocd/applications/torghut/lean-runner-deployment.yaml \
@@ -260,7 +259,6 @@ jobs:
           draft: true
           add-paths: |
             argocd/applications/torghut/knative-service.yaml
-            argocd/applications/torghut/knative-service-simple.yaml
             argocd/applications/torghut/knative-service-sim.yaml
             argocd/applications/torghut/db-migrations-job.yaml
             argocd/applications/torghut/lean-runner-deployment.yaml
@@ -302,7 +300,6 @@ jobs:
           delete-branch: true
           add-paths: |
             argocd/applications/torghut/knative-service.yaml
-            argocd/applications/torghut/knative-service-simple.yaml
             argocd/applications/torghut/knative-service-sim.yaml
             argocd/applications/torghut/db-migrations-job.yaml
             argocd/applications/torghut/lean-runner-deployment.yaml
