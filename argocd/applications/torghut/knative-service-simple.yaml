@@ -15,7 +15,7 @@ spec:
   template:
     metadata:
       annotations:
-        client.knative.dev/updateTimestamp: "2026-03-26T21:00:00Z"
+        client.knative.dev/updateTimestamp: "2026-03-26T22:59:41Z"
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/target: "80"
@@ -25,7 +25,7 @@ spec:
       containers:
         - name: user-container
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:884bec35f7d24ef34c51240e697aa996bc134385be9f6936aa170880fe2d601e
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:7d0d72b4b5e027e3ffad736e3bcaf68b2baaee4b49f07c5d140ef1cbcbc75d2d
           ports:
             - name: http1
               containerPort: 8181
