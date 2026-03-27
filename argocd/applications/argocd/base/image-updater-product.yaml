@@ -122,6 +122,8 @@ spec:
           commonUpdateSettings:
             updateStrategy: newest-build
             allowTags: 'regexp:^[0-9a-f]{40}$'
+            platforms:
+              - linux/arm64
           manifestTargets:
             kustomize:
               name: registry.ide-newton.ts.net/lab/bilig-web
@@ -130,6 +132,8 @@ spec:
           commonUpdateSettings:
             updateStrategy: newest-build
             allowTags: 'regexp:^[0-9a-f]{40}$'
+            platforms:
+              - linux/arm64
           manifestTargets:
             kustomize:
               name: registry.ide-newton.ts.net/lab/bilig-sync
