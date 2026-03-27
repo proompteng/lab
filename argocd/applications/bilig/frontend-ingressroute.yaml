@@ -9,6 +9,20 @@ spec:
     - websecure
   routes:
     - kind: Rule
+      priority: 100
+      match: Host(`bilig.proompteng.ai`) && (PathPrefix(`/v1`) || PathPrefix(`/api/zero`))
+      services:
+        - name: bilig-sync
+          port: 80
+    - kind: Rule
+      priority: 99
+      match: Host(`bilig.proompteng.ai`) && PathPrefix(`/zero`)
+      middlewares:
+        - name: bilig-zero-strip-prefix
+      services:
+        - name: bilig-zero
+          port: 80
+    - kind: Rule
       match: Host(`bilig.proompteng.ai`)
       services:
         - name: bilig-web

@@ -7,6 +7,7 @@ resources:
   - frontend-deployment.yaml
   - frontend-service.yaml
   - frontend-ingressroute.yaml
+  - zero-strip-prefix-middleware.yaml
   - sync-deployment.yaml
   - sync-service.yaml
   - sync-ingressroute.yaml

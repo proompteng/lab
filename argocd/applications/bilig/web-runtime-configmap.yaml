@@ -6,8 +6,8 @@ metadata:
 data:
   runtime-config.json: |
     {
-      "apiBaseUrl": "https://api.bilig.proompteng.ai",
-      "zeroCacheUrl": "https://zero.bilig.proompteng.ai",
+      "apiBaseUrl": "https://bilig.proompteng.ai",
+      "zeroCacheUrl": "https://bilig.proompteng.ai/zero",
       "defaultDocumentId": "bilig-demo",
       "persistState": true
     }
