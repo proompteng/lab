@@ -17,6 +17,7 @@ spec:
   storage:
     storageClass: rook-ceph-block
     size: 10Gi
+    resizeInUseVolumes: true
   bootstrap:
     initdb:
       database: bilig
