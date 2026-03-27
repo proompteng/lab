@@ -36,6 +36,11 @@ spec:
               value: "4848"
             - name: ZERO_REPLICA_FILE
               value: /data/zero.db
+            - name: ZERO_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bilig-zero-admin
+                  key: ZERO_ADMIN_PASSWORD
             - name: ZERO_UPSTREAM_DB
               valueFrom:
                 secretKeyRef:
