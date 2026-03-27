@@ -223,7 +223,6 @@ jobs:
             argocd/applications/torghut/knative-service.yaml \
             argocd/applications/torghut/knative-service-sim.yaml \
             argocd/applications/torghut/db-migrations-job.yaml \
-            argocd/applications/torghut/lean-runner-deployment.yaml \
             argocd/applications/torghut/historical-simulation-workflowtemplate.yaml \
             argocd/applications/torghut/empirical-promotion-workflowtemplate.yaml \
             argocd/applications/torghut/analysis-template-runtime-ready.yaml \
@@ -232,9 +231,7 @@ jobs:
             argocd/applications/torghut/analysis-template-artifact-bundle.yaml \
             argocd/applications/torghut/empirical-jobs-backfill-job.yaml \
             argocd/applications/torghut-options/catalog/deployment.yaml \
-            argocd/applications/torghut-options/enricher/deployment.yaml \
-            argocd/applications/torghut-forecast/deployment.yaml \
-            argocd/applications/torghut-forecast/sim/deployment.yaml; then
+            argocd/applications/torghut-options/enricher/deployment.yaml; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -261,7 +258,6 @@ jobs:
             argocd/applications/torghut/knative-service.yaml
             argocd/applications/torghut/knative-service-sim.yaml
             argocd/applications/torghut/db-migrations-job.yaml
-            argocd/applications/torghut/lean-runner-deployment.yaml
             argocd/applications/torghut/historical-simulation-workflowtemplate.yaml
             argocd/applications/torghut/empirical-promotion-workflowtemplate.yaml
             argocd/applications/torghut/analysis-template-runtime-ready.yaml
@@ -271,8 +267,6 @@ jobs:
             argocd/applications/torghut/empirical-jobs-backfill-job.yaml
             argocd/applications/torghut-options/catalog/deployment.yaml
             argocd/applications/torghut-options/enricher/deployment.yaml
-            argocd/applications/torghut-forecast/deployment.yaml
-            argocd/applications/torghut-forecast/sim/deployment.yaml
           body: |
             ## Summary
             Promote Torghut image into GitOps manifests.
@@ -302,7 +296,6 @@ jobs:
             argocd/applications/torghut/knative-service.yaml
             argocd/applications/torghut/knative-service-sim.yaml
             argocd/applications/torghut/db-migrations-job.yaml
-            argocd/applications/torghut/lean-runner-deployment.yaml
             argocd/applications/torghut/historical-simulation-workflowtemplate.yaml
             argocd/applications/torghut/empirical-promotion-workflowtemplate.yaml
             argocd/applications/torghut/analysis-template-runtime-ready.yaml
@@ -312,8 +305,6 @@ jobs:
             argocd/applications/torghut/empirical-jobs-backfill-job.yaml
             argocd/applications/torghut-options/catalog/deployment.yaml
             argocd/applications/torghut-options/enricher/deployment.yaml
-            argocd/applications/torghut-forecast/deployment.yaml
-            argocd/applications/torghut-forecast/sim/deployment.yaml
           body: |
             ## Summary
             Promote Torghut image into GitOps manifests.
