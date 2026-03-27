@@ -26,7 +26,9 @@ COPY alembic.ini ./
 ARG TORGHUT_COMMIT
 COPY app ./app
 COPY migrations ./migrations
-RUN test -f /app/app/forecast_service.py
+RUN test -f /app/app/main.py \
+ && test -f /app/app/trading/forecast_runtime.py \
+ && test -f /app/app/trading/lean_runtime.py
 RUN /opt/venv/bin/uv sync --frozen --no-dev
 
 
@@ -65,7 +67,9 @@ COPY config ./config
 COPY migrations ./migrations
 COPY scripts ./scripts
 COPY README.md .
-RUN test -f /app/app/forecast_service.py
+RUN test -f /app/app/main.py \
+ && test -f /app/app/trading/forecast_runtime.py \
+ && test -f /app/app/trading/lean_runtime.py
 
 RUN groupadd --system torghut && useradd --system --create-home --gid torghut torghut
 USER torghut
