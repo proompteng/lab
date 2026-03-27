@@ -10,6 +10,8 @@ spec:
       app: bilig-web
   template:
     metadata:
+      annotations:
+        bilig.proompteng.ai/runtime-config-sha: "030f88422d165c94"
       labels:
         app: bilig-web
     spec:
