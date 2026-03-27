@@ -2,12 +2,17 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - bilig-cert-tls.yaml
+  - web-runtime-configmap.yaml
   - frontend-deployment.yaml
   - frontend-service.yaml
   - frontend-ingressroute.yaml
   - sync-deployment.yaml
   - sync-service.yaml
   - sync-ingressroute.yaml
+  - zero-pvc.yaml
+  - zero-deployment.yaml
+  - zero-service.yaml
+  - zero-ingressroute.yaml
   - redis-deployment.yaml
   - redis-service.yaml
   - postgres-cluster.yaml
@@ -18,7 +23,7 @@ resources:
 images:
   - name: registry.ide-newton.ts.net/lab/bilig-web
     newName: registry.ide-newton.ts.net/lab/bilig-web
-    newTag: "b94da25"
+    newTag: "afe89f1ddbb38f7f788a23953d15955310dfdacf"
   - name: registry.ide-newton.ts.net/lab/bilig-sync
     newName: registry.ide-newton.ts.net/lab/bilig-sync
-    newTag: "b94da25"
+    newTag: "afe89f1ddbb38f7f788a23953d15955310dfdacf"
