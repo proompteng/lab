@@ -14,6 +14,7 @@ This app is the standalone ArgoCD product shell for `bilig`.
 
 - `bilig.proompteng.ai`
 - `api.bilig.proompteng.ai`
+- `zero.bilig.proompteng.ai`
 
 ## Promotion mode
 
