@@ -262,16 +262,8 @@ spec:
               value: "15"
             - name: JANGAR_TORGHUT_QUANT_POLICY_MAX_TA_FRESHNESS_SECONDS
               value: "120"
-            - name: JANGAR_TORGHUT_FORECAST_READY_URL
-              value: http://torghut-forecast.torghut.svc.cluster.local:8089/readyz
-            - name: JANGAR_TORGHUT_FORECAST_CALIBRATION_URL
-              value: http://torghut-forecast.torghut.svc.cluster.local:8089/v1/calibration/report
-            - name: JANGAR_TORGHUT_LEAN_READY_URL
-              value: http://torghut-lean-runner.torghut.svc.cluster.local:8088/readyz
-            - name: JANGAR_TORGHUT_LEAN_OBSERVABILITY_URL
-              value: http://torghut-lean-runner.torghut.svc.cluster.local:8088/v1/observability
-            - name: JANGAR_TORGHUT_EMPIRICAL_JOBS_URL
-              value: http://torghut.torghut.svc.cluster.local/trading/empirical-jobs
+            - name: JANGAR_TORGHUT_STATUS_URL
+              value: http://torghut.torghut.svc.cluster.local/trading/status
             - name: JANGAR_TORGHUT_QUANT_HEALTH_MISSING_UPDATE_SECONDS
               value: "15"
             - name: JANGAR_FEATURE_FLAGS_URL

@@ -7,7 +7,6 @@ model_refs:
   - rules/intraday_tsmom_v1
 runtime_version_refs:
   - services/torghut@simulation
-  - services/torghut-forecast@simulation
 
 ta_restore:
   mode: stateless
@@ -58,7 +57,6 @@ runtime:
   ta_configmap: torghut-ta-sim-config
   ta_deployment: torghut-ta-sim
   torghut_service: torghut-sim
-  torghut_forecast_service: torghut-forecast-sim
   output_root: artifacts/torghut/simulations
 
 rollouts:

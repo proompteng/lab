@@ -448,7 +448,6 @@ class TestExecutionAdapters(TestCase):
         )
 
     def test_build_execution_adapter_uses_simulation_when_enabled(self) -> None:
-        original_adapter = config.settings.trading_execution_adapter
         original_sim_enabled = config.settings.trading_simulation_enabled
         original_sim_topic = config.settings.trading_simulation_order_updates_topic
         original_sim_bootstrap = config.settings.trading_simulation_order_updates_bootstrap_servers
@@ -456,7 +455,6 @@ class TestExecutionAdapters(TestCase):
         original_run_id = config.settings.trading_simulation_run_id
         original_dataset = config.settings.trading_simulation_dataset_id
         try:
-            config.settings.trading_execution_adapter = 'alpaca'
             config.settings.trading_simulation_enabled = True
             config.settings.trading_simulation_order_updates_topic = 'torghut.sim.trade-updates.v1'
             config.settings.trading_simulation_order_updates_bootstrap_servers = None
@@ -469,13 +467,24 @@ class TestExecutionAdapters(TestCase):
             )
             self.assertEqual(adapter.name, 'simulation')
         finally:
-            config.settings.trading_execution_adapter = original_adapter
             config.settings.trading_simulation_enabled = original_sim_enabled
             config.settings.trading_simulation_order_updates_topic = original_sim_topic
             config.settings.trading_simulation_order_updates_bootstrap_servers = original_sim_bootstrap
             config.settings.trading_order_feed_bootstrap_servers = original_order_bootstrap
             config.settings.trading_simulation_run_id = original_run_id
             config.settings.trading_simulation_dataset_id = original_dataset
+
+    def test_build_execution_adapter_uses_alpaca_when_simulation_disabled(self) -> None:
+        original_sim_enabled = config.settings.trading_simulation_enabled
+        try:
+            config.settings.trading_simulation_enabled = False
+            adapter = build_execution_adapter(
+                alpaca_client=FakeReadClient(),
+                order_firewall=FakeOrderFirewall(),
+            )
+            self.assertEqual(adapter.name, 'alpaca')
+        finally:
+            config.settings.trading_simulation_enabled = original_sim_enabled
 
     def test_simulation_adapter_uses_kafka_security_kwargs(self) -> None:
         captured_kwargs: dict[str, Any] = {}
@@ -512,14 +521,19 @@ class TestExecutionAdapters(TestCase):
         self.assertEqual(captured_kwargs.get('sasl_plain_password'), 'secret')
 
     def test_adapter_enabled_for_symbol_true_for_simulation(self) -> None:
-        original_adapter = config.settings.trading_execution_adapter
         original_sim_enabled = config.settings.trading_simulation_enabled
         try:
-            config.settings.trading_execution_adapter = 'simulation'
-            config.settings.trading_simulation_enabled = False
+            config.settings.trading_simulation_enabled = True
             self.assertTrue(adapter_enabled_for_symbol('AAPL'))
         finally:
-            config.settings.trading_execution_adapter = original_adapter
+            config.settings.trading_simulation_enabled = original_sim_enabled
+
+    def test_adapter_enabled_for_symbol_false_without_simulation(self) -> None:
+        original_sim_enabled = config.settings.trading_simulation_enabled
+        try:
+            config.settings.trading_simulation_enabled = False
+            self.assertFalse(adapter_enabled_for_symbol('AAPL'))
+        finally:
             config.settings.trading_simulation_enabled = original_sim_enabled
 
     def test_lean_submit_includes_correlation_and_idempotency_audit_fields(self) -> None:
@@ -740,100 +754,3 @@ class TestExecutionAdapters(TestCase):
         self.assertEqual(adapter.last_route, 'alpaca_fallback')
         self.assertEqual(payload.get('symbol'), 'AAPL')
         self.assertEqual(payload.get('_execution_fallback_reason'), 'lean_submit_order_contract_violation')
-
-    def test_symbol_allowlists_and_canaries_do_not_gate_lean_routing(self) -> None:
-        original_adapter = config.settings.trading_execution_adapter
-        original_mode = config.settings.trading_mode
-        original_policy = config.settings.trading_execution_adapter_policy
-        original_symbols = config.settings.trading_execution_adapter_symbols_raw
-        original_canary = config.settings.trading_lean_live_canary_enabled
-        original_crypto_only = config.settings.trading_lean_live_canary_crypto_only
-        original_canary_symbols = config.settings.trading_lean_live_canary_symbols_raw
-        try:
-            config.settings.trading_execution_adapter = 'lean'
-            config.settings.trading_mode = 'live'
-            config.settings.trading_execution_adapter_policy = 'allowlist'
-            config.settings.trading_execution_adapter_symbols_raw = 'NVDA'
-            config.settings.trading_lean_live_canary_enabled = True
-            config.settings.trading_lean_live_canary_crypto_only = True
-            config.settings.trading_lean_live_canary_symbols_raw = 'BTC/USD'
-            self.assertTrue(adapter_enabled_for_symbol('AAPL'))
-            self.assertTrue(adapter_enabled_for_symbol('BTC/USD'))
-            self.assertTrue(adapter_enabled_for_symbol('MSFT', allowlist=set()))
-        finally:
-            config.settings.trading_execution_adapter = original_adapter
-            config.settings.trading_mode = original_mode
-            config.settings.trading_execution_adapter_policy = original_policy
-            config.settings.trading_execution_adapter_symbols_raw = original_symbols
-            config.settings.trading_lean_live_canary_enabled = original_canary
-            config.settings.trading_lean_live_canary_crypto_only = original_crypto_only
-            config.settings.trading_lean_live_canary_symbols_raw = original_canary_symbols
-
-    def test_disable_switch_blocks_lean_routing(self) -> None:
-        original_adapter = config.settings.trading_execution_adapter
-        original_disable = config.settings.trading_lean_lane_disable_switch
-        try:
-            config.settings.trading_execution_adapter = 'lean'
-            config.settings.trading_lean_lane_disable_switch = True
-            self.assertFalse(adapter_enabled_for_symbol('AAPL'))
-        finally:
-            config.settings.trading_execution_adapter = original_adapter
-            config.settings.trading_lean_lane_disable_switch = original_disable
-
-    def test_build_execution_adapter_falls_back_when_healthcheck_required_and_unhealthy(self) -> None:
-        original_adapter = config.settings.trading_execution_adapter
-        original_mode = config.settings.trading_mode
-        original_url = config.settings.trading_lean_runner_url
-        original_fallback = config.settings.trading_execution_fallback_adapter
-        original_healthcheck_enabled = config.settings.trading_lean_runner_healthcheck_enabled
-        original_healthcheck_required = config.settings.trading_lean_runner_require_healthy
-        try:
-            config.settings.trading_execution_adapter = 'lean'
-            config.settings.trading_mode = 'live'
-            config.settings.trading_lean_runner_url = 'http://lean.invalid'
-            config.settings.trading_execution_fallback_adapter = 'alpaca'
-            config.settings.trading_lean_runner_healthcheck_enabled = True
-            config.settings.trading_lean_runner_require_healthy = True
-
-            with patch('app.trading.execution_adapters._check_lean_runner_health', return_value=(False, 'timeout')):
-                adapter = build_execution_adapter(
-                    alpaca_client=FakeReadClient(),
-                    order_firewall=FakeOrderFirewall(),
-                )
-            self.assertEqual(adapter.name, 'alpaca')
-        finally:
-            config.settings.trading_execution_adapter = original_adapter
-            config.settings.trading_mode = original_mode
-            config.settings.trading_lean_runner_url = original_url
-            config.settings.trading_execution_fallback_adapter = original_fallback
-            config.settings.trading_lean_runner_healthcheck_enabled = original_healthcheck_enabled
-            config.settings.trading_lean_runner_require_healthy = original_healthcheck_required
-
-    def test_build_execution_adapter_allows_lean_when_healthcheck_nonblocking(self) -> None:
-        original_adapter = config.settings.trading_execution_adapter
-        original_mode = config.settings.trading_mode
-        original_url = config.settings.trading_lean_runner_url
-        original_fallback = config.settings.trading_execution_fallback_adapter
-        original_healthcheck_enabled = config.settings.trading_lean_runner_healthcheck_enabled
-        original_healthcheck_required = config.settings.trading_lean_runner_require_healthy
-        try:
-            config.settings.trading_execution_adapter = 'lean'
-            config.settings.trading_mode = 'paper'
-            config.settings.trading_lean_runner_url = 'http://lean.invalid'
-            config.settings.trading_execution_fallback_adapter = 'alpaca'
-            config.settings.trading_lean_runner_healthcheck_enabled = True
-            config.settings.trading_lean_runner_require_healthy = False
-
-            with patch('app.trading.execution_adapters._check_lean_runner_health', return_value=(False, 'timeout')):
-                adapter = build_execution_adapter(
-                    alpaca_client=FakeReadClient(),
-                    order_firewall=FakeOrderFirewall(),
-                )
-            self.assertEqual(adapter.name, 'lean')
-        finally:
-            config.settings.trading_execution_adapter = original_adapter
-            config.settings.trading_mode = original_mode
-            config.settings.trading_lean_runner_url = original_url
-            config.settings.trading_execution_fallback_adapter = original_fallback
-            config.settings.trading_lean_runner_healthcheck_enabled = original_healthcheck_enabled
-            config.settings.trading_lean_runner_require_healthy = original_healthcheck_required

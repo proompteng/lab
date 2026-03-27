@@ -162,22 +162,10 @@ spec:
               value: http://jangar.jangar.svc.cluster.local/api/torghut/trading/control-plane/quant/health
             - name: TRADING_JANGAR_CONTROL_PLANE_CACHE_TTL_SECONDS
               value: "15"
-            - name: TRADING_FORECAST_SERVICE_URL
-              value: http://torghut-forecast-sim.torghut.svc.cluster.local:8089
-            - name: TRADING_FORECAST_SERVICE_TIMEOUT_SECONDS
-              value: "5"
-            - name: TRADING_FORECAST_SERVICE_REQUIRE_HEALTHY
-              value: "true"
             - name: TRADING_FORECAST_SERVICE_ALLOWED_MODEL_FAMILIES
               value: chronos,moment,financial_tsfm
-            - name: TRADING_FORECAST_SERVICE_FAIL_MODE
-              value: allow_operational_fallback
             - name: TRADING_EMPIRICAL_JOB_STALE_AFTER_SECONDS
               value: "86400"
-            - name: TRADING_FORECAST_ROUTER_PROVIDER_MODE
-              value: http
-            - name: TRADING_FORECAST_ROUTER_PROVIDER_URL
-              value: http://torghut-forecast-sim.torghut.svc.cluster.local:8089
             - name: TRADING_POLL_MS
               value: "1000"
             - name: TRADING_RECONCILE_MS
@@ -219,12 +207,6 @@ spec:
                 secretKeyRef:
                   name: torghut-ws
                   key: password
-            - name: TRADING_EXECUTION_ADAPTER
-              value: simulation
-            - name: TRADING_EXECUTION_FALLBACK_ADAPTER
-              value: none
-            - name: TRADING_EXECUTION_ADAPTER_POLICY
-              value: all
             - name: TRADING_EXECUTION_ADVISOR_LIVE_APPLY_ENABLED
               value: "false"
             - name: TRADING_EXECUTION_ADVISOR_ENABLED
@@ -233,16 +215,6 @@ spec:
               value: "false"
             - name: TRADING_CRYPTO_LIVE_ENABLED
               value: "false"
-            - name: TRADING_LEAN_RUNNER_URL
-              value: http://torghut-lean-runner.torghut.svc.cluster.local:8088
-            - name: TRADING_LEAN_RUNNER_TIMEOUT_SECONDS
-              value: "5"
-            - name: TRADING_LEAN_RUNNER_HEALTHCHECK_ENABLED
-              value: "true"
-            - name: TRADING_LEAN_RUNNER_HEALTHCHECK_TIMEOUT_SECONDS
-              value: "2"
-            - name: TRADING_LEAN_RUNNER_REQUIRE_HEALTHY
-              value: "true"
             - name: TRADING_LEAN_BACKTEST_ENABLED
               value: "true"
             - name: TRADING_LEAN_SHADOW_EXECUTION_ENABLED

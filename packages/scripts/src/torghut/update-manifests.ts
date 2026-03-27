@@ -13,7 +13,6 @@ const defaultRepository = 'lab/torghut'
 const defaultManifestPath = 'argocd/applications/torghut/knative-service.yaml'
 const defaultSimulationManifestPath = 'argocd/applications/torghut/knative-service-sim.yaml'
 const defaultMigrationManifestPath = 'argocd/applications/torghut/db-migrations-job.yaml'
-const defaultLeanRunnerManifestPath = 'argocd/applications/torghut/lean-runner-deployment.yaml'
 const defaultHistoricalSimulationWorkflowManifestPath =
   'argocd/applications/torghut/historical-simulation-workflowtemplate.yaml'
 const defaultEmpiricalPromotionWorkflowManifestPath =
@@ -23,8 +22,6 @@ const defaultAnalysisActivityManifestPath = 'argocd/applications/torghut/analysi
 const defaultAnalysisTeardownManifestPath = 'argocd/applications/torghut/analysis-template-teardown-clean.yaml'
 const defaultAnalysisArtifactManifestPath = 'argocd/applications/torghut/analysis-template-artifact-bundle.yaml'
 const defaultEmpiricalBackfillManifestPath = 'argocd/applications/torghut/empirical-jobs-backfill-job.yaml'
-const defaultForecastManifestPath = 'argocd/applications/torghut-forecast/deployment.yaml'
-const defaultForecastSimulationManifestPath = 'argocd/applications/torghut-forecast/sim/deployment.yaml'
 const defaultOptionsCatalogManifestPath = 'argocd/applications/torghut-options/catalog/deployment.yaml'
 const defaultOptionsEnricherManifestPath = 'argocd/applications/torghut-options/enricher/deployment.yaml'
 
@@ -39,7 +36,6 @@ type UpdateManifestsOptions = {
   manifestPath?: string
   simulationManifestPath?: string
   migrationManifestPath?: string
-  leanRunnerManifestPath?: string
   historicalSimulationWorkflowManifestPath?: string
   empiricalPromotionWorkflowManifestPath?: string
   analysisRuntimeReadyManifestPath?: string
@@ -47,8 +43,6 @@ type UpdateManifestsOptions = {
   analysisTeardownManifestPath?: string
   analysisArtifactManifestPath?: string
   empiricalBackfillManifestPath?: string
-  forecastManifestPath?: string
-  forecastSimulationManifestPath?: string
   optionsCatalogManifestPath?: string
   optionsEnricherManifestPath?: string
 }
@@ -64,7 +58,6 @@ type CliOptions = {
   manifestPath?: string
   simulationManifestPath?: string
   migrationManifestPath?: string
-  leanRunnerManifestPath?: string
   historicalSimulationWorkflowManifestPath?: string
   empiricalPromotionWorkflowManifestPath?: string
   analysisRuntimeReadyManifestPath?: string
@@ -72,8 +65,6 @@ type CliOptions = {
   analysisTeardownManifestPath?: string
   analysisArtifactManifestPath?: string
   empiricalBackfillManifestPath?: string
-  forecastManifestPath?: string
-  forecastSimulationManifestPath?: string
   optionsCatalogManifestPath?: string
   optionsEnricherManifestPath?: string
 }
@@ -134,16 +125,8 @@ const updateTorghutManifest = (options: UpdateManifestsOptions) => {
     `$1${imageRef}`,
     'user-container image reference',
   )
-  updated = replaceIfPresent(
-    updated,
-    /(- name:\s*TORGHUT_VERSION\s*\n\s*value:\s*)([^\n]+)/,
-    `$1${options.version}`,
-  )
-  updated = replaceIfPresent(
-    updated,
-    /(- name:\s*TORGHUT_COMMIT\s*\n\s*value:\s*)([^\n]+)/,
-    `$1${options.commit}`,
-  )
+  updated = replaceIfPresent(updated, /(- name:\s*TORGHUT_VERSION\s*\n\s*value:\s*)([^\n]+)/, `$1${options.version}`)
+  updated = replaceIfPresent(updated, /(- name:\s*TORGHUT_COMMIT\s*\n\s*value:\s*)([^\n]+)/, `$1${options.commit}`)
   updated = updated.replace(/^\s*serving\.knative\.dev\/lastModifier:\s*[^\n]+\n/gm, '')
 
   if (updated !== source) {
@@ -247,11 +230,6 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     manifestPath: options.simulationManifestPath ?? defaultSimulationManifestPath,
   })
   const migration = updateTorghutMigrationManifest(options)
-  const leanRunner = updateImageOnlyManifest(
-    options,
-    options.leanRunnerManifestPath ?? defaultLeanRunnerManifestPath,
-    'torghut-lean-runner image reference',
-  )
   const historicalSimulationWorkflow = updateImageOnlyManifest(
     options,
     options.historicalSimulationWorkflowManifestPath ?? defaultHistoricalSimulationWorkflowManifestPath,
@@ -287,16 +265,6 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     options.empiricalBackfillManifestPath ?? defaultEmpiricalBackfillManifestPath,
     'torghut-empirical-jobs-backfill image reference',
   )
-  const forecast = updateImageOnlyManifest(
-    options,
-    options.forecastManifestPath ?? defaultForecastManifestPath,
-    'torghut-forecast image reference',
-  )
-  const forecastSimulation = updateImageOnlyManifest(
-    options,
-    options.forecastSimulationManifestPath ?? defaultForecastSimulationManifestPath,
-    'torghut-forecast-sim image reference',
-  )
   const optionsCatalog = updateVersionedDeploymentManifest(
     options,
     options.optionsCatalogManifestPath ?? defaultOptionsCatalogManifestPath,
@@ -317,7 +285,6 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     service,
     simulationService,
     migration,
-    leanRunner,
     historicalSimulationWorkflow,
     empiricalPromotionWorkflow,
     analysisRuntimeReady,
@@ -325,8 +292,6 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     analysisTeardown,
     analysisArtifact,
     empiricalBackfill,
-    forecast,
-    forecastSimulation,
     optionsCatalog,
     optionsEnricher,
   ]
@@ -358,7 +323,6 @@ Options:
   --manifest-path <path>
   --simulation-manifest-path <path>
   --migration-manifest-path <path>
-  --lean-runner-manifest-path <path>
   --historical-simulation-workflow-manifest-path <path>
   --empirical-promotion-workflow-manifest-path <path>
   --analysis-runtime-ready-manifest-path <path>
@@ -366,8 +330,6 @@ Options:
   --analysis-teardown-manifest-path <path>
   --analysis-artifact-manifest-path <path>
   --empirical-backfill-manifest-path <path>
-  --forecast-manifest-path <path>
-  --forecast-simulation-manifest-path <path>
   --options-catalog-manifest-path <path>
   --options-enricher-manifest-path <path>`)
       process.exit(0)
@@ -417,9 +379,6 @@ Options:
       case '--migration-manifest-path':
         options.migrationManifestPath = value
         break
-      case '--lean-runner-manifest-path':
-        options.leanRunnerManifestPath = value
-        break
       case '--historical-simulation-workflow-manifest-path':
         options.historicalSimulationWorkflowManifestPath = value
         break
@@ -440,12 +399,6 @@ Options:
         break
       case '--empirical-backfill-manifest-path':
         options.empiricalBackfillManifestPath = value
-        break
-      case '--forecast-manifest-path':
-        options.forecastManifestPath = value
-        break
-      case '--forecast-simulation-manifest-path':
-        options.forecastSimulationManifestPath = value
         break
       case '--options-catalog-manifest-path':
         options.optionsCatalogManifestPath = value
@@ -488,7 +441,6 @@ export const main = (cliOptions?: CliOptions) => {
     manifestPath: parsed.manifestPath ?? process.env.TORGHUT_MANIFEST_PATH,
     simulationManifestPath: parsed.simulationManifestPath ?? process.env.TORGHUT_SIMULATION_MANIFEST_PATH,
     migrationManifestPath: parsed.migrationManifestPath ?? process.env.TORGHUT_MIGRATION_MANIFEST_PATH,
-    leanRunnerManifestPath: parsed.leanRunnerManifestPath ?? process.env.TORGHUT_LEAN_RUNNER_MANIFEST_PATH,
     historicalSimulationWorkflowManifestPath:
       parsed.historicalSimulationWorkflowManifestPath ?? process.env.TORGHUT_HISTORICAL_SIMULATION_WORKFLOW_PATH,
     empiricalPromotionWorkflowManifestPath:
@@ -503,9 +455,6 @@ export const main = (cliOptions?: CliOptions) => {
       parsed.analysisArtifactManifestPath ?? process.env.TORGHUT_ANALYSIS_ARTIFACT_MANIFEST_PATH,
     empiricalBackfillManifestPath:
       parsed.empiricalBackfillManifestPath ?? process.env.TORGHUT_EMPIRICAL_BACKFILL_MANIFEST_PATH,
-    forecastManifestPath: parsed.forecastManifestPath ?? process.env.TORGHUT_FORECAST_MANIFEST_PATH,
-    forecastSimulationManifestPath:
-      parsed.forecastSimulationManifestPath ?? process.env.TORGHUT_FORECAST_SIMULATION_MANIFEST_PATH,
     optionsCatalogManifestPath: parsed.optionsCatalogManifestPath ?? process.env.TORGHUT_OPTIONS_CATALOG_MANIFEST_PATH,
     optionsEnricherManifestPath:
       parsed.optionsEnricherManifestPath ?? process.env.TORGHUT_OPTIONS_ENRICHER_MANIFEST_PATH,

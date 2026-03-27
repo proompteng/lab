@@ -43,8 +43,6 @@ TORGHUT_ENV_KEYS = [
     'TRADING_ORDER_FEED_TOPIC',
     'TRADING_ORDER_FEED_TOPIC_V2',
     'TRADING_ORDER_FEED_GROUP_ID',
-    'TRADING_EXECUTION_ADAPTER',
-    'TRADING_EXECUTION_FALLBACK_ADAPTER',
     'TRADING_SIMULATION_ENABLED',
     'TRADING_SIMULATION_RUN_ID',
     'TRADING_SIMULATION_DATASET_ID',
@@ -1129,8 +1127,7 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
     torghut_service = _as_text(_resource_attr(resources, 'torghut_service'))
     ta_deployment = _as_text(_resource_attr(resources, 'ta_deployment'))
     ta_configmap = _as_text(_resource_attr(resources, 'ta_configmap'))
-    forecast_service = _as_text(_resource_attr(resources, 'torghut_forecast_service'))
-    if torghut_service is None or ta_deployment is None or ta_configmap is None or forecast_service is None:
+    if torghut_service is None or ta_deployment is None or ta_configmap is None:
         raise RuntimeError('simulation resources are incomplete')
 
     service = _kubectl_json(namespace, ['get', 'kservice', torghut_service, '-o', 'json'])
@@ -1211,7 +1208,6 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
     if latest_ready_revision:
         revision_health = _deployment_replica_health(namespace, f'{latest_ready_revision}-deployment')
     ta_health = _flink_runtime_health(namespace, ta_deployment)
-    forecast_health = _deployment_replica_health(namespace, forecast_service)
     return {
         'runtime_state': 'ready'
         if ready
@@ -1219,7 +1215,6 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
         and revision_health['ready_replicas'] > 0
         and ta_health['desired_state'] == 'running'
         and ta_health['lifecycle_state'] in {'RUNNING', 'running', 'DEPLOYED'}
-        and forecast_health['ready_replicas'] > 0
         and trading_config_complete
         and ta_runtime_config_complete
         and bool(schema_registry.get('ready'))
@@ -1239,11 +1234,9 @@ def _runtime_verify(*, resources: Any, manifest: Mapping[str, Any]) -> dict[str,
         'ta_runtime_config': ta_runtime_config,
         'schema_registry': schema_registry,
         'analysis_images': analysis_images,
-        'forecast_runtime': forecast_health,
         'environment_state': 'complete'
         if (
-            forecast_health['ready_replicas'] > 0
-            and trading_config_complete
+            trading_config_complete
             and ta_runtime_config_complete
             and bool(schema_registry.get('ready'))
             and bool(analysis_images.get('ready'))

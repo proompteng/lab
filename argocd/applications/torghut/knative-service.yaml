@@ -126,10 +126,6 @@ spec:
               value: "5000"
             - name: TRADING_RECONCILE_MS
               value: "15000"
-            - name: TRADING_EXECUTION_ADAPTER
-              value: alpaca
-            - name: TRADING_EXECUTION_ADAPTER_POLICY
-              value: all
             - name: TRADING_EXECUTION_ADVISOR_LIVE_APPLY_ENABLED
               value: "false"
             - name: TRADING_EXECUTION_ADVISOR_ENABLED

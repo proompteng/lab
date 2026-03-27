@@ -86,7 +86,6 @@ runtime:
   ta_configmap: torghut-options-ta-sim-config
   ta_deployment: torghut-options-ta-sim
   torghut_service: torghut-sim
-  torghut_forecast_service: torghut-forecast-sim
 
 ta_config:
   topic_key_by_role:

@@ -142,26 +142,25 @@ class TestConfig(TestCase):
         self.assertEqual(settings.trading_jangar_control_plane_timeout_seconds, 2.5)
         self.assertEqual(settings.trading_jangar_control_plane_cache_ttl_seconds, 30)
 
-    def test_forecast_service_settings_normalize_and_backfill_router_provider(
-        self,
-    ) -> None:
+    def test_forecast_registry_settings_are_normalized(self) -> None:
         settings = Settings(
             TRADING_ENABLED=False,
             TRADING_AUTONOMY_ENABLED=False,
             TRADING_LIVE_ENABLED=False,
             TRADING_UNIVERSE_SOURCE="static",
-            TRADING_FORECAST_SERVICE_URL=" http://torghut-forecast.torghut.svc.cluster.local:8089/ ",
+            TRADING_FORECAST_REGISTRY_MANIFEST_PATH=" config/forecast/registry.json ",
+            TRADING_FORECAST_REGISTRY_MANIFEST_URL=" https://registry.example/forecast.json ",
             TRADING_FORECAST_SERVICE_ALLOWED_MODEL_FAMILIES=" chronos , moment , financial_tsfm ",
             DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
         )
 
         self.assertEqual(
-            settings.trading_forecast_service_url,
-            "http://torghut-forecast.torghut.svc.cluster.local:8089",
+            settings.trading_forecast_registry_manifest_path,
+            "config/forecast/registry.json",
         )
         self.assertEqual(
-            settings.trading_forecast_router_provider_url,
-            "http://torghut-forecast.torghut.svc.cluster.local:8089",
+            settings.trading_forecast_registry_manifest_url,
+            "https://registry.example/forecast.json",
         )
         self.assertEqual(
             settings.trading_forecast_service_allowed_model_families,
@@ -721,7 +720,6 @@ class TestConfig(TestCase):
         settings = Settings(
             TRADING_ENABLED=False,
             TRADING_UNIVERSE_SOURCE="static",
-            TRADING_EXECUTION_ADAPTER="simulation",
             TRADING_SIMULATION_ENABLED=True,
             TRADING_SIMULATION_RUN_ID="  sim-2026-02-27-01  ",
             TRADING_SIMULATION_DATASET_ID="  dataset-a  ",
@@ -733,7 +731,6 @@ class TestConfig(TestCase):
             TRADING_SIMULATION_ORDER_UPDATES_BOOTSTRAP_SERVERS="  kafka:9092  ",
             DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
         )
-        self.assertEqual(settings.trading_execution_adapter, "simulation")
         self.assertEqual(settings.trading_simulation_run_id, "sim-2026-02-27-01")
         self.assertEqual(settings.trading_simulation_dataset_id, "dataset-a")
         self.assertEqual(
@@ -1003,9 +1000,6 @@ class TestConfig(TestCase):
             "trading_live_enabled",
             "trading_ws_crypto_enabled",
             "trading_universe_crypto_enabled",
-            "trading_forecast_service_require_healthy",
-            "trading_lean_runner_healthcheck_enabled",
-            "trading_lean_runner_require_healthy",
             "trading_lean_backtest_enabled",
             "trading_lean_shadow_execution_enabled",
             "trading_lean_strategy_shadow_enabled",

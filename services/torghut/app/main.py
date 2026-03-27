@@ -55,6 +55,7 @@ from .trading.autonomy import (
 )
 from .trading.completion import build_doc29_completion_status
 from .trading.empirical_jobs import build_empirical_jobs_status
+from .trading.forecast_runtime import forecast_status
 from .trading.hypotheses import (
     JangarDependencyQuorumStatus,
     compile_hypothesis_runtime_statuses,
@@ -64,6 +65,7 @@ from .trading.hypotheses import (
     validate_hypothesis_registry_from_settings,
 )
 from .trading.lean_lanes import LeanLaneManager
+from .trading.lean_runtime import lean_authority_status
 from .trading.llm.evaluation import build_llm_evaluation_metrics
 from .trading.submission_council import (
     build_live_submission_gate_payload,
@@ -2644,182 +2646,12 @@ def _check_clickhouse() -> dict[str, object]:
     return {"ok": True, "detail": "ok"}
 
 
-def _http_json_request(
-    *,
-    url: str,
-    timeout_seconds: int,
-    method: str = "GET",
-    body: dict[str, object] | None = None,
-) -> dict[str, object]:
-    parsed = urlsplit(url)
-    scheme = parsed.scheme.lower()
-    if scheme not in {"http", "https"}:
-        return {"ok": False, "detail": f"invalid url scheme: {scheme or 'missing'}"}
-    if not parsed.hostname:
-        return {"ok": False, "detail": "invalid url host"}
-    path = parsed.path or "/"
-    if parsed.query:
-        path = f"{path}?{parsed.query}"
-    payload_bytes = (
-        json.dumps(body, separators=(",", ":")).encode("utf-8")
-        if body is not None
-        else None
-    )
-    headers = {"accept": "application/json"}
-    if payload_bytes is not None:
-        headers["content-type"] = "application/json"
-    connection_class = HTTPSConnection if scheme == "https" else HTTPConnection
-    connection = connection_class(parsed.hostname, parsed.port, timeout=max(timeout_seconds, 1))
-    response: Any | None = None
-    raw = ""
-    try:
-        connection.request(method, path, body=payload_bytes, headers=headers)
-        response = connection.getresponse()
-        raw = response.read().decode("utf-8")
-    except Exception as exc:  # pragma: no cover - depends on network
-        return {"ok": False, "detail": f"http error: {exc}"}
-    finally:
-        connection.close()
-    if response is None:
-        return {"ok": False, "detail": "missing response"}
-    if response.status < 200 or response.status >= 300:
-        return {
-            "ok": False,
-            "detail": f"http status {response.status}",
-            "status_code": response.status,
-            "body": raw[:200],
-        }
-    if not raw.strip():
-        return {"ok": True, "payload": {}}
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return {"ok": False, "detail": "invalid json response"}
-    if not isinstance(payload, dict):
-        return {"ok": False, "detail": "invalid payload shape"}
-    return {"ok": True, "payload": cast(dict[str, object], payload)}
-
-
 def _forecast_service_status() -> dict[str, object]:
-    endpoint = settings.trading_forecast_service_url or ""
-    if not endpoint:
-        return {
-            "configured": False,
-            "endpoint": None,
-            "status": "disabled",
-            "authority": "blocked",
-            "message": "forecast service not configured",
-            "calibration_status": "unknown",
-            "promotion_authority_eligible_models": [],
-            "allowed_model_families": sorted(
-                settings.trading_forecast_service_allowed_model_families
-            ),
-        }
-    ready = _http_json_request(
-        url=f"{endpoint.rstrip('/')}/readyz",
-        timeout_seconds=settings.trading_forecast_service_timeout_seconds,
-    )
-    calibration = _http_json_request(
-        url=f"{endpoint.rstrip('/')}/v1/calibration/report",
-        timeout_seconds=settings.trading_forecast_service_timeout_seconds,
-        method="POST",
-        body={},
-    )
-    calibration_payload = (
-        cast(dict[str, object], calibration.get("payload"))
-        if calibration.get("ok") and isinstance(calibration.get("payload"), dict)
-        else {}
-    )
-    models = (
-        cast(list[object], calibration_payload.get("models"))
-        if isinstance(calibration_payload.get("models"), list)
-        else []
-    )
-    eligible_models = sorted(
-        str(cast(dict[str, object], item).get("model_family") or "").strip()
-        for item in models
-        if isinstance(item, dict)
-        and bool(cast(dict[str, object], item).get("promotion_authority_eligible"))
-        and str(cast(dict[str, object], item).get("model_family") or "").strip()
-    )
-    healthy = bool(ready.get("ok"))
-    authority = "empirical" if healthy and eligible_models else "blocked"
-    return {
-        "configured": True,
-        "endpoint": endpoint,
-        "status": "healthy" if healthy else "degraded",
-        "authority": authority,
-        "message": (
-            "ok"
-            if healthy
-            else str(ready.get("detail") or "forecast service readiness failed")
-        ),
-        "calibration_status": str(calibration_payload.get("status") or "unknown"),
-        "registry_ref": calibration_payload.get("registry_ref"),
-        "promotion_authority_eligible_models": eligible_models,
-        "allowed_model_families": sorted(
-            settings.trading_forecast_service_allowed_model_families
-        ),
-        "require_healthy": settings.trading_forecast_service_require_healthy,
-        "fail_mode": settings.trading_forecast_service_fail_mode,
-    }
+    return cast(dict[str, object], forecast_status())
 
 
 def _lean_authority_status() -> dict[str, object]:
-    endpoint = settings.trading_lean_runner_url or ""
-    if not endpoint:
-        return {
-            "configured": False,
-            "endpoint": None,
-            "status": "disabled",
-            "authority": "blocked",
-            "message": "LEAN runner not configured",
-            "authoritative_modes": [],
-        }
-    ready = _http_json_request(
-        url=f"{endpoint.rstrip('/')}/readyz",
-        timeout_seconds=settings.trading_lean_runner_timeout_seconds,
-    )
-    observability = _http_json_request(
-        url=f"{endpoint.rstrip('/')}/v1/observability",
-        timeout_seconds=settings.trading_lean_runner_timeout_seconds,
-    )
-    observability_payload = (
-        cast(dict[str, object], observability.get("payload"))
-        if observability.get("ok") and isinstance(observability.get("payload"), dict)
-        else {}
-    )
-    authority_payload = (
-        cast(dict[str, object], observability_payload.get("authority"))
-        if isinstance(observability_payload.get("authority"), dict)
-        else {}
-    )
-    authoritative_modes = (
-        [
-            str(item).strip()
-            for item in cast(list[object], authority_payload.get("authoritative_modes"))
-            if str(item).strip()
-        ]
-        if isinstance(authority_payload.get("authoritative_modes"), list)
-        else []
-    )
-    healthy = bool(ready.get("ok"))
-    ready_payload = (
-        cast(dict[str, object], ready.get("payload"))
-        if isinstance(ready.get("payload"), dict)
-        else {}
-    )
-    return {
-        "configured": True,
-        "endpoint": endpoint,
-        "status": "healthy" if healthy else "degraded",
-        "authority": "empirical" if healthy and authoritative_modes else "blocked",
-        "message": "ok" if healthy else str(ready.get("detail") or "LEAN readiness failed"),
-        "authoritative_modes": authoritative_modes,
-        "deterministic_scaffold_enabled": bool(
-            ready_payload.get("deterministic_scaffold_enabled", True)
-        ),
-    }
+    return cast(dict[str, object], lean_authority_status())
 
 
 def _empirical_jobs_status() -> dict[str, object]:

@@ -289,14 +289,6 @@ spec:
                       - /spec/restartNonce
                 automation: manual
                 enabled: "true"
-              - name: torghut-forecast
-                path: argocd/applications/torghut-forecast
-                namespace: torghut
-                renderWithLovely: false
-                annotations:
-                  argocd.argoproj.io/sync-wave: "6"
-                automation: auto
-                enabled: "true"
               - name: torghut-options
                 path: argocd/applications/torghut-options
                 namespace: torghut

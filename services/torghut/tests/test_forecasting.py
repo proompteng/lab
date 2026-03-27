@@ -132,49 +132,16 @@ class TestForecastRouterV5(TestCase):
         self.assertEqual(result.contract.fallback.reason, 'latency_slo_breach')
         self.assertLessEqual(result.contract.inference_latency_ms, 20)
 
-    def test_http_forecast_adapter_serializes_decimal_feature_values(self) -> None:
-        captured: dict[str, object] = {}
-
-        class _Response:
-            def __enter__(self) -> '_Response':
-                return self
-
-            def __exit__(self, exc_type, exc, tb) -> None:
-                return None
-
-            def read(self) -> bytes:
-                return json.dumps(
-                    {
-                        'model_family': 'chronos',
-                        'model_version': 'external-http',
-                        'point_forecast': '0.12',
-                        'interval': {'p05': '-0.10', 'p50': '0.12', 'p95': '0.35'},
-                        'uncertainty': {'epistemic': '0.20', 'aleatoric': '0.15'},
-                        'inference_latency_ms': 23,
-                    }
-                ).encode('utf-8')
-
-        def _fake_urlopen(request, timeout: int):
-            captured['timeout'] = timeout
-            captured['body'] = request.data.decode('utf-8')
-            return _Response()
-
+    def test_default_router_uses_in_process_forecast_adapters(self) -> None:
         signal = _signal()
         feature_vector = normalize_feature_vector_v3(signal)
 
         with (
-            patch.object(settings, 'trading_forecast_router_provider_mode', 'http'),
-            patch.object(settings, 'trading_forecast_router_provider_url', 'http://forecast.test'),
-            patch.object(settings, 'trading_forecast_router_provider_api_key', None),
-            patch.object(settings, 'trading_forecast_service_url', None),
-            patch.object(settings, 'trading_forecast_service_api_key', None),
-            patch.object(settings, 'trading_forecast_service_timeout_seconds', 7),
             patch.object(
                 settings,
                 'trading_forecast_service_allowed_model_families_raw',
                 'chronos',
             ),
-            patch('app.trading.forecasting.urlopen', side_effect=_fake_urlopen),
         ):
             router = build_default_forecast_router(
                 policy_path=None,
@@ -186,15 +153,8 @@ class TestForecastRouterV5(TestCase):
                 event_ts=signal.event_ts,
             )
 
-        body = json.loads(str(captured['body']))
-        assert isinstance(body, dict)
-        assert isinstance(body.get('values'), dict)
-        self.assertEqual(body['values']['macd'], '0.6')
-        self.assertEqual(body['values']['macd_signal'], '0.1')
-        self.assertEqual(body['values']['price'], '194.32')
-        self.assertEqual(captured['timeout'], 7)
         self.assertEqual(result.contract.model_family, 'chronos')
-        self.assertEqual(result.contract.point_forecast, Decimal('0.12'))
+        self.assertIsInstance(result.contract.point_forecast, Decimal)
 
     def test_router_is_deterministic_for_same_input(self) -> None:
         router = build_default_forecast_router(policy_path=None, refinement_enabled=True)

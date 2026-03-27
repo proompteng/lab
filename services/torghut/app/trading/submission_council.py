@@ -343,7 +343,6 @@ def critical_trading_toggle_snapshot() -> dict[str, object]:
         'TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION': settings.trading_autonomy_allow_live_promotion,
         'TRADING_KILL_SWITCH_ENABLED': settings.trading_kill_switch_enabled,
         'TRADING_MODE': settings.trading_mode,
-        'TRADING_EXECUTION_ADAPTER_POLICY': settings.trading_execution_adapter_policy,
     }
 
 

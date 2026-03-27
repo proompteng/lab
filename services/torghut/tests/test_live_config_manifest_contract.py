@@ -59,37 +59,6 @@ def _load_torghut_knative_env() -> dict[str, object]:
     return env
 
 
-def _load_torghut_lean_runner_env() -> dict[str, object]:
-    manifest_path = (
-        _repo_root() / "argocd" / "applications" / "torghut" / "lean-runner-deployment.yaml"
-    )
-    manifest = safe_load(manifest_path.read_text(encoding="utf-8"))
-    containers = (
-        manifest.get("spec", {})
-        .get("template", {})
-        .get("spec", {})
-        .get("containers", [])
-    )
-    if not containers:
-        raise AssertionError(
-            "lean-runner-deployment.yaml missing spec.template.spec.containers"
-        )
-
-    first_container = containers[0]
-    env_entries = first_container.get("env", [])
-    env: dict[str, object] = {}
-    for item in env_entries:
-        if not isinstance(item, dict):
-            continue
-        name = item.get("name")
-        if not isinstance(name, str):
-            continue
-        if "value" in item:
-            raw_value = item["value"]
-            env[name] = raw_value if isinstance(raw_value, str) else str(raw_value)
-    return env
-
-
 def _load_torghut_feature_flags() -> dict[str, object]:
     manifest_path = (
         _repo_root()
@@ -140,8 +109,6 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertTrue(settings.trading_universe_static_fallback_enabled)
         self.assertIsNone(settings.trading_jangar_control_plane_status_url)
         self.assertIsNone(settings.trading_jangar_quant_health_url)
-        self.assertIsNone(settings.trading_forecast_service_url)
-        self.assertIsNone(settings.trading_lean_runner_url)
         self.assertIsNone(settings.trading_market_context_url)
         self.assertEqual(
             set(settings.trading_universe_static_fallback_symbols),
@@ -192,23 +159,15 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertFalse(_manifest_bool(env, "TRADING_KILL_SWITCH_ENABLED"))
         self.assertFalse(_manifest_bool(env, "TRADING_EMERGENCY_STOP_ENABLED"))
-        self.assertEqual(env.get("TRADING_EXECUTION_ADAPTER_POLICY"), "all")
+        self.assertNotIn("TRADING_EXECUTION_ADAPTER_POLICY", env)
 
     def test_manifest_rollout_toggles_disable_execution_advisor(self) -> None:
         knative_env = _load_torghut_knative_env()
-        lean_runner_env = _load_torghut_lean_runner_env()
         self.assertEqual(
             knative_env.get("TRADING_EXECUTION_ADVISOR_ENABLED"), "false"
         )
         self.assertEqual(
             knative_env.get("TRADING_EXECUTION_ADVISOR_LIVE_APPLY_ENABLED"),
-            "false",
-        )
-        self.assertEqual(
-            lean_runner_env.get("TRADING_EXECUTION_ADVISOR_ENABLED"), "false"
-        )
-        self.assertEqual(
-            lean_runner_env.get("TRADING_EXECUTION_ADVISOR_LIVE_APPLY_ENABLED"),
             "false",
         )
 

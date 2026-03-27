@@ -46,7 +46,6 @@ runtime:
   ta_configmap: torghut-ta-sim-config
   ta_deployment: torghut-ta-sim
   torghut_service: torghut-sim
-  torghut_forecast_service: torghut-forecast-sim
   output_root: artifacts/torghut/simulations
 
 rollouts:

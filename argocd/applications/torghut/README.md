@@ -53,9 +53,9 @@ The workflow output root can be overridden with `outputRoot` and replay/reapply 
 `forceReplay` / `forceDump`.
 
 By default, the workflow now targets the dedicated simulation surfaces managed in this app:
-`Service/torghut-sim`, `FlinkDeployment/torghut-ta-sim`, `ConfigMap/torghut-ta-sim-config`, and
-`Service/torghut-forecast-sim`. Supply explicit `runtime.*` overrides in the dataset manifest only when you
-intentionally need different resource names.
+`Service/torghut-sim`, `FlinkDeployment/torghut-ta-sim`, and `ConfigMap/torghut-ta-sim-config`.
+Supply explicit `runtime.*` overrides in the dataset manifest only when you intentionally need different
+resource names.
 
 ### Argo Rollouts gate plane
 
@@ -74,7 +74,6 @@ remain:
 
 - Knative `Service/torghut-sim`
 - `FlinkDeployment/torghut-ta-sim`
-- `Deployment` and `Service/torghut-forecast-sim`
 
 Required namespaced AnalysisTemplates:
 
@@ -87,7 +86,7 @@ Canonical operator flow:
 
 1. Sync Argo CD app `argo-rollouts`.
 2. Verify Rollouts CRDs/controller are healthy.
-3. Sync Argo CD apps `torghut` and `torghut-forecast`.
+3. Sync Argo CD app `torghut`.
 4. Verify the AnalysisTemplates exist in namespace `torghut`.
 5. Submit `torghut-historical-simulation`.
 6. Observe both the Argo Workflow phases and the `AnalysisRun` objects in `torghut`.
@@ -106,7 +105,6 @@ kubectl get analysisrun -n torghut
 - Flink TA job: `FlinkDeployment/torghut-ta-sim` (`argocd/applications/torghut/ta-sim/flinkdeployment.yaml`)
 - TA config: `ConfigMap/torghut-ta-sim-config` (`argocd/applications/torghut/ta-sim/configmap.yaml`)
 - Trading service: Knative `Service/torghut-sim` (`argocd/applications/torghut/knative-service-sim.yaml`)
-- Forecast service: `Service/torghut-forecast-sim` (`argocd/applications/torghut-forecast/sim/service.yaml`)
 - Simulation gates: `AnalysisTemplate/*` and `AnalysisRun/*` in namespace `torghut`
 - DB migration gate: `Job/torghut-db-migrations` (`argocd/applications/torghut/db-migrations-job.yaml`, Argo `PreSync` hook)
 - Kafka namespace/tools: `kafka` (Strimzi); bootstrap `kafka-kafka-bootstrap.kafka:9092`

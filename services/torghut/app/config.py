@@ -530,79 +530,20 @@ class Settings(BaseSettings):
         alias="TRADING_FORECAST_ROUTER_ENABLED",
         description="Enable deterministic forecast routing and uncertainty contract emission.",
     )
-    trading_forecast_service_url: Optional[str] = Field(
-        default=None,
-        alias="TRADING_FORECAST_SERVICE_URL",
-        validation_alias=AliasChoices(
-            "TRADING_FORECAST_SERVICE_URL",
-            "TRADING_FORECAST_ROUTER_PROVIDER_URL",
-        ),
-        description="Base URL for the empirical forecast service.",
-    )
-    trading_forecast_service_timeout_seconds: int = Field(
-        default=5,
-        alias="TRADING_FORECAST_SERVICE_TIMEOUT_SECONDS",
-        validation_alias=AliasChoices(
-            "TRADING_FORECAST_SERVICE_TIMEOUT_SECONDS",
-            "TRADING_FORECAST_ROUTER_PROVIDER_TIMEOUT_SECONDS",
-        ),
-        description="HTTP timeout for empirical forecast service requests.",
-    )
-    trading_forecast_service_require_healthy: bool = Field(
-        default=True,
-        alias="TRADING_FORECAST_SERVICE_REQUIRE_HEALTHY",
-        description="Treat forecast service readiness failures as operational degradation.",
-    )
-    trading_forecast_service_fail_mode: Literal[
-        "allow_operational_fallback", "fail_closed"
-    ] = Field(
-        default="allow_operational_fallback",
-        alias="TRADING_FORECAST_SERVICE_FAIL_MODE",
-        description="How Torghut reacts when empirical forecast service is unavailable.",
-    )
     trading_forecast_service_allowed_model_families_raw: Optional[str] = Field(
         default="chronos,moment,financial_tsfm",
         alias="TRADING_FORECAST_SERVICE_ALLOWED_MODEL_FAMILIES",
         description="Comma-separated model families allowed from the empirical forecast service.",
-    )
-    trading_forecast_service_api_key: Optional[str] = Field(
-        default=None,
-        alias="TRADING_FORECAST_SERVICE_API_KEY",
-        validation_alias=AliasChoices(
-            "TRADING_FORECAST_SERVICE_API_KEY",
-            "TRADING_FORECAST_ROUTER_PROVIDER_API_KEY",
-        ),
-        description="Optional API key forwarded to the empirical forecast service.",
     )
     trading_forecast_router_policy_path: Optional[str] = Field(
         default=None,
         alias="TRADING_FORECAST_ROUTER_POLICY_PATH",
         description="Optional path to forecast router policy JSON.",
     )
-    trading_forecast_router_provider_mode: Literal["deterministic", "http"] = Field(
-        default="deterministic",
-        alias="TRADING_FORECAST_ROUTER_PROVIDER_MODE",
-        description="Forecast producer mode. http enables external empirical inference service integration.",
-    )
-    trading_forecast_router_provider_url: Optional[str] = Field(
-        default=None,
-        alias="TRADING_FORECAST_ROUTER_PROVIDER_URL",
-        description="Optional base URL for external forecast inference service.",
-    )
-    trading_forecast_router_provider_timeout_seconds: int = Field(
-        default=5,
-        alias="TRADING_FORECAST_ROUTER_PROVIDER_TIMEOUT_SECONDS",
-        description="HTTP timeout for external forecast inference requests.",
-    )
-    trading_forecast_router_provider_api_key: Optional[str] = Field(
-        default=None,
-        alias="TRADING_FORECAST_ROUTER_PROVIDER_API_KEY",
-        description="Optional API key forwarded to external forecast inference service.",
-    )
     trading_forecast_registry_manifest_path: Optional[str] = Field(
         default=None,
         alias="TRADING_FORECAST_REGISTRY_MANIFEST_PATH",
-        description="Path to the forecast model registry manifest consumed by torghut-forecast.",
+        description="Path to the in-process forecast model registry manifest.",
     )
     trading_forecast_registry_manifest_url: Optional[str] = Field(
         default=None,
@@ -612,12 +553,12 @@ class Settings(BaseSettings):
     trading_forecast_registry_refresh_seconds: int = Field(
         default=30,
         alias="TRADING_FORECAST_REGISTRY_REFRESH_SECONDS",
-        description="Refresh cadence for torghut-forecast registry manifest reloads.",
+        description="Refresh cadence for in-process forecast registry manifest reloads.",
     )
     trading_forecast_calibration_stale_after_seconds: int = Field(
         default=604800,
         alias="TRADING_FORECAST_CALIBRATION_STALE_AFTER_SECONDS",
-        description="Forecast calibration freshness budget used by torghut-forecast readiness checks.",
+        description="Forecast calibration freshness budget used by in-process forecast readiness checks.",
     )
     trading_empirical_job_stale_after_seconds: int = Field(
         default=86400,
@@ -912,26 +853,6 @@ class Settings(BaseSettings):
         alias="TRADING_EXECUTION_ADVISOR_TIMEOUT_MS",
         description="Maximum tolerated advisor inference latency before deterministic fallback.",
     )
-    trading_execution_adapter: Literal["alpaca", "lean", "simulation"] = Field(
-        default="alpaca",
-        alias="TRADING_EXECUTION_ADAPTER",
-        description="Primary execution adapter selection.",
-    )
-    trading_execution_fallback_adapter: Literal["none", "alpaca"] = Field(
-        default="alpaca",
-        alias="TRADING_EXECUTION_FALLBACK_ADAPTER",
-        description="Fallback adapter when primary adapter fails.",
-    )
-    trading_execution_adapter_policy: Literal["all", "allowlist"] = Field(
-        default="allowlist",
-        alias="TRADING_EXECUTION_ADAPTER_POLICY",
-        description="Execution adapter routing policy.",
-    )
-    trading_execution_adapter_symbols_raw: Optional[str] = Field(
-        default=None,
-        alias="TRADING_EXECUTION_ADAPTER_SYMBOLS",
-        description="Comma-separated symbol allowlist for adapter routing.",
-    )
     trading_simulation_enabled: bool = Field(
         default=False,
         alias="TRADING_SIMULATION_ENABLED",
@@ -1007,21 +928,6 @@ class Settings(BaseSettings):
         alias="TRADING_SIMULATION_ORDER_UPDATES_SASL_PASSWORD",
         description="Kafka SASL password for simulated trade-updates emission; defaults to order-feed password.",
     )
-    trading_lean_runner_url: Optional[str] = Field(
-        default=None,
-        alias="TRADING_LEAN_RUNNER_URL",
-        description="Base URL for LEAN runner API.",
-    )
-    trading_lean_runner_timeout_seconds: int = Field(
-        default=5,
-        alias="TRADING_LEAN_RUNNER_TIMEOUT_SECONDS",
-        description="HTTP timeout for LEAN runner calls.",
-    )
-    trading_lean_runner_upstream_timeout_seconds: int = Field(
-        default=10,
-        alias="TRADING_LEAN_RUNNER_UPSTREAM_TIMEOUT_SECONDS",
-        description="HTTP timeout for LEAN runner upstream proxy calls.",
-    )
     trading_lean_backtest_upstream_url: Optional[str] = Field(
         default=None,
         alias="TRADING_LEAN_BACKTEST_UPSTREAM_URL",
@@ -1036,21 +942,6 @@ class Settings(BaseSettings):
         default=None,
         alias="TRADING_LEAN_STRATEGY_SHADOW_UPSTREAM_URL",
         description="Optional upstream URL for authoritative LEAN strategy shadow evaluation.",
-    )
-    trading_lean_runner_healthcheck_enabled: bool = Field(
-        default=True,
-        alias="TRADING_LEAN_RUNNER_HEALTHCHECK_ENABLED",
-        description="Validate LEAN runner /healthz before enabling LEAN adapter routing.",
-    )
-    trading_lean_runner_healthcheck_timeout_seconds: int = Field(
-        default=2,
-        alias="TRADING_LEAN_RUNNER_HEALTHCHECK_TIMEOUT_SECONDS",
-        description="HTTP timeout for LEAN runner preflight health checks.",
-    )
-    trading_lean_runner_require_healthy: bool = Field(
-        default=True,
-        alias="TRADING_LEAN_RUNNER_REQUIRE_HEALTHY",
-        description="Fallback to Alpaca adapter when LEAN runner preflight health checks fail.",
     )
     trading_lean_backtest_enabled: bool = Field(
         default=False,
@@ -1903,9 +1794,6 @@ class Settings(BaseSettings):
             "trading_jangar_control_plane_status_url",
             "trading_jangar_quant_health_url",
             "trading_market_context_url",
-            "trading_lean_runner_url",
-            "trading_forecast_service_url",
-            "trading_forecast_router_provider_url",
             "trading_forecast_registry_manifest_url",
             "trading_lean_backtest_upstream_url",
             "trading_lean_shadow_upstream_url",
@@ -1926,8 +1814,6 @@ class Settings(BaseSettings):
             "trading_order_feed_sasl_password",
             "trading_accounts_json",
             "trading_autonomy_approval_token",
-            "trading_forecast_service_api_key",
-            "trading_forecast_router_provider_api_key",
             "trading_forecast_registry_manifest_path",
             "trading_simulation_run_id",
             "trading_simulation_dataset_id",
@@ -1960,24 +1846,9 @@ class Settings(BaseSettings):
             self.trading_forecast_router_policy_path = (
                 self.trading_forecast_router_policy_path.strip() or None
             )
-        if (
-            self.trading_forecast_service_url
-            and not self.trading_forecast_router_provider_url
-        ):
-            self.trading_forecast_router_provider_url = (
-                self.trading_forecast_service_url
-            )
-        if (
-            self.trading_forecast_service_api_key
-            and not self.trading_forecast_router_provider_api_key
-        ):
-            self.trading_forecast_router_provider_api_key = (
-                self.trading_forecast_service_api_key
-            )
 
     def _normalize_trading_csv_settings(self) -> None:
         for field_name in (
-            "trading_execution_adapter_symbols_raw",
             "trading_forecast_service_allowed_model_families_raw",
             "trading_lean_live_canary_symbols_raw",
             "trading_signal_allowed_sources_raw",
@@ -2572,16 +2443,6 @@ class Settings(BaseSettings):
                 if symbol.strip()
             ]
         return self.trading_static_symbols
-
-    @property
-    def trading_execution_adapter_symbols(self) -> set[str]:
-        if not self.trading_execution_adapter_symbols_raw:
-            return set()
-        return {
-            symbol.strip()
-            for symbol in self.trading_execution_adapter_symbols_raw.split(",")
-            if symbol.strip()
-        }
 
     @property
     def trading_forecast_service_allowed_model_families(self) -> set[str]:

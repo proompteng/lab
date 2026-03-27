@@ -1064,7 +1064,6 @@ class TradingPipeline:
             "trading_autonomy_enabled": settings.trading_autonomy_enabled,
             "trading_autonomy_allow_live_promotion": settings.trading_autonomy_allow_live_promotion,
             "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
-            "trading_execution_adapter_policy": settings.trading_execution_adapter_policy,
             "capital_stage": capital_stage or self._submission_capital_stage(),
             "live_submission_gate": gate,
         }
@@ -1840,7 +1839,6 @@ class TradingPipeline:
             {
                 "execution_adapter": {
                     "selected": selected_adapter_name,
-                    "policy": settings.trading_execution_adapter_policy,
                     "symbol": decision.symbol,
                 }
             },
@@ -2238,7 +2236,6 @@ class TradingPipeline:
                 "execution_adapter": {
                     "selected": selected_adapter_name,
                     "actual": actual_adapter_name,
-                    "policy": settings.trading_execution_adapter_policy,
                     "symbol": decision.symbol,
                 }
             },

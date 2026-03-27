@@ -1005,40 +1005,7 @@ def build_execution_adapter(
     simulation_adapter = _build_simulation_execution_adapter()
     if simulation_adapter is not None:
         return simulation_adapter
-
-    if settings.trading_execution_adapter != 'lean':
-        return alpaca_adapter
-    if settings.trading_lean_lane_disable_switch:
-        logger.warning('LEAN lanes disabled by TRADING_LEAN_LANE_DISABLE_SWITCH; using Alpaca adapter')
-        return alpaca_adapter
-
-    if not settings.trading_lean_runner_url:
-        logger.warning('LEAN adapter requested but TRADING_LEAN_RUNNER_URL is missing; using Alpaca adapter')
-        return alpaca_adapter
-
-    fallback: ExecutionAdapter | None = None
-    if settings.trading_execution_fallback_adapter == 'alpaca':
-        fallback = alpaca_adapter
-    if settings.trading_mode == 'live' and fallback is None:
-        logger.warning('LEAN adapter disabled in live mode because fallback adapter is not configured')
-        return alpaca_adapter
-    if settings.trading_lean_runner_healthcheck_enabled:
-        health_ok, health_error = _check_lean_runner_health(
-            base_url=settings.trading_lean_runner_url,
-            timeout_seconds=settings.trading_lean_runner_healthcheck_timeout_seconds,
-        )
-        if not health_ok and settings.trading_lean_runner_require_healthy:
-            logger.warning(
-                'LEAN adapter disabled because LEAN runner health check failed error=%s',
-                health_error or 'unknown',
-            )
-            return alpaca_adapter
-
-    return LeanExecutionAdapter(
-        base_url=settings.trading_lean_runner_url,
-        timeout_seconds=settings.trading_lean_runner_timeout_seconds,
-        fallback=fallback,
-    )
+    return alpaca_adapter
 
 
 def build_simple_execution_adapter(
@@ -1059,21 +1026,13 @@ def adapter_enabled_for_symbol(symbol: str, *, allowlist: set[str] | None = None
 
     _ = (symbol, allowlist)
 
-    if settings.trading_simulation_enabled or settings.trading_execution_adapter == 'simulation':
+    if settings.trading_simulation_enabled:
         return True
-    if settings.trading_execution_adapter != 'lean':
-        return False
-    if settings.trading_lean_lane_disable_switch:
-        return False
-    return True
+    return False
 
 
 def _build_simulation_execution_adapter() -> SimulationExecutionAdapter | None:
-    simulation_enabled = (
-        settings.trading_simulation_enabled
-        or settings.trading_execution_adapter == 'simulation'
-    )
-    if not simulation_enabled:
+    if not settings.trading_simulation_enabled:
         return None
     bootstrap_servers = (
         settings.trading_simulation_order_updates_bootstrap_servers
@@ -1252,34 +1211,6 @@ def _classify_failure_taxonomy(exc: Exception) -> str:
     if 'invalid_json' in message:
         return 'invalid_json'
     return 'unknown_error'
-
-
-def _check_lean_runner_health(*, base_url: str, timeout_seconds: int) -> tuple[bool, str | None]:
-    url = f'{base_url.rstrip("/")}/healthz'
-    try:
-        status, payload_raw = _http_request_text(
-            url=url,
-            method='GET',
-            headers={'accept': 'application/json'},
-            body=None,
-            timeout_seconds=max(timeout_seconds, 1),
-        )
-        if status < 200 or status >= 300:
-            return False, f'lean_health_http_{status}'
-        if not payload_raw:
-            return True, None
-        payload = json.loads(payload_raw)
-        if isinstance(payload, Mapping):
-            status = str(cast(Mapping[str, Any], payload).get('status', '')).strip().lower()
-            if status and status != 'ok':
-                return False, f'lean_health_status_{status}'
-        return True, None
-    except TimeoutError:
-        return False, 'lean_health_timeout'
-    except OSError as exc:
-        return False, f'lean_health_network_error:{exc}'
-    except Exception as exc:  # pragma: no cover - defensive
-        return False, f'lean_health_unknown_error:{exc}'
 
 
 def _http_request_text(

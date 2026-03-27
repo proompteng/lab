@@ -80,7 +80,6 @@ Expected dedicated resources:
 - `Service/torghut-sim`
 - `FlinkDeployment/torghut-ta-sim`
 - `ConfigMap/torghut-ta-sim-config`
-- `Service/torghut-forecast-sim`
 - `AnalysisTemplate/torghut-simulation-runtime-ready`
 - `AnalysisTemplate/torghut-simulation-activity`
 - `AnalysisTemplate/torghut-simulation-teardown-clean`

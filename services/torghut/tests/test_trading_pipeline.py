@@ -521,7 +521,6 @@ class TestTradingPipeline(TestCase):
                 "trading_static_symbols_raw",
                 "trading_feature_quality_enabled",
                 "trading_feature_max_staleness_ms",
-                "trading_execution_adapter",
                 "trading_allow_shorts",
                 "trading_fractional_equities_enabled",
                 "trading_pipeline_mode",
@@ -945,21 +944,13 @@ class TestTradingPipeline(TestCase):
 
         self.assertEqual(reason, "shorting_not_allowed_for_asset")
 
-    def test_execution_routing_uses_lean_for_all_symbols(self) -> None:
-        from app import config
-
-        original = {
-            "trading_execution_adapter": config.settings.trading_execution_adapter,
-            "trading_execution_adapter_policy": config.settings.trading_execution_adapter_policy,
-            "trading_execution_adapter_symbols_raw": config.settings.trading_execution_adapter_symbols_raw,
-        }
-        config.settings.trading_execution_adapter = "lean"
-        config.settings.trading_execution_adapter_policy = "allowlist"
-        config.settings.trading_execution_adapter_symbols_raw = "SPY"
-
-        try:
-            alpaca_client = FakeAlpacaClient()
-            lean_adapter = FakeLeanAdapter()
+    def test_execution_routing_uses_supplied_adapter_for_all_symbols(self) -> None:
+        alpaca_client = FakeAlpacaClient()
+        lean_adapter = FakeLeanAdapter()
+        with patch(
+            "app.trading.scheduler.pipeline.adapter_enabled_for_symbol",
+            return_value=True,
+        ):
             pipeline = TradingPipeline(
                 alpaca_client=alpaca_client,
                 order_firewall=OrderFirewall(alpaca_client),
@@ -991,16 +982,6 @@ class TestTradingPipeline(TestCase):
                 pipeline._execution_client_for_symbol("MSFT"),
                 lean_adapter,
             )
-        finally:
-            config.settings.trading_execution_adapter = original[
-                "trading_execution_adapter"
-            ]
-            config.settings.trading_execution_adapter_policy = original[
-                "trading_execution_adapter_policy"
-            ]
-            config.settings.trading_execution_adapter_symbols_raw = original[
-                "trading_execution_adapter_symbols_raw"
-            ]
 
     def test_pipeline_rejects_batch_when_feature_quality_gate_fails(self) -> None:
         from app import config
@@ -7839,6 +7820,7 @@ class TestTradingPipeline(TestCase):
                 session_factory=self.session_local,
                 llm_review_engine=CountingLLMReviewEngine(),
             )
+            pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
 
             eligible_summary = {
                 "promotion_eligible_total": 1,
@@ -8106,7 +8088,7 @@ class TestTradingPipeline(TestCase):
             "trading_mode": config.settings.trading_mode,
             "trading_live_enabled": config.settings.trading_live_enabled,
             "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
-            "trading_execution_adapter": config.settings.trading_execution_adapter,
+            "trading_simulation_enabled": config.settings.trading_simulation_enabled,
             "trading_allow_shorts": config.settings.trading_allow_shorts,
             "trading_fractional_equities_enabled": config.settings.trading_fractional_equities_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
@@ -8136,7 +8118,7 @@ class TestTradingPipeline(TestCase):
         config.settings.trading_mode = "live"
         config.settings.trading_live_enabled = True
         config.settings.trading_autonomy_allow_live_promotion = True
-        config.settings.trading_execution_adapter = "simulation"
+        config.settings.trading_simulation_enabled = True
         config.settings.trading_allow_shorts = True
         config.settings.trading_fractional_equities_enabled = True
         config.settings.trading_universe_source = "static"
@@ -8213,6 +8195,7 @@ class TestTradingPipeline(TestCase):
                 session_factory=self.session_local,
                 llm_review_engine=CountingLLMReviewEngine(),
             )
+            pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
 
             eligible_summary = {
                 "promotion_eligible_total": 1,
@@ -8233,6 +8216,15 @@ class TestTradingPipeline(TestCase):
             ), patch(
                 "app.trading.scheduler.pipeline.load_quant_evidence_status",
                 return_value=self._healthy_live_quant_status(),
+            ), patch(
+                "app.trading.scheduler.pipeline.adapter_enabled_for_symbol",
+                return_value=True,
+            ), patch(
+                "app.trading.scheduler.pipeline.trading_now",
+                return_value=signal.event_ts,
+            ), patch(
+                "app.trading.execution_adapters.active_simulation_runtime_context",
+                return_value={"run_id": "sim-test", "dataset_id": "dataset-a"},
             ):
                 pipeline.run_once()
 
@@ -8278,8 +8270,8 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_autonomy_allow_live_promotion = original[
                 "trading_autonomy_allow_live_promotion"
             ]
-            config.settings.trading_execution_adapter = original[
-                "trading_execution_adapter"
+            config.settings.trading_simulation_enabled = original[
+                "trading_simulation_enabled"
             ]
             config.settings.trading_allow_shorts = original["trading_allow_shorts"]
             config.settings.trading_fractional_equities_enabled = original[

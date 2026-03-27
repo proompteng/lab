@@ -68,7 +68,6 @@ DEFAULT_TORGHUT_SERVICE = 'torghut'
 DEFAULT_SIM_TA_CONFIGMAP = 'torghut-ta-sim-config'
 DEFAULT_SIM_TA_DEPLOYMENT = 'torghut-ta-sim'
 DEFAULT_SIM_TORGHUT_SERVICE = 'torghut-sim'
-DEFAULT_SIM_FORECAST_SERVICE = 'torghut-forecast-sim'
 DEFAULT_OUTPUT_ROOT = Path('artifacts/torghut/simulations')
 DEFAULT_SIMULATION_CACHE_BUCKET = 'argo-workflows'
 DEFAULT_SIMULATION_CACHE_ENDPOINT = 'http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80'
@@ -101,8 +100,6 @@ TORGHUT_ENV_KEYS = [
     'TRADING_ORDER_FEED_TOPIC',
     'TRADING_ORDER_FEED_TOPIC_V2',
     'TRADING_ORDER_FEED_GROUP_ID',
-    'TRADING_EXECUTION_ADAPTER',
-    'TRADING_EXECUTION_FALLBACK_ADAPTER',
     'TRADING_SIMULATION_ENABLED',
     'TRADING_SIMULATION_RUN_ID',
     'TRADING_SIMULATION_DATASET_ID',
@@ -115,9 +112,6 @@ TORGHUT_ENV_KEYS = [
     'TRADING_SIMULATION_ORDER_UPDATES_SASL_MECHANISM',
     'TRADING_SIMULATION_ORDER_UPDATES_SASL_USERNAME',
     'TRADING_SIMULATION_ORDER_UPDATES_SASL_PASSWORD',
-    'TRADING_FORECAST_SERVICE_URL',
-    'TRADING_FORECAST_ROUTER_PROVIDER_MODE',
-    'TRADING_FORECAST_ROUTER_PROVIDER_URL',
 ]
 
 SIMULATION_TORGHUT_ENV_OVERRIDE_ALLOWLIST = frozenset(
@@ -526,7 +520,6 @@ class SimulationResources:
     ta_configmap: str
     ta_deployment: str
     torghut_service: str
-    torghut_forecast_service: str
     output_root: Path
     source_topic_by_role: dict[str, str]
     simulation_topic_by_role: dict[str, str]
@@ -1406,9 +1399,6 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
     default_torghut_service = (
         DEFAULT_SIM_TORGHUT_SERVICE if target_mode == 'dedicated_service' else DEFAULT_TORGHUT_SERVICE
     )
-    default_forecast_service = (
-        DEFAULT_SIM_FORECAST_SERVICE if target_mode == 'dedicated_service' else 'torghut-forecast'
-    )
     ta_group_prefix = 'torghut-options-ta-sim' if lane_contract.lane == 'options' else 'torghut-ta-sim'
     order_feed_group_prefix = (
         'torghut-options-order-feed-sim'
@@ -1436,9 +1426,6 @@ def _build_resources(run_id: str, manifest: Mapping[str, Any]) -> SimulationReso
         ta_configmap=_as_text(runtime.get('ta_configmap')) or default_ta_configmap,
         ta_deployment=_as_text(runtime.get('ta_deployment')) or default_ta_deployment,
         torghut_service=_as_text(runtime.get('torghut_service')) or default_torghut_service,
-        torghut_forecast_service=(
-            _as_text(runtime.get('torghut_forecast_service')) or default_forecast_service
-        ),
         output_root=output_root,
         source_topic_by_role=source_topics,
         simulation_topic_by_role=simulation_topics,
@@ -4612,9 +4599,6 @@ def _torghut_service_env_for_simulation(
 ) -> list[dict[str, Any]]:
     _, current_env = _kservice_env(service)
     window_start, window_end = _resolve_window_bounds(manifest)
-    forecast_base_url = (
-        f'http://{resources.torghut_forecast_service}.{resources.namespace}.svc.cluster.local:8089'
-    )
     warm_lane_enabled = resources.warm_lane_enabled
     account_label = _simulation_account_label(
         resources=resources,
@@ -4645,8 +4629,6 @@ def _torghut_service_env_for_simulation(
         'TRADING_ORDER_FEED_TOPIC': resources.simulation_topic_by_role['order_updates'],
         'TRADING_ORDER_FEED_TOPIC_V2': '',
         'TRADING_ORDER_FEED_GROUP_ID': resources.order_feed_group_id,
-        'TRADING_EXECUTION_ADAPTER': 'simulation',
-        'TRADING_EXECUTION_FALLBACK_ADAPTER': 'none',
         'TRADING_SIMULATION_ENABLED': 'true',
         'TRADING_SIMULATION_RUN_ID': '' if warm_lane_enabled else resources.run_id,
         'TRADING_SIMULATION_DATASET_ID': '' if warm_lane_enabled else resources.dataset_id,
@@ -4663,9 +4645,6 @@ def _torghut_service_env_for_simulation(
         'TRADING_SIMULATION_ORDER_UPDATES_SASL_MECHANISM': kafka_config.runtime_sasl,
         'TRADING_SIMULATION_ORDER_UPDATES_SASL_USERNAME': kafka_config.runtime_username,
         'TRADING_SIMULATION_ORDER_UPDATES_SASL_PASSWORD': kafka_config.runtime_password,
-        'TRADING_FORECAST_SERVICE_URL': forecast_base_url,
-        'TRADING_FORECAST_ROUTER_PROVIDER_MODE': 'http',
-        'TRADING_FORECAST_ROUTER_PROVIDER_URL': forecast_base_url,
     }
     if torghut_env_overrides:
         for key, value in torghut_env_overrides.items():
@@ -4866,10 +4845,6 @@ def _runtime_verify(
             f'{latest_ready_revision}-deployment',
         )
     ta_health = _fink_runtime_health(resources.namespace, resources.ta_deployment)
-    forecast_health = _deployment_replica_health(
-        resources.namespace,
-        resources.torghut_forecast_service,
-    )
     report = {
         'runtime_state': 'ready'
         if ready
@@ -4877,7 +4852,6 @@ def _runtime_verify(
         and revision_health['ready_replicas'] > 0
         and ta_health['desired_state'] == 'running'
         and ta_health['lifecycle_state'] in {'RUNNING', 'running', 'DEPLOYED'}
-        and forecast_health['ready_replicas'] > 0
         else 'not_ready',
         'target_mode': resources.target_mode,
         'window_start': window_start.astimezone(timezone.utc).isoformat(),
@@ -4889,10 +4863,7 @@ def _runtime_verify(
             'revision_health': revision_health,
         },
         'ta_runtime': ta_health,
-        'forecast_runtime': forecast_health,
-        'environment_state': 'complete'
-        if forecast_health['ready_replicas'] > 0
-        else 'environment_incomplete',
+        'environment_state': 'complete',
     }
     return report
 
@@ -6565,7 +6536,6 @@ def _analysis_run_args(
         'torghutService': resources.torghut_service,
         'taConfigmap': resources.ta_configmap,
         'taDeployment': resources.ta_deployment,
-        'forecastService': resources.torghut_forecast_service,
         'windowStart': window_start.isoformat(),
         'windowEnd': window_end.isoformat(),
         'signalTable': resources.clickhouse_signal_table,
