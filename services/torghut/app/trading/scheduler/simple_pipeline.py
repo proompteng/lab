@@ -7,13 +7,12 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Optional, cast
+from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
 from ...config import settings
 from ...models import Strategy, TradeDecision
-from ..execution import OrderExecutor
 from ..firewall import OrderFirewallBlocked
 from ..ingest import SignalBatch
 from ..models import StrategyDecision
@@ -25,7 +24,6 @@ from ..simple_risk import (
 from .pipeline import TradingPipeline
 from .pipeline_helpers import (
     _clone_positions,
-    _coerce_strategy_symbols,
     _extract_json_error_payload,
 )
 
