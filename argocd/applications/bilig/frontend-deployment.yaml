@@ -30,13 +30,10 @@ spec:
               port: 3000
             initialDelaySeconds: 10
             periodSeconds: 10
-          env:
-            - name: NODE_ENV
-              value: "production"
-            - name: PORT
-              value: "3000"
-            - name: BILIG_SYNC_URL
-              value: wss://api.bilig.proompteng.ai/v1/ws
+          volumeMounts:
+            - name: runtime-config
+              mountPath: /usr/share/nginx/html/runtime-config.json
+              subPath: runtime-config.json
           resources:
             requests:
               cpu: 100m
@@ -44,3 +41,7 @@ spec:
             limits:
               cpu: 750m
               memory: 768Mi
+      volumes:
+        - name: runtime-config
+          configMap:
+            name: bilig-web-runtime

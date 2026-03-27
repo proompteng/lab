@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bilig-zero
+  namespace: bilig
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bilig-zero
+  template:
+    metadata:
+      labels:
+        app: bilig-zero
+    spec:
+      containers:
+        - name: bilig-zero
+          image: rocicorp/zero:1.0.0
+          ports:
+            - name: http
+              containerPort: 4848
+          readinessProbe:
+            httpGet:
+              path: /keepalive
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /keepalive
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          env:
+            - name: ZERO_PORT
+              value: "4848"
+            - name: ZERO_REPLICA_FILE
+              value: /data/zero.db
+            - name: ZERO_UPSTREAM_DB
+              valueFrom:
+                secretKeyRef:
+                  name: bilig-db-app
+                  key: uri
+            - name: ZERO_CVR_DB
+              valueFrom:
+                secretKeyRef:
+                  name: bilig-db-app
+                  key: uri
+            - name: ZERO_CHANGE_DB
+              valueFrom:
+                secretKeyRef:
+                  name: bilig-db-app
+                  key: uri
+            - name: ZERO_QUERY_URL
+              value: http://bilig-sync/api/zero/query
+            - name: ZERO_MUTATE_URL
+              value: http://bilig-sync/api/zero/mutate
+          volumeMounts:
+            - name: replica-data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+      volumes:
+        - name: replica-data
+          persistentVolumeClaim:
+            claimName: bilig-zero-replica
