@@ -18,7 +18,6 @@ class TestRunSimulationAnalysis(TestCase):
             ta_configmap = 'torghut-ta-sim-config'
             ta_deployment = 'torghut-ta-sim'
             torghut_service = 'torghut-sim'
-            forecast_service = 'torghut-forecast-sim'
             signal_table = 'torghut_sim_2026_03_06_open_30m.ta_signals'
             price_table = 'torghut_sim_2026_03_06_open_30m.ta_microbars'
 
@@ -37,7 +36,6 @@ class TestRunSimulationAnalysis(TestCase):
             ta_configmap = 'torghut-ta-sim-config'
             ta_deployment = 'torghut-ta-sim'
             torghut_service = 'torghut-sim'
-            forecast_service = 'torghut-forecast-sim'
             signal_table = 'torghut_sim_default.ta_signals'
             price_table = 'torghut_sim_default.ta_microbars'
 
@@ -58,7 +56,6 @@ class TestRunSimulationAnalysis(TestCase):
             ta_configmap = 'torghut-ta-sim-config'
             ta_deployment = 'torghut-ta-sim'
             torghut_service = 'torghut-sim'
-            forecast_service = 'torghut-forecast-sim'
             signal_table = ''
             price_table = 'torghut_sim_2026_03_06_open_30m.ta_microbars'
 
@@ -83,8 +80,6 @@ class TestRunSimulationAnalysis(TestCase):
                     'torghut-sim',
                     '--ta-deployment',
                     'torghut-ta-sim',
-                    '--forecast-service',
-                    'torghut-forecast-sim',
                     '--window-start',
                     '2026-03-06T14:30:00Z',
                     '--window-end',
@@ -125,8 +120,6 @@ class TestRunSimulationAnalysis(TestCase):
                     'torghut-sim',
                     '--ta-deployment',
                     'torghut-ta-sim',
-                    '--forecast-service',
-                    'torghut-forecast-sim',
                     '--window-start',
                     '2026-03-06T14:30:00Z',
                     '--window-end',
@@ -175,8 +168,6 @@ class TestRunSimulationAnalysis(TestCase):
                 'torghut-sim',
                 '--ta-deployment',
                 'torghut-ta-sim',
-                '--forecast-service',
-                'torghut-forecast-sim',
                 '--window-start',
                 '2026-03-06T14:30:00Z',
                 '--window-end',
@@ -207,8 +198,6 @@ class TestRunSimulationAnalysis(TestCase):
                     'torghut-sim',
                     '--ta-deployment',
                     'torghut-ta-sim',
-                    '--forecast-service',
-                    'torghut-forecast-sim',
                     '--window-start',
                     '2026-03-06T14:30:00Z',
                     '--window-end',
@@ -263,8 +252,6 @@ class TestRunSimulationAnalysis(TestCase):
                     'torghut-sim',
                     '--ta-deployment',
                     'torghut-ta-sim',
-                    '--forecast-service',
-                    'torghut-forecast-sim',
                     '--window-start',
                     '2026-03-06T14:30:00Z',
                     '--window-end',
@@ -326,8 +313,6 @@ class TestRunSimulationAnalysis(TestCase):
                     'torghut-ta-sim',
                     '--torghut-service',
                     'torghut-sim',
-                    '--forecast-service',
-                    'torghut-forecast-sim',
                     '--signal-table',
                     'torghut_sim_sim_1.ta_signals',
                     '--price-table',

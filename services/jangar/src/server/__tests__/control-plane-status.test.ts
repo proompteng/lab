@@ -526,7 +526,7 @@ describe('control-plane status', () => {
         resolveEmpiricalServices: async () => ({
           forecast: {
             status: 'healthy',
-            endpoint: 'http://torghut-forecast/readyz',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'forecast service ready',
             authoritative: true,
             calibration_status: 'ready',
@@ -534,14 +534,14 @@ describe('control-plane status', () => {
           },
           lean: {
             status: 'healthy',
-            endpoint: 'http://torghut-lean-runner/readyz',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'LEAN runner ready',
             authoritative: true,
             authoritative_modes: ['research_backtest', 'shadow_replay'],
           },
           jobs: {
             status: 'healthy',
-            endpoint: 'http://torghut/trading/empirical-jobs',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'empirical jobs fresh',
             authoritative: true,
             eligible_jobs: ['benchmark_parity', 'foundation_router_parity', 'janus_event_car', 'janus_hgrm_reward'],
@@ -623,19 +623,19 @@ describe('control-plane status', () => {
         resolveEmpiricalServices: async () => ({
           forecast: {
             status: 'healthy',
-            endpoint: 'http://torghut-forecast/readyz',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'forecast service ready',
             authoritative: true,
           },
           lean: {
             status: 'healthy',
-            endpoint: 'http://torghut-lean-runner/readyz',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'LEAN runner ready',
             authoritative: true,
           },
           jobs: {
             status: 'healthy',
-            endpoint: 'http://torghut/trading/empirical-jobs',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'empirical jobs fresh',
             authoritative: true,
             eligible_jobs: [],
@@ -761,20 +761,20 @@ describe('control-plane status', () => {
         resolveEmpiricalServices: async () => ({
           forecast: {
             status: 'degraded',
-            endpoint: 'http://torghut-forecast/readyz',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'forecast service readiness failed',
             authoritative: false,
           },
           lean: {
             status: 'healthy',
-            endpoint: 'http://torghut-lean-runner/readyz',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'LEAN runner ready',
             authoritative: true,
             authoritative_modes: ['research_backtest'],
           },
           jobs: {
             status: 'degraded',
-            endpoint: 'http://torghut/trading/empirical-jobs',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'stale empirical jobs: benchmark_parity',
             authoritative: false,
             eligible_jobs: ['foundation_router_parity'],
@@ -898,20 +898,20 @@ describe('control-plane status', () => {
         resolveEmpiricalServices: async () => ({
           forecast: {
             status: 'degraded',
-            endpoint: 'http://torghut-forecast/readyz',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'forecast service readiness failed',
             authoritative: false,
           },
           lean: {
             status: 'healthy',
-            endpoint: 'http://torghut-lean-runner/readyz',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'LEAN runner ready',
             authoritative: false,
             authoritative_modes: [],
           },
           jobs: {
             status: 'degraded',
-            endpoint: 'http://torghut/trading/empirical-jobs',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'stale empirical jobs: benchmark_parity',
             authoritative: false,
             eligible_jobs: ['foundation_router_parity'],
@@ -995,7 +995,7 @@ describe('control-plane status', () => {
         resolveEmpiricalServices: async () => ({
           forecast: {
             status: 'healthy',
-            endpoint: 'http://torghut-forecast/readyz',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'forecast service ready',
             authoritative: true,
             calibration_status: 'ready',
@@ -1003,14 +1003,14 @@ describe('control-plane status', () => {
           },
           lean: {
             status: 'healthy',
-            endpoint: 'http://torghut-lean-runner/readyz',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'LEAN runner ready',
             authoritative: true,
             authoritative_modes: ['research_backtest'],
           },
           jobs: {
             status: 'healthy',
-            endpoint: 'http://torghut/trading/empirical-jobs',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'empirical jobs fresh',
             authoritative: true,
             eligible_jobs: ['benchmark_parity', 'foundation_router_parity'],
@@ -1086,7 +1086,7 @@ describe('control-plane status', () => {
         resolveEmpiricalServices: async () => ({
           forecast: {
             status: 'healthy',
-            endpoint: 'http://torghut-forecast/readyz',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'forecast service ready',
             authoritative: true,
             calibration_status: 'ready',
@@ -1094,14 +1094,14 @@ describe('control-plane status', () => {
           },
           lean: {
             status: 'healthy',
-            endpoint: 'http://torghut-lean-runner/readyz',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'LEAN runner ready',
             authoritative: true,
             authoritative_modes: ['research_backtest'],
           },
           jobs: {
             status: 'healthy',
-            endpoint: 'http://torghut/trading/empirical-jobs',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'empirical jobs fresh',
             authoritative: true,
             eligible_jobs: ['benchmark_parity', 'foundation_router_parity'],
@@ -1923,7 +1923,7 @@ describe('control-plane status', () => {
         resolveEmpiricalServices: async () => ({
           forecast: {
             status: 'healthy',
-            endpoint: 'http://torghut-forecast/readyz',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'forecast service ready',
             authoritative: true,
             calibration_status: 'ready',
@@ -1931,14 +1931,14 @@ describe('control-plane status', () => {
           },
           lean: {
             status: 'healthy',
-            endpoint: 'http://torghut-lean-runner/readyz',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'LEAN runner ready',
             authoritative: true,
             authoritative_modes: ['research_backtest'],
           },
           jobs: {
             status: 'healthy',
-            endpoint: 'http://torghut/trading/empirical-jobs',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'empirical jobs fresh',
             authoritative: true,
             eligible_jobs: ['benchmark_parity', 'foundation_router_parity'],
@@ -1984,7 +1984,7 @@ describe('control-plane status', () => {
         resolveEmpiricalServices: async () => ({
           forecast: {
             status: 'healthy',
-            endpoint: 'http://torghut-forecast/readyz',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'forecast service ready',
             authoritative: true,
             calibration_status: 'ready',
@@ -1992,14 +1992,14 @@ describe('control-plane status', () => {
           },
           lean: {
             status: 'healthy',
-            endpoint: 'http://torghut-lean-runner/readyz',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'LEAN runner ready',
             authoritative: true,
             authoritative_modes: ['research_backtest'],
           },
           jobs: {
             status: 'healthy',
-            endpoint: 'http://torghut/trading/empirical-jobs',
+            endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
             message: 'empirical jobs fresh',
             authoritative: true,
             eligible_jobs: ['benchmark_parity', 'foundation_router_parity'],

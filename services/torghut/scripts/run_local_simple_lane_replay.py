@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Replay one trading session through Torghut's simple execution lane locally."""
+# ruff: noqa: E402
 # pyright: reportArgumentType=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false
 
 from __future__ import annotations

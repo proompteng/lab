@@ -26,8 +26,6 @@ resources:
   - alloy-deployment.yaml
   - llm-guardrails-exporter-configmap.yaml
   - llm-guardrails-exporter.yaml
-  - lean-runner-deployment.yaml
-  - lean-runner-service.yaml
   - whitepapers-objectbucketclaim.yaml
   - whitepapers-bucket-bootstrap-job.yaml
   - empirical-artifacts-objectbucketclaim.yaml

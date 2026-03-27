@@ -69,7 +69,6 @@ gates:
     required_cluster_resources:
       - torghut-sim
       - torghut-ta-sim
-      - torghut-forecast-sim
       - torghut-simulation-runtime-ready
       - torghut-simulation-activity
     blocking_conditions:
@@ -105,7 +104,6 @@ gates:
     required_cluster_resources:
       - torghut-sim
       - torghut-ta-sim
-      - torghut-forecast-sim
     blocking_conditions:
       - Coverage ratio is below the configured full-session threshold.
       - Activity classification is not success.

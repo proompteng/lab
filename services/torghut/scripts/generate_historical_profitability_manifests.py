@@ -123,7 +123,6 @@ def _manifest_payload(
         'model_refs': list(model_refs),
         'runtime_version_refs': [
             f'services/torghut@sha256:{digest}',
-            f'services/torghut-forecast@sha256:{digest}',
         ],
         'cachePolicy': cache_policy,
         'performance': {
@@ -186,7 +185,6 @@ def _manifest_payload(
             'ta_configmap': 'torghut-ta-sim-config',
             'ta_deployment': 'torghut-ta-sim',
             'torghut_service': 'torghut-sim',
-            'torghut_forecast_service': 'torghut-forecast-sim',
             'output_root': 'artifacts/torghut/simulations',
         },
         'rollouts': {

@@ -140,7 +140,7 @@ const baseStatus: ControlPlaneStatus = {
   empirical_services: {
     forecast: {
       status: 'healthy',
-      endpoint: 'http://torghut-forecast.torghut.svc.cluster.local:8089/readyz',
+      endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
       message: 'forecast service ready',
       authoritative: true,
       calibration_status: 'ready',
@@ -148,7 +148,7 @@ const baseStatus: ControlPlaneStatus = {
     },
     lean: {
       status: 'healthy',
-      endpoint: 'http://torghut-lean-runner.torghut.svc.cluster.local:8088/readyz',
+      endpoint: 'http://torghut.torghut.svc.cluster.local/trading/status',
       message: 'LEAN runner ready',
       authoritative: true,
       authoritative_modes: ['research_backtest', 'shadow_replay'],

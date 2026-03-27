@@ -900,41 +900,18 @@ def build_default_forecast_router(*, policy_path: str | None, refinement_enabled
 
     policy = ForecastRouterPolicyV1.from_payload(policy_payload)
     calibration_store = ForecastCalibrationStore.from_payload(policy_payload)
-    service_enabled = bool(settings.trading_forecast_service_url) or (
-        settings.trading_forecast_router_provider_mode == 'http'
-        and settings.trading_forecast_router_provider_url
-    )
     allowed_families = settings.trading_forecast_service_allowed_model_families
-    if service_enabled:
-        service_url = (
-            settings.trading_forecast_service_url
-            or settings.trading_forecast_router_provider_url
-            or ''
-        )
-        service_timeout = settings.trading_forecast_service_timeout_seconds
-        service_api_key = (
-            settings.trading_forecast_service_api_key
-            or settings.trading_forecast_router_provider_api_key
-        )
-        adapters: dict[str, ForecastAdapter] = {
-            'baseline': DeterministicBaselineAdapter(),
-        }
-        for family in ('chronos', 'moment', 'financial_tsfm'):
-            if family not in allowed_families:
-                continue
-            adapters[family] = HttpForecastAdapter(
-                model_family=family,
-                base_url=service_url,
-                timeout_seconds=service_timeout,
-                api_key=service_api_key,
-            )
-    else:
-        adapters = {
-            'chronos': ChronosForecastAdapter(),
-            'moment': MomentForecastAdapter(),
-            'financial_tsfm': FinancialTsfmForecastAdapter(),
-            'baseline': DeterministicBaselineAdapter(),
-        }
+    adapters: dict[str, ForecastAdapter] = {
+        'baseline': DeterministicBaselineAdapter(),
+    }
+    family_adapters: dict[str, ForecastAdapter] = {
+        'chronos': ChronosForecastAdapter(),
+        'moment': MomentForecastAdapter(),
+        'financial_tsfm': FinancialTsfmForecastAdapter(),
+    }
+    for family, adapter in family_adapters.items():
+        if family in allowed_families:
+            adapters[family] = adapter
     refiner = ForecastRefinerV5() if refinement_enabled else None
     return ForecastRouterV5(
         policy=policy,

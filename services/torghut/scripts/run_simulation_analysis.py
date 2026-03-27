@@ -28,7 +28,6 @@ class _Resources:
     ta_configmap: str
     ta_deployment: str
     torghut_service: str
-    torghut_forecast_service: str
     clickhouse_signal_table: str
     clickhouse_price_table: str
     clickhouse_db: str
@@ -86,7 +85,6 @@ def _parser() -> argparse.ArgumentParser:
     runtime.add_argument('--namespace', required=True)
     runtime.add_argument('--torghut-service', required=True)
     runtime.add_argument('--ta-deployment', required=True)
-    runtime.add_argument('--forecast-service', required=True)
     runtime.add_argument('--window-start', required=True)
     runtime.add_argument('--window-end', required=True)
     runtime.add_argument('--signal-table', required=True)
@@ -101,7 +99,6 @@ def _parser() -> argparse.ArgumentParser:
     activity.add_argument('--namespace', required=True)
     activity.add_argument('--torghut-service', required=True)
     activity.add_argument('--ta-deployment', required=True)
-    activity.add_argument('--forecast-service', required=True)
     activity.add_argument('--window-start', required=True)
     activity.add_argument('--window-end', required=True)
     activity.add_argument('--signal-table', required=True)
@@ -128,7 +125,6 @@ def _parser() -> argparse.ArgumentParser:
     teardown.add_argument('--ta-configmap', required=True)
     teardown.add_argument('--ta-deployment', required=True)
     teardown.add_argument('--torghut-service', required=True)
-    teardown.add_argument('--forecast-service', required=True)
     teardown.add_argument('--signal-table', required=True)
     teardown.add_argument('--price-table', required=True)
     teardown.add_argument('--postgres-base-dsn', default='')
@@ -165,7 +161,6 @@ def _resources_from_args(args: argparse.Namespace) -> _Resources:
         ta_configmap=getattr(args, 'ta_configmap', 'torghut-ta-sim-config'),
         ta_deployment=args.ta_deployment,
         torghut_service=args.torghut_service,
-        torghut_forecast_service=args.forecast_service,
         clickhouse_signal_table=signal_table,
         clickhouse_price_table=price_table,
         clickhouse_db=clickhouse_db,

@@ -186,7 +186,7 @@ describe('torghut simulation control plane', () => {
       baseline_candidate_id: 'baseline-a',
       strategy_spec_ref: 'strategy-specs/intraday_tsmom_v1@1.1.0.json',
       model_refs: ['rules/intraday_tsmom_v1', 'rules/risk-v1'],
-      runtime_version_refs: ['services/torghut@sha256:abc', 'services/torghut-forecast@sha256:def'],
+      runtime_version_refs: ['services/torghut@sha256:abc'],
       performance: {
         dumpFormat: 'jsonl.zst',
       },
@@ -203,7 +203,7 @@ describe('torghut simulation control plane', () => {
       performance: {
         dumpFormat: 'jsonl.zst',
       },
-      runtime_version_refs: ['services/torghut@sha256:abc', 'services/torghut-forecast@sha256:def'],
+      runtime_version_refs: ['services/torghut@sha256:abc'],
       model_refs: ['rules/intraday_tsmom_v1', 'rules/risk-v1'],
       strategy_spec_ref: 'strategy-specs/intraday_tsmom_v1@1.1.0.json',
       baseline_candidate_id: 'baseline-a',

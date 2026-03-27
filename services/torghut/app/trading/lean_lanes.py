@@ -7,9 +7,7 @@ import json
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from http.client import HTTPConnection, HTTPSConnection
 from typing import Any, cast
-from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -22,6 +20,7 @@ from ..models import (
     LeanStrategyShadowEvaluation,
     coerce_json_payload,
 )
+from .lean_runtime import get_backtest, submit_backtest
 
 
 class LeanLaneManager:
@@ -36,13 +35,9 @@ class LeanLaneManager:
         requested_by: str | None,
         correlation_id: str,
     ) -> LeanBacktestRun:
-        payload = self._request_runner(
-            'POST',
-            '/v1/backtests/submit',
-            body={
-                'lane': lane,
-                'config': dict(config),
-            },
+        payload = submit_backtest(
+            lane=lane,
+            config=dict(config),
             correlation_id=correlation_id,
         )
         backtest_id = str(payload.get('backtest_id') or '').strip()
@@ -82,7 +77,7 @@ class LeanLaneManager:
         if row is None:
             raise RuntimeError('lean_backtest_not_found')
 
-        payload = self._request_runner('GET', f'/v1/backtests/{backtest_id}')
+        payload = get_backtest(backtest_id)
         previous_status = row.status
         row.status = str(payload.get('status') or row.status)
         result = payload.get('result')
@@ -227,100 +222,6 @@ class LeanLaneManager:
         if row.reproducibility_hash and row.replay_hash:
             return None
         return 'missing_repro_artifacts'
-
-    def _request_runner(
-        self,
-        method: str,
-        path: str,
-        *,
-        body: Mapping[str, Any] | None = None,
-        correlation_id: str | None = None,
-    ) -> dict[str, Any]:
-        url = self._runner_url(path)
-        headers, payload = self._runner_headers(body=body, correlation_id=correlation_id)
-        connection, request_path = self._runner_connection(url)
-        try:
-            raw = self._runner_raw_response(
-                connection=connection,
-                method=method,
-                request_path=request_path,
-                payload=payload,
-                headers=headers,
-            )
-        finally:
-            connection.close()
-        return self._runner_payload(raw)
-
-    def _runner_url(self, path: str) -> str:
-        if not settings.trading_lean_runner_url:
-            raise RuntimeError('lean_runner_url_not_configured')
-        return f'{settings.trading_lean_runner_url.rstrip("/")}{path}'
-
-    def _runner_headers(
-        self,
-        *,
-        body: Mapping[str, Any] | None,
-        correlation_id: str | None,
-    ) -> tuple[dict[str, str], bytes | None]:
-        payload: bytes | None = None
-        headers = {'accept': 'application/json'}
-        if correlation_id:
-            headers['X-Correlation-ID'] = correlation_id
-        if body is not None:
-            payload = json.dumps(dict(body)).encode('utf-8')
-            headers['content-type'] = 'application/json'
-        return headers, payload
-
-    def _runner_connection(self, url: str) -> tuple[HTTPConnection | HTTPSConnection, str]:
-        parsed = urlsplit(url)
-        scheme = parsed.scheme.lower()
-        if scheme not in {'http', 'https'}:
-            raise RuntimeError(f'lean_runner_invalid_scheme:{scheme or "missing"}')
-        if not parsed.hostname:
-            raise RuntimeError('lean_runner_invalid_host')
-
-        request_path = parsed.path or '/'
-        if parsed.query:
-            request_path = f'{request_path}?{parsed.query}'
-
-        connection_class = HTTPSConnection if scheme == 'https' else HTTPConnection
-        connection = connection_class(
-            parsed.hostname,
-            parsed.port,
-            timeout=max(settings.trading_lean_runner_timeout_seconds, 1),
-        )
-        return connection, request_path
-
-    def _runner_raw_response(
-        self,
-        *,
-        connection: HTTPConnection | HTTPSConnection,
-        method: str,
-        request_path: str,
-        payload: bytes | None,
-        headers: Mapping[str, str],
-    ) -> str:
-        try:
-            connection.request(method, request_path, body=payload, headers=dict(headers))
-            response = connection.getresponse()
-        except OSError as exc:
-            raise RuntimeError(f'lean_runner_network_error:{exc}') from exc
-
-        raw = response.read().decode('utf-8').strip()
-        if response.status < 200 or response.status >= 300:
-            raise RuntimeError(f'lean_runner_http_{response.status}:{raw[:200]}')
-        return raw
-
-    def _runner_payload(self, raw: str) -> dict[str, Any]:
-        if not raw:
-            return {}
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f'lean_runner_invalid_json:{raw[:200]}') from exc
-        if not isinstance(parsed, Mapping):
-            return {}
-        return {str(key): value for key, value in cast(Mapping[object, Any], parsed).items()}
 
 
 __all__ = ['LeanLaneManager']

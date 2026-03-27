@@ -137,7 +137,6 @@ spec:
           runtime.setdefault("ta_configmap", "torghut-ta-sim-config")
           runtime.setdefault("ta_deployment", "torghut-ta-sim")
           runtime.setdefault("torghut_service", "torghut-sim")
-          runtime.setdefault("torghut_forecast_service", "torghut-forecast-sim")
           runtime["output_root"] = output_root
           payload["runtime"] = runtime
 

@@ -1,138 +1,95 @@
 from __future__ import annotations
 
 from unittest import TestCase
-from unittest.mock import patch
 
-from fastapi.testclient import TestClient
-
-import app.lean_runner as lean_runner
-
-
-class FakeTradingClient:
-    def __init__(self) -> None:
-        self.submit_calls = 0
-
-    def submit_order(self, request):  # type: ignore[no-untyped-def]
-        self.submit_calls += 1
-        return {
-            'id': f'order-{self.submit_calls}',
-            'client_order_id': getattr(request, 'client_order_id', 'cid-1') or 'cid-1',
-            'symbol': getattr(request, 'symbol', 'AAPL') or 'AAPL',
-            'qty': str(getattr(request, 'qty', 1) or 1),
-            'status': 'accepted',
-        }
-
-    def cancel_order_by_id(self, _order_id: str) -> None:
-        return None
-
-    def cancel_orders(self):  # type: ignore[no-untyped-def]
-        return []
-
-    def get_order_by_id(self, order_id: str):  # type: ignore[no-untyped-def]
-        return {'id': order_id, 'status': 'accepted', 'qty': '1'}
-
-    def get_orders(self, _query):  # type: ignore[no-untyped-def]
-        return []
+from app.config import settings
+from app.trading.lean_runtime import (
+    SCAFFOLD_BLOCKED_STATUS,
+    _backtests,
+    get_backtest,
+    lean_authority_status,
+    evaluate_strategy_shadow,
+    shadow_simulate,
+    submit_backtest,
+)
 
 
-class TestLeanRunner(TestCase):
+class TestLeanRuntime(TestCase):
     def setUp(self) -> None:
-        lean_runner.app.state.trading_client = FakeTradingClient()
-        lean_runner._idempotency_cache.clear()
-        lean_runner._backtests.clear()
+        self.original_backtest_upstream_url = settings.trading_lean_backtest_upstream_url
+        self.original_shadow_upstream_url = settings.trading_lean_shadow_upstream_url
+        self.original_strategy_shadow_upstream_url = (
+            settings.trading_lean_strategy_shadow_upstream_url
+        )
+        self.original_disable_switch = settings.trading_lean_lane_disable_switch
+        _backtests.clear()
 
-    def test_submit_order_idempotency_replay(self) -> None:
-        client = TestClient(lean_runner.app)
-        payload = {
-            'symbol': 'AAPL',
-            'side': 'buy',
-            'qty': 1,
-            'order_type': 'market',
-            'time_in_force': 'day',
-            'extra_params': {'client_order_id': 'cid-1'},
-        }
+    def tearDown(self) -> None:
+        settings.trading_lean_backtest_upstream_url = self.original_backtest_upstream_url
+        settings.trading_lean_shadow_upstream_url = self.original_shadow_upstream_url
+        settings.trading_lean_strategy_shadow_upstream_url = (
+            self.original_strategy_shadow_upstream_url
+        )
+        settings.trading_lean_lane_disable_switch = self.original_disable_switch
+        _backtests.clear()
 
-        first = client.post('/v1/orders/submit', json=payload, headers={'Idempotency-Key': 'cid-1'})
-        second = client.post('/v1/orders/submit', json=payload, headers={'Idempotency-Key': 'cid-1'})
+    def test_backtest_submit_and_get_use_in_process_scaffold(self) -> None:
+        settings.trading_lean_backtest_upstream_url = None
+        submitted = submit_backtest(
+            lane="research",
+            config={"symbol": "BTC/USD"},
+            correlation_id="corr-1",
+        )
 
-        self.assertEqual(first.status_code, 200)
-        self.assertEqual(second.status_code, 200)
-        self.assertEqual(first.json().get('id'), second.json().get('id'))
-        self.assertFalse(first.json().get('_lean_audit', {}).get('idempotent_replay'))
-        self.assertTrue(second.json().get('_lean_audit', {}).get('idempotent_replay'))
+        self.assertEqual(submitted["status"], "queued")
+        backtest_id = submitted["backtest_id"]
+        _backtests[backtest_id].due_at = 0
 
-    def test_backtest_submit_and_get(self) -> None:
-        client = TestClient(lean_runner.app)
-        submitted = client.post('/v1/backtests/submit', json={'lane': 'research', 'config': {'symbol': 'BTC/USD'}})
+        fetched = get_backtest(backtest_id)
+        self.assertEqual(fetched["status"], "completed")
+        result = fetched["result"]
+        self.assertFalse(result["deterministic_replay_passed"])
+        self.assertEqual(result["authority_mode"], "deterministic_scaffold")
+        self.assertFalse(result["promotion_authority_eligible"])
+        self.assertEqual(result["blocking_reason"], SCAFFOLD_BLOCKED_STATUS)
 
-        self.assertEqual(submitted.status_code, 200)
-        backtest_id = submitted.json()['backtest_id']
-        lean_runner._backtests[backtest_id].due_at = 0
+    def test_authority_status_reports_disabled_when_lane_disabled(self) -> None:
+        settings.trading_lean_lane_disable_switch = True
 
-        fetched = client.get(f'/v1/backtests/{backtest_id}')
-        self.assertEqual(fetched.status_code, 200)
-        self.assertEqual(fetched.json().get('status'), 'completed')
-        self.assertFalse(fetched.json().get('result', {}).get('deterministic_replay_passed'))
-        self.assertEqual(fetched.json().get('result', {}).get('authority_mode'), 'deterministic_scaffold')
-        self.assertFalse(fetched.json().get('result', {}).get('promotion_authority_eligible'))
+        status = lean_authority_status()
+
+        self.assertEqual(status["status"], "disabled")
+        self.assertEqual(status["authority"], "blocked")
+        self.assertEqual(status["authoritative_modes"], [])
+
+    def test_strategy_shadow_uses_deterministic_scaffold(self) -> None:
+        settings.trading_lean_strategy_shadow_upstream_url = None
+
+        payload = evaluate_strategy_shadow(
+            strategy_id="s1",
+            symbol="BTC/USD",
+            intent={"qty": 1},
+            correlation_id="corr-1",
+        )
+
+        self.assertEqual(payload["parity_status"], SCAFFOLD_BLOCKED_STATUS)
+        self.assertIn("governance", payload)
+        self.assertFalse(payload["governance"]["promotion_ready"])
+
+    def test_shadow_simulate_is_fail_closed_without_empirical_replay(self) -> None:
+        settings.trading_lean_shadow_upstream_url = None
+
+        payload = shadow_simulate(
+            symbol="BTC/USD",
+            side="buy",
+            qty=1,
+            intent_price=100.0,
+            correlation_id="corr-1",
+        )
+
+        self.assertEqual(payload["parity_status"], SCAFFOLD_BLOCKED_STATUS)
         self.assertEqual(
-            fetched.json().get('result', {}).get('blocking_reason'),
-            'blocked_missing_empirical_authority',
+            payload["failure_taxonomy"],
+            "missing_empirical_shadow_replay",
         )
-
-    def test_backtest_submit_maps_proxy_failures_to_502(self) -> None:
-        client = TestClient(lean_runner.app, raise_server_exceptions=False)
-
-        with patch.object(
-            lean_runner,
-            '_proxy_backtest_submit',
-            side_effect=RuntimeError('lean_upstream_network_error:boom'),
-        ):
-            response = client.post('/v1/backtests/submit', json={'lane': 'research', 'config': {'symbol': 'BTC/USD'}})
-
-        self.assertEqual(response.status_code, 502)
-        self.assertEqual(
-            response.json(),
-            {'detail': 'lean_submit_backtest_failed:upstream_error:lean_upstream_network_error:boom'},
-        )
-
-    def test_readyz_and_run_artifacts_surface_authority_metadata(self) -> None:
-        client = TestClient(lean_runner.app)
-        readiness = client.get('/readyz')
-        self.assertEqual(readiness.status_code, 200)
-        self.assertIn('authoritative_modes', readiness.json())
-
-        submitted = client.post('/v1/backtests', json={'lane': 'research_backtest', 'config': {'symbol': 'AAPL'}})
-        self.assertEqual(submitted.status_code, 200)
-        backtest_id = submitted.json()['backtest_id']
-        lean_runner._backtests[backtest_id].due_at = 0
-        artifacts = client.get(f'/v1/runs/{backtest_id}/artifacts')
-        self.assertEqual(artifacts.status_code, 200)
-        payload = artifacts.json()
-        self.assertIn('artifact_authority', payload)
-        self.assertIn('artifacts', payload)
-
-    def test_strategy_shadow_endpoint(self) -> None:
-        client = TestClient(lean_runner.app)
-        response = client.post(
-            '/v1/strategy-shadow/evaluate',
-            json={'strategy_id': 's1', 'symbol': 'BTC/USD', 'intent': {'qty': 1}},
-        )
-        self.assertEqual(response.status_code, 200)
-        payload = response.json()
-        self.assertEqual(payload.get('parity_status'), 'blocked_missing_empirical_authority')
-        self.assertIn('governance', payload)
-        self.assertFalse(payload.get('governance', {}).get('promotion_ready'))
-
-    def test_shadow_simulate_endpoint_is_fail_closed_without_empirical_replay(self) -> None:
-        client = TestClient(lean_runner.app)
-        response = client.post(
-            '/v1/shadow/simulate',
-            json={'symbol': 'BTC/USD', 'side': 'buy', 'qty': 1, 'intent_price': 100.0},
-        )
-
-        self.assertEqual(response.status_code, 200)
-        payload = response.json()
-        self.assertEqual(payload.get('parity_status'), 'blocked_missing_empirical_authority')
-        self.assertEqual(payload.get('failure_taxonomy'), 'missing_empirical_shadow_replay')
-        self.assertFalse(payload.get('promotion_authority_eligible'))
+        self.assertFalse(payload["promotion_authority_eligible"])

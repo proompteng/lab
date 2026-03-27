@@ -7,7 +7,6 @@ model_refs:
   - rules/intraday_tsmom_v1
 runtime_version_refs:
   - services/torghut@sha256:884bec35f7d24ef34c51240e697aa996bc134385be9f6936aa170880fe2d601e
-  - services/torghut-forecast@sha256:884bec35f7d24ef34c51240e697aa996bc134385be9f6936aa170880fe2d601e
 
 cachePolicy: prefer_cache
 
@@ -65,7 +64,6 @@ runtime:
   ta_configmap: torghut-ta-sim-config
   ta_deployment: torghut-ta-sim
   torghut_service: torghut-sim
-  torghut_forecast_service: torghut-forecast-sim
   output_root: artifacts/torghut/simulations
 
 rollouts:

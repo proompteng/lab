@@ -4911,7 +4911,7 @@ class TestStartHistoricalSimulation(TestCase):
             },
         )
 
-    def test_restore_torghut_env_reverts_forecast_overrides_and_trading_enabled(self) -> None:
+    def test_restore_torghut_env_reverts_runtime_overrides_and_trading_enabled(self) -> None:
         resources = _build_resources(
             'sim-1',
             {
@@ -4924,15 +4924,10 @@ class TestStartHistoricalSimulation(TestCase):
                     'name': 'TRADING_ENABLED',
                     'value': 'false',
                 },
-                'TRADING_FORECAST_SERVICE_URL': {
-                    'name': 'TRADING_FORECAST_SERVICE_URL',
-                    'value': 'http://torghut-forecast.torghut.svc.cluster.local:8089',
+                'TRADING_MODE': {
+                    'name': 'TRADING_MODE',
+                    'value': 'live',
                 },
-                'TRADING_FORECAST_ROUTER_PROVIDER_MODE': {
-                    'name': 'TRADING_FORECAST_ROUTER_PROVIDER_MODE',
-                    'value': 'grpc',
-                },
-                'TRADING_FORECAST_ROUTER_PROVIDER_URL': None,
             }
         }
         service_payload = {
@@ -4944,15 +4939,8 @@ class TestStartHistoricalSimulation(TestCase):
                                 'name': 'user-container',
                                 'env': [
                                     {'name': 'TRADING_ENABLED', 'value': 'true'},
-                                    {
-                                        'name': 'TRADING_FORECAST_SERVICE_URL',
-                                        'value': 'http://torghut-forecast-sim.torghut.svc.cluster.local:8089',
-                                    },
-                                    {'name': 'TRADING_FORECAST_ROUTER_PROVIDER_MODE', 'value': 'http'},
-                                    {
-                                        'name': 'TRADING_FORECAST_ROUTER_PROVIDER_URL',
-                                        'value': 'http://torghut-forecast-sim.torghut.svc.cluster.local:8089',
-                                    },
+                                    {'name': 'TRADING_MODE', 'value': 'simulation'},
+                                    {'name': 'TRADING_SIMULATION_ENABLED', 'value': 'true'},
                                 ],
                             }
                         ]
@@ -4997,14 +4985,10 @@ class TestStartHistoricalSimulation(TestCase):
             'false',
         )
         self.assertEqual(
-            env_by_name['TRADING_FORECAST_SERVICE_URL'].get('value'),
-            'http://torghut-forecast.torghut.svc.cluster.local:8089',
+            env_by_name['TRADING_MODE'].get('value'),
+            'live',
         )
-        self.assertEqual(
-            env_by_name['TRADING_FORECAST_ROUTER_PROVIDER_MODE'].get('value'),
-            'grpc',
-        )
-        self.assertNotIn('TRADING_FORECAST_ROUTER_PROVIDER_URL', env_by_name)
+        self.assertNotIn('TRADING_SIMULATION_ENABLED', env_by_name)
 
     def test_teardown_requires_runtime_lock_ownership(self) -> None:
         resources = _build_resources('sim-1', {'dataset_id': 'dataset-a'})
@@ -5624,7 +5608,6 @@ class TestStartHistoricalSimulation(TestCase):
                     'ta_configmap': 'torghut-ta-sim-config',
                     'ta_deployment': 'torghut-ta-sim',
                     'torghut_service': 'torghut-sim',
-                    'torghut_forecast_service': 'torghut-forecast-sim',
                 },
             },
         )
@@ -6814,7 +6797,6 @@ class TestStartHistoricalSimulation(TestCase):
                     'ta_configmap': 'torghut-ta-sim-config',
                     'ta_deployment': 'torghut-ta-sim',
                     'torghut_service': 'torghut-sim',
-                    'torghut_forecast_service': 'torghut-forecast-sim',
                 },
             },
         )
@@ -6878,12 +6860,6 @@ class TestStartHistoricalSimulation(TestCase):
                         'available_replicas': 1,
                         'replicas': 1,
                     },
-                    {
-                        'name': 'torghut-forecast-sim',
-                        'ready_replicas': 1,
-                        'available_replicas': 1,
-                        'replicas': 1,
-                    },
                 ],
             ),
             patch(
@@ -6920,7 +6896,6 @@ class TestStartHistoricalSimulation(TestCase):
                     'ta_configmap': 'torghut-ta-sim-config',
                     'ta_deployment': 'torghut-ta-sim',
                     'torghut_service': 'torghut-sim',
-                    'torghut_forecast_service': 'torghut-forecast-sim',
                 },
             },
         )
@@ -6980,12 +6955,6 @@ class TestStartHistoricalSimulation(TestCase):
                         'available_replicas': 1,
                         'replicas': 1,
                     },
-                    {
-                        'name': 'torghut-forecast-sim',
-                        'ready_replicas': 1,
-                        'available_replicas': 1,
-                        'replicas': 1,
-                    },
                 ],
             ),
             patch(
@@ -7022,7 +6991,6 @@ class TestStartHistoricalSimulation(TestCase):
                     'ta_configmap': 'torghut-ta-sim-config',
                     'ta_deployment': 'torghut-ta-sim',
                     'torghut_service': 'torghut-sim',
-                    'torghut_forecast_service': 'torghut-forecast-sim',
                 },
             },
         )
@@ -7088,12 +7056,6 @@ class TestStartHistoricalSimulation(TestCase):
                         'available_replicas': 1,
                         'replicas': 1,
                     },
-                    {
-                        'name': 'torghut-forecast-sim',
-                        'ready_replicas': 1,
-                        'available_replicas': 1,
-                        'replicas': 1,
-                    },
                 ],
             ),
             patch(
@@ -7140,7 +7102,6 @@ class TestStartHistoricalSimulation(TestCase):
                     'ta_configmap': 'torghut-options-ta-sim-config',
                     'ta_deployment': 'torghut-options-ta-sim',
                     'torghut_service': 'torghut-sim',
-                    'torghut_forecast_service': 'torghut-forecast-sim',
                 },
             },
         )
@@ -7214,12 +7175,6 @@ class TestStartHistoricalSimulation(TestCase):
                         'available_replicas': 1,
                         'replicas': 1,
                     },
-                    {
-                        'name': 'torghut-forecast-sim',
-                        'ready_replicas': 1,
-                        'available_replicas': 1,
-                        'replicas': 1,
-                    },
                 ],
             ),
             patch(
@@ -7254,7 +7209,6 @@ class TestStartHistoricalSimulation(TestCase):
                     'ta_configmap': 'torghut-ta-sim-config',
                     'ta_deployment': 'torghut-ta-sim',
                     'torghut_service': 'torghut-sim',
-                    'torghut_forecast_service': 'torghut-forecast-sim',
                 },
             },
         )
@@ -7325,12 +7279,6 @@ class TestStartHistoricalSimulation(TestCase):
                         'available_replicas': 1,
                         'replicas': 1,
                     },
-                    {
-                        'name': 'torghut-forecast-sim',
-                        'ready_replicas': 1,
-                        'available_replicas': 1,
-                        'replicas': 1,
-                    },
                 ],
             ),
             patch(
@@ -7365,7 +7313,6 @@ class TestStartHistoricalSimulation(TestCase):
                     'ta_configmap': 'torghut-ta-sim-config',
                     'ta_deployment': 'torghut-ta-sim',
                     'torghut_service': 'torghut-sim',
-                    'torghut_forecast_service': 'torghut-forecast-sim',
                 },
             },
         )
@@ -7429,12 +7376,6 @@ class TestStartHistoricalSimulation(TestCase):
                         'available_replicas': 1,
                         'replicas': 1,
                     },
-                    {
-                        'name': 'torghut-forecast-sim',
-                        'ready_replicas': 1,
-                        'available_replicas': 1,
-                        'replicas': 1,
-                    },
                 ],
             ),
             patch(
@@ -7469,7 +7410,6 @@ class TestStartHistoricalSimulation(TestCase):
                     'ta_configmap': 'torghut-ta-sim-config',
                     'ta_deployment': 'torghut-ta-sim',
                     'torghut_service': 'torghut-sim',
-                    'torghut_forecast_service': 'torghut-forecast-sim',
                 },
             },
         )
@@ -7533,12 +7473,6 @@ class TestStartHistoricalSimulation(TestCase):
                         'available_replicas': 1,
                         'replicas': 1,
                     },
-                    {
-                        'name': 'torghut-forecast-sim',
-                        'ready_replicas': 1,
-                        'available_replicas': 1,
-                        'replicas': 1,
-                    },
                 ],
             ),
             patch(
@@ -7574,7 +7508,6 @@ class TestStartHistoricalSimulation(TestCase):
                     'ta_configmap': 'torghut-ta-sim-config',
                     'ta_deployment': 'torghut-ta-sim',
                     'torghut_service': 'torghut-sim',
-                    'torghut_forecast_service': 'torghut-forecast-sim',
                 },
             },
         )
@@ -7638,12 +7571,6 @@ class TestStartHistoricalSimulation(TestCase):
                         'available_replicas': 1,
                         'replicas': 1,
                     },
-                    {
-                        'name': 'torghut-forecast-sim',
-                        'ready_replicas': 1,
-                        'available_replicas': 1,
-                        'replicas': 1,
-                    },
                 ],
             ),
             patch(
@@ -7679,7 +7606,6 @@ class TestStartHistoricalSimulation(TestCase):
                     'ta_configmap': 'torghut-ta-sim-config',
                     'ta_deployment': 'torghut-ta-sim',
                     'torghut_service': 'torghut-sim',
-                    'torghut_forecast_service': 'torghut-forecast-sim',
                 },
             },
         )
@@ -7743,12 +7669,6 @@ class TestStartHistoricalSimulation(TestCase):
                         'available_replicas': 1,
                         'replicas': 1,
                     },
-                    {
-                        'name': 'torghut-forecast-sim',
-                        'ready_replicas': 1,
-                        'available_replicas': 1,
-                        'replicas': 1,
-                    },
                 ],
             ),
             patch(
@@ -7784,7 +7704,6 @@ class TestStartHistoricalSimulation(TestCase):
                     'ta_configmap': 'torghut-ta-sim-config',
                     'ta_deployment': 'torghut-ta-sim',
                     'torghut_service': 'torghut-sim',
-                    'torghut_forecast_service': 'torghut-forecast-sim',
                 },
             },
         )
@@ -7839,7 +7758,6 @@ class TestStartHistoricalSimulation(TestCase):
                 'scripts.historical_simulation_verification._deployment_replica_health',
                 side_effect=[
                     {'name': 'torghut-sim-00001-deployment', 'ready_replicas': 1, 'available_replicas': 1, 'replicas': 1},
-                    {'name': 'torghut-forecast-sim', 'ready_replicas': 1, 'available_replicas': 1, 'replicas': 1},
                 ],
             ),
             patch(
@@ -7918,7 +7836,6 @@ class TestStartHistoricalSimulation(TestCase):
                     'ta_configmap': 'torghut-ta-sim-config',
                     'ta_deployment': 'torghut-ta-sim',
                     'torghut_service': 'torghut-sim',
-                    'torghut_forecast_service': 'torghut-forecast-sim',
                 },
             },
         )
@@ -8020,7 +7937,6 @@ class TestStartHistoricalSimulation(TestCase):
                 'scripts.historical_simulation_verification._deployment_replica_health',
                 side_effect=[
                     {'name': 'torghut-sim-00001-deployment', 'ready_replicas': 1, 'available_replicas': 1, 'replicas': 1},
-                    {'name': 'torghut-forecast-sim', 'ready_replicas': 1, 'available_replicas': 1, 'replicas': 1},
                 ],
             ),
             patch(
@@ -8063,7 +7979,6 @@ class TestStartHistoricalSimulation(TestCase):
                     'ta_configmap': 'torghut-ta-sim-config',
                     'ta_deployment': 'torghut-ta-sim',
                     'torghut_service': 'torghut-sim',
-                    'torghut_forecast_service': 'torghut-forecast-sim',
                 },
             },
         )
@@ -8145,7 +8060,6 @@ class TestStartHistoricalSimulation(TestCase):
                 'scripts.historical_simulation_verification._deployment_replica_health',
                 side_effect=[
                     {'name': 'torghut-sim-00001-deployment', 'ready_replicas': 1, 'available_replicas': 1, 'replicas': 1},
-                    {'name': 'torghut-forecast-sim', 'ready_replicas': 1, 'available_replicas': 1, 'replicas': 1},
                 ],
             ),
             patch(
@@ -8238,7 +8152,6 @@ class TestStartHistoricalSimulation(TestCase):
                     'ta_configmap': 'torghut-ta-sim-config',
                     'ta_deployment': 'torghut-ta-sim',
                     'torghut_service': 'torghut-sim',
-                    'torghut_forecast_service': 'torghut-forecast-sim',
                 },
             },
         )
@@ -8457,7 +8370,6 @@ class TestStartHistoricalSimulation(TestCase):
                             {'name': 'namespace'},
                             {'name': 'torghutService'},
                             {'name': 'taDeployment'},
-                            {'name': 'forecastService'},
                             {'name': 'windowStart'},
                             {'name': 'windowEnd'},
                             {'name': 'signalTable'},
@@ -8496,10 +8408,11 @@ class TestStartHistoricalSimulation(TestCase):
         assert isinstance(payload, dict)
         self.assertEqual(payload['kind'], 'AnalysisRun')
         self.assertEqual(payload['metadata']['name'], 'torghut-sim-runtime-ready-sim-2026-03-06-open-hour')
-        self.assertEqual(payload['spec']['args'][8]['value'], 'torghut_sim_sim_2026_03_06_open_hour.ta_signals')
-        self.assertEqual(payload['spec']['args'][9]['value'], 'torghut_sim_sim_2026_03_06_open_hour.ta_microbars')
-        self.assertEqual(payload['spec']['args'][-2]['value'], '60')
-        self.assertEqual(payload['spec']['args'][-1]['value'], '5')
+        args_by_name = {entry['name']: entry['value'] for entry in payload['spec']['args']}
+        self.assertEqual(args_by_name['signalTable'], 'torghut_sim_sim_2026_03_06_open_hour.ta_signals')
+        self.assertEqual(args_by_name['priceTable'], 'torghut_sim_sim_2026_03_06_open_hour.ta_microbars')
+        self.assertEqual(args_by_name['runtimeVerifyTimeoutSeconds'], '60')
+        self.assertEqual(args_by_name['runtimeVerifyPollSeconds'], '5')
 
     def test_runtime_ready_template_declares_signal_and_price_tables(self) -> None:
         template_path = (

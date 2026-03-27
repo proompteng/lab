@@ -128,7 +128,6 @@ release:
       image: registry.ide-newton.ts.net/lab/torghut
       manifest_paths:
         - argocd/applications/torghut
-        - argocd/applications/torghut-forecast
       build_workflow: torghut-build-push
       release_workflow: torghut-release
       post_deploy_workflow: torghut-post-deploy-verify
@@ -156,11 +155,6 @@ health:
       namespace: torghut
       resource_kind: Deployment
       resource_name: torghut-ws
-    - name: torghut-forecast
-      type: kubernetes_resource
-      namespace: torghut
-      resource_kind: Deployment
-      resource_name: torghut-forecast
     - name: torghut-status
       type: http
       url: http://torghut.torghut.svc.cluster.local/trading/status

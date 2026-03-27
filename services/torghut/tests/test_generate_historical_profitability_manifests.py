@@ -48,7 +48,6 @@ class TestGenerateHistoricalProfitabilityManifests(TestCase):
                 payload['runtime_version_refs'],
                 [
                     'services/torghut@sha256:a9c60e5ed5ddd06253e3126d363d4f6c82c1ef4fc5ea809e21c012ee39d438a5',
-                    'services/torghut-forecast@sha256:a9c60e5ed5ddd06253e3126d363d4f6c82c1ef4fc5ea809e21c012ee39d438a5',
                 ],
             )
             self.assertEqual(payload['window']['start'], '2026-03-02T14:30:00Z')
