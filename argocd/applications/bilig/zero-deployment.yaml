@@ -41,6 +41,8 @@ spec:
                 secretKeyRef:
                   name: bilig-zero-admin
                   key: ZERO_ADMIN_PASSWORD
+            - name: ZERO_APP_PUBLICATIONS
+              value: zero_data
             - name: ZERO_UPSTREAM_DB
               valueFrom:
                 secretKeyRef:

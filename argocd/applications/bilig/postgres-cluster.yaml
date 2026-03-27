@@ -6,6 +6,14 @@ metadata:
 spec:
   instances: 1
   primaryUpdateStrategy: unsupervised
+  managed:
+    roles:
+      - name: bilig
+        ensure: present
+        login: true
+        replication: true
+        passwordSecret:
+          name: bilig-db-app
   storage:
     storageClass: rook-ceph-block
     size: 10Gi
@@ -15,5 +23,7 @@ spec:
       owner: bilig
       encoding: "UTF8"
       dataChecksums: true
+      postInitApplicationSQL:
+        - CREATE PUBLICATION zero_data FOR TABLES IN SCHEMA public;
   monitoring:
     enablePodMonitor: true
