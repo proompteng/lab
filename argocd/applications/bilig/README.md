@@ -22,9 +22,9 @@ The production web shell now uses `bilig.proompteng.ai` as the single public ent
 
 ## Promotion mode
 
-This app is registered as `manual` automation in the product ApplicationSet until the bilig production acceptance matrix is green.
+This app is registered as `auto` automation in the product ApplicationSet.
 
 ## Notes
 
 - The first tranche keeps object-storage integration optional and disabled-by-default in the app config until the durable snapshot adapter lands.
-- The app is safe to register now because manual sync prevents accidental rollout before the corresponding container images are published.
+- Argo CD Image Updater writes new published `bilig-web` and `bilig-sync` image tags back into this app, and Argo CD auto-sync applies them.
