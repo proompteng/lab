@@ -23,9 +23,9 @@ resources:
   - alloy-deployment.yaml
   - alloy-rbac.yaml
 images:
-- name: registry.ide-newton.ts.net/lab/bilig-web
-  newName: registry.ide-newton.ts.net/lab/bilig-web
-  newTag: c8264861dc0b4d837269aa4e1bbeb741d4df1ffd
-- name: registry.ide-newton.ts.net/lab/bilig-sync
-  newName: registry.ide-newton.ts.net/lab/bilig-sync
-  newTag: c8264861dc0b4d837269aa4e1bbeb741d4df1ffd
+  - name: registry.ide-newton.ts.net/lab/bilig-web
+    newName: registry.ide-newton.ts.net/lab/bilig-web
+    newTag: c8264861dc0b4d837269aa4e1bbeb741d4df1ffd
+  - name: registry.ide-newton.ts.net/lab/bilig-sync
+    newName: registry.ide-newton.ts.net/lab/bilig-sync
+    newTag: c8264861dc0b4d837269aa4e1bbeb741d4df1ffd
