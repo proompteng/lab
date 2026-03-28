@@ -72,8 +72,8 @@ class DecisionEngine:
             runtime_enabled=False,
             fallback_to_legacy=False,
         )
-        self._last_emitted_action_at: dict[tuple[str, str], datetime] = {}
-        self._position_peak_price_by_symbol: dict[str, Decimal] = {}
+        self._last_emitted_action_at: dict[tuple[str, str, str | None], datetime] = {}
+        self._position_peak_price_by_scope: dict[tuple[str, str | None], Decimal] = {}
         self.forecast_router = (
             build_default_forecast_router(
                 policy_path=settings.trading_forecast_router_policy_path,
@@ -155,12 +155,6 @@ class DecisionEngine:
             snapshot = self.price_fetcher.fetch_market_snapshot(signal)
             if snapshot is not None:
                 price = snapshot.price
-        position_peak_price = self._sync_position_peak_price(
-            symbol=signal.symbol,
-            positions=actual_positions,
-            price=price,
-        )
-
         normalized_payload = dict(signal.payload)
         if price is not None and "price" not in normalized_payload:
             normalized_payload["price"] = price
@@ -268,6 +262,10 @@ class DecisionEngine:
                 forecast_audit = forecast_result.audit.to_payload()
                 self._last_forecast_telemetry.append(forecast_result.telemetry)
             trade_policy = _resolve_runtime_trade_policy(source_strategies)
+            position_state_scope_key = _position_state_scope_key(
+                position_isolation_mode=position_isolation_mode,
+                strategy_id=primary_strategy_id,
+            )
             if not _passes_runtime_trade_policy(
                 last_emitted_action_at=self._last_emitted_action_at,
                 signal_ts=signal.event_ts,
@@ -275,6 +273,7 @@ class DecisionEngine:
                 action=direction,
                 positions=positions_scope,
                 policy=trade_policy,
+                state_scope_key=position_state_scope_key,
             ):
                 return
             if not _passes_signal_exit_policy(
@@ -350,7 +349,13 @@ class DecisionEngine:
                     | {"sizing": sizing_meta},
                 )
             )
-            self._last_emitted_action_at[(symbol, direction)] = signal.event_ts
+            self._last_emitted_action_at[
+                _runtime_trade_policy_key(
+                    symbol=symbol,
+                    action=direction,
+                    state_scope_key=position_state_scope_key,
+                )
+            ] = signal.event_ts
 
         for raw_decision in runtime_eval.raw_intents:
             primary_strategy_id = raw_decision.intent.strategy_id
@@ -403,6 +408,20 @@ class DecisionEngine:
             strategy = strategies_by_id.get(isolated_strategy_id)
             if strategy is None:
                 continue
+            isolated_positions = _positions_for_strategy_action(
+                actual_positions,
+                strategy_id=isolated_strategy_id,
+                action="sell",
+            )
+            isolated_position_peak_price = self._sync_position_peak_price(
+                symbol=signal.symbol,
+                positions=isolated_positions,
+                price=price,
+                state_scope_key=_position_state_scope_key(
+                    position_isolation_mode="per_strategy",
+                    strategy_id=isolated_strategy_id,
+                ),
+            )
             overlay_decision = _build_runtime_position_exit_overlay(
                 signal=signal,
                 strategies=[strategy],
@@ -412,23 +431,28 @@ class DecisionEngine:
                     for decision in decisions
                     if decision.symbol == signal.symbol and decision.strategy_id == isolated_strategy_id
                 ],
-                positions=_positions_for_strategy_action(
-                    actual_positions,
-                    strategy_id=isolated_strategy_id,
-                    action="sell",
-                ),
+                positions=isolated_positions,
                 equity=equity,
                 price=price,
                 features=features,
                 snapshot=snapshot,
                 raw_runtime_by_strategy_id=raw_runtime_by_strategy_id,
                 runtime_eval=runtime_eval,
-                position_peak_price=position_peak_price,
+                position_peak_price=isolated_position_peak_price,
                 aggregated=False,
                 position_isolation_mode="per_strategy",
             )
             if overlay_decision is not None:
                 decisions.append(overlay_decision)
+        aggregated_position_peak_price = (
+            self._sync_position_peak_price(
+                symbol=signal.symbol,
+                positions=actual_positions,
+                price=price,
+            )
+            if non_isolated_strategy_ids
+            else None
+        )
         overlay_decision = _build_runtime_position_exit_overlay(
             signal=signal,
             strategies=[
@@ -449,7 +473,7 @@ class DecisionEngine:
             snapshot=snapshot,
             raw_runtime_by_strategy_id=raw_runtime_by_strategy_id,
             runtime_eval=runtime_eval,
-            position_peak_price=position_peak_price,
+            position_peak_price=aggregated_position_peak_price,
         )
         if overlay_decision is not None:
             decisions.append(overlay_decision)
@@ -461,27 +485,31 @@ class DecisionEngine:
         symbol: str,
         positions: Optional[list[dict[str, Any]]],
         price: Optional[Decimal],
+        state_scope_key: str | None = None,
     ) -> Decimal | None:
         active_symbols = {
             str(position.get("symbol") or "").strip().upper()
             for position in (positions or [])
             if (_position_qty_from_payload(position) or Decimal("0")) > 0
         }
-        for tracked_symbol in list(self._position_peak_price_by_symbol):
+        for tracked_symbol, tracked_scope_key in list(self._position_peak_price_by_scope):
+            if tracked_scope_key != state_scope_key:
+                continue
             if tracked_symbol not in active_symbols:
-                self._position_peak_price_by_symbol.pop(tracked_symbol, None)
+                self._position_peak_price_by_scope.pop((tracked_symbol, tracked_scope_key), None)
 
         normalized_symbol = symbol.strip().upper()
+        peak_price_key = (normalized_symbol, state_scope_key)
         position_qty = _position_qty_for_symbol(positions, normalized_symbol)
         if position_qty is None or position_qty <= 0:
-            self._position_peak_price_by_symbol.pop(normalized_symbol, None)
+            self._position_peak_price_by_scope.pop(peak_price_key, None)
             return None
 
         avg_entry_price = _position_avg_entry_price_for_symbol(positions, normalized_symbol)
         candidates = [
             candidate
             for candidate in (
-                self._position_peak_price_by_symbol.get(normalized_symbol),
+                self._position_peak_price_by_scope.get(peak_price_key),
                 avg_entry_price,
                 price,
             )
@@ -490,7 +518,7 @@ class DecisionEngine:
         if not candidates:
             return None
         peak_price = max(candidates)
-        self._position_peak_price_by_symbol[normalized_symbol] = peak_price
+        self._position_peak_price_by_scope[peak_price_key] = peak_price
         return peak_price
 
     def _evaluate_legacy(
@@ -1619,6 +1647,30 @@ def _strategy_uses_position_isolation(strategy: Strategy) -> bool:
     return str(params.get("position_isolation_mode") or "").strip().lower() == "per_strategy"
 
 
+def _position_state_scope_key(
+    *,
+    position_isolation_mode: str | None,
+    strategy_id: str | None,
+) -> str | None:
+    if str(position_isolation_mode or "").strip().lower() != "per_strategy":
+        return None
+    normalized_strategy_id = str(strategy_id or "").strip()
+    return normalized_strategy_id or None
+
+
+def _runtime_trade_policy_key(
+    *,
+    symbol: str,
+    action: str,
+    state_scope_key: str | None,
+) -> tuple[str, str, str | None]:
+    return (
+        symbol.strip().upper(),
+        action.strip().lower(),
+        state_scope_key,
+    )
+
+
 def _positions_for_strategy_action(
     positions: Optional[list[dict[str, Any]]],
     *,
@@ -2162,12 +2214,13 @@ def _resolve_runtime_trade_policy(strategies: list[Strategy]) -> dict[str, int]:
 
 def _passes_runtime_trade_policy(
     *,
-    last_emitted_action_at: dict[tuple[str, str], datetime],
+    last_emitted_action_at: dict[tuple[str, str, str | None], datetime],
     signal_ts: datetime,
     symbol: str,
     action: str,
     positions: Optional[list[dict[str, Any]]],
     policy: Mapping[str, int],
+    state_scope_key: str | None = None,
 ) -> bool:
     normalized_action = action.strip().lower()
     if normalized_action == "buy":
@@ -2184,7 +2237,13 @@ def _passes_runtime_trade_policy(
         else "exit_cooldown_seconds"
     )
     cooldown_seconds = max(0, int(policy.get(cooldown_key, 0)))
-    last_emitted = last_emitted_action_at.get((symbol, normalized_action))
+    last_emitted = last_emitted_action_at.get(
+        _runtime_trade_policy_key(
+            symbol=symbol,
+            action=normalized_action,
+            state_scope_key=state_scope_key,
+        )
+    )
     if (
         cooldown_seconds > 0
         and last_emitted is not None
