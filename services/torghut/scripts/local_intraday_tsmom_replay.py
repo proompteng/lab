@@ -22,8 +22,6 @@ from urllib import error, request
 import yaml
 from unittest.mock import patch
 
-logging.getLogger('alembic').setLevel(logging.WARNING)
-
 from app.models import Strategy
 from app.strategies.catalog import StrategyCatalogConfig, _compose_strategy_description
 from app.config import settings
@@ -31,6 +29,8 @@ from app.trading.costs import CostModelInputs, OrderIntent, TransactionCostModel
 from app.trading.decisions import DecisionEngine
 from app.trading.execution_policy import _near_touch_limit_price
 from app.trading.models import SignalEnvelope, StrategyDecision
+
+logging.getLogger('alembic').setLevel(logging.WARNING)
 
 REGULAR_OPEN_UTC = time(hour=13, minute=30)
 REGULAR_CLOSE_UTC = time(hour=20, minute=0)
