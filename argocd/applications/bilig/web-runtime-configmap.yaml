@@ -9,5 +9,6 @@ data:
       "apiBaseUrl": "https://bilig.proompteng.ai",
       "zeroCacheUrl": "https://bilig.proompteng.ai/zero",
       "defaultDocumentId": "bilig-demo",
-      "persistState": true
+      "persistState": true,
+      "zeroViewportBridge": true
     }
