@@ -17,11 +17,6 @@ data:
       fetch_timeout: 5s
       fetch_interval: 2s
       report_interval: 1s
-      labels:
-        - ubuntu-latest:docker://ghcr.io/catthehacker/ubuntu:act-latest
-        - docker:docker://ghcr.io/catthehacker/ubuntu:act-latest
-        - ubuntu-24.04-arm64:docker://ghcr.io/catthehacker/ubuntu:act-latest
-        - docker-arm64:docker://ghcr.io/catthehacker/ubuntu:act-latest
 
     cache:
       enabled: true
