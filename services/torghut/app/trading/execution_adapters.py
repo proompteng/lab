@@ -707,6 +707,42 @@ class LeanExecutionAdapter:
         items = cast(list[Any], positions)
         return [cast(dict[str, Any], item) for item in items if isinstance(item, Mapping)]
 
+    def get_account(self) -> dict[str, Any] | None:
+        if self.fallback is None:
+            return None
+        getter = getattr(self.fallback, 'get_account', None)
+        if not callable(getter):
+            return None
+        try:
+            payload = getter()
+        except Exception as exc:
+            logger.warning("Lean adapter fallback get_account failed: %s", exc)
+            return None
+        if not isinstance(payload, Mapping):
+            return None
+        account = cast(Mapping[str, Any], payload)
+        return {str(key): value for key, value in account.items()}
+
+    def get_asset(self, symbol_or_asset_id: str) -> dict[str, Any] | None:
+        if self.fallback is None:
+            return None
+        getter = getattr(self.fallback, 'get_asset', None)
+        if not callable(getter):
+            return None
+        try:
+            payload = getter(symbol_or_asset_id)
+        except Exception as exc:
+            logger.warning(
+                "Lean adapter fallback get_asset failed symbol=%s: %s",
+                symbol_or_asset_id,
+                exc,
+            )
+            return None
+        if not isinstance(payload, Mapping):
+            return None
+        asset = cast(Mapping[str, Any], payload)
+        return {str(key): value for key, value in asset.items()}
+
     def _request_json_with_headers(
         self,
         method: str,

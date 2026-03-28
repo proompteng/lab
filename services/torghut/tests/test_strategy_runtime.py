@@ -6,6 +6,7 @@ from decimal import Decimal
 from unittest import TestCase
 
 from app.models import Strategy
+from app.strategies.catalog import StrategyConfig, _compose_strategy_description
 from app.trading.features import FeatureNormalizationError, normalize_feature_vector_v3
 from app.trading.models import SignalEnvelope
 from app.trading.strategy_runtime import (
@@ -239,6 +240,242 @@ class TestStrategyRuntime(TestCase):
         self.assertEqual(decision.intent.action, "buy")
         self.assertIn("tsmom_trend_up", decision.intent.rationale)
 
+    def test_intraday_tsmom_plugin_skips_buy_outside_entry_window(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="intraday-tsmom-1sec-window",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="intraday-tsmom-1sec-window",
+                    strategy_id="intraday_tsmom_v1@prod",
+                    strategy_type="intraday_tsmom_v1",
+                    version="1.1.0",
+                    base_timeframe="1Sec",
+                    universe_type="intraday_tsmom_v1",
+                    universe_symbols=["META"],
+                    max_position_pct_equity=Decimal("0.08"),
+                    max_notional_per_trade=Decimal("1000"),
+                    params={"entry_end_minute_utc": "1180"},
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="intraday_tsmom_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("0.08"),
+            max_notional_per_trade=Decimal("1000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 19, 45, 55, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 593.625,
+                "ema12": 593.70,
+                "ema26": 593.40,
+                "macd": 0.020,
+                "macd_signal": 0.010,
+                "rsi14": 57.0,
+                "vol_realized_w60s": 0.00018,
+            },
+        )
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNone(decision)
+
+    def test_intraday_tsmom_plugin_skips_buy_when_spread_exceeds_cap(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="intraday-tsmom-1sec-spread-cap",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="intraday-tsmom-1sec-spread-cap",
+                    strategy_id="intraday_tsmom_v1@prod",
+                    strategy_type="intraday_tsmom_v1",
+                    version="1.1.0",
+                    base_timeframe="1Sec",
+                    universe_type="intraday_tsmom_v1",
+                    universe_symbols=["META"],
+                    max_position_pct_equity=Decimal("0.08"),
+                    max_notional_per_trade=Decimal("1000"),
+                    params={"max_spread_bps": "60"},
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="intraday_tsmom_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("0.08"),
+            max_notional_per_trade=Decimal("1000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 23, 19, 17, 55, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 604.815,
+                "spread": 5.77,
+                "ema12": 606.3602961607454,
+                "ema26": 606.3534338611167,
+                "macd": 0.006862299628771475,
+                "macd_signal": -0.04526378862269545,
+                "rsi14": 57.80709380988871,
+                "vol_realized_w60s": 0.00017176690067199733,
+            },
+        )
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNone(decision)
+
+    def test_intraday_tsmom_plugin_skips_buy_when_price_is_above_ema12_band(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="intraday-tsmom-1sec-band",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="intraday-tsmom-1sec-band",
+                    strategy_id="intraday_tsmom_v1@prod",
+                    strategy_type="intraday_tsmom_v1",
+                    version="1.1.0",
+                    base_timeframe="1Sec",
+                    universe_type="intraday_tsmom_v1",
+                    universe_symbols=["META"],
+                    max_position_pct_equity=Decimal("0.08"),
+                    max_notional_per_trade=Decimal("1000"),
+                    params={"max_price_above_ema12_bps": "0"},
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="intraday_tsmom_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("0.08"),
+            max_notional_per_trade=Decimal("1000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 18, 27, 27, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 528.29,
+                "ema12": 523.7876786224246,
+                "ema26": 523.7686581843907,
+                "macd": 0.019020438033943658,
+                "macd_signal": -0.03527149321001294,
+                "rsi14": 58.25782645382979,
+                "vol_realized_w60s": 0.00019104321463884983,
+            },
+        )
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNone(decision)
+
+    def test_intraday_tsmom_plugin_skips_buy_when_pullback_is_too_shallow(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="intraday-tsmom-1sec-pullback",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="intraday-tsmom-1sec-pullback",
+                    strategy_id="intraday_tsmom_v1@prod",
+                    strategy_type="intraday_tsmom_v1",
+                    version="1.1.0",
+                    base_timeframe="1Sec",
+                    universe_type="intraday_tsmom_v1",
+                    universe_symbols=["META"],
+                    max_position_pct_equity=Decimal("0.08"),
+                    max_notional_per_trade=Decimal("1000"),
+                    params={"min_price_below_ema12_bps": "2"},
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="intraday_tsmom_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("0.08"),
+            max_notional_per_trade=Decimal("1000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 18, 27, 36, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 523.78,
+                "ema12": 523.8487984735763,
+                "ema26": 523.8048007992227,
+                "macd": 0.04399767435360296,
+                "macd_signal": 0.001197208657777601,
+                "rsi14": 56.28545201421526,
+                "vol_realized_w60s": 0.00018957788471576266,
+            },
+        )
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNone(decision)
+
+    def test_intraday_tsmom_plugin_skips_buy_when_bullish_hist_is_too_hot(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="intraday-tsmom-1sec-hot-hist",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="intraday-tsmom-1sec-hot-hist",
+                    strategy_id="intraday_tsmom_v1@prod",
+                    strategy_type="intraday_tsmom_v1",
+                    version="1.1.0",
+                    base_timeframe="1Sec",
+                    universe_type="intraday_tsmom_v1",
+                    universe_symbols=["META"],
+                    max_position_pct_equity=Decimal("0.08"),
+                    max_notional_per_trade=Decimal("1000"),
+                    params={"bullish_hist_cap": "0.055"},
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="intraday_tsmom_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("0.08"),
+            max_notional_per_trade=Decimal("1000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 16, 56, 49, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 594.62,
+                "ema12": 595.2109424468129,
+                "ema26": 595.1980527414847,
+                "macd": 0.012889705328175226,
+                "macd_signal": -0.05243924370763675,
+                "rsi14": 57.950805218453446,
+                "vol_realized_w60s": 0.000188712908208969,
+            },
+        )
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNone(decision)
+
     def test_intraday_tsmom_plugin_emits_sell_for_one_second_profile(self) -> None:
         strategy = Strategy(
             id=uuid.uuid4(),
@@ -275,6 +512,358 @@ class TestStrategyRuntime(TestCase):
         assert decision is not None
         self.assertEqual(decision.intent.action, "sell")
         self.assertIn("tsmom_trend_down", decision.intent.rationale)
+
+    def test_momentum_pullback_plugin_emits_buy_for_controlled_pullback(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="momentum-pullback",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="momentum_pullback_long_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 19, 45, 55, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 593.62,
+                "ema12": 594.10,
+                "ema26": 593.70,
+                "macd": 0.041,
+                "macd_signal": 0.022,
+                "rsi14": 59,
+                "vol_realized_w60s": 0.00018,
+                "spread": 0.05,
+                "imbalance_bid_sz": 4200,
+                "imbalance_ask_sz": 3800,
+            },
+        )
+
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.intent.action, "buy")
+        self.assertEqual(decision.plugin_id, "momentum_pullback_long")
+        self.assertIn("pullback_entry", decision.intent.rationale)
+
+    def test_breakout_continuation_plugin_emits_buy_with_vwap_and_imbalance_confirmation(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="breakout-continuation",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="breakout_continuation_long_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 17, 30, 3, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 523.25,
+                "ema12": 523.10,
+                "ema26": 522.90,
+                "macd": 0.031,
+                "macd_signal": 0.012,
+                "rsi14": 62,
+                "vol_realized_w60s": 0.00017,
+                "vwap_session": 522.10,
+                "spread": 0.04,
+                "imbalance_bid_sz": 5200,
+                "imbalance_ask_sz": 4300,
+            },
+        )
+
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.intent.action, "buy")
+        self.assertEqual(decision.plugin_id, "breakout_continuation_long")
+        self.assertIn("imbalance_confirmed", decision.intent.rationale)
+
+    def test_breakout_continuation_plugin_does_not_exit_on_single_reference_loss(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="breakout-continuation",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="breakout_continuation_long_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 18, 4, 3, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=2,
+            payload={
+                "price": 523.00,
+                "ema12": 523.10,
+                "ema26": 522.90,
+                "macd": 0.014,
+                "macd_signal": 0.015,
+                "rsi14": 58,
+                "vol_realized_w60s": 0.00017,
+                "vwap_session": 522.80,
+                "spread": 0.04,
+                "imbalance_bid_sz": 5200,
+                "imbalance_ask_sz": 4300,
+            },
+        )
+
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNone(decision)
+
+    def test_breakout_continuation_plugin_emits_sell_on_confirmed_breakout_failure(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="breakout-continuation",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="breakout_continuation_long_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 18, 5, 3, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=3,
+            payload={
+                "price": 522.90,
+                "ema12": 523.10,
+                "ema26": 522.95,
+                "macd": 0.010,
+                "macd_signal": 0.012,
+                "rsi14": 54,
+                "vol_realized_w60s": 0.00017,
+                "vwap_session": 523.05,
+                "spread": 0.04,
+                "imbalance_bid_sz": 4700,
+                "imbalance_ask_sz": 5000,
+            },
+        )
+
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.intent.action, "sell")
+        self.assertEqual(decision.plugin_id, "breakout_continuation_long")
+        self.assertIn("breakout_failed", decision.intent.rationale)
+
+    def test_breakout_continuation_plugin_skips_late_entry_near_flatten(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="breakout-continuation",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="breakout-continuation",
+                    strategy_id="breakout_continuation_long_v1@research",
+                    strategy_type="breakout_continuation_long_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="breakout_continuation_long_v1",
+                    universe_symbols=["META"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("14000"),
+                    params={
+                        "entry_start_minute_utc": "840",
+                        "entry_end_minute_utc": "1170",
+                        "session_flatten_start_minute_utc": "1170",
+                        "min_entry_minutes_before_flatten": "15",
+                        "min_price_above_vwap_bps": "1",
+                        "max_price_above_vwap_bps": "24",
+                        "min_imbalance_pressure": "0.02",
+                        "max_spread_bps": "6",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="breakout_continuation_long_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 19, 20, 3, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=4,
+            payload={
+                "price": 523.25,
+                "ema12": 523.10,
+                "ema26": 522.90,
+                "macd": 0.031,
+                "macd_signal": 0.012,
+                "rsi14": 62,
+                "vol_realized_w60s": 0.00017,
+                "vwap_session": 522.10,
+                "spread": 0.04,
+                "imbalance_bid_sz": 5200,
+                "imbalance_ask_sz": 4300,
+            },
+        )
+
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNone(decision)
+
+    def test_late_day_continuation_plugin_emits_buy_on_late_strength(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="late-day-continuation",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="late_day_continuation_long_v1",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 18, 58, 3, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=5,
+            payload={
+                "price": 253.93,
+                "ema12": 253.82,
+                "ema26": 253.60,
+                "macd": 0.028,
+                "macd_signal": 0.014,
+                "rsi14": 63,
+                "vol_realized_w60s": 0.00019,
+                "vwap_session": 253.74,
+                "spread": 0.03,
+                "imbalance_bid_sz": 5400,
+                "imbalance_ask_sz": 5000,
+            },
+        )
+
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.intent.action, "buy")
+        self.assertEqual(decision.plugin_id, "late_day_continuation_long")
+        self.assertIn("late_day_strength", decision.intent.rationale)
+
+    def test_late_day_continuation_plugin_emits_sell_on_late_failure(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="late-day-continuation",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="late_day_continuation_long_v1",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 19, 8, 3, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=6,
+            payload={
+                "price": 253.54,
+                "ema12": 253.72,
+                "ema26": 253.61,
+                "macd": 0.010,
+                "macd_signal": 0.016,
+                "rsi14": 53,
+                "vol_realized_w60s": 0.00018,
+                "vwap_session": 253.68,
+                "spread": 0.03,
+                "imbalance_bid_sz": 4500,
+                "imbalance_ask_sz": 4700,
+            },
+        )
+
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.intent.action, "sell")
+        self.assertEqual(decision.plugin_id, "late_day_continuation_long")
+        self.assertIn("late_day_failure", decision.intent.rationale)
+
+    def test_mean_reversion_rebound_plugin_emits_buy_after_controlled_selloff(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="mean-reversion-rebound",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="mean_reversion_rebound_long_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("12000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 17, 14, 12, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 593.90,
+                "ema12": 595.10,
+                "macd": 0.010,
+                "macd_signal": 0.004,
+                "rsi14": 45,
+                "vol_realized_w60s": 0.00022,
+                "vwap_session": 596.40,
+                "spread": 0.05,
+                "imbalance_bid_sz": 4700,
+                "imbalance_ask_sz": 4300,
+            },
+        )
+
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.intent.action, "buy")
+        self.assertEqual(decision.plugin_id, "mean_reversion_rebound_long")
+        self.assertIn("oversold_rebound", decision.intent.rationale)
 
     def test_runtime_isolates_plugin_failures_and_continues(self) -> None:
         healthy = Strategy(
@@ -435,6 +1024,40 @@ class TestStrategyRuntime(TestCase):
             evaluation.intents[0].source_strategy_ids,
             (str(buy_strategy.id),),
         )
+
+    def test_runtime_skips_strategy_when_signal_symbol_is_outside_universe(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="momentum-pullback",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="momentum_pullback_long_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 19, 45, 55, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 593.62,
+                "ema12": 594.10,
+                "ema26": 593.70,
+                "macd": 0.041,
+                "macd_signal": 0.022,
+                "rsi14": 59,
+                "vol_realized_w60s": 0.00018,
+                "spread": 0.05,
+            },
+        )
+
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+
+        self.assertIsNone(runtime.evaluate(strategy, feature_contract, timeframe="1Sec"))
 
     def test_runtime_rejects_plugin_with_undeclared_contract_feature(self) -> None:
         class InvalidPlugin:

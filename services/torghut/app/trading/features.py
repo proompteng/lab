@@ -17,6 +17,7 @@ FEATURE_SCHEMA_VERSION_V3 = '3.0.0'
 FEATURE_VECTOR_V3_REQUIRED_FIELDS = ('price', 'macd', 'macd_signal', 'rsi14')
 FEATURE_VECTOR_V3_VALUE_FIELDS = (
     'price',
+    'mid_price',
     'ema12',
     'ema26',
     'macd',
@@ -30,7 +31,12 @@ FEATURE_VECTOR_V3_VALUE_FIELDS = (
     'boll_lower',
     'vol_realized_w60s',
     'imbalance_spread',
+    'imbalance_bid_px',
+    'imbalance_ask_px',
+    'imbalance_bid_sz',
+    'imbalance_ask_sz',
     'spread',
+    'spread_bps',
     'signal_quality_flag',
     'hmm_state_posterior',
     'hmm_entropy',
@@ -265,6 +271,7 @@ def map_feature_values_v3(signal: SignalEnvelope) -> dict[str, Any]:
 
     return {
         'price': extract_price(payload),
+        'mid_price': _extract_mid_price(payload),
         'ema12': optional_decimal(payload.get('ema12') or _nested(payload, 'ema', 'ema12')),
         'ema26': optional_decimal(payload.get('ema26') or _nested(payload, 'ema', 'ema26')),
         'macd': macd,
@@ -278,7 +285,12 @@ def map_feature_values_v3(signal: SignalEnvelope) -> dict[str, Any]:
         'boll_lower': optional_decimal(payload.get('boll_lower') or _nested(payload, 'boll', 'lower')),
         'vol_realized_w60s': extract_volatility(payload),
         'imbalance_spread': optional_decimal(payload.get('imbalance_spread') or _nested(payload, 'imbalance', 'spread')),
+        'imbalance_bid_px': optional_decimal(payload.get('imbalance_bid_px') or _nested(payload, 'imbalance', 'bid_px')),
+        'imbalance_ask_px': optional_decimal(payload.get('imbalance_ask_px') or _nested(payload, 'imbalance', 'ask_px')),
+        'imbalance_bid_sz': optional_decimal(payload.get('imbalance_bid_sz') or _nested(payload, 'imbalance', 'bid_sz')),
+        'imbalance_ask_sz': optional_decimal(payload.get('imbalance_ask_sz') or _nested(payload, 'imbalance', 'ask_sz')),
         'spread': optional_decimal(payload.get('spread')),
+        'spread_bps': _spread_bps(payload),
         'signal_quality_flag': payload.get('signal_quality_flag'),
         'hmm_state_posterior': regime_context.posterior,
         'hmm_entropy': regime_context.entropy,
@@ -362,6 +374,22 @@ def _route_regime_label(
     macd_signal: Decimal | None,
 ) -> str:
     return resolve_regime_route_label(payload, macd=macd, macd_signal=macd_signal)
+
+
+def _extract_mid_price(payload: dict[str, Any]) -> Decimal | None:
+    bid = optional_decimal(payload.get('imbalance_bid_px') or _nested(payload, 'imbalance', 'bid_px'))
+    ask = optional_decimal(payload.get('imbalance_ask_px') or _nested(payload, 'imbalance', 'ask_px'))
+    if bid is None or ask is None:
+        return None
+    return (bid + ask) / 2
+
+
+def _spread_bps(payload: dict[str, Any]) -> Decimal | None:
+    spread = optional_decimal(payload.get('spread') or payload.get('imbalance_spread') or _nested(payload, 'imbalance', 'spread'))
+    price = extract_price(payload)
+    if spread is None or price is None or price <= 0:
+        return None
+    return (spread / price) * Decimal('10000')
 
 
 def _validate_signal_schema_version(signal: SignalEnvelope) -> None:

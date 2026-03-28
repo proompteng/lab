@@ -187,7 +187,7 @@ class TestSignalIngest(TestCase):
             "deeplob-bdlob-v1",
         )
 
-    def test_parse_flat_row_uses_vwap_as_price_fallback(self) -> None:
+    def test_parse_flat_row_prefers_midpoint_price_when_available(self) -> None:
         ingestor = ClickHouseSignalIngestor(schema="flat", fast_forward_stale_cursor=False)
         row = {
             "ts": "2026-01-01T00:00:02Z",
@@ -195,7 +195,7 @@ class TestSignalIngest(TestCase):
             "macd": 0.4,
             "signal": 0.2,
             "rsi14": 44,
-            "vwap_session": 125.75,
+            "vwap_session": 125.50,
             "spread": 0.08,
             "imbalance_bid_px": 125.70,
             "imbalance_ask_px": 125.80,
@@ -208,6 +208,21 @@ class TestSignalIngest(TestCase):
         self.assertEqual(signal.payload.get("imbalance", {}).get("bid_px"), 125.70)
         self.assertEqual(signal.payload.get("imbalance", {}).get("ask_px"), 125.80)
         self.assertEqual(signal.payload.get("imbalance", {}).get("spread"), 0.08)
+
+    def test_parse_flat_row_uses_vwap_as_price_fallback_without_midpoint(self) -> None:
+        ingestor = ClickHouseSignalIngestor(schema="flat", fast_forward_stale_cursor=False)
+        row = {
+            "ts": "2026-01-01T00:00:02Z",
+            "symbol": "NVDA",
+            "macd": 0.4,
+            "signal": 0.2,
+            "rsi14": 44,
+            "vwap_session": 125.75,
+        }
+        signal = ingestor.parse_row(row)
+        self.assertIsNotNone(signal)
+        assert signal is not None
+        self.assertEqual(signal.payload.get("price"), 125.75)
 
     def test_parse_row_attaches_simulation_context_from_row_fields(self) -> None:
         ingestor = ClickHouseSignalIngestor(schema='envelope', fast_forward_stale_cursor=False)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Literal, Mapping
 
@@ -10,6 +11,7 @@ from typing import Any, Literal, Mapping
 @dataclass(frozen=True)
 class IntradayTsmomThresholdProfile:
     bullish_hist_min: Decimal
+    bullish_hist_cap: Decimal | None
     bearish_hist_min: Decimal
     min_bull_rsi: Decimal
     max_bull_rsi: Decimal
@@ -19,6 +21,9 @@ class IntradayTsmomThresholdProfile:
     vol_ceil: Decimal | None
     bearish_hist_cap: Decimal | None
     low_vol_bonus_threshold: Decimal | None
+    max_price_above_ema12_bps: Decimal | None
+    min_price_below_ema12_bps: Decimal | None
+    max_price_below_ema12_bps: Decimal | None
 
 
 @dataclass(frozen=True)
@@ -32,6 +37,7 @@ class IntradayTsmomEvaluation:
 
 _ONE_SECOND_PROFILE = IntradayTsmomThresholdProfile(
     bullish_hist_min=Decimal("0.005"),
+    bullish_hist_cap=None,
     bearish_hist_min=Decimal("0.004"),
     min_bull_rsi=Decimal("52"),
     max_bull_rsi=Decimal("62"),
@@ -41,10 +47,14 @@ _ONE_SECOND_PROFILE = IntradayTsmomThresholdProfile(
     vol_ceil=Decimal("0.00030"),
     bearish_hist_cap=Decimal("0.03"),
     low_vol_bonus_threshold=Decimal("0.00020"),
+    max_price_above_ema12_bps=None,
+    min_price_below_ema12_bps=None,
+    max_price_below_ema12_bps=None,
 )
 
 _DEFAULT_PROFILE = IntradayTsmomThresholdProfile(
     bullish_hist_min=Decimal("0.04"),
+    bullish_hist_cap=None,
     bearish_hist_min=Decimal("0.06"),
     min_bull_rsi=Decimal("52"),
     max_bull_rsi=Decimal("62"),
@@ -54,22 +64,46 @@ _DEFAULT_PROFILE = IntradayTsmomThresholdProfile(
     vol_ceil=Decimal("0.012"),
     bearish_hist_cap=None,
     low_vol_bonus_threshold=Decimal("0.008"),
+    max_price_above_ema12_bps=None,
+    min_price_below_ema12_bps=None,
+    max_price_below_ema12_bps=None,
 )
 
 
 def validate_intraday_tsmom_params(params: Mapping[str, Any]) -> None:
     for key in (
         "bullish_hist_min",
+        "bullish_hist_cap",
         "bearish_hist_min",
         "bearish_hist_cap",
         "vol_floor",
         "vol_ceil",
         "low_vol_bonus_threshold",
+        "max_spread_bps",
+        "entry_start_minute_utc",
+        "entry_end_minute_utc",
+        "max_price_above_ema12_bps",
+        "min_price_below_ema12_bps",
+        "max_price_below_ema12_bps",
+        "long_stop_loss_bps",
+        "long_stop_loss_spread_bps_multiplier",
+        "long_stop_loss_volatility_bps_multiplier",
+        "long_trailing_stop_activation_profit_bps",
+        "long_trailing_stop_drawdown_bps",
+        "long_trailing_stop_spread_bps_multiplier",
+        "long_trailing_stop_volatility_bps_multiplier",
     ):
         _validate_optional_decimal_param(
             params=params,
             key=key,
             invalid_error=f"invalid_{key}",
+        )
+    for key in ("entry_start_minute_utc", "entry_end_minute_utc"):
+        _validate_optional_minute_param(
+            params=params,
+            key=key,
+            invalid_error=f"invalid_{key}",
+            out_of_range_error=f"{key}_out_of_range",
         )
     for key in ("min_bull_rsi", "max_bull_rsi", "min_bear_rsi", "max_bear_rsi"):
         _validate_optional_rsi_param(
@@ -92,6 +126,11 @@ def resolve_intraday_tsmom_thresholds(
             params=params,
             key="bullish_hist_min",
             default=profile.bullish_hist_min,
+        ),
+        bullish_hist_cap=_optional_decimal_param(
+            params=params,
+            key="bullish_hist_cap",
+            default=profile.bullish_hist_cap,
         ),
         bearish_hist_min=_decimal_param(
             params=params,
@@ -138,6 +177,21 @@ def resolve_intraday_tsmom_thresholds(
             key="low_vol_bonus_threshold",
             default=profile.low_vol_bonus_threshold,
         ),
+        max_price_above_ema12_bps=_optional_decimal_param(
+            params=params,
+            key="max_price_above_ema12_bps",
+            default=profile.max_price_above_ema12_bps,
+        ),
+        min_price_below_ema12_bps=_optional_decimal_param(
+            params=params,
+            key="min_price_below_ema12_bps",
+            default=profile.min_price_below_ema12_bps,
+        ),
+        max_price_below_ema12_bps=_optional_decimal_param(
+            params=params,
+            key="max_price_below_ema12_bps",
+            default=profile.max_price_below_ema12_bps,
+        ),
     )
 
 
@@ -145,6 +199,9 @@ def evaluate_intraday_tsmom_signal(
     *,
     timeframe: str | None,
     params: Mapping[str, Any],
+    event_ts: str | datetime | None,
+    price: Decimal | None,
+    spread: Decimal | None,
     ema12: Decimal | None,
     ema26: Decimal | None,
     macd: Decimal | None,
@@ -158,7 +215,10 @@ def evaluate_intraday_tsmom_signal(
         or macd is None
         or macd_signal is None
         or rsi14 is None
+        or price is None
     ):
+        return None
+    if not _within_entry_window(event_ts=event_ts, params=params):
         return None
 
     thresholds = resolve_intraday_tsmom_thresholds(
@@ -166,6 +226,7 @@ def evaluate_intraday_tsmom_signal(
         timeframe=timeframe,
     )
     macd_hist = macd - macd_signal
+    spread_bps = _spread_bps(price=price, spread=spread)
     trend_up = ema12 > ema26 and macd > macd_signal
     trend_down = ema12 < ema26 and macd < macd_signal
     vol_ok = _volatility_within_budget(
@@ -173,11 +234,34 @@ def evaluate_intraday_tsmom_signal(
         floor=thresholds.vol_floor,
         ceil=thresholds.vol_ceil,
     )
+    max_spread_bps = _optional_decimal_param(
+        params=params,
+        key='max_spread_bps',
+        default=None,
+    )
+    spread_ok = (
+        max_spread_bps is None
+        or spread_bps is None
+        or spread_bps <= max_spread_bps
+    )
+    price_not_overextended = _price_within_entry_band(
+        price=price,
+        ema12=ema12,
+        max_price_above_ema12_bps=thresholds.max_price_above_ema12_bps,
+        min_price_below_ema12_bps=thresholds.min_price_below_ema12_bps,
+        max_price_below_ema12_bps=thresholds.max_price_below_ema12_bps,
+    )
 
     if (
         trend_up
         and vol_ok
+        and spread_ok
+        and price_not_overextended
         and macd_hist >= thresholds.bullish_hist_min
+        and (
+            thresholds.bullish_hist_cap is None
+            or macd_hist <= thresholds.bullish_hist_cap
+        )
         and thresholds.min_bull_rsi <= rsi14 <= thresholds.max_bull_rsi
     ):
         confidence = Decimal("0.64")
@@ -206,6 +290,7 @@ def evaluate_intraday_tsmom_signal(
     bearish_hist = -macd_hist
     if (
         trend_down
+        and spread_ok
         and bearish_hist >= thresholds.bearish_hist_min
         and _rsi_within_bearish_bounds(
             rsi14,
@@ -229,6 +314,30 @@ def evaluate_intraday_tsmom_signal(
         )
 
     return None
+
+
+def _price_within_entry_band(
+    *,
+    price: Decimal,
+    ema12: Decimal,
+    max_price_above_ema12_bps: Decimal | None,
+    min_price_below_ema12_bps: Decimal | None,
+    max_price_below_ema12_bps: Decimal | None,
+) -> bool:
+    if ema12 <= 0:
+        return True
+    if price > ema12:
+        if max_price_above_ema12_bps is None:
+            return True
+        price_gap_bps = ((price - ema12) / ema12) * Decimal("10000")
+        return price_gap_bps <= max_price_above_ema12_bps
+
+    price_gap_bps = ((ema12 - price) / ema12) * Decimal("10000")
+    if min_price_below_ema12_bps is not None and price_gap_bps < min_price_below_ema12_bps:
+        return False
+    if max_price_below_ema12_bps is not None and price_gap_bps > max_price_below_ema12_bps:
+        return False
+    return True
 
 
 def _profile_for_timeframe(timeframe: str | None) -> IntradayTsmomThresholdProfile:
@@ -282,6 +391,76 @@ def _decimal(value: Any) -> Decimal | None:
         return None
 
 
+def _minute_param(
+    *,
+    params: Mapping[str, Any],
+    key: str,
+) -> int | None:
+    raw_value = params.get(key)
+    if raw_value is None:
+        return None
+    try:
+        resolved = int(str(raw_value))
+    except (TypeError, ValueError):
+        return None
+    if resolved < 0 or resolved >= 24 * 60:
+        return None
+    return resolved
+
+
+def _validate_optional_minute_param(
+    *,
+    params: Mapping[str, Any],
+    key: str,
+    invalid_error: str,
+    out_of_range_error: str,
+) -> None:
+    if key not in params:
+        return
+    raw_value = params.get(key)
+    try:
+        resolved = int(str(raw_value))
+    except (TypeError, ValueError):
+        raise ValueError(invalid_error) from None
+    if resolved < 0 or resolved >= 24 * 60:
+        raise ValueError(out_of_range_error)
+
+
+def _within_entry_window(
+    *,
+    event_ts: str | datetime | None,
+    params: Mapping[str, Any],
+) -> bool:
+    if not event_ts:
+        return True
+    entry_start_minute = _minute_param(
+        params=params,
+        key="entry_start_minute_utc",
+    )
+    entry_end_minute = _minute_param(
+        params=params,
+        key="entry_end_minute_utc",
+    )
+    if entry_start_minute is None and entry_end_minute is None:
+        return True
+    if isinstance(event_ts, datetime):
+        event_dt = event_ts
+    else:
+        try:
+            event_dt = datetime.fromisoformat(event_ts.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+    if event_dt.tzinfo is None:
+        event_dt = event_dt.replace(tzinfo=timezone.utc)
+    event_dt = event_dt.astimezone(timezone.utc)
+    minute_of_day = event_dt.hour * 60 + event_dt.minute
+    if entry_start_minute is not None and minute_of_day < entry_start_minute:
+        return False
+    if entry_end_minute is not None and minute_of_day > entry_end_minute:
+        return False
+    return True
+
+
 def _validate_optional_decimal_param(
     *,
     params: Mapping[str, Any],
@@ -323,6 +502,16 @@ def _volatility_within_budget(
     if ceil is not None and volatility > ceil:
         return False
     return True
+
+
+def _spread_bps(
+    *,
+    price: Decimal,
+    spread: Decimal | None,
+) -> Decimal | None:
+    if spread is None or spread <= 0 or price <= 0:
+        return None
+    return (spread / price) * Decimal('10000')
 
 
 def _rsi_within_bearish_bounds(

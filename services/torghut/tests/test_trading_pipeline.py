@@ -55,6 +55,7 @@ from app.trading.scheduler.pipeline_helpers import (
     _apply_projected_position_decision,
     _build_dspy_lineage,
     _committee_trace_has_veto,
+    _project_open_orders_onto_positions,
 )
 from app.trading.scheduler.state import TradingState
 from app.trading.tca import AdaptiveExecutionPolicyDecision
@@ -242,6 +243,17 @@ class PositionedAlpacaClient(FakeAlpacaClient):
 
     def list_positions(self) -> list[dict[str, str]]:
         return list(self._positions)
+
+
+class OpenOrderAlpacaClient(FakeAlpacaClient):
+    def __init__(self, orders: list[dict[str, str]]) -> None:
+        super().__init__()
+        self._orders = orders
+
+    def list_orders(self, status: str = "all") -> list[dict[str, str]]:
+        if status == "open":
+            return [dict(order) for order in self._orders]
+        return super().list_orders(status=status)
 
 
 class SellInventoryConflictRetryClient(FakeAlpacaClient):
@@ -4753,6 +4765,84 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(positions[0]["qty"], "7")
         self.assertEqual(positions[0]["side"], "long")
         self.assertEqual(positions[0]["market_value"], "700")
+
+    def test_project_open_orders_onto_positions_projects_buy_exposure(self) -> None:
+        positions: list[dict[str, Any]] = []
+
+        projected = _project_open_orders_onto_positions(
+            positions,
+            [
+                {
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "qty": "3",
+                    "filled_qty": "1",
+                    "limit_price": "100",
+                    "type": "limit",
+                    "time_in_force": "day",
+                }
+            ],
+        )
+
+        self.assertEqual(projected, 1)
+        self.assertEqual(positions, [
+            {"symbol": "AAPL", "qty": "2", "side": "long", "market_value": "200"}
+        ])
+
+    def test_project_open_orders_onto_positions_projects_sell_against_existing_long(self) -> None:
+        positions: list[dict[str, Any]] = [
+            {"symbol": "AAPL", "qty": "5", "side": "long", "market_value": "500"}
+        ]
+
+        projected = _project_open_orders_onto_positions(
+            positions,
+            [
+                {
+                    "symbol": "AAPL",
+                    "side": "sell",
+                    "qty": "4",
+                    "filled_qty": "1",
+                    "limit_price": "100",
+                    "type": "limit",
+                    "time_in_force": "day",
+                }
+            ],
+        )
+
+        self.assertEqual(projected, 1)
+        self.assertEqual(positions, [
+            {"symbol": "AAPL", "qty": "2", "side": "long", "market_value": "200"}
+        ])
+
+    def test_resolve_execution_context_positions_projects_open_orders(self) -> None:
+        pipeline = TradingPipeline.__new__(TradingPipeline)
+        pipeline.account_label = "paper"
+
+        class AdapterWithOpenOrders:
+            name = "test"
+
+            def list_orders(self, status: str = "all") -> list[dict[str, str]]:
+                if status == "open":
+                    return [
+                        {
+                            "symbol": "AAPL",
+                            "side": "buy",
+                            "qty": "3",
+                            "filled_qty": "1",
+                            "limit_price": "100",
+                            "type": "limit",
+                            "time_in_force": "day",
+                        }
+                    ]
+                return []
+
+        pipeline.execution_adapter = AdapterWithOpenOrders()
+
+        positions = pipeline._resolve_execution_context_positions([])
+
+        self.assertEqual(positions, [
+            {"symbol": "AAPL", "qty": "2", "side": "long", "market_value": "200"}
+        ])
 
     def test_pipeline_runtime_uncertainty_rechecks_after_llm_adjustment(self) -> None:
         from app import config

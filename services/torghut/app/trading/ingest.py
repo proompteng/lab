@@ -1293,24 +1293,23 @@ def _copy_row_value_if_missing(payload: dict[str, Any], row: dict[str, Any], key
 def _ensure_price_value(payload: dict[str, Any], row: dict[str, Any]) -> None:
     if "price" in payload:
         return
+    bid_px = row.get("imbalance_bid_px")
+    ask_px = row.get("imbalance_ask_px")
+    if bid_px is not None and ask_px is not None:
+        try:
+            payload["price"] = (float(bid_px) + float(ask_px)) / 2
+            return
+        except (TypeError, ValueError):
+            logger.debug(
+                'Unable to derive midpoint price from imbalance fields bid=%r ask=%r',
+                bid_px,
+                ask_px,
+            )
     for key in ("vwap_session", "vwap_w5m", "vwap"):
         candidate = row.get(key)
         if candidate is not None:
             payload["price"] = candidate
             return
-
-    bid_px = row.get("imbalance_bid_px")
-    ask_px = row.get("imbalance_ask_px")
-    if bid_px is None or ask_px is None:
-        return
-    try:
-        payload["price"] = (float(bid_px) + float(ask_px)) / 2
-    except (TypeError, ValueError):
-        logger.debug(
-            'Unable to derive midpoint price from imbalance fields bid=%r ask=%r',
-            bid_px,
-            ask_px,
-        )
 
 
 def _merge_imbalance_payload(payload: dict[str, Any], row: dict[str, Any]) -> None:

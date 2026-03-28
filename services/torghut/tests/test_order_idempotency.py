@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.models import Base, Execution, ExecutionOrderEvent, ExecutionTCAMetric, Strategy, TradeDecision
 from app.config import settings
+from app.trading.execution_adapters import LeanExecutionAdapter
 from app.trading.execution import OrderExecutor
 from app.trading.models import StrategyDecision, decision_hash
 from app.trading.reconcile import Reconciler
@@ -316,6 +317,41 @@ class TestOrderIdempotency(TestCase):
         hash_a = decision_hash(decision, account_label='paper-a')
         hash_b = decision_hash(decision, account_label='paper-b')
         self.assertNotEqual(hash_a, hash_b)
+
+    def test_decision_hash_ignores_telemetry_only_params(self) -> None:
+        event_ts = datetime(2026, 2, 10, tzinfo=timezone.utc)
+        decision_a = StrategyDecision(
+            strategy_id='strategy-1',
+            symbol='AAPL',
+            event_ts=event_ts,
+            timeframe='1Min',
+            action='buy',
+            qty=Decimal('1.0'),
+            order_type='market',
+            time_in_force='day',
+            params={
+                'forecast': {'point_forecast': '101.0'},
+                'forecast_audit': {'inference_latency_ms': 114},
+                'strategy_runtime': {'intent_conflicts_total': 0},
+            },
+        )
+        decision_b = StrategyDecision(
+            strategy_id='strategy-1',
+            symbol='AAPL',
+            event_ts=event_ts,
+            timeframe='1Min',
+            action='buy',
+            qty=Decimal('1.0'),
+            order_type='market',
+            time_in_force='day',
+            params={
+                'forecast': {'point_forecast': '101.0'},
+                'forecast_audit': {'inference_latency_ms': 197},
+                'strategy_runtime': {'intent_conflicts_total': 1},
+            },
+        )
+
+        self.assertEqual(decision_hash(decision_a), decision_hash(decision_b))
 
     def test_execution_exists_ignores_unrelated_same_account_execution(self) -> None:
         with self.session_local() as session:
@@ -1236,6 +1272,54 @@ class TestOrderIdempotency(TestCase):
                 executor.submit_order(
                     session,
                     SymbolNotShortableClient(),
+                    decision,
+                    decision_row,
+                    "paper",
+                )
+
+            payload = json.loads(str(context.exception))
+            self.assertEqual(payload.get("source"), "local_pre_submit")
+            self.assertEqual(payload.get("code"), "local_symbol_not_shortable")
+
+    def test_submit_order_precheck_blocks_short_when_lean_fallback_symbol_not_shortable(
+        self,
+    ) -> None:
+        settings.trading_allow_shorts = True
+        settings.trading_mode = "live"
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("1"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+            execution_client = LeanExecutionAdapter(
+                base_url="http://lean.invalid",
+                timeout_seconds=1,
+                fallback=SymbolNotShortableClient(),
+            )
+
+            with self.assertRaises(RuntimeError) as context:
+                executor.submit_order(
+                    session,
+                    execution_client,
                     decision,
                     decision_row,
                     "paper",

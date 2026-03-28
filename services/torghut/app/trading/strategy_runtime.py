@@ -15,6 +15,12 @@ from ..models import Strategy
 from ..strategies.catalog import extract_catalog_metadata
 from .features import FeatureVectorV3, validate_declared_features
 from .intraday_tsmom_contract import evaluate_intraday_tsmom_signal
+from .research_sleeves import (
+    evaluate_breakout_continuation_long,
+    evaluate_late_day_continuation_long,
+    evaluate_mean_reversion_rebound_long,
+    evaluate_momentum_pullback_long,
+)
 from .strategy_specs import build_compiled_strategy_artifacts, strategy_type_supports_spec_v2
 
 
@@ -35,6 +41,7 @@ class StrategyDefinition:
     execution_profile: str
     enabled: bool
     base_timeframe: str
+    universe_symbols: tuple[str, ...] = field(default_factory=tuple)
     compiler_source: str = "legacy_runtime"
     strategy_spec: dict[str, Any] = field(default_factory=_empty_meta)
     compiled_targets: dict[str, Any] = field(default_factory=_empty_meta)
@@ -191,6 +198,10 @@ class StrategyRegistry:
         plugin_map = plugins or {
             "legacy_macd_rsi": LegacyMacdRsiPlugin(),
             "intraday_tsmom_v1": IntradayTsmomPlugin(),
+            "momentum_pullback_long_v1": MomentumPullbackLongPlugin(),
+            "breakout_continuation_long_v1": BreakoutContinuationLongPlugin(),
+            "mean_reversion_rebound_long_v1": MeanReversionReboundLongPlugin(),
+            "late_day_continuation_long_v1": LateDayContinuationLongPlugin(),
         }
         self._by_key: dict[tuple[str, str], StrategyPlugin] = {}
         self._type_alias: dict[str, tuple[str, str]] = {}
@@ -383,6 +394,7 @@ class IntradayTsmomPlugin:
     ) -> StrategyIntent | None:
         ema12 = _decimal(features.values.get("ema12"))
         ema26 = _decimal(features.values.get("ema26"))
+        price = _decimal(features.values.get("price"))
         macd = _decimal(features.values.get("macd"))
         macd_signal = _decimal(features.values.get("macd_signal"))
         rsi14 = _decimal(features.values.get("rsi14"))
@@ -390,6 +402,9 @@ class IntradayTsmomPlugin:
         evaluation = evaluate_intraday_tsmom_signal(
             timeframe=context.timeframe,
             params=context.params,
+            event_ts=context.event_ts,
+            price=price,
+            spread=_decimal(features.values.get("spread")),
             ema12=ema12,
             ema26=ema26,
             macd=macd,
@@ -416,6 +431,194 @@ class IntradayTsmomPlugin:
         )
 
 
+class MomentumPullbackLongPlugin:
+    plugin_id = "momentum_pullback_long"
+    version = "1.0.0"
+    required_features: tuple[str, ...] = (
+        "price",
+        "ema12",
+        "ema26",
+        "macd",
+        "macd_signal",
+        "rsi14",
+        "vol_realized_w60s",
+        "spread",
+    )
+
+    def evaluate(
+        self, context: StrategyContext, features: FeatureVectorV3
+    ) -> StrategyIntent | None:
+        evaluation = evaluate_momentum_pullback_long(
+            params=context.params,
+            event_ts=context.event_ts,
+            price=_decimal(features.values.get("price")),
+            ema12=_decimal(features.values.get("ema12")),
+            ema26=_decimal(features.values.get("ema26")),
+            macd=_decimal(features.values.get("macd")),
+            macd_signal=_decimal(features.values.get("macd_signal")),
+            rsi14=_decimal(features.values.get("rsi14")),
+            vol_realized_w60s=_decimal(features.values.get("vol_realized_w60s")),
+            spread=_decimal(features.values.get("spread")),
+            imbalance_bid_sz=_decimal(features.values.get("imbalance_bid_sz")),
+            imbalance_ask_sz=_decimal(features.values.get("imbalance_ask_sz")),
+        )
+        if evaluation is None:
+            return None
+        return StrategyIntent(
+            strategy_id=context.strategy_id,
+            symbol=context.symbol,
+            direction=evaluation.action,
+            confidence=evaluation.confidence,
+            target_notional=_target_notional(context.params),
+            horizon=context.timeframe,
+            explain=evaluation.rationale,
+            feature_snapshot_hash=features.normalization_hash,
+            required_features=self.required_features,
+        )
+
+
+class BreakoutContinuationLongPlugin:
+    plugin_id = "breakout_continuation_long"
+    version = "1.0.0"
+    required_features: tuple[str, ...] = (
+        "price",
+        "ema12",
+        "ema26",
+        "macd",
+        "macd_signal",
+        "rsi14",
+        "vol_realized_w60s",
+        "spread",
+    )
+
+    def evaluate(
+        self, context: StrategyContext, features: FeatureVectorV3
+    ) -> StrategyIntent | None:
+        evaluation = evaluate_breakout_continuation_long(
+            params=context.params,
+            event_ts=context.event_ts,
+            price=_decimal(features.values.get("price")),
+            ema12=_decimal(features.values.get("ema12")),
+            ema26=_decimal(features.values.get("ema26")),
+            macd=_decimal(features.values.get("macd")),
+            macd_signal=_decimal(features.values.get("macd_signal")),
+            rsi14=_decimal(features.values.get("rsi14")),
+            vol_realized_w60s=_decimal(features.values.get("vol_realized_w60s")),
+            vwap_session=_decimal(features.values.get("vwap_session")),
+            spread=_decimal(features.values.get("spread")),
+            imbalance_bid_sz=_decimal(features.values.get("imbalance_bid_sz")),
+            imbalance_ask_sz=_decimal(features.values.get("imbalance_ask_sz")),
+        )
+        if evaluation is None:
+            return None
+        return StrategyIntent(
+            strategy_id=context.strategy_id,
+            symbol=context.symbol,
+            direction=evaluation.action,
+            confidence=evaluation.confidence,
+            target_notional=_target_notional(context.params),
+            horizon=context.timeframe,
+            explain=evaluation.rationale,
+            feature_snapshot_hash=features.normalization_hash,
+            required_features=self.required_features,
+        )
+
+
+class MeanReversionReboundLongPlugin:
+    plugin_id = "mean_reversion_rebound_long"
+    version = "1.0.0"
+    required_features: tuple[str, ...] = (
+        "price",
+        "ema12",
+        "macd",
+        "macd_signal",
+        "rsi14",
+        "vol_realized_w60s",
+        "spread",
+    )
+
+    def evaluate(
+        self, context: StrategyContext, features: FeatureVectorV3
+    ) -> StrategyIntent | None:
+        evaluation = evaluate_mean_reversion_rebound_long(
+            params=context.params,
+            event_ts=context.event_ts,
+            price=_decimal(features.values.get("price")),
+            ema12=_decimal(features.values.get("ema12")),
+            macd=_decimal(features.values.get("macd")),
+            macd_signal=_decimal(features.values.get("macd_signal")),
+            rsi14=_decimal(features.values.get("rsi14")),
+            vol_realized_w60s=_decimal(features.values.get("vol_realized_w60s")),
+            vwap_session=_decimal(features.values.get("vwap_session")),
+            spread=_decimal(features.values.get("spread")),
+            imbalance_bid_sz=_decimal(features.values.get("imbalance_bid_sz")),
+            imbalance_ask_sz=_decimal(features.values.get("imbalance_ask_sz")),
+        )
+        if evaluation is None:
+            return None
+        return StrategyIntent(
+            strategy_id=context.strategy_id,
+            symbol=context.symbol,
+            direction=evaluation.action,
+            confidence=evaluation.confidence,
+            target_notional=_target_notional(context.params),
+            horizon=context.timeframe,
+            explain=evaluation.rationale,
+            feature_snapshot_hash=features.normalization_hash,
+            required_features=self.required_features,
+        )
+
+
+class LateDayContinuationLongPlugin:
+    plugin_id = "late_day_continuation_long"
+    version = "1.0.0"
+    required_features: tuple[str, ...] = (
+        "price",
+        "ema12",
+        "ema26",
+        "macd",
+        "macd_signal",
+        "rsi14",
+        "vol_realized_w60s",
+        "vwap_session",
+        "spread",
+        "imbalance_bid_sz",
+        "imbalance_ask_sz",
+    )
+
+    def evaluate(
+        self, context: StrategyContext, features: FeatureVectorV3
+    ) -> StrategyIntent | None:
+        evaluation = evaluate_late_day_continuation_long(
+            params=context.params,
+            event_ts=context.event_ts,
+            price=_decimal(features.values.get("price")),
+            ema12=_decimal(features.values.get("ema12")),
+            ema26=_decimal(features.values.get("ema26")),
+            macd=_decimal(features.values.get("macd")),
+            macd_signal=_decimal(features.values.get("macd_signal")),
+            rsi14=_decimal(features.values.get("rsi14")),
+            vol_realized_w60s=_decimal(features.values.get("vol_realized_w60s")),
+            vwap_session=_decimal(features.values.get("vwap_session")),
+            spread=_decimal(features.values.get("spread")),
+            imbalance_bid_sz=_decimal(features.values.get("imbalance_bid_sz")),
+            imbalance_ask_sz=_decimal(features.values.get("imbalance_ask_sz")),
+        )
+        if evaluation is None:
+            return None
+        return StrategyIntent(
+            strategy_id=context.strategy_id,
+            symbol=context.symbol,
+            direction=evaluation.action,
+            confidence=evaluation.confidence,
+            target_notional=_target_notional(context.params),
+            horizon=context.timeframe,
+            explain=evaluation.rationale,
+            feature_snapshot_hash=features.normalization_hash,
+            required_features=self.required_features,
+        )
+
+
 class StrategyRuntime:
     """Deterministic strategy plugin runtime with failure isolation."""
 
@@ -432,6 +635,8 @@ class StrategyRuntime:
         self, strategy: Strategy, features: FeatureVectorV3, *, timeframe: str
     ) -> RuntimeDecision | None:
         definition = self.definition_from_strategy(strategy)
+        if definition.universe_symbols and features.symbol not in definition.universe_symbols:
+            return None
         plugin = self.registry.resolve(definition)
         if plugin is None:
             return None
@@ -487,6 +692,8 @@ class StrategyRuntime:
         )
         for definition in sorted_definitions:
             if definition.base_timeframe != timeframe:
+                continue
+            if definition.universe_symbols and features.symbol not in definition.universe_symbols:
                 continue
             start = time.perf_counter()
             if self.registry.is_degraded(
@@ -639,6 +846,7 @@ class StrategyRuntime:
             execution_profile="market",
             enabled=bool(strategy.enabled),
             base_timeframe=str(strategy.base_timeframe),
+            universe_symbols=StrategyRuntime._normalized_universe_symbols(strategy),
             compiler_source=compiler_source,
             strategy_spec=strategy_spec,
             compiled_targets=compiled_targets,
@@ -709,6 +917,18 @@ class StrategyRuntime:
         params.setdefault("base_timeframe", strategy.base_timeframe)
         params.setdefault("universe_symbols", strategy.universe_symbols)
         return params
+
+    @staticmethod
+    def _normalized_universe_symbols(strategy: Strategy) -> tuple[str, ...]:
+        raw = strategy.universe_symbols
+        if not isinstance(raw, list):
+            return ()
+        values: list[str] = []
+        for item in cast(list[object], raw):
+            text = str(item).strip().upper()
+            if text:
+                values.append(text)
+        return tuple(values)
 
     @staticmethod
     def _catalog_metadata(strategy: Strategy) -> dict[str, Any]:

@@ -68,6 +68,17 @@ class FakeFallbackAdapter:
     def list_positions(self) -> list[dict[str, str]]:
         return []
 
+    def get_account(self) -> dict[str, bool]:
+        return {'shorting_enabled': True}
+
+    def get_asset(self, symbol_or_asset_id: str) -> dict[str, str | bool]:
+        return {
+            'symbol': symbol_or_asset_id,
+            'tradable': True,
+            'shortable': True,
+            'easy_to_borrow': True,
+        }
+
 
 class FakeOrderFirewall:
     def submit_order(self, **kwargs):  # type: ignore[no-untyped-def]
@@ -718,6 +729,25 @@ class TestExecutionAdapters(TestCase):
             fallback=None,
         )
         self.assertIsNone(adapter.list_positions())
+
+    def test_lean_short_precheck_metadata_passthrough_uses_fallback(self) -> None:
+        fallback = FakeFallbackAdapter()
+        adapter = LeanExecutionAdapter(
+            base_url='http://lean.invalid',
+            timeout_seconds=1,
+            fallback=fallback,
+        )
+
+        self.assertEqual(adapter.get_account(), {'shorting_enabled': True})
+        self.assertEqual(
+            adapter.get_asset('AAPL'),
+            {
+                'symbol': 'AAPL',
+                'tradable': True,
+                'shortable': True,
+                'easy_to_borrow': True,
+            },
+        )
 
     def test_lean_submit_symbol_mismatch_triggers_fallback(self) -> None:
         class InvalidLeanAdapter(LeanExecutionAdapter):

@@ -9,7 +9,7 @@ import logging
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, Optional, cast
+from typing import Any, Literal, Optional, cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -34,6 +34,9 @@ from .state import (
 
 logger = logging.getLogger(__name__)
 _RUNTIME_UNCERTAINTY_GATE_MAX_STALENESS_SECONDS = 15 * 60
+_PROJECTED_ORDER_ACTIONS = {"buy", "sell"}
+_PROJECTED_ORDER_TYPES = {"market", "limit", "stop", "stop_limit"}
+_PROJECTED_ORDER_TIME_IN_FORCE = {"day", "gtc", "ioc", "fok"}
 
 def _runtime_uncertainty_gate_rank(action: RuntimeUncertaintyGateAction) -> int:
     ranking: dict[RuntimeUncertaintyGateAction, int] = {
@@ -543,6 +546,59 @@ def _apply_projected_position_decision(
     positions.append(projected_position)
 
 
+def _project_open_orders_onto_positions(
+    positions: list[dict[str, Any]],
+    open_orders: list[dict[str, Any]],
+) -> int:
+    projected_total = 0
+    projection_ts = datetime.now(timezone.utc)
+    for order in open_orders:
+        symbol = str(order.get("symbol") or "").strip().upper()
+        side = str(order.get("side") or "").strip().lower()
+        if not symbol or side not in {"buy", "sell"}:
+            continue
+        qty = _optional_decimal(order.get("qty"))
+        filled_qty = _optional_decimal(order.get("filled_qty")) or Decimal("0")
+        if qty is None or qty <= 0:
+            continue
+        remaining_qty = qty - max(filled_qty, Decimal("0"))
+        if remaining_qty <= 0:
+            continue
+        price = (
+            _optional_decimal(order.get("limit_price"))
+            or _optional_decimal(order.get("stop_price"))
+            or _optional_decimal(order.get("notional_price"))
+        )
+        params: dict[str, Any] = {}
+        if price is not None:
+            params["price"] = str(price)
+        action = str(side).strip().lower()
+        if action not in _PROJECTED_ORDER_ACTIONS:
+            continue
+        order_type = str(order.get("type") or order.get("order_type") or "market").strip().lower()
+        if order_type not in _PROJECTED_ORDER_TYPES:
+            order_type = "market"
+        time_in_force = str(order.get("time_in_force") or "day").strip().lower()
+        if time_in_force not in _PROJECTED_ORDER_TIME_IN_FORCE:
+            time_in_force = "day"
+        projected_total += 1
+        _apply_projected_position_decision(
+            positions,
+            StrategyDecision(
+                strategy_id="open_order_projection",
+                symbol=symbol,
+                event_ts=projection_ts,
+                timeframe="open_order",
+                action=cast(Literal["buy", "sell"], action),
+                qty=remaining_qty,
+                order_type=cast(Literal["market", "limit", "stop", "stop_limit"], order_type),
+                time_in_force=cast(Literal["day", "gtc", "ioc", "fok"], time_in_force),
+                params=params,
+            ),
+        )
+    return projected_total
+
+
 def _is_runtime_risk_increasing_entry(
     decision: StrategyDecision,
     positions: list[dict[str, Any]],
@@ -821,6 +877,7 @@ __all__ = [
     "_position_market_value",
     "_position_qty",
     "_price_snapshot_payload",
+    "_project_open_orders_onto_positions",
     "_resolve_decision_regime_label",
     "_resolve_decision_regime_label_with_source",
     "_resolve_llm_review_error_reject_reason",
