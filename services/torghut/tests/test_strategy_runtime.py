@@ -6,6 +6,7 @@ from decimal import Decimal
 from unittest import TestCase
 
 from app.models import Strategy
+from app.strategies.catalog import StrategyConfig, _compose_strategy_description
 from app.trading.features import FeatureNormalizationError, normalize_feature_vector_v3
 from app.trading.models import SignalEnvelope
 from app.trading.strategy_runtime import (
@@ -238,6 +239,147 @@ class TestStrategyRuntime(TestCase):
         assert decision is not None
         self.assertEqual(decision.intent.action, "buy")
         self.assertIn("tsmom_trend_up", decision.intent.rationale)
+
+    def test_intraday_tsmom_plugin_skips_buy_when_price_is_above_ema12_band(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="intraday-tsmom-1sec-band",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="intraday-tsmom-1sec-band",
+                    strategy_id="intraday_tsmom_v1@prod",
+                    strategy_type="intraday_tsmom_v1",
+                    version="1.1.0",
+                    base_timeframe="1Sec",
+                    universe_type="intraday_tsmom_v1",
+                    universe_symbols=["META"],
+                    max_position_pct_equity=Decimal("0.08"),
+                    max_notional_per_trade=Decimal("1000"),
+                    params={"max_price_above_ema12_bps": "0"},
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="intraday_tsmom_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("0.08"),
+            max_notional_per_trade=Decimal("1000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 18, 27, 27, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 528.29,
+                "ema12": 523.7876786224246,
+                "ema26": 523.7686581843907,
+                "macd": 0.019020438033943658,
+                "macd_signal": -0.03527149321001294,
+                "rsi14": 58.25782645382979,
+                "vol_realized_w60s": 0.00019104321463884983,
+            },
+        )
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNone(decision)
+
+    def test_intraday_tsmom_plugin_skips_buy_when_pullback_is_too_shallow(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="intraday-tsmom-1sec-pullback",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="intraday-tsmom-1sec-pullback",
+                    strategy_id="intraday_tsmom_v1@prod",
+                    strategy_type="intraday_tsmom_v1",
+                    version="1.1.0",
+                    base_timeframe="1Sec",
+                    universe_type="intraday_tsmom_v1",
+                    universe_symbols=["META"],
+                    max_position_pct_equity=Decimal("0.08"),
+                    max_notional_per_trade=Decimal("1000"),
+                    params={"min_price_below_ema12_bps": "2"},
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="intraday_tsmom_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("0.08"),
+            max_notional_per_trade=Decimal("1000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 18, 27, 36, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 523.78,
+                "ema12": 523.8487984735763,
+                "ema26": 523.8048007992227,
+                "macd": 0.04399767435360296,
+                "macd_signal": 0.001197208657777601,
+                "rsi14": 56.28545201421526,
+                "vol_realized_w60s": 0.00018957788471576266,
+            },
+        )
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNone(decision)
+
+    def test_intraday_tsmom_plugin_skips_buy_when_bullish_hist_is_too_hot(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="intraday-tsmom-1sec-hot-hist",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="intraday-tsmom-1sec-hot-hist",
+                    strategy_id="intraday_tsmom_v1@prod",
+                    strategy_type="intraday_tsmom_v1",
+                    version="1.1.0",
+                    base_timeframe="1Sec",
+                    universe_type="intraday_tsmom_v1",
+                    universe_symbols=["META"],
+                    max_position_pct_equity=Decimal("0.08"),
+                    max_notional_per_trade=Decimal("1000"),
+                    params={"bullish_hist_cap": "0.055"},
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="intraday_tsmom_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("0.08"),
+            max_notional_per_trade=Decimal("1000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 16, 56, 49, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 594.62,
+                "ema12": 595.2109424468129,
+                "ema26": 595.1980527414847,
+                "macd": 0.012889705328175226,
+                "macd_signal": -0.05243924370763675,
+                "rsi14": 57.950805218453446,
+                "vol_realized_w60s": 0.000188712908208969,
+            },
+        )
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNone(decision)
 
     def test_intraday_tsmom_plugin_emits_sell_for_one_second_profile(self) -> None:
         strategy = Strategy(

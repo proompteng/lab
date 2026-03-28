@@ -383,6 +383,7 @@ class IntradayTsmomPlugin:
     ) -> StrategyIntent | None:
         ema12 = _decimal(features.values.get("ema12"))
         ema26 = _decimal(features.values.get("ema26"))
+        price = _decimal(features.values.get("price"))
         macd = _decimal(features.values.get("macd"))
         macd_signal = _decimal(features.values.get("macd_signal"))
         rsi14 = _decimal(features.values.get("rsi14"))
@@ -390,6 +391,7 @@ class IntradayTsmomPlugin:
         evaluation = evaluate_intraday_tsmom_signal(
             timeframe=context.timeframe,
             params=context.params,
+            price=price,
             ema12=ema12,
             ema26=ema26,
             macd=macd,

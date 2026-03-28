@@ -42,6 +42,8 @@ from .strategy_runtime import (
 
 logger = logging.getLogger(__name__)
 _SHORT_ENTRY_BELOW_MIN_QTY_REASON = "short_entry_below_min_qty"
+_SAME_DIRECTION_REENTRY_REASON = "same_direction_reentry"
+_EXIT_ONLY_SELL_FLAT_REASON = "exit_only_sell_without_long_position"
 
 
 @dataclass(frozen=True)
@@ -178,8 +180,6 @@ class DecisionEngine:
 
         decisions: list[StrategyDecision] = []
         self._last_forecast_telemetry = []
-        if not runtime_eval.intents:
-            return decisions
 
         strategies_by_id = {str(strategy.id): strategy for strategy in strategies}
         raw_runtime_by_strategy_id = {
@@ -302,6 +302,21 @@ class DecisionEngine:
                     | {"sizing": sizing_meta},
                 )
             )
+        overlay_decision = _build_runtime_position_exit_overlay(
+            signal=signal,
+            strategies=strategies,
+            timeframe=timeframe,
+            decisions=decisions,
+            positions=positions,
+            equity=equity,
+            price=price,
+            features=features,
+            snapshot=snapshot,
+            raw_runtime_by_strategy_id=raw_runtime_by_strategy_id,
+            runtime_eval=runtime_eval,
+        )
+        if overlay_decision is not None:
+            decisions.append(overlay_decision)
         return decisions
 
     def _evaluate_legacy(
@@ -768,23 +783,61 @@ def _resolve_qty(
         equity=equity,
     )
     current_value = _position_value_for_symbol(positions, symbol)
-    if (
-        action.strip().lower() == "buy"
-        and symbol_notional_cap is not None
-        and current_value is not None
-        and current_value >= symbol_notional_cap
+    position_qty = _position_qty_for_symbol(positions, symbol)
+    normalized_action = action.strip().lower()
+    exit_only_sell = _treats_sell_as_exit_only(strategy) and normalized_action == "sell"
+    if exit_only_sell and position_qty is not None and position_qty <= 0:
+        return Decimal("0"), {
+            "method": method,
+            "reason": _EXIT_ONLY_SELL_FLAT_REASON,
+            "notional_budget": str(notional_budget),
+            "price": str(price),
+            "position_qty": str(position_qty),
+        }
+    if _blocks_same_direction_reentry(strategy) and _same_direction_reentry_exists(
+        action=normalized_action,
+        position_qty=position_qty,
     ):
+        return Decimal("0"), {
+            "method": method,
+            "reason": _SAME_DIRECTION_REENTRY_REASON,
+            "notional_budget": str(notional_budget),
+            "price": str(price),
+            "position_qty": (
+                str(position_qty) if position_qty is not None else None
+            ),
+        }
+
+    requested_qty = notional_budget / price
+    if exit_only_sell and position_qty is not None and position_qty > 0:
+        requested_qty = position_qty
+    capped_requested_qty = _cap_requested_qty_by_symbol_cap(
+        action=normalized_action,
+        requested_qty=requested_qty,
+        price=price,
+        position_qty=position_qty,
+        symbol_notional_cap=symbol_notional_cap,
+    )
+    cap_applied = capped_requested_qty is not None and capped_requested_qty < requested_qty
+    if capped_requested_qty is not None:
+        requested_qty = capped_requested_qty
+    if requested_qty <= 0:
         return Decimal("0"), {
             "method": method,
             "reason": "symbol_capacity_exhausted",
             "notional_budget": str(notional_budget),
             "price": str(price),
-            "current_value": str(current_value),
-            "symbol_notional_cap": str(symbol_notional_cap),
+            "requested_qty": str(notional_budget / price),
+            "current_value": str(current_value) if current_value is not None else None,
+            "position_qty": (
+                str(position_qty) if position_qty is not None else None
+            ),
+            "symbol_notional_cap": (
+                str(symbol_notional_cap)
+                if symbol_notional_cap is not None
+                else None
+            ),
         }
-
-    requested_qty = notional_budget / price
-    position_qty = _position_qty_for_symbol(positions, symbol)
     resolution = resolve_quantity_resolution(
         action=action,
         symbol=symbol,
@@ -802,6 +855,27 @@ def _resolve_qty(
         symbol, fractional_equities_enabled=resolution.fractional_allowed
     )
     if qty < min_qty:
+        if cap_applied:
+            return Decimal("0"), {
+                "method": method,
+                "reason": "symbol_capacity_exhausted",
+                "notional_budget": str(notional_budget),
+                "price": str(price),
+                "requested_qty": str(requested_qty),
+                "min_qty": str(min_qty),
+                "current_value": (
+                    str(current_value) if current_value is not None else None
+                ),
+                "position_qty": (
+                    str(position_qty) if position_qty is not None else None
+                ),
+                "symbol_notional_cap": (
+                    str(symbol_notional_cap)
+                    if symbol_notional_cap is not None
+                    else None
+                ),
+                "quantity_resolution": resolution.to_payload(),
+            }
         position_qty = resolution.position_qty
         entering_short = (
             action.strip().lower() == "sell"
@@ -824,6 +898,13 @@ def _resolve_qty(
         "method": method,
         "notional_budget": str(notional_budget),
         "price": str(price),
+        "requested_qty": str(requested_qty),
+        "current_value": str(current_value) if current_value is not None else None,
+        "position_qty": str(position_qty) if position_qty is not None else None,
+        "symbol_notional_cap": (
+            str(symbol_notional_cap) if symbol_notional_cap is not None else None
+        ),
+        "symbol_capacity_limited": cap_applied,
         "quantity_resolution": resolution.to_payload(),
     }
 
@@ -852,23 +933,63 @@ def _resolve_qty_for_aggregated(
         equity=equity,
     )
     current_value = _position_value_for_symbol(positions, symbol)
-    if (
-        action.strip().lower() == "buy"
-        and symbol_notional_cap is not None
-        and current_value is not None
-        and current_value >= symbol_notional_cap
+    position_qty = _position_qty_for_symbol(positions, symbol)
+    normalized_action = action.strip().lower()
+    exit_only_sell = (
+        _treats_sell_as_exit_only_any(strategies) and normalized_action == "sell"
+    )
+    if exit_only_sell and position_qty is not None and position_qty <= 0:
+        return Decimal("0"), {
+            "method": "aggregated_notional_budget",
+            "reason": _EXIT_ONLY_SELL_FLAT_REASON,
+            "notional_budget": str(total_budget),
+            "price": str(price),
+            "position_qty": str(position_qty),
+        }
+    if _blocks_same_direction_reentry_any(strategies) and _same_direction_reentry_exists(
+        action=normalized_action,
+        position_qty=position_qty,
     ):
+        return Decimal("0"), {
+            "method": "aggregated_notional_budget",
+            "reason": _SAME_DIRECTION_REENTRY_REASON,
+            "notional_budget": str(total_budget),
+            "price": str(price),
+            "position_qty": (
+                str(position_qty) if position_qty is not None else None
+            ),
+        }
+
+    requested_qty = total_budget / price
+    if exit_only_sell and position_qty is not None and position_qty > 0:
+        requested_qty = position_qty
+    capped_requested_qty = _cap_requested_qty_by_symbol_cap(
+        action=normalized_action,
+        requested_qty=requested_qty,
+        price=price,
+        position_qty=position_qty,
+        symbol_notional_cap=symbol_notional_cap,
+    )
+    cap_applied = capped_requested_qty is not None and capped_requested_qty < requested_qty
+    if capped_requested_qty is not None:
+        requested_qty = capped_requested_qty
+    if requested_qty <= 0:
         return Decimal("0"), {
             "method": "aggregated_notional_budget",
             "reason": "symbol_capacity_exhausted",
             "notional_budget": str(total_budget),
             "price": str(price),
-            "current_value": str(current_value),
-            "symbol_notional_cap": str(symbol_notional_cap),
+            "requested_qty": str(total_budget / price),
+            "current_value": str(current_value) if current_value is not None else None,
+            "position_qty": (
+                str(position_qty) if position_qty is not None else None
+            ),
+            "symbol_notional_cap": (
+                str(symbol_notional_cap)
+                if symbol_notional_cap is not None
+                else None
+            ),
         }
-
-    requested_qty = total_budget / price
-    position_qty = _position_qty_for_symbol(positions, symbol)
     resolution = resolve_quantity_resolution(
         action=action,
         symbol=symbol,
@@ -886,6 +1007,27 @@ def _resolve_qty_for_aggregated(
         symbol, fractional_equities_enabled=resolution.fractional_allowed
     )
     if qty < min_qty:
+        if cap_applied:
+            return Decimal("0"), {
+                "method": "aggregated_notional_budget",
+                "reason": "symbol_capacity_exhausted",
+                "notional_budget": str(total_budget),
+                "price": str(price),
+                "requested_qty": str(requested_qty),
+                "min_qty": str(min_qty),
+                "current_value": (
+                    str(current_value) if current_value is not None else None
+                ),
+                "position_qty": (
+                    str(position_qty) if position_qty is not None else None
+                ),
+                "symbol_notional_cap": (
+                    str(symbol_notional_cap)
+                    if symbol_notional_cap is not None
+                    else None
+                ),
+                "quantity_resolution": resolution.to_payload(),
+            }
         position_qty = resolution.position_qty
         entering_short = (
             action.strip().lower() == "sell"
@@ -907,6 +1049,13 @@ def _resolve_qty_for_aggregated(
         "method": "aggregated_notional_budget",
         "notional_budget": str(total_budget),
         "price": str(price),
+        "requested_qty": str(requested_qty),
+        "current_value": str(current_value) if current_value is not None else None,
+        "position_qty": str(position_qty) if position_qty is not None else None,
+        "symbol_notional_cap": (
+            str(symbol_notional_cap) if symbol_notional_cap is not None else None
+        ),
+        "symbol_capacity_limited": cap_applied,
         "quantity_resolution": resolution.to_payload(),
     }
 
@@ -916,9 +1065,222 @@ def _skip_non_executable_decision_qty(
 ) -> bool:
     reason = str(sizing_meta.get("reason") or "").strip()
     return qty <= 0 and reason in {
+        _EXIT_ONLY_SELL_FLAT_REASON,
         _SHORT_ENTRY_BELOW_MIN_QTY_REASON,
+        _SAME_DIRECTION_REENTRY_REASON,
         "symbol_capacity_exhausted",
     }
+
+
+def _build_runtime_position_exit_overlay(
+    *,
+    signal: SignalEnvelope,
+    strategies: list[Strategy],
+    timeframe: str,
+    decisions: list[StrategyDecision],
+    positions: Optional[list[dict[str, Any]]],
+    equity: Optional[Decimal],
+    price: Optional[Decimal],
+    features: SignalFeatures,
+    snapshot: Optional[MarketSnapshot],
+    raw_runtime_by_strategy_id: Mapping[str, dict[str, Any]],
+    runtime_eval: Any,
+) -> StrategyDecision | None:
+    if price is None or positions is None:
+        return None
+    if any(
+        decision.symbol == signal.symbol and decision.action == "sell"
+        for decision in decisions
+    ):
+        return None
+
+    eligible_strategies = [
+        strategy
+        for strategy in strategies
+        if strategy.enabled
+        and strategy.base_timeframe == timeframe
+        and _treats_sell_as_exit_only(strategy)
+    ]
+    if not eligible_strategies:
+        return None
+
+    position_qty = _position_qty_for_symbol(positions, signal.symbol)
+    if position_qty is None or position_qty <= 0:
+        return None
+
+    avg_entry_price = _position_avg_entry_price_for_symbol(positions, signal.symbol)
+    if avg_entry_price is None or avg_entry_price <= 0 or price >= avg_entry_price:
+        return None
+
+    stop_loss_bps = _resolve_min_positive_strategy_param(
+        strategies=eligible_strategies,
+        key="long_stop_loss_bps",
+    )
+    if stop_loss_bps is None or stop_loss_bps <= 0:
+        return None
+
+    drawdown_bps = ((avg_entry_price - price) / avg_entry_price) * Decimal("10000")
+    if drawdown_bps < stop_loss_bps:
+        return None
+
+    qty, sizing_meta = _resolve_qty_for_aggregated(
+        eligible_strategies,
+        symbol=signal.symbol,
+        action="sell",
+        price=price,
+        equity=equity,
+        positions=positions,
+    )
+    if _skip_non_executable_decision_qty(qty=qty, sizing_meta=sizing_meta):
+        return None
+
+    primary_strategy = eligible_strategies[0]
+    primary_runtime_metadata = dict(
+        raw_runtime_by_strategy_id.get(str(primary_strategy.id), {})
+    )
+    runtime_metadata = {
+        "mode": settings.trading_strategy_runtime_mode,
+        "aggregated": True,
+        "primary_strategy_row_id": str(primary_strategy.id),
+        "primary_declared_strategy_id": primary_runtime_metadata.get(
+            "declared_strategy_id"
+        ),
+        "source_strategy_ids": [str(strategy.id) for strategy in eligible_strategies],
+        "source_declared_strategy_ids": [
+            str(item.get("declared_strategy_id"))
+            for item in raw_runtime_by_strategy_id.values()
+            if str(item.get("declared_strategy_id") or "").strip()
+        ],
+        "compiler_sources": sorted(
+            {
+                str(item.get("compiler_source") or "").strip()
+                for item in raw_runtime_by_strategy_id.values()
+                if str(item.get("compiler_source") or "").strip()
+            }
+        ),
+        "source_strategy_runtime": [
+            dict(raw_runtime_by_strategy_id[str(strategy.id)])
+            for strategy in eligible_strategies
+            if str(strategy.id) in raw_runtime_by_strategy_id
+        ],
+        "intent_conflicts_total": runtime_eval.observation.intent_conflicts_total,
+        "strategy_errors": [
+            {
+                "strategy_id": error.strategy_id,
+                "strategy_type": error.strategy_type,
+                "plugin_id": error.plugin_id,
+                "reason": error.reason,
+            }
+            for error in runtime_eval.errors
+        ],
+        "exit_overlay": "long_stop_loss_bps",
+    }
+    decision = StrategyDecision(
+        strategy_id=str(primary_strategy.id),
+        symbol=signal.symbol,
+        event_ts=signal.event_ts,
+        timeframe=timeframe,
+        action="sell",
+        qty=qty,
+        order_type="market",
+        time_in_force="day",
+        rationale="position_stop_loss_exit",
+        params=_build_params(
+            signal=signal,
+            macd=features.macd,
+            macd_signal=features.macd_signal,
+            rsi=features.rsi,
+            price=price,
+            volatility=features.volatility,
+            snapshot=snapshot,
+            runtime_metadata=runtime_metadata,
+        )
+        | {
+            "sizing": sizing_meta,
+            "position_exit": {
+                "type": "long_stop_loss_bps",
+                "threshold_bps": stop_loss_bps,
+                "drawdown_bps": drawdown_bps,
+                "avg_entry_price": avg_entry_price,
+            },
+        },
+    )
+    return decision
+
+
+def _blocks_same_direction_reentry(strategy: Strategy) -> bool:
+    normalized = str(strategy.universe_type or "").strip().lower()
+    return normalized in {"intraday_tsmom_v1", "intraday_tsmom", "tsmom_intraday"}
+
+
+def _treats_sell_as_exit_only(strategy: Strategy) -> bool:
+    normalized = str(strategy.universe_type or "").strip().lower()
+    return normalized in {"intraday_tsmom_v1", "intraday_tsmom", "tsmom_intraday"}
+
+
+def _blocks_same_direction_reentry_any(strategies: list[Strategy]) -> bool:
+    return any(_blocks_same_direction_reentry(strategy) for strategy in strategies)
+
+
+def _treats_sell_as_exit_only_any(strategies: list[Strategy]) -> bool:
+    return any(_treats_sell_as_exit_only(strategy) for strategy in strategies)
+
+
+def _same_direction_reentry_exists(
+    *,
+    action: str,
+    position_qty: Optional[Decimal],
+) -> bool:
+    if position_qty is None:
+        return False
+    if action == "buy":
+        return position_qty > 0
+    if action == "sell":
+        return position_qty < 0
+    return False
+
+
+def _cap_requested_qty_by_symbol_cap(
+    *,
+    action: str,
+    requested_qty: Decimal,
+    price: Decimal,
+    position_qty: Optional[Decimal],
+    symbol_notional_cap: Optional[Decimal],
+) -> Decimal | None:
+    if requested_qty <= 0:
+        return Decimal("0")
+    if symbol_notional_cap is None or symbol_notional_cap <= 0:
+        return None
+    if price <= 0 or position_qty is None:
+        return None
+
+    cap_qty = symbol_notional_cap / price
+    max_requested_qty = _max_requested_qty_with_symbol_cap(
+        action=action,
+        position_qty=position_qty,
+        cap_qty=cap_qty,
+    )
+    return min(requested_qty, max_requested_qty)
+
+
+def _max_requested_qty_with_symbol_cap(
+    *,
+    action: str,
+    position_qty: Decimal,
+    cap_qty: Decimal,
+) -> Decimal:
+    if cap_qty <= 0:
+        return Decimal("0")
+    if action == "buy":
+        if position_qty < 0:
+            return abs(position_qty) + cap_qty
+        return max(Decimal("0"), cap_qty - position_qty)
+    if action == "sell":
+        if position_qty > 0:
+            return position_qty + cap_qty
+        return max(Decimal("0"), cap_qty - abs(position_qty))
+    return Decimal("0")
 
 
 def _position_qty_for_symbol(
@@ -978,6 +1340,48 @@ def _position_value_for_symbol(
     if not matched:
         return None
     return current_value
+
+
+def _position_avg_entry_price_for_symbol(
+    positions: Optional[list[dict[str, Any]]],
+    symbol: str,
+) -> Optional[Decimal]:
+    if positions is None:
+        return None
+    normalized_symbol = symbol.strip().upper()
+    for position in positions:
+        if str(position.get("symbol") or "").strip().upper() != normalized_symbol:
+            continue
+        raw_value = position.get("avg_entry_price") or position.get("average_entry_price")
+        if raw_value is None:
+            continue
+        try:
+            return Decimal(str(raw_value))
+        except (ArithmeticError, ValueError):
+            continue
+    return None
+
+
+def _resolve_min_positive_strategy_param(
+    *,
+    strategies: list[Strategy],
+    key: str,
+) -> Optional[Decimal]:
+    values: list[Decimal] = []
+    for strategy in strategies:
+        params = StrategyRuntime.definition_from_strategy(strategy).params
+        raw_value = params.get(key)
+        if raw_value is None:
+            continue
+        try:
+            resolved = Decimal(str(raw_value))
+        except (ArithmeticError, ValueError):
+            continue
+        if resolved > 0:
+            values.append(resolved)
+    if not values:
+        return None
+    return min(values)
 
 
 def _resolve_symbol_notional_cap(

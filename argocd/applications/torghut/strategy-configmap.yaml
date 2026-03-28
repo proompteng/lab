@@ -18,18 +18,22 @@ data:
         enabled: true
         base_timeframe: "1Sec"
         universe_type: intraday_tsmom_v1
-        max_notional_per_trade: 1000
+        max_notional_per_trade: 2500
         max_position_pct_equity: 0.08
         params:
-          bullish_hist_min: "0.005"
+          bullish_hist_min: "0.04"
+          bullish_hist_cap: "0.055"
           bearish_hist_min: "0.004"
           bearish_hist_cap: "0.03"
-          min_bull_rsi: "52"
-          max_bull_rsi: "62"
+          min_bull_rsi: "56"
+          max_bull_rsi: "58"
           max_bear_rsi: "45"
           vol_floor: "0"
-          vol_ceil: "0.00030"
+          vol_ceil: "0.00019"
           low_vol_bonus_threshold: "0.00020"
+          max_price_above_ema12_bps: "0"
+          min_price_below_ema12_bps: "2"
+          max_price_below_ema12_bps: "28"
   forecast-router-policy.json: |
     {
       "policy_version": "forecast_router_policy_v2",

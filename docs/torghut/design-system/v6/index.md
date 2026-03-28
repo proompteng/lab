@@ -10,6 +10,8 @@
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
+  - `53-torghut-kafka-retention-bootstrap-and-archive-backed-profitability-proof-2026-03-27.md`
+  - `54-torghut-research-backed-sleeves-and-this-week-holdout-proof-2026-03-27.md`
   - `64-torghut-profit-window-cutover-and-escrow-enforcement-contract-2026-03-21.md`
   - `docs/agents/designs/65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`
   - `63-torghut-profit-windows-and-evidence-escrow-contract-2026-03-21.md`
@@ -125,6 +127,14 @@ Current source-state priority is narrower:
 - `52-torghut-profit-sleeves-segment-scoped-deallocation-and-evidence-decay-2026-03-19.md` now makes that capital
   contract hypothesis-local: each sleeve carries segment requirements, evidence expiry, overlap caps, and typed
   alert-driven deallocation.
+- `53-torghut-kafka-retention-bootstrap-and-archive-backed-profitability-proof-2026-03-27.md` now turns the March 27
+  data-availability reality into one concrete proof program: Kafka retention is the bounded bootstrap source,
+  immutable replay bundles are the durable truth surface, and `>= $250/day` remains blocked until archive-backed
+  historical and paper gates pass.
+- `54-torghut-research-backed-sleeves-and-this-week-holdout-proof-2026-03-27.md` now turns the retained March 16
+  through March 27 ClickHouse surface into one concrete strategy-and-proof contract: separate continuation,
+  breakout, and rebound sleeves, a frozen March 23 through March 27 holdout week, and a safe query discipline that
+  avoids memory-bound raw ClickHouse aggregates.
 - `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md` now makes the next step
   explicit: non-observe capital depends on one certificate that consumes Jangar witness quorum, Jangar market-context
   and quant evidence, toggle parity, and typed options auth/bootstrap escrow rather than local gate optimism.
@@ -307,6 +317,8 @@ This pack is positioned as the next architecture layer above:
 50. `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
 51. `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
 52. `52-torghut-profit-sleeves-segment-scoped-deallocation-and-evidence-decay-2026-03-19.md`
+53. `53-torghut-kafka-retention-bootstrap-and-archive-backed-profitability-proof-2026-03-27.md`
+54. `54-torghut-research-backed-sleeves-and-this-week-holdout-proof-2026-03-27.md`
 53. `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md`
 54. `54-torghut-capital-lease-receipts-and-profit-falsification-ledger-2026-03-20.md`
 55. `55-torghut-hypothesis-settlement-exchange-and-lane-capability-leases-2026-03-20.md`

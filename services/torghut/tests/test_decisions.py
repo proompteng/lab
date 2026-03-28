@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from app.config import settings
 from app.models import Strategy
+from app.strategies.catalog import StrategyConfig, _compose_strategy_description
 from app.trading.decisions import DecisionEngine
 from app.trading.models import SignalEnvelope
 from app.trading.prices import MarketSnapshot, PriceFetcher
@@ -561,6 +562,345 @@ class TestDecisionEngine(TestCase):
             )
 
         self.assertEqual(decisions, [])
+
+    def test_legacy_buy_clips_to_residual_symbol_capacity(self) -> None:
+        original_fractional = settings.trading_fractional_equities_enabled
+        original_max_pct = settings.trading_max_position_pct_equity
+        settings.trading_fractional_equities_enabled = True
+        settings.trading_max_position_pct_equity = 0.08
+        try:
+            engine = DecisionEngine(price_fetcher=None)
+            strategy = Strategy(
+                name="residual-cap-buy",
+                description=None,
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=None,
+                max_position_pct_equity=Decimal("0.08"),
+                max_notional_per_trade=Decimal("500"),
+            )
+            signal = SignalEnvelope(
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                    "rsi14": Decimal("20"),
+                    "price": Decimal("100"),
+                },
+                timeframe="1Min",
+            )
+
+            decisions = engine.evaluate(
+                signal,
+                [strategy],
+                equity=Decimal("10000"),
+                positions=[{"symbol": "AAPL", "qty": "6.5", "market_value": "650"}],
+            )
+
+            self.assertEqual(len(decisions), 1)
+            self.assertEqual(decisions[0].qty, Decimal("1.5000"))
+            sizing = decisions[0].params.get("sizing")
+            assert isinstance(sizing, dict)
+            self.assertEqual(Decimal(str(sizing.get("requested_qty"))), Decimal("1.5"))
+            self.assertTrue(sizing.get("symbol_capacity_limited"))
+        finally:
+            settings.trading_fractional_equities_enabled = original_fractional
+            settings.trading_max_position_pct_equity = original_max_pct
+
+    def test_legacy_buy_skips_when_residual_symbol_capacity_is_below_min_qty(self) -> None:
+        original_fractional = settings.trading_fractional_equities_enabled
+        original_max_pct = settings.trading_max_position_pct_equity
+        settings.trading_fractional_equities_enabled = False
+        settings.trading_max_position_pct_equity = 0.08
+        try:
+            engine = DecisionEngine(price_fetcher=None)
+            strategy = Strategy(
+                name="residual-cap-min-qty",
+                description=None,
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=None,
+                max_position_pct_equity=Decimal("0.08"),
+                max_notional_per_trade=Decimal("500"),
+            )
+            signal = SignalEnvelope(
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                symbol="AAPL",
+                payload={
+                    "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                    "rsi14": Decimal("20"),
+                    "price": Decimal("100"),
+                },
+                timeframe="1Min",
+            )
+
+            decisions = engine.evaluate(
+                signal,
+                [strategy],
+                equity=Decimal("10000"),
+                positions=[{"symbol": "AAPL", "qty": "7.95", "market_value": "795"}],
+            )
+
+            self.assertEqual(decisions, [])
+        finally:
+            settings.trading_fractional_equities_enabled = original_fractional
+            settings.trading_max_position_pct_equity = original_max_pct
+
+    def test_scheduler_runtime_intraday_tsmom_skips_same_direction_reentry(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="intraday-tsmom",
+            description="version=1.1.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="intraday_tsmom_v1",
+            universe_symbols=["NVDA"],
+            max_position_pct_equity=Decimal("0.02"),
+            max_notional_per_trade=Decimal("2500"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+            symbol="NVDA",
+            timeframe="1Sec",
+            seq=7,
+            payload={
+                "price": 140.25,
+                "ema12": 140.40,
+                "ema26": 139.95,
+                "macd": 0.45,
+                "macd_signal": 0.30,
+                "rsi14": 56,
+                "vol_realized_w60s": 0.009,
+            },
+        )
+
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+        ):
+            decisions = engine.evaluate(
+                signal,
+                [strategy],
+                positions=[{"symbol": "NVDA", "qty": "3", "side": "long", "market_value": "420.75"}],
+            )
+
+        self.assertEqual(decisions, [])
+
+    def test_scheduler_runtime_intraday_tsmom_skips_exit_only_sell_without_long_inventory(
+        self,
+    ) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="intraday-tsmom",
+            description="version=1.1.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="intraday_tsmom_v1",
+            universe_symbols=["NVDA"],
+            max_position_pct_equity=Decimal("0.02"),
+            max_notional_per_trade=Decimal("2500"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+            symbol="NVDA",
+            timeframe="1Sec",
+            seq=8,
+            payload={
+                "price": 140.25,
+                "ema12": 139.90,
+                "ema26": 140.40,
+                "macd": -0.205,
+                "macd_signal": -0.18,
+                "rsi14": 38,
+                "vol_realized_w60s": 0.009,
+            },
+        )
+
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+        ):
+            decisions = engine.evaluate(signal, [strategy], positions=[])
+
+        self.assertEqual(decisions, [])
+
+    def test_scheduler_runtime_intraday_tsmom_caps_exit_only_sell_to_long_inventory(
+        self,
+    ) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="intraday-tsmom",
+            description="version=1.1.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="intraday_tsmom_v1",
+            universe_symbols=["NVDA"],
+            max_position_pct_equity=Decimal("0.02"),
+            max_notional_per_trade=Decimal("2500"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+            symbol="NVDA",
+            timeframe="1Sec",
+            seq=9,
+            payload={
+                "price": 140.25,
+                "ema12": 139.90,
+                "ema26": 140.40,
+                "macd": -0.205,
+                "macd_signal": -0.18,
+                "rsi14": 38,
+                "vol_realized_w60s": 0.009,
+            },
+        )
+
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+        ):
+            decisions = engine.evaluate(
+                signal,
+                [strategy],
+                positions=[
+                    {
+                        "symbol": "NVDA",
+                        "qty": "3",
+                        "side": "long",
+                        "market_value": "420.75",
+                    }
+                ],
+            )
+
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0].action, "sell")
+        self.assertEqual(decisions[0].qty, Decimal("3"))
+
+    def test_scheduler_runtime_intraday_tsmom_exit_only_sell_ignores_entry_notional_budget(
+        self,
+    ) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="intraday-tsmom",
+            description="version=1.1.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="intraday_tsmom_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("0.08"),
+            max_notional_per_trade=Decimal("1000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=10,
+            payload={
+                "price": 528.29,
+                "ema12": 527.90,
+                "ema26": 528.40,
+                "macd": -0.205,
+                "macd_signal": -0.18,
+                "rsi14": 38,
+                "vol_realized_w60s": 0.009,
+            },
+        )
+
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+            patch.object(settings, "trading_fractional_equities_enabled", True),
+        ):
+            decisions = engine.evaluate(
+                signal,
+                [strategy],
+                positions=[
+                    {
+                        "symbol": "META",
+                        "qty": "1.9091",
+                        "side": "long",
+                        "market_value": "1008.144239",
+                    }
+                ],
+            )
+
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0].action, "sell")
+        self.assertEqual(decisions[0].qty, Decimal("1.9091"))
+
+    def test_scheduler_runtime_intraday_tsmom_emits_stop_loss_exit_overlay(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="intraday-tsmom-stop",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="intraday-tsmom-stop",
+                    strategy_id="intraday_tsmom_v1@prod",
+                    strategy_type="intraday_tsmom_v1",
+                    version="1.1.0",
+                    base_timeframe="1Sec",
+                    universe_type="intraday_tsmom_v1",
+                    universe_symbols=["META"],
+                    max_position_pct_equity=Decimal("0.08"),
+                    max_notional_per_trade=Decimal("1000"),
+                    params={"long_stop_loss_bps": "25"},
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="intraday_tsmom_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("0.08"),
+            max_notional_per_trade=Decimal("1000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 18, 29, 10, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=11,
+            payload={
+                "price": 526.70,
+                "ema12": 526.90,
+                "ema26": 526.85,
+                "macd": 0.010,
+                "macd_signal": 0.008,
+                "rsi14": 56.4,
+                "vol_realized_w60s": 0.00018,
+            },
+        )
+
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+            patch.object(settings, "trading_fractional_equities_enabled", True),
+        ):
+            decisions = engine.evaluate(
+                signal,
+                [strategy],
+                positions=[
+                    {
+                        "symbol": "META",
+                        "qty": "1.9091",
+                        "side": "long",
+                        "market_value": "1005.12497",
+                        "avg_entry_price": "528.29",
+                    }
+                ],
+            )
+
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0].action, "sell")
+        self.assertEqual(decisions[0].qty, Decimal("1.9091"))
+        self.assertEqual(decisions[0].rationale, "position_stop_loss_exit")
+        position_exit = decisions[0].params.get("position_exit")
+        assert isinstance(position_exit, dict)
+        self.assertEqual(position_exit.get("type"), "long_stop_loss_bps")
 
     def test_scheduler_runtime_does_not_fallback_to_legacy_when_runtime_returns_no_intents(
         self,

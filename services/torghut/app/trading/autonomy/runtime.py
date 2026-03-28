@@ -187,6 +187,7 @@ class IntradayTsmomV1Plugin:
         return 0
 
     def on_event(self, fv: FeatureVectorV3, ctx: StrategyContext) -> StrategyIntent | None:
+        price = _decimal(fv.values.get('price'))
         ema12 = _decimal(fv.values.get('ema12'))
         ema26 = _decimal(fv.values.get('ema26'))
         macd = _decimal(fv.values.get('macd'))
@@ -196,6 +197,7 @@ class IntradayTsmomV1Plugin:
         evaluation = evaluate_intraday_tsmom_signal(
             timeframe=fv.timeframe,
             params=ctx.params,
+            price=price,
             ema12=ema12,
             ema26=ema26,
             macd=macd,

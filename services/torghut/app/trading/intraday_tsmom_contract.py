@@ -10,6 +10,7 @@ from typing import Any, Literal, Mapping
 @dataclass(frozen=True)
 class IntradayTsmomThresholdProfile:
     bullish_hist_min: Decimal
+    bullish_hist_cap: Decimal | None
     bearish_hist_min: Decimal
     min_bull_rsi: Decimal
     max_bull_rsi: Decimal
@@ -19,6 +20,9 @@ class IntradayTsmomThresholdProfile:
     vol_ceil: Decimal | None
     bearish_hist_cap: Decimal | None
     low_vol_bonus_threshold: Decimal | None
+    max_price_above_ema12_bps: Decimal | None
+    min_price_below_ema12_bps: Decimal | None
+    max_price_below_ema12_bps: Decimal | None
 
 
 @dataclass(frozen=True)
@@ -32,6 +36,7 @@ class IntradayTsmomEvaluation:
 
 _ONE_SECOND_PROFILE = IntradayTsmomThresholdProfile(
     bullish_hist_min=Decimal("0.005"),
+    bullish_hist_cap=None,
     bearish_hist_min=Decimal("0.004"),
     min_bull_rsi=Decimal("52"),
     max_bull_rsi=Decimal("62"),
@@ -41,10 +46,14 @@ _ONE_SECOND_PROFILE = IntradayTsmomThresholdProfile(
     vol_ceil=Decimal("0.00030"),
     bearish_hist_cap=Decimal("0.03"),
     low_vol_bonus_threshold=Decimal("0.00020"),
+    max_price_above_ema12_bps=None,
+    min_price_below_ema12_bps=None,
+    max_price_below_ema12_bps=None,
 )
 
 _DEFAULT_PROFILE = IntradayTsmomThresholdProfile(
     bullish_hist_min=Decimal("0.04"),
+    bullish_hist_cap=None,
     bearish_hist_min=Decimal("0.06"),
     min_bull_rsi=Decimal("52"),
     max_bull_rsi=Decimal("62"),
@@ -54,17 +63,25 @@ _DEFAULT_PROFILE = IntradayTsmomThresholdProfile(
     vol_ceil=Decimal("0.012"),
     bearish_hist_cap=None,
     low_vol_bonus_threshold=Decimal("0.008"),
+    max_price_above_ema12_bps=None,
+    min_price_below_ema12_bps=None,
+    max_price_below_ema12_bps=None,
 )
 
 
 def validate_intraday_tsmom_params(params: Mapping[str, Any]) -> None:
     for key in (
         "bullish_hist_min",
+        "bullish_hist_cap",
         "bearish_hist_min",
         "bearish_hist_cap",
         "vol_floor",
         "vol_ceil",
         "low_vol_bonus_threshold",
+        "max_price_above_ema12_bps",
+        "min_price_below_ema12_bps",
+        "max_price_below_ema12_bps",
+        "long_stop_loss_bps",
     ):
         _validate_optional_decimal_param(
             params=params,
@@ -92,6 +109,11 @@ def resolve_intraday_tsmom_thresholds(
             params=params,
             key="bullish_hist_min",
             default=profile.bullish_hist_min,
+        ),
+        bullish_hist_cap=_optional_decimal_param(
+            params=params,
+            key="bullish_hist_cap",
+            default=profile.bullish_hist_cap,
         ),
         bearish_hist_min=_decimal_param(
             params=params,
@@ -138,6 +160,21 @@ def resolve_intraday_tsmom_thresholds(
             key="low_vol_bonus_threshold",
             default=profile.low_vol_bonus_threshold,
         ),
+        max_price_above_ema12_bps=_optional_decimal_param(
+            params=params,
+            key="max_price_above_ema12_bps",
+            default=profile.max_price_above_ema12_bps,
+        ),
+        min_price_below_ema12_bps=_optional_decimal_param(
+            params=params,
+            key="min_price_below_ema12_bps",
+            default=profile.min_price_below_ema12_bps,
+        ),
+        max_price_below_ema12_bps=_optional_decimal_param(
+            params=params,
+            key="max_price_below_ema12_bps",
+            default=profile.max_price_below_ema12_bps,
+        ),
     )
 
 
@@ -145,6 +182,7 @@ def evaluate_intraday_tsmom_signal(
     *,
     timeframe: str | None,
     params: Mapping[str, Any],
+    price: Decimal | None,
     ema12: Decimal | None,
     ema26: Decimal | None,
     macd: Decimal | None,
@@ -158,6 +196,7 @@ def evaluate_intraday_tsmom_signal(
         or macd is None
         or macd_signal is None
         or rsi14 is None
+        or price is None
     ):
         return None
 
@@ -173,11 +212,23 @@ def evaluate_intraday_tsmom_signal(
         floor=thresholds.vol_floor,
         ceil=thresholds.vol_ceil,
     )
+    price_not_overextended = _price_within_entry_band(
+        price=price,
+        ema12=ema12,
+        max_price_above_ema12_bps=thresholds.max_price_above_ema12_bps,
+        min_price_below_ema12_bps=thresholds.min_price_below_ema12_bps,
+        max_price_below_ema12_bps=thresholds.max_price_below_ema12_bps,
+    )
 
     if (
         trend_up
         and vol_ok
+        and price_not_overextended
         and macd_hist >= thresholds.bullish_hist_min
+        and (
+            thresholds.bullish_hist_cap is None
+            or macd_hist <= thresholds.bullish_hist_cap
+        )
         and thresholds.min_bull_rsi <= rsi14 <= thresholds.max_bull_rsi
     ):
         confidence = Decimal("0.64")
@@ -229,6 +280,30 @@ def evaluate_intraday_tsmom_signal(
         )
 
     return None
+
+
+def _price_within_entry_band(
+    *,
+    price: Decimal,
+    ema12: Decimal,
+    max_price_above_ema12_bps: Decimal | None,
+    min_price_below_ema12_bps: Decimal | None,
+    max_price_below_ema12_bps: Decimal | None,
+) -> bool:
+    if ema12 <= 0:
+        return True
+    if price > ema12:
+        if max_price_above_ema12_bps is None:
+            return True
+        price_gap_bps = ((price - ema12) / ema12) * Decimal("10000")
+        return price_gap_bps <= max_price_above_ema12_bps
+
+    price_gap_bps = ((ema12 - price) / ema12) * Decimal("10000")
+    if min_price_below_ema12_bps is not None and price_gap_bps < min_price_below_ema12_bps:
+        return False
+    if max_price_below_ema12_bps is not None and price_gap_bps > max_price_below_ema12_bps:
+        return False
+    return True
 
 
 def _profile_for_timeframe(timeframe: str | None) -> IntradayTsmomThresholdProfile:

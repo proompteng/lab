@@ -1,8 +1,8 @@
-# Torghut Design-System Current Source-of-Truth and Priority Guide (updated 2026-03-21)
+# Torghut Design-System Current Source-of-Truth and Priority Guide (updated 2026-03-27)
 
 ## Status
 
-- Date: `2026-03-21`
+- Date: `2026-03-27`
 - Purpose: distinguish live source-of-truth docs from historical milestone records and identify the current highest-priority work
 - Scope: `docs/torghut/design-system/**`, `docs/torghut/**`, `argocd/applications/torghut/**`, `services/torghut/**`, `services/jangar/**`
 
@@ -76,6 +76,8 @@ If the question is "what should I trust right now?", start here:
    - `docs/torghut/design-system/v6/51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
    - `docs/torghut/design-system/v6/51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
    - `docs/torghut/design-system/v6/52-torghut-profit-sleeves-segment-scoped-deallocation-and-evidence-decay-2026-03-19.md`
+   - `docs/torghut/design-system/v6/53-torghut-kafka-retention-bootstrap-and-archive-backed-profitability-proof-2026-03-27.md`
+   - `docs/torghut/design-system/v6/54-torghut-research-backed-sleeves-and-this-week-holdout-proof-2026-03-27.md`
    - `docs/torghut/design-system/v6/53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md`
    - `docs/torghut/design-system/v6/53-torghut-capital-leases-and-profit-trial-firebreaks-2026-03-20.md`
    - `docs/torghut/design-system/v6/54-torghut-capital-lease-receipts-and-profit-falsification-ledger-2026-03-20.md`
@@ -94,6 +96,13 @@ If the question is "what should I trust right now?", start here:
 ## Current priority, not historical priority
 
 The current highest-priority work is:
+
+The March 27 profitability-proof contracts are also active operator work for the retained internal-history window:
+
+- convert Kafka-retained recent history into immutable replay bundles and archive-backed profitability proof in
+  `docs/torghut/design-system/v6/53-torghut-kafka-retention-bootstrap-and-archive-backed-profitability-proof-2026-03-27.md`;
+- turn the retained March 16 through March 27 internal window into a frozen selection/holdout sleeve-proof contract in
+  `docs/torghut/design-system/v6/54-torghut-research-backed-sleeves-and-this-week-holdout-proof-2026-03-27.md`.
 
 1. cut Jangar over to shadow-compiled, sealed recovery epochs and enforce backlog-seat ownership before rollout in
    `docs/agents/designs/65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`;
@@ -277,6 +286,8 @@ These are still active contract docs rather than historical snapshots:
 - `docs/torghut/design-system/v6/51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
 - `docs/torghut/design-system/v6/52-torghut-profit-sleeves-segment-scoped-deallocation-and-evidence-decay-2026-03-19.md`
 - `docs/torghut/design-system/v6/51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
+- `docs/torghut/design-system/v6/53-torghut-kafka-retention-bootstrap-and-archive-backed-profitability-proof-2026-03-27.md`
+- `docs/torghut/design-system/v6/54-torghut-research-backed-sleeves-and-this-week-holdout-proof-2026-03-27.md`
 - `docs/torghut/design-system/v6/53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md`
 - `docs/torghut/design-system/v6/53-torghut-capital-leases-and-profit-trial-firebreaks-2026-03-20.md`
 - `docs/torghut/design-system/v6/54-torghut-capital-lease-receipts-and-profit-falsification-ledger-2026-03-20.md`
