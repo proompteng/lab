@@ -96,6 +96,7 @@ from .pipeline_helpers import (
     _optional_decimal,
     _optional_int,
     _price_snapshot_payload,
+    _project_open_orders_onto_positions,
     _resolve_decision_regime_label_with_source,
     _resolve_llm_review_error_reject_reason,
     _resolve_llm_unavailable_reject_reason,
@@ -408,45 +409,90 @@ class TradingPipeline:
         self,
         snapshot_positions: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
+        normalized_positions = _clone_positions(snapshot_positions)
         seed_snapshot = getattr(self.execution_adapter, "seed_positions_snapshot", None)
-        if not callable(seed_snapshot):
-            return _clone_positions(snapshot_positions)
+        if callable(seed_snapshot):
+            try:
+                seed_snapshot(_clone_positions(snapshot_positions))
+            except Exception as exc:
+                logger.warning(
+                    "Failed to seed simulation execution positions account=%s error=%s",
+                    self.account_label,
+                    exc,
+                )
+            else:
+                list_positions = getattr(self.execution_adapter, "list_positions", None)
+                if callable(list_positions):
+                    try:
+                        seeded_positions = list_positions()
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to read simulation execution positions account=%s error=%s",
+                            self.account_label,
+                            exc,
+                        )
+                    else:
+                        if isinstance(seeded_positions, list):
+                            normalized_positions: list[dict[str, Any]] = []
+                            for raw_position in cast(list[Any], seeded_positions):
+                                if not isinstance(raw_position, Mapping):
+                                    continue
+                                normalized_positions.append(
+                                    {
+                                        str(key): value
+                                        for key, value in cast(Mapping[object, Any], raw_position).items()
+                                    }
+                                )
+        projected_open_orders = self._resolve_execution_context_open_orders()
+        if projected_open_orders:
+            projected_count = _project_open_orders_onto_positions(
+                normalized_positions,
+                projected_open_orders,
+            )
+            if projected_count > 0:
+                logger.info(
+                    "Projected open-order exposure into execution context account=%s orders=%s",
+                    self.account_label,
+                    projected_count,
+                )
+        return normalized_positions
+
+    def _resolve_execution_context_open_orders(self) -> list[dict[str, Any]]:
+        list_orders = getattr(self.execution_adapter, "list_orders", None)
+        if not callable(list_orders):
+            return []
         try:
-            seed_snapshot(_clone_positions(snapshot_positions))
+            raw_orders = list_orders(status="open")
+        except TypeError:
+            try:
+                raw_orders = list_orders()
+            except Exception as exc:
+                logger.warning(
+                    "Failed to read execution open orders account=%s error=%s",
+                    self.account_label,
+                    exc,
+                )
+                return []
         except Exception as exc:
             logger.warning(
-                "Failed to seed simulation execution positions account=%s error=%s",
+                "Failed to read execution open orders account=%s error=%s",
                 self.account_label,
                 exc,
             )
-            return _clone_positions(snapshot_positions)
-
-        list_positions = getattr(self.execution_adapter, "list_positions", None)
-        if not callable(list_positions):
-            return _clone_positions(snapshot_positions)
-        try:
-            seeded_positions = list_positions()
-        except Exception as exc:
-            logger.warning(
-                "Failed to read simulation execution positions account=%s error=%s",
-                self.account_label,
-                exc,
-            )
-            return _clone_positions(snapshot_positions)
-        if not isinstance(seeded_positions, list):
-            return _clone_positions(snapshot_positions)
-
-        normalized_positions: list[dict[str, Any]] = []
-        for raw_position in cast(list[Any], seeded_positions):
-            if not isinstance(raw_position, Mapping):
+            return []
+        if not isinstance(raw_orders, list):
+            return []
+        normalized_orders: list[dict[str, Any]] = []
+        for raw_order in cast(list[Any], raw_orders):
+            if not isinstance(raw_order, Mapping):
                 continue
-            normalized_positions.append(
+            normalized_orders.append(
                 {
                     str(key): value
-                    for key, value in cast(Mapping[object, Any], raw_position).items()
+                    for key, value in cast(Mapping[object, Any], raw_order).items()
                 }
             )
-        return normalized_positions
+        return normalized_orders
 
     def _process_batch_signals(
         self,

@@ -104,6 +104,13 @@ What changes in this document is narrower:
 - archive bundles remain the durable proof surface;
 - ClickHouse/Postgres day surfaces remain part of the archived evidence contract rather than being replaced.
 
+This document does **not** require this week's retained-window simulations to start from Kafka.
+
+For the currently retained March 16 through March 27, 2026 window, direct ClickHouse TA replay is the primary
+research/simulation path when the needed day coverage already exists in `torghut.ta_signals` and `torghut.ta_microbars`.
+Kafka matters here as the bounded bootstrap for durable archive creation before retention expiry, not as the mandatory
+entrypoint for every short-window replay.
+
 ## Non-goals
 
 - claiming that the current Torghut sleeve family is already profitable enough;

@@ -10,16 +10,17 @@ metadata:
 data:
   strategies.yaml: |
     strategies:
-      - name: intraday-tsmom-profit-v2
+      - name: intraday-tsmom-profit-v3
         strategy_id: intraday_tsmom_v1@prod
         strategy_type: intraday_tsmom_v1
         version: 1.1.0
-        description: Intraday momentum strategy tuned for higher selectivity, version=1.1.0
+        description: Intraday momentum strategy tuned for higher selectivity and bounded 3x intraday buying power, version=1.1.0
         enabled: true
         base_timeframe: "1Sec"
         universe_type: intraday_tsmom_v1
-        max_notional_per_trade: 2500
-        max_position_pct_equity: 0.08
+        universe_symbols: ["AAPL", "AMAT", "AMD", "AVGO", "GOOG", "INTC", "META", "MSFT", "MU", "NVDA", "PLTR", "SHOP"]
+        max_notional_per_trade: 94770
+        max_position_pct_equity: 3.0
         params:
           bullish_hist_min: "0.04"
           bullish_hist_cap: "0.055"
@@ -31,9 +32,162 @@ data:
           vol_floor: "0"
           vol_ceil: "0.00019"
           low_vol_bonus_threshold: "0.00020"
+          max_spread_bps: "60"
+          entry_start_minute_utc: "880"
           max_price_above_ema12_bps: "0"
           min_price_below_ema12_bps: "2"
           max_price_below_ema12_bps: "28"
+          max_gross_exposure_pct_equity: "3.0"
+          entry_cooldown_seconds: "7200"
+          exit_cooldown_seconds: "0"
+          min_hold_seconds: "0"
+          entry_end_minute_utc: "1180"
+          long_stop_loss_bps: "25"
+          long_stop_loss_spread_bps_multiplier: "0.25"
+          long_stop_loss_volatility_bps_multiplier: "4"
+          long_trailing_stop_activation_profit_bps: "25"
+          long_trailing_stop_drawdown_bps: "18"
+          long_trailing_stop_spread_bps_multiplier: "0.15"
+          long_trailing_stop_volatility_bps_multiplier: "4"
+          require_positive_price_for_signal_exit: "true"
+          min_signal_exit_profit_bps: "8"
+      - name: momentum-pullback-long-v1
+        strategy_id: momentum_pullback_long_v1@research
+        strategy_type: momentum_pullback_long_v1
+        version: 1.0.0
+        description: Research-backed momentum pullback sleeve for liquid equities, version=1.0.0
+        enabled: false
+        base_timeframe: "1Sec"
+        universe_type: momentum_pullback_long_v1
+        universe_symbols: ["AAPL", "AMAT", "AMD", "AVGO", "GOOG", "INTC", "META", "MSFT", "MU", "NVDA", "PLTR", "SHOP"]
+        max_notional_per_trade: 31590
+        max_position_pct_equity: 1.0
+        params:
+          bullish_hist_min: "0.030"
+          bullish_hist_cap: "0.060"
+          min_bull_rsi: "56"
+          max_bull_rsi: "61"
+          vol_floor: "0.00005"
+          vol_ceil: "0.00024"
+          min_price_below_ema12_bps: "3"
+          max_price_below_ema12_bps: "10"
+          max_spread_bps: "4"
+          min_imbalance_pressure: "0.02"
+          exit_macd_hist_max: "-0.004"
+          exit_rsi_max: "47"
+          entry_start_minute_utc: "930"
+          entry_end_minute_utc: "1170"
+          session_flatten_start_minute_utc: "1170"
+          entry_cooldown_seconds: "1800"
+          exit_cooldown_seconds: "180"
+          min_hold_seconds: "180"
+          max_hold_seconds: "1500"
+          max_concurrent_positions: "1"
+          require_positive_price_for_signal_exit: "true"
+      - name: breakout-continuation-long-v1
+        strategy_id: breakout_continuation_long_v1@research
+        strategy_type: breakout_continuation_long_v1
+        version: 1.0.0
+        description: Research-backed breakout continuation sleeve with spread and imbalance confirmation, version=1.0.0
+        enabled: false
+        base_timeframe: "1Sec"
+        universe_type: breakout_continuation_long_v1
+        universe_symbols: ["AAPL", "AMAT", "AMD", "AVGO", "GOOG", "INTC", "META", "MSFT", "MU", "NVDA", "PLTR", "SHOP"]
+        max_notional_per_trade: 14000
+        max_position_pct_equity: 1.0
+        params:
+          bullish_hist_min: "0.015"
+          min_bull_rsi: "60"
+          max_bull_rsi: "68"
+          vol_floor: "0.00004"
+          vol_ceil: "0.00028"
+          min_price_above_ema12_bps: "1"
+          max_price_above_ema12_bps: "8"
+          min_price_above_vwap_bps: "4"
+          max_price_above_vwap_bps: "16"
+          max_spread_bps: "4"
+          min_imbalance_pressure: "0.08"
+          exit_macd_hist_max: "-0.003"
+          entry_start_minute_utc: "900"
+          entry_end_minute_utc: "1170"
+          session_flatten_start_minute_utc: "1170"
+          entry_cooldown_seconds: "1800"
+          exit_cooldown_seconds: "120"
+          min_hold_seconds: "180"
+          max_hold_seconds: "900"
+          max_concurrent_positions: "2"
+          require_positive_price_for_signal_exit: "true"
+      - name: mean-reversion-rebound-long-v1
+        strategy_id: mean_reversion_rebound_long_v1@research
+        strategy_type: mean_reversion_rebound_long_v1
+        version: 1.0.0
+        description: Research-backed intraday rebound sleeve after controlled downside dislocation, version=1.0.0
+        enabled: false
+        base_timeframe: "1Sec"
+        universe_type: mean_reversion_rebound_long_v1
+        universe_symbols: ["AAPL", "AMAT", "AMD", "AVGO", "GOOG", "INTC", "META", "MSFT", "MU", "NVDA", "PLTR", "SHOP"]
+        max_notional_per_trade: 12000
+        max_position_pct_equity: 1.0
+        params:
+          bullish_hist_min: "0.004"
+          bullish_hist_cap: "0.030"
+          min_bull_rsi: "43"
+          max_bull_rsi: "50"
+          vol_floor: "0.00005"
+          vol_ceil: "0.00035"
+          min_price_below_vwap_bps: "15"
+          max_price_below_vwap_bps: "45"
+          min_price_below_ema12_bps: "6"
+          max_price_below_ema12_bps: "24"
+          max_spread_bps: "5"
+          min_imbalance_pressure: "0.06"
+          exit_macd_hist_max: "-0.002"
+          exit_rsi_min: "58"
+          entry_start_minute_utc: "840"
+          entry_end_minute_utc: "1080"
+          session_flatten_start_minute_utc: "1080"
+          entry_cooldown_seconds: "1200"
+          exit_cooldown_seconds: "120"
+          min_hold_seconds: "120"
+          max_hold_seconds: "420"
+          max_concurrent_positions: "1"
+          require_positive_price_for_signal_exit: "true"
+      - name: late-day-continuation-long-v1
+        strategy_id: late_day_continuation_long_v1@research
+        strategy_type: late_day_continuation_long_v1
+        version: 1.0.0
+        description: Research-backed late-day continuation sleeve for strong liquid equities into the close, version=1.0.0
+        enabled: false
+        base_timeframe: "1Sec"
+        universe_type: late_day_continuation_long_v1
+        universe_symbols: ["AAPL", "AMAT", "AMD", "AVGO", "GOOG", "INTC", "META", "MSFT", "MU", "NVDA", "PLTR", "SHOP"]
+        max_notional_per_trade: 14000
+        max_position_pct_equity: 1.0
+        params:
+          bullish_hist_min: "0.008"
+          bullish_hist_cap: "0.045"
+          min_bull_rsi: "58"
+          max_bull_rsi: "70"
+          vol_floor: "0.00005"
+          vol_ceil: "0.00030"
+          min_price_above_ema12_bps: "0"
+          max_price_above_ema12_bps: "12"
+          min_price_above_vwap_bps: "2"
+          max_price_above_vwap_bps: "16"
+          max_spread_bps: "4"
+          min_imbalance_pressure: "0.00"
+          exit_macd_hist_max: "-0.004"
+          exit_rsi_max: "55"
+          entry_start_minute_utc: "1095"
+          entry_end_minute_utc: "1155"
+          session_flatten_start_minute_utc: "1170"
+          min_entry_minutes_before_flatten: "10"
+          entry_cooldown_seconds: "14400"
+          exit_cooldown_seconds: "120"
+          min_hold_seconds: "120"
+          max_hold_seconds: "900"
+          max_concurrent_positions: "1"
+          require_positive_price_for_signal_exit: "true"
   forecast-router-policy.json: |
     {
       "policy_version": "forecast_router_policy_v2",

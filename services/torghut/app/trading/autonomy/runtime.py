@@ -197,7 +197,9 @@ class IntradayTsmomV1Plugin:
         evaluation = evaluate_intraday_tsmom_signal(
             timeframe=fv.timeframe,
             params=ctx.params,
+            event_ts=fv.event_ts,
             price=price,
+            spread=_decimal(fv.values.get('spread')),
             ema12=ema12,
             ema26=ema26,
             macd=macd,

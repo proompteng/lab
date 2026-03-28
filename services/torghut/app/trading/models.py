@@ -71,7 +71,12 @@ class ExecutionRequest(BaseModel):
 def decision_hash(
     decision: StrategyDecision, *, account_label: str | None = None
 ) -> str:
-    """Create an idempotency hash for a strategy decision."""
+    """Create an idempotency hash for the executable order intent.
+
+    The hash intentionally excludes auxiliary telemetry in ``decision.params`` so
+    repeated evaluations of the same order do not produce a different
+    client_order_id just because forecast or runtime audit metadata changed.
+    """
 
     params_payload = {
         "strategy_id": decision.strategy_id,
@@ -84,7 +89,6 @@ def decision_hash(
         "time_in_force": decision.time_in_force,
         "limit_price": str(decision.limit_price) if decision.limit_price is not None else None,
         "stop_price": str(decision.stop_price) if decision.stop_price is not None else None,
-        "params": decision.params,
         "account_label": account_label,
     }
     raw = json.dumps(params_payload, sort_keys=True, separators=(",", ":"), default=str)

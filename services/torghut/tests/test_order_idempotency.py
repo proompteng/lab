@@ -318,6 +318,41 @@ class TestOrderIdempotency(TestCase):
         hash_b = decision_hash(decision, account_label='paper-b')
         self.assertNotEqual(hash_a, hash_b)
 
+    def test_decision_hash_ignores_telemetry_only_params(self) -> None:
+        event_ts = datetime(2026, 2, 10, tzinfo=timezone.utc)
+        decision_a = StrategyDecision(
+            strategy_id='strategy-1',
+            symbol='AAPL',
+            event_ts=event_ts,
+            timeframe='1Min',
+            action='buy',
+            qty=Decimal('1.0'),
+            order_type='market',
+            time_in_force='day',
+            params={
+                'forecast': {'point_forecast': '101.0'},
+                'forecast_audit': {'inference_latency_ms': 114},
+                'strategy_runtime': {'intent_conflicts_total': 0},
+            },
+        )
+        decision_b = StrategyDecision(
+            strategy_id='strategy-1',
+            symbol='AAPL',
+            event_ts=event_ts,
+            timeframe='1Min',
+            action='buy',
+            qty=Decimal('1.0'),
+            order_type='market',
+            time_in_force='day',
+            params={
+                'forecast': {'point_forecast': '101.0'},
+                'forecast_audit': {'inference_latency_ms': 197},
+                'strategy_runtime': {'intent_conflicts_total': 1},
+            },
+        )
+
+        self.assertEqual(decision_hash(decision_a), decision_hash(decision_b))
+
     def test_execution_exists_ignores_unrelated_same_account_execution(self) -> None:
         with self.session_local() as session:
             strategy = Strategy(

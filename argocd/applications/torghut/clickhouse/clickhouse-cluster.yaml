@@ -28,7 +28,7 @@ spec:
             <level>information</level>
           </logger>
 
-          <!-- Bound internal system logs so they cannot starve user-table writes on a 4Gi pod. -->
+          <!-- Bound internal system logs so they cannot starve user-table writes on an 8Gi pod. -->
           <text_log>
             <level>information</level>
             <engine>Engine = MergeTree PARTITION BY event_date ORDER BY event_time TTL event_date + INTERVAL 3 DAY</engine>
@@ -137,10 +137,10 @@ spec:
               resources:
                 requests:
                   cpu: 1
-                  memory: 2Gi
+                  memory: 4Gi
                 limits:
                   cpu: 2
-                  memory: 4Gi
+                  memory: 8Gi
     volumeClaimTemplates:
       - name: chi-data
         spec:

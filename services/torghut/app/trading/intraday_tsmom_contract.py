@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Literal, Mapping
 
@@ -78,15 +79,31 @@ def validate_intraday_tsmom_params(params: Mapping[str, Any]) -> None:
         "vol_floor",
         "vol_ceil",
         "low_vol_bonus_threshold",
+        "max_spread_bps",
+        "entry_start_minute_utc",
+        "entry_end_minute_utc",
         "max_price_above_ema12_bps",
         "min_price_below_ema12_bps",
         "max_price_below_ema12_bps",
         "long_stop_loss_bps",
+        "long_stop_loss_spread_bps_multiplier",
+        "long_stop_loss_volatility_bps_multiplier",
+        "long_trailing_stop_activation_profit_bps",
+        "long_trailing_stop_drawdown_bps",
+        "long_trailing_stop_spread_bps_multiplier",
+        "long_trailing_stop_volatility_bps_multiplier",
     ):
         _validate_optional_decimal_param(
             params=params,
             key=key,
             invalid_error=f"invalid_{key}",
+        )
+    for key in ("entry_start_minute_utc", "entry_end_minute_utc"):
+        _validate_optional_minute_param(
+            params=params,
+            key=key,
+            invalid_error=f"invalid_{key}",
+            out_of_range_error=f"{key}_out_of_range",
         )
     for key in ("min_bull_rsi", "max_bull_rsi", "min_bear_rsi", "max_bear_rsi"):
         _validate_optional_rsi_param(
@@ -182,7 +199,9 @@ def evaluate_intraday_tsmom_signal(
     *,
     timeframe: str | None,
     params: Mapping[str, Any],
+    event_ts: str | datetime | None,
     price: Decimal | None,
+    spread: Decimal | None,
     ema12: Decimal | None,
     ema26: Decimal | None,
     macd: Decimal | None,
@@ -199,18 +218,31 @@ def evaluate_intraday_tsmom_signal(
         or price is None
     ):
         return None
+    if not _within_entry_window(event_ts=event_ts, params=params):
+        return None
 
     thresholds = resolve_intraday_tsmom_thresholds(
         params=params,
         timeframe=timeframe,
     )
     macd_hist = macd - macd_signal
+    spread_bps = _spread_bps(price=price, spread=spread)
     trend_up = ema12 > ema26 and macd > macd_signal
     trend_down = ema12 < ema26 and macd < macd_signal
     vol_ok = _volatility_within_budget(
         vol_realized_w60s,
         floor=thresholds.vol_floor,
         ceil=thresholds.vol_ceil,
+    )
+    max_spread_bps = _optional_decimal_param(
+        params=params,
+        key='max_spread_bps',
+        default=None,
+    )
+    spread_ok = (
+        max_spread_bps is None
+        or spread_bps is None
+        or spread_bps <= max_spread_bps
     )
     price_not_overextended = _price_within_entry_band(
         price=price,
@@ -223,6 +255,7 @@ def evaluate_intraday_tsmom_signal(
     if (
         trend_up
         and vol_ok
+        and spread_ok
         and price_not_overextended
         and macd_hist >= thresholds.bullish_hist_min
         and (
@@ -257,6 +290,7 @@ def evaluate_intraday_tsmom_signal(
     bearish_hist = -macd_hist
     if (
         trend_down
+        and spread_ok
         and bearish_hist >= thresholds.bearish_hist_min
         and _rsi_within_bearish_bounds(
             rsi14,
@@ -357,6 +391,76 @@ def _decimal(value: Any) -> Decimal | None:
         return None
 
 
+def _minute_param(
+    *,
+    params: Mapping[str, Any],
+    key: str,
+) -> int | None:
+    raw_value = params.get(key)
+    if raw_value is None:
+        return None
+    try:
+        resolved = int(str(raw_value))
+    except (TypeError, ValueError):
+        return None
+    if resolved < 0 or resolved >= 24 * 60:
+        return None
+    return resolved
+
+
+def _validate_optional_minute_param(
+    *,
+    params: Mapping[str, Any],
+    key: str,
+    invalid_error: str,
+    out_of_range_error: str,
+) -> None:
+    if key not in params:
+        return
+    raw_value = params.get(key)
+    try:
+        resolved = int(str(raw_value))
+    except (TypeError, ValueError):
+        raise ValueError(invalid_error) from None
+    if resolved < 0 or resolved >= 24 * 60:
+        raise ValueError(out_of_range_error)
+
+
+def _within_entry_window(
+    *,
+    event_ts: str | datetime | None,
+    params: Mapping[str, Any],
+) -> bool:
+    if not event_ts:
+        return True
+    entry_start_minute = _minute_param(
+        params=params,
+        key="entry_start_minute_utc",
+    )
+    entry_end_minute = _minute_param(
+        params=params,
+        key="entry_end_minute_utc",
+    )
+    if entry_start_minute is None and entry_end_minute is None:
+        return True
+    if isinstance(event_ts, datetime):
+        event_dt = event_ts
+    else:
+        try:
+            event_dt = datetime.fromisoformat(event_ts.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+    if event_dt.tzinfo is None:
+        event_dt = event_dt.replace(tzinfo=timezone.utc)
+    event_dt = event_dt.astimezone(timezone.utc)
+    minute_of_day = event_dt.hour * 60 + event_dt.minute
+    if entry_start_minute is not None and minute_of_day < entry_start_minute:
+        return False
+    if entry_end_minute is not None and minute_of_day > entry_end_minute:
+        return False
+    return True
+
+
 def _validate_optional_decimal_param(
     *,
     params: Mapping[str, Any],
@@ -398,6 +502,16 @@ def _volatility_within_budget(
     if ceil is not None and volatility > ceil:
         return False
     return True
+
+
+def _spread_bps(
+    *,
+    price: Decimal,
+    spread: Decimal | None,
+) -> Decimal | None:
+    if spread is None or spread <= 0 or price <= 0:
+        return None
+    return (spread / price) * Decimal('10000')
 
 
 def _rsi_within_bearish_bounds(
