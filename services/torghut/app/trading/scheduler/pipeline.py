@@ -40,6 +40,7 @@ from ..execution_adapters import (
 )
 from ..execution_policy import ExecutionPolicy
 from ..feature_quality import FeatureQualityThresholds, evaluate_feature_batch_quality
+from ..features import extract_executable_price
 from ..firewall import OrderFirewall, OrderFirewallBlocked
 from ..ingest import ClickHouseSignalIngestor, SignalBatch
 from ..lean_lanes import LeanLaneManager
@@ -161,6 +162,8 @@ class TradingPipeline:
         self.account_label = account_label
         self.session_factory = session_factory
         self.price_fetcher = price_fetcher or ClickHousePriceFetcher()
+        if self.decision_engine.price_fetcher is None:
+            self.decision_engine.price_fetcher = self.price_fetcher
         self._snapshot_cache = None
         self._snapshot_cached_at: Optional[datetime] = None
         self.strategy_catalog = strategy_catalog
@@ -547,6 +550,7 @@ class TradingPipeline:
         positions: list[dict[str, Any]],
     ) -> list[StrategyDecision]:
         try:
+            signal = self._ensure_signal_executable_price(signal)
             quote_status = self._signal_quote_quality.assess(signal)
             if not quote_status.valid:
                 self.decision_engine.observe_signal(signal)
@@ -584,6 +588,18 @@ class TradingPipeline:
                 signal.timeframe,
             )
             return []
+
+    def _ensure_signal_executable_price(self, signal: SignalEnvelope) -> SignalEnvelope:
+        if extract_executable_price(signal.payload) is not None:
+            return signal
+        snapshot = self.price_fetcher.fetch_market_snapshot(signal)
+        if snapshot is None or snapshot.price is None:
+            return signal
+        payload = dict(signal.payload)
+        payload.setdefault("price", snapshot.price)
+        if snapshot.spread is not None:
+            payload.setdefault("spread", snapshot.spread)
+        return signal.model_copy(update={"payload": payload})
 
     def _feature_quality_failure_payload(
         self,

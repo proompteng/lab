@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Mapping, cast
+from typing import Any
 
-from .features import extract_executable_price, optional_decimal
+from .features import extract_executable_price, optional_decimal, payload_value
 from .models import SignalEnvelope
 
 DEFAULT_MAX_EXECUTABLE_SPREAD_BPS = Decimal('50')
@@ -103,13 +103,23 @@ def _extract_price(signal: SignalEnvelope) -> Decimal | None:
 
 def _extract_bid(signal: SignalEnvelope) -> Decimal | None:
     return optional_decimal(
-        _payload_value(signal.payload, 'imbalance_bid_px', 'imbalance', 'bid_px')
+        payload_value(
+            signal.payload,
+            'imbalance_bid_px',
+            block='imbalance',
+            nested_key='bid_px',
+        )
     )
 
 
 def _extract_ask(signal: SignalEnvelope) -> Decimal | None:
     return optional_decimal(
-        _payload_value(signal.payload, 'imbalance_ask_px', 'imbalance', 'ask_px')
+        payload_value(
+            signal.payload,
+            'imbalance_ask_px',
+            block='imbalance',
+            nested_key='ask_px',
+        )
     )
 
 
@@ -123,11 +133,11 @@ def _signal_spread_bps(
     spread = _optional_decimal(signal.payload.get('spread'))
     if spread is None:
         spread = _optional_decimal(
-            _payload_value(
+            payload_value(
                 signal.payload,
                 'imbalance_spread',
-                'imbalance',
-                'spread',
+                block='imbalance',
+                nested_key='spread',
             )
         )
     if spread is None:
@@ -152,25 +162,6 @@ def _signal_mid_jump_bps(
 
 def _optional_decimal(value: Any) -> Decimal | None:
     return optional_decimal(value)
-
-
-def _nested(payload: dict[str, Any], block: str, key: str) -> Any:
-    item = payload.get(block)
-    if isinstance(item, dict):
-        return cast(Mapping[str, Any], item).get(key)
-    return None
-
-
-def _payload_value(
-    payload: dict[str, Any],
-    key: str,
-    block: str,
-    nested_key: str,
-) -> Any:
-    direct_value = payload.get(key)
-    if direct_value is not None:
-        return direct_value
-    return _nested(payload, block, nested_key)
 
 
 __all__ = [

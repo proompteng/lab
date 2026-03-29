@@ -132,8 +132,6 @@ spec:
               value: lean
             - name: TRADING_EXECUTION_FALLBACK_ADAPTER
               value: alpaca
-            - name: TRADING_EXECUTION_ADAPTER_POLICY
-              value: all
             - name: TRADING_EXECUTION_PREFER_LIMIT
               value: "true"
             - name: TRADING_EXECUTION_ADVISOR_LIVE_APPLY_ENABLED
