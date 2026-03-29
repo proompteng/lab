@@ -240,6 +240,48 @@ class TestStrategyRuntime(TestCase):
         self.assertEqual(decision.intent.action, "buy")
         self.assertIn("tsmom_trend_up", decision.intent.rationale)
 
+    def test_runtime_decision_metadata_includes_trace_when_enabled(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="intraday-tsmom-trace",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="intraday_tsmom_v1",
+            universe_symbols=["NVDA"],
+            max_position_pct_equity=Decimal("0.02"),
+            max_notional_per_trade=Decimal("2500"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+            symbol="NVDA",
+            timeframe="1Min",
+            seq=7,
+            payload={
+                "price": 140.25,
+                "ema12": 140.40,
+                "ema26": 139.95,
+                "macd": 0.45,
+                "macd_signal": 0.30,
+                "rsi14": 56,
+                "vol_realized_w60s": 0.009,
+            },
+        )
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime(trace_enabled=True)
+
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Min")
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertIsNotNone(decision.trace)
+        metadata = decision.metadata()
+        self.assertIn("strategy_trace", metadata)
+        strategy_trace = metadata["strategy_trace"]
+        assert isinstance(strategy_trace, dict)
+        self.assertEqual(strategy_trace["strategy_id"], str(strategy.id))
+        self.assertTrue(strategy_trace["passed"])
+
     def test_intraday_tsmom_plugin_skips_buy_outside_entry_window(self) -> None:
         strategy = Strategy(
             id=uuid.uuid4(),

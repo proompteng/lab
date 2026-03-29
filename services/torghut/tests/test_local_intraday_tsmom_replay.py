@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest import TestCase
 
 from app.trading.costs import TransactionCostModel
+from app.trading.evaluation_trace import GateTrace, StrategyTrace, ThresholdTrace
 from app.trading.models import SignalEnvelope, StrategyDecision
 from scripts.local_intraday_tsmom_replay import (
     PendingOrder,
@@ -14,9 +15,12 @@ from scripts.local_intraday_tsmom_replay import (
     _SHARED_POSITION_OWNER,
     _apply_filled_decision,
     _apply_order_preferences,
+    _build_near_miss,
+    _init_funnel_stats,
     _parse_signal_row,
     _positions_payload,
     _quote_quality_status,
+    _record_trace_for_funnel,
     _reconcile_pending_order_before_immediate_fill,
     _resolve_pending_fill_price,
     _should_replace_pending_order,
@@ -417,3 +421,87 @@ class TestLocalIntradayTsmomReplay(TestCase):
         assert isinstance(imbalance, dict)
         self.assertEqual(imbalance['bid_sz'], Decimal('1200'))
         self.assertEqual(imbalance['ask_sz'], Decimal('800'))
+
+    def test_record_trace_for_funnel_stops_at_first_failed_gate(self) -> None:
+        funnel = _init_funnel_stats()
+        trace = StrategyTrace(
+            strategy_id='breakout@prod',
+            strategy_type='breakout_continuation_long',
+            symbol='META',
+            event_ts='2026-03-27T17:30:24+00:00',
+            timeframe='1Sec',
+            passed=False,
+            action=None,
+            first_failed_gate='feed_quality',
+            gates=(
+                GateTrace(
+                    gate='structure',
+                    category='structure',
+                    passed=True,
+                    thresholds=(),
+                ),
+                GateTrace(
+                    gate='feed_quality',
+                    category='feed_quality',
+                    passed=False,
+                    thresholds=(
+                        ThresholdTrace(
+                            metric='recent_quote_invalid_ratio',
+                            comparator='max_lte',
+                            value=Decimal('0.20'),
+                            threshold=Decimal('0.10'),
+                            passed=False,
+                            missing_policy='fail_closed',
+                            distance_to_pass=Decimal('0.10'),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        _record_trace_for_funnel(funnel, trace)
+
+        self.assertEqual(funnel['strategy_evaluations'], 1)
+        self.assertEqual(
+            dict(funnel['gate_pass_counts']),
+            {'breakout_continuation_long:structure': 1},
+        )
+
+    def test_build_near_miss_uses_failed_gate_thresholds(self) -> None:
+        trace = StrategyTrace(
+            strategy_id='breakout@prod',
+            strategy_type='breakout_continuation_long',
+            symbol='AAPL',
+            event_ts='2026-03-26T18:07:12+00:00',
+            timeframe='1Sec',
+            passed=False,
+            action=None,
+            first_failed_gate='confirmation',
+            gates=(
+                GateTrace(
+                    gate='confirmation',
+                    category='confirmation',
+                    passed=False,
+                    thresholds=(
+                        ThresholdTrace(
+                            metric='cross_section_continuation_breadth',
+                            comparator='min_gte',
+                            value=Decimal('0.42'),
+                            threshold=Decimal('0.50'),
+                            passed=False,
+                            missing_policy='fail_closed',
+                            distance_to_pass=Decimal('0.08'),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        near_miss = _build_near_miss(trace, trading_day='2026-03-26')
+
+        self.assertIsNotNone(near_miss)
+        assert near_miss is not None
+        self.assertEqual(near_miss.symbol, 'AAPL')
+        self.assertEqual(near_miss.first_failed_gate, 'confirmation')
+        self.assertEqual(near_miss.distance_score, Decimal('0.08'))
+        self.assertEqual(len(near_miss.thresholds), 1)

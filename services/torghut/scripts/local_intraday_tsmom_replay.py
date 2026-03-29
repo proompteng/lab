@@ -27,6 +27,13 @@ from app.strategies.catalog import StrategyCatalogConfig, _compose_strategy_desc
 from app.config import settings
 from app.trading.costs import CostModelInputs, OrderIntent, TransactionCostModel
 from app.trading.decisions import DecisionEngine
+from app.trading.evaluation_trace import (
+    NearMissRecord,
+    ReplayFunnelBucket,
+    ReplayFunnelReport,
+    ReplayTraceRecord,
+    StrategyTrace,
+)
 from app.trading.execution_policy import _near_touch_limit_price
 from app.trading.models import SignalEnvelope, StrategyDecision
 from app.trading.portfolio import allocator_from_settings, sizer_from_settings
@@ -165,6 +172,21 @@ def _parse_args() -> argparse.Namespace:
         '--log-level',
         default=os.environ.get('TORGHUT_REPLAY_LOG_LEVEL', 'INFO'),
         help='Python logging level for replay progress logs.',
+    )
+    parser.add_argument(
+        '--trace-output',
+        type=Path,
+        help='Optional path to write replay trace JSONL.',
+    )
+    parser.add_argument(
+        '--funnel-output',
+        type=Path,
+        help='Optional path to write replay funnel JSON.',
+    )
+    parser.add_argument(
+        '--near-misses-output',
+        type=Path,
+        help='Optional path to write replay near-miss JSON.',
     )
     parser.add_argument('--no-flatten-eod', action='store_true')
     parser.add_argument('--json', action='store_true')
@@ -698,6 +720,75 @@ def _init_day_stats() -> dict[str, Any]:
     }
 
 
+def _init_funnel_stats() -> dict[str, Any]:
+    return {
+        'retained_rows': 0,
+        'runtime_evaluable_rows': 0,
+        'quote_valid_rows': 0,
+        'strategy_evaluations': 0,
+        'gate_pass_counts': defaultdict(int),
+        'decision_count': 0,
+        'filled_count': 0,
+        'closed_trade_count': 0,
+        'gross_pnl': Decimal('0'),
+        'net_pnl': Decimal('0'),
+        'cost_total': Decimal('0'),
+    }
+
+
+def _record_trace_for_funnel(
+    stats: dict[str, Any],
+    trace: StrategyTrace,
+) -> None:
+    stats['strategy_evaluations'] += 1
+    for gate in trace.gates:
+        if not gate.passed:
+            break
+        gate_key = f'{trace.strategy_type}:{gate.gate}'
+        stats['gate_pass_counts'][gate_key] += 1
+
+
+def _build_near_miss(trace: StrategyTrace, *, trading_day: str) -> NearMissRecord | None:
+    if trace.passed or trace.first_failed_gate is None:
+        return None
+    failed_gate = trace.failed_gate()
+    if failed_gate is None:
+        return None
+    failing_thresholds = failed_gate.failing_thresholds()
+    if not failing_thresholds:
+        return None
+    return NearMissRecord(
+        trading_day=trading_day,
+        symbol=trace.symbol,
+        strategy_id=trace.strategy_id,
+        strategy_type=trace.strategy_type,
+        event_ts=trace.event_ts,
+        action=trace.action,
+        first_failed_gate=trace.first_failed_gate,
+        distance_score=trace.distance_score(),
+        thresholds=failing_thresholds,
+    )
+
+
+def _insert_near_miss(
+    near_misses: dict[str, list[NearMissRecord]],
+    record: NearMissRecord,
+    *,
+    limit: int = 20,
+) -> None:
+    bucket = near_misses.setdefault(record.trading_day, [])
+    bucket.append(record)
+    bucket.sort(
+        key=lambda item: (
+            item.distance_score,
+            item.event_ts,
+            item.strategy_id,
+            item.symbol,
+        )
+    )
+    del bucket[limit:]
+
+
 def _decimal_text(value: Decimal) -> str:
     return format(value, 'f')
 
@@ -974,6 +1065,7 @@ def _apply_filled_decision(
     created_at: datetime,
     positions: dict[tuple[str, str], PositionState],
     day_bucket: dict[str, Any],
+    symbol_bucket: dict[str, Any] | None = None,
     cost_model: TransactionCostModel,
     cash: Decimal,
     all_closed_trades: list[ClosedTrade],
@@ -984,6 +1076,9 @@ def _apply_filled_decision(
         fill_cost = _estimate_trade_cost(model=cost_model, decision=decision, signal=signal)
         day_bucket['cost_total'] += fill_cost
         day_bucket['filled_count'] += 1
+        if symbol_bucket is not None:
+            symbol_bucket['cost_total'] += fill_cost
+            symbol_bucket['filled_count'] += 1
         cash -= (fill_price * decision.qty) + fill_cost
         existing = positions.get(position_key)
         if existing is None:
@@ -1018,6 +1113,9 @@ def _apply_filled_decision(
     fill_cost = _estimate_trade_cost(model=cost_model, decision=decision, signal=signal)
     day_bucket['cost_total'] += fill_cost
     day_bucket['filled_count'] += 1
+    if symbol_bucket is not None:
+        symbol_bucket['cost_total'] += fill_cost
+        symbol_bucket['filled_count'] += 1
     sell_qty = min(decision.qty, existing.qty)
     cash += (fill_price * sell_qty) - fill_cost
     entry_cost_allocated = existing.entry_cost_total * (sell_qty / existing.qty)
@@ -1037,6 +1135,10 @@ def _apply_filled_decision(
         positions[position_key] = remaining
     day_bucket['gross_pnl'] += trade.gross_pnl
     day_bucket['net_pnl'] += trade.net_pnl
+    if symbol_bucket is not None:
+        symbol_bucket['gross_pnl'] += trade.gross_pnl
+        symbol_bucket['net_pnl'] += trade.net_pnl
+        symbol_bucket['closed_trade_count'] += 1
     if trade.net_pnl > 0:
         day_bucket['wins'] += 1
     elif trade.net_pnl < 0:
@@ -1050,7 +1152,7 @@ def _apply_filled_decision(
 def run_replay(config: ReplayConfig) -> dict[str, Any]:
     strategies = _load_strategies(config.strategy_configmap_path)
     strategies_by_id = {str(strategy.id): strategy for strategy in strategies}
-    engine = DecisionEngine(price_fetcher=None)
+    engine = DecisionEngine(price_fetcher=None, runtime_trace_enabled=True)
     quote_quality = SignalQuoteQualityTracker(
         policy=QuoteQualityPolicy(
             max_executable_spread_bps=config.max_executable_spread_bps,
@@ -1065,6 +1167,9 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
     last_signals: dict[str, SignalEnvelope] = {}
     cash = config.start_equity
     day_stats: dict[str, dict[str, Any]] = {}
+    funnel_stats: dict[tuple[str, str], dict[str, Any]] = {}
+    trace_records: list[ReplayTraceRecord] = []
+    near_misses: dict[str, list[NearMissRecord]] = {}
     all_closed_trades: list[ClosedTrade] = []
     current_day: date | None = None
     signals_seen = 0
@@ -1085,6 +1190,9 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
     def _active_day_stats(target_day: date) -> dict[str, Any]:
         return day_stats.setdefault(target_day.isoformat(), _init_day_stats())
 
+    def _active_symbol_funnel(target_day: date, symbol: str) -> dict[str, Any]:
+        return funnel_stats.setdefault((target_day.isoformat(), symbol), _init_funnel_stats())
+
     with (
         patch.object(settings, 'trading_strategy_runtime_mode', 'scheduler_v3'),
         patch.object(settings, 'trading_strategy_scheduler_enabled', True),
@@ -1102,6 +1210,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                     _flatten_positions(
                         day=current_day,
                         stats=_active_day_stats(current_day),
+                        funnel_stats=funnel_stats,
                         positions=positions,
                         last_signals=last_signals,
                         last_prices=last_prices,
@@ -1129,6 +1238,8 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
 
             signals_seen += 1
             day_bucket = _active_day_stats(signal_day)
+            symbol_bucket = _active_symbol_funnel(signal_day, signal.symbol)
+            symbol_bucket['retained_rows'] += 1
             quote_status = quote_quality.assess(signal)
             if not quote_status.valid:
                 engine.observe_signal(signal)
@@ -1144,6 +1255,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                 continue
 
             price = _extract_price(signal)
+            symbol_bucket['quote_valid_rows'] += 1
             last_prices[signal.symbol] = price
             last_signals[signal.symbol] = signal
 
@@ -1169,6 +1281,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                     created_at=pending.created_at,
                     positions=positions,
                     day_bucket=day_bucket,
+                    symbol_bucket=symbol_bucket,
                     cost_model=cost_model,
                     cash=cash,
                     all_closed_trades=all_closed_trades,
@@ -1186,6 +1299,13 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                 equity=equity,
                 positions=live_positions,
             )
+            telemetry = engine.consume_runtime_telemetry()
+            symbol_bucket['runtime_evaluable_rows'] += 1
+            for trace in telemetry.traces:
+                _record_trace_for_funnel(symbol_bucket, trace)
+                near_miss = _build_near_miss(trace, trading_day=signal_day.isoformat())
+                if near_miss is not None:
+                    _insert_near_miss(near_misses, near_miss)
             regime_label = _signal_regime_label(signal)
             allocator = allocator_from_settings(equity)
             account = {'equity': str(equity)}
@@ -1212,9 +1332,20 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                     continue
                 executable_decisions.append(sizing_result.decision)
 
+            emitted_strategy_ids = {decision.strategy_id for decision in executable_decisions}
+            fill_status_by_strategy_id: dict[str, str] = {}
+            block_reason_by_strategy_id: dict[str, str] = {}
+            for trace in telemetry.traces:
+                if trace.passed and trace.strategy_id not in emitted_strategy_ids:
+                    block_reason_by_strategy_id[trace.strategy_id] = 'post_runtime_filter_rejected'
+                elif not trace.passed and trace.first_failed_gate is not None:
+                    block_reason_by_strategy_id[trace.strategy_id] = trace.first_failed_gate
+
             for decision in executable_decisions:
                 decision = _apply_order_preferences(decision, signal)
                 _record_decision(day_bucket, decision)
+                decision_symbol_bucket = _active_symbol_funnel(signal_day, decision.symbol)
+                decision_symbol_bucket['decision_count'] += 1
                 if decision.qty <= 0:
                     continue
                 immediate_fill_price = _resolve_pending_fill_price(decision, signal)
@@ -1232,10 +1363,12 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                         created_at=signal.event_ts,
                         positions=positions,
                         day_bucket=day_bucket,
+                        symbol_bucket=decision_symbol_bucket,
                         cost_model=cost_model,
                         cash=cash,
                         all_closed_trades=all_closed_trades,
                     )
+                    fill_status_by_strategy_id[decision.strategy_id] = 'filled'
                     continue
                 pending_key = _position_key(
                     decision.symbol,
@@ -1258,6 +1391,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                             replacement=decision,
                         )
                         _log_decision_queued(decision, signal.event_ts)
+                        fill_status_by_strategy_id[decision.strategy_id] = 'pending'
                     continue
                 pending_orders[pending_key] = PendingOrder(
                     decision=decision,
@@ -1265,6 +1399,19 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                     signal=signal,
                 )
                 _log_decision_queued(decision, signal.event_ts)
+                fill_status_by_strategy_id[decision.strategy_id] = 'pending'
+
+            for trace in telemetry.traces:
+                trace_records.append(
+                    ReplayTraceRecord(
+                        trading_day=signal_day.isoformat(),
+                        strategy_trace=trace,
+                        decision_emitted=trace.strategy_id in emitted_strategy_ids,
+                        fill_status=fill_status_by_strategy_id.get(trace.strategy_id, 'none'),
+                        decision_strategy_id=trace.strategy_id if trace.strategy_id in emitted_strategy_ids else None,
+                        block_reason=block_reason_by_strategy_id.get(trace.strategy_id),
+                    )
+                )
 
             now = time_mod.monotonic()
             if now - last_progress_at >= config.progress_log_interval_seconds:
@@ -1285,6 +1432,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
             _flatten_positions(
                 day=current_day,
                 stats=_active_day_stats(current_day),
+                funnel_stats=funnel_stats,
                 positions=positions,
                 last_signals=last_signals,
                 last_prices=last_prices,
@@ -1312,6 +1460,33 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
     total_cost = sum((item['cost_total'] for item in day_stats.values()), Decimal('0'))
     wins = sum(item['wins'] for item in day_stats.values())
     losses = sum(item['losses'] for item in day_stats.values())
+    funnel_report = ReplayFunnelReport(
+        start_date=config.start_date.isoformat(),
+        end_date=config.end_date.isoformat(),
+        buckets=tuple(
+            ReplayFunnelBucket(
+                trading_day=trading_day,
+                symbol=symbol,
+                retained_rows=int(bucket['retained_rows']),
+                runtime_evaluable_rows=int(bucket['runtime_evaluable_rows']),
+                quote_valid_rows=int(bucket['quote_valid_rows']),
+                strategy_evaluations=int(bucket['strategy_evaluations']),
+                gate_pass_counts=dict(bucket['gate_pass_counts']),
+                decision_count=int(bucket['decision_count']),
+                filled_count=int(bucket['filled_count']),
+                closed_trade_count=int(bucket['closed_trade_count']),
+                gross_pnl=bucket['gross_pnl'],
+                net_pnl=bucket['net_pnl'],
+                cost_total=bucket['cost_total'],
+            )
+            for (trading_day, symbol), bucket in sorted(funnel_stats.items())
+        ),
+    )
+    near_miss_payload = [
+        item.to_payload()
+        for trading_day in sorted(near_misses)
+        for item in near_misses[trading_day]
+    ]
     closed_trade_payload = sorted(
         all_closed_trades,
         key=lambda item: item.net_pnl,
@@ -1330,6 +1505,8 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
         _decimal_text(final_equity),
     )
     return {
+        'start_date': config.start_date.isoformat(),
+        'end_date': config.end_date.isoformat(),
         'start_equity': str(config.start_equity),
         'final_equity': str(final_equity),
         'net_pnl': str(total_net),
@@ -1390,6 +1567,9 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
             }
             for item in list(reversed(closed_trade_payload[-10:]))
         ],
+        'trace': [item.to_payload() for item in trace_records],
+        'funnel': funnel_report.to_payload(),
+        'near_misses': near_miss_payload,
     }
 
 
@@ -1409,6 +1589,7 @@ def _flatten_positions(
     *,
     day: date,
     stats: dict[str, Any],
+    funnel_stats: dict[tuple[str, str], dict[str, Any]],
     positions: dict[tuple[str, str], PositionState],
     last_signals: dict[str, SignalEnvelope],
     last_prices: dict[str, Decimal],
@@ -1465,6 +1646,12 @@ def _flatten_positions(
         stats['net_pnl'] += trade.net_pnl
         stats['cost_total'] += exit_cost
         stats['filled_count'] += 1
+        symbol_bucket = funnel_stats.setdefault((day.isoformat(), symbol), _init_funnel_stats())
+        symbol_bucket['gross_pnl'] += trade.gross_pnl
+        symbol_bucket['net_pnl'] += trade.net_pnl
+        symbol_bucket['cost_total'] += exit_cost
+        symbol_bucket['filled_count'] += 1
+        symbol_bucket['closed_trade_count'] += 1
         if trade.net_pnl > 0:
             stats['wins'] += 1
         elif trade.net_pnl < 0:
@@ -1503,6 +1690,21 @@ def main() -> None:
         max_jump_with_wide_spread_bps=Decimal(str(args.max_jump_with_wide_spread_bps)),
     )
     payload = run_replay(config)
+    if args.trace_output:
+        args.trace_output.write_text(
+            ''.join(json.dumps(item, sort_keys=True) + '\n' for item in payload['trace']),
+            encoding='utf-8',
+        )
+    if args.funnel_output:
+        args.funnel_output.write_text(
+            json.dumps(payload['funnel'], indent=2, sort_keys=True),
+            encoding='utf-8',
+        )
+    if args.near_misses_output:
+        args.near_misses_output.write_text(
+            json.dumps(payload['near_misses'], indent=2, sort_keys=True),
+            encoding='utf-8',
+        )
     if args.json:
         print(json.dumps(payload, sort_keys=True, separators=(',', ':')))
         return

@@ -1,0 +1,28 @@
+schema_version: torghut.replay-frontier-sweep.v1
+family: breakout_continuation
+strategy_name: breakout-continuation-long-v1
+disable_other_strategies: true
+constraints:
+  holdout_target_net_per_day: '250'
+  min_active_holdout_days: 3
+  max_worst_holdout_day_loss: '150'
+  min_profit_factor: '1.5'
+  require_training_decisions: true
+  require_holdout_decisions: true
+parameters:
+  min_cross_section_continuation_rank:
+    - '0.45'
+    - '0.55'
+    - '0.65'
+  min_cross_section_continuation_breadth:
+    - '0.20'
+    - '0.30'
+    - '0.40'
+  min_recent_above_opening_window_close_ratio:
+    - '0.55'
+    - '0.65'
+    - '0.75'
+  min_recent_microprice_bias_bps:
+    - '0.05'
+    - '0.20'
+    - '0.35'

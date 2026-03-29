@@ -172,7 +172,7 @@ def main() -> int:
         folds,
         strategies=strategies,
         signal_source=signal_source,
-        decision_engine=DecisionEngine(),
+        decision_engine=DecisionEngine(runtime_trace_enabled=True),
     )
     write_walk_forward_results(results, args.output)
 
