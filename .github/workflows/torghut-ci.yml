@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -51,12 +53,14 @@ jobs:
         run: uv run --frozen pyright --project pyrightconfig.scripts.json
 
   lint-and-tests:
-    name: Bytecode + unit tests
+    name: Bytecode + pytest + coverage
     needs: pyright
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -82,9 +86,22 @@ jobs:
         working-directory: services/torghut
         run: uv run --frozen python scripts/check_migration_graph.py
 
-      - name: Unit tests
+      - name: Pytest + branch coverage
         working-directory: services/torghut
-        run: uv run --frozen python -m unittest discover -s tests -p "test_*.py"
+        run: >
+          uv run --frozen pytest
+          --cov
+          --cov-branch
+          --cov-report=term-missing
+          --cov-report=xml
+          --cov-fail-under=70
+
+      - name: Changed-file coverage
+        working-directory: services/torghut
+        env:
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+        run: uv run --frozen python scripts/check_diff_coverage.py --coverage-xml coverage.xml --threshold 90
 
   quality-signals:
     name: Quality signals (complexity + security)
@@ -93,6 +110,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5

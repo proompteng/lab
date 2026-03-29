@@ -380,6 +380,7 @@ This pack is positioned as the next architecture layer above:
 46. `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
 47. `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
 48. `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md`
+49. `66-torghut-property-based-testing-coverage-and-lint-hardening-2026-03-28.md`
 
 ## Why This Sequence
 
@@ -426,3 +427,6 @@ This pack is positioned as the next architecture layer above:
 - `46-torghut-probability-and-capital-mesh-for-profitable-autonomy-2026-03-16.md` and
   `47-torghut-quant-plan-merge-contract-and-handoff-implementation-2026-03-16.md` convert the historical discovery stack into
   explicit per-hypothesis and per-lane profitability execution contracts for plan-stage implementation.
+- `66-torghut-property-based-testing-coverage-and-lint-hardening-2026-03-28.md` adds the missing test-quality layer:
+  property-based invariants, state-machine replay/runtime checks, and hard branch-coverage / lint gates for the
+  service's trading core.

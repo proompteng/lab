@@ -71,6 +71,83 @@ The current config follows the upstream Vulture guidance for conservative cleanu
 
 After removing findings, rerun Vulture because additional dead code may become visible once the first layer is gone.
 
+## Pytest, Hypothesis, and coverage
+
+Torghut now uses `pytest` as the canonical test runner. The existing `unittest.TestCase` suite still runs under pytest,
+and new property/stateful tests live under `tests/property/` and `tests/stateful/`.
+
+Install and sync dev tooling:
+
+```bash
+cd services/torghut
+uv sync --frozen --extra dev
+```
+
+Run the full suite with branch coverage:
+
+```bash
+cd services/torghut
+uv run --frozen pytest --cov --cov-branch --cov-report=term-missing --cov-report=xml
+```
+
+Run only property-based tests:
+
+```bash
+cd services/torghut
+uv run --frozen pytest -m property
+```
+
+Run only state-machine tests:
+
+```bash
+cd services/torghut
+uv run --frozen pytest -m stateful
+```
+
+Hypothesis profiles are loaded from `tests/hypothesis_profiles.py`.
+
+- default local profile: `local_debug`
+- CI profile: `ci_fast`
+- deeper state-machine profile: `ci_stateful`
+- nightly/deep profile: `nightly_deep`
+
+Override locally with:
+
+```bash
+cd services/torghut
+TORGHUT_HYPOTHESIS_PROFILE=ci_stateful uv run --frozen pytest -m stateful
+```
+
+Validate changed-file coverage locally after generating `coverage.xml`:
+
+```bash
+cd services/torghut
+uv run --frozen python scripts/check_diff_coverage.py --coverage-xml coverage.xml --threshold 90
+```
+
+Curated mutation-testing entrypoint:
+
+```bash
+cd services/torghut
+uvx --from mutmut mutmut run app.trading.quantity_rules*
+```
+
+Curated CrossHair check for pure helpers:
+
+```bash
+cd services/torghut
+uvx --from crosshair-tool crosshair check --analysis_kind=asserts app/trading/quantity_rules.py
+```
+
+Testing rules for the trading core:
+
+- changes to `app/trading/**` should add or modify tests unless they are comment-only or dead-code removal
+- changes to `quantity_rules.py`, `features.py`, `quote_quality.py`, `session_context.py`, `portfolio.py`,
+  `decisions.py`, `strategy_runtime.py`, or `scripts/local_intraday_tsmom_replay.py` should include at least one
+  property-based or stateful test
+- new global Ruff ignores or Pyright suppressions in trading-core files require explicit justification
+- new property tests should use the centralized strategies in `tests/strategies/` instead of ad hoc payload builders
+
 ## Hypothesis readiness and dependency quorum
 
 - Hypothesis manifests live under `config/trading/hypotheses/` and are loaded at startup from
