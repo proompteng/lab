@@ -24,24 +24,7 @@ spec:
             - /bin/sh
             - -ec
             - |
-              psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
-              DO $$
-              BEGIN
-                IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'zero_data_v2') THEN
-                  CREATE PUBLICATION zero_data_v2;
-                END IF;
-              END
-              $$;
-              ALTER PUBLICATION zero_data_v2 SET TABLE
-                workbooks,
-                sheets,
-                cells,
-                cell_eval,
-                row_metadata,
-                column_metadata,
-                defined_names,
-                cell_styles,
-                cell_number_formats,
-                sheet_style_ranges,
-                sheet_format_ranges;
-              SQL
+              if ! psql "$DATABASE_URL" -Atqc "SELECT 1 FROM pg_publication WHERE pubname = 'zero_data_v2'" | grep -q '^1$'; then
+                psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE PUBLICATION zero_data_v2"
+              fi
+              psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "ALTER PUBLICATION zero_data_v2 SET TABLE workbooks, sheets, cells, cell_eval, row_metadata, column_metadata, defined_names, cell_styles, cell_number_formats, sheet_style_ranges, sheet_format_ranges"
