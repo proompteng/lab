@@ -17,6 +17,7 @@ from scripts.local_intraday_tsmom_replay import (
     _parse_signal_row,
     _positions_payload,
     _quote_quality_status,
+    _reconcile_pending_order_before_immediate_fill,
     _resolve_pending_fill_price,
     _should_replace_pending_order,
 )
@@ -250,6 +251,24 @@ class TestLocalIntradayTsmomReplay(TestCase):
         )
 
         self.assertTrue(should_replace)
+
+    def test_immediate_fill_clears_existing_pending_order_for_same_position_owner(self) -> None:
+        signal = self._signal(bid='523.22', ask='523.28', price='523.25')
+        existing_pending = PendingOrder(
+            decision=self._decision(action='buy', order_type='limit', limit_price='523.10'),
+            created_at=datetime(2026, 3, 27, 17, 29, 55, tzinfo=timezone.utc),
+            signal=signal,
+        )
+        pending_orders = {('META', _SHARED_POSITION_OWNER): existing_pending}
+        immediate_decision = self._decision(action='buy', order_type='limit', limit_price='523.40')
+
+        _reconcile_pending_order_before_immediate_fill(
+            decision=immediate_decision,
+            pending_orders=pending_orders,
+            created_at=signal.event_ts,
+        )
+
+        self.assertNotIn(('META', _SHARED_POSITION_OWNER), pending_orders)
 
     def test_positions_payload_projects_pending_buy_exposure(self) -> None:
         signal = self._signal(bid='523.22', ask='523.28', price='523.25')

@@ -829,6 +829,32 @@ def _should_replace_pending_order(
     return False
 
 
+def _reconcile_pending_order_before_immediate_fill(
+    *,
+    decision: StrategyDecision,
+    pending_orders: dict[tuple[str, str], PendingOrder],
+    created_at: datetime,
+) -> None:
+    pending_key = _position_key(
+        decision.symbol,
+        _decision_position_owner(decision),
+    )
+    existing_pending = pending_orders.pop(pending_key, None)
+    if existing_pending is None:
+        return
+    logger.info(
+        'replay_pending_order_cleared_for_immediate_fill ts=%s symbol=%s existing_order_type=%s existing_limit=%s existing_exit=%s immediate_order_type=%s immediate_limit=%s immediate_exit=%s',
+        created_at.isoformat(),
+        decision.symbol,
+        existing_pending.decision.order_type,
+        existing_pending.decision.limit_price,
+        _decision_exit_reason(existing_pending.decision),
+        decision.order_type,
+        decision.limit_price,
+        _decision_exit_reason(decision),
+    )
+
+
 def _log_pending_order_replaced(
     *,
     created_at: datetime,
@@ -1193,6 +1219,11 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                     continue
                 immediate_fill_price = _resolve_pending_fill_price(decision, signal)
                 if immediate_fill_price is not None:
+                    _reconcile_pending_order_before_immediate_fill(
+                        decision=decision,
+                        pending_orders=pending_orders,
+                        created_at=signal.event_ts,
+                    )
                     cash = _apply_filled_decision(
                         decision=decision,
                         signal=signal,

@@ -888,12 +888,14 @@ def evaluate_breakout_continuation_long(
             )
         )
     )
-    if (
-        _optional_max_threshold(
+    price_below_opening_range_high = (
+        price_vs_opening_range_high_bps is not None
+        and _optional_max_threshold(
             price_vs_opening_range_high_bps,
             exit_price_below_opening_range_high_bps,
         )
-    ) or session_strength_reversal_confirmed:
+    )
+    if price_below_opening_range_high or session_strength_reversal_confirmed:
         return SleeveSignalEvaluation(
             action='sell',
             confidence=Decimal('0.63'),
