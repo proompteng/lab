@@ -478,18 +478,6 @@ class IntentAggregator:
                 chosen_qty = sell_qty - buy_qty
 
             primary = bucket[0]
-            resolution = resolve_quantity_resolution(
-                primary.symbol,
-                action=chosen_action,
-                global_enabled=settings.trading_fractional_equities_enabled,
-                allow_shorts=settings.trading_allow_shorts,
-                requested_qty=chosen_qty,
-            )
-            chosen_qty = quantize_qty_for_symbol(
-                primary.symbol,
-                chosen_qty,
-                fractional_equities_enabled=resolution.fractional_allowed,
-            )
             params = dict(primary.params)
             allocator_meta = dict(_mapping(params.get("allocator")))
             allocator_meta.update(

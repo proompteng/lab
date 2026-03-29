@@ -35,8 +35,54 @@ FEATURE_VECTOR_V3_VALUE_FIELDS = (
     'imbalance_ask_px',
     'imbalance_bid_sz',
     'imbalance_ask_sz',
+    'imbalance_pressure',
     'spread',
     'spread_bps',
+    'vwap_w5m_vs_session_bps',
+    'price_vs_vwap_w5m_bps',
+    'session_open_price',
+    'prev_session_close_price',
+    'session_high_price',
+    'session_low_price',
+    'opening_range_high',
+    'opening_range_low',
+    'opening_window_close_price',
+    'opening_range_width_bps',
+    'session_range_bps',
+    'price_vs_session_open_bps',
+    'price_vs_prev_session_close_bps',
+    'opening_window_return_bps',
+    'opening_window_return_from_prev_close_bps',
+    'price_vs_session_high_bps',
+    'price_vs_session_low_bps',
+    'price_vs_opening_range_high_bps',
+    'price_vs_opening_range_low_bps',
+    'price_vs_opening_window_close_bps',
+    'price_position_in_session_range',
+    'recent_spread_bps_avg',
+    'recent_spread_bps_max',
+    'recent_imbalance_pressure_avg',
+    'recent_quote_invalid_ratio',
+    'recent_quote_jump_bps_avg',
+    'recent_quote_jump_bps_max',
+    'recent_microprice_bias_bps_avg',
+    'cross_section_session_open_rank',
+    'cross_section_prev_session_close_rank',
+    'cross_section_opening_window_return_rank',
+    'cross_section_opening_window_return_from_prev_close_rank',
+    'cross_section_range_position_rank',
+    'cross_section_vwap_w5m_rank',
+    'cross_section_recent_imbalance_rank',
+    'cross_section_positive_session_open_ratio',
+    'cross_section_positive_prev_session_close_ratio',
+    'cross_section_positive_opening_window_return_ratio',
+    'cross_section_positive_opening_window_return_from_prev_close_ratio',
+    'cross_section_above_vwap_w5m_ratio',
+    'cross_section_positive_recent_imbalance_ratio',
+    'cross_section_continuation_breadth',
+    'cross_section_continuation_rank',
+    'cross_section_reversal_rank',
+    'session_minutes_elapsed',
     'signal_quality_flag',
     'hmm_state_posterior',
     'hmm_entropy',
@@ -125,14 +171,21 @@ def extract_rsi(payload: dict[str, Any]) -> Optional[Decimal]:
 
 
 def extract_price(payload: dict[str, Any]) -> Optional[Decimal]:
+    executable_price = extract_executable_price(payload)
+    if executable_price is not None:
+        return executable_price
+
     vwap_price = _extract_price_from_vwap(payload)
     if vwap_price is not None:
         return vwap_price
 
-    direct_price = _extract_price_from_direct_keys(payload)
+    return _extract_price_from_vwap_keys(payload)
+
+
+def extract_executable_price(payload: dict[str, Any]) -> Optional[Decimal]:
+    direct_price = _extract_price_from_trade_keys(payload)
     if direct_price is not None:
         return direct_price
-
     return _extract_price_from_imbalance(payload)
 
 
@@ -150,8 +203,15 @@ def _extract_price_from_vwap(payload: dict[str, Any]) -> Decimal | None:
     return None
 
 
-def _extract_price_from_direct_keys(payload: dict[str, Any]) -> Decimal | None:
-    for key in ('price', 'close', 'c', 'last', 'vwap', 'vwap_session', 'vwap_w5m'):
+def _extract_price_from_trade_keys(payload: dict[str, Any]) -> Decimal | None:
+    for key in ('price', 'close', 'c', 'last'):
+        if key in payload:
+            return optional_decimal(payload.get(key))
+    return None
+
+
+def _extract_price_from_vwap_keys(payload: dict[str, Any]) -> Decimal | None:
+    for key in ('vwap', 'vwap_session', 'vwap_w5m'):
         if key in payload:
             return optional_decimal(payload.get(key))
     return None
@@ -268,17 +328,20 @@ def map_feature_values_v3(signal: SignalEnvelope) -> dict[str, Any]:
     payload = signal.payload or {}
     macd, macd_signal = extract_macd(payload)
     regime_context = resolve_hmm_context(payload)
+    price = extract_price(payload)
+    vwap_session = optional_decimal(payload.get('vwap_session') or _nested(payload, 'vwap', 'session'))
+    vwap_w5m = optional_decimal(payload.get('vwap_w5m') or _nested(payload, 'vwap', 'w5m'))
 
     return {
-        'price': extract_price(payload),
+        'price': price,
         'mid_price': _extract_mid_price(payload),
         'ema12': optional_decimal(payload.get('ema12') or _nested(payload, 'ema', 'ema12')),
         'ema26': optional_decimal(payload.get('ema26') or _nested(payload, 'ema', 'ema26')),
         'macd': macd,
         'macd_signal': macd_signal,
         'macd_hist': optional_decimal(payload.get('macd_hist') or _nested(payload, 'macd', 'hist')),
-        'vwap_session': optional_decimal(payload.get('vwap_session') or _nested(payload, 'vwap', 'session')),
-        'vwap_w5m': optional_decimal(payload.get('vwap_w5m') or _nested(payload, 'vwap', 'w5m')),
+        'vwap_session': vwap_session,
+        'vwap_w5m': vwap_w5m,
         'rsi14': extract_rsi(payload),
         'boll_mid': optional_decimal(payload.get('boll_mid') or _nested(payload, 'boll', 'mid')),
         'boll_upper': optional_decimal(payload.get('boll_upper') or _nested(payload, 'boll', 'upper')),
@@ -289,8 +352,68 @@ def map_feature_values_v3(signal: SignalEnvelope) -> dict[str, Any]:
         'imbalance_ask_px': optional_decimal(payload.get('imbalance_ask_px') or _nested(payload, 'imbalance', 'ask_px')),
         'imbalance_bid_sz': optional_decimal(payload.get('imbalance_bid_sz') or _nested(payload, 'imbalance', 'bid_sz')),
         'imbalance_ask_sz': optional_decimal(payload.get('imbalance_ask_sz') or _nested(payload, 'imbalance', 'ask_sz')),
+        'imbalance_pressure': _imbalance_pressure(payload),
         'spread': optional_decimal(payload.get('spread')),
         'spread_bps': _spread_bps(payload),
+        'vwap_w5m_vs_session_bps': _bps_delta(vwap_w5m, vwap_session),
+        'price_vs_vwap_w5m_bps': _bps_delta(price, vwap_w5m),
+        'session_open_price': optional_decimal(payload.get('session_open_price')),
+        'prev_session_close_price': optional_decimal(payload.get('prev_session_close_price')),
+        'session_high_price': optional_decimal(payload.get('session_high_price')),
+        'session_low_price': optional_decimal(payload.get('session_low_price')),
+        'opening_range_high': optional_decimal(payload.get('opening_range_high')),
+        'opening_range_low': optional_decimal(payload.get('opening_range_low')),
+        'opening_window_close_price': optional_decimal(payload.get('opening_window_close_price')),
+        'opening_range_width_bps': optional_decimal(payload.get('opening_range_width_bps')),
+        'session_range_bps': optional_decimal(payload.get('session_range_bps')),
+        'price_vs_session_open_bps': optional_decimal(payload.get('price_vs_session_open_bps')),
+        'price_vs_prev_session_close_bps': optional_decimal(payload.get('price_vs_prev_session_close_bps')),
+        'opening_window_return_bps': optional_decimal(payload.get('opening_window_return_bps')),
+        'opening_window_return_from_prev_close_bps': optional_decimal(
+            payload.get('opening_window_return_from_prev_close_bps')
+        ),
+        'price_vs_session_high_bps': optional_decimal(payload.get('price_vs_session_high_bps')),
+        'price_vs_session_low_bps': optional_decimal(payload.get('price_vs_session_low_bps')),
+        'price_vs_opening_range_high_bps': optional_decimal(payload.get('price_vs_opening_range_high_bps')),
+        'price_vs_opening_range_low_bps': optional_decimal(payload.get('price_vs_opening_range_low_bps')),
+        'price_vs_opening_window_close_bps': optional_decimal(payload.get('price_vs_opening_window_close_bps')),
+        'price_position_in_session_range': optional_decimal(payload.get('price_position_in_session_range')),
+        'recent_spread_bps_avg': optional_decimal(payload.get('recent_spread_bps_avg')),
+        'recent_spread_bps_max': optional_decimal(payload.get('recent_spread_bps_max')),
+        'recent_imbalance_pressure_avg': optional_decimal(payload.get('recent_imbalance_pressure_avg')),
+        'recent_quote_invalid_ratio': optional_decimal(payload.get('recent_quote_invalid_ratio')),
+        'recent_quote_jump_bps_avg': optional_decimal(payload.get('recent_quote_jump_bps_avg')),
+        'recent_quote_jump_bps_max': optional_decimal(payload.get('recent_quote_jump_bps_max')),
+        'recent_microprice_bias_bps_avg': optional_decimal(payload.get('recent_microprice_bias_bps_avg')),
+        'cross_section_session_open_rank': optional_decimal(payload.get('cross_section_session_open_rank')),
+        'cross_section_prev_session_close_rank': optional_decimal(
+            payload.get('cross_section_prev_session_close_rank')
+        ),
+        'cross_section_opening_window_return_rank': optional_decimal(payload.get('cross_section_opening_window_return_rank')),
+        'cross_section_opening_window_return_from_prev_close_rank': optional_decimal(
+            payload.get('cross_section_opening_window_return_from_prev_close_rank')
+        ),
+        'cross_section_range_position_rank': optional_decimal(payload.get('cross_section_range_position_rank')),
+        'cross_section_vwap_w5m_rank': optional_decimal(payload.get('cross_section_vwap_w5m_rank')),
+        'cross_section_recent_imbalance_rank': optional_decimal(payload.get('cross_section_recent_imbalance_rank')),
+        'cross_section_positive_session_open_ratio': optional_decimal(payload.get('cross_section_positive_session_open_ratio')),
+        'cross_section_positive_prev_session_close_ratio': optional_decimal(
+            payload.get('cross_section_positive_prev_session_close_ratio')
+        ),
+        'cross_section_positive_opening_window_return_ratio': optional_decimal(
+            payload.get('cross_section_positive_opening_window_return_ratio')
+        ),
+        'cross_section_positive_opening_window_return_from_prev_close_ratio': optional_decimal(
+            payload.get('cross_section_positive_opening_window_return_from_prev_close_ratio')
+        ),
+        'cross_section_above_vwap_w5m_ratio': optional_decimal(payload.get('cross_section_above_vwap_w5m_ratio')),
+        'cross_section_positive_recent_imbalance_ratio': optional_decimal(
+            payload.get('cross_section_positive_recent_imbalance_ratio')
+        ),
+        'cross_section_continuation_breadth': optional_decimal(payload.get('cross_section_continuation_breadth')),
+        'cross_section_continuation_rank': optional_decimal(payload.get('cross_section_continuation_rank')),
+        'cross_section_reversal_rank': optional_decimal(payload.get('cross_section_reversal_rank')),
+        'session_minutes_elapsed': _optional_int(payload.get('session_minutes_elapsed')),
         'signal_quality_flag': payload.get('signal_quality_flag'),
         'hmm_state_posterior': regime_context.posterior,
         'hmm_entropy': regime_context.entropy,
@@ -385,11 +508,31 @@ def _extract_mid_price(payload: dict[str, Any]) -> Decimal | None:
 
 
 def _spread_bps(payload: dict[str, Any]) -> Decimal | None:
+    direct_spread_bps = optional_decimal(payload.get('spread_bps'))
+    if direct_spread_bps is not None:
+        return abs(direct_spread_bps)
     spread = optional_decimal(payload.get('spread') or payload.get('imbalance_spread') or _nested(payload, 'imbalance', 'spread'))
     price = extract_price(payload)
     if spread is None or price is None or price <= 0:
         return None
     return (spread / price) * Decimal('10000')
+
+
+def _bps_delta(price: Decimal | None, reference: Decimal | None) -> Decimal | None:
+    if price is None or reference is None or reference == 0:
+        return None
+    return ((price - reference) / reference) * Decimal('10000')
+
+
+def _imbalance_pressure(payload: dict[str, Any]) -> Decimal | None:
+    bid_sz = optional_decimal(payload.get('imbalance_bid_sz') or _nested(payload, 'imbalance', 'bid_sz'))
+    ask_sz = optional_decimal(payload.get('imbalance_ask_sz') or _nested(payload, 'imbalance', 'ask_sz'))
+    if bid_sz is None or ask_sz is None:
+        return None
+    total = bid_sz + ask_sz
+    if total <= 0:
+        return None
+    return (bid_sz - ask_sz) / total
 
 
 def _validate_signal_schema_version(signal: SignalEnvelope) -> None:
@@ -429,6 +572,7 @@ __all__ = [
     'extract_microstructure_features_v1',
     'extract_signal_features',
     'extract_macd',
+    'extract_executable_price',
     'extract_price',
     'extract_rsi',
     'extract_volatility',

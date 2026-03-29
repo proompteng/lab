@@ -85,6 +85,16 @@ def validate_intraday_tsmom_params(params: Mapping[str, Any]) -> None:
         "max_price_above_ema12_bps",
         "min_price_below_ema12_bps",
         "max_price_below_ema12_bps",
+        "min_session_open_drive_bps",
+        "min_session_range_bps",
+        "min_session_range_position",
+        "min_price_vs_vwap_w5m_bps",
+        "max_price_vs_vwap_w5m_bps",
+        "min_price_vs_opening_range_high_bps",
+        "max_price_vs_opening_range_high_bps",
+        "max_recent_spread_bps",
+        "max_recent_spread_bps_max",
+        "min_recent_imbalance_pressure",
         "long_stop_loss_bps",
         "long_stop_loss_spread_bps_multiplier",
         "long_stop_loss_volatility_bps_multiplier",
@@ -208,6 +218,24 @@ def evaluate_intraday_tsmom_signal(
     macd_signal: Decimal | None,
     rsi14: Decimal | None,
     vol_realized_w60s: Decimal | None,
+    price_vs_session_open_bps: Decimal | None = None,
+    price_vs_prev_session_close_bps: Decimal | None = None,
+    opening_window_return_bps: Decimal | None = None,
+    opening_window_return_from_prev_close_bps: Decimal | None = None,
+    session_range_bps: Decimal | None = None,
+    price_position_in_session_range: Decimal | None = None,
+    price_vs_vwap_w5m_bps: Decimal | None = None,
+    price_vs_opening_range_high_bps: Decimal | None = None,
+    recent_spread_bps_avg: Decimal | None = None,
+    recent_spread_bps_max: Decimal | None = None,
+    recent_imbalance_pressure_avg: Decimal | None = None,
+    recent_quote_invalid_ratio: Decimal | None = None,
+    recent_quote_jump_bps_max: Decimal | None = None,
+    recent_microprice_bias_bps_avg: Decimal | None = None,
+    cross_section_opening_window_return_rank: Decimal | None = None,
+    cross_section_opening_window_return_from_prev_close_rank: Decimal | None = None,
+    cross_section_continuation_rank: Decimal | None = None,
+    cross_section_continuation_breadth: Decimal | None = None,
 ) -> IntradayTsmomEvaluation | None:
     if (
         ema12 is None
@@ -244,6 +272,106 @@ def evaluate_intraday_tsmom_signal(
         or spread_bps is None
         or spread_bps <= max_spread_bps
     )
+    min_session_open_drive_bps = _optional_decimal_param(
+        params=params,
+        key='min_session_open_drive_bps',
+        default=None,
+    )
+    min_session_range_bps = _optional_decimal_param(
+        params=params,
+        key='min_session_range_bps',
+        default=None,
+    )
+    min_opening_window_return_bps = _optional_decimal_param(
+        params=params,
+        key='min_opening_window_return_bps',
+        default=None,
+    )
+    min_session_range_position = _optional_decimal_param(
+        params=params,
+        key='min_session_range_position',
+        default=None,
+    )
+    min_price_vs_vwap_w5m_bps = _optional_decimal_param(
+        params=params,
+        key='min_price_vs_vwap_w5m_bps',
+        default=None,
+    )
+    max_price_vs_vwap_w5m_bps = _optional_decimal_param(
+        params=params,
+        key='max_price_vs_vwap_w5m_bps',
+        default=None,
+    )
+    min_price_vs_opening_range_high_bps = _optional_decimal_param(
+        params=params,
+        key='min_price_vs_opening_range_high_bps',
+        default=None,
+    )
+    max_price_vs_opening_range_high_bps = _optional_decimal_param(
+        params=params,
+        key='max_price_vs_opening_range_high_bps',
+        default=None,
+    )
+    max_recent_spread_bps = _optional_decimal_param(
+        params=params,
+        key='max_recent_spread_bps',
+        default=None,
+    )
+    max_recent_spread_bps_max = _optional_decimal_param(
+        params=params,
+        key='max_recent_spread_bps_max',
+        default=None,
+    )
+    min_recent_imbalance_pressure = _optional_decimal_param(
+        params=params,
+        key='min_recent_imbalance_pressure',
+        default=None,
+    )
+    max_recent_quote_invalid_ratio = _optional_decimal_param(
+        params=params,
+        key='max_recent_quote_invalid_ratio',
+        default=None,
+    )
+    max_recent_quote_jump_bps = _optional_decimal_param(
+        params=params,
+        key='max_recent_quote_jump_bps',
+        default=None,
+    )
+    min_recent_microprice_bias_bps = _optional_decimal_param(
+        params=params,
+        key='min_recent_microprice_bias_bps',
+        default=None,
+    )
+    min_cross_section_opening_window_return_rank = _optional_decimal_param(
+        params=params,
+        key='min_cross_section_opening_window_return_rank',
+        default=None,
+    )
+    min_cross_section_continuation_rank = _optional_decimal_param(
+        params=params,
+        key='min_cross_section_continuation_rank',
+        default=None,
+    )
+    min_cross_section_continuation_breadth = _optional_decimal_param(
+        params=params,
+        key='min_cross_section_continuation_breadth',
+        default=None,
+    )
+    effective_price_drive_bps = (
+        price_vs_prev_session_close_bps
+        if price_vs_prev_session_close_bps is not None
+        else price_vs_session_open_bps
+    )
+    effective_opening_window_return_bps = (
+        opening_window_return_from_prev_close_bps
+        if opening_window_return_from_prev_close_bps is not None
+        else opening_window_return_bps
+    )
+    effective_opening_window_return_rank = (
+        cross_section_opening_window_return_from_prev_close_rank
+        if cross_section_opening_window_return_from_prev_close_rank is not None
+        else cross_section_opening_window_return_rank
+    )
     price_not_overextended = _price_within_entry_band(
         price=price,
         ema12=ema12,
@@ -263,6 +391,50 @@ def evaluate_intraday_tsmom_signal(
             or macd_hist <= thresholds.bullish_hist_cap
         )
         and thresholds.min_bull_rsi <= rsi14 <= thresholds.max_bull_rsi
+        and _optional_min_threshold(effective_price_drive_bps, min_session_open_drive_bps)
+        and _optional_min_threshold(
+            effective_opening_window_return_bps,
+            min_opening_window_return_bps,
+        )
+        and _optional_min_threshold(session_range_bps, min_session_range_bps)
+        and _optional_min_threshold(price_position_in_session_range, min_session_range_position)
+        and _optional_min_threshold(price_vs_vwap_w5m_bps, min_price_vs_vwap_w5m_bps)
+        and _optional_max_threshold(price_vs_vwap_w5m_bps, max_price_vs_vwap_w5m_bps)
+        and _optional_min_threshold(
+            price_vs_opening_range_high_bps, min_price_vs_opening_range_high_bps
+        )
+        and _optional_max_threshold(
+            price_vs_opening_range_high_bps, max_price_vs_opening_range_high_bps
+        )
+        and _optional_max_threshold(recent_spread_bps_avg, max_recent_spread_bps)
+        and _optional_max_threshold(recent_spread_bps_max, max_recent_spread_bps_max)
+        and _optional_min_threshold(
+            recent_imbalance_pressure_avg, min_recent_imbalance_pressure
+        )
+        and _optional_max_threshold(
+            recent_quote_invalid_ratio,
+            max_recent_quote_invalid_ratio,
+        )
+        and _optional_max_threshold(
+            recent_quote_jump_bps_max,
+            max_recent_quote_jump_bps,
+        )
+        and _optional_min_threshold(
+            recent_microprice_bias_bps_avg,
+            min_recent_microprice_bias_bps,
+        )
+        and _optional_min_threshold(
+            effective_opening_window_return_rank,
+            min_cross_section_opening_window_return_rank,
+        )
+        and _optional_min_threshold(
+            cross_section_continuation_rank,
+            min_cross_section_continuation_rank,
+        )
+        and _optional_min_threshold(
+            cross_section_continuation_breadth,
+            min_cross_section_continuation_breadth,
+        )
     ):
         confidence = Decimal("0.64")
         if macd_hist >= thresholds.bullish_hist_min * Decimal("2"):
@@ -273,6 +445,26 @@ def evaluate_intraday_tsmom_signal(
             and vol_realized_w60s <= thresholds.low_vol_bonus_threshold
         ):
             confidence += Decimal("0.03")
+        if (
+            effective_opening_window_return_rank is not None
+            and effective_opening_window_return_rank >= Decimal("0.80")
+        ):
+            confidence += Decimal("0.02")
+        if (
+            cross_section_continuation_rank is not None
+            and cross_section_continuation_rank >= Decimal("0.80")
+        ):
+            confidence += Decimal("0.02")
+        if (
+            cross_section_continuation_breadth is not None
+            and cross_section_continuation_breadth >= Decimal("0.55")
+        ):
+            confidence += Decimal("0.02")
+        if (
+            recent_microprice_bias_bps_avg is not None
+            and recent_microprice_bias_bps_avg >= Decimal("0.50")
+        ):
+            confidence += Decimal("0.02")
         if rsi14 >= thresholds.max_bull_rsi:
             confidence += Decimal("0.02")
         return IntradayTsmomEvaluation(
@@ -525,6 +717,28 @@ def _rsi_within_bearish_bounds(
     if max_bear_rsi is not None and rsi14 > max_bear_rsi:
         return False
     return True
+
+
+def _optional_min_threshold(
+    value: Decimal | None,
+    threshold: Decimal | None,
+) -> bool:
+    if threshold is None:
+        return True
+    if value is None:
+        return False
+    return value >= threshold
+
+
+def _optional_max_threshold(
+    value: Decimal | None,
+    threshold: Decimal | None,
+) -> bool:
+    if threshold is None:
+        return True
+    if value is None:
+        return False
+    return value <= threshold
 
 
 __all__ = [

@@ -29,6 +29,18 @@ from app.trading.costs import CostModelInputs, OrderIntent, TransactionCostModel
 from app.trading.decisions import DecisionEngine
 from app.trading.execution_policy import _near_touch_limit_price
 from app.trading.models import SignalEnvelope, StrategyDecision
+from app.trading.portfolio import allocator_from_settings, sizer_from_settings
+from app.trading.quote_quality import (
+    DEFAULT_MAX_EXECUTABLE_SPREAD_BPS,
+    DEFAULT_MAX_JUMP_WITH_WIDE_SPREAD_BPS,
+    DEFAULT_MAX_QUOTE_MID_JUMP_BPS,
+    QuoteQualityPolicy,
+    QuoteQualityStatus,
+    SignalQuoteQualityTracker,
+    assess_signal_quote_quality,
+)
+
+logging.getLogger('alembic').setLevel(logging.WARNING)
 
 logging.getLogger('alembic').setLevel(logging.WARNING)
 
@@ -37,10 +49,6 @@ REGULAR_CLOSE_UTC = time(hour=20, minute=0)
 DEFAULT_CHUNK_MINUTES = 10
 DEFAULT_START_EQUITY = Decimal('31590.02')
 DEFAULT_PROGRESS_LOG_INTERVAL_SECONDS = 15
-DEFAULT_MAX_EXECUTABLE_SPREAD_BPS = Decimal('50')
-DEFAULT_MAX_QUOTE_MID_JUMP_BPS = Decimal('150')
-DEFAULT_MAX_JUMP_WITH_WIDE_SPREAD_BPS = Decimal('25')
-
 logger = logging.getLogger(__name__)
 _SHARED_POSITION_OWNER = '__shared__'
 
@@ -98,14 +106,6 @@ class ClosedTrade:
     gross_pnl: Decimal
     net_pnl: Decimal
     exit_reason: str
-
-
-@dataclass(frozen=True)
-class QuoteQualityStatus:
-    valid: bool
-    reason: str | None = None
-    spread_bps: Decimal | None = None
-    jump_bps: Decimal | None = None
 
 
 def _parse_args() -> argparse.Namespace:
@@ -599,36 +599,15 @@ def _quote_quality_status(
     previous_price: Decimal | None,
     config: ReplayConfig,
 ) -> QuoteQualityStatus:
-    price = _extract_price(signal)
-    bid = _extract_bid(signal)
-    ask = _extract_ask(signal)
-    if price <= 0:
-        return QuoteQualityStatus(valid=False, reason='non_positive_price')
-    if bid is not None and bid <= 0:
-        return QuoteQualityStatus(valid=False, reason='non_positive_bid')
-    if ask is not None and ask <= 0:
-        return QuoteQualityStatus(valid=False, reason='non_positive_ask')
-    if bid is not None and ask is not None and ask < bid:
-        return QuoteQualityStatus(valid=False, reason='crossed_quote')
-
-    spread_bps = _signal_spread_bps(signal=signal, price=price)
-    if spread_bps is not None and spread_bps > config.max_executable_spread_bps:
-        return QuoteQualityStatus(valid=False, reason='spread_bps_exceeded', spread_bps=spread_bps)
-
-    jump_bps = _signal_mid_jump_bps(price=price, reference_price=previous_price)
-    if (
-        jump_bps is not None
-        and jump_bps > config.max_quote_mid_jump_bps
-        and spread_bps is not None
-        and spread_bps > config.max_jump_with_wide_spread_bps
-    ):
-        return QuoteQualityStatus(
-            valid=False,
-            reason='wide_spread_midpoint_jump',
-            spread_bps=spread_bps,
-            jump_bps=jump_bps,
-        )
-    return QuoteQualityStatus(valid=True, spread_bps=spread_bps, jump_bps=jump_bps)
+    return assess_signal_quote_quality(
+        signal=signal,
+        previous_price=previous_price,
+        policy=QuoteQualityPolicy(
+            max_executable_spread_bps=config.max_executable_spread_bps,
+            max_quote_mid_jump_bps=config.max_quote_mid_jump_bps,
+            max_jump_with_wide_spread_bps=config.max_jump_with_wide_spread_bps,
+        ),
+    )
 
 
 def _log_quote_skipped(
@@ -962,7 +941,15 @@ def _close_position(
 
 def run_replay(config: ReplayConfig) -> dict[str, Any]:
     strategies = _load_strategies(config.strategy_configmap_path)
+    strategies_by_id = {str(strategy.id): strategy for strategy in strategies}
     engine = DecisionEngine(price_fetcher=None)
+    quote_quality = SignalQuoteQualityTracker(
+        policy=QuoteQualityPolicy(
+            max_executable_spread_bps=config.max_executable_spread_bps,
+            max_quote_mid_jump_bps=config.max_quote_mid_jump_bps,
+            max_jump_with_wide_spread_bps=config.max_jump_with_wide_spread_bps,
+        )
+    )
     cost_model = TransactionCostModel()
     positions: dict[tuple[str, str], PositionState] = {}
     pending_orders: dict[tuple[str, str], PendingOrder] = {}
@@ -1034,12 +1021,9 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
 
             signals_seen += 1
             day_bucket = _active_day_stats(signal_day)
-            quote_status = _quote_quality_status(
-                signal=signal,
-                previous_price=last_prices.get(signal.symbol),
-                config=config,
-            )
+            quote_status = quote_quality.assess(signal)
             if not quote_status.valid:
+                engine.observe_signal(signal)
                 has_open_position = any(symbol == signal.symbol for symbol, _ in positions)
                 has_pending_order = any(symbol == signal.symbol for symbol, _ in pending_orders)
                 if has_open_position or has_pending_order:
@@ -1138,17 +1122,44 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                 _log_trade_closed(trade)
 
             equity = _position_equity(cash=cash, positions=positions, last_prices=last_prices)
-            decisions = engine.evaluate(
+            live_positions = _positions_payload(
+                positions,
+                last_prices,
+                pending_orders,
+            )
+            raw_decisions = engine.evaluate(
                 signal,
                 strategies,
                 equity=equity,
-                positions=_positions_payload(
-                    positions,
-                    last_prices,
-                    pending_orders,
-                ),
+                positions=live_positions,
             )
-            for decision in decisions:
+            regime_label = _signal_regime_label(signal)
+            allocator = allocator_from_settings(equity)
+            account = {'equity': str(equity)}
+            executable_decisions: list[StrategyDecision] = []
+            for allocation_result in allocator.allocate(
+                raw_decisions,
+                account=account,
+                positions=live_positions,
+                regime_label=regime_label,
+            ):
+                if not allocation_result.approved:
+                    continue
+                decision = allocation_result.decision
+                strategy = strategies_by_id.get(decision.strategy_id)
+                if strategy is None:
+                    executable_decisions.append(decision)
+                    continue
+                sizing_result = sizer_from_settings(strategy, equity).size(
+                    decision,
+                    account=account,
+                    positions=live_positions,
+                )
+                if not sizing_result.approved:
+                    continue
+                executable_decisions.append(sizing_result.decision)
+
+            for decision in executable_decisions:
                 decision = _apply_order_preferences(decision, signal)
                 _record_decision(day_bucket, decision)
                 if decision.qty <= 0:
@@ -1307,6 +1318,18 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
             for item in list(reversed(closed_trade_payload[-10:]))
         ],
     }
+
+
+def _signal_regime_label(signal: SignalEnvelope) -> str | None:
+    payload = signal.payload or {}
+    for key in ('route_regime_label', 'regime_label'):
+        raw = payload.get(key)
+        if raw is None:
+            continue
+        value = str(raw).strip()
+        if value:
+            return value
+    return None
 
 
 def _flatten_positions(

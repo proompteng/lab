@@ -54,6 +54,7 @@ from ..models import SignalEnvelope, StrategyDecision
 from ..order_feed import OrderFeedIngestor
 from ..portfolio import AllocationResult, PortfolioSizingResult, allocator_from_settings, sizer_from_settings
 from ..prices import ClickHousePriceFetcher, MarketSnapshot, PriceFetcher
+from ..quote_quality import QuoteQualityPolicy, SignalQuoteQualityTracker
 from ..quantity_rules import (
     min_qty_for_symbol,
     quantize_qty_for_symbol,
@@ -169,6 +170,13 @@ class TradingPipeline:
         self.lean_lane_manager = LeanLaneManager()
         self.llm_review_engine = llm_review_engine
         self._last_live_submission_gate: dict[str, object] | None = None
+        self._signal_quote_quality = SignalQuoteQualityTracker(
+            policy=QuoteQualityPolicy(
+                max_executable_spread_bps=settings.trading_signal_max_executable_spread_bps,
+                max_quote_mid_jump_bps=settings.trading_signal_max_quote_mid_jump_bps,
+                max_jump_with_wide_spread_bps=settings.trading_signal_max_jump_with_wide_spread_bps,
+            )
+        )
 
     def run_once(self) -> None:
         with self.session_factory() as session:
@@ -539,6 +547,19 @@ class TradingPipeline:
         positions: list[dict[str, Any]],
     ) -> list[StrategyDecision]:
         try:
+            quote_status = self._signal_quote_quality.assess(signal)
+            if not quote_status.valid:
+                self.decision_engine.observe_signal(signal)
+                logger.info(
+                    "Skipping signal due to quote quality account=%s symbol=%s ts=%s reason=%s spread_bps=%s jump_bps=%s",
+                    self.account_label,
+                    signal.symbol,
+                    signal.event_ts.isoformat(),
+                    quote_status.reason or "unknown",
+                    quote_status.spread_bps,
+                    quote_status.jump_bps,
+                )
+                return []
             evaluate_kwargs: dict[str, Any] = {"equity": equity}
             evaluate_signature = inspect.signature(self.decision_engine.evaluate)
             if "positions" in evaluate_signature.parameters:

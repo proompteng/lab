@@ -105,6 +105,28 @@ class TestPortfolioSizing(TestCase):
         self.assertEqual(aggregated[0].decision.qty, Decimal("7"))
         self.assertTrue(aggregated[0].had_conflict)
 
+    def test_intent_aggregator_preserves_fractional_equity_sell_qty(self) -> None:
+        aggregator = IntentAggregator()
+        decisions = [
+            StrategyDecision(
+                strategy_id="s1",
+                symbol="NVDA",
+                event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("147.5843"),
+                order_type="market",
+                time_in_force="day",
+                params={"price": Decimal("177.74")},
+            )
+        ]
+
+        aggregated = aggregator.aggregate(decisions)
+
+        self.assertEqual(len(aggregated), 1)
+        self.assertEqual(aggregated[0].decision.action, "sell")
+        self.assertEqual(aggregated[0].decision.qty, Decimal("147.5843"))
+
     def test_allocator_clips_symbol_concentration_and_records_reason(self) -> None:
         allocator = PortfolioAllocator(
             AllocationConfig(
