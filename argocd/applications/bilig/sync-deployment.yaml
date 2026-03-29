@@ -42,8 +42,6 @@ spec:
                   name: bilig-db-app
                   key: uri
                   optional: true
-            - name: BILIG_ZERO_PUBLICATION
-              value: zero_data_v2
             - name: REDIS_URL
               value: redis://bilig-redis:6379
             - name: SNAPSHOT_BUCKET
