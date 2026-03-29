@@ -53,7 +53,14 @@ spec:
       localeCollate: C
       dataChecksums: true
       postInitApplicationSQL:
-        - CREATE PUBLICATION zero_data FOR TABLES IN SCHEMA public;
+        - |
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'zero_data_v2') THEN
+              CREATE PUBLICATION zero_data_v2;
+            END IF;
+          END
+          $$;
   monitoring:
     customQueriesConfigMap:
       - key: queries

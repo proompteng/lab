@@ -8,6 +8,7 @@ resources:
   - frontend-service.yaml
   - frontend-ingressroute.yaml
   - zero-strip-prefix-middleware.yaml
+  - zero-publication-cutover-job.yaml
   - sync-deployment.yaml
   - sync-service.yaml
   - sync-ingressroute.yaml
@@ -25,7 +26,7 @@ resources:
 images:
   - name: registry.ide-newton.ts.net/lab/bilig-web
     newName: registry.ide-newton.ts.net/lab/bilig-web
-    newTag: ad5fe5ed362afdde729c6af86a94f9b37b487a85
+    newTag: ce889aa6279cd1ac3f488efe1279102f92ed4c06
   - name: registry.ide-newton.ts.net/lab/bilig-sync
     newName: registry.ide-newton.ts.net/lab/bilig-sync
-    newTag: cf982311e006dec5f6e21f01fb4b21443b7ee03f
+    newTag: ce889aa6279cd1ac3f488efe1279102f92ed4c06
