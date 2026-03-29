@@ -167,7 +167,7 @@ def extract_macd(payload: dict[str, Any]) -> tuple[Optional[Decimal], Optional[D
 
 
 def extract_rsi(payload: dict[str, Any]) -> Optional[Decimal]:
-    return optional_decimal(payload.get('rsi14') or payload.get('rsi'))
+    return optional_decimal(payload_value(payload, 'rsi14', nested_key='rsi'))
 
 
 def extract_price(payload: dict[str, Any]) -> Optional[Decimal]:
@@ -252,7 +252,7 @@ def extract_microstructure_features_v1(signal: SignalEnvelope) -> Microstructure
     payload = signal.payload or {}
     spread_bps = optional_decimal(payload.get('spread_bps'))
     if spread_bps is None:
-        spread = optional_decimal(payload.get('spread') or _nested(payload, 'imbalance', 'spread'))
+        spread = optional_decimal(payload_value(payload, 'spread', block='imbalance', nested_key='spread'))
         price = extract_price(payload)
         if spread is not None and price is not None and price > 0:
             spread_bps = (spread / price) * Decimal('10000')
@@ -261,15 +261,22 @@ def extract_microstructure_features_v1(signal: SignalEnvelope) -> Microstructure
 
     depth_top5_usd = optional_decimal(payload.get('depth_top5_usd'))
     if depth_top5_usd is None:
-        depth_top5_usd = optional_decimal(_nested(payload, 'depth', 'top5_usd')) or Decimal('0')
+        depth_top5_usd = optional_decimal(nested_payload_value(payload, 'depth', 'top5_usd')) or Decimal('0')
 
     imbalance = optional_decimal(payload.get('order_flow_imbalance'))
     if imbalance is None:
-        imbalance = optional_decimal(payload.get('imbalance_spread') or _nested(payload, 'imbalance', 'value'))
+        imbalance = optional_decimal(
+            payload_value(payload, 'imbalance_spread', block='imbalance', nested_key='value')
+        )
     order_flow_imbalance = imbalance or Decimal('0')
 
-    latency_ms_estimate = _optional_int(payload.get('latency_ms_estimate') or payload.get('latency_ms')) or 0
-    fill_hazard = optional_decimal(payload.get('fill_hazard') or _nested(payload, 'execution', 'fill_hazard'))
+    latency_ms_estimate = (
+        _optional_int(payload_value(payload, 'latency_ms_estimate', nested_key='latency_ms'))
+        or 0
+    )
+    fill_hazard = optional_decimal(
+        payload_value(payload, 'fill_hazard', block='execution', nested_key='fill_hazard')
+    )
     if fill_hazard is None:
         fill_hazard = optional_decimal(payload.get('signal_quality_flag')) or Decimal('0.5')
 
@@ -329,29 +336,39 @@ def map_feature_values_v3(signal: SignalEnvelope) -> dict[str, Any]:
     macd, macd_signal = extract_macd(payload)
     regime_context = resolve_hmm_context(payload)
     price = extract_price(payload)
-    vwap_session = optional_decimal(payload.get('vwap_session') or _nested(payload, 'vwap', 'session'))
-    vwap_w5m = optional_decimal(payload.get('vwap_w5m') or _nested(payload, 'vwap', 'w5m'))
+    vwap_session = optional_decimal(payload_value(payload, 'vwap_session', block='vwap', nested_key='session'))
+    vwap_w5m = optional_decimal(payload_value(payload, 'vwap_w5m', block='vwap', nested_key='w5m'))
 
     return {
         'price': price,
         'mid_price': _extract_mid_price(payload),
-        'ema12': optional_decimal(payload.get('ema12') or _nested(payload, 'ema', 'ema12')),
-        'ema26': optional_decimal(payload.get('ema26') or _nested(payload, 'ema', 'ema26')),
+        'ema12': optional_decimal(payload_value(payload, 'ema12', block='ema', nested_key='ema12')),
+        'ema26': optional_decimal(payload_value(payload, 'ema26', block='ema', nested_key='ema26')),
         'macd': macd,
         'macd_signal': macd_signal,
-        'macd_hist': optional_decimal(payload.get('macd_hist') or _nested(payload, 'macd', 'hist')),
+        'macd_hist': optional_decimal(payload_value(payload, 'macd_hist', block='macd', nested_key='hist')),
         'vwap_session': vwap_session,
         'vwap_w5m': vwap_w5m,
         'rsi14': extract_rsi(payload),
-        'boll_mid': optional_decimal(payload.get('boll_mid') or _nested(payload, 'boll', 'mid')),
-        'boll_upper': optional_decimal(payload.get('boll_upper') or _nested(payload, 'boll', 'upper')),
-        'boll_lower': optional_decimal(payload.get('boll_lower') or _nested(payload, 'boll', 'lower')),
+        'boll_mid': optional_decimal(payload_value(payload, 'boll_mid', block='boll', nested_key='mid')),
+        'boll_upper': optional_decimal(payload_value(payload, 'boll_upper', block='boll', nested_key='upper')),
+        'boll_lower': optional_decimal(payload_value(payload, 'boll_lower', block='boll', nested_key='lower')),
         'vol_realized_w60s': extract_volatility(payload),
-        'imbalance_spread': optional_decimal(payload.get('imbalance_spread') or _nested(payload, 'imbalance', 'spread')),
-        'imbalance_bid_px': optional_decimal(payload.get('imbalance_bid_px') or _nested(payload, 'imbalance', 'bid_px')),
-        'imbalance_ask_px': optional_decimal(payload.get('imbalance_ask_px') or _nested(payload, 'imbalance', 'ask_px')),
-        'imbalance_bid_sz': optional_decimal(payload.get('imbalance_bid_sz') or _nested(payload, 'imbalance', 'bid_sz')),
-        'imbalance_ask_sz': optional_decimal(payload.get('imbalance_ask_sz') or _nested(payload, 'imbalance', 'ask_sz')),
+        'imbalance_spread': optional_decimal(
+            payload_value(payload, 'imbalance_spread', block='imbalance', nested_key='spread')
+        ),
+        'imbalance_bid_px': optional_decimal(
+            payload_value(payload, 'imbalance_bid_px', block='imbalance', nested_key='bid_px')
+        ),
+        'imbalance_ask_px': optional_decimal(
+            payload_value(payload, 'imbalance_ask_px', block='imbalance', nested_key='ask_px')
+        ),
+        'imbalance_bid_sz': optional_decimal(
+            payload_value(payload, 'imbalance_bid_sz', block='imbalance', nested_key='bid_sz')
+        ),
+        'imbalance_ask_sz': optional_decimal(
+            payload_value(payload, 'imbalance_ask_sz', block='imbalance', nested_key='ask_sz')
+        ),
         'imbalance_pressure': _imbalance_pressure(payload),
         'spread': optional_decimal(payload.get('spread')),
         'spread_bps': _spread_bps(payload),
@@ -482,11 +499,28 @@ def _staleness_ms(event_ts: datetime, ingest_ts: datetime | None) -> int:
     return max(0, int(delta.total_seconds() * 1000))
 
 
-def _nested(payload: dict[str, Any], block: str, key: str) -> Any:
+def nested_payload_value(payload: dict[str, Any], block: str, key: str) -> Any:
     item = payload.get(block)
     if isinstance(item, dict):
         item_map = cast(dict[str, Any], item)
         return item_map.get(key)
+    return None
+
+
+def payload_value(
+    payload: dict[str, Any],
+    key: str,
+    *,
+    block: str | None = None,
+    nested_key: str | None = None,
+) -> Any:
+    direct_value = payload.get(key)
+    if direct_value is not None:
+        return direct_value
+    if block is not None and nested_key is not None:
+        return nested_payload_value(payload, block, nested_key)
+    if nested_key is not None:
+        return payload.get(nested_key)
     return None
 
 
@@ -500,8 +534,8 @@ def _route_regime_label(
 
 
 def _extract_mid_price(payload: dict[str, Any]) -> Decimal | None:
-    bid = optional_decimal(payload.get('imbalance_bid_px') or _nested(payload, 'imbalance', 'bid_px'))
-    ask = optional_decimal(payload.get('imbalance_ask_px') or _nested(payload, 'imbalance', 'ask_px'))
+    bid = optional_decimal(payload_value(payload, 'imbalance_bid_px', block='imbalance', nested_key='bid_px'))
+    ask = optional_decimal(payload_value(payload, 'imbalance_ask_px', block='imbalance', nested_key='ask_px'))
     if bid is None or ask is None:
         return None
     return (bid + ask) / 2
@@ -511,7 +545,11 @@ def _spread_bps(payload: dict[str, Any]) -> Decimal | None:
     direct_spread_bps = optional_decimal(payload.get('spread_bps'))
     if direct_spread_bps is not None:
         return abs(direct_spread_bps)
-    spread = optional_decimal(payload.get('spread') or payload.get('imbalance_spread') or _nested(payload, 'imbalance', 'spread'))
+    spread = optional_decimal(payload_value(payload, 'spread'))
+    if spread is None:
+        spread = optional_decimal(
+            payload_value(payload, 'imbalance_spread', block='imbalance', nested_key='spread')
+        )
     price = extract_price(payload)
     if spread is None or price is None or price <= 0:
         return None
@@ -525,8 +563,8 @@ def _bps_delta(price: Decimal | None, reference: Decimal | None) -> Decimal | No
 
 
 def _imbalance_pressure(payload: dict[str, Any]) -> Decimal | None:
-    bid_sz = optional_decimal(payload.get('imbalance_bid_sz') or _nested(payload, 'imbalance', 'bid_sz'))
-    ask_sz = optional_decimal(payload.get('imbalance_ask_sz') or _nested(payload, 'imbalance', 'ask_sz'))
+    bid_sz = optional_decimal(payload_value(payload, 'imbalance_bid_sz', block='imbalance', nested_key='bid_sz'))
+    ask_sz = optional_decimal(payload_value(payload, 'imbalance_ask_sz', block='imbalance', nested_key='ask_sz'))
     if bid_sz is None or ask_sz is None:
         return None
     total = bid_sz + ask_sz
@@ -579,6 +617,8 @@ __all__ = [
     'map_feature_values_v3',
     'normalize_feature_vector_v3',
     'optional_decimal',
+    'payload_value',
     'signal_declares_compatible_schema',
+    'nested_payload_value',
     'validate_declared_features',
 ]

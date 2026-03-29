@@ -9,7 +9,6 @@ from app import config
 from app.trading.execution_adapters import (
     LeanExecutionAdapter,
     SimulationExecutionAdapter,
-    adapter_enabled_for_symbol,
     build_execution_adapter,
 )
 
@@ -530,22 +529,6 @@ class TestExecutionAdapters(TestCase):
         self.assertEqual(captured_kwargs.get('sasl_mechanism'), 'SCRAM-SHA-512')
         self.assertEqual(captured_kwargs.get('sasl_plain_username'), 'user')
         self.assertEqual(captured_kwargs.get('sasl_plain_password'), 'secret')
-
-    def test_adapter_enabled_for_symbol_true_for_simulation(self) -> None:
-        original_sim_enabled = config.settings.trading_simulation_enabled
-        try:
-            config.settings.trading_simulation_enabled = True
-            self.assertTrue(adapter_enabled_for_symbol('AAPL'))
-        finally:
-            config.settings.trading_simulation_enabled = original_sim_enabled
-
-    def test_adapter_enabled_for_symbol_false_without_simulation(self) -> None:
-        original_sim_enabled = config.settings.trading_simulation_enabled
-        try:
-            config.settings.trading_simulation_enabled = False
-            self.assertFalse(adapter_enabled_for_symbol('AAPL'))
-        finally:
-            config.settings.trading_simulation_enabled = original_sim_enabled
 
     def test_lean_submit_includes_correlation_and_idempotency_audit_fields(self) -> None:
         class CapturingLeanAdapter(LeanExecutionAdapter):

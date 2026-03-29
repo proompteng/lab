@@ -107,6 +107,43 @@ class TestFeatureContractV3(TestCase):
         self.assertEqual(fv.values['imbalance_spread'], Decimal('0.03'))
         self.assertEqual(fv.values['staleness_ms'], 2000)
 
+    def test_normalization_preserves_zero_valued_top_level_market_fields(self) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+            symbol='AAPL',
+            timeframe='1Min',
+            payload={
+                'macd': {'macd': '0.4', 'signal': '0.2', 'hist': '0'},
+                'rsi14': '0',
+                'price': '100',
+                'spread': '0',
+                'imbalance_spread': '0',
+                'imbalance_bid_px': '99',
+                'imbalance_ask_px': '101',
+                'imbalance_bid_sz': '0',
+                'imbalance_ask_sz': '10',
+                'imbalance': {
+                    'spread': '0.5',
+                    'bid_px': '98',
+                    'ask_px': '102',
+                    'bid_sz': '5',
+                    'ask_sz': '5',
+                },
+            },
+            seq=4,
+            source='fixture',
+        )
+
+        fv = normalize_feature_vector_v3(signal)
+        self.assertEqual(fv.values['rsi14'], Decimal('0'))
+        self.assertEqual(fv.values['macd_hist'], Decimal('0'))
+        self.assertEqual(fv.values['spread'], Decimal('0'))
+        self.assertEqual(fv.values['spread_bps'], Decimal('0'))
+        self.assertEqual(fv.values['imbalance_spread'], Decimal('0'))
+        self.assertEqual(fv.values['imbalance_bid_sz'], Decimal('0'))
+        self.assertEqual(fv.values['imbalance_ask_sz'], Decimal('10'))
+        self.assertEqual(fv.values['imbalance_pressure'], Decimal('-1'))
+
     def test_normalization_maps_session_context_and_derived_vwap_fields(self) -> None:
         signal = SignalEnvelope(
             event_ts=datetime(2026, 3, 24, 15, 5, tzinfo=timezone.utc),

@@ -16,7 +16,7 @@ from ...observability import capture_posthog_event
 from ...strategies import StrategyCatalog
 from ..decisions import DecisionEngine
 from ..execution import OrderExecutor
-from ..execution_adapters import build_execution_adapter, build_simple_execution_adapter
+from ..execution_adapters import build_execution_adapter
 from ..firewall import OrderFirewall
 from ..ingest import ClickHouseSignalIngestor
 from ..llm.dspy_programs.runtime import DSPyReviewRuntime, DSPyRuntimeUnsupportedStateError
@@ -268,9 +268,8 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
         order_firewall = OrderFirewall(alpaca_client)
         pipeline_cls: type[TradingPipeline] = TradingPipeline
         if settings.trading_pipeline_mode == "simple":
-            execution_adapter = build_simple_execution_adapter(
-                alpaca_client=alpaca_client,
-                order_firewall=order_firewall,
+            execution_adapter = build_execution_adapter(
+                alpaca_client=alpaca_client, order_firewall=order_firewall
             )
             pipeline_cls = SimpleTradingPipeline
         else:

@@ -160,6 +160,8 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertFalse(_manifest_bool(env, "TRADING_KILL_SWITCH_ENABLED"))
         self.assertFalse(_manifest_bool(env, "TRADING_EMERGENCY_STOP_ENABLED"))
         self.assertNotIn("TRADING_EXECUTION_ADAPTER_POLICY", env)
+        self.assertNotIn("TRADING_EXECUTION_ADAPTER", env)
+        self.assertNotIn("TRADING_EXECUTION_FALLBACK_ADAPTER", env)
 
     def test_manifest_rollout_toggles_disable_execution_advisor(self) -> None:
         knative_env = _load_torghut_knative_env()

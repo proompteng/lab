@@ -224,6 +224,7 @@ def evaluate_breakout_continuation_long(
     cross_section_opening_window_return_from_prev_close_rank: Decimal | None,
     cross_section_continuation_rank: Decimal | None,
 ) -> SleeveSignalEvaluation | None:
+    del cross_section_prev_session_close_rank
     if (
         price is None
         or ema12 is None
@@ -845,6 +846,7 @@ def evaluate_late_day_continuation_long(
     cross_section_opening_window_return_from_prev_close_rank: Decimal | None,
     cross_section_continuation_rank: Decimal | None,
 ) -> SleeveSignalEvaluation | None:
+    del cross_section_prev_session_close_rank
     if (
         price is None
         or ema12 is None

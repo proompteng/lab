@@ -1044,29 +1044,6 @@ def build_execution_adapter(
     return alpaca_adapter
 
 
-def build_simple_execution_adapter(
-    *,
-    alpaca_client: TorghutAlpacaClient,
-    order_firewall: OrderFirewall,
-) -> ExecutionAdapter:
-    """Build the direct-submit adapter used by the simple execution lane."""
-
-    simulation_adapter = _build_simulation_execution_adapter()
-    if simulation_adapter is not None:
-        return simulation_adapter
-    return AlpacaExecutionAdapter(firewall=order_firewall, read_client=alpaca_client)
-
-
-def adapter_enabled_for_symbol(symbol: str, *, allowlist: set[str] | None = None) -> bool:
-    """Return whether LEAN should be used for execution routing."""
-
-    _ = (symbol, allowlist)
-
-    if settings.trading_simulation_enabled:
-        return True
-    return False
-
-
 def _build_simulation_execution_adapter() -> SimulationExecutionAdapter | None:
     if not settings.trading_simulation_enabled:
         return None
@@ -1286,5 +1263,4 @@ __all__ = [
     'SimulationExecutionAdapter',
     'LeanExecutionAdapter',
     'build_execution_adapter',
-    'adapter_enabled_for_symbol',
 ]

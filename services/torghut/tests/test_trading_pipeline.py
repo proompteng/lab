@@ -287,10 +287,6 @@ class SellInventoryConflictRetryClient(FakeAlpacaClient):
         return True
 
 
-class FakeLeanAdapter(FakeAlpacaClient):
-    name = "lean"
-
-
 class FakeLLMReviewEngine:
     def __init__(
         self,
@@ -956,44 +952,66 @@ class TestTradingPipeline(TestCase):
 
         self.assertEqual(reason, "shorting_not_allowed_for_asset")
 
-    def test_execution_routing_uses_supplied_adapter_for_all_symbols(self) -> None:
+    def test_execution_routing_uses_order_firewall_for_non_simulation_adapter(
+        self,
+    ) -> None:
         alpaca_client = FakeAlpacaClient()
-        lean_adapter = FakeLeanAdapter()
-        with patch(
-            "app.trading.scheduler.pipeline.adapter_enabled_for_symbol",
-            return_value=True,
-        ):
-            pipeline = TradingPipeline(
-                alpaca_client=alpaca_client,
-                order_firewall=OrderFirewall(alpaca_client),
-                ingestor=FakeIngestor([]),
-                decision_engine=DecisionEngine(),
-                risk_engine=RiskEngine(),
-                executor=OrderExecutor(),
-                execution_adapter=lean_adapter,
-                reconciler=Reconciler(),
-                universe_resolver=UniverseResolver(),
-                state=TradingState(),
-                account_label="paper",
-                session_factory=self.session_local,
-            )
+        pipeline = TradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
 
-            self.assertIs(
-                pipeline._execution_client_for_symbol(
-                    "MSFT", symbol_allowlist={"MSFT"}
-                ),
-                lean_adapter,
-            )
-            self.assertIs(
-                pipeline._execution_client_for_symbol(
-                    "AAPL", symbol_allowlist={"MSFT"}
-                ),
-                lean_adapter,
-            )
-            self.assertIs(
-                pipeline._execution_client_for_symbol("MSFT"),
-                lean_adapter,
-            )
+        self.assertIs(
+            pipeline._execution_client_for_symbol("MSFT"),
+            pipeline.order_firewall,
+        )
+        self.assertIs(
+            pipeline._execution_client_for_symbol("AAPL"),
+            pipeline.order_firewall,
+        )
+
+    def test_execution_routing_uses_simulation_adapter_when_active(self) -> None:
+        alpaca_client = FakeAlpacaClient()
+        execution_adapter = SimulationExecutionAdapter(
+            bootstrap_servers=None,
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+            topic="torghut.sim.trade-updates.v1",
+            account_label="paper",
+            simulation_run_id="sim-route",
+            dataset_id="dataset-route",
+        )
+        pipeline = TradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=execution_adapter,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+
+        self.assertIs(
+            pipeline._execution_client_for_symbol("MSFT"),
+            execution_adapter,
+        )
 
     def test_pipeline_rejects_batch_when_feature_quality_gate_fails(self) -> None:
         from app import config
@@ -8306,9 +8324,6 @@ class TestTradingPipeline(TestCase):
             ), patch(
                 "app.trading.scheduler.pipeline.load_quant_evidence_status",
                 return_value=self._healthy_live_quant_status(),
-            ), patch(
-                "app.trading.scheduler.pipeline.adapter_enabled_for_symbol",
-                return_value=True,
             ), patch(
                 "app.trading.scheduler.pipeline.trading_now",
                 return_value=signal.event_ts,

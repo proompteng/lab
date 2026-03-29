@@ -52,6 +52,25 @@ Optional migration-lineage controls:
 - Remove the runtime override from GitOps after merge migrations collapse the graph back to the tolerated branch count;
   keep the feature flag default disabled outside explicit rollout windows.
 
+## Dead-code audit (Vulture)
+
+Run Vulture from the Torghut service root so it picks up the checked-in `[tool.vulture]` config in
+[`pyproject.toml`](/Users/gregkonush/.codex/worktrees/3348/lab/services/torghut/pyproject.toml):
+
+```bash
+cd services/torghut
+uvx --from vulture vulture --config pyproject.toml
+```
+
+The current config follows the upstream Vulture guidance for conservative cleanup:
+
+- scan `app` and `scripts`
+- exclude test, virtualenv, and migration paths
+- only report `100%` confidence findings
+- sort by size so larger dead blocks are easier to review first
+
+After removing findings, rerun Vulture because additional dead code may become visible once the first layer is gone.
+
 ## Hypothesis readiness and dependency quorum
 
 - Hypothesis manifests live under `config/trading/hypotheses/` and are loaded at startup from

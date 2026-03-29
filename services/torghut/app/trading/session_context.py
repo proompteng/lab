@@ -6,9 +6,9 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
-from typing import Any, Mapping, cast
+from typing import Any
 
-from .features import extract_price, optional_decimal
+from .features import extract_price, nested_payload_value, optional_decimal, payload_value
 from .models import SignalEnvelope
 from .quote_quality import QuoteQualityPolicy, assess_signal_quote_quality
 
@@ -25,11 +25,11 @@ def _extract_price(payload: dict[str, Any]) -> Decimal | None:
 def _extract_spread_bps(payload: dict[str, Any], price: Decimal | None) -> Decimal | None:
     if price is None or price <= 0:
         return None
-    spread_value = _payload_value(payload, 'spread')
+    spread_value = payload_value(payload, 'spread')
     if spread_value is None:
-        spread_value = _payload_value(payload, 'imbalance_spread')
+        spread_value = payload_value(payload, 'imbalance_spread')
     if spread_value is None:
-        spread_value = _nested(payload, 'imbalance', 'spread')
+        spread_value = nested_payload_value(payload, 'imbalance', 'spread')
     spread = optional_decimal(spread_value)
     if spread is None:
         return None
@@ -38,10 +38,10 @@ def _extract_spread_bps(payload: dict[str, Any], price: Decimal | None) -> Decim
 
 def _extract_imbalance_pressure(payload: dict[str, Any]) -> Decimal | None:
     bid_sz = optional_decimal(
-        _payload_value(payload, 'imbalance_bid_sz', 'imbalance', 'bid_sz')
+        payload_value(payload, 'imbalance_bid_sz', block='imbalance', nested_key='bid_sz')
     )
     ask_sz = optional_decimal(
-        _payload_value(payload, 'imbalance_ask_sz', 'imbalance', 'ask_sz')
+        payload_value(payload, 'imbalance_ask_sz', block='imbalance', nested_key='ask_sz')
     )
     if bid_sz is None or ask_sz is None:
         return None
@@ -53,16 +53,16 @@ def _extract_imbalance_pressure(payload: dict[str, Any]) -> Decimal | None:
 
 def _extract_microprice_bias_bps(payload: dict[str, Any]) -> Decimal | None:
     bid_px = optional_decimal(
-        _payload_value(payload, 'imbalance_bid_px', 'imbalance', 'bid_px')
+        payload_value(payload, 'imbalance_bid_px', block='imbalance', nested_key='bid_px')
     )
     ask_px = optional_decimal(
-        _payload_value(payload, 'imbalance_ask_px', 'imbalance', 'ask_px')
+        payload_value(payload, 'imbalance_ask_px', block='imbalance', nested_key='ask_px')
     )
     bid_sz = optional_decimal(
-        _payload_value(payload, 'imbalance_bid_sz', 'imbalance', 'bid_sz')
+        payload_value(payload, 'imbalance_bid_sz', block='imbalance', nested_key='bid_sz')
     )
     ask_sz = optional_decimal(
-        _payload_value(payload, 'imbalance_ask_sz', 'imbalance', 'ask_sz')
+        payload_value(payload, 'imbalance_ask_sz', block='imbalance', nested_key='ask_sz')
     )
     if (
         bid_px is None
@@ -81,28 +81,6 @@ def _extract_microprice_bias_bps(payload: dict[str, Any]) -> Decimal | None:
         return None
     microprice = ((ask_px * bid_sz) + (bid_px * ask_sz)) / total_size
     return ((microprice - mid_price) / mid_price) * Decimal('10000')
-
-
-def _nested(payload: dict[str, Any], block: str, key: str) -> Any:
-    item = payload.get(block)
-    if isinstance(item, dict):
-        return cast(Mapping[str, Any], item).get(key)
-    return None
-
-
-def _payload_value(
-    payload: dict[str, Any],
-    key: str,
-    block: str | None = None,
-    nested_key: str | None = None,
-) -> Any:
-    direct_value = payload.get(key)
-    if direct_value is not None:
-        return direct_value
-    if block is None or nested_key is None:
-        return None
-    return _nested(payload, block, nested_key)
-
 
 def _bps_delta(price: Decimal | None, reference: Decimal | None) -> Decimal | None:
     if price is None or reference is None or reference == 0:
@@ -290,7 +268,7 @@ class SessionContextTracker:
             position_in_range = (price - state.session_low_price) / session_range
 
         vwap_w5m = optional_decimal(
-            _payload_value(payload, 'vwap_w5m', 'vwap', 'w5m')
+            payload_value(payload, 'vwap_w5m', block='vwap', nested_key='w5m')
         )
         opening_range_width_bps = _bps_delta(state.opening_range_high, state.opening_range_low)
         session_range_bps = _bps_delta(state.session_high_price, state.session_low_price)
