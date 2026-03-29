@@ -96,3 +96,34 @@ def test_session_context_series_preserves_range_and_ratio_invariants(signals: li
             if ratio is not None:
                 assert Decimal('0') <= ratio <= Decimal('1')
         assert payload['session_minutes_elapsed'] >= 0
+
+
+@given(invalid_price=positive_prices(), valid_price=positive_prices())
+def test_first_invalid_regular_quote_still_seeds_quote_instability_features(
+    invalid_price: Decimal,
+    valid_price: Decimal,
+) -> None:
+    tracker = SessionContextTracker()
+
+    invalid_payload = tracker.enrich_signal_payload(
+        _session_signal(
+            event_ts=datetime(2026, 3, 25, 13, 30, 5, tzinfo=timezone.utc),
+            price=invalid_price,
+            spread=max(Decimal('0.01'), invalid_price * Decimal('0.01')),
+            bid_sz=Decimal('4000'),
+            ask_sz=Decimal('3800'),
+        )
+    )
+    valid_payload = tracker.enrich_signal_payload(
+        _session_signal(
+            event_ts=datetime(2026, 3, 25, 13, 31, 0, tzinfo=timezone.utc),
+            price=valid_price,
+            spread=max(Decimal('0.0001'), valid_price * Decimal('0.0001')),
+            bid_sz=Decimal('4200'),
+            ask_sz=Decimal('3900'),
+        )
+    )
+
+    assert invalid_payload['recent_quote_invalid_ratio'] == Decimal('1')
+    assert valid_payload['recent_quote_invalid_ratio'] == Decimal('0.5')
+    assert valid_payload['session_open_price'] == valid_price

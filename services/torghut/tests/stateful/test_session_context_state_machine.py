@@ -89,7 +89,7 @@ class SessionContextStateMachine(RuleBasedStateMachine):
         self.closed_today = False
         self.last_payload = None
 
-    @precondition(lambda self: not self.opened_today and not self.closed_today)
+    @precondition(lambda self: not self.opened_today and not self.closed_today and self.last_payload is None)
     @rule(price=positive_prices(), spread=non_negative_spreads(), bid_sz=size_decimals(), ask_sz=size_decimals())
     def premarket_tick(self, price: Decimal, spread: Decimal, bid_sz: Decimal, ask_sz: Decimal) -> None:
         payload = self.tracker.enrich_signal_payload(
@@ -122,6 +122,10 @@ class SessionContextStateMachine(RuleBasedStateMachine):
         )
         self.last_payload = payload
         if 'session_open_price' not in payload:
+            assert not self.opened_today
+            return
+        state = self.tracker._state_by_symbol['META']
+        if state.last_valid_quote_price is None:
             assert not self.opened_today
             return
         if not self.opened_today:
@@ -162,6 +166,10 @@ class SessionContextStateMachine(RuleBasedStateMachine):
         )
         self.last_payload = payload
         if 'session_open_price' not in payload:
+            return
+        state = self.tracker._state_by_symbol['META']
+        if state.last_valid_quote_price is None:
+            assert not self.opened_today
             return
         assert payload['session_open_price'] == self.expected_open_price
 

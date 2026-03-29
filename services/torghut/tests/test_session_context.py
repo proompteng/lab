@@ -146,7 +146,7 @@ class TestSessionContextTracker(TestCase):
         self.assertEqual(open_payload['opening_range_high'], Decimal('100.00'))
         self.assertEqual(open_payload['opening_window_close_price'], Decimal('100.00'))
 
-    def test_invalid_regular_quote_does_not_anchor_session_until_first_valid_quote(self) -> None:
+    def test_invalid_regular_quote_initializes_guardrails_and_reanchors_on_first_valid_quote(self) -> None:
         tracker = SessionContextTracker()
 
         invalid_open_payload = tracker.enrich_signal_payload(
@@ -168,10 +168,12 @@ class TestSessionContextTracker(TestCase):
             )
         )
 
-        self.assertNotIn('session_open_price', invalid_open_payload)
+        self.assertEqual(invalid_open_payload['session_open_price'], Decimal('100.00'))
+        self.assertEqual(invalid_open_payload['recent_quote_invalid_ratio'], Decimal('1'))
         self.assertEqual(valid_open_payload['session_open_price'], Decimal('100.10'))
         self.assertEqual(valid_open_payload['opening_range_high'], Decimal('100.10'))
         self.assertEqual(valid_open_payload['session_high_price'], Decimal('100.10'))
+        self.assertEqual(valid_open_payload['recent_quote_invalid_ratio'], Decimal('0.5'))
 
     def test_invalid_quote_does_not_poison_session_high_or_opening_range(self) -> None:
         tracker = SessionContextTracker()

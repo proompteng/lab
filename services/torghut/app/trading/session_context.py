@@ -228,11 +228,6 @@ class SessionContextTracker:
                 if previous_close is not None:
                     payload['prev_session_close_price'] = previous_close
                 return payload
-            if not quote_quality.valid:
-                previous_close = self._last_session_close_by_symbol.get(symbol)
-                if previous_close is not None:
-                    payload['prev_session_close_price'] = previous_close
-                return payload
             state = _SymbolSessionState(
                 session_day=session_day,
                 session_open_price=price,
@@ -267,12 +262,20 @@ class SessionContextTracker:
         if quote_quality.jump_bps is not None:
             state.quote_jump_bps_window.append(quote_quality.jump_bps)
         if quote_quality.valid:
-            state.session_high_price = max(state.session_high_price, price)
-            state.session_low_price = min(state.session_low_price, price)
-            if minutes_elapsed <= self.opening_range_minutes:
-                state.opening_range_high = max(state.opening_range_high, price)
-                state.opening_range_low = min(state.opening_range_low, price)
+            if state.last_valid_quote_price is None:
+                state.session_open_price = price
+                state.session_high_price = price
+                state.session_low_price = price
+                state.opening_range_high = price
+                state.opening_range_low = price
                 state.opening_window_close_price = price
+            else:
+                state.session_high_price = max(state.session_high_price, price)
+                state.session_low_price = min(state.session_low_price, price)
+                if minutes_elapsed <= self.opening_range_minutes:
+                    state.opening_range_high = max(state.opening_range_high, price)
+                    state.opening_range_low = min(state.opening_range_low, price)
+                    state.opening_window_close_price = price
             if spread_bps is not None:
                 state.spread_bps_window.append(spread_bps)
             if imbalance_pressure is not None:
