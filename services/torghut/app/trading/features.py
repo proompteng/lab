@@ -66,6 +66,9 @@ FEATURE_VECTOR_V3_VALUE_FIELDS = (
     'recent_quote_jump_bps_avg',
     'recent_quote_jump_bps_max',
     'recent_microprice_bias_bps_avg',
+    'recent_above_opening_range_high_ratio',
+    'recent_above_opening_window_close_ratio',
+    'recent_above_vwap_w5m_ratio',
     'cross_section_session_open_rank',
     'cross_section_prev_session_close_rank',
     'cross_section_opening_window_return_rank',
@@ -395,6 +398,15 @@ def map_feature_values_v3(signal: SignalEnvelope) -> dict[str, Any]:
         'recent_quote_jump_bps_avg': optional_decimal(payload.get('recent_quote_jump_bps_avg')),
         'recent_quote_jump_bps_max': optional_decimal(payload.get('recent_quote_jump_bps_max')),
         'recent_microprice_bias_bps_avg': optional_decimal(payload.get('recent_microprice_bias_bps_avg')),
+        'recent_above_opening_range_high_ratio': optional_decimal(
+            payload.get('recent_above_opening_range_high_ratio')
+        ),
+        'recent_above_opening_window_close_ratio': optional_decimal(
+            payload.get('recent_above_opening_window_close_ratio')
+        ),
+        'recent_above_vwap_w5m_ratio': optional_decimal(
+            payload.get('recent_above_vwap_w5m_ratio')
+        ),
         'cross_section_session_open_rank': optional_decimal(payload.get('cross_section_session_open_rank')),
         'cross_section_prev_session_close_rank': optional_decimal(
             payload.get('cross_section_prev_session_close_rank')

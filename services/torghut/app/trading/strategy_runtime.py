@@ -608,6 +608,7 @@ class BreakoutContinuationLongPlugin:
         "recent_quote_invalid_ratio",
         "recent_quote_jump_bps_max",
         "recent_microprice_bias_bps_avg",
+        "recent_above_opening_window_close_ratio",
         "cross_section_positive_session_open_ratio",
         "cross_section_positive_opening_window_return_ratio",
         "cross_section_positive_prev_session_close_ratio",
@@ -665,6 +666,15 @@ class BreakoutContinuationLongPlugin:
             recent_quote_jump_bps_max=_decimal(features.values.get("recent_quote_jump_bps_max")),
             recent_microprice_bias_bps_avg=_decimal(
                 features.values.get("recent_microprice_bias_bps_avg")
+            ),
+            recent_above_opening_range_high_ratio=_decimal(
+                features.values.get("recent_above_opening_range_high_ratio")
+            ),
+            recent_above_opening_window_close_ratio=_decimal(
+                features.values.get("recent_above_opening_window_close_ratio")
+            ),
+            recent_above_vwap_w5m_ratio=_decimal(
+                features.values.get("recent_above_vwap_w5m_ratio")
             ),
             cross_section_positive_session_open_ratio=_decimal(
                 features.values.get("cross_section_positive_session_open_ratio")
@@ -856,6 +866,7 @@ class LateDayContinuationLongPlugin:
         "recent_quote_invalid_ratio",
         "recent_quote_jump_bps_max",
         "recent_microprice_bias_bps_avg",
+        "recent_above_opening_window_close_ratio",
         "cross_section_positive_session_open_ratio",
         "cross_section_positive_opening_window_return_ratio",
         "cross_section_positive_prev_session_close_ratio",
@@ -911,6 +922,15 @@ class LateDayContinuationLongPlugin:
             recent_quote_jump_bps_max=_decimal(features.values.get("recent_quote_jump_bps_max")),
             recent_microprice_bias_bps_avg=_decimal(
                 features.values.get("recent_microprice_bias_bps_avg")
+            ),
+            recent_above_opening_range_high_ratio=_decimal(
+                features.values.get("recent_above_opening_range_high_ratio")
+            ),
+            recent_above_opening_window_close_ratio=_decimal(
+                features.values.get("recent_above_opening_window_close_ratio")
+            ),
+            recent_above_vwap_w5m_ratio=_decimal(
+                features.values.get("recent_above_vwap_w5m_ratio")
             ),
             cross_section_positive_session_open_ratio=_decimal(
                 features.values.get("cross_section_positive_session_open_ratio")

@@ -1244,6 +1244,88 @@ class TestStrategyRuntime(TestCase):
 
         self.assertIsNone(decision)
 
+    def test_breakout_continuation_plugin_accepts_open_close_hold_when_orh_hold_is_weak(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="breakout-continuation",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="breakout-continuation",
+                    strategy_id="breakout_continuation_long_v1@research",
+                    strategy_type="breakout_continuation_long_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="breakout_continuation_long_v1",
+                    universe_symbols=["AAPL"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("14000"),
+                    params={
+                        "min_recent_above_opening_range_high_ratio": "0.45",
+                        "min_recent_above_opening_window_close_ratio": "0.75",
+                        "min_recent_above_vwap_w5m_ratio": "0.60",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="breakout_continuation_long_v1",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 15, 12, 3, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=18,
+            payload={
+                "price": 254.12,
+                "ema12": 254.00,
+                "ema26": 253.84,
+                "macd": 0.027,
+                "macd_signal": 0.011,
+                "rsi14": 61,
+                "vol_realized_w60s": 0.00018,
+                "spread": 0.03,
+                "vwap_w5m": 254.00,
+                "imbalance_bid_sz": 5200,
+                "imbalance_ask_sz": 4700,
+                "price_vs_session_open_bps": 54,
+                "opening_window_return_bps": 22,
+                "session_high_price": 254.28,
+                "opening_range_high": 253.98,
+                "price_vs_opening_range_high_bps": 5.5,
+                "price_vs_opening_window_close_bps": 13,
+                "opening_range_width_bps": 18,
+                "session_range_bps": 52,
+                "price_position_in_session_range": 0.86,
+                "recent_spread_bps_avg": 0.74,
+                "recent_spread_bps_max": 1.26,
+                "recent_imbalance_pressure_avg": 0.05,
+                "recent_microprice_bias_bps_avg": 0.72,
+                "recent_above_opening_range_high_ratio": 0.20,
+                "recent_above_opening_window_close_ratio": 0.88,
+                "recent_above_vwap_w5m_ratio": 0.83,
+                "cross_section_positive_session_open_ratio": 0.58,
+                "cross_section_positive_opening_window_return_ratio": 0.67,
+                "cross_section_above_vwap_w5m_ratio": 0.51,
+                "cross_section_continuation_breadth": 0.60,
+                "cross_section_opening_window_return_rank": 0.82,
+                "cross_section_continuation_rank": 0.84,
+            },
+        )
+
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.intent.action, "buy")
+        self.assertEqual(decision.plugin_id, "breakout_continuation_long")
+
     def test_breakout_continuation_plugin_allows_early_breakout_with_strong_microstructure_confirmation(
         self,
     ) -> None:
@@ -1877,6 +1959,290 @@ class TestStrategyRuntime(TestCase):
         self.assertEqual(decision.plugin_id, "breakout_continuation_long")
         self.assertIn("opening_range_breakout", decision.intent.rationale)
 
+    def test_breakout_continuation_plugin_allows_isolated_same_day_leader_when_breadth_is_weak(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="breakout-continuation",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="breakout-continuation",
+                    strategy_id="breakout_continuation_long_v1@research",
+                    strategy_type="breakout_continuation_long_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="breakout_continuation_long_v1",
+                    universe_symbols=["AAPL"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("14000"),
+                    params={
+                        "min_cross_section_positive_session_open_ratio": "0.50",
+                        "min_cross_section_positive_opening_window_return_ratio": "0.55",
+                        "min_cross_section_above_vwap_w5m_ratio": "0.60",
+                        "min_cross_section_continuation_breadth": "0.65",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="breakout_continuation_long_v1",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 14, 22, 3, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=142,
+            payload={
+                "price": 255.14,
+                "ema12": 255.02,
+                "ema26": 254.84,
+                "macd": 0.032,
+                "macd_signal": 0.014,
+                "rsi14": 63,
+                "vol_realized_w60s": 0.00018,
+                "spread": 0.07,
+                "vwap_w5m": 255.02,
+                "imbalance_bid_sz": 6200,
+                "imbalance_ask_sz": 5600,
+                "price_vs_session_open_bps": 48,
+                "opening_window_return_bps": 29,
+                "session_high_price": 255.20,
+                "opening_range_high": 254.95,
+                "price_vs_opening_range_high_bps": 7.45,
+                "price_vs_opening_window_close_bps": 11.5,
+                "opening_range_width_bps": 23,
+                "session_range_bps": 57,
+                "price_position_in_session_range": 0.86,
+                "recent_spread_bps_avg": 0.78,
+                "recent_spread_bps_max": 1.22,
+                "recent_imbalance_pressure_avg": 0.03,
+                "recent_microprice_bias_bps_avg": 0.46,
+                "recent_above_opening_range_high_ratio": 0.42,
+                "recent_above_opening_window_close_ratio": 0.72,
+                "recent_above_vwap_w5m_ratio": 0.68,
+                "cross_section_positive_session_open_ratio": 0.17,
+                "cross_section_positive_opening_window_return_ratio": 0.25,
+                "cross_section_above_vwap_w5m_ratio": 0.33,
+                "cross_section_continuation_breadth": 0.25,
+                "cross_section_session_open_rank": 0.96,
+                "cross_section_opening_window_return_rank": 0.92,
+                "cross_section_range_position_rank": 0.60,
+                "cross_section_vwap_w5m_rank": 0.58,
+                "cross_section_recent_imbalance_rank": 0.52,
+                "cross_section_continuation_rank": 0.91,
+            },
+        )
+
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(
+            strategy,
+            normalize_feature_vector_v3(signal),
+            timeframe="1Sec",
+        )
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.intent.action, "buy")
+        self.assertEqual(decision.plugin_id, "breakout_continuation_long")
+
+    def test_breakout_continuation_plugin_allows_guarded_leader_reclaim_after_open(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="breakout-continuation",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="breakout-continuation",
+                    strategy_id="breakout_continuation_long_v1@research",
+                    strategy_type="breakout_continuation_long_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="breakout_continuation_long_v1",
+                    universe_symbols=["AMAT"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("14000"),
+                    params={
+                        "entry_start_minute_utc": "845",
+                        "bullish_hist_min": "0.003",
+                        "min_bull_rsi": "54",
+                        "max_bull_rsi": "74",
+                        "vol_ceil": "0.00045",
+                        "max_spread_bps": "20",
+                        "max_recent_spread_bps": "18",
+                        "max_recent_spread_bps_max": "60",
+                        "min_imbalance_pressure": "-0.18",
+                        "min_recent_imbalance_pressure": "-0.12",
+                        "min_cross_section_continuation_rank": "0.72",
+                        "min_cross_section_opening_window_return_rank": "0.60",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="breakout_continuation_long_v1",
+            universe_symbols=["AMAT"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 15, 21, 27, tzinfo=timezone.utc),
+            symbol="AMAT",
+            timeframe="1Sec",
+            seq=911,
+            payload={
+                "price": 374.58,
+                "ema12": 374.12,
+                "ema26": 373.96,
+                "macd": 0.18714994068979438,
+                "macd_signal": 0.2293658653363894,
+                "rsi14": 53.76915985001121,
+                "vol_realized_w60s": 0.0005671340738954782,
+                "spread": 0.29,
+                "vwap_w5m": 373.9075,
+                "imbalance_bid_sz": 200,
+                "imbalance_ask_sz": 400,
+                "price_vs_session_open_bps": 93,
+                "opening_window_return_bps": 81,
+                "session_high_price": 374.65,
+                "opening_range_high": 374.20,
+                "price_vs_opening_range_high_bps": 10.15,
+                "price_vs_opening_window_close_bps": 18.3,
+                "opening_range_width_bps": 17,
+                "session_range_bps": 96,
+                "price_position_in_session_range": 0.94,
+                "recent_spread_bps_avg": 7.70,
+                "recent_spread_bps_max": 34.78,
+                "recent_imbalance_pressure_avg": 0.2714285714285714,
+                "recent_microprice_bias_bps_avg": 2.3427932913269284,
+                "recent_above_opening_range_high_ratio": 0.22,
+                "recent_above_opening_window_close_ratio": 1.0,
+                "recent_above_vwap_w5m_ratio": 0.9666666666666667,
+                "cross_section_positive_session_open_ratio": 0.83,
+                "cross_section_positive_opening_window_return_ratio": 0.83,
+                "cross_section_above_vwap_w5m_ratio": 1.0,
+                "cross_section_continuation_breadth": 0.83,
+                "cross_section_session_open_rank": 1.0,
+                "cross_section_opening_window_return_rank": 1.0,
+                "cross_section_range_position_rank": 0.92,
+                "cross_section_vwap_w5m_rank": 0.95,
+                "cross_section_recent_imbalance_rank": 0.94,
+                "cross_section_continuation_rank": 1.0,
+            },
+        )
+
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(
+            strategy,
+            normalize_feature_vector_v3(signal),
+            timeframe="1Sec",
+        )
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.intent.action, "buy")
+        self.assertEqual(decision.plugin_id, "breakout_continuation_long")
+        self.assertIn("leader_reclaim_confirmed", decision.intent.rationale)
+
+    def test_breakout_continuation_plugin_rejects_leader_reclaim_without_recent_flow_confirmation(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="breakout-continuation",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="breakout-continuation",
+                    strategy_id="breakout_continuation_long_v1@research",
+                    strategy_type="breakout_continuation_long_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="breakout_continuation_long_v1",
+                    universe_symbols=["AMAT"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("14000"),
+                    params={
+                        "entry_start_minute_utc": "845",
+                        "bullish_hist_min": "0.003",
+                        "min_bull_rsi": "54",
+                        "max_bull_rsi": "74",
+                        "vol_ceil": "0.00045",
+                        "max_spread_bps": "20",
+                        "max_recent_spread_bps": "18",
+                        "max_recent_spread_bps_max": "60",
+                        "min_imbalance_pressure": "-0.18",
+                        "min_recent_imbalance_pressure": "-0.12",
+                        "min_cross_section_continuation_rank": "0.72",
+                        "min_cross_section_opening_window_return_rank": "0.60",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="breakout_continuation_long_v1",
+            universe_symbols=["AMAT"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 15, 21, 27, tzinfo=timezone.utc),
+            symbol="AMAT",
+            timeframe="1Sec",
+            seq=912,
+            payload={
+                "price": 374.58,
+                "ema12": 374.12,
+                "ema26": 373.96,
+                "macd": 0.18714994068979438,
+                "macd_signal": 0.2293658653363894,
+                "rsi14": 53.76915985001121,
+                "vol_realized_w60s": 0.0005671340738954782,
+                "spread": 0.29,
+                "vwap_w5m": 373.9075,
+                "imbalance_bid_sz": 200,
+                "imbalance_ask_sz": 400,
+                "price_vs_session_open_bps": 93,
+                "opening_window_return_bps": 81,
+                "session_high_price": 374.65,
+                "opening_range_high": 374.20,
+                "price_vs_opening_range_high_bps": 10.15,
+                "price_vs_opening_window_close_bps": 18.3,
+                "opening_range_width_bps": 17,
+                "session_range_bps": 96,
+                "price_position_in_session_range": 0.94,
+                "recent_spread_bps_avg": 7.70,
+                "recent_spread_bps_max": 34.78,
+                "recent_imbalance_pressure_avg": 0.02,
+                "recent_microprice_bias_bps_avg": 0.04,
+                "recent_above_opening_range_high_ratio": 0.22,
+                "recent_above_opening_window_close_ratio": 0.62,
+                "recent_above_vwap_w5m_ratio": 0.70,
+                "cross_section_positive_session_open_ratio": 0.83,
+                "cross_section_positive_opening_window_return_ratio": 0.83,
+                "cross_section_above_vwap_w5m_ratio": 1.0,
+                "cross_section_continuation_breadth": 0.83,
+                "cross_section_session_open_rank": 1.0,
+                "cross_section_opening_window_return_rank": 1.0,
+                "cross_section_range_position_rank": 0.92,
+                "cross_section_vwap_w5m_rank": 0.95,
+                "cross_section_recent_imbalance_rank": 0.94,
+                "cross_section_continuation_rank": 1.0,
+            },
+        )
+
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(
+            strategy,
+            normalize_feature_vector_v3(signal),
+            timeframe="1Sec",
+        )
+
+        self.assertIsNone(decision)
+
     def test_breakout_continuation_plugin_allows_isolated_flow_without_clean_orh_rebreak(
         self,
     ) -> None:
@@ -2087,7 +2453,22 @@ class TestStrategyRuntime(TestCase):
         strategy = Strategy(
             id=uuid.uuid4(),
             name="breakout-continuation",
-            description="version=1.0.0",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="breakout-continuation",
+                    strategy_id="breakout_continuation_long_v1@research",
+                    strategy_type="breakout_continuation_long_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="breakout_continuation_long_v1",
+                    universe_symbols=["AAPL"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("14000"),
+                    params={
+                        "hard_max_recent_quote_invalid_ratio": "0.22",
+                    },
+                )
+            ),
             enabled=True,
             base_timeframe="1Sec",
             universe_type="breakout_continuation_long_v1",
@@ -2142,6 +2523,79 @@ class TestStrategyRuntime(TestCase):
         assert decision is not None
         self.assertEqual(decision.intent.action, "buy")
         self.assertEqual(decision.plugin_id, "breakout_continuation_long")
+
+    def test_breakout_continuation_plugin_blocks_isolated_leader_with_hard_invalid_quote_ratio(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="breakout-continuation",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="breakout-continuation",
+                    strategy_id="breakout_continuation_long_v1@research",
+                    strategy_type="breakout_continuation_long_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="breakout_continuation_long_v1",
+                    universe_symbols=["AAPL"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("14000"),
+                    params={
+                        "hard_max_recent_quote_invalid_ratio": "0.12",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="breakout_continuation_long_v1",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 16, 7, 34, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=63,
+            payload={
+                "price": 254.10,
+                "ema12": 253.96,
+                "ema26": 253.70,
+                "macd": 0.036,
+                "macd_signal": 0.018,
+                "rsi14": 64,
+                "vol_realized_w60s": 0.00014,
+                "spread": 0.03,
+                "vwap_w5m": 253.99,
+                "imbalance_bid_sz": 5600,
+                "imbalance_ask_sz": 4700,
+                "price_vs_session_open_bps": 52,
+                "opening_window_return_bps": 20,
+                "session_high_price": 254.16,
+                "opening_range_high": 254.20,
+                "price_vs_opening_range_high_bps": -4,
+                "price_vs_opening_window_close_bps": 10,
+                "opening_range_width_bps": 20,
+                "session_range_bps": 44,
+                "price_position_in_session_range": 0.93,
+                "recent_spread_bps_avg": 7.7,
+                "recent_spread_bps_max": 24.4,
+                "recent_imbalance_pressure_avg": 0.05,
+                "recent_quote_invalid_ratio": 0.20,
+                "recent_quote_jump_bps_max": 12.8,
+                "recent_microprice_bias_bps_avg": 0.37,
+                "cross_section_range_position_rank": 0.95,
+                "cross_section_vwap_w5m_rank": 0.93,
+                "cross_section_recent_imbalance_rank": 0.91,
+                "cross_section_continuation_rank": 0.89,
+            },
+        )
+
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, normalize_feature_vector_v3(signal), timeframe="1Sec")
+
+        self.assertIsNone(decision)
 
     def test_breakout_continuation_plugin_prefers_prev_close_opening_drive(self) -> None:
         strategy = Strategy(
@@ -2651,6 +3105,79 @@ class TestStrategyRuntime(TestCase):
 
         self.assertIsNone(decision)
 
+    def test_breakout_continuation_plugin_respects_latest_breakout_entry_end(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="breakout-continuation",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="breakout-continuation",
+                    strategy_id="breakout_continuation_long_v1@research",
+                    strategy_type="breakout_continuation_long_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="breakout_continuation_long_v1",
+                    universe_symbols=["AAPL"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("14000"),
+                    params={
+                        "entry_start_minute_utc": "845",
+                        "entry_end_minute_utc": "990",
+                        "latest_breakout_entry_end_minute_utc": "980",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="breakout_continuation_long_v1",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 16, 26, 28, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=61,
+            payload={
+                "price": 255.00,
+                "ema12": 254.86,
+                "ema26": 254.62,
+                "macd": 0.036,
+                "macd_signal": 0.018,
+                "rsi14": 64,
+                "vol_realized_w60s": 0.00014,
+                "spread": 0.03,
+                "vwap_w5m": 254.92,
+                "imbalance_bid_sz": 5600,
+                "imbalance_ask_sz": 4700,
+                "price_vs_session_open_bps": 52,
+                "opening_window_return_bps": 20,
+                "session_high_price": 255.06,
+                "opening_range_high": 255.04,
+                "price_vs_opening_range_high_bps": -1.6,
+                "price_vs_opening_window_close_bps": 10,
+                "opening_range_width_bps": 20,
+                "session_range_bps": 44,
+                "price_position_in_session_range": 0.93,
+                "recent_spread_bps_avg": 7.7,
+                "recent_spread_bps_max": 24.4,
+                "recent_imbalance_pressure_avg": 0.05,
+                "recent_quote_invalid_ratio": 0.20,
+                "recent_quote_jump_bps_max": 12.8,
+                "recent_microprice_bias_bps_avg": 0.37,
+                "cross_section_range_position_rank": 0.95,
+                "cross_section_vwap_w5m_rank": 0.93,
+                "cross_section_recent_imbalance_rank": 0.91,
+                "cross_section_continuation_rank": 0.89,
+            },
+        )
+
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, normalize_feature_vector_v3(signal), timeframe="1Sec")
+
+        self.assertIsNone(decision)
+
     def test_late_day_continuation_plugin_emits_buy_on_late_strength(self) -> None:
         strategy = Strategy(
             id=uuid.uuid4(),
@@ -2788,6 +3315,576 @@ class TestStrategyRuntime(TestCase):
         self.assertEqual(decision.intent.action, "buy")
         self.assertEqual(decision.plugin_id, "late_day_continuation_long")
         self.assertIn("late_day_strength", decision.intent.rationale)
+
+    def test_late_day_continuation_plugin_respects_recent_hold_quality(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="late-day-continuation",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="late-day-continuation",
+                    strategy_id="late_day_continuation_long_v1@research",
+                    strategy_type="late_day_continuation_long_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="late_day_continuation_long_v1",
+                    universe_symbols=["AAPL"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("14000"),
+                    params={
+                        "min_recent_above_opening_range_high_ratio": "0.45",
+                        "min_recent_above_vwap_w5m_ratio": "0.70",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="late_day_continuation_long_v1",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        strong_signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 18, 58, 3, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=56,
+            payload={
+                "price": 253.93,
+                "ema12": 253.82,
+                "ema26": 253.60,
+                "macd": 0.028,
+                "macd_signal": 0.014,
+                "rsi14": 63,
+                "vol_realized_w60s": 0.00019,
+                "spread": 0.03,
+                "vwap_w5m": 253.88,
+                "imbalance_bid_sz": 5400,
+                "imbalance_ask_sz": 5000,
+                "price_vs_session_open_bps": 58,
+                "opening_window_return_bps": 32,
+                "price_position_in_session_range": 0.92,
+                "session_high_price": 254.02,
+                "opening_range_high": 253.86,
+                "price_vs_opening_range_high_bps": 2.8,
+                "price_vs_opening_window_close_bps": 9.5,
+                "recent_spread_bps_avg": 0.61,
+                "recent_imbalance_pressure_avg": 0.03,
+                "recent_microprice_bias_bps_avg": 0.9,
+                "recent_above_opening_range_high_ratio": 0.65,
+                "recent_above_vwap_w5m_ratio": 0.90,
+                "session_range_bps": 48,
+                "cross_section_positive_session_open_ratio": 0.58,
+                "cross_section_positive_opening_window_return_ratio": 0.66,
+                "cross_section_above_vwap_w5m_ratio": 0.50,
+                "cross_section_continuation_breadth": 0.62,
+                "cross_section_opening_window_return_rank": 0.88,
+                "cross_section_continuation_rank": 0.84,
+            },
+        )
+        weak_signal = strong_signal.model_copy(
+            update={
+                "seq": 57,
+                "payload": {
+                    **strong_signal.payload,
+                    "recent_above_opening_range_high_ratio": Decimal("0.20"),
+                    "recent_above_vwap_w5m_ratio": Decimal("0.40"),
+                },
+            }
+        )
+
+        runtime = StrategyRuntime()
+
+        strong_decision = runtime.evaluate(
+            strategy,
+            normalize_feature_vector_v3(strong_signal),
+            timeframe="1Sec",
+        )
+        weak_decision = runtime.evaluate(
+            strategy,
+            normalize_feature_vector_v3(weak_signal),
+            timeframe="1Sec",
+        )
+
+        self.assertIsNotNone(strong_decision)
+        assert strong_decision is not None
+        self.assertEqual(strong_decision.intent.action, "buy")
+        self.assertIsNone(weak_decision)
+
+    def test_late_day_continuation_plugin_accepts_open_close_hold_when_orh_hold_is_weak(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="late-day-continuation",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="late-day-continuation",
+                    strategy_id="late_day_continuation_long_v1@research",
+                    strategy_type="late_day_continuation_long_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="late_day_continuation_long_v1",
+                    universe_symbols=["AAPL"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("14000"),
+                    params={
+                        "min_recent_above_opening_range_high_ratio": "0.45",
+                        "min_recent_above_opening_window_close_ratio": "0.80",
+                        "min_recent_above_vwap_w5m_ratio": "0.70",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="late_day_continuation_long_v1",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 18, 58, 3, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=156,
+            payload={
+                "price": 253.93,
+                "ema12": 253.82,
+                "ema26": 253.60,
+                "macd": 0.028,
+                "macd_signal": 0.014,
+                "rsi14": 63,
+                "vol_realized_w60s": 0.00019,
+                "spread": 0.03,
+                "vwap_w5m": 253.88,
+                "imbalance_bid_sz": 5400,
+                "imbalance_ask_sz": 5000,
+                "price_vs_session_open_bps": 58,
+                "opening_window_return_bps": 32,
+                "price_position_in_session_range": 0.92,
+                "session_high_price": 254.02,
+                "opening_range_high": 253.86,
+                "price_vs_opening_range_high_bps": 2.8,
+                "price_vs_opening_window_close_bps": 9.5,
+                "recent_spread_bps_avg": 0.61,
+                "recent_imbalance_pressure_avg": 0.03,
+                "recent_microprice_bias_bps_avg": 0.9,
+                "recent_above_opening_range_high_ratio": 0.22,
+                "recent_above_opening_window_close_ratio": 0.92,
+                "recent_above_vwap_w5m_ratio": 0.90,
+                "session_range_bps": 48,
+                "cross_section_positive_session_open_ratio": 0.58,
+                "cross_section_positive_opening_window_return_ratio": 0.66,
+                "cross_section_above_vwap_w5m_ratio": 0.50,
+                "cross_section_continuation_breadth": 0.62,
+                "cross_section_opening_window_return_rank": 0.88,
+                "cross_section_continuation_rank": 0.84,
+            },
+        )
+
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(
+            strategy,
+            normalize_feature_vector_v3(signal),
+            timeframe="1Sec",
+        )
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.intent.action, "buy")
+        self.assertEqual(decision.plugin_id, "late_day_continuation_long")
+
+    def test_late_day_continuation_plugin_blocks_when_open_close_hold_is_weak(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="late-day-continuation",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="late-day-continuation",
+                    strategy_id="late_day_continuation_long_v1@research",
+                    strategy_type="late_day_continuation_long_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="late_day_continuation_long_v1",
+                    universe_symbols=["AAPL"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("14000"),
+                    params={
+                        "min_recent_above_opening_range_high_ratio": "0.45",
+                        "min_recent_above_opening_window_close_ratio": "0.80",
+                        "min_recent_above_vwap_w5m_ratio": "0.70",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="late_day_continuation_long_v1",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 18, 58, 3, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=157,
+            payload={
+                "price": 253.93,
+                "ema12": 253.82,
+                "ema26": 253.60,
+                "macd": 0.028,
+                "macd_signal": 0.014,
+                "rsi14": 63,
+                "vol_realized_w60s": 0.00019,
+                "spread": 0.03,
+                "vwap_w5m": 253.88,
+                "imbalance_bid_sz": 5400,
+                "imbalance_ask_sz": 5000,
+                "price_vs_session_open_bps": 58,
+                "opening_window_return_bps": 32,
+                "price_position_in_session_range": 0.92,
+                "session_high_price": 254.02,
+                "opening_range_high": 253.86,
+                "price_vs_opening_range_high_bps": 2.8,
+                "price_vs_opening_window_close_bps": 9.5,
+                "recent_spread_bps_avg": 0.61,
+                "recent_imbalance_pressure_avg": 0.03,
+                "recent_microprice_bias_bps_avg": 0.9,
+                "recent_above_opening_range_high_ratio": 0.88,
+                "recent_above_opening_window_close_ratio": 0.62,
+                "recent_above_vwap_w5m_ratio": 0.90,
+                "session_range_bps": 48,
+                "cross_section_positive_session_open_ratio": 0.58,
+                "cross_section_positive_opening_window_return_ratio": 0.66,
+                "cross_section_above_vwap_w5m_ratio": 0.50,
+                "cross_section_continuation_breadth": 0.62,
+                "cross_section_opening_window_return_rank": 0.88,
+                "cross_section_continuation_rank": 0.84,
+            },
+        )
+
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(
+            strategy,
+            normalize_feature_vector_v3(signal),
+            timeframe="1Sec",
+        )
+
+        self.assertIsNone(decision)
+
+    def test_late_day_continuation_plugin_relaxes_breadth_for_strong_opening_drive(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="late-day-continuation",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="late-day-continuation",
+                    strategy_id="late_day_continuation_long_v1@research",
+                    strategy_type="late_day_continuation_long_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="late_day_continuation_long_v1",
+                    universe_symbols=["AAPL"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("14000"),
+                    params={
+                        "min_cross_section_positive_session_open_ratio": "0.25",
+                        "min_cross_section_positive_opening_window_return_ratio": "0.40",
+                        "min_cross_section_above_vwap_w5m_ratio": "0.45",
+                        "min_cross_section_continuation_breadth": "0.40",
+                        "min_cross_section_opening_window_return_rank": "0.65",
+                        "min_cross_section_continuation_rank": "0.70",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="late_day_continuation_long_v1",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 18, 46, 3, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=176,
+            payload={
+                "price": 253.96,
+                "ema12": 253.84,
+                "ema26": 253.63,
+                "macd": 0.027,
+                "macd_signal": 0.013,
+                "rsi14": 62,
+                "vol_realized_w60s": 0.00018,
+                "spread": 0.03,
+                "vwap_w5m": 253.89,
+                "imbalance_bid_sz": 5300,
+                "imbalance_ask_sz": 5000,
+                "price_vs_session_open_bps": 61,
+                "opening_window_return_bps": 34,
+                "price_position_in_session_range": 0.90,
+                "session_high_price": 254.04,
+                "opening_range_high": 253.88,
+                "price_vs_opening_range_high_bps": 3.2,
+                "price_vs_opening_window_close_bps": 10.8,
+                "recent_spread_bps_avg": 0.62,
+                "recent_imbalance_pressure_avg": 0.03,
+                "recent_microprice_bias_bps_avg": 0.88,
+                "recent_above_opening_range_high_ratio": 0.22,
+                "recent_above_opening_window_close_ratio": 0.94,
+                "recent_above_vwap_w5m_ratio": 0.87,
+                "session_range_bps": 49,
+                "cross_section_positive_session_open_ratio": 0.16,
+                "cross_section_positive_opening_window_return_ratio": 0.28,
+                "cross_section_above_vwap_w5m_ratio": 0.37,
+                "cross_section_continuation_breadth": 0.30,
+                "cross_section_opening_window_return_rank": 0.58,
+                "cross_section_continuation_rank": 0.61,
+            },
+        )
+
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(
+            strategy,
+            normalize_feature_vector_v3(signal),
+            timeframe="1Sec",
+        )
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.intent.action, "buy")
+        self.assertEqual(decision.plugin_id, "late_day_continuation_long")
+
+    def test_late_day_continuation_plugin_blocks_isolated_overextension_above_open_close(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="late-day-continuation",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="late-day-continuation",
+                    strategy_id="late_day_continuation_long_v1@research",
+                    strategy_type="late_day_continuation_long_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="late_day_continuation_long_v1",
+                    universe_symbols=["AAPL"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("14000"),
+                    params={
+                        "isolated_flow_max_late_day_price_vs_opening_range_high_bps": "30",
+                        "isolated_flow_max_late_day_price_vs_opening_window_close_bps": "40",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="late_day_continuation_long_v1",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 19, 4, 3, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=89,
+            payload={
+                "price": 253.94,
+                "ema12": 253.82,
+                "ema26": 253.61,
+                "macd": 0.030,
+                "macd_signal": 0.014,
+                "rsi14": 63,
+                "vol_realized_w60s": 0.00018,
+                "spread": 0.03,
+                "vwap_w5m": 253.88,
+                "imbalance_bid_sz": 5600,
+                "imbalance_ask_sz": 4700,
+                "price_vs_session_open_bps": 58,
+                "opening_window_return_bps": 22,
+                "price_position_in_session_range": 0.93,
+                "session_high_price": 254.15,
+                "opening_range_high": 253.18,
+                "price_vs_opening_range_high_bps": 29,
+                "price_vs_opening_window_close_bps": 42,
+                "recent_spread_bps_avg": 0.61,
+                "recent_imbalance_pressure_avg": 0.04,
+                "recent_microprice_bias_bps_avg": 0.92,
+                "recent_quote_invalid_ratio": 0.05,
+                "session_range_bps": 48,
+                "cross_section_range_position_rank": 0.95,
+                "cross_section_vwap_w5m_rank": 0.93,
+                "cross_section_recent_imbalance_rank": 0.91,
+                "cross_section_continuation_rank": 0.86,
+            },
+        )
+
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, normalize_feature_vector_v3(signal), timeframe="1Sec")
+
+        self.assertIsNone(decision)
+
+    def test_late_day_continuation_plugin_blocks_isolated_leader_with_hard_invalid_quote_ratio(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="late-day-continuation",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="late-day-continuation",
+                    strategy_id="late_day_continuation_long_v1@research",
+                    strategy_type="late_day_continuation_long_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="late_day_continuation_long_v1",
+                    universe_symbols=["AAPL"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("14000"),
+                    params={
+                        "hard_max_recent_quote_invalid_ratio": "0.12",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="late_day_continuation_long_v1",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 19, 7, 34, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=90,
+            payload={
+                "price": 254.10,
+                "ema12": 253.96,
+                "ema26": 253.70,
+                "macd": 0.030,
+                "macd_signal": 0.014,
+                "rsi14": 64,
+                "vol_realized_w60s": 0.00014,
+                "spread": 0.03,
+                "vwap_w5m": 253.98,
+                "imbalance_bid_sz": 5600,
+                "imbalance_ask_sz": 4700,
+                "price_vs_session_open_bps": 58,
+                "opening_window_return_bps": 22,
+                "price_position_in_session_range": 0.93,
+                "session_high_price": 254.12,
+                "opening_range_high": 254.02,
+                "price_vs_opening_range_high_bps": 3.9,
+                "price_vs_opening_window_close_bps": 18,
+                "recent_spread_bps_avg": 0.61,
+                "recent_imbalance_pressure_avg": 0.04,
+                "recent_microprice_bias_bps_avg": 0.92,
+                "recent_quote_invalid_ratio": 0.13,
+                "session_range_bps": 48,
+                "cross_section_range_position_rank": 0.95,
+                "cross_section_vwap_w5m_rank": 0.93,
+                "cross_section_recent_imbalance_rank": 0.91,
+                "cross_section_continuation_rank": 0.86,
+            },
+        )
+
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, normalize_feature_vector_v3(signal), timeframe="1Sec")
+
+        self.assertIsNone(decision)
+
+    def test_late_day_continuation_plugin_blocks_gap_only_strength_without_same_day_opening_drive(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="late-day-continuation",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="late-day-continuation",
+                    strategy_id="late_day_continuation_long_v1@research",
+                    strategy_type="late_day_continuation_long_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="late_day_continuation_long_v1",
+                    universe_symbols=["AAPL"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("14000"),
+                    params={
+                        "min_same_day_opening_window_return_bps": "8",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="late_day_continuation_long_v1",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 18, 7, 12, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=212,
+            payload={
+                "price": 254.755,
+                "ema12": 254.63,
+                "ema26": 254.38,
+                "macd": 0.031,
+                "macd_signal": 0.014,
+                "rsi14": 64,
+                "vol_realized_w60s": 0.00018,
+                "spread": 0.03,
+                "vwap_w5m": 254.55,
+                "imbalance_bid_sz": 5600,
+                "imbalance_ask_sz": 4700,
+                "price_vs_session_open_bps": 38.6,
+                "price_vs_prev_session_close_bps": 52.0,
+                "opening_window_return_bps": 0,
+                "opening_window_return_from_prev_close_bps": 31.0,
+                "price_position_in_session_range": 0.82,
+                "session_high_price": 254.97,
+                "opening_range_high": 253.78,
+                "price_vs_opening_range_high_bps": 38.6,
+                "price_vs_opening_window_close_bps": 38.6,
+                "price_vs_vwap_w5m_bps": 7.9,
+                "recent_spread_bps_avg": 18.4,
+                "recent_imbalance_pressure_avg": 0.03,
+                "recent_microprice_bias_bps_avg": 0.88,
+                "recent_quote_invalid_ratio": 0.06,
+                "recent_above_opening_range_high_ratio": 1.0,
+                "recent_above_opening_window_close_ratio": 1.0,
+                "recent_above_vwap_w5m_ratio": 0.93,
+                "session_range_bps": 52,
+                "cross_section_positive_session_open_ratio": 1.0,
+                "cross_section_positive_prev_session_close_ratio": 1.0,
+                "cross_section_positive_opening_window_return_ratio": 0.0,
+                "cross_section_positive_opening_window_return_from_prev_close_ratio": 1.0,
+                "cross_section_above_vwap_w5m_ratio": 0.75,
+                "cross_section_continuation_breadth": 0.75,
+                "cross_section_opening_window_return_rank": 0.15,
+                "cross_section_opening_window_return_from_prev_close_rank": 0.92,
+                "cross_section_continuation_rank": 0.91,
+            },
+        )
+
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(
+            strategy,
+            normalize_feature_vector_v3(signal),
+            timeframe="1Sec",
+        )
+
+        self.assertIsNone(decision)
 
     def test_late_day_continuation_plugin_allows_late_isolated_leader_with_relaxed_drive_requirements(
         self,
@@ -3007,7 +4104,22 @@ class TestStrategyRuntime(TestCase):
         strategy = Strategy(
             id=uuid.uuid4(),
             name="late-day-continuation",
-            description="version=1.0.0",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="late-day-continuation",
+                    strategy_id="late_day_continuation_long_v1@research",
+                    strategy_type="late_day_continuation_long_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="late_day_continuation_long_v1",
+                    universe_symbols=["AAPL"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("14000"),
+                    params={
+                        "hard_max_recent_quote_invalid_ratio": "0.22",
+                    },
+                )
+            ),
             enabled=True,
             base_timeframe="1Sec",
             universe_type="late_day_continuation_long_v1",
