@@ -67,7 +67,7 @@ class _HttpResponseHandle:
     def __enter__(self) -> "_HttpResponseHandle":
         return self
 
-    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+    def __exit__(self, _exc_type: Any, _exc: Any, _tb: Any) -> bool:
         self.close()
         return False
 
