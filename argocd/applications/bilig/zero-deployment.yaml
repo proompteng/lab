@@ -64,9 +64,9 @@ spec:
                   name: bilig-db-app
                   key: uri
             - name: ZERO_QUERY_URL
-              value: http://bilig-sync/api/zero/query
+              value: http://bilig-sync/api/zero/v2/query
             - name: ZERO_MUTATE_URL
-              value: http://bilig-sync/api/zero/mutate
+              value: http://bilig-sync/api/zero/v2/mutate
           volumeMounts:
             - name: replica-data
               mountPath: /data
