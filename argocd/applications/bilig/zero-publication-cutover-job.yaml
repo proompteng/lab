@@ -1,0 +1,47 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bilig-zero-publication-cutover
+  namespace: bilig
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: ensure-zero-publication
+          image: ghcr.io/cloudnative-pg/postgresql:17.0
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bilig-db-app
+                  key: uri
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+              DO $$
+              BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'zero_data_v2') THEN
+                  CREATE PUBLICATION zero_data_v2;
+                END IF;
+              END
+              $$;
+              ALTER PUBLICATION zero_data_v2 SET TABLE
+                workbooks,
+                sheets,
+                cells,
+                cell_eval,
+                row_metadata,
+                column_metadata,
+                defined_names,
+                cell_styles,
+                cell_number_formats,
+                sheet_style_ranges,
+                sheet_format_ranges;
+              SQL
