@@ -26,7 +26,7 @@ resources:
 images:
   - name: registry.ide-newton.ts.net/lab/bilig-web
     newName: registry.ide-newton.ts.net/lab/bilig-web
-    newTag: da4e6fef0b84ba6f3d499d187f2303ca0c4f313b
+    newTag: 1931a80605b5c057f4e683d8b4e87165878dec82
   - name: registry.ide-newton.ts.net/lab/bilig-sync
     newName: registry.ide-newton.ts.net/lab/bilig-sync
-    newTag: da4e6fef0b84ba6f3d499d187f2303ca0c4f313b
+    newTag: 1931a80605b5c057f4e683d8b4e87165878dec82
