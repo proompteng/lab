@@ -327,7 +327,13 @@ class DecisionEngine:
                     action=cast(Literal["buy", "sell"], direction),
                     qty=qty,
                     order_type="market",
-                    time_in_force="day",
+                    time_in_force=cast(
+                        Literal["day", "gtc", "ioc", "fok"],
+                        _resolve_strategy_time_in_force(
+                            strategies=source_strategies,
+                            action=direction,
+                        ),
+                    ),
                     rationale=",".join(explain),
                     params=_build_params(
                         signal=signal,
@@ -498,22 +504,38 @@ class DecisionEngine:
                 position_isolation_mode="per_strategy",
             )
             if overlay_decision is not None:
+                overlay_policy = _resolve_runtime_trade_policy([strategy])
+                overlay_positions = _positions_for_strategy_action(
+                    actual_positions,
+                    strategy_id=isolated_strategy_id,
+                    action="sell",
+                )
+                overlay_position_owner = _runtime_trade_policy_owner(
+                    primary_strategy_id=isolated_strategy_id,
+                    position_isolation_mode="per_strategy",
+                )
+                if not _passes_runtime_trade_policy(
+                    last_emitted_action_at=self._last_emitted_action_at,
+                    runtime_trade_policy_state=self._runtime_trade_policy_state,
+                    signal_ts=signal.event_ts,
+                    symbol=signal.symbol,
+                    action=overlay_decision.action,
+                    position_owner=overlay_position_owner,
+                    positions=overlay_positions,
+                    policy=overlay_policy,
+                    position_exit_type=_decision_position_exit_type(overlay_decision),
+                    state_scope_key=isolated_strategy_id,
+                ):
+                    continue
                 decisions.append(overlay_decision)
                 _record_runtime_trade_policy_decision(
                     runtime_trade_policy_state=self._runtime_trade_policy_state,
                     signal_ts=signal.event_ts,
                     symbol=signal.symbol,
-                    position_owner=_runtime_trade_policy_owner(
-                        primary_strategy_id=isolated_strategy_id,
-                        position_isolation_mode="per_strategy",
-                    ),
+                    position_owner=overlay_position_owner,
                     action=overlay_decision.action,
-                    policy=_resolve_runtime_trade_policy([strategy]),
-                    positions=_positions_for_strategy_action(
-                        actual_positions,
-                        strategy_id=isolated_strategy_id,
-                        action="sell",
-                    ),
+                    policy=overlay_policy,
+                    positions=overlay_positions,
                     signal=signal,
                     price=price,
                     decision=overlay_decision,
@@ -559,6 +581,25 @@ class DecisionEngine:
             position_peak_price=aggregated_position_peak_price,
         )
         if overlay_decision is not None:
+            overlay_policy = _resolve_runtime_trade_policy(
+                [
+                    strategy
+                    for strategy in strategies
+                    if str(strategy.id) in non_isolated_strategy_ids
+                ]
+            )
+            if not _passes_runtime_trade_policy(
+                last_emitted_action_at=self._last_emitted_action_at,
+                runtime_trade_policy_state=self._runtime_trade_policy_state,
+                signal_ts=signal.event_ts,
+                symbol=signal.symbol,
+                action=overlay_decision.action,
+                position_owner=_RUNTIME_TRADE_POLICY_SHARED_OWNER,
+                positions=actual_positions,
+                policy=overlay_policy,
+                position_exit_type=_decision_position_exit_type(overlay_decision),
+            ):
+                return decisions
             decisions.append(overlay_decision)
             _record_runtime_trade_policy_decision(
                 runtime_trade_policy_state=self._runtime_trade_policy_state,
@@ -566,13 +607,7 @@ class DecisionEngine:
                 symbol=signal.symbol,
                 position_owner=_RUNTIME_TRADE_POLICY_SHARED_OWNER,
                 action=overlay_decision.action,
-                policy=_resolve_runtime_trade_policy(
-                    [
-                        strategy
-                        for strategy in strategies
-                        if str(strategy.id) in non_isolated_strategy_ids
-                    ]
-                ),
+                policy=overlay_policy,
                 positions=actual_positions,
                 signal=signal,
                 price=price,
@@ -1558,6 +1593,16 @@ def _build_runtime_position_exit_overlay(
         volatility_bps=volatility_bps,
         volatility_multiplier_key="long_trailing_stop_volatility_bps_multiplier",
     )
+    trailing_stop_requires_structure_loss = _resolve_bool_strategy_param(
+        strategies=eligible_strategies,
+        key="long_trailing_stop_requires_structure_loss",
+        default=_default_trailing_stop_requires_structure_loss(eligible_strategies),
+    )
+    trailing_stop_structure_loss_confirmed = _trailing_stop_structure_loss_confirmed(
+        signal=signal,
+        price=price,
+        strategies=eligible_strategies,
+    )
 
     exit_type: str | None = None
     exit_rationale: str | None = None
@@ -1590,7 +1635,13 @@ def _build_runtime_position_exit_overlay(
         peak_profit_bps = ((position_peak_price - avg_entry_price) / avg_entry_price) * Decimal("10000")
         if peak_profit_bps >= trailing_activation_profit_bps and price < position_peak_price:
             peak_drawdown_bps = ((position_peak_price - price) / position_peak_price) * Decimal("10000")
-            if peak_drawdown_bps >= trailing_stop_threshold_bps:
+            if (
+                peak_drawdown_bps >= trailing_stop_threshold_bps
+                and (
+                    not trailing_stop_requires_structure_loss
+                    or trailing_stop_structure_loss_confirmed
+                )
+            ):
                 exit_type = "long_trailing_stop_bps"
                 exit_rationale = "position_trailing_stop_exit"
                 trigger_threshold_bps = trailing_stop_threshold_bps
@@ -2407,6 +2458,7 @@ def _passes_runtime_trade_policy(
     position_owner: str,
     positions: Optional[list[dict[str, Any]]],
     policy: Mapping[str, int | Decimal],
+    position_exit_type: str | None = None,
     state_scope_key: str | None = None,
 ) -> bool:
     normalized_action = action.strip().lower()
@@ -2496,6 +2548,9 @@ def _passes_runtime_trade_policy(
     if normalized_action != "sell":
         return True
 
+    if _position_exit_bypasses_min_hold(position_exit_type):
+        return True
+
     min_hold_seconds = max(0, int(policy.get("min_hold_seconds", 0)))
     if min_hold_seconds <= 0:
         return True
@@ -2507,6 +2562,50 @@ def _passes_runtime_trade_policy(
         - position_opened_at.astimezone(timezone.utc)
     ).total_seconds()
     return age_seconds >= min_hold_seconds
+
+
+def _decision_position_exit_type(decision: StrategyDecision) -> str | None:
+    position_exit = decision.params.get("position_exit")
+    if not isinstance(position_exit, Mapping):
+        return None
+    normalized = str(cast(Mapping[str, Any], position_exit).get("type") or "").strip()
+    return normalized or None
+
+
+def _position_exit_bypasses_min_hold(position_exit_type: str | None) -> bool:
+    normalized = str(position_exit_type or "").strip().lower()
+    return normalized in {
+        "long_stop_loss_bps",
+        "max_hold_seconds",
+        "session_flatten_minute_utc",
+    }
+
+
+def _resolve_strategy_time_in_force(
+    *,
+    strategies: list[Strategy],
+    action: str,
+) -> str:
+    normalized_action = str(action or "").strip().lower()
+    param_key = "entry_time_in_force" if normalized_action == "buy" else "exit_time_in_force"
+    supported_values = {"day", "gtc", "ioc", "fok"}
+    for strategy in strategies:
+        params = StrategyRuntime.definition_from_strategy(strategy).params
+        candidate = str(params.get(param_key) or "").strip().lower()
+        if candidate in supported_values:
+            return candidate
+    if normalized_action == "buy":
+        continuation_strategy_types = {
+            "breakout_continuation_long_v1",
+            "late_day_continuation_long_v1",
+        }
+        if any(
+            str(strategy.universe_type or "").strip().lower()
+            in continuation_strategy_types
+            for strategy in strategies
+        ):
+            return "ioc"
+    return "day"
 
 
 def _runtime_trade_policy_owner(
@@ -2631,6 +2730,73 @@ def _passes_signal_exit_policy(
     )
 
 
+def _default_trailing_stop_requires_structure_loss(
+    strategies: list[Strategy],
+) -> bool:
+    continuation_strategy_types = {
+        "breakout_continuation_long_v1",
+        "late_day_continuation_long_v1",
+    }
+    return any(
+        str(strategy.universe_type or "").strip().lower() in continuation_strategy_types
+        for strategy in strategies
+    )
+
+
+def _trailing_stop_structure_loss_confirmed(
+    *,
+    signal: SignalEnvelope,
+    price: Decimal,
+    strategies: list[Strategy],
+) -> bool:
+    payload = signal.payload or {}
+    vwap_threshold = _resolve_max_nonnegative_strategy_param(
+        strategies=strategies,
+        key="long_trailing_stop_structure_loss_vwap_bps",
+    )
+    if vwap_threshold is None:
+        vwap_threshold = Decimal("0")
+    opening_range_high_threshold = _resolve_max_nonnegative_strategy_param(
+        strategies=strategies,
+        key="long_trailing_stop_structure_loss_price_vs_opening_range_high_bps",
+    )
+    if opening_range_high_threshold is None:
+        opening_range_high_threshold = Decimal("0")
+    session_range_position_max = _resolve_max_nonnegative_strategy_param(
+        strategies=strategies,
+        key="long_trailing_stop_structure_loss_session_range_position_max",
+    )
+    if session_range_position_max is None:
+        session_range_position_max = Decimal("0.80")
+    price_vs_vwap_w5m_bps = _signal_decimal_feature_bps(
+        signal,
+        key="price_vs_vwap_w5m_bps",
+        price=price,
+        reference_key="vwap_w5m",
+    )
+    price_vs_opening_range_high_bps = _signal_decimal_feature_bps(
+        signal,
+        key="price_vs_opening_range_high_bps",
+        price=price,
+        reference_key="opening_range_high",
+    )
+    price_position_in_session_range = optional_decimal(
+        payload.get("price_position_in_session_range")
+    )
+    return (
+        (
+            price_vs_opening_range_high_bps is not None
+            and price_vs_opening_range_high_bps <= opening_range_high_threshold
+        )
+        or (
+            price_vs_vwap_w5m_bps is not None
+            and price_vs_vwap_w5m_bps <= vwap_threshold
+            and price_position_in_session_range is not None
+            and price_position_in_session_range <= session_range_position_max
+        )
+    )
+
+
 def _signal_spread(signal: SignalEnvelope) -> Decimal | None:
     payload = signal.payload or {}
     spread = optional_decimal(payload.get("spread"))
@@ -2653,6 +2819,23 @@ def _signal_spread(signal: SignalEnvelope) -> Decimal | None:
     if bid is None or ask is None or ask <= bid:
         return None
     return ask - bid
+
+
+def _signal_decimal_feature_bps(
+    signal: SignalEnvelope,
+    *,
+    key: str,
+    price: Decimal,
+    reference_key: str,
+) -> Decimal | None:
+    payload = signal.payload or {}
+    direct_value = optional_decimal(payload.get(key))
+    if direct_value is not None:
+        return direct_value
+    reference_value = optional_decimal(payload.get(reference_key))
+    if reference_value is None or reference_value <= 0 or price <= 0:
+        return None
+    return ((price - reference_value) / reference_value) * Decimal("10000")
 
 
 def _near_touch_exit_price(

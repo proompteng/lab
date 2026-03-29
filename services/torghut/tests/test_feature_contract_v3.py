@@ -77,6 +77,31 @@ class TestFeatureContractV3(TestCase):
         self.assertEqual(feature_vector.values.get('vwap_session'), Decimal('100.0'))
         self.assertEqual(feature_vector.values.get('price_vs_vwap_w5m_bps'), Decimal('149.2537313432835820895522388'))
 
+    def test_normalization_prefers_top_level_imbalance_midpoint_over_vwap_keys(self) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+            symbol='AAPL',
+            timeframe='1Sec',
+            payload={
+                'macd': '0.4',
+                'macd_signal': '0.2',
+                'rsi14': '50',
+                'vwap_session': '109.0',
+                'vwap_w5m': '108.5',
+                'imbalance_bid_px': '100.0',
+                'imbalance_ask_px': '102.0',
+            },
+            seq=2,
+            source='fixture',
+        )
+
+        feature_vector = normalize_feature_vector_v3(signal)
+        self.assertEqual(feature_vector.values.get('price'), Decimal('101'))
+        self.assertEqual(
+            feature_vector.values.get('price_vs_vwap_w5m_bps'),
+            Decimal('-691.2442396313364055299539171'),
+        )
+
     def test_normalization_maps_nested_schema_fields(self) -> None:
         signal = SignalEnvelope(
             event_ts=datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),

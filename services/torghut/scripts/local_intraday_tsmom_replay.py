@@ -939,6 +939,88 @@ def _close_position(
     )
 
 
+def _apply_filled_decision(
+    *,
+    decision: StrategyDecision,
+    signal: SignalEnvelope,
+    fill_price: Decimal,
+    filled_at: datetime,
+    created_at: datetime,
+    positions: dict[tuple[str, str], PositionState],
+    day_bucket: dict[str, Any],
+    cost_model: TransactionCostModel,
+    cash: Decimal,
+    all_closed_trades: list[ClosedTrade],
+) -> Decimal:
+    owner_strategy_id = _decision_position_owner(decision)
+    position_key = _position_key(decision.symbol, owner_strategy_id)
+    if decision.action == 'buy':
+        fill_cost = _estimate_trade_cost(model=cost_model, decision=decision, signal=signal)
+        day_bucket['cost_total'] += fill_cost
+        day_bucket['filled_count'] += 1
+        cash -= (fill_price * decision.qty) + fill_cost
+        existing = positions.get(position_key)
+        if existing is None:
+            positions[position_key] = PositionState(
+                strategy_id=owner_strategy_id,
+                qty=decision.qty,
+                avg_entry_price=fill_price,
+                opened_at=filled_at,
+                entry_cost_total=fill_cost,
+                decision_at=created_at,
+                pending_entry=False,
+            )
+            return cash
+        new_qty = existing.qty + decision.qty
+        avg_entry = (
+            (existing.avg_entry_price * existing.qty) + (fill_price * decision.qty)
+        ) / new_qty
+        positions[position_key] = PositionState(
+            strategy_id=existing.strategy_id,
+            qty=new_qty,
+            avg_entry_price=avg_entry,
+            opened_at=existing.opened_at,
+            entry_cost_total=existing.entry_cost_total + fill_cost,
+            decision_at=existing.decision_at,
+            pending_entry=False,
+        )
+        return cash
+
+    existing = positions.get(position_key)
+    if existing is None or existing.qty <= 0:
+        return cash
+    fill_cost = _estimate_trade_cost(model=cost_model, decision=decision, signal=signal)
+    day_bucket['cost_total'] += fill_cost
+    day_bucket['filled_count'] += 1
+    sell_qty = min(decision.qty, existing.qty)
+    cash += (fill_price * sell_qty) - fill_cost
+    entry_cost_allocated = existing.entry_cost_total * (sell_qty / existing.qty)
+    remaining, trade = _close_position(
+        symbol=decision.symbol,
+        position=existing,
+        sell_qty=sell_qty,
+        fill_price=fill_price,
+        closed_at=filled_at,
+        exit_reason=_decision_exit_reason(decision),
+        entry_cost_allocated=entry_cost_allocated,
+        exit_cost_total=fill_cost,
+    )
+    if remaining is None:
+        positions.pop(position_key, None)
+    else:
+        positions[position_key] = remaining
+    day_bucket['gross_pnl'] += trade.gross_pnl
+    day_bucket['net_pnl'] += trade.net_pnl
+    if trade.net_pnl > 0:
+        day_bucket['wins'] += 1
+    elif trade.net_pnl < 0:
+        day_bucket['losses'] += 1
+    day_bucket['closed_trades'].append(trade)
+    all_closed_trades.append(trade)
+    _log_trade_closed(trade)
+    return cash
+
+
 def run_replay(config: ReplayConfig) -> dict[str, Any]:
     strategies = _load_strategies(config.strategy_configmap_path)
     strategies_by_id = {str(strategy.id): strategy for strategy in strategies}
@@ -1053,73 +1135,18 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                 if fill_price is None:
                     pending_orders[pending_key] = pending
                     continue
-                owner_strategy_id = _decision_position_owner(decision)
-                position_key = _position_key(decision.symbol, owner_strategy_id)
-                if decision.action == 'buy':
-                    fill_cost = _estimate_trade_cost(model=cost_model, decision=decision, signal=signal)
-                    day_bucket['cost_total'] += fill_cost
-                    day_bucket['filled_count'] += 1
-                    cash -= (fill_price * decision.qty) + fill_cost
-                    existing = positions.get(position_key)
-                    if existing is None:
-                        positions[position_key] = PositionState(
-                            strategy_id=owner_strategy_id,
-                            qty=decision.qty,
-                            avg_entry_price=fill_price,
-                            opened_at=signal.event_ts,
-                            entry_cost_total=fill_cost,
-                            decision_at=pending.created_at,
-                            pending_entry=False,
-                        )
-                    else:
-                        new_qty = existing.qty + decision.qty
-                        avg_entry = (
-                            (existing.avg_entry_price * existing.qty) + (fill_price * decision.qty)
-                        ) / new_qty
-                        positions[position_key] = PositionState(
-                            strategy_id=existing.strategy_id,
-                            qty=new_qty,
-                            avg_entry_price=avg_entry,
-                            opened_at=existing.opened_at,
-                            entry_cost_total=existing.entry_cost_total + fill_cost,
-                            decision_at=existing.decision_at,
-                            pending_entry=False,
-                        )
-                    continue
-                existing = positions.get(position_key)
-                if existing is None or existing.qty <= 0:
-                    continue
-                fill_cost = _estimate_trade_cost(model=cost_model, decision=decision, signal=signal)
-                day_bucket['cost_total'] += fill_cost
-                day_bucket['filled_count'] += 1
-                sell_qty = min(decision.qty, existing.qty)
-                cash += (fill_price * sell_qty) - fill_cost
-                entry_cost_allocated = existing.entry_cost_total * (
-                    sell_qty / existing.qty
-                )
-                remaining, trade = _close_position(
-                    symbol=decision.symbol,
-                    position=existing,
-                    sell_qty=sell_qty,
+                cash = _apply_filled_decision(
+                    decision=decision,
+                    signal=signal,
                     fill_price=fill_price,
-                    closed_at=signal.event_ts,
-                    exit_reason=_decision_exit_reason(decision),
-                    entry_cost_allocated=entry_cost_allocated,
-                    exit_cost_total=fill_cost,
+                    filled_at=signal.event_ts,
+                    created_at=pending.created_at,
+                    positions=positions,
+                    day_bucket=day_bucket,
+                    cost_model=cost_model,
+                    cash=cash,
+                    all_closed_trades=all_closed_trades,
                 )
-                if remaining is None:
-                    positions.pop(position_key, None)
-                else:
-                    positions[position_key] = remaining
-                day_bucket['gross_pnl'] += trade.gross_pnl
-                day_bucket['net_pnl'] += trade.net_pnl
-                if trade.net_pnl > 0:
-                    day_bucket['wins'] += 1
-                elif trade.net_pnl < 0:
-                    day_bucket['losses'] += 1
-                day_bucket['closed_trades'].append(trade)
-                all_closed_trades.append(trade)
-                _log_trade_closed(trade)
 
             equity = _position_equity(cash=cash, positions=positions, last_prices=last_prices)
             live_positions = _positions_payload(
@@ -1163,6 +1190,21 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                 decision = _apply_order_preferences(decision, signal)
                 _record_decision(day_bucket, decision)
                 if decision.qty <= 0:
+                    continue
+                immediate_fill_price = _resolve_pending_fill_price(decision, signal)
+                if immediate_fill_price is not None:
+                    cash = _apply_filled_decision(
+                        decision=decision,
+                        signal=signal,
+                        fill_price=immediate_fill_price,
+                        filled_at=signal.event_ts,
+                        created_at=signal.event_ts,
+                        positions=positions,
+                        day_bucket=day_bucket,
+                        cost_model=cost_model,
+                        cash=cash,
+                        all_closed_trades=all_closed_trades,
+                    )
                     continue
                 pending_key = _position_key(
                     decision.symbol,
