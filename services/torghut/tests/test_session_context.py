@@ -107,6 +107,45 @@ class TestSessionContextTracker(TestCase):
             Decimal('-297.0297029702970297029702970'),
         )
 
+    def test_tracker_ignores_premarket_tick_for_regular_session_open_anchor(self) -> None:
+        tracker = SessionContextTracker()
+        tracker.enrich_signal_payload(
+            _signal(
+                event_ts=datetime(2026, 3, 24, 19, 59, 0, tzinfo=timezone.utc),
+                price='101.00',
+                spread='0.03',
+                bid_sz='4500',
+                ask_sz='4100',
+            )
+        )
+        premarket_payload = tracker.enrich_signal_payload(
+            _signal(
+                event_ts=datetime(2026, 3, 25, 12, 45, 0, tzinfo=timezone.utc),
+                price='99.00',
+                spread='0.02',
+                bid_sz='3900',
+                ask_sz='4200',
+            )
+        )
+        open_payload = tracker.enrich_signal_payload(
+            _signal(
+                event_ts=datetime(2026, 3, 25, 13, 30, 5, tzinfo=timezone.utc),
+                price='100.00',
+                spread='0.03',
+                bid_sz='4200',
+                ask_sz='3800',
+            )
+        )
+
+        self.assertNotIn('session_open_price', premarket_payload)
+        self.assertEqual(
+            premarket_payload['prev_session_close_price'],
+            Decimal('101.00'),
+        )
+        self.assertEqual(open_payload['session_open_price'], Decimal('100.00'))
+        self.assertEqual(open_payload['opening_range_high'], Decimal('100.00'))
+        self.assertEqual(open_payload['opening_window_close_price'], Decimal('100.00'))
+
     def test_tracker_locks_opening_window_close_and_return_after_first_half_hour(self) -> None:
         tracker = SessionContextTracker()
         tracker.enrich_signal_payload(

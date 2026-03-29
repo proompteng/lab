@@ -103,13 +103,13 @@ def _extract_price(signal: SignalEnvelope) -> Decimal | None:
 
 def _extract_bid(signal: SignalEnvelope) -> Decimal | None:
     return optional_decimal(
-        signal.payload.get('imbalance_bid_px') or _nested(signal.payload, 'imbalance', 'bid_px')
+        _payload_value(signal.payload, 'imbalance_bid_px', 'imbalance', 'bid_px')
     )
 
 
 def _extract_ask(signal: SignalEnvelope) -> Decimal | None:
     return optional_decimal(
-        signal.payload.get('imbalance_ask_px') or _nested(signal.payload, 'imbalance', 'ask_px')
+        _payload_value(signal.payload, 'imbalance_ask_px', 'imbalance', 'ask_px')
     )
 
 
@@ -123,7 +123,12 @@ def _signal_spread_bps(
     spread = _optional_decimal(signal.payload.get('spread'))
     if spread is None:
         spread = _optional_decimal(
-            signal.payload.get('imbalance_spread') or _nested(signal.payload, 'imbalance', 'spread')
+            _payload_value(
+                signal.payload,
+                'imbalance_spread',
+                'imbalance',
+                'spread',
+            )
         )
     if spread is None:
         bid = _extract_bid(signal)
@@ -154,6 +159,18 @@ def _nested(payload: dict[str, Any], block: str, key: str) -> Any:
     if isinstance(item, dict):
         return cast(Mapping[str, Any], item).get(key)
     return None
+
+
+def _payload_value(
+    payload: dict[str, Any],
+    key: str,
+    block: str,
+    nested_key: str,
+) -> Any:
+    direct_value = payload.get(key)
+    if direct_value is not None:
+        return direct_value
+    return _nested(payload, block, nested_key)
 
 
 __all__ = [

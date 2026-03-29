@@ -25,19 +25,24 @@ def _extract_price(payload: dict[str, Any]) -> Decimal | None:
 def _extract_spread_bps(payload: dict[str, Any], price: Decimal | None) -> Decimal | None:
     if price is None or price <= 0:
         return None
-    spread = optional_decimal(
-        payload.get('spread')
-        or payload.get('imbalance_spread')
-        or _nested(payload, 'imbalance', 'spread')
-    )
+    spread_value = _payload_value(payload, 'spread')
+    if spread_value is None:
+        spread_value = _payload_value(payload, 'imbalance_spread')
+    if spread_value is None:
+        spread_value = _nested(payload, 'imbalance', 'spread')
+    spread = optional_decimal(spread_value)
     if spread is None:
         return None
     return (abs(spread) / price) * Decimal('10000')
 
 
 def _extract_imbalance_pressure(payload: dict[str, Any]) -> Decimal | None:
-    bid_sz = optional_decimal(payload.get('imbalance_bid_sz') or _nested(payload, 'imbalance', 'bid_sz'))
-    ask_sz = optional_decimal(payload.get('imbalance_ask_sz') or _nested(payload, 'imbalance', 'ask_sz'))
+    bid_sz = optional_decimal(
+        _payload_value(payload, 'imbalance_bid_sz', 'imbalance', 'bid_sz')
+    )
+    ask_sz = optional_decimal(
+        _payload_value(payload, 'imbalance_ask_sz', 'imbalance', 'ask_sz')
+    )
     if bid_sz is None or ask_sz is None:
         return None
     total = bid_sz + ask_sz
@@ -47,10 +52,18 @@ def _extract_imbalance_pressure(payload: dict[str, Any]) -> Decimal | None:
 
 
 def _extract_microprice_bias_bps(payload: dict[str, Any]) -> Decimal | None:
-    bid_px = optional_decimal(payload.get('imbalance_bid_px') or _nested(payload, 'imbalance', 'bid_px'))
-    ask_px = optional_decimal(payload.get('imbalance_ask_px') or _nested(payload, 'imbalance', 'ask_px'))
-    bid_sz = optional_decimal(payload.get('imbalance_bid_sz') or _nested(payload, 'imbalance', 'bid_sz'))
-    ask_sz = optional_decimal(payload.get('imbalance_ask_sz') or _nested(payload, 'imbalance', 'ask_sz'))
+    bid_px = optional_decimal(
+        _payload_value(payload, 'imbalance_bid_px', 'imbalance', 'bid_px')
+    )
+    ask_px = optional_decimal(
+        _payload_value(payload, 'imbalance_ask_px', 'imbalance', 'ask_px')
+    )
+    bid_sz = optional_decimal(
+        _payload_value(payload, 'imbalance_bid_sz', 'imbalance', 'bid_sz')
+    )
+    ask_sz = optional_decimal(
+        _payload_value(payload, 'imbalance_ask_sz', 'imbalance', 'ask_sz')
+    )
     if (
         bid_px is None
         or ask_px is None
@@ -75,6 +88,20 @@ def _nested(payload: dict[str, Any], block: str, key: str) -> Any:
     if isinstance(item, dict):
         return cast(Mapping[str, Any], item).get(key)
     return None
+
+
+def _payload_value(
+    payload: dict[str, Any],
+    key: str,
+    block: str | None = None,
+    nested_key: str | None = None,
+) -> Any:
+    direct_value = payload.get(key)
+    if direct_value is not None:
+        return direct_value
+    if block is None or nested_key is None:
+        return None
+    return _nested(payload, block, nested_key)
 
 
 def _bps_delta(price: Decimal | None, reference: Decimal | None) -> Decimal | None:
@@ -185,7 +212,14 @@ class SessionContextTracker:
             return payload
 
         symbol = signal.symbol.strip().upper()
-        session_day = signal.event_ts.astimezone(timezone.utc).date()
+        signal_ts_utc = signal.event_ts.astimezone(timezone.utc)
+        session_day = signal_ts_utc.date()
+        session_open_ts = datetime.combine(
+            session_day,
+            REGULAR_OPEN_UTC,
+            tzinfo=timezone.utc,
+        )
+        regular_session_started = signal_ts_utc >= session_open_ts
         state = self._state_by_symbol.get(symbol)
         if state is not None and state.session_day != session_day:
             previous_close = (
@@ -197,6 +231,11 @@ class SessionContextTracker:
                 self._last_session_close_by_symbol[symbol] = previous_close
             state = None
         if state is None:
+            if not regular_session_started:
+                previous_close = self._last_session_close_by_symbol.get(symbol)
+                if previous_close is not None:
+                    payload['prev_session_close_price'] = previous_close
+                return payload
             state = _SymbolSessionState(
                 session_day=session_day,
                 session_open_price=price,
@@ -250,7 +289,9 @@ class SessionContextTracker:
         if session_range > 0:
             position_in_range = (price - state.session_low_price) / session_range
 
-        vwap_w5m = optional_decimal(payload.get('vwap_w5m') or _nested(payload, 'vwap', 'w5m'))
+        vwap_w5m = optional_decimal(
+            _payload_value(payload, 'vwap_w5m', 'vwap', 'w5m')
+        )
         opening_range_width_bps = _bps_delta(state.opening_range_high, state.opening_range_low)
         session_range_bps = _bps_delta(state.session_high_price, state.session_low_price)
         price_vs_session_open_bps = _bps_delta(price, state.session_open_price)
