@@ -184,15 +184,15 @@ def _load_coverage_index(xml_path: Path) -> dict[str, dict[int, int]]:
             if not filename:
                 continue
             normalized = filename.replace('\\', '/').lstrip('./')
-            if '/' not in normalized and package_name in {'app', 'scripts'}:
-                normalized = f'{package_name}/{normalized}'
-            elif '/' not in normalized and package_name == '.':
-                script_path = service_root / 'scripts' / normalized
+            if not normalized.startswith(('app/', 'scripts/')):
                 app_path = service_root / 'app' / normalized
-                if script_path.exists() and not app_path.exists():
-                    normalized = f'scripts/{normalized}'
-                elif app_path.exists() and not script_path.exists():
+                script_path = service_root / 'scripts' / normalized
+                if app_path.exists() and not script_path.exists():
                     normalized = f'app/{normalized}'
+                elif script_path.exists() and not app_path.exists():
+                    normalized = f'scripts/{normalized}'
+                elif '/' not in normalized and package_name in {'app', 'scripts'}:
+                    normalized = f'{package_name}/{normalized}'
             line_hits = coverage_index.setdefault(normalized, {})
             for line_node in class_node.findall('./lines/line'):
                 number = line_node.get('number')

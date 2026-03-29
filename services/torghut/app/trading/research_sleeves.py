@@ -213,6 +213,9 @@ def evaluate_breakout_continuation_long(
     recent_quote_invalid_ratio: Decimal | None,
     recent_quote_jump_bps_max: Decimal | None,
     recent_microprice_bias_bps_avg: Decimal | None,
+    recent_above_opening_range_high_ratio: Decimal | None,
+    recent_above_opening_window_close_ratio: Decimal | None,
+    recent_above_vwap_w5m_ratio: Decimal | None,
     cross_section_positive_session_open_ratio: Decimal | None,
     cross_section_positive_prev_session_close_ratio: Decimal | None,
     cross_section_positive_opening_window_return_ratio: Decimal | None,
@@ -239,13 +242,21 @@ def evaluate_breakout_continuation_long(
         return None
 
     ts = _parse_event_ts(event_ts)
+    entry_start_minute = _minute_param(params, 'entry_start_minute_utc', 14 * 60 + 15)
+    entry_end_minute = _effective_entry_end_minute(
+        params,
+        default_end_minute=19 * 60 + 45,
+    )
+    latest_breakout_entry_end_minute = _optional_minute_param(
+        params,
+        'latest_breakout_entry_end_minute_utc',
+    )
+    if latest_breakout_entry_end_minute is not None:
+        entry_end_minute = min(entry_end_minute, latest_breakout_entry_end_minute)
     if not _within_utc_window(
         ts,
-        start_minute=_minute_param(params, 'entry_start_minute_utc', 14 * 60 + 15),
-        end_minute=_effective_entry_end_minute(
-            params,
-            default_end_minute=19 * 60 + 45,
-        ),
+        start_minute=entry_start_minute,
+        end_minute=entry_end_minute,
     ):
         return None
 
@@ -379,6 +390,11 @@ def evaluate_breakout_continuation_long(
         'max_recent_quote_invalid_ratio',
         Decimal('0.12'),
     )
+    hard_max_recent_quote_invalid_ratio = _optional_decimal_param(
+        params,
+        'hard_max_recent_quote_invalid_ratio',
+        None,
+    )
     max_recent_quote_jump_bps = _optional_decimal_param(
         params,
         'max_recent_quote_jump_bps',
@@ -389,7 +405,23 @@ def evaluate_breakout_continuation_long(
         'min_recent_microprice_bias_bps',
         Decimal('0.25'),
     )
+    min_recent_above_opening_range_high_ratio = _optional_decimal_param(
+        params,
+        'min_recent_above_opening_range_high_ratio',
+        None,
+    )
+    min_recent_above_opening_window_close_ratio = _optional_decimal_param(
+        params,
+        'min_recent_above_opening_window_close_ratio',
+        None,
+    )
+    min_recent_above_vwap_w5m_ratio = _optional_decimal_param(
+        params,
+        'min_recent_above_vwap_w5m_ratio',
+        None,
+    )
     spread_cap_bps = _decimal_param(params, 'max_spread_bps', Decimal('6'))
+    min_imbalance_pressure = _decimal_param(params, 'min_imbalance_pressure', Decimal('0'))
     min_cross_section_continuation_rank = _optional_decimal_param(
         params,
         'min_cross_section_continuation_rank',
@@ -466,12 +498,88 @@ def evaluate_breakout_continuation_long(
         reference_bps=session_range_bps or opening_range_width_bps,
         multiplier=_optional_decimal_param(params, 'vwap_w5m_range_multiplier', Decimal('0.45')),
     )
-    isolated_strength_confirmed = _isolated_breakout_strength_confirmed(
+    isolated_flow_strength_confirmed = _isolated_breakout_strength_confirmed(
         params=params,
         range_position_rank=cross_section_range_position_rank,
         vwap_w5m_rank=cross_section_vwap_w5m_rank,
         recent_imbalance_rank=cross_section_recent_imbalance_rank,
     )
+    isolated_same_day_leadership_confirmed = _isolated_same_day_leadership_confirmed(
+        params=params,
+        session_open_rank=cross_section_session_open_rank,
+        opening_window_return_rank=cross_section_opening_window_return_rank,
+        continuation_rank=effective_continuation_rank,
+        microprice_bias_bps=recent_microprice_bias_bps_avg,
+        price_vs_opening_window_close_bps=price_vs_opening_window_close_bps,
+        recent_above_opening_window_close_ratio=recent_above_opening_window_close_ratio,
+    )
+    isolated_strength_confirmed = (
+        isolated_flow_strength_confirmed
+        or isolated_same_day_leadership_confirmed
+    )
+    leader_reclaim_confirmed = _leader_reclaim_confirmed(
+        params=params,
+        event_ts=event_ts,
+        same_day_leadership_confirmed=isolated_same_day_leadership_confirmed,
+        recent_imbalance_pressure_avg=recent_imbalance_pressure_avg,
+        recent_microprice_bias_bps_avg=recent_microprice_bias_bps_avg,
+        recent_above_opening_window_close_ratio=recent_above_opening_window_close_ratio,
+        recent_above_vwap_w5m_ratio=recent_above_vwap_w5m_ratio,
+        price_position_in_session_range=price_position_in_session_range,
+        price_vs_vwap_w5m_bps=price_vs_vwap_w5m_bps,
+    )
+    effective_bullish_hist_min = _decimal_param(params, 'bullish_hist_min', Decimal('0.008'))
+    if leader_reclaim_confirmed:
+        effective_bullish_hist_min -= (
+            _optional_decimal_param(
+                params,
+                'leader_reclaim_bullish_hist_relaxation',
+                Decimal('0.053'),
+            )
+            or Decimal('0')
+        )
+    effective_min_bull_rsi = _relax_floor_for_isolated_strength(
+        floor=_decimal_param(params, 'min_bull_rsi', Decimal('58')),
+        isolated_strength_confirmed=leader_reclaim_confirmed,
+        relaxation=_optional_decimal_param(
+            params,
+            'leader_reclaim_min_bull_rsi_relaxation',
+            Decimal('4'),
+        ),
+    )
+    effective_max_bull_rsi = _widen_cap_for_isolated_strength(
+        cap=_decimal_param(params, 'max_bull_rsi', Decimal('72')),
+        isolated_strength_confirmed=leader_reclaim_confirmed,
+        extension=_optional_decimal_param(
+            params,
+            'leader_reclaim_max_bull_rsi_extension',
+            Decimal('6'),
+        ),
+    )
+    effective_vol_ceil = _widen_cap_for_isolated_strength(
+        cap=_optional_decimal_param(params, 'vol_ceil', Decimal('0.00040')),
+        isolated_strength_confirmed=leader_reclaim_confirmed,
+        extension=_optional_decimal_param(
+            params,
+            'leader_reclaim_vol_ceil_extension',
+            Decimal('0.00030'),
+        ),
+    )
+    effective_min_imbalance_pressure = _relax_floor_for_isolated_strength(
+        floor=min_imbalance_pressure,
+        isolated_strength_confirmed=leader_reclaim_confirmed,
+        relaxation=_optional_decimal_param(
+            params,
+            'leader_reclaim_imbalance_relaxation',
+            Decimal('0.22'),
+        ),
+    )
+    if effective_min_bull_rsi is None:
+        effective_min_bull_rsi = Decimal('58')
+    if effective_max_bull_rsi is None:
+        effective_max_bull_rsi = Decimal('72')
+    if effective_min_imbalance_pressure is None:
+        effective_min_imbalance_pressure = Decimal('0')
     min_session_open_drive_bps = _relax_floor_for_isolated_strength(
         floor=min_session_open_drive_bps,
         isolated_strength_confirmed=isolated_strength_confirmed,
@@ -508,6 +616,15 @@ def evaluate_breakout_continuation_long(
             Decimal('0.12'),
         ),
     )
+    min_cross_section_positive_session_open_ratio = _relax_floor_for_isolated_strength(
+        floor=min_cross_section_positive_session_open_ratio,
+        isolated_strength_confirmed=isolated_same_day_leadership_confirmed,
+        relaxation=_optional_decimal_param(
+            params,
+            'isolated_same_day_session_open_ratio_relaxation',
+            Decimal('0.25'),
+        ),
+    )
     min_cross_section_positive_opening_window_return_ratio = _relax_floor_for_isolated_strength(
         floor=min_cross_section_positive_opening_window_return_ratio,
         isolated_strength_confirmed=isolated_strength_confirmed,
@@ -515,6 +632,15 @@ def evaluate_breakout_continuation_long(
             params,
             'isolated_flow_opening_window_ratio_relaxation',
             Decimal('0.15'),
+        ),
+    )
+    min_cross_section_positive_opening_window_return_ratio = _relax_floor_for_isolated_strength(
+        floor=min_cross_section_positive_opening_window_return_ratio,
+        isolated_strength_confirmed=isolated_same_day_leadership_confirmed,
+        relaxation=_optional_decimal_param(
+            params,
+            'isolated_same_day_opening_window_ratio_relaxation',
+            Decimal('0.25'),
         ),
     )
     min_cross_section_above_vwap_w5m_ratio = _relax_floor_for_isolated_strength(
@@ -526,6 +652,15 @@ def evaluate_breakout_continuation_long(
             Decimal('0.15'),
         ),
     )
+    min_cross_section_above_vwap_w5m_ratio = _relax_floor_for_isolated_strength(
+        floor=min_cross_section_above_vwap_w5m_ratio,
+        isolated_strength_confirmed=isolated_same_day_leadership_confirmed,
+        relaxation=_optional_decimal_param(
+            params,
+            'isolated_same_day_above_vwap_ratio_relaxation',
+            Decimal('0.20'),
+        ),
+    )
     min_cross_section_continuation_breadth = _relax_floor_for_isolated_strength(
         floor=min_cross_section_continuation_breadth,
         isolated_strength_confirmed=isolated_strength_confirmed,
@@ -533,6 +668,15 @@ def evaluate_breakout_continuation_long(
             params,
             'isolated_flow_continuation_breadth_relaxation',
             Decimal('0.15'),
+        ),
+    )
+    min_cross_section_continuation_breadth = _relax_floor_for_isolated_strength(
+        floor=min_cross_section_continuation_breadth,
+        isolated_strength_confirmed=isolated_same_day_leadership_confirmed,
+        relaxation=_optional_decimal_param(
+            params,
+            'isolated_same_day_continuation_breadth_relaxation',
+            Decimal('0.30'),
         ),
     )
     max_recent_spread_bps = _widen_cap_for_isolated_strength(
@@ -568,6 +712,33 @@ def evaluate_breakout_continuation_long(
         relaxation=_optional_decimal_param(
             params,
             'isolated_flow_recent_microprice_bias_relaxation_bps',
+            Decimal('0.15'),
+        ),
+    )
+    min_recent_above_opening_range_high_ratio = _relax_floor_for_isolated_strength(
+        floor=min_recent_above_opening_range_high_ratio,
+        isolated_strength_confirmed=isolated_strength_confirmed,
+        relaxation=_optional_decimal_param(
+            params,
+            'isolated_flow_recent_above_orh_ratio_relaxation',
+            Decimal('0.20'),
+        ),
+    )
+    min_recent_above_opening_window_close_ratio = _relax_floor_for_isolated_strength(
+        floor=min_recent_above_opening_window_close_ratio,
+        isolated_strength_confirmed=isolated_strength_confirmed,
+        relaxation=_optional_decimal_param(
+            params,
+            'isolated_flow_recent_above_open_close_ratio_relaxation',
+            Decimal('0.15'),
+        ),
+    )
+    min_recent_above_vwap_w5m_ratio = _relax_floor_for_isolated_strength(
+        floor=min_recent_above_vwap_w5m_ratio,
+        isolated_strength_confirmed=isolated_strength_confirmed,
+        relaxation=_optional_decimal_param(
+            params,
+            'isolated_flow_recent_above_vwap_ratio_relaxation',
             Decimal('0.15'),
         ),
     )
@@ -641,11 +812,17 @@ def evaluate_breakout_continuation_long(
         opening_range_width_bps=opening_range_width_bps,
         session_range_bps=session_range_bps,
     )
+    recent_breakout_reference_hold_passes = _recent_reference_hold_passes(
+        recent_above_opening_range_high_ratio=recent_above_opening_range_high_ratio,
+        min_recent_above_opening_range_high_ratio=min_recent_above_opening_range_high_ratio,
+        recent_above_opening_window_close_ratio=recent_above_opening_window_close_ratio,
+        min_recent_above_opening_window_close_ratio=min_recent_above_opening_window_close_ratio,
+    )
 
     if (
         ema12 > ema26
-        and macd_hist >= _decimal_param(params, 'bullish_hist_min', Decimal('0.008'))
-        and _decimal_param(params, 'min_bull_rsi', Decimal('58')) <= rsi14 <= _decimal_param(params, 'max_bull_rsi', Decimal('72'))
+        and macd_hist >= effective_bullish_hist_min
+        and effective_min_bull_rsi <= rsi14 <= effective_max_bull_rsi
         and _optional_min_threshold(
             price_vs_ema12_bps,
             _decimal_param(params, 'min_price_above_ema12_bps', Decimal('0')),
@@ -654,7 +831,7 @@ def evaluate_breakout_continuation_long(
         and _optional_min_threshold(price_vs_vwap_w5m_bps, min_price_vs_vwap_w5m_bps)
         and _optional_max_threshold(price_vs_vwap_w5m_bps, vwap_w5m_extension_cap_bps)
         and effective_spread_bps <= spread_cap_bps
-        and imbalance_pressure >= _decimal_param(params, 'min_imbalance_pressure', Decimal('0'))
+        and imbalance_pressure >= effective_min_imbalance_pressure
         and _optional_min_threshold(effective_price_drive_bps, min_session_open_drive_bps)
         and _optional_min_threshold(
             effective_opening_window_return_bps,
@@ -671,6 +848,10 @@ def evaluate_breakout_continuation_long(
         and _optional_max_threshold(recent_spread_bps_avg, max_recent_spread_bps)
         and _optional_max_threshold(recent_spread_bps_max, max_recent_spread_bps_max)
         and _optional_min_threshold(recent_imbalance_pressure_avg, min_recent_imbalance_pressure)
+        and _optional_max_threshold(
+            recent_quote_invalid_ratio,
+            hard_max_recent_quote_invalid_ratio,
+        )
         and _quote_stability_passes(
             recent_quote_invalid_ratio=recent_quote_invalid_ratio,
             max_recent_quote_invalid_ratio=max_recent_quote_invalid_ratio,
@@ -680,6 +861,11 @@ def evaluate_breakout_continuation_long(
         and _optional_min_threshold(
             recent_microprice_bias_bps_avg,
             min_recent_microprice_bias_bps,
+        )
+        and recent_breakout_reference_hold_passes
+        and _optional_min_threshold(
+            recent_above_vwap_w5m_ratio,
+            min_recent_above_vwap_w5m_ratio,
         )
         and _optional_min_threshold(
             effective_continuation_rank,
@@ -718,7 +904,7 @@ def evaluate_breakout_continuation_long(
         and _vol_within_band(
             vol_realized_w60s,
             floor=_optional_decimal_param(params, 'vol_floor', Decimal('0.00004')),
-            ceil=_optional_decimal_param(params, 'vol_ceil', Decimal('0.00040')),
+            ceil=effective_vol_ceil,
         )
     ):
         confidence = Decimal('0.68')
@@ -764,7 +950,7 @@ def evaluate_breakout_continuation_long(
                 'session_drive_confirmed',
                 'opening_range_breakout',
                 'above_vwap',
-                'imbalance_confirmed',
+                'leader_reclaim_confirmed' if leader_reclaim_confirmed else 'imbalance_confirmed',
             ),
             notional_multiplier=_resolve_entry_notional_multiplier(
                 params=params,
@@ -1187,6 +1373,9 @@ def evaluate_late_day_continuation_long(
     recent_quote_invalid_ratio: Decimal | None,
     recent_quote_jump_bps_max: Decimal | None,
     recent_microprice_bias_bps_avg: Decimal | None,
+    recent_above_opening_range_high_ratio: Decimal | None,
+    recent_above_opening_window_close_ratio: Decimal | None,
+    recent_above_vwap_w5m_ratio: Decimal | None,
     cross_section_positive_session_open_ratio: Decimal | None,
     cross_section_positive_prev_session_close_ratio: Decimal | None,
     cross_section_positive_opening_window_return_ratio: Decimal | None,
@@ -1343,10 +1532,30 @@ def evaluate_late_day_continuation_long(
         'max_recent_quote_jump_bps',
         Decimal('30'),
     )
+    hard_max_recent_quote_invalid_ratio = _optional_decimal_param(
+        params,
+        'hard_max_recent_quote_invalid_ratio',
+        Decimal('0.12'),
+    )
     min_recent_microprice_bias_bps = _optional_decimal_param(
         params,
         'min_recent_microprice_bias_bps',
         Decimal('0.50'),
+    )
+    min_recent_above_opening_range_high_ratio = _optional_decimal_param(
+        params,
+        'min_recent_above_opening_range_high_ratio',
+        None,
+    )
+    min_recent_above_opening_window_close_ratio = _optional_decimal_param(
+        params,
+        'min_recent_above_opening_window_close_ratio',
+        None,
+    )
+    min_recent_above_vwap_w5m_ratio = _optional_decimal_param(
+        params,
+        'min_recent_above_vwap_w5m_ratio',
+        None,
     )
     spread_cap_bps = _decimal_param(params, 'max_spread_bps', Decimal('6'))
     min_cross_section_continuation_rank = _optional_decimal_param(
@@ -1385,6 +1594,16 @@ def evaluate_late_day_continuation_long(
             None,
         ),
     )
+    min_same_day_opening_window_return_bps = _optional_decimal_param(
+        params,
+        'min_same_day_opening_window_return_bps',
+        Decimal('5'),
+    )
+    min_same_day_positive_opening_window_return_ratio = _optional_decimal_param(
+        params,
+        'min_same_day_positive_opening_window_return_ratio',
+        None,
+    )
     min_cross_section_above_vwap_w5m_ratio = _optional_decimal_param(
         params,
         'min_cross_section_above_vwap_w5m_ratio',
@@ -1394,6 +1613,36 @@ def evaluate_late_day_continuation_long(
         params,
         'min_cross_section_continuation_breadth',
         None,
+    )
+    opening_drive_late_day_session_open_drive_bps = _optional_decimal_param(
+        params,
+        'opening_drive_late_day_session_open_drive_bps',
+        Decimal('45'),
+    )
+    opening_drive_late_day_opening_window_return_bps = _optional_decimal_param(
+        params,
+        'opening_drive_late_day_opening_window_return_bps',
+        Decimal('25'),
+    )
+    opening_drive_late_day_price_vs_opening_window_close_bps = _optional_decimal_param(
+        params,
+        'opening_drive_late_day_price_vs_opening_window_close_bps',
+        Decimal('2'),
+    )
+    opening_drive_late_day_session_range_position = _optional_decimal_param(
+        params,
+        'opening_drive_late_day_session_range_position',
+        Decimal('0.70'),
+    )
+    opening_drive_late_day_recent_above_opening_window_close_ratio = _optional_decimal_param(
+        params,
+        'opening_drive_late_day_recent_above_opening_window_close_ratio',
+        Decimal('0.78'),
+    )
+    opening_drive_late_day_recent_above_vwap_w5m_ratio = _optional_decimal_param(
+        params,
+        'opening_drive_late_day_recent_above_vwap_w5m_ratio',
+        Decimal('0.68'),
     )
     isolated_strength_confirmed = _isolated_breakout_strength_confirmed(
         params=params,
@@ -1446,6 +1695,33 @@ def evaluate_late_day_continuation_long(
             Decimal('0.15'),
         ),
     )
+    min_recent_above_opening_range_high_ratio = _relax_floor_for_isolated_strength(
+        floor=min_recent_above_opening_range_high_ratio,
+        isolated_strength_confirmed=isolated_strength_confirmed,
+        relaxation=_optional_decimal_param(
+            params,
+            'isolated_flow_recent_above_orh_ratio_relaxation',
+            Decimal('0.20'),
+        ),
+    )
+    min_recent_above_opening_window_close_ratio = _relax_floor_for_isolated_strength(
+        floor=min_recent_above_opening_window_close_ratio,
+        isolated_strength_confirmed=isolated_strength_confirmed,
+        relaxation=_optional_decimal_param(
+            params,
+            'isolated_flow_recent_above_open_close_ratio_relaxation',
+            Decimal('0.15'),
+        ),
+    )
+    min_recent_above_vwap_w5m_ratio = _relax_floor_for_isolated_strength(
+        floor=min_recent_above_vwap_w5m_ratio,
+        isolated_strength_confirmed=isolated_strength_confirmed,
+        relaxation=_optional_decimal_param(
+            params,
+            'isolated_flow_recent_above_vwap_ratio_relaxation',
+            Decimal('0.15'),
+        ),
+    )
     min_session_high_above_opening_range_high_bps = _relax_floor_for_isolated_strength(
         floor=min_session_high_above_opening_range_high_bps,
         isolated_strength_confirmed=isolated_strength_confirmed,
@@ -1491,6 +1767,100 @@ def evaluate_late_day_continuation_long(
             Decimal('14'),
         ),
     )
+    opening_drive_late_day_confirmed = (
+        _required_min_threshold(
+            effective_price_drive_bps,
+            opening_drive_late_day_session_open_drive_bps,
+        )
+        and _required_min_threshold(
+            effective_opening_window_return_bps,
+            opening_drive_late_day_opening_window_return_bps,
+        )
+        and _required_min_threshold(
+            price_vs_opening_window_close_bps,
+            opening_drive_late_day_price_vs_opening_window_close_bps,
+        )
+        and _required_min_threshold(
+            price_position_in_session_range,
+            opening_drive_late_day_session_range_position,
+        )
+        and _required_min_threshold(
+            recent_above_opening_window_close_ratio,
+            opening_drive_late_day_recent_above_opening_window_close_ratio,
+        )
+        and _required_min_threshold(
+            recent_above_vwap_w5m_ratio,
+            opening_drive_late_day_recent_above_vwap_w5m_ratio,
+        )
+    )
+    late_day_strength_confirmed = (
+        isolated_strength_confirmed
+        or opening_drive_late_day_confirmed
+    )
+    same_day_opening_window_confirmed = (
+        _required_min_threshold(
+            opening_window_return_bps,
+            min_same_day_opening_window_return_bps,
+        )
+        and _required_min_threshold(
+            cross_section_positive_opening_window_return_ratio,
+            min_same_day_positive_opening_window_return_ratio,
+        )
+    )
+    min_cross_section_continuation_rank = _relax_floor_for_isolated_strength(
+        floor=min_cross_section_continuation_rank,
+        isolated_strength_confirmed=late_day_strength_confirmed,
+        relaxation=_optional_decimal_param(
+            params,
+            'opening_drive_late_day_continuation_rank_relaxation',
+            Decimal('0.12'),
+        ),
+    )
+    min_cross_section_opening_window_return_rank = _relax_floor_for_isolated_strength(
+        floor=min_cross_section_opening_window_return_rank,
+        isolated_strength_confirmed=late_day_strength_confirmed,
+        relaxation=_optional_decimal_param(
+            params,
+            'opening_drive_late_day_opening_window_rank_relaxation',
+            Decimal('0.12'),
+        ),
+    )
+    min_cross_section_positive_session_open_ratio = _relax_floor_for_isolated_strength(
+        floor=min_cross_section_positive_session_open_ratio,
+        isolated_strength_confirmed=late_day_strength_confirmed,
+        relaxation=_optional_decimal_param(
+            params,
+            'opening_drive_late_day_positive_session_open_ratio_relaxation',
+            Decimal('0.12'),
+        ),
+    )
+    min_cross_section_positive_opening_window_return_ratio = _relax_floor_for_isolated_strength(
+        floor=min_cross_section_positive_opening_window_return_ratio,
+        isolated_strength_confirmed=late_day_strength_confirmed,
+        relaxation=_optional_decimal_param(
+            params,
+            'opening_drive_late_day_positive_opening_window_ratio_relaxation',
+            Decimal('0.15'),
+        ),
+    )
+    min_cross_section_above_vwap_w5m_ratio = _relax_floor_for_isolated_strength(
+        floor=min_cross_section_above_vwap_w5m_ratio,
+        isolated_strength_confirmed=late_day_strength_confirmed,
+        relaxation=_optional_decimal_param(
+            params,
+            'opening_drive_late_day_above_vwap_ratio_relaxation',
+            Decimal('0.10'),
+        ),
+    )
+    min_cross_section_continuation_breadth = _relax_floor_for_isolated_strength(
+        floor=min_cross_section_continuation_breadth,
+        isolated_strength_confirmed=late_day_strength_confirmed,
+        relaxation=_optional_decimal_param(
+            params,
+            'opening_drive_late_day_continuation_breadth_relaxation',
+            Decimal('0.12'),
+        ),
+    )
 
     classical_late_day_shape_passes = (
         _optional_min_threshold(price_position_in_session_range, min_session_range_position)
@@ -1520,6 +1890,44 @@ def evaluate_late_day_continuation_long(
         default_min_price_vs_opening_range_high_bps=Decimal('-24'),
         min_session_range_bps_key='isolated_flow_min_late_day_session_range_bps',
         default_min_session_range_bps=min_session_range_bps or Decimal('20'),
+    ) and _optional_max_threshold(
+        price_vs_opening_range_high_bps,
+        _optional_decimal_param(
+            params,
+            'isolated_flow_max_late_day_price_vs_opening_range_high_bps',
+            Decimal('30'),
+        ),
+    ) and _optional_max_threshold(
+        price_vs_opening_window_close_bps,
+        _optional_decimal_param(
+            params,
+            'isolated_flow_max_late_day_price_vs_opening_window_close_bps',
+            Decimal('40'),
+        ),
+    )
+    recent_late_day_reference_hold_passes = _recent_reference_hold_passes(
+        recent_above_opening_range_high_ratio=recent_above_opening_range_high_ratio,
+        min_recent_above_opening_range_high_ratio=min_recent_above_opening_range_high_ratio,
+        recent_above_opening_window_close_ratio=recent_above_opening_window_close_ratio,
+        min_recent_above_opening_window_close_ratio=min_recent_above_opening_window_close_ratio,
+    )
+    late_day_opening_window_close_hold_passes = _required_min_threshold(
+        recent_above_opening_window_close_ratio,
+        min_recent_above_opening_window_close_ratio,
+    )
+    opening_drive_late_day_shape_passes = (
+        opening_drive_late_day_confirmed
+        and _optional_min_threshold(session_range_bps, min_session_range_bps)
+        and _optional_min_threshold(price_vs_vwap_w5m_bps, min_price_vs_vwap_w5m_bps)
+        and _optional_max_threshold(price_vs_vwap_w5m_bps, max_price_vs_vwap_w5m_bps)
+        and _optional_min_threshold(
+            price_vs_opening_window_close_bps,
+            min_price_vs_opening_window_close_bps,
+        )
+        and _optional_max_threshold(
+            price_vs_opening_window_close_bps,
+            max_price_vs_opening_window_close_bps,
+        )
     )
 
     if (
@@ -1543,12 +1951,18 @@ def evaluate_late_day_continuation_long(
             effective_opening_window_return_bps,
             min_opening_window_return_bps,
         )
+        and same_day_opening_window_confirmed
         and (
             classical_late_day_shape_passes
             or isolated_late_day_shape_passes
+            or opening_drive_late_day_shape_passes
         )
         and _optional_max_threshold(recent_spread_bps_avg, max_recent_spread_bps)
         and _optional_min_threshold(recent_imbalance_pressure_avg, min_recent_imbalance_pressure)
+        and _optional_max_threshold(
+            recent_quote_invalid_ratio,
+            hard_max_recent_quote_invalid_ratio,
+        )
         and _quote_stability_passes(
             recent_quote_invalid_ratio=recent_quote_invalid_ratio,
             max_recent_quote_invalid_ratio=max_recent_quote_invalid_ratio,
@@ -1558,6 +1972,12 @@ def evaluate_late_day_continuation_long(
         and _optional_min_threshold(
             recent_microprice_bias_bps_avg,
             min_recent_microprice_bias_bps,
+        )
+        and recent_late_day_reference_hold_passes
+        and late_day_opening_window_close_hold_passes
+        and _optional_min_threshold(
+            recent_above_vwap_w5m_ratio,
+            min_recent_above_vwap_w5m_ratio,
         )
         and _optional_min_threshold(
             effective_continuation_rank,
@@ -2176,7 +2596,7 @@ def _isolated_breakout_strength_confirmed(
     recent_imbalance_rank: Decimal | None,
 ) -> bool:
     return (
-        _optional_min_threshold(
+        _required_min_threshold(
             range_position_rank,
             _optional_decimal_param(
                 params,
@@ -2184,7 +2604,7 @@ def _isolated_breakout_strength_confirmed(
                 Decimal('0.85'),
             ),
         )
-        and _optional_min_threshold(
+        and _required_min_threshold(
             vwap_w5m_rank,
             _optional_decimal_param(
                 params,
@@ -2192,12 +2612,154 @@ def _isolated_breakout_strength_confirmed(
                 Decimal('0.75'),
             ),
         )
-        and _optional_min_threshold(
+        and _required_min_threshold(
             recent_imbalance_rank,
             _optional_decimal_param(
                 params,
                 'isolated_flow_min_recent_imbalance_rank',
                 Decimal('0.75'),
+            ),
+        )
+    )
+
+
+def _isolated_same_day_leadership_confirmed(
+    *,
+    params: Mapping[str, Any],
+    session_open_rank: Decimal | None,
+    opening_window_return_rank: Decimal | None,
+    continuation_rank: Decimal | None,
+    microprice_bias_bps: Decimal | None,
+    price_vs_opening_window_close_bps: Decimal | None,
+    recent_above_opening_window_close_ratio: Decimal | None,
+) -> bool:
+    return (
+        _required_min_threshold(
+            session_open_rank,
+            _optional_decimal_param(
+                params,
+                'isolated_same_day_min_session_open_rank',
+                Decimal('0.90'),
+            ),
+        )
+        and _required_min_threshold(
+            opening_window_return_rank,
+            _optional_decimal_param(
+                params,
+                'isolated_same_day_min_opening_window_return_rank',
+                Decimal('0.85'),
+            ),
+        )
+        and _required_min_threshold(
+            continuation_rank,
+            _optional_decimal_param(
+                params,
+                'isolated_same_day_min_continuation_rank',
+                Decimal('0.88'),
+            ),
+        )
+        and _required_min_threshold(
+            microprice_bias_bps,
+            _optional_decimal_param(
+                params,
+                'isolated_same_day_min_microprice_bias_bps',
+                Decimal('0.25'),
+            ),
+        )
+        and _required_min_threshold(
+            price_vs_opening_window_close_bps,
+            _optional_decimal_param(
+                params,
+                'isolated_same_day_min_price_vs_opening_window_close_bps',
+                Decimal('0'),
+            ),
+        )
+        and _required_min_threshold(
+            recent_above_opening_window_close_ratio,
+            _optional_decimal_param(
+                params,
+                'isolated_same_day_min_recent_above_opening_window_close_ratio',
+                Decimal('0.55'),
+            ),
+        )
+    )
+
+
+def _leader_reclaim_confirmed(
+    *,
+    params: Mapping[str, Any],
+    event_ts: str,
+    same_day_leadership_confirmed: bool,
+    recent_imbalance_pressure_avg: Decimal | None,
+    recent_microprice_bias_bps_avg: Decimal | None,
+    recent_above_opening_window_close_ratio: Decimal | None,
+    recent_above_vwap_w5m_ratio: Decimal | None,
+    price_position_in_session_range: Decimal | None,
+    price_vs_vwap_w5m_bps: Decimal | None,
+) -> bool:
+    if not same_day_leadership_confirmed:
+        return False
+    if _session_minutes_elapsed(event_ts) <= _minute_param(
+        params,
+        'leader_reclaim_start_minutes_since_open',
+        90,
+    ):
+        return False
+    return (
+        _required_min_threshold(
+            recent_imbalance_pressure_avg,
+            _optional_decimal_param(
+                params,
+                'leader_reclaim_min_recent_imbalance_pressure',
+                Decimal('0.20'),
+            ),
+        )
+        and _required_min_threshold(
+            recent_microprice_bias_bps_avg,
+            _optional_decimal_param(
+                params,
+                'leader_reclaim_min_recent_microprice_bias_bps',
+                Decimal('1.0'),
+            ),
+        )
+        and _required_min_threshold(
+            recent_above_opening_window_close_ratio,
+            _optional_decimal_param(
+                params,
+                'leader_reclaim_min_recent_above_opening_window_close_ratio',
+                Decimal('0.85'),
+            ),
+        )
+        and _required_min_threshold(
+            recent_above_vwap_w5m_ratio,
+            _optional_decimal_param(
+                params,
+                'leader_reclaim_min_recent_above_vwap_w5m_ratio',
+                Decimal('0.80'),
+            ),
+        )
+        and _required_min_threshold(
+            price_position_in_session_range,
+            _optional_decimal_param(
+                params,
+                'leader_reclaim_min_session_range_position',
+                Decimal('0.80'),
+            ),
+        )
+        and _required_min_threshold(
+            price_vs_vwap_w5m_bps,
+            _optional_decimal_param(
+                params,
+                'leader_reclaim_min_price_vs_vwap_w5m_bps',
+                Decimal('-4'),
+            ),
+        )
+        and _optional_max_threshold(
+            price_vs_vwap_w5m_bps,
+            _optional_decimal_param(
+                params,
+                'leader_reclaim_max_price_vs_vwap_w5m_bps',
+                Decimal('28'),
             ),
         )
     )
@@ -2335,6 +2897,41 @@ def _optional_min_threshold(value: Decimal | None, floor: Decimal | None) -> boo
     if floor is None or value is None:
         return True
     return value >= floor
+
+
+def _required_min_threshold(value: Decimal | None, floor: Decimal | None) -> bool:
+    if floor is None:
+        return True
+    if value is None:
+        return False
+    return value >= floor
+
+
+def _recent_reference_hold_passes(
+    *,
+    recent_above_opening_range_high_ratio: Decimal | None,
+    min_recent_above_opening_range_high_ratio: Decimal | None,
+    recent_above_opening_window_close_ratio: Decimal | None,
+    min_recent_above_opening_window_close_ratio: Decimal | None,
+) -> bool:
+    checks: list[bool] = []
+    if min_recent_above_opening_range_high_ratio is not None:
+        checks.append(
+            _required_min_threshold(
+                recent_above_opening_range_high_ratio,
+                min_recent_above_opening_range_high_ratio,
+            )
+        )
+    if min_recent_above_opening_window_close_ratio is not None:
+        checks.append(
+            _required_min_threshold(
+                recent_above_opening_window_close_ratio,
+                min_recent_above_opening_window_close_ratio,
+            )
+        )
+    if not checks:
+        return True
+    return any(checks)
 
 
 def _optional_max_threshold(value: Decimal | None, ceil: Decimal | None) -> bool:

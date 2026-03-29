@@ -146,6 +146,75 @@ class TestSessionContextTracker(TestCase):
         self.assertEqual(open_payload['opening_range_high'], Decimal('100.00'))
         self.assertEqual(open_payload['opening_window_close_price'], Decimal('100.00'))
 
+    def test_invalid_regular_quote_initializes_guardrails_and_reanchors_on_first_valid_quote(self) -> None:
+        tracker = SessionContextTracker()
+
+        invalid_open_payload = tracker.enrich_signal_payload(
+            _signal(
+                event_ts=datetime(2026, 3, 25, 13, 30, 5, tzinfo=timezone.utc),
+                price='100.00',
+                spread='5.00',
+                bid_sz='4200',
+                ask_sz='3800',
+            )
+        )
+        valid_open_payload = tracker.enrich_signal_payload(
+            _signal(
+                event_ts=datetime(2026, 3, 25, 13, 31, 0, tzinfo=timezone.utc),
+                price='100.10',
+                spread='0.03',
+                bid_sz='4300',
+                ask_sz='3700',
+            )
+        )
+
+        self.assertEqual(invalid_open_payload['session_open_price'], Decimal('100.00'))
+        self.assertEqual(invalid_open_payload['recent_quote_invalid_ratio'], Decimal('1'))
+        self.assertEqual(valid_open_payload['session_open_price'], Decimal('100.10'))
+        self.assertEqual(valid_open_payload['opening_range_high'], Decimal('100.10'))
+        self.assertEqual(valid_open_payload['session_high_price'], Decimal('100.10'))
+        self.assertEqual(valid_open_payload['recent_quote_invalid_ratio'], Decimal('0.5'))
+
+    def test_invalid_quote_does_not_poison_session_high_or_opening_range(self) -> None:
+        tracker = SessionContextTracker()
+        tracker.enrich_signal_payload(
+            _signal(
+                event_ts=datetime(2026, 3, 24, 13, 30, 5, tzinfo=timezone.utc),
+                price='100.00',
+                spread='0.03',
+                bid_sz='4200',
+                ask_sz='3800',
+            )
+        )
+        invalid_payload = tracker.enrich_signal_payload(
+            _signal(
+                event_ts=datetime(2026, 3, 24, 13, 35, 0, tzinfo=timezone.utc),
+                price='103.50',
+                spread='5.00',
+                bid_sz='6100',
+                ask_sz='3500',
+            )
+        )
+        breakout_payload = tracker.enrich_signal_payload(
+            _signal(
+                event_ts=datetime(2026, 3, 24, 14, 5, 0, tzinfo=timezone.utc),
+                price='101.20',
+                spread='0.03',
+                bid_sz='5100',
+                ask_sz='4300',
+            )
+        )
+
+        self.assertEqual(invalid_payload['session_open_price'], Decimal('100.00'))
+        self.assertEqual(invalid_payload['session_high_price'], Decimal('100.00'))
+        self.assertEqual(invalid_payload['opening_range_high'], Decimal('100.00'))
+        self.assertEqual(breakout_payload['session_high_price'], Decimal('101.20'))
+        self.assertEqual(breakout_payload['opening_range_high'], Decimal('100.00'))
+        self.assertGreater(
+            breakout_payload['recent_quote_invalid_ratio'],
+            Decimal('0'),
+        )
+
     def test_tracker_locks_opening_window_close_and_return_after_first_half_hour(self) -> None:
         tracker = SessionContextTracker()
         tracker.enrich_signal_payload(
@@ -237,7 +306,7 @@ class TestSessionContextTracker(TestCase):
                 'imbalance': {
                     'bid_px': Decimal('101.0'),
                     'ask_px': Decimal('103.0'),
-                    'spread': Decimal('2.0'),
+                    'spread': Decimal('0.2'),
                     'bid_sz': Decimal('5200'),
                     'ask_sz': Decimal('4300'),
                 },
@@ -246,8 +315,8 @@ class TestSessionContextTracker(TestCase):
 
         payload = tracker.enrich_signal_payload(signal)
         self.assertEqual(payload['session_open_price'], Decimal('102.0'))
-        self.assertIsNone(payload['recent_spread_bps_avg'])
-        self.assertIsNone(payload['recent_imbalance_pressure_avg'])
+        self.assertGreater(payload['recent_spread_bps_avg'], Decimal('0'))
+        self.assertGreater(payload['recent_imbalance_pressure_avg'], Decimal('0'))
 
     def test_tracker_emits_cross_section_continuation_and_reversal_ranks(self) -> None:
         tracker = SessionContextTracker()
@@ -384,6 +453,81 @@ class TestSessionContextTracker(TestCase):
         self.assertGreater(
             cast(Decimal, unstable_payload['recent_microprice_bias_bps_avg']),
             Decimal('0'),
+        )
+
+    def test_tracker_emits_recent_hold_quality_ratios_from_valid_quotes(self) -> None:
+        tracker = SessionContextTracker()
+        tracker.enrich_signal_payload(
+            _signal(
+                event_ts=datetime(2026, 3, 24, 13, 30, 5, tzinfo=timezone.utc),
+                symbol='AAPL',
+                price='100.00',
+                spread='0.03',
+                bid_sz='5200',
+                ask_sz='4100',
+                vwap_w5m='100.00',
+            )
+        )
+        tracker.enrich_signal_payload(
+            _signal(
+                event_ts=datetime(2026, 3, 24, 14, 5, 0, tzinfo=timezone.utc),
+                symbol='AAPL',
+                price='101.20',
+                spread='0.03',
+                bid_sz='5600',
+                ask_sz='3900',
+                vwap_w5m='100.90',
+            )
+        )
+        tracker.enrich_signal_payload(
+            _signal(
+                event_ts=datetime(2026, 3, 24, 14, 5, 5, tzinfo=timezone.utc),
+                symbol='AAPL',
+                price='100.85',
+                spread='0.03',
+                bid_sz='5400',
+                ask_sz='4000',
+                vwap_w5m='100.90',
+            )
+        )
+        invalid_payload = tracker.enrich_signal_payload(
+            _signal(
+                event_ts=datetime(2026, 3, 24, 14, 5, 10, tzinfo=timezone.utc),
+                symbol='AAPL',
+                price='101.40',
+                spread='5.00',
+                bid_sz='6100',
+                ask_sz='3500',
+                vwap_w5m='101.00',
+            )
+        )
+        final_payload = tracker.enrich_signal_payload(
+            _signal(
+                event_ts=datetime(2026, 3, 24, 14, 5, 15, tzinfo=timezone.utc),
+                symbol='AAPL',
+                price='101.35',
+                spread='0.03',
+                bid_sz='5700',
+                ask_sz='3800',
+                vwap_w5m='101.05',
+            )
+        )
+
+        self.assertEqual(
+            final_payload['recent_above_opening_range_high_ratio'],
+            Decimal('1'),
+        )
+        self.assertEqual(
+            final_payload['recent_above_opening_window_close_ratio'],
+            Decimal('1'),
+        )
+        self.assertEqual(
+            final_payload['recent_above_vwap_w5m_ratio'],
+            Decimal('0.75'),
+        )
+        self.assertEqual(
+            invalid_payload['recent_above_opening_range_high_ratio'],
+            Decimal('1'),
         )
 
     def test_tracker_prefers_prev_close_in_cross_section_continuation_rank(self) -> None:
