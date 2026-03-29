@@ -4,6 +4,7 @@ import json
 import logging
 import tempfile
 import os
+from decimal import Decimal
 from functools import lru_cache
 from http.client import HTTPConnection, HTTPSConnection
 from pathlib import Path
@@ -1421,6 +1422,21 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices(
             "TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS", "CLICKHOUSE_TIMEOUT_SECONDS"
         ),
+    )
+    trading_signal_max_executable_spread_bps: Decimal = Field(
+        default=Decimal("50"),
+        alias="TRADING_SIGNAL_MAX_EXECUTABLE_SPREAD_BPS",
+        description="Reject signals whose executable spread exceeds this bound before strategy evaluation.",
+    )
+    trading_signal_max_quote_mid_jump_bps: Decimal = Field(
+        default=Decimal("150"),
+        alias="TRADING_SIGNAL_MAX_QUOTE_MID_JUMP_BPS",
+        description="Reject wide-spread signals whose midpoint jumps too far from the last executable quote.",
+    )
+    trading_signal_max_jump_with_wide_spread_bps: Decimal = Field(
+        default=Decimal("25"),
+        alias="TRADING_SIGNAL_MAX_JUMP_WITH_WIDE_SPREAD_BPS",
+        description="Only apply the midpoint-jump filter when the spread is at least this wide.",
     )
     trading_readiness_dependency_cache_enabled: bool = Field(
         default=True,

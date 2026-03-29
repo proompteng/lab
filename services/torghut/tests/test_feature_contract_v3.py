@@ -57,6 +57,26 @@ class TestFeatureContractV3(TestCase):
         feature_vector = normalize_feature_vector_v3(signal)
         self.assertEqual(feature_vector.values.get('price'), 101)
 
+    def test_normalization_prefers_executable_price_over_nested_vwap(self) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+            symbol='AAPL',
+            timeframe='1Min',
+            payload={
+                'macd': {'macd': '0.4', 'signal': '0.2'},
+                'rsi14': '50',
+                'vwap': {'session': '100.0', 'w5m': '100.5'},
+                'imbalance': {'bid_px': '101.0', 'ask_px': '103.0'},
+            },
+            seq=2,
+            source='fixture',
+        )
+
+        feature_vector = normalize_feature_vector_v3(signal)
+        self.assertEqual(feature_vector.values.get('price'), Decimal('102'))
+        self.assertEqual(feature_vector.values.get('vwap_session'), Decimal('100.0'))
+        self.assertEqual(feature_vector.values.get('price_vs_vwap_w5m_bps'), Decimal('149.2537313432835820895522388'))
+
     def test_normalization_maps_nested_schema_fields(self) -> None:
         signal = SignalEnvelope(
             event_ts=datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
@@ -86,6 +106,99 @@ class TestFeatureContractV3(TestCase):
         self.assertEqual(fv.values['vol_realized_w60s'], Decimal('0.009'))
         self.assertEqual(fv.values['imbalance_spread'], Decimal('0.03'))
         self.assertEqual(fv.values['staleness_ms'], 2000)
+
+    def test_normalization_maps_session_context_and_derived_vwap_fields(self) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 15, 5, tzinfo=timezone.utc),
+            symbol='META',
+            timeframe='1Sec',
+            payload={
+                'macd': {'macd': '0.6', 'signal': '0.3'},
+                'rsi14': '61',
+                'price': '101.2',
+                'vwap_session': '100.8',
+                'vwap_w5m': '101.0',
+                'imbalance_bid_sz': '5100',
+                'imbalance_ask_sz': '4300',
+                'prev_session_close_price': '99.4',
+                'session_open_price': '100.0',
+                'session_high_price': '101.2',
+                'session_low_price': '99.8',
+                'opening_range_high': '100.6',
+                'opening_range_low': '99.9',
+                'opening_window_close_price': '100.9',
+                'opening_range_width_bps': '70',
+                'session_range_bps': '140',
+                'price_vs_session_open_bps': '120',
+                'price_vs_prev_session_close_bps': '181.0865191146881287726358149',
+                'opening_window_return_bps': '90',
+                'opening_window_return_from_prev_close_bps': '150.9054325955734406438631791',
+                'price_vs_opening_range_high_bps': '59.64',
+                'price_vs_opening_window_close_bps': '29.73',
+                'price_position_in_session_range': '1.0',
+                'recent_spread_bps_avg': '0.75',
+                'recent_spread_bps_max': '1.20',
+                'recent_imbalance_pressure_avg': '0.06',
+                'recent_quote_invalid_ratio': '0.04',
+                'recent_quote_jump_bps_avg': '12.5',
+                'recent_quote_jump_bps_max': '18.2',
+                'recent_microprice_bias_bps_avg': '0.85',
+                'cross_section_prev_session_close_rank': '0.91',
+                'cross_section_positive_session_open_ratio': '0.58',
+                'cross_section_positive_prev_session_close_ratio': '0.75',
+                'cross_section_positive_opening_window_return_ratio': '0.66',
+                'cross_section_positive_opening_window_return_from_prev_close_ratio': '0.83',
+                'cross_section_above_vwap_w5m_ratio': '0.50',
+                'cross_section_positive_recent_imbalance_ratio': '0.75',
+                'cross_section_continuation_breadth': '0.6225',
+                'cross_section_opening_window_return_rank': '0.83',
+                'cross_section_opening_window_return_from_prev_close_rank': '0.87',
+                'session_minutes_elapsed': 95,
+            },
+            seq=11,
+            source='fixture',
+        )
+
+        fv = normalize_feature_vector_v3(signal)
+        self.assertEqual(fv.values['imbalance_pressure'], Decimal('0.08510638297872340425531914894'))
+        self.assertEqual(fv.values['vwap_w5m_vs_session_bps'], Decimal('19.84126984126984126984126984'))
+        self.assertEqual(fv.values['price_vs_vwap_w5m_bps'], Decimal('19.80198019801980198019801980'))
+        self.assertEqual(fv.values['session_open_price'], Decimal('100.0'))
+        self.assertEqual(fv.values['prev_session_close_price'], Decimal('99.4'))
+        self.assertEqual(fv.values['opening_range_high'], Decimal('100.6'))
+        self.assertEqual(fv.values['opening_window_close_price'], Decimal('100.9'))
+        self.assertEqual(fv.values['price_vs_session_open_bps'], Decimal('120'))
+        self.assertEqual(
+            fv.values['price_vs_prev_session_close_bps'],
+            Decimal('181.0865191146881287726358149'),
+        )
+        self.assertEqual(fv.values['opening_window_return_bps'], Decimal('90'))
+        self.assertEqual(
+            fv.values['opening_window_return_from_prev_close_bps'],
+            Decimal('150.9054325955734406438631791'),
+        )
+        self.assertEqual(fv.values['price_vs_opening_window_close_bps'], Decimal('29.73'))
+        self.assertEqual(fv.values['recent_spread_bps_avg'], Decimal('0.75'))
+        self.assertEqual(fv.values['recent_quote_invalid_ratio'], Decimal('0.04'))
+        self.assertEqual(fv.values['recent_quote_jump_bps_max'], Decimal('18.2'))
+        self.assertEqual(fv.values['recent_microprice_bias_bps_avg'], Decimal('0.85'))
+        self.assertEqual(fv.values['cross_section_prev_session_close_rank'], Decimal('0.91'))
+        self.assertEqual(fv.values['cross_section_positive_session_open_ratio'], Decimal('0.58'))
+        self.assertEqual(fv.values['cross_section_positive_prev_session_close_ratio'], Decimal('0.75'))
+        self.assertEqual(fv.values['cross_section_positive_opening_window_return_ratio'], Decimal('0.66'))
+        self.assertEqual(
+            fv.values['cross_section_positive_opening_window_return_from_prev_close_ratio'],
+            Decimal('0.83'),
+        )
+        self.assertEqual(fv.values['cross_section_above_vwap_w5m_ratio'], Decimal('0.50'))
+        self.assertEqual(fv.values['cross_section_positive_recent_imbalance_ratio'], Decimal('0.75'))
+        self.assertEqual(fv.values['cross_section_continuation_breadth'], Decimal('0.6225'))
+        self.assertEqual(fv.values['cross_section_opening_window_return_rank'], Decimal('0.83'))
+        self.assertEqual(
+            fv.values['cross_section_opening_window_return_from_prev_close_rank'],
+            Decimal('0.87'),
+        )
+        self.assertEqual(fv.values['session_minutes_elapsed'], 95)
 
     def test_normalization_persists_hmm_transition_shock_and_artifact_lineage(self) -> None:
         signal = SignalEnvelope(

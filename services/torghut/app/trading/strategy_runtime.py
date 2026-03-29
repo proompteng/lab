@@ -17,6 +17,7 @@ from .features import FeatureVectorV3, validate_declared_features
 from .intraday_tsmom_contract import evaluate_intraday_tsmom_signal
 from .research_sleeves import (
     evaluate_breakout_continuation_long,
+    evaluate_end_of_day_reversal_long,
     evaluate_late_day_continuation_long,
     evaluate_mean_reversion_rebound_long,
     evaluate_momentum_pullback_long,
@@ -121,6 +122,10 @@ class RuntimeDecision:
             "plugin_version": self.plugin_version,
             "parameter_hash": self.parameter_hash,
             "feature_hash": self.feature_hash,
+            "intent_action": self.intent.direction,
+            "intent_confidence": str(self.intent.confidence),
+            "intent_target_notional": str(self.intent.target_notional),
+            "intent_rationale": list(self.intent.explain),
             "required_features": list(self.intent.required_features),
             "compiler_source": self.compiler_source,
             "strategy_spec_v2": dict(self.strategy_spec),
@@ -202,6 +207,7 @@ class StrategyRegistry:
             "breakout_continuation_long_v1": BreakoutContinuationLongPlugin(),
             "mean_reversion_rebound_long_v1": MeanReversionReboundLongPlugin(),
             "late_day_continuation_long_v1": LateDayContinuationLongPlugin(),
+            "end_of_day_reversal_long_v1": EndOfDayReversalLongPlugin(),
         }
         self._by_key: dict[tuple[str, str], StrategyPlugin] = {}
         self._type_alias: dict[str, tuple[str, str]] = {}
@@ -387,6 +393,24 @@ class IntradayTsmomPlugin:
         "macd_signal",
         "rsi14",
         "vol_realized_w60s",
+        "price_vs_session_open_bps",
+        "price_vs_prev_session_close_bps",
+        "opening_window_return_bps",
+        "opening_window_return_from_prev_close_bps",
+        "session_range_bps",
+        "price_position_in_session_range",
+        "price_vs_vwap_w5m_bps",
+        "price_vs_opening_range_high_bps",
+        "recent_spread_bps_avg",
+        "recent_spread_bps_max",
+        "recent_imbalance_pressure_avg",
+        "recent_quote_invalid_ratio",
+        "recent_quote_jump_bps_max",
+        "recent_microprice_bias_bps_avg",
+        "cross_section_opening_window_return_rank",
+        "cross_section_opening_window_return_from_prev_close_rank",
+        "cross_section_continuation_rank",
+        "cross_section_continuation_breadth",
     )
 
     def evaluate(
@@ -411,6 +435,50 @@ class IntradayTsmomPlugin:
             macd_signal=macd_signal,
             rsi14=rsi14,
             vol_realized_w60s=vol,
+            price_vs_session_open_bps=_decimal(features.values.get("price_vs_session_open_bps")),
+            price_vs_prev_session_close_bps=_decimal(
+                features.values.get("price_vs_prev_session_close_bps")
+            ),
+            opening_window_return_bps=_decimal(
+                features.values.get("opening_window_return_bps")
+            ),
+            opening_window_return_from_prev_close_bps=_decimal(
+                features.values.get("opening_window_return_from_prev_close_bps")
+            ),
+            session_range_bps=_decimal(features.values.get("session_range_bps")),
+            price_position_in_session_range=_decimal(
+                features.values.get("price_position_in_session_range")
+            ),
+            price_vs_vwap_w5m_bps=_decimal(features.values.get("price_vs_vwap_w5m_bps")),
+            price_vs_opening_range_high_bps=_decimal(
+                features.values.get("price_vs_opening_range_high_bps")
+            ),
+            recent_spread_bps_avg=_decimal(features.values.get("recent_spread_bps_avg")),
+            recent_spread_bps_max=_decimal(features.values.get("recent_spread_bps_max")),
+            recent_imbalance_pressure_avg=_decimal(
+                features.values.get("recent_imbalance_pressure_avg")
+            ),
+            recent_quote_invalid_ratio=_decimal(
+                features.values.get("recent_quote_invalid_ratio")
+            ),
+            recent_quote_jump_bps_max=_decimal(
+                features.values.get("recent_quote_jump_bps_max")
+            ),
+            recent_microprice_bias_bps_avg=_decimal(
+                features.values.get("recent_microprice_bias_bps_avg")
+            ),
+            cross_section_opening_window_return_rank=_decimal(
+                features.values.get("cross_section_opening_window_return_rank")
+            ),
+            cross_section_opening_window_return_from_prev_close_rank=_decimal(
+                features.values.get("cross_section_opening_window_return_from_prev_close_rank")
+            ),
+            cross_section_continuation_rank=_decimal(
+                features.values.get("cross_section_continuation_rank")
+            ),
+            cross_section_continuation_breadth=_decimal(
+                features.values.get("cross_section_continuation_breadth")
+            ),
         )
         if evaluation is None:
             return None
@@ -442,7 +510,14 @@ class MomentumPullbackLongPlugin:
         "macd_signal",
         "rsi14",
         "vol_realized_w60s",
-        "spread",
+        "spread_bps",
+        "price_vs_session_open_bps",
+        "recent_spread_bps_avg",
+        "recent_imbalance_pressure_avg",
+        "recent_quote_invalid_ratio",
+        "recent_quote_jump_bps_max",
+        "recent_microprice_bias_bps_avg",
+        "cross_section_continuation_rank",
     )
 
     def evaluate(
@@ -458,9 +533,20 @@ class MomentumPullbackLongPlugin:
             macd_signal=_decimal(features.values.get("macd_signal")),
             rsi14=_decimal(features.values.get("rsi14")),
             vol_realized_w60s=_decimal(features.values.get("vol_realized_w60s")),
-            spread=_decimal(features.values.get("spread")),
+            spread_bps=_decimal(features.values.get("spread_bps")),
             imbalance_bid_sz=_decimal(features.values.get("imbalance_bid_sz")),
             imbalance_ask_sz=_decimal(features.values.get("imbalance_ask_sz")),
+            price_vs_session_open_bps=_decimal(features.values.get("price_vs_session_open_bps")),
+            recent_spread_bps_avg=_decimal(features.values.get("recent_spread_bps_avg")),
+            recent_imbalance_pressure_avg=_decimal(features.values.get("recent_imbalance_pressure_avg")),
+            recent_quote_invalid_ratio=_decimal(features.values.get("recent_quote_invalid_ratio")),
+            recent_quote_jump_bps_max=_decimal(features.values.get("recent_quote_jump_bps_max")),
+            recent_microprice_bias_bps_avg=_decimal(
+                features.values.get("recent_microprice_bias_bps_avg")
+            ),
+            cross_section_continuation_rank=_decimal(
+                features.values.get("cross_section_continuation_rank")
+            ),
         )
         if evaluation is None:
             return None
@@ -469,7 +555,10 @@ class MomentumPullbackLongPlugin:
             symbol=context.symbol,
             direction=evaluation.action,
             confidence=evaluation.confidence,
-            target_notional=_target_notional(context.params),
+            target_notional=_resolved_target_notional(
+                context.params,
+                multiplier=evaluation.notional_multiplier,
+            ),
             horizon=context.timeframe,
             explain=evaluation.rationale,
             feature_snapshot_hash=features.normalization_hash,
@@ -488,7 +577,35 @@ class BreakoutContinuationLongPlugin:
         "macd_signal",
         "rsi14",
         "vol_realized_w60s",
-        "spread",
+        "spread_bps",
+        "price_vs_vwap_w5m_bps",
+        "price_vs_session_open_bps",
+        "price_vs_prev_session_close_bps",
+        "opening_window_return_bps",
+        "opening_window_return_from_prev_close_bps",
+        "price_vs_opening_range_high_bps",
+        "price_vs_opening_window_close_bps",
+        "opening_range_width_bps",
+        "session_high_price",
+        "opening_range_high",
+        "session_range_bps",
+        "price_position_in_session_range",
+        "recent_spread_bps_avg",
+        "recent_spread_bps_max",
+        "recent_imbalance_pressure_avg",
+        "recent_quote_invalid_ratio",
+        "recent_quote_jump_bps_max",
+        "recent_microprice_bias_bps_avg",
+        "cross_section_positive_session_open_ratio",
+        "cross_section_positive_opening_window_return_ratio",
+        "cross_section_positive_prev_session_close_ratio",
+        "cross_section_positive_opening_window_return_from_prev_close_ratio",
+        "cross_section_above_vwap_w5m_ratio",
+        "cross_section_continuation_breadth",
+        "cross_section_opening_window_return_rank",
+        "cross_section_prev_session_close_rank",
+        "cross_section_opening_window_return_from_prev_close_rank",
+        "cross_section_continuation_rank",
     )
 
     def evaluate(
@@ -504,10 +621,65 @@ class BreakoutContinuationLongPlugin:
             macd_signal=_decimal(features.values.get("macd_signal")),
             rsi14=_decimal(features.values.get("rsi14")),
             vol_realized_w60s=_decimal(features.values.get("vol_realized_w60s")),
-            vwap_session=_decimal(features.values.get("vwap_session")),
-            spread=_decimal(features.values.get("spread")),
+            spread_bps=_decimal(features.values.get("spread_bps")),
             imbalance_bid_sz=_decimal(features.values.get("imbalance_bid_sz")),
             imbalance_ask_sz=_decimal(features.values.get("imbalance_ask_sz")),
+            price_vs_session_open_bps=_decimal(features.values.get("price_vs_session_open_bps")),
+            price_vs_prev_session_close_bps=_decimal(
+                features.values.get("price_vs_prev_session_close_bps")
+            ),
+            opening_window_return_bps=_decimal(features.values.get("opening_window_return_bps")),
+            opening_window_return_from_prev_close_bps=_decimal(
+                features.values.get("opening_window_return_from_prev_close_bps")
+            ),
+            price_vs_opening_range_high_bps=_decimal(features.values.get("price_vs_opening_range_high_bps")),
+            price_vs_opening_window_close_bps=_decimal(
+                features.values.get("price_vs_opening_window_close_bps")
+            ),
+            opening_range_width_bps=_decimal(features.values.get("opening_range_width_bps")),
+            session_range_bps=_decimal(features.values.get("session_range_bps")),
+            price_position_in_session_range=_decimal(features.values.get("price_position_in_session_range")),
+            price_vs_vwap_w5m_bps=_decimal(features.values.get("price_vs_vwap_w5m_bps")),
+            session_high_price=_decimal(features.values.get("session_high_price")),
+            opening_range_high=_decimal(features.values.get("opening_range_high")),
+            recent_spread_bps_avg=_decimal(features.values.get("recent_spread_bps_avg")),
+            recent_spread_bps_max=_decimal(features.values.get("recent_spread_bps_max")),
+            recent_imbalance_pressure_avg=_decimal(features.values.get("recent_imbalance_pressure_avg")),
+            recent_quote_invalid_ratio=_decimal(features.values.get("recent_quote_invalid_ratio")),
+            recent_quote_jump_bps_max=_decimal(features.values.get("recent_quote_jump_bps_max")),
+            recent_microprice_bias_bps_avg=_decimal(
+                features.values.get("recent_microprice_bias_bps_avg")
+            ),
+            cross_section_positive_session_open_ratio=_decimal(
+                features.values.get("cross_section_positive_session_open_ratio")
+            ),
+            cross_section_positive_opening_window_return_ratio=_decimal(
+                features.values.get("cross_section_positive_opening_window_return_ratio")
+            ),
+            cross_section_positive_prev_session_close_ratio=_decimal(
+                features.values.get("cross_section_positive_prev_session_close_ratio")
+            ),
+            cross_section_positive_opening_window_return_from_prev_close_ratio=_decimal(
+                features.values.get("cross_section_positive_opening_window_return_from_prev_close_ratio")
+            ),
+            cross_section_above_vwap_w5m_ratio=_decimal(
+                features.values.get("cross_section_above_vwap_w5m_ratio")
+            ),
+            cross_section_continuation_breadth=_decimal(
+                features.values.get("cross_section_continuation_breadth")
+            ),
+            cross_section_opening_window_return_rank=_decimal(
+                features.values.get("cross_section_opening_window_return_rank")
+            ),
+            cross_section_prev_session_close_rank=_decimal(
+                features.values.get("cross_section_prev_session_close_rank")
+            ),
+            cross_section_opening_window_return_from_prev_close_rank=_decimal(
+                features.values.get("cross_section_opening_window_return_from_prev_close_rank")
+            ),
+            cross_section_continuation_rank=_decimal(
+                features.values.get("cross_section_continuation_rank")
+            ),
         )
         if evaluation is None:
             return None
@@ -516,7 +688,10 @@ class BreakoutContinuationLongPlugin:
             symbol=context.symbol,
             direction=evaluation.action,
             confidence=evaluation.confidence,
-            target_notional=_target_notional(context.params),
+            target_notional=_resolved_target_notional(
+                context.params,
+                multiplier=evaluation.notional_multiplier,
+            ),
             horizon=context.timeframe,
             explain=evaluation.rationale,
             feature_snapshot_hash=features.normalization_hash,
@@ -534,7 +709,27 @@ class MeanReversionReboundLongPlugin:
         "macd_signal",
         "rsi14",
         "vol_realized_w60s",
-        "spread",
+        "spread_bps",
+        "vwap_session",
+        "imbalance_bid_sz",
+        "imbalance_ask_sz",
+        "price_vs_session_open_bps",
+        "price_vs_prev_session_close_bps",
+        "opening_window_return_bps",
+        "opening_window_return_from_prev_close_bps",
+        "price_position_in_session_range",
+        "price_vs_opening_range_low_bps",
+        "session_range_bps",
+        "recent_spread_bps_avg",
+        "recent_spread_bps_max",
+        "recent_imbalance_pressure_avg",
+        "recent_quote_invalid_ratio",
+        "recent_quote_jump_bps_max",
+        "recent_microprice_bias_bps_avg",
+        "cross_section_opening_window_return_rank",
+        "cross_section_opening_window_return_from_prev_close_rank",
+        "cross_section_continuation_rank",
+        "cross_section_reversal_rank",
     )
 
     def evaluate(
@@ -550,9 +745,40 @@ class MeanReversionReboundLongPlugin:
             rsi14=_decimal(features.values.get("rsi14")),
             vol_realized_w60s=_decimal(features.values.get("vol_realized_w60s")),
             vwap_session=_decimal(features.values.get("vwap_session")),
-            spread=_decimal(features.values.get("spread")),
+            spread_bps=_decimal(features.values.get("spread_bps")),
             imbalance_bid_sz=_decimal(features.values.get("imbalance_bid_sz")),
             imbalance_ask_sz=_decimal(features.values.get("imbalance_ask_sz")),
+            price_vs_session_open_bps=_decimal(features.values.get("price_vs_session_open_bps")),
+            price_vs_prev_session_close_bps=_decimal(
+                features.values.get("price_vs_prev_session_close_bps")
+            ),
+            opening_window_return_bps=_decimal(features.values.get("opening_window_return_bps")),
+            opening_window_return_from_prev_close_bps=_decimal(
+                features.values.get("opening_window_return_from_prev_close_bps")
+            ),
+            price_position_in_session_range=_decimal(features.values.get("price_position_in_session_range")),
+            price_vs_opening_range_low_bps=_decimal(features.values.get("price_vs_opening_range_low_bps")),
+            session_range_bps=_decimal(features.values.get("session_range_bps")),
+            recent_spread_bps_avg=_decimal(features.values.get("recent_spread_bps_avg")),
+            recent_spread_bps_max=_decimal(features.values.get("recent_spread_bps_max")),
+            recent_imbalance_pressure_avg=_decimal(features.values.get("recent_imbalance_pressure_avg")),
+            recent_quote_invalid_ratio=_decimal(features.values.get("recent_quote_invalid_ratio")),
+            recent_quote_jump_bps_max=_decimal(features.values.get("recent_quote_jump_bps_max")),
+            recent_microprice_bias_bps_avg=_decimal(
+                features.values.get("recent_microprice_bias_bps_avg")
+            ),
+            cross_section_opening_window_return_rank=_decimal(
+                features.values.get("cross_section_opening_window_return_rank")
+            ),
+            cross_section_opening_window_return_from_prev_close_rank=_decimal(
+                features.values.get("cross_section_opening_window_return_from_prev_close_rank")
+            ),
+            cross_section_continuation_rank=_decimal(
+                features.values.get("cross_section_continuation_rank")
+            ),
+            cross_section_reversal_rank=_decimal(
+                features.values.get("cross_section_reversal_rank")
+            ),
         )
         if evaluation is None:
             return None
@@ -561,7 +787,10 @@ class MeanReversionReboundLongPlugin:
             symbol=context.symbol,
             direction=evaluation.action,
             confidence=evaluation.confidence,
-            target_notional=_target_notional(context.params),
+            target_notional=_resolved_target_notional(
+                context.params,
+                multiplier=evaluation.notional_multiplier,
+            ),
             horizon=context.timeframe,
             explain=evaluation.rationale,
             feature_snapshot_hash=features.normalization_hash,
@@ -580,10 +809,35 @@ class LateDayContinuationLongPlugin:
         "macd_signal",
         "rsi14",
         "vol_realized_w60s",
-        "vwap_session",
-        "spread",
+        "spread_bps",
         "imbalance_bid_sz",
         "imbalance_ask_sz",
+        "price_vs_session_open_bps",
+        "price_vs_prev_session_close_bps",
+        "opening_window_return_bps",
+        "opening_window_return_from_prev_close_bps",
+        "price_position_in_session_range",
+        "price_vs_vwap_w5m_bps",
+        "session_high_price",
+        "opening_range_high",
+        "price_vs_opening_range_high_bps",
+        "price_vs_opening_window_close_bps",
+        "recent_spread_bps_avg",
+        "recent_imbalance_pressure_avg",
+        "session_range_bps",
+        "recent_quote_invalid_ratio",
+        "recent_quote_jump_bps_max",
+        "recent_microprice_bias_bps_avg",
+        "cross_section_positive_session_open_ratio",
+        "cross_section_positive_opening_window_return_ratio",
+        "cross_section_positive_prev_session_close_ratio",
+        "cross_section_positive_opening_window_return_from_prev_close_ratio",
+        "cross_section_above_vwap_w5m_ratio",
+        "cross_section_continuation_breadth",
+        "cross_section_opening_window_return_rank",
+        "cross_section_prev_session_close_rank",
+        "cross_section_opening_window_return_from_prev_close_rank",
+        "cross_section_continuation_rank",
     )
 
     def evaluate(
@@ -599,10 +853,63 @@ class LateDayContinuationLongPlugin:
             macd_signal=_decimal(features.values.get("macd_signal")),
             rsi14=_decimal(features.values.get("rsi14")),
             vol_realized_w60s=_decimal(features.values.get("vol_realized_w60s")),
-            vwap_session=_decimal(features.values.get("vwap_session")),
-            spread=_decimal(features.values.get("spread")),
+            spread_bps=_decimal(features.values.get("spread_bps")),
             imbalance_bid_sz=_decimal(features.values.get("imbalance_bid_sz")),
             imbalance_ask_sz=_decimal(features.values.get("imbalance_ask_sz")),
+            price_vs_session_open_bps=_decimal(features.values.get("price_vs_session_open_bps")),
+            price_vs_prev_session_close_bps=_decimal(
+                features.values.get("price_vs_prev_session_close_bps")
+            ),
+            opening_window_return_bps=_decimal(features.values.get("opening_window_return_bps")),
+            opening_window_return_from_prev_close_bps=_decimal(
+                features.values.get("opening_window_return_from_prev_close_bps")
+            ),
+            price_position_in_session_range=_decimal(features.values.get("price_position_in_session_range")),
+            price_vs_vwap_w5m_bps=_decimal(features.values.get("price_vs_vwap_w5m_bps")),
+            session_high_price=_decimal(features.values.get("session_high_price")),
+            opening_range_high=_decimal(features.values.get("opening_range_high")),
+            price_vs_opening_range_high_bps=_decimal(features.values.get("price_vs_opening_range_high_bps")),
+            price_vs_opening_window_close_bps=_decimal(
+                features.values.get("price_vs_opening_window_close_bps")
+            ),
+            recent_spread_bps_avg=_decimal(features.values.get("recent_spread_bps_avg")),
+            recent_imbalance_pressure_avg=_decimal(features.values.get("recent_imbalance_pressure_avg")),
+            session_range_bps=_decimal(features.values.get("session_range_bps")),
+            recent_quote_invalid_ratio=_decimal(features.values.get("recent_quote_invalid_ratio")),
+            recent_quote_jump_bps_max=_decimal(features.values.get("recent_quote_jump_bps_max")),
+            recent_microprice_bias_bps_avg=_decimal(
+                features.values.get("recent_microprice_bias_bps_avg")
+            ),
+            cross_section_positive_session_open_ratio=_decimal(
+                features.values.get("cross_section_positive_session_open_ratio")
+            ),
+            cross_section_positive_opening_window_return_ratio=_decimal(
+                features.values.get("cross_section_positive_opening_window_return_ratio")
+            ),
+            cross_section_positive_prev_session_close_ratio=_decimal(
+                features.values.get("cross_section_positive_prev_session_close_ratio")
+            ),
+            cross_section_positive_opening_window_return_from_prev_close_ratio=_decimal(
+                features.values.get("cross_section_positive_opening_window_return_from_prev_close_ratio")
+            ),
+            cross_section_above_vwap_w5m_ratio=_decimal(
+                features.values.get("cross_section_above_vwap_w5m_ratio")
+            ),
+            cross_section_continuation_breadth=_decimal(
+                features.values.get("cross_section_continuation_breadth")
+            ),
+            cross_section_opening_window_return_rank=_decimal(
+                features.values.get("cross_section_opening_window_return_rank")
+            ),
+            cross_section_prev_session_close_rank=_decimal(
+                features.values.get("cross_section_prev_session_close_rank")
+            ),
+            cross_section_opening_window_return_from_prev_close_rank=_decimal(
+                features.values.get("cross_section_opening_window_return_from_prev_close_rank")
+            ),
+            cross_section_continuation_rank=_decimal(
+                features.values.get("cross_section_continuation_rank")
+            ),
         )
         if evaluation is None:
             return None
@@ -611,7 +918,111 @@ class LateDayContinuationLongPlugin:
             symbol=context.symbol,
             direction=evaluation.action,
             confidence=evaluation.confidence,
-            target_notional=_target_notional(context.params),
+            target_notional=_resolved_target_notional(
+                context.params,
+                multiplier=evaluation.notional_multiplier,
+            ),
+            horizon=context.timeframe,
+            explain=evaluation.rationale,
+            feature_snapshot_hash=features.normalization_hash,
+            required_features=self.required_features,
+        )
+
+
+class EndOfDayReversalLongPlugin:
+    plugin_id = "end_of_day_reversal_long"
+    version = "1.0.0"
+    required_features: tuple[str, ...] = (
+        "price",
+        "ema12",
+        "ema26",
+        "macd",
+        "macd_signal",
+        "rsi14",
+        "vol_realized_w60s",
+        "vwap_session",
+        "spread_bps",
+        "imbalance_bid_sz",
+        "imbalance_ask_sz",
+        "price_vs_session_open_bps",
+        "price_vs_prev_session_close_bps",
+        "opening_window_return_bps",
+        "opening_window_return_from_prev_close_bps",
+        "price_position_in_session_range",
+        "price_vs_opening_range_low_bps",
+        "session_range_bps",
+        "recent_spread_bps_avg",
+        "recent_spread_bps_max",
+        "recent_imbalance_pressure_avg",
+        "recent_quote_invalid_ratio",
+        "recent_quote_jump_bps_max",
+        "recent_microprice_bias_bps_avg",
+        "cross_section_opening_window_return_rank",
+        "cross_section_opening_window_return_from_prev_close_rank",
+        "cross_section_continuation_rank",
+        "cross_section_reversal_rank",
+    )
+
+    def evaluate(
+        self, context: StrategyContext, features: FeatureVectorV3
+    ) -> StrategyIntent | None:
+        evaluation = evaluate_end_of_day_reversal_long(
+            params=context.params,
+            event_ts=context.event_ts,
+            price=_decimal(features.values.get("price")),
+            ema12=_decimal(features.values.get("ema12")),
+            ema26=_decimal(features.values.get("ema26")),
+            macd=_decimal(features.values.get("macd")),
+            macd_signal=_decimal(features.values.get("macd_signal")),
+            rsi14=_decimal(features.values.get("rsi14")),
+            vol_realized_w60s=_decimal(features.values.get("vol_realized_w60s")),
+            vwap_session=_decimal(features.values.get("vwap_session")),
+            spread_bps=_decimal(features.values.get("spread_bps")),
+            imbalance_bid_sz=_decimal(features.values.get("imbalance_bid_sz")),
+            imbalance_ask_sz=_decimal(features.values.get("imbalance_ask_sz")),
+            price_vs_session_open_bps=_decimal(features.values.get("price_vs_session_open_bps")),
+            price_vs_prev_session_close_bps=_decimal(
+                features.values.get("price_vs_prev_session_close_bps")
+            ),
+            opening_window_return_bps=_decimal(features.values.get("opening_window_return_bps")),
+            opening_window_return_from_prev_close_bps=_decimal(
+                features.values.get("opening_window_return_from_prev_close_bps")
+            ),
+            price_position_in_session_range=_decimal(features.values.get("price_position_in_session_range")),
+            price_vs_opening_range_low_bps=_decimal(features.values.get("price_vs_opening_range_low_bps")),
+            session_range_bps=_decimal(features.values.get("session_range_bps")),
+            recent_spread_bps_avg=_decimal(features.values.get("recent_spread_bps_avg")),
+            recent_spread_bps_max=_decimal(features.values.get("recent_spread_bps_max")),
+            recent_imbalance_pressure_avg=_decimal(features.values.get("recent_imbalance_pressure_avg")),
+            recent_quote_invalid_ratio=_decimal(features.values.get("recent_quote_invalid_ratio")),
+            recent_quote_jump_bps_max=_decimal(features.values.get("recent_quote_jump_bps_max")),
+            recent_microprice_bias_bps_avg=_decimal(
+                features.values.get("recent_microprice_bias_bps_avg")
+            ),
+            cross_section_opening_window_return_rank=_decimal(
+                features.values.get("cross_section_opening_window_return_rank")
+            ),
+            cross_section_opening_window_return_from_prev_close_rank=_decimal(
+                features.values.get("cross_section_opening_window_return_from_prev_close_rank")
+            ),
+            cross_section_continuation_rank=_decimal(
+                features.values.get("cross_section_continuation_rank")
+            ),
+            cross_section_reversal_rank=_decimal(
+                features.values.get("cross_section_reversal_rank")
+            ),
+        )
+        if evaluation is None:
+            return None
+        return StrategyIntent(
+            strategy_id=context.strategy_id,
+            symbol=context.symbol,
+            direction=evaluation.action,
+            confidence=evaluation.confidence,
+            target_notional=_resolved_target_notional(
+                context.params,
+                multiplier=evaluation.notional_multiplier,
+            ),
             horizon=context.timeframe,
             explain=evaluation.rationale,
             feature_snapshot_hash=features.normalization_hash,
@@ -958,3 +1369,17 @@ def _target_notional(params: dict[str, Any]) -> Decimal:
     if notional is None or notional <= 0:
         return Decimal("100")
     return notional
+
+
+def _resolved_target_notional(
+    params: dict[str, Any],
+    *,
+    multiplier: Decimal | None = None,
+) -> Decimal:
+    base_notional = _target_notional(params)
+    if multiplier is None or multiplier <= 0:
+        return base_notional
+    resolved = base_notional * multiplier
+    if resolved <= 0:
+        return base_notional
+    return resolved.quantize(Decimal("0.0001"))

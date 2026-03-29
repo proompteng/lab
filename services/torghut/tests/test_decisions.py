@@ -478,13 +478,72 @@ class TestDecisionEngine(TestCase):
             "buy",
         )
         self.assertEqual(source_runtime[0].get("compiler_source"), "legacy_runtime")
+        self.assertEqual(source_runtime[0].get("intent_target_notional"), "100")
 
-    def test_scheduler_runtime_skips_non_executable_fractional_short_entry(self) -> None:
+    def test_scheduler_runtime_uses_runtime_target_notional_for_qty_resolution(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
         engine.strategy_runtime = StrategyRuntime(
             registry=StrategyRegistry(
                 plugins={
-                    "sell_plugin": _SellPlugin(),
+                    "buy_plugin": _BuyPlugin(),
+                }
+            )
+        )
+        strategy = Strategy(
+            id=uuid.UUID("00000000-0000-0000-0000-000000000010"),
+            name="buy",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="buy_plugin",
+            universe_symbols=None,
+            max_position_pct_equity=None,
+            max_notional_per_trade=Decimal("1000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            symbol="AAPL",
+            payload={
+                "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                "rsi14": Decimal("20"),
+                "price": 50,
+            },
+            timeframe="1Min",
+        )
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+        ):
+            decisions = engine.evaluate(signal, [strategy])
+
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0].qty, Decimal("2"))
+        self.assertEqual(decisions[0].params["sizing"]["method"], "runtime_target_notional")
+
+    def test_scheduler_runtime_skips_non_executable_fractional_short_entry(self) -> None:
+        class SmallShortPlugin:
+            plugin_id = "small_short_plugin"
+            version = "1.0.0"
+            required_features = ("price",)
+
+            def evaluate(self, context: StrategyContext, features) -> StrategyIntent:  # type: ignore[no-untyped-def]
+                return StrategyIntent(
+                    strategy_id=context.strategy_id,
+                    symbol=context.symbol,
+                    direction="sell",
+                    confidence=Decimal("0.40"),
+                    target_notional=Decimal("50"),
+                    horizon=context.timeframe,
+                    explain=("sell_signal",),
+                    feature_snapshot_hash=features.normalization_hash,
+                    required_features=self.required_features,
+                )
+
+        engine = DecisionEngine(price_fetcher=None)
+        engine.strategy_runtime = StrategyRuntime(
+            registry=StrategyRegistry(
+                plugins={
+                    "small_short_plugin": SmallShortPlugin(),
                 }
             )
         )
@@ -494,7 +553,7 @@ class TestDecisionEngine(TestCase):
             description="version=1.0.0",
             enabled=True,
             base_timeframe="1Min",
-            universe_type="sell_plugin",
+            universe_type="small_short_plugin",
             universe_symbols=None,
             max_position_pct_equity=None,
             max_notional_per_trade=Decimal("50"),
@@ -770,6 +829,59 @@ class TestDecisionEngine(TestCase):
 
         self.assertEqual(len(decisions), 1)
         self.assertEqual(decisions[0].action, "buy")
+        runtime_payload = decisions[0].params.get("strategy_runtime")
+        assert isinstance(runtime_payload, dict)
+        self.assertEqual(runtime_payload.get("position_isolation_mode"), "per_strategy")
+
+    def test_scheduler_runtime_defaults_research_sleeves_to_position_isolation(self) -> None:
+        strategy_id = uuid.uuid4()
+        engine = DecisionEngine(price_fetcher=None)
+        engine.strategy_runtime = StrategyRuntime(
+            registry=StrategyRegistry(plugins={"buy_plugin": _BuyPlugin()})
+        )
+        strategy = Strategy(
+            id=strategy_id,
+            name="isolated-default",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="isolated-default",
+                    strategy_id="isolated-default",
+                    strategy_type="buy_plugin",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="mean_reversion_rebound_long_v1",
+                    universe_symbols=["AAPL"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("1000"),
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="mean_reversion_rebound_long_v1",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("1000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 17, 30, 3, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 101,
+                "macd": Decimal("0.12"),
+                "macd_signal": Decimal("0.08"),
+                "rsi14": Decimal("52"),
+            },
+        )
+
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+        ):
+            decisions = engine.evaluate(signal, [strategy], positions=[])
+
+        self.assertEqual(len(decisions), 1)
         runtime_payload = decisions[0].params.get("strategy_runtime")
         assert isinstance(runtime_payload, dict)
         self.assertEqual(runtime_payload.get("position_isolation_mode"), "per_strategy")
@@ -1300,6 +1412,56 @@ class TestDecisionEngine(TestCase):
 
         self.assertEqual(decisions, [])
 
+    def test_scheduler_runtime_end_of_day_reversal_skips_exit_only_sell_without_long_inventory(
+        self,
+    ) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="end-of-day-reversal",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="end_of_day_reversal_long_v1",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 19, 40, 3, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 253.44,
+                "ema12": 253.30,
+                "ema26": 253.12,
+                "macd": 0.003,
+                "macd_signal": 0.001,
+                "rsi14": 57,
+                "vol_realized_w60s": 0.00017,
+                "vwap_session": 253.10,
+                "spread": 0.03,
+                "imbalance_bid_sz": 5200,
+                "imbalance_ask_sz": 4500,
+                "price_vs_session_open_bps": 8,
+                "price_position_in_session_range": 0.68,
+                "price_vs_opening_range_low_bps": 24,
+                "session_range_bps": 74,
+                "recent_spread_bps_avg": 0.72,
+                "recent_spread_bps_max": 1.30,
+                "recent_imbalance_pressure_avg": 0.06,
+            },
+        )
+
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+        ):
+            decisions = engine.evaluate(signal, [strategy], positions=[])
+
+        self.assertEqual(decisions, [])
+
     def test_scheduler_runtime_breakout_continuation_skips_exit_only_sell_for_pending_entry_only(
         self,
     ) -> None:
@@ -1364,7 +1526,7 @@ class TestDecisionEngine(TestCase):
             name="breakout-continuation",
             description=(
                 "version=1.0.0\n[catalog_metadata]\n"
-                '{"params":{"entry_cooldown_seconds":"300"},"strategy_type":"breakout_continuation_long_v1","version":"1.0.0"}'
+                '{"params":{"entry_cooldown_seconds":"300","bullish_hist_min":"0.001","min_bull_rsi":"50","max_bull_rsi":"80","max_spread_bps":"100","min_session_open_drive_bps":"0","min_opening_window_return_bps":"0","min_session_high_above_opening_range_high_bps":"0","min_price_vs_opening_range_high_bps":"-100","max_price_vs_opening_range_high_bps":"100","min_price_vs_opening_window_close_bps":"-100","max_price_vs_opening_window_close_bps":"100","min_opening_range_width_bps":"0","min_session_range_bps":"0","min_session_range_position":"0","min_price_vs_vwap_w5m_bps":"-100","max_price_vs_vwap_w5m_bps":"100","max_recent_spread_bps":"100","max_recent_spread_bps_max":"200","max_recent_quote_jump_bps":"200","min_recent_imbalance_pressure":"-1"},"strategy_type":"breakout_continuation_long_v1","version":"1.0.0"}'
             ),
             enabled=True,
             base_timeframe="1Sec",
@@ -1387,6 +1549,46 @@ class TestDecisionEngine(TestCase):
                 "rsi14": 62,
                 "vol_realized_w60s": 0.00017,
                 "spread": 0.04,
+                "vwap_w5m": 523.10,
+                "imbalance_bid_sz": 5200,
+                "imbalance_ask_sz": 4300,
+                "price_vs_session_open_bps": 46,
+                "price_vs_prev_session_close_bps": 46,
+                "opening_window_return_from_prev_close_bps": 28,
+                "session_high_price": 523.70,
+                "opening_range_high": 523.10,
+                "price_vs_opening_range_high_bps": 3,
+                "opening_range_width_bps": 22,
+                "session_range_bps": 61,
+                "price_position_in_session_range": 0.89,
+                "recent_spread_bps_avg": 0.76,
+                "recent_spread_bps_max": 1.32,
+                "recent_imbalance_pressure_avg": 0.09,
+                "recent_quote_invalid_ratio": 0.02,
+                "recent_quote_jump_bps_max": 8,
+                "recent_microprice_bias_bps_avg": 0.65,
+                "cross_section_opening_window_return_from_prev_close_rank": 0.82,
+                "cross_section_continuation_rank": 0.84,
+                "cross_section_continuation_breadth": 0.61,
+            },
+        )
+        seed_signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 14, 0, 3, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=0,
+            payload={
+                "price": 521.40,
+                "ema12": 521.30,
+                "ema26": 521.10,
+                "macd": 0.010,
+                "macd_signal": 0.008,
+                "rsi14": 58,
+                "vol_realized_w60s": 0.00015,
+                "spread": 0.03,
+                "vwap_w5m": 521.28,
+                "imbalance_bid_sz": 5000,
+                "imbalance_ask_sz": 4600,
             },
         )
 
@@ -1394,11 +1596,286 @@ class TestDecisionEngine(TestCase):
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
             patch.object(settings, "trading_strategy_scheduler_enabled", True),
         ):
+            engine.evaluate(seed_signal, [strategy], positions=[])
             first = engine.evaluate(signal, [strategy], positions=[])
             second = engine.evaluate(signal, [strategy], positions=[])
 
         self.assertEqual(len(first), 1)
         self.assertEqual(second, [])
+
+    def test_scheduler_runtime_research_sleeve_buy_respects_max_entries_per_session(
+        self,
+    ) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="breakout-continuation",
+            description=(
+                "version=1.0.0\n[catalog_metadata]\n"
+                '{"params":{"max_entries_per_session":"1","bullish_hist_min":"0.001","min_bull_rsi":"50","max_bull_rsi":"80","max_spread_bps":"100","min_session_open_drive_bps":"0","min_opening_window_return_bps":"0","min_session_high_above_opening_range_high_bps":"0","min_price_vs_opening_range_high_bps":"-100","max_price_vs_opening_range_high_bps":"100","min_price_vs_opening_window_close_bps":"-100","max_price_vs_opening_window_close_bps":"100","min_opening_range_width_bps":"0","min_session_range_bps":"0","min_session_range_position":"0","min_price_vs_vwap_w5m_bps":"-100","max_price_vs_vwap_w5m_bps":"100","max_recent_spread_bps":"100","max_recent_spread_bps_max":"200","max_recent_quote_jump_bps":"200","min_recent_imbalance_pressure":"-1"},"strategy_type":"breakout_continuation_long_v1","version":"1.0.0"}'
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="breakout_continuation_long_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        seed_signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 14, 0, 3, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=0,
+            payload={
+                "price": 521.40,
+                "ema12": 521.30,
+                "ema26": 521.10,
+                "macd": 0.010,
+                "macd_signal": 0.008,
+                "rsi14": 58,
+                "vol_realized_w60s": 0.00015,
+                "spread": 0.03,
+                "vwap_w5m": 521.28,
+                "imbalance_bid_sz": 5000,
+                "imbalance_ask_sz": 4600,
+            },
+        )
+        first_signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 17, 30, 3, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 523.25,
+                "ema12": 523.10,
+                "ema26": 522.90,
+                "macd": 0.031,
+                "macd_signal": 0.012,
+                "rsi14": 62,
+                "vol_realized_w60s": 0.00017,
+                "spread": 0.04,
+                "vwap_w5m": 523.10,
+                "imbalance_bid_sz": 5200,
+                "imbalance_ask_sz": 4300,
+                "price_vs_session_open_bps": 46,
+                "price_vs_prev_session_close_bps": 46,
+                "opening_window_return_from_prev_close_bps": 28,
+                "session_high_price": 523.70,
+                "opening_range_high": 523.10,
+                "price_vs_opening_range_high_bps": 3,
+                "opening_range_width_bps": 22,
+                "session_range_bps": 61,
+                "price_position_in_session_range": 0.89,
+                "recent_spread_bps_avg": 0.76,
+                "recent_spread_bps_max": 1.32,
+                "recent_imbalance_pressure_avg": 0.09,
+                "recent_quote_invalid_ratio": 0.02,
+                "recent_quote_jump_bps_max": 8,
+                "recent_microprice_bias_bps_avg": 0.65,
+                "cross_section_opening_window_return_from_prev_close_rank": 0.82,
+                "cross_section_continuation_rank": 0.84,
+                "cross_section_continuation_breadth": 0.61,
+            },
+        )
+        second_signal = first_signal.model_copy(
+            update={
+                "event_ts": datetime(2026, 3, 27, 18, 0, 3, tzinfo=timezone.utc),
+                "seq": 2,
+            }
+        )
+
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+        ):
+            engine.evaluate(seed_signal, [strategy], positions=[])
+            first = engine.evaluate(first_signal, [strategy], positions=[])
+            second = engine.evaluate(second_signal, [strategy], positions=[])
+
+        self.assertEqual(len(first), 1)
+        self.assertEqual(second, [])
+
+    def test_scheduler_runtime_research_sleeve_buy_respects_stop_loss_lockout(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="breakout-continuation",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="breakout-continuation",
+                    strategy_id="breakout_continuation_long_v1@research",
+                    strategy_type="breakout_continuation_long_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="breakout_continuation_long_v1",
+                    universe_symbols=["META"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("14000"),
+                    params={
+                        "bullish_hist_min": "0.001",
+                        "min_bull_rsi": "50",
+                        "max_bull_rsi": "80",
+                        "max_spread_bps": "100",
+                        "min_session_open_drive_bps": "0",
+                        "min_session_high_above_opening_range_high_bps": "0",
+                        "min_price_vs_opening_range_high_bps": "-100",
+                        "max_price_vs_opening_range_high_bps": "100",
+                        "min_opening_range_width_bps": "0",
+                        "min_session_range_bps": "0",
+                        "min_session_range_position": "0",
+                        "min_price_vs_vwap_w5m_bps": "-100",
+                        "max_price_vs_vwap_w5m_bps": "100",
+                        "max_recent_spread_bps": "100",
+                        "max_recent_spread_bps_max": "200",
+                        "min_recent_imbalance_pressure": "-1",
+                        "long_stop_loss_bps": "25",
+                        "stop_loss_lockout_seconds": "1800",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="breakout_continuation_long_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        stop_signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 17, 0, 0, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 520.00,
+                "ema12": 521.00,
+                "ema26": 520.80,
+                "macd": 0.010,
+                "macd_signal": 0.008,
+                "rsi14": 55,
+                "vol_realized_w60s": 0.00017,
+                "spread": 0.04,
+            },
+        )
+        buy_signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 17, 10, 0, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=2,
+            payload={
+                "price": 523.25,
+                "ema12": 523.10,
+                "ema26": 522.90,
+                "macd": 0.031,
+                "macd_signal": 0.012,
+                "rsi14": 62,
+                "vol_realized_w60s": 0.00017,
+                "spread": 0.04,
+                "vwap_w5m": 523.10,
+                "imbalance_bid_sz": 5200,
+                "imbalance_ask_sz": 4300,
+                "price_vs_session_open_bps": 46,
+                "session_high_price": 523.70,
+                "opening_range_high": 523.10,
+                "price_vs_opening_range_high_bps": 3,
+                "opening_range_width_bps": 22,
+                "session_range_bps": 61,
+                "price_position_in_session_range": 0.89,
+                "recent_spread_bps_avg": 0.76,
+                "recent_spread_bps_max": 1.32,
+                "recent_imbalance_pressure_avg": 0.09,
+            },
+        )
+
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+            patch.object(settings, "trading_fractional_equities_enabled", True),
+        ):
+            stop_decisions = engine.evaluate(
+                stop_signal,
+                [strategy],
+                positions=[
+                    {
+                        "symbol": "META",
+                        "strategy_id": str(strategy.id),
+                        "qty": "10",
+                        "side": "long",
+                        "market_value": "5200",
+                        "avg_entry_price": "523.00",
+                    }
+                ],
+            )
+            locked_out = engine.evaluate(buy_signal, [strategy], positions=[])
+
+        self.assertEqual(len(stop_decisions), 1)
+        self.assertEqual(stop_decisions[0].rationale, "position_stop_loss_exit")
+        self.assertEqual(locked_out, [])
+
+    def test_scheduler_runtime_observed_wide_spread_blocks_later_breakout_entry(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="breakout-continuation",
+            description=(
+                "version=1.0.0\n[catalog_metadata]\n"
+                '{"params":{"bullish_hist_min":"0.001","min_bull_rsi":"50","max_bull_rsi":"80","max_spread_bps":"100","min_session_open_drive_bps":"0","min_session_high_above_opening_range_high_bps":"0","min_price_vs_opening_range_high_bps":"-100","max_price_vs_opening_range_high_bps":"100","min_opening_range_width_bps":"0","min_session_range_bps":"0","min_session_range_position":"0","min_price_vs_vwap_w5m_bps":"-100","max_price_vs_vwap_w5m_bps":"100","max_recent_spread_bps":"100","max_recent_spread_bps_max":"20","min_recent_imbalance_pressure":"-1"},"strategy_type":"breakout_continuation_long_v1","version":"1.0.0"}'
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="breakout_continuation_long_v1",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        unstable_quote = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 17, 29, 0, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "imbalance_bid_px": 254.97,
+                "imbalance_ask_px": 256.60,
+                "price": 255.785,
+                "ema12": 254.99,
+                "ema26": 254.97,
+                "macd": 0.018,
+                "macd_signal": 0.025,
+                "rsi14": 52.7,
+                "vol_realized_w60s": 0.00028,
+                "vwap_w5m": 254.72,
+                "imbalance_bid_sz": 100,
+                "imbalance_ask_sz": 100,
+            },
+        )
+        candidate_signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 17, 30, 3, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=2,
+            payload={
+                "imbalance_bid_px": 255.37,
+                "imbalance_ask_px": 255.40,
+                "price": 255.385,
+                "ema12": 255.239,
+                "ema26": 255.140,
+                "macd": 0.099,
+                "macd_signal": 0.064,
+                "rsi14": 73.0,
+                "vol_realized_w60s": 0.000196,
+                "vwap_w5m": 254.832,
+                "imbalance_bid_sz": 200,
+                "imbalance_ask_sz": 200,
+            },
+        )
+
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+        ):
+            engine.observe_signal(unstable_quote)
+            decisions = engine.evaluate(candidate_signal, [strategy], positions=[])
+
+        self.assertEqual(decisions, [])
 
     def test_scheduler_runtime_research_sleeve_sell_respects_min_hold(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
@@ -2180,6 +2657,7 @@ class TestDecisionEngine(TestCase):
                 positions=[
                     {
                         "symbol": "META",
+                        "strategy_id": str(strategy.id),
                         "qty": "26.7624",
                         "side": "long",
                         "market_value": "13995.02",
