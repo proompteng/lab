@@ -10,7 +10,7 @@ spec:
   routes:
     - kind: Rule
       priority: 100
-      match: Host(`bilig.proompteng.ai`) && (PathPrefix(`/v1`) || PathPrefix(`/api/zero`))
+      match: Host(`bilig.proompteng.ai`) && (PathPrefix(`/v1`) || PathPrefix(`/v2`) || PathPrefix(`/api/zero`))
       services:
         - name: bilig-sync
           port: 80
