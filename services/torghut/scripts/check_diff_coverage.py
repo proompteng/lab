@@ -85,9 +85,10 @@ def _resolve_diff_base(repo_root: Path, explicit_base_ref: str) -> str | None:
     base_spec = _resolve_base_spec(explicit_base_ref)
     if base_spec is not None:
         return _git_optional(repo_root, 'merge-base', base_spec, 'HEAD')
+    head_commit = _git_optional(repo_root, 'rev-parse', 'HEAD')
     for fallback_ref in ('origin/main', 'main'):
         merge_base = _git_optional(repo_root, 'merge-base', fallback_ref, 'HEAD')
-        if merge_base is not None:
+        if merge_base is not None and merge_base != head_commit:
             return merge_base
     return _git_optional(repo_root, 'rev-parse', 'HEAD^')
 

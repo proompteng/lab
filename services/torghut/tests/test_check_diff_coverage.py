@@ -6,6 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import Mock
+from unittest.mock import call
 from unittest.mock import patch
 
 from scripts.check_diff_coverage import (
@@ -212,18 +213,26 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
         self.assertTrue(summary[0].missing_from_coverage)
         self.assertEqual(summary[0].missing_lines, (11, 12))
 
+    @patch.dict('os.environ', {}, clear=True)
     @patch('scripts.check_diff_coverage._git_optional')
     def test_resolve_diff_base_prefers_origin_main_when_no_explicit_base(self, git_optional: object) -> None:
-        git_optional.side_effect = ['base-from-origin-main']
+        git_optional.side_effect = ['head-commit', 'base-from-origin-main']
 
         resolved = _resolve_diff_base(Path('/tmp/repo'), '')
 
         self.assertEqual(resolved, 'base-from-origin-main')
-        git_optional.assert_called_once_with(Path('/tmp/repo'), 'merge-base', 'origin/main', 'HEAD')
+        self.assertEqual(
+            git_optional.call_args_list,
+            [
+                call(Path('/tmp/repo'), 'rev-parse', 'HEAD'),
+                call(Path('/tmp/repo'), 'merge-base', 'origin/main', 'HEAD'),
+            ],
+        )
 
+    @patch.dict('os.environ', {}, clear=True)
     @patch('scripts.check_diff_coverage._git_optional')
     def test_resolve_diff_base_falls_back_to_head_parent(self, git_optional: object) -> None:
-        git_optional.side_effect = [None, None, 'parent-commit']
+        git_optional.side_effect = ['head-commit', None, None, 'parent-commit']
 
         resolved = _resolve_diff_base(Path('/tmp/repo'), '')
 
@@ -231,6 +240,27 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
         self.assertEqual(
             git_optional.call_args_list[-1].args,
             (Path('/tmp/repo'), 'rev-parse', 'HEAD^'),
+        )
+
+    @patch.dict('os.environ', {}, clear=True)
+    @patch('scripts.check_diff_coverage._git_optional')
+    def test_resolve_diff_base_falls_back_to_head_parent_when_merge_base_is_head(
+        self,
+        git_optional: object,
+    ) -> None:
+        git_optional.side_effect = ['head-commit', 'head-commit', 'head-commit', 'parent-commit']
+
+        resolved = _resolve_diff_base(Path('/tmp/repo'), '')
+
+        self.assertEqual(resolved, 'parent-commit')
+        self.assertEqual(
+            git_optional.call_args_list,
+            [
+                call(Path('/tmp/repo'), 'rev-parse', 'HEAD'),
+                call(Path('/tmp/repo'), 'merge-base', 'origin/main', 'HEAD'),
+                call(Path('/tmp/repo'), 'merge-base', 'main', 'HEAD'),
+                call(Path('/tmp/repo'), 'rev-parse', 'HEAD^'),
+            ],
         )
 
     @patch('scripts.check_diff_coverage._git_optional')
