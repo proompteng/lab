@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import sys
 import tempfile
 from dataclasses import dataclass
 from datetime import date
@@ -355,5 +356,13 @@ def main() -> int:
     return 0
 
 
+def cli_main() -> int:
+    try:
+        return main()
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+
 if __name__ == '__main__':
-    raise SystemExit(main())
+    raise SystemExit(cli_main())
