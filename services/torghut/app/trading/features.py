@@ -218,19 +218,12 @@ def _extract_price_from_vwap_keys(payload: dict[str, Any]) -> Decimal | None:
 
 
 def _extract_price_from_imbalance(payload: dict[str, Any]) -> Decimal | None:
-    imbalance = payload.get('imbalance')
-    if not isinstance(imbalance, dict):
-        return None
-    imbalance_payload = cast(dict[str, Any], imbalance)
-    bid_px = imbalance_payload.get('bid_px')
-    ask_px = imbalance_payload.get('ask_px')
-    if bid_px is None or ask_px is None:
-        return None
-    try:
-        bid = optional_decimal(bid_px)
-        ask = optional_decimal(ask_px)
-    except (TypeError, ArithmeticError):
-        return None
+    bid = optional_decimal(
+        payload_value(payload, 'imbalance_bid_px', block='imbalance', nested_key='bid_px')
+    )
+    ask = optional_decimal(
+        payload_value(payload, 'imbalance_ask_px', block='imbalance', nested_key='ask_px')
+    )
     if bid is None or ask is None:
         return None
     return (bid + ask) / 2

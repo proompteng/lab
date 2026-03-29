@@ -248,18 +248,18 @@ class SessionContextTracker:
             previous_price=state.last_valid_quote_price,
             policy=self.quote_quality_policy,
         )
-        if spread_bps is not None:
-            state.spread_bps_window.append(spread_bps)
-        if imbalance_pressure is not None:
-            state.imbalance_pressure_window.append(imbalance_pressure)
-        if microprice_bias_bps is not None:
-            state.microprice_bias_bps_window.append(microprice_bias_bps)
         state.quote_validity_window.append(
             Decimal('1') if quote_quality.valid else Decimal('0')
         )
         if quote_quality.jump_bps is not None:
             state.quote_jump_bps_window.append(quote_quality.jump_bps)
         if quote_quality.valid:
+            if spread_bps is not None:
+                state.spread_bps_window.append(spread_bps)
+            if imbalance_pressure is not None:
+                state.imbalance_pressure_window.append(imbalance_pressure)
+            if microprice_bias_bps is not None:
+                state.microprice_bias_bps_window.append(microprice_bias_bps)
             state.last_valid_quote_price = price
 
         session_range = state.session_high_price - state.session_low_price

@@ -3,13 +3,15 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
 
 from app.config import settings
 from app.models import Strategy
 from app.strategies.catalog import StrategyConfig, _compose_strategy_description
-from app.trading.decisions import DecisionEngine
+from app.trading.decisions import DecisionEngine, _build_runtime_position_exit_overlay
+from app.trading.features import extract_signal_features
 from app.trading.models import SignalEnvelope
 from app.trading.prices import MarketSnapshot, PriceFetcher
 from app.trading.strategy_runtime import (
@@ -1603,6 +1605,89 @@ class TestDecisionEngine(TestCase):
         self.assertEqual(len(first), 1)
         self.assertEqual(second, [])
 
+    def test_scheduler_runtime_continuation_buy_defaults_to_ioc_time_in_force(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="breakout-continuation",
+            description=(
+                "version=1.0.0\n[catalog_metadata]\n"
+                '{"params":{"bullish_hist_min":"0.001","min_bull_rsi":"50","max_bull_rsi":"80","max_spread_bps":"100","min_session_open_drive_bps":"0","min_opening_window_return_bps":"0","min_session_high_above_opening_range_high_bps":"0","min_price_vs_opening_range_high_bps":"-100","max_price_vs_opening_range_high_bps":"100","min_price_vs_opening_window_close_bps":"-100","max_price_vs_opening_window_close_bps":"100","min_opening_range_width_bps":"0","min_session_range_bps":"0","min_session_range_position":"0","min_price_vs_vwap_w5m_bps":"-100","max_price_vs_vwap_w5m_bps":"100","max_recent_spread_bps":"100","max_recent_spread_bps_max":"200","max_recent_quote_jump_bps":"200","min_recent_imbalance_pressure":"-1"},"strategy_type":"breakout_continuation_long_v1","version":"1.0.0"}'
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="breakout_continuation_long_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        seed_signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 14, 0, 3, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=0,
+            payload={
+                "price": 521.40,
+                "ema12": 521.30,
+                "ema26": 521.10,
+                "macd": 0.010,
+                "macd_signal": 0.008,
+                "rsi14": 58,
+                "vol_realized_w60s": 0.00015,
+                "spread": 0.03,
+                "vwap_w5m": 521.28,
+                "imbalance_bid_sz": 5000,
+                "imbalance_ask_sz": 4600,
+            },
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 17, 30, 3, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 523.25,
+                "ema12": 523.10,
+                "ema26": 522.90,
+                "macd": 0.031,
+                "macd_signal": 0.012,
+                "rsi14": 62,
+                "vol_realized_w60s": 0.00017,
+                "spread": 0.04,
+                "vwap_w5m": 523.10,
+                "imbalance_bid_sz": 5200,
+                "imbalance_ask_sz": 4300,
+                "price_vs_session_open_bps": 46,
+                "price_vs_prev_session_close_bps": 46,
+                "opening_window_return_from_prev_close_bps": 28,
+                "session_high_price": 523.70,
+                "opening_range_high": 523.10,
+                "price_vs_opening_range_high_bps": 3,
+                "opening_range_width_bps": 22,
+                "session_range_bps": 61,
+                "price_position_in_session_range": 0.89,
+                "recent_spread_bps_avg": 0.76,
+                "recent_spread_bps_max": 1.32,
+                "recent_imbalance_pressure_avg": 0.09,
+                "recent_quote_invalid_ratio": 0.02,
+                "recent_quote_jump_bps_max": 8,
+                "recent_microprice_bias_bps_avg": 0.65,
+                "cross_section_opening_window_return_from_prev_close_rank": 0.82,
+                "cross_section_continuation_rank": 0.84,
+                "cross_section_continuation_breadth": 0.61,
+            },
+        )
+
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+        ):
+            engine.evaluate(seed_signal, [strategy], positions=[])
+            decisions = engine.evaluate(signal, [strategy], positions=[])
+
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0].time_in_force, "ioc")
+
     def test_scheduler_runtime_research_sleeve_buy_respects_max_entries_per_session(
         self,
     ) -> None:
@@ -2459,6 +2544,90 @@ class TestDecisionEngine(TestCase):
         assert isinstance(trailing_exit, dict)
         self.assertEqual(trailing_exit.get("type"), "long_trailing_stop_bps")
 
+    def test_scheduler_runtime_position_trailing_stop_respects_min_hold(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="intraday-tsmom-trailing-stop-min-hold",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="intraday-tsmom-trailing-stop-min-hold",
+                    strategy_id="intraday_tsmom_v1@prod",
+                    strategy_type="intraday_tsmom_v1",
+                    version="1.1.0",
+                    base_timeframe="1Sec",
+                    universe_type="intraday_tsmom_v1",
+                    universe_symbols=["META"],
+                    max_position_pct_equity=Decimal("0.08"),
+                    max_notional_per_trade=Decimal("1000"),
+                    params={
+                        "min_hold_seconds": "120",
+                        "long_trailing_stop_activation_profit_bps": "20",
+                        "long_trailing_stop_drawdown_bps": "15",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="intraday_tsmom_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("0.08"),
+            max_notional_per_trade=Decimal("1000"),
+        )
+        peak_signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 18, 29, 10, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=11,
+            payload={
+                "price": 530.00,
+                "spread": 0.04,
+                "ema12": 529.50,
+                "ema26": 529.10,
+                "macd": 0.015,
+                "macd_signal": 0.010,
+                "rsi14": 58.0,
+                "vol_realized_w60s": 0.00018,
+            },
+        )
+        trailing_signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 18, 30, 10, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=12,
+            payload={
+                "price": 529.00,
+                "spread": 0.04,
+                "ema12": 529.30,
+                "ema26": 529.05,
+                "macd": 0.012,
+                "macd_signal": 0.009,
+                "rsi14": 56.5,
+                "vol_realized_w60s": 0.00018,
+            },
+        )
+        positions = [
+            {
+                "symbol": "META",
+                "qty": "1.9091",
+                "side": "long",
+                "market_value": "1009.5123",
+                "avg_entry_price": "528.29",
+                "opened_at": "2026-03-27T18:28:50+00:00",
+            }
+        ]
+
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+            patch.object(settings, "trading_fractional_equities_enabled", True),
+        ):
+            initial_decisions = engine.evaluate(peak_signal, [strategy], positions=positions)
+            trailing_decisions = engine.evaluate(trailing_signal, [strategy], positions=positions)
+
+        self.assertEqual(initial_decisions, [])
+        self.assertEqual(trailing_decisions, [])
+
     def test_scheduler_runtime_position_trailing_stop_skips_non_profitable_exit(
         self,
     ) -> None:
@@ -2545,6 +2714,182 @@ class TestDecisionEngine(TestCase):
         self.assertEqual(initial_decisions, [])
         self.assertEqual(trailing_decisions, [])
 
+    def test_scheduler_runtime_breakout_trailing_stop_holds_above_structure(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="breakout-trailing-stop-structure-aware",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="breakout-trailing-stop-structure-aware",
+                    strategy_id="breakout_continuation_long_v1@research",
+                    strategy_type="breakout_continuation_long_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="breakout_continuation_long_v1",
+                    universe_symbols=["AAPL"],
+                    max_position_pct_equity=Decimal("1.5"),
+                    max_notional_per_trade=Decimal("14000"),
+                    params={
+                        "long_trailing_stop_activation_profit_bps": "18",
+                        "long_trailing_stop_drawdown_bps": "10",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="breakout_continuation_long_v1",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("1.5"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        trailing_signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 14, 19, 7, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=22,
+            payload={
+                "price": 255.32,
+                "spread": 0.03,
+                "ema12": 255.18,
+                "ema26": 255.10,
+                "macd": 0.028,
+                "macd_signal": 0.026,
+                "rsi14": 58.2,
+                "vol_realized_w60s": 0.00017,
+                "vwap_w5m": 255.18,
+                "opening_range_high": 255.26,
+                "price_vs_session_open_bps": 60,
+                "price_position_in_session_range": 0.95,
+                "recent_imbalance_pressure_avg": 0.02,
+            },
+        )
+        positions = [
+            {
+                "symbol": "AAPL",
+                "strategy_id": str(strategy.id),
+                "qty": "138.8497",
+                "side": "long",
+                "market_value": "35443.5014",
+                "avg_entry_price": "254.69",
+                "opened_at": "2026-03-26T14:13:18+00:00",
+            }
+        ]
+
+        decision = _build_runtime_position_exit_overlay(
+            signal=trailing_signal,
+            strategies=[strategy],
+            timeframe="1Sec",
+            decisions=[],
+            positions=positions,
+            equity=Decimal("31590.02"),
+            price=Decimal("255.32"),
+            features=extract_signal_features(trailing_signal),
+            snapshot=None,
+            raw_runtime_by_strategy_id={},
+            runtime_eval=SimpleNamespace(
+                observation=SimpleNamespace(intent_conflicts_total=0),
+                errors=[],
+            ),
+            position_peak_price=Decimal("255.80"),
+            aggregated=False,
+            position_isolation_mode="per_strategy",
+        )
+
+        self.assertIsNone(decision)
+
+    def test_scheduler_runtime_breakout_trailing_stop_exits_after_structure_loss(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="breakout-trailing-stop-structure-loss",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="breakout-trailing-stop-structure-loss",
+                    strategy_id="breakout_continuation_long_v1@research",
+                    strategy_type="breakout_continuation_long_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="breakout_continuation_long_v1",
+                    universe_symbols=["AAPL"],
+                    max_position_pct_equity=Decimal("1.5"),
+                    max_notional_per_trade=Decimal("14000"),
+                    params={
+                        "long_trailing_stop_activation_profit_bps": "18",
+                        "long_trailing_stop_drawdown_bps": "10",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="breakout_continuation_long_v1",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("1.5"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        trailing_signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 14, 19, 7, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=24,
+            payload={
+                "price": 255.30,
+                "spread": 0.03,
+                "ema12": 255.18,
+                "ema26": 255.10,
+                "macd": 0.028,
+                "macd_signal": 0.026,
+                "rsi14": 58.2,
+                "vol_realized_w60s": 0.00017,
+                "vwap_w5m": 255.36,
+                "opening_range_high": 255.26,
+                "price_vs_session_open_bps": 60,
+                "price_position_in_session_range": 0.70,
+                "recent_imbalance_pressure_avg": 0.02,
+            },
+        )
+        positions = [
+            {
+                "symbol": "AAPL",
+                "strategy_id": str(strategy.id),
+                "qty": "138.8497",
+                "side": "long",
+                "market_value": "35440.7244",
+                "avg_entry_price": "254.69",
+                "opened_at": "2026-03-26T14:13:18+00:00",
+            }
+        ]
+
+        decision = _build_runtime_position_exit_overlay(
+            signal=trailing_signal,
+            strategies=[strategy],
+            timeframe="1Sec",
+            decisions=[],
+            positions=positions,
+            equity=Decimal("31590.02"),
+            price=Decimal("255.30"),
+            features=extract_signal_features(trailing_signal),
+            snapshot=None,
+            raw_runtime_by_strategy_id={},
+            runtime_eval=SimpleNamespace(
+                observation=SimpleNamespace(intent_conflicts_total=0),
+                errors=[],
+            ),
+            position_peak_price=Decimal("255.80"),
+            aggregated=False,
+            position_isolation_mode="per_strategy",
+        )
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.action, "sell")
+        self.assertEqual(decision.rationale, "position_trailing_stop_exit")
+        trailing_exit = decision.params.get("position_exit")
+        assert isinstance(trailing_exit, dict)
+        self.assertEqual(trailing_exit.get("type"), "long_trailing_stop_bps")
+
     def test_scheduler_runtime_position_exit_overlay_emits_session_flatten_exit(
         self,
     ) -> None:
@@ -2607,6 +2952,81 @@ class TestDecisionEngine(TestCase):
                         "side": "long",
                         "market_value": "1002.63",
                         "avg_entry_price": "524.50",
+                    }
+                ],
+            )
+
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0].action, "sell")
+        self.assertEqual(decisions[0].rationale, "session_flatten_exit")
+        session_exit = decisions[0].params.get("position_exit")
+        assert isinstance(session_exit, dict)
+        self.assertEqual(session_exit.get("type"), "session_flatten_minute_utc")
+
+    def test_scheduler_runtime_position_exit_overlay_session_flatten_bypasses_min_hold(
+        self,
+    ) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="intraday-tsmom-session-flatten-min-hold",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="intraday-tsmom-session-flatten-min-hold",
+                    strategy_id="intraday_tsmom_v1@prod",
+                    strategy_type="intraday_tsmom_v1",
+                    version="1.1.0",
+                    base_timeframe="1Sec",
+                    universe_type="intraday_tsmom_v1",
+                    universe_symbols=["META"],
+                    max_position_pct_equity=Decimal("0.08"),
+                    max_notional_per_trade=Decimal("1000"),
+                    params={
+                        "min_hold_seconds": "3600",
+                        "session_flatten_start_minute_utc": "1170",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="intraday_tsmom_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("0.08"),
+            max_notional_per_trade=Decimal("1000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 19, 30, 0, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=13,
+            payload={
+                "price": 525.10,
+                "spread": 0.20,
+                "ema12": 525.30,
+                "ema26": 525.25,
+                "macd": 0.001,
+                "macd_signal": 0.001,
+                "rsi14": 50.0,
+                "vol_realized_w60s": 0.00012,
+            },
+        )
+
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+            patch.object(settings, "trading_fractional_equities_enabled", True),
+        ):
+            decisions = engine.evaluate(
+                signal,
+                [strategy],
+                positions=[
+                    {
+                        "symbol": "META",
+                        "qty": "1.9091",
+                        "side": "long",
+                        "market_value": "1002.63",
+                        "avg_entry_price": "524.50",
+                        "opened_at": "2026-03-27T19:29:15+00:00",
                     }
                 ],
             )

@@ -411,6 +411,9 @@ class IntradayTsmomPlugin:
         "cross_section_opening_window_return_from_prev_close_rank",
         "cross_section_continuation_rank",
         "cross_section_continuation_breadth",
+        "cross_section_range_position_rank",
+        "cross_section_vwap_w5m_rank",
+        "cross_section_recent_imbalance_rank",
     )
 
     def evaluate(
@@ -478,6 +481,15 @@ class IntradayTsmomPlugin:
             ),
             cross_section_continuation_breadth=_decimal(
                 features.values.get("cross_section_continuation_breadth")
+            ),
+            cross_section_range_position_rank=_decimal(
+                features.values.get("cross_section_range_position_rank")
+            ),
+            cross_section_vwap_w5m_rank=_decimal(
+                features.values.get("cross_section_vwap_w5m_rank")
+            ),
+            cross_section_recent_imbalance_rank=_decimal(
+                features.values.get("cross_section_recent_imbalance_rank")
             ),
         )
         if evaluation is None:
@@ -602,9 +614,13 @@ class BreakoutContinuationLongPlugin:
         "cross_section_positive_opening_window_return_from_prev_close_ratio",
         "cross_section_above_vwap_w5m_ratio",
         "cross_section_continuation_breadth",
+        "cross_section_session_open_rank",
         "cross_section_opening_window_return_rank",
         "cross_section_prev_session_close_rank",
         "cross_section_opening_window_return_from_prev_close_rank",
+        "cross_section_range_position_rank",
+        "cross_section_vwap_w5m_rank",
+        "cross_section_recent_imbalance_rank",
         "cross_section_continuation_rank",
     )
 
@@ -668,6 +684,9 @@ class BreakoutContinuationLongPlugin:
             cross_section_continuation_breadth=_decimal(
                 features.values.get("cross_section_continuation_breadth")
             ),
+            cross_section_session_open_rank=_decimal(
+                features.values.get("cross_section_session_open_rank")
+            ),
             cross_section_opening_window_return_rank=_decimal(
                 features.values.get("cross_section_opening_window_return_rank")
             ),
@@ -676,6 +695,15 @@ class BreakoutContinuationLongPlugin:
             ),
             cross_section_opening_window_return_from_prev_close_rank=_decimal(
                 features.values.get("cross_section_opening_window_return_from_prev_close_rank")
+            ),
+            cross_section_range_position_rank=_decimal(
+                features.values.get("cross_section_range_position_rank")
+            ),
+            cross_section_vwap_w5m_rank=_decimal(
+                features.values.get("cross_section_vwap_w5m_rank")
+            ),
+            cross_section_recent_imbalance_rank=_decimal(
+                features.values.get("cross_section_recent_imbalance_rank")
             ),
             cross_section_continuation_rank=_decimal(
                 features.values.get("cross_section_continuation_rank")
@@ -834,9 +862,13 @@ class LateDayContinuationLongPlugin:
         "cross_section_positive_opening_window_return_from_prev_close_ratio",
         "cross_section_above_vwap_w5m_ratio",
         "cross_section_continuation_breadth",
+        "cross_section_session_open_rank",
         "cross_section_opening_window_return_rank",
         "cross_section_prev_session_close_rank",
         "cross_section_opening_window_return_from_prev_close_rank",
+        "cross_section_range_position_rank",
+        "cross_section_vwap_w5m_rank",
+        "cross_section_recent_imbalance_rank",
         "cross_section_continuation_rank",
     )
 
@@ -898,6 +930,9 @@ class LateDayContinuationLongPlugin:
             cross_section_continuation_breadth=_decimal(
                 features.values.get("cross_section_continuation_breadth")
             ),
+            cross_section_session_open_rank=_decimal(
+                features.values.get("cross_section_session_open_rank")
+            ),
             cross_section_opening_window_return_rank=_decimal(
                 features.values.get("cross_section_opening_window_return_rank")
             ),
@@ -906,6 +941,15 @@ class LateDayContinuationLongPlugin:
             ),
             cross_section_opening_window_return_from_prev_close_rank=_decimal(
                 features.values.get("cross_section_opening_window_return_from_prev_close_rank")
+            ),
+            cross_section_range_position_rank=_decimal(
+                features.values.get("cross_section_range_position_rank")
+            ),
+            cross_section_vwap_w5m_rank=_decimal(
+                features.values.get("cross_section_vwap_w5m_rank")
+            ),
+            cross_section_recent_imbalance_rank=_decimal(
+                features.values.get("cross_section_recent_imbalance_rank")
             ),
             cross_section_continuation_rank=_decimal(
                 features.values.get("cross_section_continuation_rank")

@@ -246,8 +246,8 @@ class TestSessionContextTracker(TestCase):
 
         payload = tracker.enrich_signal_payload(signal)
         self.assertEqual(payload['session_open_price'], Decimal('102.0'))
-        self.assertEqual(payload['recent_spread_bps_avg'], Decimal('196.0784313725490196078431373'))
-        self.assertGreater(payload['recent_imbalance_pressure_avg'], Decimal('0'))
+        self.assertIsNone(payload['recent_spread_bps_avg'])
+        self.assertIsNone(payload['recent_imbalance_pressure_avg'])
 
     def test_tracker_emits_cross_section_continuation_and_reversal_ranks(self) -> None:
         tracker = SessionContextTracker()
@@ -377,6 +377,10 @@ class TestSessionContextTracker(TestCase):
         self.assertEqual(first_payload['recent_quote_invalid_ratio'], Decimal('0'))
         self.assertEqual(unstable_payload['recent_quote_invalid_ratio'], Decimal('0.5'))
         self.assertIsNone(unstable_payload['recent_quote_jump_bps_max'])
+        self.assertEqual(
+            unstable_payload['recent_spread_bps_avg'],
+            first_payload['recent_spread_bps_avg'],
+        )
         self.assertGreater(
             cast(Decimal, unstable_payload['recent_microprice_bias_bps_avg']),
             Decimal('0'),
