@@ -28,4 +28,4 @@ images:
     newTag: f21a2f3ae87fce22ba4d34faf8aeaf3a502d3d4f
   - name: registry.ide-newton.ts.net/lab/bilig-sync
     newName: registry.ide-newton.ts.net/lab/bilig-sync
-    newTag: f21a2f3ae87fce22ba4d34faf8aeaf3a502d3d4f
+    newTag: cf982311e006dec5f6e21f01fb4b21443b7ee03f
