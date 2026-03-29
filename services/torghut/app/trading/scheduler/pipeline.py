@@ -34,10 +34,7 @@ from ..autonomy.phase_manifest_contract import AUTONOMY_PHASE_ORDER
 from ..decisions import DecisionEngine
 from ..empirical_jobs import build_empirical_jobs_status
 from ..execution import OrderExecutor
-from ..execution_adapters import (
-    ExecutionAdapter,
-    adapter_enabled_for_symbol,
-)
+from ..execution_adapters import ExecutionAdapter
 from ..execution_policy import ExecutionPolicy
 from ..feature_quality import FeatureQualityThresholds, evaluate_feature_batch_quality
 from ..features import extract_executable_price
@@ -966,7 +963,6 @@ class TradingPipeline:
                 decision=decision,
                 decision_row=decision_row,
                 policy_outcome=policy_outcome,
-                symbol_allowlist=symbol_allowlist,
             )
             if not submitted:
                 return None
@@ -1897,12 +1893,8 @@ class TradingPipeline:
         decision: StrategyDecision,
         decision_row: TradeDecision,
         policy_outcome: Any,
-        symbol_allowlist: set[str],
     ) -> bool:
-        execution_client = self._execution_client_for_symbol(
-            decision.symbol,
-            symbol_allowlist=symbol_allowlist,
-        )
+        execution_client = self._execution_client_for_symbol(decision.symbol)
         selected_adapter_name = self._execution_client_name(execution_client)
         self._maybe_record_lean_strategy_shadow(
             session=session,
@@ -2857,10 +2849,9 @@ class TradingPipeline:
     def _execution_client_for_symbol(
         self,
         symbol: str,
-        *,
-        symbol_allowlist: set[str] | None = None,
     ) -> Any:
-        if adapter_enabled_for_symbol(symbol, allowlist=symbol_allowlist):
+        _ = symbol
+        if getattr(self.execution_adapter, "name", None) == "simulation":
             return self.execution_adapter
         return self.order_firewall
 

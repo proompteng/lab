@@ -85,38 +85,6 @@ class SimpleTradingPipeline(TradingPipeline):
         self.state.last_signal_continuity_actionable = False
         return True
 
-    def _build_run_context(
-        self, session: Session
-    ) -> tuple[Any, dict[str, str], list[dict[str, Any]], set[str]] | None:
-        account_snapshot = self._get_account_snapshot(session)
-        account = {
-            "equity": str(account_snapshot.equity),
-            "cash": str(account_snapshot.cash),
-            "buying_power": str(account_snapshot.buying_power),
-        }
-        snapshot_positions = _clone_positions(account_snapshot.positions)
-        positions = self._resolve_execution_context_positions(snapshot_positions)
-        fallback_symbols = {
-            symbol.strip().upper()
-            for symbol in settings.trading_universe_static_fallback_symbols
-            if symbol.strip()
-        }
-        allowed_symbols = fallback_symbols
-        universe_reason = "simple_static_fallback" if fallback_symbols else "strategy_symbols_only"
-        self.state.universe_source_status = "simple"
-        self.state.universe_source_reason = universe_reason
-        self.state.universe_symbols_count = len(allowed_symbols)
-        self.state.universe_cache_age_seconds = 0
-        self.state.universe_fail_safe_blocked = False
-        self.state.universe_fail_safe_block_reason = None
-        self.state.metrics.record_universe_resolution(
-            status="simple",
-            reason=universe_reason,
-            symbols_count=len(allowed_symbols),
-            cache_age_seconds=0,
-        )
-        return account_snapshot, account, positions, allowed_symbols
-
     def _process_batch_signals(
         self,
         *,
