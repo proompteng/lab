@@ -2533,6 +2533,54 @@ class TestStrategyRuntime(TestCase):
         self.assertEqual(decision.plugin_id, "breakout_continuation_long")
         self.assertIn("session_strength_reversal", decision.intent.rationale)
 
+    def test_breakout_continuation_plugin_does_not_exit_when_orh_distance_missing(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="breakout-continuation",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="breakout_continuation_long_v1",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 14, 24, 5, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=6,
+            payload={
+                "price": 255.16,
+                "ema12": 255.10,
+                "ema26": 255.22,
+                "macd": 0.028,
+                "macd_signal": 0.026,
+                "rsi14": 58.2,
+                "vol_realized_w60s": 0.000170,
+                "spread": 0.03,
+                "vwap_w5m": 255.22,
+                "imbalance_bid_sz": 160,
+                "imbalance_ask_sz": 120,
+                "price_vs_session_open_bps": 54,
+                "session_high_price": 255.74,
+                "opening_range_high": 255.26,
+                "opening_range_width_bps": 376.63,
+                "session_range_bps": 508.52,
+                "price_position_in_session_range": 0.74,
+                "recent_spread_bps_avg": 5.9,
+                "recent_spread_bps_max": 12.5,
+                "recent_imbalance_pressure_avg": 0.01,
+                "recent_microprice_bias_bps_avg": 0.12,
+            },
+        )
+
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNone(decision)
+
     def test_breakout_continuation_plugin_skips_late_entry_near_flatten(self) -> None:
         strategy = Strategy(
             id=uuid.uuid4(),
