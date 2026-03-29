@@ -15,6 +15,7 @@ Both shards run:
 
 - amd64 shard: `ubuntu-latest:docker://ghcr.io/catthehacker/ubuntu:act-latest`, `docker:docker://ghcr.io/catthehacker/ubuntu:act-latest`
 - arm64 shard: `ubuntu-24.04-arm64:docker://ghcr.io/catthehacker/ubuntu:act-latest`, `docker-arm64:docker://ghcr.io/catthehacker/ubuntu:act-latest`
+- The shared `configmap-runner.yaml` must not set `runner.labels`; labels are injected only through each shard's `RUNNER_LABELS` registration env so amd64 and arm64 do not advertise the same queues.
 
 ## Secrets and Registration Token
 

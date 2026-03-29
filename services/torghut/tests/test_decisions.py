@@ -1695,6 +1695,100 @@ class TestDecisionEngine(TestCase):
         self.assertEqual(len(first), 1)
         self.assertEqual(second, [])
 
+    def test_scheduler_runtime_isolated_buy_cooldown_is_scoped_per_strategy(self) -> None:
+        first_strategy_id = uuid.uuid4()
+        second_strategy_id = uuid.uuid4()
+        engine = DecisionEngine(price_fetcher=None)
+        engine.strategy_runtime = StrategyRuntime(
+            registry=StrategyRegistry(
+                plugins={
+                    "buy_plugin": _BuyPlugin(),
+                }
+            )
+        )
+        first_strategy = Strategy(
+            id=first_strategy_id,
+            name="isolated-buy-one",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="isolated-buy-one",
+                    strategy_id="isolated-buy-one",
+                    strategy_type="buy_plugin",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="breakout_continuation_long_v1",
+                    universe_symbols=["AAPL"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("1000"),
+                    params={
+                        "position_isolation_mode": "per_strategy",
+                        "entry_cooldown_seconds": "300",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="breakout_continuation_long_v1",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("1000"),
+        )
+        second_strategy = Strategy(
+            id=second_strategy_id,
+            name="isolated-buy-two",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="isolated-buy-two",
+                    strategy_id="isolated-buy-two",
+                    strategy_type="buy_plugin",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="breakout_continuation_long_v1",
+                    universe_symbols=["AAPL"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("1000"),
+                    params={
+                        "position_isolation_mode": "per_strategy",
+                        "entry_cooldown_seconds": "300",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="breakout_continuation_long_v1",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("1000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 17, 30, 3, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 101,
+                "macd": Decimal("0.12"),
+                "macd_signal": Decimal("0.08"),
+                "rsi14": Decimal("52"),
+            },
+        )
+
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+        ):
+            decisions = engine.evaluate(
+                signal,
+                [first_strategy, second_strategy],
+                positions=[],
+            )
+
+        self.assertEqual(len(decisions), 2)
+        self.assertCountEqual(
+            [decision.strategy_id for decision in decisions],
+            [str(first_strategy_id), str(second_strategy_id)],
+        )
+
     def test_scheduler_runtime_research_sleeve_buy_respects_stop_loss_lockout(self) -> None:
         engine = DecisionEngine(price_fetcher=None)
         strategy = Strategy(

@@ -42,6 +42,8 @@ from app.trading.quote_quality import (
 
 logging.getLogger('alembic').setLevel(logging.WARNING)
 
+logging.getLogger('alembic').setLevel(logging.WARNING)
+
 REGULAR_OPEN_UTC = time(hour=13, minute=30)
 REGULAR_CLOSE_UTC = time(hour=20, minute=0)
 DEFAULT_CHUNK_MINUTES = 10
