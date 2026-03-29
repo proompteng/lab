@@ -191,6 +191,33 @@ diff --git a/services/torghut/scripts/foo.py b/services/torghut/scripts/foo.py
 
         self.assertEqual(coverage_index['scripts/check_diff_coverage.py'][20], 1)
 
+    def test_load_coverage_index_prefixes_nested_app_filenames(self) -> None:
+        xml_text = '''
+<coverage>
+  <packages>
+    <package name="trading">
+      <classes>
+        <class filename="trading/session_context.py">
+          <lines>
+            <line number="20" hits="1"/>
+          </lines>
+        </class>
+      </classes>
+    </package>
+  </packages>
+</coverage>
+'''.strip()
+        with TemporaryDirectory() as tmpdir:
+            app_path = Path(tmpdir) / 'app' / 'trading' / 'session_context.py'
+            app_path.parent.mkdir(parents=True, exist_ok=True)
+            app_path.write_text('print("ok")\n', encoding='utf-8')
+            xml_path = Path(tmpdir) / 'coverage.xml'
+            xml_path.write_text(xml_text, encoding='utf-8')
+
+            coverage_index = _load_coverage_index(xml_path)
+
+        self.assertEqual(coverage_index['app/trading/session_context.py'][20], 1)
+
     def test_summarize_changed_coverage_uses_only_executable_changed_lines(self) -> None:
         summary = summarize_changed_coverage(
             changed_lines={'app/trading/foo.py': {11, 12, 99}},
