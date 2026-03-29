@@ -135,6 +135,9 @@ Current source-state priority is narrower:
   through March 27 ClickHouse surface into one concrete strategy-and-proof contract: separate continuation,
   breakout, and rebound sleeves, a frozen March 23 through March 27 holdout week, and a safe query discipline that
   avoids memory-bound raw ClickHouse aggregates.
+- `67-torghut-trading-engine-glossary-and-mechanics-2026-03-29.md` now provides one onboarding glossary for the
+  current Torghut runtime, replay, decision-persistence, and profitability vocabulary so a new engineer can map terms
+  directly to active code paths and diagnostics.
 - `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md` now makes the next step
   explicit: non-observe capital depends on one certificate that consumes Jangar witness quorum, Jangar market-context
   and quant evidence, toggle parity, and typed options auth/bootstrap escrow rather than local gate optimism.
@@ -381,6 +384,7 @@ This pack is positioned as the next architecture layer above:
 47. `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
 48. `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md`
 49. `66-torghut-property-based-testing-coverage-and-lint-hardening-2026-03-28.md`
+50. `67-torghut-trading-engine-glossary-and-mechanics-2026-03-29.md`
 
 ## Why This Sequence
 
@@ -430,3 +434,5 @@ This pack is positioned as the next architecture layer above:
 - `66-torghut-property-based-testing-coverage-and-lint-hardening-2026-03-28.md` adds the missing test-quality layer:
   property-based invariants, state-machine replay/runtime checks, and hard branch-coverage / lint gates for the
   service's trading core.
+- `67-torghut-trading-engine-glossary-and-mechanics-2026-03-29.md` adds the missing onboarding layer: one current
+  terminology and mechanics map for data flow, strategy flow, persistence, replay, and diagnostics.

@@ -79,6 +79,7 @@ If the question is "what should I trust right now?", start here:
    - `docs/torghut/design-system/v6/53-torghut-kafka-retention-bootstrap-and-archive-backed-profitability-proof-2026-03-27.md`
    - `docs/torghut/design-system/v6/54-torghut-research-backed-sleeves-and-this-week-holdout-proof-2026-03-27.md`
    - `docs/torghut/design-system/v6/66-torghut-property-based-testing-coverage-and-lint-hardening-2026-03-28.md`
+   - `docs/torghut/design-system/v6/67-torghut-trading-engine-glossary-and-mechanics-2026-03-29.md`
    - `docs/torghut/design-system/v6/53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md`
    - `docs/torghut/design-system/v6/53-torghut-capital-leases-and-profit-trial-firebreaks-2026-03-20.md`
    - `docs/torghut/design-system/v6/54-torghut-capital-lease-receipts-and-profit-falsification-ledger-2026-03-20.md`
@@ -109,6 +110,11 @@ The March 28 service-quality contract is also active engineering work for Torghu
 
 - move Torghut to Hypothesis-backed property/stateful testing, branch-coverage enforcement, and stricter lint gates in
   `docs/torghut/design-system/v6/66-torghut-property-based-testing-coverage-and-lint-hardening-2026-03-28.md`.
+
+The March 29 onboarding glossary is the current terminology companion for engineers entering this codebase:
+
+- use `docs/torghut/design-system/v6/67-torghut-trading-engine-glossary-and-mechanics-2026-03-29.md` when the problem
+  is understanding Torghut vocabulary, runtime flow, replay flow, decision persistence, or why a sleeve is flat.
 
 1. cut Jangar over to shadow-compiled, sealed recovery epochs and enforce backlog-seat ownership before rollout in
    `docs/agents/designs/65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`;
