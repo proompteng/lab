@@ -120,10 +120,13 @@ class SessionContextStateMachine(RuleBasedStateMachine):
                 ask_sz=ask_sz,
             )
         )
+        self.last_payload = payload
+        if 'session_open_price' not in payload:
+            assert not self.opened_today
+            return
         if not self.opened_today:
             self.expected_open_price = payload['session_open_price']
             self.opened_today = True
-        self.last_payload = payload
         assert payload['session_open_price'] == self.expected_open_price
 
     @precondition(lambda self: not self.closed_today)
@@ -144,6 +147,8 @@ class SessionContextStateMachine(RuleBasedStateMachine):
     ) -> None:
         if not self.opened_today:
             self.regular_open_tick(price, spread, bid_sz, ask_sz)
+            if not self.opened_today:
+                return
             return
         payload = self.tracker.enrich_signal_payload(
             _signal(
@@ -156,6 +161,8 @@ class SessionContextStateMachine(RuleBasedStateMachine):
             )
         )
         self.last_payload = payload
+        if 'session_open_price' not in payload:
+            return
         assert payload['session_open_price'] == self.expected_open_price
 
     @invariant()

@@ -153,6 +153,15 @@ class _SymbolSessionState:
     quote_validity_window: deque[Decimal] = field(default_factory=lambda: deque(maxlen=DEFAULT_RECENT_WINDOW))
     quote_jump_bps_window: deque[Decimal] = field(default_factory=lambda: deque(maxlen=DEFAULT_RECENT_WINDOW))
     microprice_bias_bps_window: deque[Decimal] = field(default_factory=lambda: deque(maxlen=DEFAULT_RECENT_WINDOW))
+    above_opening_range_high_window: deque[Decimal] = field(
+        default_factory=lambda: deque(maxlen=DEFAULT_RECENT_WINDOW)
+    )
+    above_opening_window_close_window: deque[Decimal] = field(
+        default_factory=lambda: deque(maxlen=DEFAULT_RECENT_WINDOW)
+    )
+    above_vwap_w5m_window: deque[Decimal] = field(
+        default_factory=lambda: deque(maxlen=DEFAULT_RECENT_WINDOW)
+    )
     latest_price_vs_session_open_bps: Decimal | None = None
     latest_price_vs_prev_session_close_bps: Decimal | None = None
     latest_price_position_in_session_range: Decimal | None = None
@@ -208,8 +217,18 @@ class SessionContextTracker:
             if previous_close > 0:
                 self._last_session_close_by_symbol[symbol] = previous_close
             state = None
+        quote_quality = assess_signal_quote_quality(
+            signal=signal,
+            previous_price=(state.last_valid_quote_price if state is not None else None),
+            policy=self.quote_quality_policy,
+        )
         if state is None:
             if not regular_session_started:
+                previous_close = self._last_session_close_by_symbol.get(symbol)
+                if previous_close is not None:
+                    payload['prev_session_close_price'] = previous_close
+                return payload
+            if not quote_quality.valid:
                 previous_close = self._last_session_close_by_symbol.get(symbol)
                 if previous_close is not None:
                     payload['prev_session_close_price'] = previous_close
@@ -228,25 +247,19 @@ class SessionContextTracker:
                 quote_validity_window=deque(maxlen=self.recent_window),
                 quote_jump_bps_window=deque(maxlen=self.recent_window),
                 microprice_bias_bps_window=deque(maxlen=self.recent_window),
+                above_opening_range_high_window=deque(maxlen=self.recent_window),
+                above_opening_window_close_window=deque(maxlen=self.recent_window),
+                above_vwap_w5m_window=deque(maxlen=self.recent_window),
             )
             self._state_by_symbol[symbol] = state
 
-        state.session_high_price = max(state.session_high_price, price)
-        state.session_low_price = min(state.session_low_price, price)
-
         minutes_elapsed = _session_minutes_elapsed(signal.event_ts)
-        if minutes_elapsed <= self.opening_range_minutes:
-            state.opening_range_high = max(state.opening_range_high, price)
-            state.opening_range_low = min(state.opening_range_low, price)
-            state.opening_window_close_price = price
 
         spread_bps = _extract_spread_bps(payload, price)
         imbalance_pressure = _extract_imbalance_pressure(payload)
         microprice_bias_bps = _extract_microprice_bias_bps(payload)
-        quote_quality = assess_signal_quote_quality(
-            signal=signal,
-            previous_price=state.last_valid_quote_price,
-            policy=self.quote_quality_policy,
+        vwap_w5m = optional_decimal(
+            payload_value(payload, 'vwap_w5m', block='vwap', nested_key='w5m')
         )
         state.quote_validity_window.append(
             Decimal('1') if quote_quality.valid else Decimal('0')
@@ -254,22 +267,39 @@ class SessionContextTracker:
         if quote_quality.jump_bps is not None:
             state.quote_jump_bps_window.append(quote_quality.jump_bps)
         if quote_quality.valid:
+            state.session_high_price = max(state.session_high_price, price)
+            state.session_low_price = min(state.session_low_price, price)
+            if minutes_elapsed <= self.opening_range_minutes:
+                state.opening_range_high = max(state.opening_range_high, price)
+                state.opening_range_low = min(state.opening_range_low, price)
+                state.opening_window_close_price = price
             if spread_bps is not None:
                 state.spread_bps_window.append(spread_bps)
             if imbalance_pressure is not None:
                 state.imbalance_pressure_window.append(imbalance_pressure)
             if microprice_bias_bps is not None:
                 state.microprice_bias_bps_window.append(microprice_bias_bps)
+            state.above_opening_range_high_window.append(
+                Decimal('1') if price >= state.opening_range_high else Decimal('0')
+            )
+            state.above_opening_window_close_window.append(
+                Decimal('1') if price >= state.opening_window_close_price else Decimal('0')
+            )
+            if vwap_w5m is not None:
+                state.above_vwap_w5m_window.append(
+                    Decimal('1') if price >= vwap_w5m else Decimal('0')
+                )
             state.last_valid_quote_price = price
 
         session_range = state.session_high_price - state.session_low_price
         position_in_range = DEFAULT_POSITION_IN_RANGE
         if session_range > 0:
             position_in_range = (price - state.session_low_price) / session_range
+            position_in_range = min(
+                Decimal('1'),
+                max(Decimal('0'), position_in_range),
+            )
 
-        vwap_w5m = optional_decimal(
-            payload_value(payload, 'vwap_w5m', block='vwap', nested_key='w5m')
-        )
         opening_range_width_bps = _bps_delta(state.opening_range_high, state.opening_range_low)
         session_range_bps = _bps_delta(state.session_high_price, state.session_low_price)
         price_vs_session_open_bps = _bps_delta(price, state.session_open_price)
@@ -301,6 +331,13 @@ class SessionContextTracker:
         recent_microprice_bias_bps_avg = _mean_decimal(
             state.microprice_bias_bps_window
         )
+        recent_above_opening_range_high_ratio = _mean_decimal(
+            state.above_opening_range_high_window
+        )
+        recent_above_opening_window_close_ratio = _mean_decimal(
+            state.above_opening_window_close_window
+        )
+        recent_above_vwap_w5m_ratio = _mean_decimal(state.above_vwap_w5m_window)
         price_vs_vwap_w5m_bps = _bps_delta(price, vwap_w5m)
 
         state.latest_price_vs_session_open_bps = price_vs_session_open_bps
@@ -469,6 +506,9 @@ class SessionContextTracker:
                 'recent_quote_jump_bps_avg': recent_quote_jump_bps_avg,
                 'recent_quote_jump_bps_max': recent_quote_jump_bps_max,
                 'recent_microprice_bias_bps_avg': recent_microprice_bias_bps_avg,
+                'recent_above_opening_range_high_ratio': recent_above_opening_range_high_ratio,
+                'recent_above_opening_window_close_ratio': recent_above_opening_window_close_ratio,
+                'recent_above_vwap_w5m_ratio': recent_above_vwap_w5m_ratio,
                 'cross_section_session_open_rank': session_open_rank,
                 'cross_section_prev_session_close_rank': prev_session_close_rank,
                 'cross_section_opening_window_return_rank': opening_window_return_rank,
