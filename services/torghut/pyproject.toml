@@ -28,13 +28,71 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pyright>=1.1.389,<2.0", "ruff>=0.9.0,<1.0"]
+dev = [
+  "coverage[toml]>=7.10.0,<8.0",
+  "crosshair-tool>=0.0.95,<1.0",
+  "hypothesis>=6.151.0,<7.0",
+  "mutmut>=3.3.1,<4.0",
+  "pyright>=1.1.389,<2.0",
+  "pytest>=8.4.0,<9.0",
+  "pytest-cov>=7.0.0,<8.0",
+  "ruff>=0.9.0,<1.0",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers"
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+testpaths = ["tests"]
+markers = [
+  "property: property-based tests backed by Hypothesis",
+  "stateful: state-machine or sequence-based tests",
+  "slow: longer-running checks reserved for selective execution",
+  "mutation: mutation-testing focused suites or helpers",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["app", "scripts"]
+omit = ["tests/*", "migrations/*"]
+
+[tool.coverage.report]
+fail_under = 70
+show_missing = true
+skip_covered = false
+precision = 2
+exclude_also = [
+  "pragma: no cover",
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+]
+
+[tool.coverage.xml]
+output = "coverage.xml"
 
 [tool.vulture]
 paths = ["app", "scripts"]
 exclude = ["*/tests/*", "*/.venv/*", "*/migrations/*"]
 min_confidence = 100
 sort_by_size = true
+
+[tool.mutmut]
+paths_to_mutate = [
+  "app/trading/quantity_rules.py",
+  "app/trading/features.py",
+  "app/trading/quote_quality.py",
+  "app/trading/session_context.py",
+]
+pytest_add_cli_args_test_selection = [
+  "tests/property",
+  "tests/stateful",
+  "tests/test_feature_contract_v3.py",
+  "tests/test_local_intraday_tsmom_replay.py",
+  "tests/test_portfolio_sizing.py",
+  "tests/test_quote_quality.py",
+  "tests/test_session_context.py",
+]
+mutate_only_covered_lines = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
