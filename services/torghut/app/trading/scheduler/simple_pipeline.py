@@ -23,7 +23,6 @@ from ..simple_risk import (
 )
 from .pipeline import TradingPipeline
 from .pipeline_helpers import (
-    _clone_positions,
     _extract_json_error_payload,
 )
 
