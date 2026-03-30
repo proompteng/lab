@@ -13,6 +13,7 @@ from typing import Any, Literal, Mapping, Optional, cast
 from ..models import Strategy
 from .costs import CostModelConfig, CostModelInputs, OrderIntent, TransactionCostModel
 from .evaluation import WalkForwardDecision, WalkForwardResults
+from .evaluation_trace import SweepCandidateResult
 from .regime import RegimeLabel, classify_regime
 
 
@@ -949,6 +950,147 @@ def _decimal_std(values: list[Decimal], mean: Decimal) -> Decimal:
     return variance.sqrt()
 
 
+@dataclass(frozen=True)
+class ProfitabilityConstraintPolicy:
+    holdout_target_net_per_day: Decimal = Decimal("250")
+    min_active_holdout_days: int = 3
+    max_worst_holdout_day_loss: Decimal = Decimal("150")
+    min_profit_factor: Decimal = Decimal("1.5")
+    require_training_decisions: bool = True
+    require_holdout_decisions: bool = True
+
+
+@dataclass(frozen=True)
+class ReplayProfitabilitySummary:
+    start_date: str
+    end_date: str
+    trading_day_count: int
+    net_pnl: Decimal
+    net_per_day: Decimal
+    active_days: int
+    decision_count: int
+    filled_count: int
+    wins: int
+    losses: int
+    worst_day_net: Decimal
+    profit_factor: Decimal | None
+    daily_net: dict[str, Decimal]
+
+
+def summarize_replay_profitability(payload: Mapping[str, Any]) -> ReplayProfitabilitySummary:
+    daily_payload = cast(Mapping[str, Any], payload.get("daily") or {})
+    daily_net: dict[str, Decimal] = {}
+    for day, value in daily_payload.items():
+        if not isinstance(value, Mapping):
+            continue
+        value_mapping = cast(Mapping[str, Any], value)
+        daily_net[str(day)] = _decimal(value_mapping.get("net_pnl")) or Decimal("0")
+
+    trading_day_count = len(daily_net)
+    net_pnl = _decimal(payload.get("net_pnl")) or Decimal("0")
+    active_days = sum(
+        1
+        for value in daily_payload.values()
+        if isinstance(value, Mapping)
+        and int(cast(Mapping[str, Any], value).get("filled_count", 0)) > 0
+    )
+    positive_total = sum((value for value in daily_net.values() if value > 0), Decimal("0"))
+    negative_total = sum((-value for value in daily_net.values() if value < 0), Decimal("0"))
+    profit_factor = (
+        (positive_total / negative_total)
+        if negative_total > 0
+        else (Decimal("999999") if positive_total > 0 else None)
+    )
+    worst_day_net = min(daily_net.values()) if daily_net else Decimal("0")
+    net_per_day = (
+        net_pnl / Decimal(trading_day_count)
+        if trading_day_count > 0
+        else Decimal("0")
+    )
+    return ReplayProfitabilitySummary(
+        start_date=str(payload.get("start_date") or ""),
+        end_date=str(payload.get("end_date") or ""),
+        trading_day_count=trading_day_count,
+        net_pnl=net_pnl,
+        net_per_day=net_per_day,
+        active_days=active_days,
+        decision_count=int(payload.get("decision_count", 0)),
+        filled_count=int(payload.get("filled_count", 0)),
+        wins=int(payload.get("wins", 0)),
+        losses=int(payload.get("losses", 0)),
+        worst_day_net=worst_day_net,
+        profit_factor=profit_factor,
+        daily_net=daily_net,
+    )
+
+
+def score_replay_profitability_candidate(
+    *,
+    family: str,
+    strategy_name: str,
+    replay_config: Mapping[str, Any],
+    train_payload: Mapping[str, Any],
+    holdout_payload: Mapping[str, Any],
+    policy: ProfitabilityConstraintPolicy = ProfitabilityConstraintPolicy(),
+) -> SweepCandidateResult:
+    train = summarize_replay_profitability(train_payload)
+    holdout = summarize_replay_profitability(holdout_payload)
+
+    penalties = Decimal("0")
+    if holdout.active_days < policy.min_active_holdout_days:
+        penalties += Decimal(policy.min_active_holdout_days - holdout.active_days) * Decimal("250")
+    if holdout.worst_day_net < -policy.max_worst_holdout_day_loss:
+        penalties += abs(holdout.worst_day_net + policy.max_worst_holdout_day_loss)
+    if holdout.profit_factor is None:
+        penalties += Decimal("250")
+    elif holdout.profit_factor < policy.min_profit_factor:
+        penalties += (policy.min_profit_factor - holdout.profit_factor) * Decimal("250")
+    if policy.require_training_decisions and train.decision_count <= 0:
+        penalties += Decimal("250")
+    if policy.require_holdout_decisions and holdout.decision_count <= 0:
+        penalties += Decimal("500")
+    if holdout.net_per_day < policy.holdout_target_net_per_day:
+        penalties += policy.holdout_target_net_per_day - holdout.net_per_day
+
+    score = holdout.net_per_day - penalties
+    candidate_key = json.dumps(
+        {
+            "family": family,
+            "strategy_name": strategy_name,
+            "replay_config": dict(replay_config),
+            "train": {
+                "start_date": train.start_date,
+                "end_date": train.end_date,
+                "net_per_day": str(train.net_per_day),
+            },
+            "holdout": {
+                "start_date": holdout.start_date,
+                "end_date": holdout.end_date,
+                "net_per_day": str(holdout.net_per_day),
+            },
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    candidate_id = hashlib.sha256(candidate_key.encode("utf-8")).hexdigest()[:24]
+    return SweepCandidateResult(
+        candidate_id=candidate_id,
+        family=family,
+        strategy_name=strategy_name,
+        train_net_per_day=train.net_per_day,
+        holdout_net_per_day=holdout.net_per_day,
+        train_total_net=train.net_pnl,
+        holdout_total_net=holdout.net_pnl,
+        active_holdout_days=holdout.active_days,
+        max_holdout_drawdown_day=abs(min(holdout.worst_day_net, Decimal("0"))),
+        profit_factor=holdout.profit_factor,
+        wins=holdout.wins,
+        losses=holdout.losses,
+        score=score,
+        replay_config=dict(replay_config),
+    )
+
+
 __all__ = [
     "EvaluationImpactAssumptions",
     "EvaluationGateOutcome",
@@ -957,11 +1099,15 @@ __all__ = [
     "EvaluationReport",
     "EvaluationReportConfig",
     "MultipleTestingSummary",
+    "ProfitabilityConstraintPolicy",
     "PromotionEvidenceSummary",
     "PromotionRecommendation",
+    "ReplayProfitabilitySummary",
     "RobustnessFoldMetrics",
     "RobustnessReport",
     "build_promotion_recommendation",
     "generate_evaluation_report",
+    "score_replay_profitability_candidate",
+    "summarize_replay_profitability",
     "write_evaluation_report",
 ]

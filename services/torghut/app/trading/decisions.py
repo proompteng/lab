@@ -20,6 +20,7 @@ from .features import (
     optional_decimal,
 )
 from .microstructure import parse_microstructure_state
+from .evaluation_trace import StrategyTrace
 from .forecasting import ForecastRoutingTelemetry, build_default_forecast_router
 from .models import SignalEnvelope, StrategyDecision
 from .regime_hmm import (
@@ -57,6 +58,7 @@ class DecisionRuntimeTelemetry:
     fallback_to_legacy: bool
     errors: tuple[RuntimeErrorRecord, ...] = field(default_factory=tuple)
     observation: RuntimeObservation | None = None
+    traces: tuple[StrategyTrace, ...] = field(default_factory=tuple)
 
 
 @dataclass
@@ -73,13 +75,19 @@ class _RuntimeTradePolicySessionState:
 class DecisionEngine:
     """Evaluate TA signals against configured strategies."""
 
-    def __init__(self, price_fetcher: Optional[PriceFetcher] = None) -> None:
+    def __init__(
+        self,
+        price_fetcher: Optional[PriceFetcher] = None,
+        *,
+        runtime_trace_enabled: bool = False,
+    ) -> None:
         self.price_fetcher = price_fetcher
         self.strategy_runtime = StrategyRuntime(
             registry=StrategyRegistry(
                 circuit_error_threshold=settings.trading_strategy_runtime_circuit_errors,
                 cooldown_seconds=settings.trading_strategy_runtime_circuit_cooldown_seconds,
-            )
+            ),
+            trace_enabled=runtime_trace_enabled,
         )
         self._last_runtime_telemetry = DecisionRuntimeTelemetry(
             mode="legacy",
@@ -206,6 +214,7 @@ class DecisionEngine:
             fallback_to_legacy=False,
             errors=tuple(runtime_eval.errors),
             observation=runtime_eval.observation,
+            traces=tuple(runtime_eval.traces),
         )
 
         decisions: list[StrategyDecision] = []

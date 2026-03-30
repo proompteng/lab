@@ -13,9 +13,12 @@ from typing import Any, Literal, Protocol, cast
 
 from ..models import Strategy
 from ..strategies.catalog import extract_catalog_metadata
+from .evaluation_trace import GateTrace, StrategyTrace, ThresholdTrace
 from .features import FeatureVectorV3, validate_declared_features
 from .intraday_tsmom_contract import evaluate_intraday_tsmom_signal
 from .research_sleeves import (
+    SleeveSignalEvaluation,
+    SleeveSignalResult,
     evaluate_breakout_continuation_long,
     evaluate_end_of_day_reversal_long,
     evaluate_late_day_continuation_long,
@@ -27,6 +30,72 @@ from .strategy_specs import build_compiled_strategy_artifacts, strategy_type_sup
 
 def _empty_meta() -> dict[str, Any]:
     return {}
+
+
+def _generic_plugin_trace(
+    *,
+    context: "StrategyContext",
+    gate: str,
+    passed: bool,
+    action: Literal["buy", "sell"] | None = None,
+    rationale: tuple[str, ...] = (),
+    thresholds: tuple[ThresholdTrace, ...] = (),
+    gate_context: dict[str, Any] | None = None,
+) -> StrategyTrace | None:
+    if not context.trace_enabled:
+        return None
+    return StrategyTrace(
+        strategy_id=context.strategy_id,
+        strategy_type=context.strategy_type,
+        symbol=context.symbol,
+        event_ts=context.event_ts,
+        timeframe=context.timeframe,
+        passed=passed,
+        action=action,
+        rationale=rationale,
+        gates=(
+            GateTrace(
+                gate=gate,
+                category='structure',
+                passed=passed,
+                thresholds=thresholds,
+                context=gate_context or {},
+            ),
+        ),
+        first_failed_gate=None if passed else gate,
+    )
+
+
+def _plugin_result_from_sleeve_result(
+    *,
+    context: "StrategyContext",
+    features: FeatureVectorV3,
+    required_features: tuple[str, ...],
+    evaluation: SleeveSignalResult | SleeveSignalEvaluation | None,
+) -> PluginEvaluationResult:
+    if evaluation is None:
+        return PluginEvaluationResult(intent=None, trace=None)
+    if isinstance(evaluation, SleeveSignalEvaluation):
+        evaluation = SleeveSignalResult(signal=evaluation, trace=None)
+    if evaluation.signal is None:
+        return PluginEvaluationResult(intent=None, trace=evaluation.trace)
+    return PluginEvaluationResult(
+        intent=StrategyIntent(
+            strategy_id=context.strategy_id,
+            symbol=context.symbol,
+            direction=evaluation.signal.action,
+            confidence=evaluation.signal.confidence,
+            target_notional=_resolved_target_notional(
+                context.params,
+                multiplier=evaluation.signal.notional_multiplier,
+            ),
+            horizon=context.timeframe,
+            explain=evaluation.signal.rationale,
+            feature_snapshot_hash=features.normalization_hash,
+            required_features=required_features,
+        ),
+        trace=evaluation.trace,
+    )
 
 
 @dataclass(frozen=True)
@@ -59,6 +128,7 @@ class StrategyContext:
     symbol: str
     timeframe: str
     params: dict[str, Any]
+    trace_enabled: bool = False
     strategy_spec: dict[str, Any] = field(default_factory=_empty_meta)
 
 
@@ -98,6 +168,7 @@ class AggregatedIntent:
 @dataclass(frozen=True)
 class RuntimeDecision:
     intent: StrategyIntent
+    trace: StrategyTrace | None
     strategy_row_id: str
     declared_strategy_id: str
     strategy_name: str
@@ -112,7 +183,7 @@ class RuntimeDecision:
     compiled_targets: dict[str, Any] = field(default_factory=_empty_meta)
 
     def metadata(self) -> dict[str, Any]:
-        return {
+        payload = {
             "strategy_row_id": self.strategy_row_id,
             "declared_strategy_id": self.declared_strategy_id,
             "strategy_name": self.strategy_name,
@@ -131,6 +202,9 @@ class RuntimeDecision:
             "strategy_spec_v2": dict(self.strategy_spec),
             "compiled_targets": dict(self.compiled_targets),
         }
+        if self.trace is not None:
+            payload["strategy_trace"] = self.trace.to_payload()
+        return payload
 
 
 @dataclass(frozen=True)
@@ -172,6 +246,7 @@ class RuntimeObservation:
 class RuntimeEvaluation:
     intents: list[AggregatedIntent]
     raw_intents: list[RuntimeDecision]
+    traces: list[StrategyTrace]
     errors: list[RuntimeErrorRecord]
     observation: RuntimeObservation
 
@@ -183,7 +258,21 @@ class StrategyPlugin(Protocol):
 
     def evaluate(
         self, context: StrategyContext, features: FeatureVectorV3
-    ) -> StrategyIntent | None: ...
+    ) -> "PluginEvaluationResult": ...
+
+
+@dataclass(frozen=True)
+class PluginEvaluationResult:
+    intent: StrategyIntent | None
+    trace: StrategyTrace | None = None
+
+
+def _coerce_plugin_result(result: PluginEvaluationResult | StrategyIntent | None) -> PluginEvaluationResult:
+    if isinstance(result, PluginEvaluationResult):
+        return result
+    if result is None:
+        return PluginEvaluationResult(intent=None, trace=None)
+    return PluginEvaluationResult(intent=result, trace=None)
 
 
 @dataclass
@@ -346,38 +435,98 @@ class LegacyMacdRsiPlugin:
 
     def evaluate(
         self, context: StrategyContext, features: FeatureVectorV3
-    ) -> StrategyIntent | None:
+    ) -> PluginEvaluationResult:
         macd = _decimal(features.values.get("macd"))
         macd_signal = _decimal(features.values.get("macd_signal"))
         rsi14 = _decimal(features.values.get("rsi14"))
         target_notional = _target_notional(context.params)
         if macd is None or macd_signal is None or rsi14 is None:
-            return None
+            return PluginEvaluationResult(
+                intent=None,
+                trace=_generic_plugin_trace(
+                    context=context,
+                    gate='legacy_required_inputs',
+                    passed=False,
+                    thresholds=(
+                        ThresholdTrace(
+                            metric='required_inputs_present',
+                            comparator='all_present',
+                            value={
+                                'macd': macd is not None,
+                                'macd_signal': macd_signal is not None,
+                                'rsi14': rsi14 is not None,
+                            },
+                            threshold=True,
+                            passed=False,
+                            missing_policy='fail_closed',
+                        ),
+                    ),
+                ),
+            )
         if macd > macd_signal and rsi14 < Decimal("35"):
-            return StrategyIntent(
-                strategy_id=context.strategy_id,
-                symbol=context.symbol,
-                direction="buy",
-                confidence=Decimal("0.65"),
-                target_notional=target_notional,
-                horizon=context.timeframe,
-                explain=("macd_cross_up", "rsi_oversold"),
-                feature_snapshot_hash=features.normalization_hash,
-                required_features=self.required_features,
+            return PluginEvaluationResult(
+                intent=StrategyIntent(
+                    strategy_id=context.strategy_id,
+                    symbol=context.symbol,
+                    direction="buy",
+                    confidence=Decimal("0.65"),
+                    target_notional=target_notional,
+                    horizon=context.timeframe,
+                    explain=("macd_cross_up", "rsi_oversold"),
+                    feature_snapshot_hash=features.normalization_hash,
+                    required_features=self.required_features,
+                ),
+                trace=_generic_plugin_trace(
+                    context=context,
+                    gate='legacy_macd_rsi_signal',
+                    passed=True,
+                    action='buy',
+                    rationale=('macd_cross_up', 'rsi_oversold'),
+                ),
             )
         if macd < macd_signal and rsi14 > Decimal("65"):
-            return StrategyIntent(
-                strategy_id=context.strategy_id,
-                symbol=context.symbol,
-                direction="sell",
-                confidence=Decimal("0.65"),
-                target_notional=target_notional,
-                horizon=context.timeframe,
-                explain=("macd_cross_down", "rsi_overbought"),
-                feature_snapshot_hash=features.normalization_hash,
-                required_features=self.required_features,
+            return PluginEvaluationResult(
+                intent=StrategyIntent(
+                    strategy_id=context.strategy_id,
+                    symbol=context.symbol,
+                    direction="sell",
+                    confidence=Decimal("0.65"),
+                    target_notional=target_notional,
+                    horizon=context.timeframe,
+                    explain=("macd_cross_down", "rsi_overbought"),
+                    feature_snapshot_hash=features.normalization_hash,
+                    required_features=self.required_features,
+                ),
+                trace=_generic_plugin_trace(
+                    context=context,
+                    gate='legacy_macd_rsi_signal',
+                    passed=True,
+                    action='sell',
+                    rationale=('macd_cross_down', 'rsi_overbought'),
+                ),
             )
-        return None
+        return PluginEvaluationResult(
+            intent=None,
+            trace=_generic_plugin_trace(
+                context=context,
+                gate='legacy_macd_rsi_signal',
+                passed=False,
+                thresholds=(
+                    ThresholdTrace(
+                        metric='signal_condition',
+                        comparator='legacy_macd_rsi',
+                        value={
+                            'macd': macd,
+                            'macd_signal': macd_signal,
+                            'rsi14': rsi14,
+                        },
+                        threshold='cross_and_rsi',
+                        passed=False,
+                        missing_policy='fail_open',
+                    ),
+                ),
+            ),
+        )
 
 
 class IntradayTsmomPlugin:
@@ -418,7 +567,7 @@ class IntradayTsmomPlugin:
 
     def evaluate(
         self, context: StrategyContext, features: FeatureVectorV3
-    ) -> StrategyIntent | None:
+    ) -> PluginEvaluationResult:
         ema12 = _decimal(features.values.get("ema12"))
         ema26 = _decimal(features.values.get("ema26"))
         price = _decimal(features.values.get("price"))
@@ -493,12 +642,19 @@ class IntradayTsmomPlugin:
             ),
         )
         if evaluation is None:
-            return None
+            return PluginEvaluationResult(
+                intent=None,
+                trace=_generic_plugin_trace(
+                    context=context,
+                    gate='intraday_tsmom_contract',
+                    passed=False,
+                ),
+            )
 
         target_notional = _target_notional(context.params)
         direction = "buy" if evaluation.direction == "long" else "sell"
         confidence_cap = Decimal("0.84") if evaluation.direction == "long" else Decimal("0.80")
-        return StrategyIntent(
+        intent = StrategyIntent(
             strategy_id=context.strategy_id,
             symbol=context.symbol,
             direction=direction,
@@ -508,6 +664,16 @@ class IntradayTsmomPlugin:
             explain=evaluation.rationale,
             feature_snapshot_hash=features.normalization_hash,
             required_features=self.required_features,
+        )
+        return PluginEvaluationResult(
+            intent=intent,
+            trace=_generic_plugin_trace(
+                context=context,
+                gate='intraday_tsmom_contract',
+                passed=True,
+                action=intent.direction,
+                rationale=intent.explain,
+            ),
         )
 
 
@@ -534,10 +700,15 @@ class MomentumPullbackLongPlugin:
 
     def evaluate(
         self, context: StrategyContext, features: FeatureVectorV3
-    ) -> StrategyIntent | None:
+    ) -> PluginEvaluationResult:
         evaluation = evaluate_momentum_pullback_long(
             params=context.params,
+            strategy_id=context.strategy_id,
+            strategy_type=context.strategy_type,
+            symbol=context.symbol,
             event_ts=context.event_ts,
+            timeframe=context.timeframe,
+            trace_enabled=context.trace_enabled,
             price=_decimal(features.values.get("price")),
             ema12=_decimal(features.values.get("ema12")),
             ema26=_decimal(features.values.get("ema26")),
@@ -560,21 +731,11 @@ class MomentumPullbackLongPlugin:
                 features.values.get("cross_section_continuation_rank")
             ),
         )
-        if evaluation is None:
-            return None
-        return StrategyIntent(
-            strategy_id=context.strategy_id,
-            symbol=context.symbol,
-            direction=evaluation.action,
-            confidence=evaluation.confidence,
-            target_notional=_resolved_target_notional(
-                context.params,
-                multiplier=evaluation.notional_multiplier,
-            ),
-            horizon=context.timeframe,
-            explain=evaluation.rationale,
-            feature_snapshot_hash=features.normalization_hash,
+        return _plugin_result_from_sleeve_result(
+            context=context,
+            features=features,
             required_features=self.required_features,
+            evaluation=evaluation,
         )
 
 
@@ -627,10 +788,15 @@ class BreakoutContinuationLongPlugin:
 
     def evaluate(
         self, context: StrategyContext, features: FeatureVectorV3
-    ) -> StrategyIntent | None:
+    ) -> PluginEvaluationResult:
         evaluation = evaluate_breakout_continuation_long(
             params=context.params,
+            strategy_id=context.strategy_id,
+            strategy_type=context.strategy_type,
+            symbol=context.symbol,
             event_ts=context.event_ts,
+            timeframe=context.timeframe,
+            trace_enabled=context.trace_enabled,
             price=_decimal(features.values.get("price")),
             ema12=_decimal(features.values.get("ema12")),
             ema26=_decimal(features.values.get("ema26")),
@@ -719,21 +885,11 @@ class BreakoutContinuationLongPlugin:
                 features.values.get("cross_section_continuation_rank")
             ),
         )
-        if evaluation is None:
-            return None
-        return StrategyIntent(
-            strategy_id=context.strategy_id,
-            symbol=context.symbol,
-            direction=evaluation.action,
-            confidence=evaluation.confidence,
-            target_notional=_resolved_target_notional(
-                context.params,
-                multiplier=evaluation.notional_multiplier,
-            ),
-            horizon=context.timeframe,
-            explain=evaluation.rationale,
-            feature_snapshot_hash=features.normalization_hash,
+        return _plugin_result_from_sleeve_result(
+            context=context,
+            features=features,
             required_features=self.required_features,
+            evaluation=evaluation,
         )
 
 
@@ -772,10 +928,15 @@ class MeanReversionReboundLongPlugin:
 
     def evaluate(
         self, context: StrategyContext, features: FeatureVectorV3
-    ) -> StrategyIntent | None:
+    ) -> PluginEvaluationResult:
         evaluation = evaluate_mean_reversion_rebound_long(
             params=context.params,
+            strategy_id=context.strategy_id,
+            strategy_type=context.strategy_type,
+            symbol=context.symbol,
             event_ts=context.event_ts,
+            timeframe=context.timeframe,
+            trace_enabled=context.trace_enabled,
             price=_decimal(features.values.get("price")),
             ema12=_decimal(features.values.get("ema12")),
             macd=_decimal(features.values.get("macd")),
@@ -818,21 +979,11 @@ class MeanReversionReboundLongPlugin:
                 features.values.get("cross_section_reversal_rank")
             ),
         )
-        if evaluation is None:
-            return None
-        return StrategyIntent(
-            strategy_id=context.strategy_id,
-            symbol=context.symbol,
-            direction=evaluation.action,
-            confidence=evaluation.confidence,
-            target_notional=_resolved_target_notional(
-                context.params,
-                multiplier=evaluation.notional_multiplier,
-            ),
-            horizon=context.timeframe,
-            explain=evaluation.rationale,
-            feature_snapshot_hash=features.normalization_hash,
+        return _plugin_result_from_sleeve_result(
+            context=context,
+            features=features,
             required_features=self.required_features,
+            evaluation=evaluation,
         )
 
 
@@ -885,10 +1036,15 @@ class LateDayContinuationLongPlugin:
 
     def evaluate(
         self, context: StrategyContext, features: FeatureVectorV3
-    ) -> StrategyIntent | None:
+    ) -> PluginEvaluationResult:
         evaluation = evaluate_late_day_continuation_long(
             params=context.params,
+            strategy_id=context.strategy_id,
+            strategy_type=context.strategy_type,
+            symbol=context.symbol,
             event_ts=context.event_ts,
+            timeframe=context.timeframe,
+            trace_enabled=context.trace_enabled,
             price=_decimal(features.values.get("price")),
             ema12=_decimal(features.values.get("ema12")),
             ema26=_decimal(features.values.get("ema26")),
@@ -975,21 +1131,11 @@ class LateDayContinuationLongPlugin:
                 features.values.get("cross_section_continuation_rank")
             ),
         )
-        if evaluation is None:
-            return None
-        return StrategyIntent(
-            strategy_id=context.strategy_id,
-            symbol=context.symbol,
-            direction=evaluation.action,
-            confidence=evaluation.confidence,
-            target_notional=_resolved_target_notional(
-                context.params,
-                multiplier=evaluation.notional_multiplier,
-            ),
-            horizon=context.timeframe,
-            explain=evaluation.rationale,
-            feature_snapshot_hash=features.normalization_hash,
+        return _plugin_result_from_sleeve_result(
+            context=context,
+            features=features,
             required_features=self.required_features,
+            evaluation=evaluation,
         )
 
 
@@ -1029,10 +1175,15 @@ class EndOfDayReversalLongPlugin:
 
     def evaluate(
         self, context: StrategyContext, features: FeatureVectorV3
-    ) -> StrategyIntent | None:
+    ) -> PluginEvaluationResult:
         evaluation = evaluate_end_of_day_reversal_long(
             params=context.params,
+            strategy_id=context.strategy_id,
+            strategy_type=context.strategy_type,
+            symbol=context.symbol,
             event_ts=context.event_ts,
+            timeframe=context.timeframe,
+            trace_enabled=context.trace_enabled,
             price=_decimal(features.values.get("price")),
             ema12=_decimal(features.values.get("ema12")),
             ema26=_decimal(features.values.get("ema26")),
@@ -1076,21 +1227,11 @@ class EndOfDayReversalLongPlugin:
                 features.values.get("cross_section_reversal_rank")
             ),
         )
-        if evaluation is None:
-            return None
-        return StrategyIntent(
-            strategy_id=context.strategy_id,
-            symbol=context.symbol,
-            direction=evaluation.action,
-            confidence=evaluation.confidence,
-            target_notional=_resolved_target_notional(
-                context.params,
-                multiplier=evaluation.notional_multiplier,
-            ),
-            horizon=context.timeframe,
-            explain=evaluation.rationale,
-            feature_snapshot_hash=features.normalization_hash,
+        return _plugin_result_from_sleeve_result(
+            context=context,
+            features=features,
             required_features=self.required_features,
+            evaluation=evaluation,
         )
 
 
@@ -1102,9 +1243,11 @@ class StrategyRuntime:
         *,
         registry: StrategyRegistry | None = None,
         aggregator: IntentAggregator | None = None,
+        trace_enabled: bool = False,
     ) -> None:
         self.registry = registry or StrategyRegistry()
         self.aggregator = aggregator or IntentAggregator()
+        self.trace_enabled = trace_enabled
 
     def evaluate(
         self, strategy: Strategy, features: FeatureVectorV3, *, timeframe: str
@@ -1128,13 +1271,15 @@ class StrategyRuntime:
             symbol=features.symbol,
             timeframe=timeframe,
             params=definition.params,
+            trace_enabled=self.trace_enabled,
             strategy_spec=dict(definition.strategy_spec),
         )
-        intent = plugin.evaluate(context, features)
-        if intent is None:
+        plugin_result = _coerce_plugin_result(plugin.evaluate(context, features))
+        if plugin_result.intent is None:
             return None
         return RuntimeDecision(
-            intent=intent,
+            intent=plugin_result.intent,
+            trace=plugin_result.trace,
             strategy_row_id=definition.strategy_id,
             declared_strategy_id=definition.declared_strategy_id,
             strategy_name=definition.strategy_name,
@@ -1153,6 +1298,7 @@ class StrategyRuntime:
         self, strategies: list[Strategy], features: FeatureVectorV3, *, timeframe: str
     ) -> RuntimeEvaluation:
         raw_intents: list[RuntimeDecision] = []
+        traces: list[StrategyTrace] = []
         errors: list[RuntimeErrorRecord] = []
         observation = RuntimeObservation()
         all_intents: list[StrategyIntent] = []
@@ -1208,18 +1354,22 @@ class StrategyRuntime:
                 symbol=features.symbol,
                 timeframe=timeframe,
                 params=definition.params,
+                trace_enabled=self.trace_enabled,
                 strategy_spec=dict(definition.strategy_spec),
             )
 
             try:
-                intent = plugin.evaluate(context, features)
+                plugin_result = _coerce_plugin_result(plugin.evaluate(context, features))
                 latency_ms = int((time.perf_counter() - start) * 1000)
                 observation.record_event(definition.strategy_id, latency_ms)
                 self.registry.record_success(definition.strategy_id)
-                if intent is None:
+                if plugin_result.trace is not None:
+                    traces.append(plugin_result.trace)
+                if plugin_result.intent is None:
                     continue
                 decision = RuntimeDecision(
-                    intent=intent,
+                    intent=plugin_result.intent,
+                    trace=plugin_result.trace,
                     strategy_row_id=definition.strategy_id,
                     declared_strategy_id=definition.declared_strategy_id,
                     strategy_name=definition.strategy_name,
@@ -1234,7 +1384,7 @@ class StrategyRuntime:
                     compiled_targets=dict(definition.compiled_targets),
                 )
                 raw_intents.append(decision)
-                all_intents.append(intent)
+                all_intents.append(plugin_result.intent)
                 observation.record_intent(definition.strategy_id)
             except Exception as exc:
                 latency_ms = int((time.perf_counter() - start) * 1000)
@@ -1257,6 +1407,7 @@ class StrategyRuntime:
         return RuntimeEvaluation(
             intents=aggregated_intents,
             raw_intents=raw_intents,
+            traces=traces,
             errors=errors,
             observation=observation,
         )
