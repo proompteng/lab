@@ -858,6 +858,7 @@ class TestLocalIntradayTsmomReplay(TestCase):
             chunk_minutes=10,
             flatten_eod=True,
             start_equity=Decimal('10000'),
+            capture_traces=True,
         )
 
         with (

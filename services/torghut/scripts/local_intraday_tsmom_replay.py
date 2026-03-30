@@ -77,6 +77,7 @@ class ReplayConfig:
     start_equity: Decimal
     symbols: tuple[str, ...] = ()
     progress_log_interval_seconds: int = DEFAULT_PROGRESS_LOG_INTERVAL_SECONDS
+    capture_traces: bool = False
     max_executable_spread_bps: Decimal = DEFAULT_MAX_EXECUTABLE_SPREAD_BPS
     max_quote_mid_jump_bps: Decimal = DEFAULT_MAX_QUOTE_MID_JUMP_BPS
     max_jump_with_wide_spread_bps: Decimal = DEFAULT_MAX_JUMP_WITH_WIDE_SPREAD_BPS
@@ -187,6 +188,11 @@ def _parse_args() -> argparse.Namespace:
         '--near-misses-output',
         type=Path,
         help='Optional path to write replay near-miss JSON.',
+    )
+    parser.add_argument(
+        '--collect-traces',
+        action='store_true',
+        help='Capture per-strategy runtime traces and emit them in payload trace output.',
     )
     parser.add_argument('--no-flatten-eod', action='store_true')
     parser.add_argument('--json', action='store_true')
@@ -1152,7 +1158,7 @@ def _apply_filled_decision(
 def run_replay(config: ReplayConfig) -> dict[str, Any]:
     strategies = _load_strategies(config.strategy_configmap_path)
     strategies_by_id = {str(strategy.id): strategy for strategy in strategies}
-    engine = DecisionEngine(price_fetcher=None, runtime_trace_enabled=True)
+    engine = DecisionEngine(price_fetcher=None, runtime_trace_enabled=config.capture_traces)
     quote_quality = SignalQuoteQualityTracker(
         policy=QuoteQualityPolicy(
             max_executable_spread_bps=config.max_executable_spread_bps,
@@ -1301,7 +1307,8 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
             )
             telemetry = engine.consume_runtime_telemetry()
             symbol_bucket['runtime_evaluable_rows'] += 1
-            for trace in telemetry.traces:
+            telemetry_traces = telemetry.traces if config.capture_traces else ()
+            for trace in telemetry_traces:
                 _record_trace_for_funnel(symbol_bucket, trace)
                 near_miss = _build_near_miss(trace, trading_day=signal_day.isoformat())
                 if near_miss is not None:
@@ -1335,11 +1342,12 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
             emitted_strategy_ids = {decision.strategy_id for decision in executable_decisions}
             fill_status_by_strategy_id: dict[str, str] = {}
             block_reason_by_strategy_id: dict[str, str] = {}
-            for trace in telemetry.traces:
-                if trace.passed and trace.strategy_id not in emitted_strategy_ids:
-                    block_reason_by_strategy_id[trace.strategy_id] = 'post_runtime_filter_rejected'
-                elif not trace.passed and trace.first_failed_gate is not None:
-                    block_reason_by_strategy_id[trace.strategy_id] = trace.first_failed_gate
+            if config.capture_traces:
+                for trace in telemetry_traces:
+                    if trace.passed and trace.strategy_id not in emitted_strategy_ids:
+                        block_reason_by_strategy_id[trace.strategy_id] = 'post_runtime_filter_rejected'
+                    elif not trace.passed and trace.first_failed_gate is not None:
+                        block_reason_by_strategy_id[trace.strategy_id] = trace.first_failed_gate
 
             for decision in executable_decisions:
                 decision = _apply_order_preferences(decision, signal)
@@ -1401,17 +1409,18 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                 _log_decision_queued(decision, signal.event_ts)
                 fill_status_by_strategy_id[decision.strategy_id] = 'pending'
 
-            for trace in telemetry.traces:
-                trace_records.append(
-                    ReplayTraceRecord(
-                        trading_day=signal_day.isoformat(),
-                        strategy_trace=trace,
-                        decision_emitted=trace.strategy_id in emitted_strategy_ids,
-                        fill_status=fill_status_by_strategy_id.get(trace.strategy_id, 'none'),
-                        decision_strategy_id=trace.strategy_id if trace.strategy_id in emitted_strategy_ids else None,
-                        block_reason=block_reason_by_strategy_id.get(trace.strategy_id),
+            if config.capture_traces:
+                for trace in telemetry_traces:
+                    trace_records.append(
+                        ReplayTraceRecord(
+                            trading_day=signal_day.isoformat(),
+                            strategy_trace=trace,
+                            decision_emitted=trace.strategy_id in emitted_strategy_ids,
+                            fill_status=fill_status_by_strategy_id.get(trace.strategy_id, 'none'),
+                            decision_strategy_id=trace.strategy_id if trace.strategy_id in emitted_strategy_ids else None,
+                            block_reason=block_reason_by_strategy_id.get(trace.strategy_id),
+                        )
                     )
-                )
 
             now = time_mod.monotonic()
             if now - last_progress_at >= config.progress_log_interval_seconds:
@@ -1685,6 +1694,7 @@ def main() -> None:
             if symbol.strip()
         ),
         progress_log_interval_seconds=max(1, int(args.progress_log_seconds)),
+        capture_traces=bool(getattr(args, 'collect_traces', False)) or args.trace_output is not None,
         max_executable_spread_bps=Decimal(str(args.max_executable_spread_bps)),
         max_quote_mid_jump_bps=Decimal(str(args.max_quote_mid_jump_bps)),
         max_jump_with_wide_spread_bps=Decimal(str(args.max_jump_with_wide_spread_bps)),
