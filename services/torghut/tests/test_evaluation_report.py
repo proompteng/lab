@@ -217,6 +217,23 @@ class TestEvaluationReport(TestCase):
         self.assertEqual(summary.worst_day_net, Decimal('-100'))
         self.assertEqual(summary.profit_factor, Decimal('6'))
 
+    def test_summarize_replay_profitability_ignores_non_mapping_daily_rows(self) -> None:
+        summary = summarize_replay_profitability(
+            {
+                'start_date': '2026-03-10',
+                'end_date': '2026-03-12',
+                'net_pnl': '200',
+                'daily': {
+                    '2026-03-10': {'net_pnl': '200', 'filled_count': 1},
+                    '2026-03-11': 'not-a-mapping',
+                },
+            }
+        )
+
+        self.assertEqual(summary.trading_day_count, 1)
+        self.assertEqual(summary.daily_net, {'2026-03-10': Decimal('200')})
+        self.assertEqual(summary.profit_factor, Decimal('999999'))
+
     def test_score_replay_profitability_candidate_penalizes_constraint_failures(self) -> None:
         candidate = score_replay_profitability_candidate(
             family='breakout_continuation',
@@ -265,3 +282,85 @@ class TestEvaluationReport(TestCase):
         self.assertEqual(candidate.max_holdout_drawdown_day, Decimal('50'))
         self.assertEqual(candidate.profit_factor, Decimal('5'))
         self.assertLess(candidate.score, candidate.holdout_net_per_day)
+
+    def test_score_replay_profitability_candidate_penalizes_missing_profit_factor_and_decisions(self) -> None:
+        candidate = score_replay_profitability_candidate(
+            family='breakout_continuation',
+            strategy_name='breakout-continuation-long-v1',
+            replay_config={'params': {'min_cross_section_continuation_rank': '0.45'}},
+            train_payload={
+                'start_date': '2026-03-03',
+                'end_date': '2026-03-07',
+                'net_pnl': '0',
+                'decision_count': 0,
+                'filled_count': 0,
+                'wins': 0,
+                'losses': 0,
+                'daily': {
+                    '2026-03-03': {'net_pnl': '0', 'filled_count': 0},
+                    '2026-03-04': {'net_pnl': '0', 'filled_count': 0},
+                },
+            },
+            holdout_payload={
+                'start_date': '2026-03-10',
+                'end_date': '2026-03-14',
+                'net_pnl': '0',
+                'decision_count': 0,
+                'filled_count': 0,
+                'wins': 0,
+                'losses': 0,
+                'daily': {
+                    '2026-03-10': {'net_pnl': '0', 'filled_count': 0},
+                    '2026-03-11': {'net_pnl': '0', 'filled_count': 0},
+                    '2026-03-12': {'net_pnl': '0', 'filled_count': 0},
+                    '2026-03-13': {'net_pnl': '0', 'filled_count': 0},
+                    '2026-03-14': {'net_pnl': '0', 'filled_count': 0},
+                },
+            },
+            policy=ProfitabilityConstraintPolicy(),
+        )
+
+        self.assertIsNone(candidate.profit_factor)
+        self.assertEqual(candidate.active_holdout_days, 0)
+        self.assertEqual(candidate.score, Decimal('-2000'))
+
+    def test_score_replay_profitability_candidate_penalizes_drawdown_and_low_profit_factor(self) -> None:
+        candidate = score_replay_profitability_candidate(
+            family='breakout_continuation',
+            strategy_name='breakout-continuation-long-v1',
+            replay_config={'params': {'min_cross_section_continuation_rank': '0.65'}},
+            train_payload={
+                'start_date': '2026-03-03',
+                'end_date': '2026-03-07',
+                'net_pnl': '100',
+                'decision_count': 2,
+                'filled_count': 2,
+                'wins': 1,
+                'losses': 1,
+                'daily': {
+                    '2026-03-03': {'net_pnl': '75', 'filled_count': 1},
+                    '2026-03-04': {'net_pnl': '25', 'filled_count': 1},
+                },
+            },
+            holdout_payload={
+                'start_date': '2026-03-10',
+                'end_date': '2026-03-14',
+                'net_pnl': '-150',
+                'decision_count': 2,
+                'filled_count': 2,
+                'wins': 1,
+                'losses': 1,
+                'daily': {
+                    '2026-03-10': {'net_pnl': '50', 'filled_count': 1},
+                    '2026-03-11': {'net_pnl': '-200', 'filled_count': 1},
+                    '2026-03-12': {'net_pnl': '0', 'filled_count': 0},
+                    '2026-03-13': {'net_pnl': '0', 'filled_count': 0},
+                    '2026-03-14': {'net_pnl': '0', 'filled_count': 0},
+                },
+            },
+            policy=ProfitabilityConstraintPolicy(),
+        )
+
+        self.assertEqual(candidate.profit_factor, Decimal('0.25'))
+        self.assertEqual(candidate.max_holdout_drawdown_day, Decimal('200'))
+        self.assertEqual(candidate.score, Decimal('-922.50'))

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 from argparse import Namespace
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import date, timedelta
@@ -170,6 +171,9 @@ class TestSearchProfitabilityFrontier(TestCase):
             ],
         )
 
+    def test_iter_parameter_candidates_returns_single_empty_candidate_for_empty_grid(self) -> None:
+        self.assertEqual(iter_parameter_candidates({}), [{}])
+
     def test_apply_candidate_to_configmap_updates_target_and_disables_others(self) -> None:
         configmap_payload = {
             'apiVersion': 'v1',
@@ -218,6 +222,94 @@ class TestSearchProfitabilityFrontier(TestCase):
         )
         self.assertFalse(strategies['late-day-continuation-long-v1']['enabled'])
 
+    def test_apply_candidate_to_configmap_coerces_non_mapping_params(self) -> None:
+        configmap_payload = {
+            'data': {
+                'strategies.yaml': yaml.safe_dump(
+                    {
+                        'strategies': [
+                            {
+                                'name': 'breakout-continuation-long-v1',
+                                'enabled': True,
+                                'params': ['not-a-mapping'],
+                            }
+                        ]
+                    },
+                    sort_keys=False,
+                )
+            }
+        }
+
+        updated = apply_candidate_to_configmap(
+            configmap_payload=configmap_payload,
+            strategy_name='breakout-continuation-long-v1',
+            candidate_params={'min_cross_section_continuation_rank': '0.65'},
+            disable_other_strategies=False,
+        )
+
+        catalog = yaml.safe_load(updated['data']['strategies.yaml'])
+        strategy = catalog['strategies'][0]
+        self.assertEqual(strategy['params'], {'min_cross_section_continuation_rank': '0.65'})
+
+    def test_apply_candidate_to_configmap_raises_for_missing_strategy(self) -> None:
+        with self.assertRaisesRegex(ValueError, 'strategy_not_found:missing'):
+            apply_candidate_to_configmap(
+                configmap_payload={
+                    'data': {
+                        'strategies.yaml': yaml.safe_dump({'strategies': []}, sort_keys=False),
+                    }
+                },
+                strategy_name='missing',
+                candidate_params={},
+                disable_other_strategies=False,
+            )
+
+    def test_apply_candidate_to_configmap_rejects_invalid_shapes(self) -> None:
+        with self.assertRaisesRegex(ValueError, 'strategy_configmap_missing_data'):
+            apply_candidate_to_configmap(
+                configmap_payload={},
+                strategy_name='breakout-continuation-long-v1',
+                candidate_params={},
+                disable_other_strategies=False,
+            )
+        with self.assertRaisesRegex(ValueError, 'strategy_configmap_missing_strategies_yaml'):
+            apply_candidate_to_configmap(
+                configmap_payload={'data': {}},
+                strategy_name='breakout-continuation-long-v1',
+                candidate_params={},
+                disable_other_strategies=False,
+            )
+        with self.assertRaisesRegex(ValueError, 'strategy_catalog_not_mapping'):
+            apply_candidate_to_configmap(
+                configmap_payload={'data': {'strategies.yaml': yaml.safe_dump(['bad'], sort_keys=False)}},
+                strategy_name='breakout-continuation-long-v1',
+                candidate_params={},
+                disable_other_strategies=False,
+            )
+        with self.assertRaisesRegex(ValueError, 'strategy_catalog_missing_strategies'):
+            apply_candidate_to_configmap(
+                configmap_payload={'data': {'strategies.yaml': yaml.safe_dump({}, sort_keys=False)}},
+                strategy_name='breakout-continuation-long-v1',
+                candidate_params={},
+                disable_other_strategies=False,
+            )
+
+    def test_parse_args_uses_frontier_defaults(self) -> None:
+        with patch.object(sys, 'argv', ['search_profitability_frontier.py']):
+            args = frontier._parse_args()
+
+        self.assertEqual(args.clickhouse_http_url, 'http://torghut-clickhouse.torghut.svc.cluster.local:8123')
+        self.assertEqual(args.clickhouse_username, 'torghut')
+        self.assertEqual(args.clickhouse_password, '')
+        self.assertEqual(args.start_equity, '31590.02')
+        self.assertEqual(args.chunk_minutes, 10)
+        self.assertEqual(args.symbols, '')
+        self.assertEqual(args.progress_log_seconds, 30)
+        self.assertEqual(args.train_days, 10)
+        self.assertEqual(args.holdout_days, 5)
+        self.assertEqual(args.top_n, 10)
+        self.assertIsNone(args.json_output)
+
     def test_resolve_recent_trading_days_uses_qualified_signal_query(self) -> None:
         with patch('scripts.search_profitability_frontier._http_query', return_value='2026-03-27\n2026-03-26\n') as query:
             days = frontier._resolve_recent_trading_days(
@@ -232,6 +324,22 @@ class TestSearchProfitabilityFrontier(TestCase):
         self.assertIn('FROM torghut.ta_signals', sql)
         self.assertIn("source = 'ta'", sql)
         self.assertIn("window_size = 'PT1S'", sql)
+
+    def test_load_sweep_config_rejects_non_mapping_payload(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / 'invalid-sweep.yaml'
+            path.write_text('- nope\n', encoding='utf-8')
+
+            with self.assertRaisesRegex(ValueError, 'sweep_config_not_mapping'):
+                frontier._load_sweep_config(path)
+
+    def test_load_sweep_config_rejects_invalid_schema(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / 'invalid-sweep.yaml'
+            path.write_text(yaml.safe_dump({'schema_version': 'wrong'}), encoding='utf-8')
+
+            with self.assertRaisesRegex(ValueError, 'sweep_config_schema_version_invalid:wrong'):
+                frontier._load_sweep_config(path)
 
     def test_main_writes_frontier_json_and_stdout_payload(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -458,3 +566,92 @@ class TestSearchProfitabilityFrontier(TestCase):
 
         self.assertEqual(exit_code, 1)
         self.assertIn('insufficient_recent_trading_days:9<10', stderr.getvalue())
+
+    def test_cli_main_reports_invalid_base_configmap_shape(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            strategy_configmap = root / 'strategy-configmap.yaml'
+            strategy_configmap.write_text('- invalid\n', encoding='utf-8')
+            sweep_config = self._write_sweep_config(root, ranks=['0.45'])
+            args = self._make_args(
+                strategy_configmap=strategy_configmap,
+                sweep_config=sweep_config,
+                json_output=root / 'frontier.json',
+            )
+            stderr = io.StringIO()
+            recent_days = tuple(date(2026, 3, 16) + timedelta(days=index) for index in range(10))
+            with (
+                patch('scripts.search_profitability_frontier._parse_args', return_value=args),
+                patch('scripts.search_profitability_frontier._resolve_recent_trading_days', return_value=recent_days),
+                redirect_stderr(stderr),
+            ):
+                exit_code = frontier.cli_main()
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn('base_strategy_configmap_not_mapping', stderr.getvalue())
+
+    def test_cli_main_reports_missing_family_or_strategy_name(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            strategy_configmap = self._write_strategy_configmap(root)
+            sweep_config = root / 'sweep.yaml'
+            sweep_config.write_text(
+                yaml.safe_dump(
+                    {
+                        'schema_version': 'torghut.replay-frontier-sweep.v1',
+                        'family': '',
+                        'strategy_name': '',
+                        'parameters': {},
+                    }
+                ),
+                encoding='utf-8',
+            )
+            args = self._make_args(
+                strategy_configmap=strategy_configmap,
+                sweep_config=sweep_config,
+                json_output=root / 'frontier.json',
+            )
+            stderr = io.StringIO()
+            recent_days = tuple(date(2026, 3, 16) + timedelta(days=index) for index in range(10))
+            with (
+                patch('scripts.search_profitability_frontier._parse_args', return_value=args),
+                patch('scripts.search_profitability_frontier._resolve_recent_trading_days', return_value=recent_days),
+                redirect_stderr(stderr),
+            ):
+                exit_code = frontier.cli_main()
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn('sweep_config_missing_family_or_strategy_name', stderr.getvalue())
+
+    def test_cli_main_reports_non_mapping_parameter_grid(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            strategy_configmap = self._write_strategy_configmap(root)
+            sweep_config = root / 'sweep.yaml'
+            sweep_config.write_text(
+                yaml.safe_dump(
+                    {
+                        'schema_version': 'torghut.replay-frontier-sweep.v1',
+                        'family': 'breakout_continuation',
+                        'strategy_name': 'breakout-continuation-long-v1',
+                        'parameters': ['not-a-mapping'],
+                    }
+                ),
+                encoding='utf-8',
+            )
+            args = self._make_args(
+                strategy_configmap=strategy_configmap,
+                sweep_config=sweep_config,
+                json_output=root / 'frontier.json',
+            )
+            stderr = io.StringIO()
+            recent_days = tuple(date(2026, 3, 16) + timedelta(days=index) for index in range(10))
+            with (
+                patch('scripts.search_profitability_frontier._parse_args', return_value=args),
+                patch('scripts.search_profitability_frontier._resolve_recent_trading_days', return_value=recent_days),
+                redirect_stderr(stderr),
+            ):
+                exit_code = frontier.cli_main()
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn('sweep_config_parameters_not_mapping', stderr.getvalue())

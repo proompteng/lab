@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from argparse import Namespace
 from unittest import TestCase
+from unittest.mock import patch
 
 from app.trading.costs import TransactionCostModel
-from app.trading.evaluation_trace import GateTrace, StrategyTrace, ThresholdTrace
+from app.trading.evaluation_trace import GateTrace, NearMissRecord, StrategyTrace, ThresholdTrace
+from app.models import Strategy
 from app.trading.models import SignalEnvelope, StrategyDecision
 from scripts.local_intraday_tsmom_replay import (
     PendingOrder,
@@ -17,6 +22,7 @@ from scripts.local_intraday_tsmom_replay import (
     _apply_order_preferences,
     _build_near_miss,
     _init_funnel_stats,
+    _insert_near_miss,
     _parse_signal_row,
     _positions_payload,
     _quote_quality_status,
@@ -24,6 +30,8 @@ from scripts.local_intraday_tsmom_replay import (
     _reconcile_pending_order_before_immediate_fill,
     _resolve_pending_fill_price,
     _should_replace_pending_order,
+    main as replay_main,
+    run_replay,
 )
 
 
@@ -505,3 +513,371 @@ class TestLocalIntradayTsmomReplay(TestCase):
         self.assertEqual(near_miss.first_failed_gate, 'confirmation')
         self.assertEqual(near_miss.distance_score, Decimal('0.08'))
         self.assertEqual(len(near_miss.thresholds), 1)
+
+    def test_build_near_miss_returns_none_for_non_rejectable_traces(self) -> None:
+        passed_trace = StrategyTrace(
+            strategy_id='breakout@prod',
+            strategy_type='breakout_continuation_long',
+            symbol='AAPL',
+            event_ts='2026-03-26T18:07:12+00:00',
+            timeframe='1Sec',
+            passed=True,
+            action='buy',
+            first_failed_gate=None,
+            gates=(),
+        )
+        missing_gate_trace = StrategyTrace(
+            strategy_id='breakout@prod',
+            strategy_type='breakout_continuation_long',
+            symbol='AAPL',
+            event_ts='2026-03-26T18:07:12+00:00',
+            timeframe='1Sec',
+            passed=False,
+            action=None,
+            first_failed_gate='confirmation',
+            gates=(),
+        )
+        no_thresholds_trace = StrategyTrace(
+            strategy_id='breakout@prod',
+            strategy_type='breakout_continuation_long',
+            symbol='AAPL',
+            event_ts='2026-03-26T18:07:12+00:00',
+            timeframe='1Sec',
+            passed=False,
+            action=None,
+            first_failed_gate='confirmation',
+            gates=(
+                GateTrace(
+                    gate='confirmation',
+                    category='confirmation',
+                    passed=False,
+                    thresholds=(),
+                ),
+            ),
+        )
+
+        self.assertIsNone(_build_near_miss(passed_trace, trading_day='2026-03-26'))
+        self.assertIsNone(_build_near_miss(missing_gate_trace, trading_day='2026-03-26'))
+        self.assertIsNone(_build_near_miss(no_thresholds_trace, trading_day='2026-03-26'))
+
+    def test_insert_near_miss_sorts_and_limits_bucket(self) -> None:
+        near_misses: dict[str, list[NearMissRecord]] = {}
+        for symbol, score in [('MSFT', '0.30'), ('AAPL', '0.10'), ('NVDA', '0.20')]:
+            _insert_near_miss(
+                near_misses,
+                NearMissRecord(
+                    trading_day='2026-03-27',
+                    symbol=symbol,
+                    strategy_id=f'{symbol.lower()}@prod',
+                    strategy_type='breakout_continuation_long',
+                    event_ts=f'2026-03-27T18:0{len(near_misses)}:00+00:00',
+                    action='buy',
+                    first_failed_gate='confirmation',
+                    distance_score=Decimal(score),
+                    thresholds=(),
+                ),
+                limit=2,
+            )
+
+        self.assertEqual(
+            [item.symbol for item in near_misses['2026-03-27']],
+            ['AAPL', 'NVDA'],
+        )
+
+    def test_apply_filled_decision_updates_symbol_bucket_for_buy_and_sell(self) -> None:
+        signal = self._signal(bid='523.22', ask='523.28', price='523.25')
+        positions: dict[tuple[str, str], PositionState] = {}
+        day_bucket = {
+            'decision_count': 1,
+            'filled_count': 0,
+            'gross_pnl': Decimal('0'),
+            'net_pnl': Decimal('0'),
+            'cost_total': Decimal('0'),
+            'wins': 0,
+            'losses': 0,
+            'closed_trades': [],
+        }
+        symbol_bucket = _init_funnel_stats()
+
+        cash = _apply_filled_decision(
+            decision=self._decision(action='buy', order_type='limit', limit_price='523.28'),
+            signal=signal,
+            fill_price=Decimal('523.28'),
+            filled_at=signal.event_ts,
+            created_at=signal.event_ts,
+            positions=positions,
+            day_bucket=day_bucket,
+            symbol_bucket=symbol_bucket,
+            cost_model=TransactionCostModel(),
+            cash=Decimal('10000'),
+            all_closed_trades=[],
+        )
+
+        self.assertEqual(symbol_bucket['filled_count'], 1)
+        self.assertGreaterEqual(symbol_bucket['cost_total'], Decimal('0'))
+
+        cash = _apply_filled_decision(
+            decision=self._decision(action='sell', order_type='market'),
+            signal=signal,
+            fill_price=Decimal('523.22'),
+            filled_at=signal.event_ts,
+            created_at=signal.event_ts,
+            positions=positions,
+            day_bucket=day_bucket,
+            symbol_bucket=symbol_bucket,
+            cost_model=TransactionCostModel(),
+            cash=cash,
+            all_closed_trades=[],
+        )
+
+        self.assertGreater(symbol_bucket['gross_pnl'], Decimal('-1'))
+        self.assertNotEqual(symbol_bucket['net_pnl'], Decimal('0'))
+        self.assertEqual(symbol_bucket['closed_trade_count'], 1)
+        self.assertGreater(cash, Decimal('0'))
+
+    def test_replay_main_writes_trace_funnel_and_near_miss_outputs(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            trace_output = root / 'trace.jsonl'
+            funnel_output = root / 'funnel.json'
+            near_misses_output = root / 'near-misses.json'
+
+            args = Namespace(
+                strategy_configmap='/tmp/strategies.yaml',
+                clickhouse_http_url='http://example.invalid:8123',
+                clickhouse_username='',
+                clickhouse_password='',
+                start_date='2026-03-26',
+                end_date='2026-03-27',
+                chunk_minutes=10,
+                no_flatten_eod=False,
+                start_equity='31590.02',
+                symbols='',
+                progress_log_seconds=30,
+                max_executable_spread_bps='12',
+                max_quote_mid_jump_bps='150',
+                max_jump_with_wide_spread_bps='40',
+                log_level='INFO',
+                trace_output=trace_output,
+                funnel_output=funnel_output,
+                near_misses_output=near_misses_output,
+                json=False,
+            )
+
+            payload = {
+                'trace': [{'strategy_id': 'breakout@prod', 'passed': True}],
+                'funnel': {'schema_version': 'torghut.replay-funnel.v1', 'buckets': []},
+                'near_misses': [{'symbol': 'AAPL'}],
+            }
+            with (
+                patch('scripts.local_intraday_tsmom_replay._parse_args', return_value=args),
+                patch('scripts.local_intraday_tsmom_replay.run_replay', return_value=payload),
+                patch('builtins.print'),
+            ):
+                replay_main()
+
+            self.assertEqual(
+                trace_output.read_text(encoding='utf-8'),
+                json.dumps(payload['trace'][0], sort_keys=True) + '\n',
+            )
+            self.assertEqual(
+                json.loads(funnel_output.read_text(encoding='utf-8')),
+                payload['funnel'],
+            )
+            self.assertEqual(
+                json.loads(near_misses_output.read_text(encoding='utf-8')),
+                payload['near_misses'],
+            )
+
+    def test_run_replay_emits_trace_funnel_and_near_misses(self) -> None:
+        strategy = Strategy(
+            name='breakout-continuation-long-v1',
+            description=None,
+            enabled=True,
+            base_timeframe='1Sec',
+            universe_type='static',
+            universe_symbols=['AAPL'],
+            max_position_pct_equity=None,
+            max_notional_per_trade=None,
+        )
+        decision_strategy_id = str(strategy.id)
+
+        signal_open = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 17, 30, 0, tzinfo=timezone.utc),
+            symbol='AAPL',
+            timeframe='1Sec',
+            seq=1,
+            payload={
+                'price': Decimal('99.95'),
+                'imbalance_bid_px': Decimal('99.90'),
+                'imbalance_ask_px': Decimal('100.00'),
+                'spread': Decimal('0.10'),
+            },
+        )
+        signal_fill = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 17, 31, 0, tzinfo=timezone.utc),
+            symbol='AAPL',
+            timeframe='1Sec',
+            seq=2,
+            payload={
+                'price': Decimal('99.45'),
+                'imbalance_bid_px': Decimal('99.40'),
+                'imbalance_ask_px': Decimal('99.50'),
+                'spread': Decimal('0.10'),
+            },
+        )
+        signal_follow = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 17, 30, 0, tzinfo=timezone.utc),
+            symbol='AAPL',
+            timeframe='1Sec',
+            seq=3,
+            payload={
+                'price': Decimal('101.50'),
+                'imbalance_bid_px': Decimal('101.40'),
+                'imbalance_ask_px': Decimal('101.50'),
+                'spread': Decimal('0.10'),
+            },
+        )
+
+        decision_one = StrategyDecision(
+            strategy_id=decision_strategy_id,
+            symbol='AAPL',
+            event_ts=signal_open.event_ts,
+            timeframe='1Sec',
+            action='buy',
+            qty=Decimal('2'),
+            order_type='limit',
+            time_in_force='day',
+            limit_price=Decimal('99.00'),
+            rationale='candidate_one',
+            params={},
+        )
+        decision_two = StrategyDecision(
+            strategy_id='replacement-strategy',
+            symbol='AAPL',
+            event_ts=signal_open.event_ts,
+            timeframe='1Sec',
+            action='buy',
+            qty=Decimal('2'),
+            order_type='limit',
+            time_in_force='day',
+            limit_price=Decimal('99.50'),
+            rationale='candidate_two',
+            params={},
+        )
+
+        passed_trace = StrategyTrace(
+            strategy_id='replacement-strategy',
+            strategy_type='breakout_continuation_long',
+            symbol='AAPL',
+            event_ts=signal_open.event_ts.isoformat(),
+            timeframe='1Sec',
+            passed=True,
+            action='buy',
+            gates=(
+                GateTrace(gate='eligibility', category='eligibility', passed=True, thresholds=()),
+            ),
+        )
+        failed_trace = StrategyTrace(
+            strategy_id='late-day-blocked',
+            strategy_type='late_day_continuation_long',
+            symbol='AAPL',
+            event_ts=signal_fill.event_ts.isoformat(),
+            timeframe='1Sec',
+            passed=False,
+            action=None,
+            first_failed_gate='feed_quality',
+            gates=(
+                GateTrace(
+                    gate='feed_quality',
+                    category='feed_quality',
+                    passed=False,
+                    thresholds=(
+                        ThresholdTrace(
+                            metric='recent_quote_invalid_ratio',
+                            comparator='max_lte',
+                            value=Decimal('0.22'),
+                            threshold=Decimal('0.10'),
+                            passed=False,
+                            missing_policy='fail_closed',
+                            distance_to_pass=Decimal('0.12'),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        class _Engine:
+            def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+                _ = args
+                _ = kwargs
+                self._call_index = 0
+
+            def observe_signal(self, signal: SignalEnvelope) -> None:
+                _ = signal
+
+            def evaluate(self, signal: SignalEnvelope, strategies, *, equity, positions):  # type: ignore[no-untyped-def]
+                _ = signal
+                _ = strategies
+                _ = equity
+                _ = positions
+                self._call_index += 1
+                if self._call_index == 1:
+                    return [decision_one, decision_two]
+                return []
+
+            def consume_runtime_telemetry(self):  # type: ignore[no-untyped-def]
+                if self._call_index == 1:
+                    traces = [passed_trace]
+                elif self._call_index == 2:
+                    traces = [failed_trace]
+                else:
+                    traces = []
+                return type('Telemetry', (), {'traces': traces})()
+
+        class _Allocator:
+            def allocate(self, raw_decisions, **kwargs):  # type: ignore[no-untyped-def]
+                _ = kwargs
+                return [
+                    type('AllocationResult', (), {'approved': True, 'decision': decision})()
+                    for decision in raw_decisions
+                ]
+
+        class _Sizer:
+            def size(self, decision, **kwargs):  # type: ignore[no-untyped-def]
+                _ = kwargs
+                return type('SizingResult', (), {'approved': True, 'decision': decision})()
+
+        config = ReplayConfig(
+            strategy_configmap_path=Path('/tmp/strategies.yaml'),
+            clickhouse_http_url='http://example.invalid:8123',
+            clickhouse_username=None,
+            clickhouse_password=None,
+            start_date=datetime(2026, 3, 26, tzinfo=timezone.utc).date(),
+            end_date=datetime(2026, 3, 27, tzinfo=timezone.utc).date(),
+            chunk_minutes=10,
+            flatten_eod=True,
+            start_equity=Decimal('10000'),
+        )
+
+        with (
+            patch('scripts.local_intraday_tsmom_replay._load_strategies', return_value=[strategy]),
+            patch(
+                'scripts.local_intraday_tsmom_replay._iter_signal_rows',
+                return_value=iter([signal_open, signal_fill, signal_follow]),
+            ),
+            patch('scripts.local_intraday_tsmom_replay.DecisionEngine', _Engine),
+            patch('scripts.local_intraday_tsmom_replay.allocator_from_settings', return_value=_Allocator()),
+            patch('scripts.local_intraday_tsmom_replay.sizer_from_settings', return_value=_Sizer()),
+        ):
+            payload = run_replay(config)
+
+        self.assertEqual(payload['start_date'], '2026-03-26')
+        self.assertEqual(payload['end_date'], '2026-03-27')
+        self.assertEqual(len(payload['trace']), 2)
+        self.assertEqual(payload['trace'][0]['fill_status'], 'pending')
+        self.assertEqual(payload['trace'][1]['block_reason'], 'feed_quality')
+        self.assertEqual(payload['near_misses'][0]['first_failed_gate'], 'feed_quality')
+        self.assertEqual(payload['funnel']['schema_version'], 'torghut.replay-funnel.v1')
+        self.assertEqual(payload['funnel']['buckets'][0]['trading_day'], '2026-03-26')
+        self.assertGreaterEqual(payload['filled_count'], 2)
