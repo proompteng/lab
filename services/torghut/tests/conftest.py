@@ -8,10 +8,14 @@ _ACTIVE_HYPOTHESIS_PROFILE = load_default_hypothesis_profile()
 
 
 def pytest_configure() -> None:
-    # CI teardown can invoke litellm async cleanup logging after stdout/stderr are closed.
-    # Force litellm's logger to warning-level so debug shutdown messages are not emitted.
-    litellm_logger = logging.getLogger("litellm")
-    litellm_logger.setLevel(logging.WARNING)
+    # CI teardown can invoke litellm/asyncio cleanup while streams are already closed.
+    # Silence logger output and prevent logging exceptions from failing test shutdown.
+    for logger_name in ("litellm", "asyncio"):
+        logger = logging.getLogger(logger_name)
+        logger.setLevel(logging.CRITICAL)
+        logger.disabled = True
+
+    logging.raiseExceptions = False
 
 
 def pytest_report_header() -> list[str]:
