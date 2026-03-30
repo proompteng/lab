@@ -742,6 +742,66 @@ class TestLocalIntradayTsmomReplay(TestCase):
 
         self.assertTrue(args.collect_traces)
 
+    def test_replay_main_enables_trace_capture_for_funnel_and_near_miss_outputs(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            funnel_output = root / "funnel.json"
+            near_misses_output = root / "near-misses.json"
+
+            args = Namespace(
+                strategy_configmap="/tmp/strategies.yaml",
+                clickhouse_http_url="http://example.invalid:8123",
+                clickhouse_username="",
+                clickhouse_password="",
+                start_date="2026-03-26",
+                end_date="2026-03-27",
+                chunk_minutes=10,
+                no_flatten_eod=False,
+                start_equity="31590.02",
+                symbols="",
+                progress_log_seconds=30,
+                max_executable_spread_bps="12",
+                max_quote_mid_jump_bps="150",
+                max_jump_with_wide_spread_bps="40",
+                log_level="INFO",
+                trace_output=None,
+                funnel_output=funnel_output,
+                near_misses_output=near_misses_output,
+                collect_traces=False,
+                json=False,
+            )
+
+            payload = {
+                "trace": [],
+                "funnel": {"schema_version": "torghut.replay-funnel.v1", "buckets": []},
+                "near_misses": [],
+            }
+
+            with (
+                patch(
+                    "scripts.local_intraday_tsmom_replay._parse_args", return_value=args
+                ),
+                patch(
+                    "scripts.local_intraday_tsmom_replay.run_replay",
+                    return_value=payload,
+                ) as run_replay_mock,
+                patch("builtins.print"),
+            ):
+                replay_main()
+
+            replay_config = run_replay_mock.call_args.args[0]
+            self.assertTrue(replay_config.capture_traces)
+            self.assertEqual(
+                json.loads(funnel_output.read_text(encoding="utf-8")),
+                payload["funnel"],
+            )
+            self.assertEqual(
+                json.loads(near_misses_output.read_text(encoding="utf-8")),
+                payload["near_misses"],
+            )
+
     def test_run_replay_emits_trace_funnel_and_near_misses(self) -> None:
         strategy = Strategy(
             name="breakout-continuation-long-v1",

@@ -1694,7 +1694,12 @@ def main() -> None:
             if symbol.strip()
         ),
         progress_log_interval_seconds=max(1, int(args.progress_log_seconds)),
-        capture_traces=bool(getattr(args, 'collect_traces', False)) or args.trace_output is not None,
+        capture_traces=(
+            bool(getattr(args, "collect_traces", False))
+            or args.trace_output is not None
+            or args.funnel_output is not None
+            or args.near_misses_output is not None
+        ),
         max_executable_spread_bps=Decimal(str(args.max_executable_spread_bps)),
         max_quote_mid_jump_bps=Decimal(str(args.max_quote_mid_jump_bps)),
         max_jump_with_wide_spread_bps=Decimal(str(args.max_jump_with_wide_spread_bps)),
