@@ -171,6 +171,10 @@ class TestSearchProfitabilityFrontier(TestCase):
             ],
         )
 
+    def test_iter_parameter_candidates_rejects_scalar_sequence_values(self) -> None:
+        with self.assertRaisesRegex(ValueError, 'parameter_values_not_sequence:min_rank'):
+            iter_parameter_candidates({'min_rank': '0.55'})
+
     def test_iter_parameter_candidates_returns_single_empty_candidate_for_empty_grid(self) -> None:
         self.assertEqual(iter_parameter_candidates({}), [{}])
 
@@ -655,3 +659,37 @@ class TestSearchProfitabilityFrontier(TestCase):
 
         self.assertEqual(exit_code, 1)
         self.assertIn('sweep_config_parameters_not_mapping', stderr.getvalue())
+
+    def test_cli_main_reports_non_mapping_constraints(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            strategy_configmap = self._write_strategy_configmap(root)
+            sweep_config = root / 'sweep.yaml'
+            sweep_config.write_text(
+                yaml.safe_dump(
+                    {
+                        'schema_version': 'torghut.replay-frontier-sweep.v1',
+                        'family': 'breakout_continuation',
+                        'strategy_name': 'breakout-continuation-long-v1',
+                        'constraints': 'invalid',
+                        'parameters': {},
+                    }
+                ),
+                encoding='utf-8',
+            )
+            args = self._make_args(
+                strategy_configmap=strategy_configmap,
+                sweep_config=sweep_config,
+                json_output=root / 'frontier.json',
+            )
+            stderr = io.StringIO()
+            recent_days = tuple(date(2026, 3, 16) + timedelta(days=index) for index in range(10))
+            with (
+                patch('scripts.search_profitability_frontier._parse_args', return_value=args),
+                patch('scripts.search_profitability_frontier._resolve_recent_trading_days', return_value=recent_days),
+                redirect_stderr(stderr),
+            ):
+                exit_code = frontier.cli_main()
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn('sweep_config_constraints_not_mapping', stderr.getvalue())

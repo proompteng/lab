@@ -139,7 +139,16 @@ def _load_sweep_config(path: Path) -> dict[str, Any]:
 def iter_parameter_candidates(
     parameter_grid: Mapping[str, Iterable[Any]],
 ) -> list[dict[str, Any]]:
-    items = [(str(key), list(values)) for key, values in parameter_grid.items()]
+    items = []
+    for key, values in parameter_grid.items():
+        if isinstance(values, (str, bytes)):
+            raise ValueError(f'parameter_values_not_sequence:{key}')
+        if isinstance(values, Mapping):
+            raise ValueError(f'parameter_values_not_sequence:{key}')
+        if not isinstance(values, Iterable):
+            raise ValueError(f'parameter_values_not_iterable:{key}')
+        value_list = list(values)
+        items.append((str(key), value_list))
     if not items:
         return [{}]
     names = [name for name, _ in items]
@@ -251,7 +260,13 @@ def main() -> int:
     if not isinstance(parameter_grid, Mapping):
         raise ValueError('sweep_config_parameters_not_mapping')
 
-    constraints = cast(Mapping[str, Any], sweep_config.get('constraints') or {})
+    constraints_value = sweep_config.get('constraints')
+    if constraints_value is None:
+        constraints: Mapping[str, Any] = {}
+    elif isinstance(constraints_value, Mapping):
+        constraints = cast(Mapping[str, Any], constraints_value)
+    else:
+        raise ValueError('sweep_config_constraints_not_mapping')
     policy = ProfitabilityConstraintPolicy(
         holdout_target_net_per_day=Decimal(str(constraints.get('holdout_target_net_per_day', '250'))),
         min_active_holdout_days=int(constraints.get('min_active_holdout_days', 3)),
