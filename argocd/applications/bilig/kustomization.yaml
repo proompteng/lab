@@ -8,7 +8,6 @@ resources:
   - frontend-service.yaml
   - frontend-ingressroute.yaml
   - zero-strip-prefix-middleware.yaml
-  - zero-publication-cutover-job.yaml
   - sync-deployment.yaml
   - sync-service.yaml
   - sync-ingressroute.yaml
