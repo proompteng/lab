@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: bilig-sync
+  name: bilig-app
   namespace: bilig
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: bilig-sync
+      app: bilig-app
   template:
     metadata:
       labels:
-        app: bilig-sync
+        app: bilig-app
     spec:
       containers:
-        - name: bilig-sync
-          image: registry.ide-newton.ts.net/lab/bilig-sync
+        - name: bilig-app
+          image: registry.ide-newton.ts.net/lab/bilig-app
           ports:
             - name: http
               containerPort: 4321
@@ -36,14 +36,26 @@ spec:
               value: "production"
             - name: PORT
               value: "4321"
+            - name: LOCAL_PORT
+              value: "4381"
+            - name: BILIG_PUBLIC_SERVER_URL
+              value: https://bilig.proompteng.ai
+            - name: BILIG_WEB_APP_BASE_URL
+              value: https://bilig.proompteng.ai
+            - name: BILIG_ZERO_CACHE_URL
+              value: /zero
+            - name: BILIG_ZERO_PROXY_UPSTREAM
+              value: http://bilig-zero:4848
+            - name: BILIG_DEFAULT_DOCUMENT_ID
+              value: bilig-demo
+            - name: BILIG_PERSIST_STATE
+              value: "true"
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: bilig-db-app
                   key: uri
                   optional: true
-            - name: REDIS_URL
-              value: redis://bilig-redis:6379
             - name: SNAPSHOT_BUCKET
               valueFrom:
                 configMapKeyRef:
