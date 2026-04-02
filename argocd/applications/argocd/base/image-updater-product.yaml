@@ -117,8 +117,8 @@ spec:
           branch: main:release/{{.SHA256}}
           writeBackTarget: kustomization:/argocd/applications/bilig
       images:
-        - alias: bilig-web
-          imageName: registry.ide-newton.ts.net/lab/bilig-web:latest
+        - alias: bilig-app
+          imageName: registry.ide-newton.ts.net/lab/bilig-app:latest
           commonUpdateSettings:
             updateStrategy: newest-build
             allowTags: 'regexp:^[0-9a-f]{40}$'
@@ -126,14 +126,4 @@ spec:
               - linux/arm64
           manifestTargets:
             kustomize:
-              name: registry.ide-newton.ts.net/lab/bilig-web
-        - alias: bilig-sync
-          imageName: registry.ide-newton.ts.net/lab/bilig-sync:latest
-          commonUpdateSettings:
-            updateStrategy: newest-build
-            allowTags: 'regexp:^[0-9a-f]{40}$'
-            platforms:
-              - linux/arm64
-          manifestTargets:
-            kustomize:
-              name: registry.ide-newton.ts.net/lab/bilig-sync
+              name: registry.ide-newton.ts.net/lab/bilig-app
