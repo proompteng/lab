@@ -52,8 +52,6 @@ spec:
               value: "production"
             - name: PORT
               value: "4321"
-            - name: LOCAL_PORT
-              value: "4381"
             - name: BILIG_PUBLIC_SERVER_URL
               value: https://bilig.proompteng.ai
             - name: BILIG_WEB_APP_BASE_URL
