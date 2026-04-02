@@ -3,29 +3,20 @@ kind: Kustomization
 resources:
   - bilig-cert-tls.yaml
   - zero-admin-sealedsecret.yaml
-  - web-runtime-configmap.yaml
-  - frontend-deployment.yaml
-  - frontend-service.yaml
-  - frontend-ingressroute.yaml
   - zero-strip-prefix-middleware.yaml
-  - sync-deployment.yaml
-  - sync-service.yaml
-  - sync-ingressroute.yaml
+  - app-deployment.yaml
+  - app-service.yaml
+  - app-ingressroute.yaml
   - zero-pvc.yaml
   - zero-deployment.yaml
   - zero-service.yaml
   - zero-ingressroute.yaml
-  - redis-deployment.yaml
-  - redis-service.yaml
   - postgres-cluster.yaml
   - object-storage-configmap.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
   - alloy-rbac.yaml
 images:
-  - name: registry.ide-newton.ts.net/lab/bilig-web
-    newName: registry.ide-newton.ts.net/lab/bilig-web
-    newTag: 9a163e1f3ae1c10f75dd95110708ecaf0b5385e3
-  - name: registry.ide-newton.ts.net/lab/bilig-sync
-    newName: registry.ide-newton.ts.net/lab/bilig-sync
+  - name: registry.ide-newton.ts.net/lab/bilig-app
+    newName: registry.ide-newton.ts.net/lab/bilig-app
     newTag: 9a163e1f3ae1c10f75dd95110708ecaf0b5385e3
