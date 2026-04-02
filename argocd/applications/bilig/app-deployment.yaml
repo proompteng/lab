@@ -5,6 +5,11 @@ metadata:
   namespace: bilig
 spec:
   replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: bilig-app
@@ -19,18 +24,29 @@ spec:
           ports:
             - name: http
               containerPort: 4321
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 24
+            periodSeconds: 5
+            timeoutSeconds: 3
           readinessProbe:
             httpGet:
               path: /healthz
               port: http
             initialDelaySeconds: 3
             periodSeconds: 5
+            failureThreshold: 6
+            timeoutSeconds: 3
           livenessProbe:
             httpGet:
               path: /healthz
               port: http
             initialDelaySeconds: 10
             periodSeconds: 10
+            failureThreshold: 6
+            timeoutSeconds: 3
           env:
             - name: NODE_ENV
               value: "production"

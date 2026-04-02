@@ -5,6 +5,7 @@ resources:
   - zero-admin-sealedsecret.yaml
   - zero-strip-prefix-middleware.yaml
   - app-deployment.yaml
+  - app-pdb.yaml
   - app-service.yaml
   - app-ingressroute.yaml
   - zero-pvc.yaml
