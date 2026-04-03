@@ -1,0 +1,81 @@
+{
+  "schema_version": "torghut.hypothesis-manifest.v1",
+  "hypothesis_id": "H-TSMOM-LIQ-01",
+  "lane_id": "intraday-tsmom-liquid-open",
+  "strategy_family": "intraday_tsmom_v1",
+  "initial_state": "repo_promoted",
+  "market_regimes": [
+    "open-drive",
+    "high-liquidity"
+  ],
+  "research_basis": [
+    {
+      "label": "Stock Turnover Leadership and Expected Returns",
+      "url": "https://public.econ.duke.edu/~boller/Papers/MS_2025.pdf",
+      "reason": "Prioritize liquid leadership names instead of broad low-conversion universes."
+    },
+    {
+      "label": "Equity Option Return Predictability and Expiration Days",
+      "url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4595840",
+      "reason": "Intraday flow concentration reinforces time-windowed trading rather than all-day entry."
+    }
+  ],
+  "candidate_strategy": {
+    "strategy_name": "intraday-tsmom-profit-v3",
+    "strategy_id": "intraday_tsmom_v1@prod",
+    "enabled": true,
+    "universe_symbols": [
+      "NVDA",
+      "AAPL",
+      "MSFT",
+      "AMAT",
+      "META",
+      "AVGO",
+      "AMD",
+      "GOOG",
+      "PLTR",
+      "INTC"
+    ],
+    "max_notional_per_trade": "50000",
+    "max_position_pct_equity": "3.0",
+    "params": {
+      "entry_start_minute_utc": "810",
+      "entry_end_minute_utc": "930",
+      "max_spread_bps": "20",
+      "min_recent_imbalance_pressure": "0.02",
+      "min_recent_microprice_bias_bps": "0.10",
+      "max_recent_quote_invalid_ratio": "0.20",
+      "min_cross_section_opening_window_return_rank": "0.60",
+      "min_cross_section_continuation_rank": "0.60"
+    }
+  },
+  "simulation_window": {
+    "start_date": "2026-03-30",
+    "end_date": "2026-04-02"
+  },
+  "simulation_result": {
+    "artifact_path": "/var/folders/lw/8xxlfdz912zbk9xk6vm4f1h80000gn/T/liq10_n50k_x3.json",
+    "net_pnl_total": "1650.54400120226958906935927",
+    "net_pnl_per_day": "412.6360003005673972673398175",
+    "decision_count": 58,
+    "filled_count": 64,
+    "daily_net_pnl": {
+      "2026-03-30": "-219.1886569944122196997114217",
+      "2026-03-31": "978.7489920448298212829663466",
+      "2026-04-01": "-599.1258088615208784720325819",
+      "2026-04-02": "1490.109475013372865958136967"
+    }
+  },
+  "blocking_risks": [
+    "Replay conversion materially exceeds production conversion in INTC, PLTR, and GOOG.",
+    "Production and checked-in Argo strategy catalogs are out of sync.",
+    "Close-to-close account equity on 2026-04-02 was negative despite positive regular-session equity delta."
+  ],
+  "promotion_gates": [
+    "historical_simulation_playbook_execution_match",
+    "symbol_level_conversion_close_to_replay",
+    "paper_shadow_positive",
+    "repo_and_cluster_strategy_catalog_alignment"
+  ],
+  "promotion_state": "repo_catalog_promoted_not_deployed"
+}

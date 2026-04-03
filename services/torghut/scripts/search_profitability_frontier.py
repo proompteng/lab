@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import os
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -64,10 +65,25 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         '--clickhouse-http-url',
-        default='http://torghut-clickhouse.torghut.svc.cluster.local:8123',
+        default=os.environ.get(
+            'TA_CLICKHOUSE_URL',
+            'http://torghut-clickhouse.torghut.svc.cluster.local:8123',
+        ),
     )
-    parser.add_argument('--clickhouse-username', default='torghut')
-    parser.add_argument('--clickhouse-password', default='')
+    parser.add_argument(
+        '--clickhouse-username',
+        default=os.environ.get(
+            'TA_CLICKHOUSE_USERNAME',
+            os.environ.get('CLICKHOUSE_USERNAME', 'torghut'),
+        ),
+    )
+    parser.add_argument(
+        '--clickhouse-password',
+        default=os.environ.get(
+            'TA_CLICKHOUSE_PASSWORD',
+            os.environ.get('CLICKHOUSE_PASSWORD', ''),
+        ),
+    )
     parser.add_argument('--start-equity', default='31590.02')
     parser.add_argument('--chunk-minutes', type=int, default=10)
     parser.add_argument('--symbols', default='')

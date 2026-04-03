@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -741,6 +742,23 @@ class TestLocalIntradayTsmomReplay(TestCase):
             args = replay_main.__globals__["_parse_args"]()
 
         self.assertTrue(args.collect_traces)
+
+    def test_parse_args_prefers_ta_clickhouse_env_defaults(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TA_CLICKHOUSE_URL": "http://clickhouse.example:8123",
+                "TA_CLICKHOUSE_USERNAME": "env-user",
+                "TA_CLICKHOUSE_PASSWORD": "env-secret",
+            },
+            clear=False,
+        ):
+            with patch.object(sys, "argv", ["local_intraday_tsmom_replay.py"]):
+                args = replay_main.__globals__["_parse_args"]()
+
+        self.assertEqual(args.clickhouse_http_url, "http://clickhouse.example:8123")
+        self.assertEqual(args.clickhouse_username, "env-user")
+        self.assertEqual(args.clickhouse_password, "env-secret")
 
     def test_replay_main_enables_trace_capture_for_funnel_and_near_miss_outputs(
         self,

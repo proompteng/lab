@@ -133,11 +133,17 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         '--clickhouse-username',
-        default=os.environ.get('CLICKHOUSE_USERNAME', 'torghut'),
+        default=os.environ.get(
+            'TA_CLICKHOUSE_USERNAME',
+            os.environ.get('CLICKHOUSE_USERNAME', 'torghut'),
+        ),
     )
     parser.add_argument(
         '--clickhouse-password',
-        default=os.environ.get('CLICKHOUSE_PASSWORD', ''),
+        default=os.environ.get(
+            'TA_CLICKHOUSE_PASSWORD',
+            os.environ.get('CLICKHOUSE_PASSWORD', ''),
+        ),
     )
     parser.add_argument('--start-date', default='2026-03-23')
     parser.add_argument('--end-date', default='2026-03-27')

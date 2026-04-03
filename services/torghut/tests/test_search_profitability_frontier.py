@@ -363,6 +363,25 @@ class TestSearchProfitabilityFrontier(TestCase):
         self.assertEqual(args.top_n, 10)
         self.assertIsNone(args.json_output)
 
+    def test_parse_args_uses_clickhouse_env_defaults(self) -> None:
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "TA_CLICKHOUSE_URL": "http://clickhouse.example:8123",
+                    "TA_CLICKHOUSE_USERNAME": "env-user",
+                    "TA_CLICKHOUSE_PASSWORD": "env-secret",
+                },
+                clear=False,
+            ),
+            patch.object(sys, "argv", ["search_profitability_frontier.py"]),
+        ):
+            args = frontier._parse_args()
+
+        self.assertEqual(args.clickhouse_http_url, "http://clickhouse.example:8123")
+        self.assertEqual(args.clickhouse_username, "env-user")
+        self.assertEqual(args.clickhouse_password, "env-secret")
+
     def test_resolve_recent_trading_days_uses_qualified_signal_query(self) -> None:
         with patch(
             "scripts.search_profitability_frontier._http_query",
