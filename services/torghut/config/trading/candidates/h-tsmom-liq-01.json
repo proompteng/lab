@@ -1,13 +1,9 @@
 {
-  "schema_version": "torghut.hypothesis-manifest.v1",
-  "hypothesis_id": "H-TSMOM-LIQ-01",
+  "schema_version": "torghut.candidate-record.v1",
+  "candidate_id": "H-TSMOM-LIQ-01",
   "lane_id": "intraday-tsmom-liquid-open",
   "strategy_family": "intraday_tsmom_v1",
-  "initial_state": "repo_promoted",
-  "market_regimes": [
-    "open-drive",
-    "high-liquidity"
-  ],
+  "promotion_state": "repo_catalog_promoted_not_deployed",
   "research_basis": [
     {
       "label": "Stock Turnover Leadership and Expected Returns",
@@ -70,12 +66,5 @@
     "Replay conversion materially exceeds production conversion in INTC, PLTR, and GOOG.",
     "Production and checked-in Argo strategy catalogs are out of sync.",
     "Close-to-close account equity on 2026-04-02 was negative despite positive regular-session equity delta."
-  ],
-  "promotion_gates": [
-    "historical_simulation_playbook_execution_match",
-    "symbol_level_conversion_close_to_replay",
-    "paper_shadow_positive",
-    "repo_and_cluster_strategy_catalog_alignment"
-  ],
-  "promotion_state": "repo_catalog_promoted_not_deployed"
+  ]
 }
