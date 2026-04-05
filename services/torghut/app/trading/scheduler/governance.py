@@ -1393,6 +1393,21 @@ class TradingSchedulerGovernanceMixin:
                 ),
                 persist_results=True,
                 session_factory=self._pipeline.session_factory,
+                alpha_train_prices_path=(
+                    Path(settings.trading_autonomy_alpha_train_prices_path)
+                    if settings.trading_autonomy_alpha_train_prices_path
+                    else None
+                ),
+                alpha_test_prices_path=(
+                    Path(settings.trading_autonomy_alpha_test_prices_path)
+                    if settings.trading_autonomy_alpha_test_prices_path
+                    else None
+                ),
+                alpha_gate_policy_path=(
+                    Path(settings.trading_autonomy_alpha_gate_policy_path)
+                    if settings.trading_autonomy_alpha_gate_policy_path
+                    else None
+                ),
             )
         except Exception as exc:
             self.state.autonomy_failure_streak += 1

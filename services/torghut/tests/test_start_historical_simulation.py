@@ -25,6 +25,7 @@ from scripts.start_historical_simulation import (
     _build_clickhouse_runtime_config,
     _build_fill_price_error_budget_payload,
     _build_argocd_automation_config,
+    _build_autonomy_lane_config,
     _build_kafka_runtime_config,
     _build_plan_report,
     _build_postgres_runtime_config,
@@ -6146,6 +6147,170 @@ class TestStartHistoricalSimulation(TestCase):
             ['apply', 'runtime_verify', 'replay', 'monitor', 'report'],
         )
 
+    def test_run_full_lifecycle_runs_autonomy_lane_when_enabled(self) -> None:
+        resources = _build_resources(
+            'sim-1',
+            {
+                'dataset_id': 'dataset-a',
+            },
+        )
+        manifest = {
+            'dataset_id': 'dataset-a',
+            'window': {
+                'start': '2026-02-27T14:30:00Z',
+                'end': '2026-02-27T21:00:00Z',
+            },
+        }
+        kafka_config = KafkaRuntimeConfig(
+            bootstrap_servers='kafka:9092',
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+        )
+        clickhouse_config = ClickHouseRuntimeConfig(
+            http_url='http://clickhouse:8123',
+            username='torghut',
+            password=None,
+        )
+        postgres_config = PostgresRuntimeConfig(
+            admin_dsn='postgresql://torghut:secret@localhost:5432/postgres',
+            simulation_dsn='postgresql://torghut:secret@localhost:5432/torghut_sim_sim_1',
+            simulation_db='torghut_sim_sim_1',
+            migrations_command='true',
+        )
+        argocd_config = ArgocdAutomationConfig(
+            manage_automation=False,
+            applicationset_name='product',
+            applicationset_namespace='argocd',
+            app_name='torghut',
+            root_app_name='root',
+            desired_mode_during_run='manual',
+            restore_mode_after_run='previous',
+            verify_timeout_seconds=600,
+        )
+        rollouts_config = RolloutsAnalysisConfig(
+            enabled=False,
+            namespace='agents',
+            runtime_template='torghut-runtime-ready-v1',
+            activity_template='torghut-sim-activity-v1',
+            teardown_template='torghut-teardown-v1',
+            artifact_template='torghut-artifact-v1',
+            verify_timeout_seconds=900,
+            verify_poll_seconds=5,
+        )
+        autonomy_config = start_historical_simulation.AutonomyLaneConfig(
+            enabled=True,
+            signals_path=Path('/tmp/signals.json'),
+            strategy_config_path=Path('/tmp/strategy.yaml'),
+            gate_policy_path=Path('/tmp/gate-policy.json'),
+            output_dir=Path('/tmp/autonomy'),
+            artifact_path=Path('/tmp/autonomy'),
+            repository='proompteng/lab',
+            base='main',
+            head='codex/strategy-factory',
+            priority_id='ARC-2000',
+            promotion_target='paper',
+        )
+        call_order: list[str] = []
+
+        with (
+            patch('scripts.start_historical_simulation._ensure_supported_binary', return_value=None),
+            patch('scripts.start_historical_simulation._update_run_state', return_value=None),
+            patch('scripts.start_historical_simulation._save_json', return_value=None),
+            patch('scripts.start_historical_simulation.persist_completion_trace', return_value={}),
+            patch('scripts.start_historical_simulation.SessionLocal') as mock_session_local,
+            patch('scripts.start_historical_simulation._prepare_argocd_for_run', return_value={'managed': False}),
+            patch('scripts.start_historical_simulation._restore_argocd_after_run', return_value={'managed': False}),
+            patch(
+                'scripts.start_historical_simulation._apply',
+                side_effect=lambda **_: call_order.append('apply') or {'status': 'ok'},
+            ),
+            patch(
+                'scripts.start_historical_simulation._runtime_verify',
+                side_effect=lambda **_: call_order.append('runtime_verify') or {'runtime_state': 'ready'},
+            ),
+            patch(
+                'scripts.start_historical_simulation._replay_dump',
+                side_effect=lambda **_: call_order.append('replay') or {'status': 'ok'},
+            ),
+            patch(
+                'scripts.start_historical_simulation._monitor_run_completion',
+                side_effect=lambda **_: call_order.append('monitor')
+                or {
+                    'status': 'ok',
+                    'activity_classification': 'success',
+                    'final_snapshot': {
+                        'signal_rows': 5,
+                        'price_rows': 5,
+                        'trade_decisions': 3,
+                        'cursor_at': '2026-02-27T21:00:00Z',
+                        'executions': 2,
+                        'execution_tca_metrics': 2,
+                        'execution_order_events': 2,
+                    },
+                },
+            ),
+            patch(
+                'scripts.start_historical_simulation._report_simulation',
+                side_effect=lambda **_: call_order.append('report') or {'status': 'ok'},
+            ),
+            patch(
+                'scripts.start_historical_simulation.run_autonomous_lane',
+                side_effect=lambda **kwargs: call_order.append('autonomy')
+                or SimpleNamespace(
+                    run_id='auto-run',
+                    candidate_id='cand-auto',
+                    output_dir=kwargs['output_dir'],
+                    gate_report_path=Path('/tmp/autonomy/gates/gate-evaluation.json'),
+                    actuation_intent_path=None,
+                    paper_patch_path=None,
+                    phase_manifest_path=Path('/tmp/autonomy/rollout/phase-manifest.json'),
+                    recommendation_artifact_path=Path('/tmp/autonomy/gates/recommendation.json'),
+                    candidate_spec_path=Path('/tmp/autonomy/research/candidate-spec.json'),
+                    candidate_generation_manifest_path=Path('/tmp/autonomy/stages/candidate-generation.json'),
+                    evaluation_manifest_path=Path('/tmp/autonomy/stages/evaluation.json'),
+                    recommendation_manifest_path=Path('/tmp/autonomy/stages/recommendation.json'),
+                    profitability_manifest_path=Path('/tmp/autonomy/profitability/profitability-stage.json'),
+                    benchmark_parity_path=Path('/tmp/autonomy/gates/benchmark-parity.json'),
+                    foundation_router_parity_path=Path('/tmp/autonomy/router/foundation-router-parity.json'),
+                    stage_trace_ids={'evaluation': 'trace-1'},
+                    stage_lineage_root='lineage-root',
+                ),
+            ) as autonomy_mock,
+            patch(
+                'scripts.start_historical_simulation._build_strategy_proof_artifact',
+                return_value={'status': 'ok', 'legacy_path_count': 0},
+            ),
+        ):
+            mock_session_local.return_value.__enter__.return_value = SimpleNamespace(commit=lambda: None)
+            report = _run_full_lifecycle(
+                resources=resources,
+                manifest=manifest,
+                manifest_path=Path('/tmp/manifest.json'),
+                autonomy_config=autonomy_config,
+                kafka_config=kafka_config,
+                clickhouse_config=clickhouse_config,
+                postgres_config=postgres_config,
+                argocd_config=argocd_config,
+                rollouts_config=rollouts_config,
+                force_dump=False,
+                force_replay=False,
+                skip_teardown=True,
+                report_only=False,
+            )
+
+        self.assertEqual(
+            call_order,
+            ['apply', 'runtime_verify', 'replay', 'monitor', 'report', 'autonomy'],
+        )
+        self.assertEqual(report['autonomy']['candidate_id'], 'cand-auto')
+        self.assertEqual(report['run_summary']['autonomy']['candidate_id'], 'cand-auto')
+        self.assertEqual(
+            autonomy_mock.call_args.kwargs['signals_path'],
+            Path('/tmp/signals.json'),
+        )
+
     def test_run_full_lifecycle_does_not_fail_when_activity_analysis_corroboration_is_unsuccessful(self) -> None:
         resources = _build_resources(
             'sim-1',
@@ -8318,6 +8483,63 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertEqual(config.activity_template, 'torghut-simulation-activity')
         self.assertEqual(config.teardown_template, 'torghut-simulation-teardown-clean')
         self.assertEqual(config.verify_poll_seconds, 5)
+
+    def test_build_autonomy_lane_config_resolves_manifest_relative_paths(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            manifest_path = root / 'config' / 'dataset.yaml'
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            signals_path = root / 'fixtures' / 'signals.json'
+            strategy_config_path = root / 'configs' / 'strategy.yaml'
+            gate_policy_path = root / 'configs' / 'gate-policy.json'
+            alpha_train_path = root / 'alpha' / 'train.csv'
+            alpha_test_path = root / 'alpha' / 'test.csv'
+            alpha_gate_policy_path = root / 'alpha' / 'gate-policy.json'
+            for path in (
+                signals_path,
+                strategy_config_path,
+                gate_policy_path,
+                alpha_train_path,
+                alpha_test_path,
+                alpha_gate_policy_path,
+            ):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('stub', encoding='utf-8')
+            resources = _build_resources('sim-1', {'dataset_id': 'dataset-a'})
+
+            config = _build_autonomy_lane_config(
+                {
+                    'autonomy': {
+                        'enabled': True,
+                        'signals': '../fixtures/signals.json',
+                        'strategy_config': '../configs/strategy.yaml',
+                        'gate_policy': '../configs/gate-policy.json',
+                        'repository': 'proompteng/lab',
+                        'base': 'main',
+                        'head': 'codex/strategy-factory',
+                        'priority_id': 'ARC-2000',
+                        'promotion_target': 'shadow',
+                        'alpha_train_prices': '../alpha/train.csv',
+                        'alpha_test_prices': '../alpha/test.csv',
+                        'alpha_gate_policy': '../alpha/gate-policy.json',
+                        'no_persist_results': True,
+                    }
+                },
+                manifest_path=manifest_path,
+                resources=resources,
+            )
+
+        self.assertTrue(config.enabled)
+        self.assertEqual(config.signals_path, signals_path.resolve())
+        self.assertEqual(config.strategy_config_path, strategy_config_path.resolve())
+        self.assertEqual(config.gate_policy_path, gate_policy_path.resolve())
+        self.assertEqual(config.alpha_train_prices_path, alpha_train_path.resolve())
+        self.assertEqual(config.alpha_test_prices_path, alpha_test_path.resolve())
+        self.assertEqual(config.alpha_gate_policy_path, alpha_gate_policy_path.resolve())
+        self.assertEqual(config.repository, 'proompteng/lab')
+        self.assertEqual(config.promotion_target, 'shadow')
+        self.assertFalse(config.persist_results)
+        self.assertEqual(config.output_dir, resources.output_root / resources.run_token / 'autonomy')
 
     def test_run_rollouts_analysis_materializes_analysisrun_from_template(self) -> None:
         resources = _build_resources('sim-2026-03-06-open-hour', {'dataset_id': 'dataset-a'})

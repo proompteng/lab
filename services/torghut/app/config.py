@@ -622,6 +622,21 @@ class Settings(BaseSettings):
         alias="TRADING_AUTONOMY_ARTIFACT_DIR",
         description="Output directory for autonomous lane artifacts.",
     )
+    trading_autonomy_alpha_train_prices_path: Optional[str] = Field(
+        default=None,
+        alias="TRADING_AUTONOMY_ALPHA_TRAIN_PRICES_PATH",
+        description="Optional CSV path for strategy-factory train prices consumed by autonomous lane runs.",
+    )
+    trading_autonomy_alpha_test_prices_path: Optional[str] = Field(
+        default=None,
+        alias="TRADING_AUTONOMY_ALPHA_TEST_PRICES_PATH",
+        description="Optional CSV path for strategy-factory test prices consumed by autonomous lane runs.",
+    )
+    trading_autonomy_alpha_gate_policy_path: Optional[str] = Field(
+        default=None,
+        alias="TRADING_AUTONOMY_ALPHA_GATE_POLICY_PATH",
+        description="Optional gate-policy JSON path for autonomous strategy-factory sidecar runs.",
+    )
     trading_empirical_benchmark_parity_report_path: Optional[str] = Field(
         default=None,
         alias="TRADING_EMPIRICAL_BENCHMARK_PARITY_REPORT_PATH",

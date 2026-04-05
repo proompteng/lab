@@ -9,12 +9,30 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Iterable, Literal, Mapping, Sequence, cast
+from typing import Any, Callable, Iterable, Literal, Mapping, Sequence, cast
 
 import pandas as pd
+from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
 
-from .metrics import to_jsonable
+from ...models import (
+    ResearchAttempt,
+    ResearchCandidate,
+    ResearchCostCalibration,
+    ResearchFoldMetrics,
+    ResearchPromotion,
+    ResearchRun,
+    ResearchSequentialTrial,
+    ResearchStressMetrics,
+    ResearchValidationTest,
+)
+from ..discovery import (
+    build_sequential_trial_summary,
+    build_strategy_factory_evaluation,
+)
+from .metrics import summarize_equity_curve, to_jsonable
 from .search import SearchResult, candidate_to_jsonable, run_tsmom_grid_search
+from .tsmom import TSMOMConfig, backtest_tsmom
 from ..reporting import (
     PromotionEvidenceSummary,
     build_promotion_recommendation,
@@ -36,6 +54,10 @@ class AlphaLaneResult:
     candidate_generation_manifest_path: Path
     evaluation_manifest_path: Path
     recommendation_manifest_path: Path
+    attempt_ledger_path: Path
+    validation_artifact_paths: dict[str, Path]
+    sequential_trial_path: Path
+    cost_calibration_path: Path
     recommendation_trace_id: str
     stage_trace_ids: dict[str, str] = field(default_factory=dict)
     stage_lineage_root: str | None = None
@@ -233,6 +255,18 @@ def _persist_prices(prices: pd.DataFrame, output_dir: Path, name: str) -> Path:
     else:
         prices.to_csv(path, float_format="%.12f", index_label="date")
     return path
+
+
+def _write_json(path: Path, payload: Mapping[str, Any]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(dict(payload), indent=2), encoding="utf-8")
+    return path
+
+
+def _decimal_or_none(value: object) -> Decimal | None:
+    if value is None:
+        return None
+    return Decimal(str(value))
 
 
 def _read_policy_payload(path: Path | None) -> dict[str, Any]:
@@ -566,6 +600,340 @@ def _write_iteration_notes(
     return notes_path
 
 
+def _persist_strategy_factory_results(
+    *,
+    session_factory: Callable[[], Session],
+    run_id: str,
+    candidate_id: str,
+    now: datetime,
+    requested_mode: Literal["shadow", "paper", "live"],
+    resolved_repository: str | None,
+    resolved_head: str | None,
+    train: pd.DataFrame,
+    test: pd.DataFrame,
+    search_result: SearchResult,
+    stage_lineage_payload: dict[str, Any],
+    stage_trace_ids: dict[str, str],
+    manifest_paths: Mapping[str, Path],
+    replay_artifact_hashes: dict[str, str],
+    recommendation_trace_id: str,
+    strategy_factory_summary: dict[str, Any],
+    validation_payloads: Mapping[str, dict[str, Any]],
+    attempt_payload: dict[str, Any],
+    cost_calibration_payload: dict[str, Any],
+    sequential_trial_payload: dict[str, Any],
+    evaluation_passed: bool,
+    promotion_allowed: bool,
+    recommendation_payload: dict[str, Any],
+    recommendation_rationale: str,
+) -> None:
+    with session_factory() as session:
+        session.execute(
+            delete(ResearchAttempt).where(ResearchAttempt.run_id == run_id)
+        )
+        for table in (
+            ResearchValidationTest,
+            ResearchSequentialTrial,
+            ResearchStressMetrics,
+            ResearchFoldMetrics,
+            ResearchPromotion,
+        ):
+            session.execute(delete(table).where(table.candidate_id == candidate_id))
+        session.execute(
+            delete(ResearchCandidate).where(ResearchCandidate.candidate_id == candidate_id)
+        )
+
+        cost_scope_id = str(strategy_factory_summary['candidate_family'])
+        session.execute(
+            delete(ResearchCostCalibration).where(
+                ResearchCostCalibration.scope_type == 'candidate_family',
+                ResearchCostCalibration.scope_id == cost_scope_id,
+            )
+        )
+
+        run_row = session.execute(
+            select(ResearchRun).where(ResearchRun.run_id == run_id)
+        ).scalar_one_or_none()
+        dataset_from = (
+            train.index.min().to_pydatetime()
+            if isinstance(train.index, pd.DatetimeIndex) and len(train.index) > 0
+            else None
+        )
+        dataset_to = (
+            test.index.max().to_pydatetime()
+            if isinstance(test.index, pd.DatetimeIndex) and len(test.index) > 0
+            else None
+        )
+        search_budget = len(search_result.candidates)
+        if run_row is None:
+            run_row = ResearchRun(
+                run_id=run_id,
+                status='passed' if promotion_allowed or evaluation_passed else 'failed',
+                strategy_id='strategy_factory_alpha',
+                strategy_name='strategy_factory_alpha',
+                strategy_type=strategy_factory_summary['candidate_family'],
+                strategy_version='alpha-lane-v2',
+                code_commit=resolved_head,
+                signal_source='alpha-search',
+                dataset_from=dataset_from,
+                dataset_to=dataset_to,
+                runner_version='run_alpha_discovery_lane',
+                runner_binary_hash=hashlib.sha256(run_id.encode('utf-8')).hexdigest(),
+                recommendation_trace_id=recommendation_trace_id,
+                discovery_mode='strategy_factory_alpha_v1',
+                generator_family='tsmom_grid_v1',
+                grammar_version='tsmom.dsl.v1',
+                search_budget=search_budget,
+                selection_protocol_version='alpha-selection-protocol-v1',
+                pilot_program_id='torghut-strategy-factory-pilot-v1',
+                kill_criteria_version='pilot-kill-criteria-v1',
+            )
+            session.add(run_row)
+        else:
+            run_row.status = 'passed' if promotion_allowed or evaluation_passed else 'failed'
+            run_row.strategy_id = 'strategy_factory_alpha'
+            run_row.strategy_name = 'strategy_factory_alpha'
+            run_row.strategy_type = str(strategy_factory_summary['candidate_family'])
+            run_row.strategy_version = 'alpha-lane-v2'
+            run_row.code_commit = resolved_head
+            run_row.signal_source = 'alpha-search'
+            run_row.dataset_from = dataset_from
+            run_row.dataset_to = dataset_to
+            run_row.runner_version = 'run_alpha_discovery_lane'
+            run_row.runner_binary_hash = hashlib.sha256(run_id.encode('utf-8')).hexdigest()
+            run_row.recommendation_trace_id = recommendation_trace_id
+            run_row.discovery_mode = 'strategy_factory_alpha_v1'
+            run_row.generator_family = 'tsmom_grid_v1'
+            run_row.grammar_version = 'tsmom.dsl.v1'
+            run_row.search_budget = search_budget
+            run_row.selection_protocol_version = 'alpha-selection-protocol-v1'
+            run_row.pilot_program_id = 'torghut-strategy-factory-pilot-v1'
+            run_row.kill_criteria_version = 'pilot-kill-criteria-v1'
+
+        evidence_bundle = {
+            'attempt_count': len(attempt_payload.get('attempts', [])),
+            'validation_test_count': len(validation_payloads),
+            'stage_lineage': stage_lineage_payload,
+            'stage_trace_ids': dict(stage_trace_ids),
+            'stage_manifest_refs': {
+                key: str(value) for key, value in manifest_paths.items()
+            },
+            'replay_artifact_hashes': dict(replay_artifact_hashes),
+            'cost_calibration': cost_calibration_payload,
+            'sequential_trial': sequential_trial_payload,
+            'strategy_factory': strategy_factory_summary,
+        }
+        candidate_row = ResearchCandidate(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            candidate_hash=str(strategy_factory_summary['semantic_hash']),
+            parameter_set=strategy_factory_summary['canonical_spec'],
+            decision_count=int(test.shape[0]),
+            trade_count=int(test.shape[0]),
+            symbols_covered=[str(column) for column in test.columns],
+            universe_definition={
+                'repository': resolved_repository,
+                'autonomy_lifecycle': {
+                    'role': 'challenger',
+                    'status': 'promoted_champion' if promotion_allowed else 'retained_challenger',
+                },
+            },
+            promotion_target=requested_mode,
+            lifecycle_role='challenger',
+            lifecycle_status='promoted' if promotion_allowed else 'evaluated',
+            metadata_bundle=evidence_bundle,
+            recommendation_bundle=recommendation_payload['recommendation'],
+            candidate_family=str(strategy_factory_summary['candidate_family']),
+            canonical_spec=strategy_factory_summary['canonical_spec'],
+            semantic_hash=str(strategy_factory_summary['semantic_hash']),
+            economic_rationale=str(strategy_factory_summary['economic_rationale']),
+            complexity_score=_decimal_or_none(strategy_factory_summary['complexity_score']),
+            discovery_rank=int(strategy_factory_summary['discovery_rank']),
+            posterior_edge_summary=strategy_factory_summary['posterior_edge_summary'],
+            economic_validity_card=strategy_factory_summary['economic_validity_card'],
+            valid_regime_envelope=strategy_factory_summary['valid_regime_envelope'],
+            invalidation_clauses=strategy_factory_summary['invalidation_clauses'],
+            null_comparator_summary=strategy_factory_summary['null_comparator_summary'],
+        )
+        session.add(candidate_row)
+
+        fold_bundle = strategy_factory_summary['fold_stat_bundle']
+        train_start = (
+            train.index.min().to_pydatetime()
+            if isinstance(train.index, pd.DatetimeIndex) and len(train.index) > 0
+            else now
+        )
+        train_end = (
+            train.index.max().to_pydatetime()
+            if isinstance(train.index, pd.DatetimeIndex) and len(train.index) > 0
+            else now
+        )
+        test_start = (
+            test.index.min().to_pydatetime()
+            if isinstance(test.index, pd.DatetimeIndex) and len(test.index) > 0
+            else now
+        )
+        test_end = (
+            test.index.max().to_pydatetime()
+            if isinstance(test.index, pd.DatetimeIndex) and len(test.index) > 0
+            else now
+        )
+        test_summary = cast(dict[str, Any], fold_bundle['test_summary'])
+        session.add(
+            ResearchFoldMetrics(
+                candidate_id=candidate_id,
+                fold_name='holdout-1',
+                fold_order=1,
+                train_start=train_start,
+                train_end=train_end,
+                test_start=test_start,
+                test_end=test_end,
+                decision_count=int(test.shape[0]),
+                trade_count=int(test.shape[0]),
+                gross_pnl=_decimal_or_none(test_summary.get('total_return')),
+                net_pnl=_decimal_or_none(test_summary.get('total_return')),
+                max_drawdown=_decimal_or_none(test_summary.get('max_drawdown')),
+                turnover_ratio=_decimal_or_none(fold_bundle.get('test_turnover_mean')),
+                cost_bps=_decimal_or_none(
+                    cost_calibration_payload.get('modeled_slippage_bps')
+                ),
+                cost_assumptions={
+                    'modeled_slippage_bps': cost_calibration_payload.get(
+                        'modeled_slippage_bps'
+                    ),
+                },
+                regime_label='trend_following',
+                stat_bundle=fold_bundle,
+                purge_window=0,
+                embargo_window=0,
+                feature_availability_hash=hashlib.sha256(
+                    b'tsmom-lookback-vol-shift-v1'
+                ).hexdigest(),
+            )
+        )
+
+        for stress_payload in cast(list[dict[str, Any]], strategy_factory_summary['stress_results']):
+            session.add(
+                ResearchStressMetrics(
+                    candidate_id=candidate_id,
+                    stress_case=str(stress_payload['stress_case']),
+                    metric_bundle=stress_payload['metric_bundle'],
+                    pessimistic_pnl_delta=_decimal_or_none(
+                        stress_payload.get('pessimistic_pnl_delta')
+                    ),
+                )
+            )
+
+        for attempt in cast(list[dict[str, Any]], attempt_payload.get('attempts', [])):
+            session.add(
+                ResearchAttempt(
+                    attempt_id=str(attempt['attempt_id']),
+                    run_id=run_id,
+                    candidate_hash=cast(str | None, attempt.get('candidate_hash')),
+                    generator_family=cast(str | None, attempt.get('generator_family')),
+                    attempt_stage=str(attempt['attempt_stage']),
+                    status=str(attempt['status']),
+                    reason_codes=attempt.get('reason_codes'),
+                    artifact_ref=cast(str | None, attempt.get('artifact_ref')),
+                    metadata_bundle=attempt.get('metadata_bundle'),
+                )
+            )
+
+        for test_name, payload in validation_payloads.items():
+            session.add(
+                ResearchValidationTest(
+                    candidate_id=candidate_id,
+                    test_name=test_name,
+                    status=str(payload['status']),
+                    metric_bundle=payload,
+                    artifact_ref=f'validation/{payload["artifact_name"]}',
+                    computed_at=now,
+                )
+            )
+
+        session.add(
+            ResearchSequentialTrial(
+                candidate_id=candidate_id,
+                trial_stage=str(sequential_trial_payload['trial_stage']),
+                account=str(sequential_trial_payload['account']),
+                start_at=datetime.fromisoformat(str(sequential_trial_payload['start_at'])),
+                last_update_at=datetime.fromisoformat(
+                    str(sequential_trial_payload['last_update_at'])
+                ),
+                sample_count=int(sequential_trial_payload['sample_count']),
+                confidence_sequence_lower=_decimal_or_none(
+                    sequential_trial_payload.get('confidence_sequence_lower')
+                ),
+                confidence_sequence_upper=_decimal_or_none(
+                    sequential_trial_payload.get('confidence_sequence_upper')
+                ),
+                posterior_edge_mean=_decimal_or_none(
+                    sequential_trial_payload.get('posterior_edge_mean')
+                ),
+                posterior_edge_lower=_decimal_or_none(
+                    sequential_trial_payload.get('posterior_edge_lower')
+                ),
+                status=str(sequential_trial_payload['status']),
+                reason_codes=sequential_trial_payload.get('reason_codes'),
+            )
+        )
+
+        session.add(
+            ResearchCostCalibration(
+                calibration_id=str(cost_calibration_payload['calibration_id']),
+                scope_type=str(cost_calibration_payload['scope_type']),
+                scope_id=str(cost_calibration_payload['scope_id']),
+                window_start=(
+                    datetime.fromisoformat(str(cost_calibration_payload['window_start']))
+                    if cost_calibration_payload.get('window_start')
+                    else None
+                ),
+                window_end=(
+                    datetime.fromisoformat(str(cost_calibration_payload['window_end']))
+                    if cost_calibration_payload.get('window_end')
+                    else None
+                ),
+                modeled_slippage_bps=_decimal_or_none(
+                    cost_calibration_payload.get('modeled_slippage_bps')
+                ),
+                realized_slippage_bps=_decimal_or_none(
+                    cost_calibration_payload.get('realized_slippage_bps')
+                ),
+                modeled_shortfall_bps=_decimal_or_none(
+                    cost_calibration_payload.get('modeled_shortfall_bps')
+                ),
+                realized_shortfall_bps=_decimal_or_none(
+                    cost_calibration_payload.get('realized_shortfall_bps')
+                ),
+                calibration_error_bundle=cost_calibration_payload.get(
+                    'calibration_error_bundle'
+                ),
+                status=str(cost_calibration_payload['status']),
+                computed_at=datetime.fromisoformat(
+                    str(cost_calibration_payload['computed_at'])
+                ),
+            )
+        )
+
+        session.add(
+            ResearchPromotion(
+                candidate_id=candidate_id,
+                requested_mode=requested_mode,
+                approved_mode=requested_mode if promotion_allowed else None,
+                approver='strategy_factory_alpha',
+                approver_role='system',
+                approve_reason=recommendation_rationale if promotion_allowed else None,
+                deny_reason=None if promotion_allowed else recommendation_rationale,
+                effective_time=now if promotion_allowed else None,
+                decision_action=str(recommendation_payload['recommendation']['action']),
+                decision_rationale=recommendation_rationale,
+                evidence_bundle=evidence_bundle,
+                recommendation_trace_id=recommendation_trace_id,
+            )
+        )
+        session.commit()
+
+
 def run_alpha_discovery_lane(
     *,
     artifact_path: Path,
@@ -588,6 +956,10 @@ def run_alpha_discovery_lane(
     promotion_target: str = "paper",
     evaluated_at: datetime | None = None,
     execution_context: Mapping[str, Any] | None = None,
+    persist_results: bool = False,
+    session_factory: Callable[[], Session] | None = None,
+    challenge_lane: bool = False,
+    economic_rationale: str | None = None,
 ) -> AlphaLaneResult:
     """Run deterministic alpha candidate generation, evaluation, and recommendation."""
 
@@ -595,6 +967,8 @@ def run_alpha_discovery_lane(
     test = _normalize_prices(test_prices, label="test")
     if train.empty or test.empty:
         raise ValueError("train and test prices must be non-empty")
+    if persist_results and session_factory is None:
+        raise ValueError("session_factory is required when persist_results is true")
 
     now = evaluated_at or datetime.now(timezone.utc)
     output_dir = artifact_path
@@ -648,6 +1022,8 @@ def run_alpha_discovery_lane(
         "max_gross_leverages": max_gross_leverage_values,
         "long_only": bool(long_only),
         "cost_bps_per_turnover": float(cost_bps_per_turnover),
+        "challenge_lane": bool(challenge_lane),
+        "economic_rationale": (economic_rationale or "").strip(),
         "policy": policy_payload,
     }
     run_id = _stable_hash(run_signature)[:24]
@@ -680,6 +1056,10 @@ def run_alpha_discovery_lane(
     evaluation_report_path = research_dir / "evaluation-report.json"
     recommendation_artifact_path = research_dir / "recommendation.json"
     candidate_spec_path = research_dir / "candidate-spec.json"
+    attempt_ledger_path = research_dir / "attempt-ledger.json"
+    sequential_trial_path = research_dir / "sequential-trial.json"
+    validation_dir = research_dir / "validation"
+    cost_calibration_path = validation_dir / "cost-calibration-report-v1.json"
 
     search_payload = {
         "schema_version": "alpha-search-result-v1",
@@ -704,6 +1084,88 @@ def run_alpha_discovery_lane(
         encoding="utf-8",
     )
 
+    best_cfg = TSMOMConfig(
+        lookback_days=search_result.best.config.lookback_days,
+        vol_lookback_days=search_result.best.config.vol_lookback_days,
+        target_daily_vol=search_result.best.config.target_daily_vol,
+        max_gross_leverage=search_result.best.config.max_gross_leverage,
+        long_only=bool(long_only),
+        cost_bps_per_turnover=float(cost_bps_per_turnover),
+    )
+    train_equity, train_debug = backtest_tsmom(train, best_cfg)
+    test_equity, test_debug = backtest_tsmom(test, best_cfg)
+    incumbent_cfg = TSMOMConfig(
+        lookback_days=60,
+        vol_lookback_days=20,
+        target_daily_vol=0.01,
+        max_gross_leverage=1.0,
+        long_only=bool(long_only),
+        cost_bps_per_turnover=float(cost_bps_per_turnover),
+    )
+    incumbent_equity, _incumbent_debug = backtest_tsmom(test, incumbent_cfg)
+    strategy_factory = build_strategy_factory_evaluation(
+        run_id=run_id,
+        candidate_id=candidate_id,
+        best_candidate=search_result.best,
+        all_candidates=search_result.candidates,
+        train_debug=train_debug,
+        test_debug=test_debug,
+        train_summary=search_result.best.train,
+        test_summary=search_result.best.test,
+        incumbent_summary=summarize_equity_curve(incumbent_equity),
+        cost_bps_per_turnover=float(cost_bps_per_turnover),
+        evaluated_at=now,
+        challenge_lane=bool(challenge_lane),
+        economic_rationale=economic_rationale,
+    )
+
+    validation_artifact_paths: dict[str, Path] = {}
+    validation_payloads: dict[str, dict[str, Any]] = {}
+    for validation_test in strategy_factory.validation_tests:
+        payload = {
+            'schema_version': 'strategy-factory-validation-v1',
+            'run_id': run_id,
+            'candidate_id': candidate_id,
+            **validation_test.to_payload(),
+        }
+        artifact_path = validation_dir / validation_test.artifact_name
+        _write_json(artifact_path, payload)
+        validation_artifact_paths[validation_test.test_name] = artifact_path
+        validation_payloads[validation_test.test_name] = payload
+
+    attempt_payload = {
+        'schema_version': 'research-attempt-ledger-v1',
+        'run_id': run_id,
+        'candidate_id': candidate_id,
+        'attempts': strategy_factory.attempts,
+    }
+    _write_json(attempt_ledger_path, attempt_payload)
+
+    cost_calibration_payload = {
+        'schema_version': 'cost-calibration-report-v1',
+        **strategy_factory.cost_calibration.to_payload(),
+    }
+    _write_json(cost_calibration_path, cost_calibration_payload)
+
+    sequential_trial = build_sequential_trial_summary(
+        net_returns=test_debug['port_ret_net'],
+        started_at=(
+            test.index.min().to_pydatetime()
+            if isinstance(test.index, pd.DatetimeIndex) and len(test.index) > 0
+            else now
+        ),
+        updated_at=now,
+        cost_calibration_status=strategy_factory.cost_calibration.status,
+        baseline_outperformed=bool(
+            strategy_factory.null_comparator_summary.get('baseline_outperformed')
+        ),
+    )
+    sequential_trial_payload = {
+        'schema_version': 'sequential-trial-state-v1',
+        **sequential_trial.to_payload(),
+    }
+    _write_json(sequential_trial_path, sequential_trial_payload)
+
     stage_records: list[_StageManifestRecord] = []
     manifest_paths: dict[str, Path] = {}
     stage_trace_ids: dict[str, str] = {}
@@ -717,27 +1179,28 @@ def run_alpha_discovery_lane(
         lineage_parent_hash=None,
         lineage_parent_stage=None,
         inputs={
-            "run_id": run_id,
-            "candidate_id": candidate_id,
-            "repository": resolved_repository or "",
-            "base": resolved_base or "",
-            "head": resolved_head or "",
-            "priority_id": resolved_priority_id or "",
+            'run_id': run_id,
+            'candidate_id': candidate_id,
+            'repository': resolved_repository or '',
+            'base': resolved_base or '',
+            'head': resolved_head or '',
+            'priority_id': resolved_priority_id or '',
         },
         input_artifacts={
-            "train_prices": train_snapshot_path,
-            "test_prices": test_snapshot_path,
-            "gate_policy": gate_policy_path,
+            'train_prices': train_snapshot_path,
+            'test_prices': test_snapshot_path,
+            'gate_policy': gate_policy_path,
         },
         output_artifacts={
-            "search_result": search_result_path,
-            "best_candidate": best_candidate_path,
+            'search_result': search_result_path,
+            'best_candidate': best_candidate_path,
+            'attempt_ledger': attempt_ledger_path,
         },
         created_at=now,
     )
     stage_records.append(candidate_generation_stage_record)
     manifest_paths[_STAGE_CANDIDATE_GENERATION] = (
-        stages_output_dir / f"{_STAGE_CANDIDATE_GENERATION}-manifest.json"
+        stages_output_dir / f'{_STAGE_CANDIDATE_GENERATION}-manifest.json'
     )
     stage_trace_ids[_STAGE_CANDIDATE_GENERATION] = (
         candidate_generation_stage_record.stage_trace_id
@@ -747,71 +1210,120 @@ def run_alpha_discovery_lane(
         search_result,
         policy_payload,
     )
+    validation_failures = [
+        f'validation_{item.test_name}_failed'
+        for item in strategy_factory.validation_tests
+        if item.status != 'pass'
+    ]
+    gate_allowed = evaluation_passed and not validation_failures
+    prerequisite_reasons: list[str] = []
+    if requested_mode == 'live':
+        if strategy_factory.cost_calibration.status != 'calibrated':
+            prerequisite_reasons.append('cost_calibration_not_calibrated')
+        if sequential_trial.status != 'paper_ready':
+            prerequisite_reasons.append('sequential_trial_not_live_ready')
+    elif requested_mode == 'paper':
+        if sequential_trial.status not in {'paper_ready', 'paper_only'}:
+            prerequisite_reasons.append('sequential_trial_not_paper_ready')
+    prerequisite_allowed = len(prerequisite_reasons) == 0
+    combined_reasons = sorted(set(reasons + validation_failures + prerequisite_reasons))
     evidence_summary = PromotionEvidenceSummary(
         fold_metrics_count=1,
-        stress_metrics_count=1,
+        stress_metrics_count=len(strategy_factory.stress_results),
         rationale_present=True,
-        evidence_complete=len(checks) > 0 and all(
-            item.get("status") == "pass" for item in checks
-        ),
-        reasons=sorted(reasons),
+        evidence_complete=gate_allowed and prerequisite_allowed,
+        reasons=combined_reasons,
     )
     recommendation = build_promotion_recommendation(
         run_id=run_id,
         candidate_id=candidate_id,
         requested_mode=requested_mode,
         recommended_mode=requested_mode,
-        gate_allowed=evaluation_passed,
-        prerequisite_allowed=True,
+        gate_allowed=gate_allowed,
+        prerequisite_allowed=prerequisite_allowed,
         rollback_ready=True,
         fold_metrics_count=1,
-        stress_metrics_count=1,
-        rationale="alpha lane recommendation",
-        reasons=sorted(reasons),
+        stress_metrics_count=len(strategy_factory.stress_results),
+        rationale='strategy factory alpha recommendation',
+        reasons=combined_reasons,
     )
     recommendation_trace_id = recommendation.trace_id
 
     evaluation_payload = {
-        "schema_version": "alpha-evaluation-v1",
-        "run_id": run_id,
-        "candidate_id": candidate_id,
-        "policy": _coerce_jsonable(policy_payload),
-        "search_accepted": search_result.accepted,
-        "search_reason": search_result.reason,
-        "checks": checks,
-        "evaluation_passed": evaluation_passed,
-        "recommendation": recommendation.to_payload(),
-        "evidence": {
-            "best_total_return": search_result.best.test.total_return,
-            "best_sharpe": search_result.best.test.sharpe,
-            "best_train_total_return": search_result.best.train.total_return,
-            "best_train_sharpe": search_result.best.train.sharpe,
-            "best_test_max_drawdown": search_result.best.test.max_drawdown,
-            "top_n": 5,
+        'schema_version': 'alpha-evaluation-v2',
+        'run_id': run_id,
+        'candidate_id': candidate_id,
+        'policy': _coerce_jsonable(policy_payload),
+        'search_accepted': search_result.accepted,
+        'search_reason': search_result.reason,
+        'checks': checks,
+        'evaluation_passed': evaluation_passed,
+        'gate_allowed': gate_allowed,
+        'validation_failures': validation_failures,
+        'recommendation': recommendation.to_payload(),
+        'evidence': {
+            'best_total_return': search_result.best.test.total_return,
+            'best_sharpe': search_result.best.test.sharpe,
+            'best_train_total_return': search_result.best.train.total_return,
+            'best_train_sharpe': search_result.best.train.sharpe,
+            'best_test_max_drawdown': search_result.best.test.max_drawdown,
+            'top_n': 5,
         },
-        "evidence_summary": evidence_summary.to_payload(),
-        "evaluation_context": _coerce_jsonable(evaluation_context),
-        "summary": {
-            "train": {
-                "rows": int(train.shape[0]),
-                "symbols": int(train.shape[1]),
-                "columns": [str(column) for column in train.columns],
+        'evidence_summary': evidence_summary.to_payload(),
+        'evaluation_context': _coerce_jsonable(evaluation_context),
+        'summary': {
+            'train': {
+                'rows': int(train.shape[0]),
+                'symbols': int(train.shape[1]),
+                'columns': [str(column) for column in train.columns],
             },
-            "test": {
-                "rows": int(test.shape[0]),
-                "symbols": int(test.shape[1]),
-                "columns": [str(column) for column in test.columns],
+            'test': {
+                'rows': int(test.shape[0]),
+                'symbols': int(test.shape[1]),
+                'columns': [str(column) for column in test.columns],
             },
         },
-        "evidence_detail": {
-            "best_train": to_jsonable(search_result.best.train),
-            "best_test": to_jsonable(search_result.best.test),
+        'evidence_detail': {
+            'best_train': to_jsonable(search_result.best.train),
+            'best_test': to_jsonable(search_result.best.test),
+            'train_equity': {
+                'start': float(train_equity.iloc[0]),
+                'end': float(train_equity.iloc[-1]),
+            },
+            'test_equity': {
+                'start': float(test_equity.iloc[0]),
+                'end': float(test_equity.iloc[-1]),
+            },
+        },
+        'strategy_factory': {
+            'candidate_family': strategy_factory.candidate_family,
+            'canonical_spec': strategy_factory.canonical_spec,
+            'semantic_hash': strategy_factory.semantic_hash,
+            'economic_rationale': strategy_factory.economic_rationale,
+            'complexity_score': strategy_factory.complexity_score,
+            'discovery_rank': strategy_factory.discovery_rank,
+            'posterior_edge_summary': strategy_factory.posterior_edge_summary,
+            'economic_validity_card': strategy_factory.economic_validity_card,
+            'valid_regime_envelope': strategy_factory.valid_regime_envelope,
+            'invalidation_clauses': strategy_factory.invalidation_clauses,
+            'null_comparator_summary': strategy_factory.null_comparator_summary,
+            'fold_stat_bundle': strategy_factory.fold_stat_bundle,
+            'validation_tests': [
+                item.to_payload() for item in strategy_factory.validation_tests
+            ],
+            'cost_calibration': cost_calibration_payload,
+            'sequential_trial_seed': sequential_trial_payload,
         },
     }
-    evaluation_report_path.write_text(
-        json.dumps(evaluation_payload, indent=2),
-        encoding="utf-8",
-    )
+    _write_json(evaluation_report_path, evaluation_payload)
+
+    evaluation_output_artifacts: dict[str, Path | None] = {
+        'evaluation_report': evaluation_report_path,
+        'attempt_ledger': attempt_ledger_path,
+        'cost_calibration': cost_calibration_path,
+    }
+    for test_name, artifact_path in validation_artifact_paths.items():
+        evaluation_output_artifacts[f'validation_{test_name}'] = artifact_path
 
     evaluation_stage_record = _write_stage_manifest(
         stage=_STAGE_EVALUATION,
@@ -822,43 +1334,47 @@ def run_alpha_discovery_lane(
         lineage_parent_hash=candidate_generation_stage_record.lineage_hash,
         lineage_parent_stage=candidate_generation_stage_record.stage,
         inputs={
-            "run_id": run_id,
-            "candidate_id": candidate_id,
-            "recommendation_trace_id": recommendation_trace_id,
+            'run_id': run_id,
+            'candidate_id': candidate_id,
+            'recommendation_trace_id': recommendation_trace_id,
         },
         input_artifacts={
-            "search_result": search_result_path,
-            "best_candidate": best_candidate_path,
+            'search_result': search_result_path,
+            'best_candidate': best_candidate_path,
         },
-        output_artifacts={
-            "evaluation_report": evaluation_report_path,
-        },
+        output_artifacts=evaluation_output_artifacts,
         created_at=now,
     )
     stage_records.append(evaluation_stage_record)
     manifest_paths[_STAGE_EVALUATION] = (
-        stages_output_dir / f"{_STAGE_EVALUATION}-manifest.json"
+        stages_output_dir / f'{_STAGE_EVALUATION}-manifest.json'
     )
     stage_trace_ids[_STAGE_EVALUATION] = evaluation_stage_record.stage_trace_id
 
     recommendation_payload: dict[str, Any] = {
-        "schema_version": "alpha-promotion-recommendation-v1",
-        "run_id": run_id,
-        "candidate_id": candidate_id,
-        "promotion_target": requested_mode,
-        "recommendation": recommendation.to_payload(),
-        "checks": {
-            "policy": _coerce_jsonable(policy_payload),
-            "evaluation_checks": checks,
+        'schema_version': 'alpha-promotion-recommendation-v2',
+        'run_id': run_id,
+        'candidate_id': candidate_id,
+        'promotion_target': requested_mode,
+        'recommendation': recommendation.to_payload(),
+        'checks': {
+            'policy': _coerce_jsonable(policy_payload),
+            'evaluation_checks': checks,
+            'validation_tests': [item.to_payload() for item in strategy_factory.validation_tests],
+            'prerequisite_reasons': prerequisite_reasons,
         },
-        "evaluation_passed": evaluation_passed,
-        "evidence": evidence_summary.to_payload(),
-        "recommendation_trace_id": recommendation_trace_id,
+        'evaluation_passed': evaluation_passed,
+        'gate_allowed': gate_allowed,
+        'prerequisite_allowed': prerequisite_allowed,
+        'evidence': evidence_summary.to_payload(),
+        'strategy_factory': {
+            'cost_calibration': cost_calibration_payload,
+            'sequential_trial': sequential_trial_payload,
+            'null_comparator_summary': strategy_factory.null_comparator_summary,
+        },
+        'recommendation_trace_id': recommendation_trace_id,
     }
-    recommendation_artifact_path.write_text(
-        json.dumps(recommendation_payload, indent=2),
-        encoding="utf-8",
-    )
+    _write_json(recommendation_artifact_path, recommendation_payload)
 
     recommendation_stage_record = _write_stage_manifest(
         stage=_STAGE_RECOMMENDATION,
@@ -869,21 +1385,23 @@ def run_alpha_discovery_lane(
         lineage_parent_hash=evaluation_stage_record.lineage_hash,
         lineage_parent_stage=evaluation_stage_record.stage,
         inputs={
-            "run_id": run_id,
-            "candidate_id": candidate_id,
-            "recommendation_trace_id": recommendation_trace_id,
+            'run_id': run_id,
+            'candidate_id': candidate_id,
+            'recommendation_trace_id': recommendation_trace_id,
         },
         input_artifacts={
-            "evaluation_report": evaluation_report_path,
+            'evaluation_report': evaluation_report_path,
+            'cost_calibration': cost_calibration_path,
         },
         output_artifacts={
-            "recommendation": recommendation_artifact_path,
+            'recommendation': recommendation_artifact_path,
+            'sequential_trial': sequential_trial_path,
         },
         created_at=now,
     )
     stage_records.append(recommendation_stage_record)
     manifest_paths[_STAGE_RECOMMENDATION] = (
-        stages_output_dir / f"{_STAGE_RECOMMENDATION}-manifest.json"
+        stages_output_dir / f'{_STAGE_RECOMMENDATION}-manifest.json'
     )
     stage_trace_ids[_STAGE_RECOMMENDATION] = recommendation_stage_record.stage_trace_id
 
@@ -891,85 +1409,136 @@ def run_alpha_discovery_lane(
         stage_records=stage_records,
         manifest_paths=manifest_paths,
     )
-    replay_artifact_hashes = _artifact_hashes(
-        {
-            "train_prices": train_snapshot_path,
-            "test_prices": test_snapshot_path,
-            "search_result": search_result_path,
-            "best_candidate": best_candidate_path,
-            "evaluation_report": evaluation_report_path,
-            "recommendation_artifact": recommendation_artifact_path,
-            "candidate_generation_manifest": manifest_paths[_STAGE_CANDIDATE_GENERATION],
-            "evaluation_manifest": manifest_paths[_STAGE_EVALUATION],
-            "recommendation_manifest": manifest_paths[_STAGE_RECOMMENDATION],
-        }
-    )
+    replay_artifacts: dict[str, Path | None] = {
+        'train_prices': train_snapshot_path,
+        'test_prices': test_snapshot_path,
+        'search_result': search_result_path,
+        'best_candidate': best_candidate_path,
+        'attempt_ledger': attempt_ledger_path,
+        'evaluation_report': evaluation_report_path,
+        'recommendation_artifact': recommendation_artifact_path,
+        'sequential_trial': sequential_trial_path,
+        'cost_calibration': cost_calibration_path,
+        'candidate_generation_manifest': manifest_paths[_STAGE_CANDIDATE_GENERATION],
+        'evaluation_manifest': manifest_paths[_STAGE_EVALUATION],
+        'recommendation_manifest': manifest_paths[_STAGE_RECOMMENDATION],
+    }
+    for test_name, artifact_path in validation_artifact_paths.items():
+        replay_artifacts[f'validation_{test_name}'] = artifact_path
+    replay_artifact_hashes = _artifact_hashes(replay_artifacts)
     candidate_spec_payload = {
-        "schema_version": "alpha-candidate-spec-v1",
-        "run_id": run_id,
-        "candidate_id": candidate_id,
-        "generated_at": now.isoformat(),
-        "train_prices": {
-            "path": str(train_snapshot_path),
-            "sha256": _sha256_path(train_snapshot_path),
+        'schema_version': 'alpha-candidate-spec-v2',
+        'run_id': run_id,
+        'candidate_id': candidate_id,
+        'generated_at': now.isoformat(),
+        'train_prices': {
+            'path': str(train_snapshot_path),
+            'sha256': _sha256_path(train_snapshot_path),
         },
-        "test_prices": {
-            "path": str(test_snapshot_path),
-            "sha256": _sha256_path(test_snapshot_path),
+        'test_prices': {
+            'path': str(test_snapshot_path),
+            'sha256': _sha256_path(test_snapshot_path),
         },
-        "search": {
-            "params": {
-                "lookback_days": lookback_values,
-                "vol_lookback_days": vol_lookback_values,
-                "target_daily_vols": target_daily_vol_values,
-                "max_gross_leverages": max_gross_leverage_values,
-                "long_only": bool(long_only),
-                "cost_bps_per_turnover": float(cost_bps_per_turnover),
+        'search': {
+            'params': {
+                'lookback_days': lookback_values,
+                'vol_lookback_days': vol_lookback_values,
+                'target_daily_vols': target_daily_vol_values,
+                'max_gross_leverages': max_gross_leverage_values,
+                'long_only': bool(long_only),
+                'cost_bps_per_turnover': float(cost_bps_per_turnover),
             },
-            "best_total_return": search_result.best.test.total_return,
-            "best_sharpe": search_result.best.test.sharpe,
-            "best_train_total_return": search_result.best.train.total_return,
-            "best_train_sharpe": search_result.best.train.sharpe,
+            'best_total_return': search_result.best.test.total_return,
+            'best_sharpe': search_result.best.test.sharpe,
+            'best_train_total_return': search_result.best.train.total_return,
+            'best_train_sharpe': search_result.best.train.sharpe,
         },
-        "artifacts": {
-            "train_prices": str(train_snapshot_path),
-            "test_prices": str(test_snapshot_path),
-            "search_result": str(search_result_path),
-            "best_candidate": str(best_candidate_path),
-            "evaluation_report": str(evaluation_report_path),
-            "recommendation_artifact": str(recommendation_artifact_path),
-            "candidate_generation_manifest": str(manifest_paths[_STAGE_CANDIDATE_GENERATION]),
-            "evaluation_manifest": str(manifest_paths[_STAGE_EVALUATION]),
-            "recommendation_manifest": str(manifest_paths[_STAGE_RECOMMENDATION]),
+        'strategy_factory': {
+            'candidate_family': strategy_factory.candidate_family,
+            'canonical_spec': strategy_factory.canonical_spec,
+            'semantic_hash': strategy_factory.semantic_hash,
+            'economic_rationale': strategy_factory.economic_rationale,
+            'complexity_score': strategy_factory.complexity_score,
+            'discovery_rank': strategy_factory.discovery_rank,
+            'posterior_edge_summary': strategy_factory.posterior_edge_summary,
+            'economic_validity_card': strategy_factory.economic_validity_card,
+            'valid_regime_envelope': strategy_factory.valid_regime_envelope,
+            'invalidation_clauses': strategy_factory.invalidation_clauses,
+            'null_comparator_summary': strategy_factory.null_comparator_summary,
+            'fold_stat_bundle': strategy_factory.fold_stat_bundle,
+            'challenge_lane': bool(challenge_lane),
+            'attempt_count': len(strategy_factory.attempts),
         },
-        "replay_artifact_hashes": replay_artifact_hashes,
-        "recommendation": recommendation.to_payload(),
-        "evidence_summary": evidence_summary.to_payload(),
-        "stage_manifest_refs": {
+        'artifacts': {
+            key: str(value) for key, value in replay_artifacts.items() if value is not None
+        },
+        'replay_artifact_hashes': replay_artifact_hashes,
+        'recommendation': recommendation.to_payload(),
+        'evidence_summary': evidence_summary.to_payload(),
+        'stage_manifest_refs': {
             _STAGE_CANDIDATE_GENERATION: str(
                 manifest_paths[_STAGE_CANDIDATE_GENERATION]
             ),
             _STAGE_EVALUATION: str(manifest_paths[_STAGE_EVALUATION]),
             _STAGE_RECOMMENDATION: str(manifest_paths[_STAGE_RECOMMENDATION]),
         },
-        "stage_trace_ids": {
+        'stage_trace_ids': {
             _STAGE_CANDIDATE_GENERATION: candidate_generation_stage_record.stage_trace_id,
             _STAGE_EVALUATION: evaluation_stage_record.stage_trace_id,
             _STAGE_RECOMMENDATION: recommendation_stage_record.stage_trace_id,
         },
-        "stage_lineage": stage_lineage_payload,
-        "input_context": {
-            "repository": resolved_repository,
-            "base": resolved_base,
-            "head": resolved_head,
-            "priority_id": resolved_priority_id,
+        'stage_lineage': stage_lineage_payload,
+        'input_context': {
+            'repository': resolved_repository,
+            'base': resolved_base,
+            'head': resolved_head,
+            'priority_id': resolved_priority_id,
         },
-        "policy": _coerce_jsonable(policy_payload),
+        'policy': _coerce_jsonable(policy_payload),
     }
-    candidate_spec_path.write_text(
-        json.dumps(candidate_spec_payload, indent=2),
-        encoding="utf-8",
-    )
+    _write_json(candidate_spec_path, candidate_spec_payload)
+
+    if persist_results and session_factory is not None:
+        _persist_strategy_factory_results(
+            session_factory=session_factory,
+            run_id=run_id,
+            candidate_id=candidate_id,
+            now=now,
+            requested_mode=requested_mode,
+            resolved_repository=resolved_repository,
+            resolved_head=resolved_head,
+            train=train,
+            test=test,
+            search_result=search_result,
+            stage_lineage_payload=stage_lineage_payload,
+            stage_trace_ids=stage_trace_ids,
+            manifest_paths=manifest_paths,
+            replay_artifact_hashes=replay_artifact_hashes,
+            recommendation_trace_id=recommendation_trace_id,
+            strategy_factory_summary={
+                'candidate_family': strategy_factory.candidate_family,
+                'canonical_spec': strategy_factory.canonical_spec,
+                'semantic_hash': strategy_factory.semantic_hash,
+                'economic_rationale': strategy_factory.economic_rationale,
+                'complexity_score': strategy_factory.complexity_score,
+                'discovery_rank': strategy_factory.discovery_rank,
+                'posterior_edge_summary': strategy_factory.posterior_edge_summary,
+                'economic_validity_card': strategy_factory.economic_validity_card,
+                'valid_regime_envelope': strategy_factory.valid_regime_envelope,
+                'invalidation_clauses': strategy_factory.invalidation_clauses,
+                'null_comparator_summary': strategy_factory.null_comparator_summary,
+                'fold_stat_bundle': strategy_factory.fold_stat_bundle,
+                'stress_results': strategy_factory.stress_results,
+            },
+            validation_payloads=validation_payloads,
+            attempt_payload=attempt_payload,
+            cost_calibration_payload=cost_calibration_payload,
+            sequential_trial_payload=sequential_trial_payload,
+            evaluation_passed=evaluation_passed,
+            promotion_allowed=bool(recommendation.eligible),
+            recommendation_payload=recommendation_payload,
+            recommendation_rationale='strategy factory alpha recommendation',
+        )
 
     _write_iteration_notes(
         artifact_root=notes_root,
@@ -996,6 +1565,10 @@ def run_alpha_discovery_lane(
         candidate_generation_manifest_path=manifest_paths[_STAGE_CANDIDATE_GENERATION],
         evaluation_manifest_path=manifest_paths[_STAGE_EVALUATION],
         recommendation_manifest_path=manifest_paths[_STAGE_RECOMMENDATION],
+        attempt_ledger_path=attempt_ledger_path,
+        validation_artifact_paths=validation_artifact_paths,
+        sequential_trial_path=sequential_trial_path,
+        cost_calibration_path=cost_calibration_path,
         recommendation_trace_id=recommendation_trace_id,
         stage_trace_ids=stage_trace_ids,
         stage_lineage_root=stage_records[0].lineage_hash if stage_records else None,

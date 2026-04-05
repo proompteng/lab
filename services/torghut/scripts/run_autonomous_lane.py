@@ -104,6 +104,24 @@ def main() -> int:
         "--promotion-target", choices=("shadow", "paper", "live"), default="paper"
     )
     parser.add_argument(
+        "--alpha-train-prices",
+        type=Path,
+        default=None,
+        help="Optional CSV used to run the strategy-factory sidecar on train data.",
+    )
+    parser.add_argument(
+        "--alpha-test-prices",
+        type=Path,
+        default=None,
+        help="Optional CSV used to run the strategy-factory sidecar on test data.",
+    )
+    parser.add_argument(
+        "--alpha-gate-policy",
+        type=Path,
+        default=None,
+        help="Optional gate policy JSON for the strategy-factory sidecar.",
+    )
+    parser.add_argument(
         "--strategy-configmap",
         type=Path,
         default=Path("argocd/applications/torghut/strategy-configmap.yaml"),
@@ -151,6 +169,9 @@ def main() -> int:
         code_version=_resolve_git_sha(),
         approval_token=args.approval_token,
         persist_results=args.persist_results,
+        alpha_train_prices_path=args.alpha_train_prices,
+        alpha_test_prices_path=args.alpha_test_prices,
+        alpha_gate_policy_path=args.alpha_gate_policy,
     )
 
     payload = {

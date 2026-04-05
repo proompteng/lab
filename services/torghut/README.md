@@ -350,6 +350,12 @@ uv run python scripts/start_historical_simulation.py \
   --confirm START_HISTORICAL_SIMULATION
 ```
 
+If the dataset manifest includes an `autonomy.enabled=true` block, the wrapper now runs the
+deterministic autonomous/strategy-factory lane after report generation and writes
+`autonomy-report.json` alongside the normal historical-simulation artifacts. That uses explicit
+manifest inputs (`signals`, `strategy_config`, `gate_policy`, optional `alpha_*` CSVs) instead of
+deriving research fixtures from replay internals.
+
 `--mode apply` remains available for split-run operation:
 
 ```bash

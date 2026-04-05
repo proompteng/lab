@@ -1,5 +1,5 @@
 """Deterministic autonomous lane: research -> gate evaluation -> paper candidate patch."""
-# pyright: reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedImport=false, reportUnusedFunction=false, reportUnusedVariable=false, reportGeneralTypeIssues=false
+# pyright: reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedImport=false, reportUnusedFunction=false, reportUnusedVariable=false, reportGeneralTypeIssues=false, reportMissingTypeStubs=false
 
 from __future__ import annotations
 
@@ -16,16 +16,21 @@ from typing import Any, Callable, Mapping, Sequence, cast
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+import pandas as pd
 import yaml
 
 from ...config import settings
 from ...db import SessionLocal
 from ...models import (
+    ResearchAttempt,
     ResearchCandidate,
+    ResearchCostCalibration,
     ResearchFoldMetrics,
     ResearchPromotion,
     ResearchRun,
+    ResearchSequentialTrial,
     ResearchStressMetrics,
+    ResearchValidationTest,
     StrategyCapitalAllocation,
     StrategyHypothesis,
     StrategyHypothesisMetricWindow,
@@ -41,6 +46,7 @@ from ...models import (
     VNextShadowLiveDeviation,
     VNextSimulationCalibration,
 )
+from ..alpha.lane import AlphaLaneResult, run_alpha_discovery_lane
 from ..completion import build_completion_trace, persist_completion_trace
 from ..evaluation import (
     FoldResult,
@@ -356,6 +362,168 @@ class AutonomousLaneResult:
     profitability_manifest_path: Path
     stage_trace_ids: dict[str, str] = field(default_factory=dict)
     stage_lineage_root: str | None = None
+
+
+@dataclass(frozen=True)
+class _StrategyFactoryBridge:
+    result: AlphaLaneResult
+    candidate_spec_payload: dict[str, Any]
+    evaluation_payload: dict[str, Any]
+    recommendation_payload: dict[str, Any]
+    attempt_payload: dict[str, Any]
+    validation_payloads: dict[str, dict[str, Any]]
+    sequential_trial_payload: dict[str, Any]
+    cost_calibration_payload: dict[str, Any]
+
+
+def _load_price_frame(path: Path) -> pd.DataFrame:
+    return pd.read_csv(path, index_col=0, parse_dates=True)
+
+
+def _build_strategy_factory_bridge(
+    *,
+    output_dir: Path,
+    notes_artifact_root: str | None,
+    train_prices_path: Path | None,
+    test_prices_path: Path | None,
+    alpha_gate_policy_path: Path | None,
+    repository: str | None,
+    base: str | None,
+    head: str | None,
+    priority_id: str | None,
+    promotion_target: str,
+    now: datetime,
+) -> _StrategyFactoryBridge | None:
+    if train_prices_path is None or test_prices_path is None:
+        return None
+
+    bridge_result = run_alpha_discovery_lane(
+        artifact_path=output_dir / 'strategy-factory',
+        train_prices=_load_price_frame(train_prices_path),
+        test_prices=_load_price_frame(test_prices_path),
+        repository=repository,
+        base=base,
+        head=head,
+        priority_id=priority_id,
+        notes_artifact_path=notes_artifact_root,
+        gate_policy_path=alpha_gate_policy_path,
+        promotion_target=promotion_target,
+        evaluated_at=now,
+        persist_results=False,
+    )
+    validation_payloads: dict[str, dict[str, Any]] = {}
+    for test_name, artifact_path in bridge_result.validation_artifact_paths.items():
+        validation_payload = _load_json_if_exists(artifact_path)
+        if validation_payload is None:
+            continue
+        validation_payloads[test_name] = validation_payload
+    return _StrategyFactoryBridge(
+        result=bridge_result,
+        candidate_spec_payload=_load_json_if_exists(bridge_result.candidate_spec_path)
+        or {},
+        evaluation_payload=_load_json_if_exists(bridge_result.evaluation_report_path)
+        or {},
+        recommendation_payload=_load_json_if_exists(
+            bridge_result.recommendation_artifact_path
+        )
+        or {},
+        attempt_payload=_load_json_if_exists(bridge_result.attempt_ledger_path) or {},
+        validation_payloads=validation_payloads,
+        sequential_trial_payload=_load_json_if_exists(
+            bridge_result.sequential_trial_path
+        )
+        or {},
+        cost_calibration_payload=_load_json_if_exists(
+            bridge_result.cost_calibration_path
+        )
+        or {},
+    )
+
+
+def _strategy_factory_gate_summary(
+    bridge: _StrategyFactoryBridge,
+    *,
+    promotion_target: str,
+) -> tuple[bool, list[str], dict[str, Any]]:
+    reasons: list[str] = []
+    recommendation = (
+        cast(dict[str, Any], bridge.recommendation_payload.get('recommendation'))
+        if isinstance(bridge.recommendation_payload.get('recommendation'), dict)
+        else {}
+    )
+    strategy_payload = (
+        cast(dict[str, Any], bridge.candidate_spec_payload.get('strategy_factory'))
+        if isinstance(bridge.candidate_spec_payload.get('strategy_factory'), dict)
+        else {}
+    )
+    economic_card = (
+        cast(dict[str, Any], strategy_payload.get('economic_validity_card'))
+        if isinstance(strategy_payload.get('economic_validity_card'), dict)
+        else {}
+    )
+    comparator = (
+        cast(dict[str, Any], strategy_payload.get('null_comparator_summary'))
+        if isinstance(strategy_payload.get('null_comparator_summary'), dict)
+        else {}
+    )
+    sequential = bridge.sequential_trial_payload
+    calibration = bridge.cost_calibration_payload
+
+    if not bool(recommendation.get('eligible')):
+        reasons.append('strategy_factory_recommendation_not_eligible')
+    if str(economic_card.get('status') or '').strip().lower() != 'pass':
+        reasons.append('strategy_factory_economic_validity_failed')
+    if not bool(comparator.get('baseline_outperformed')):
+        reasons.append('strategy_factory_baseline_not_outperformed')
+
+    sequential_status = str(sequential.get('status') or '').strip().lower()
+    calibration_status = str(calibration.get('status') or '').strip().lower()
+    if promotion_target in {'paper', 'live'} and sequential_status not in {
+        'paper_ready',
+        'paper_only',
+    }:
+        reasons.append('strategy_factory_sequential_not_ready')
+    if promotion_target == 'live':
+        if sequential_status != 'paper_ready':
+            reasons.append('strategy_factory_live_requires_paper_ready')
+        if calibration_status != 'calibrated':
+            reasons.append('strategy_factory_live_requires_calibrated_costs')
+
+    summary = {
+        'allowed': len(reasons) == 0,
+        'reasons': reasons,
+        'candidate_spec_artifact': str(bridge.result.candidate_spec_path),
+        'evaluation_artifact': str(bridge.result.evaluation_report_path),
+        'recommendation_artifact': str(bridge.result.recommendation_artifact_path),
+        'attempt_ledger_artifact': str(bridge.result.attempt_ledger_path),
+        'sequential_trial_artifact': str(bridge.result.sequential_trial_path),
+        'cost_calibration_artifact': str(bridge.result.cost_calibration_path),
+        'sequential_status': sequential_status or None,
+        'cost_calibration_status': calibration_status or None,
+        'baseline_outperformed': comparator.get('baseline_outperformed'),
+        'posterior_edge_summary': strategy_payload.get('posterior_edge_summary'),
+    }
+    return len(reasons) == 0, reasons, summary
+
+
+def _strategy_factory_artifact_refs(
+    bridge: _StrategyFactoryBridge | None,
+) -> list[str]:
+    if bridge is None:
+        return []
+    refs = [
+        bridge.result.candidate_spec_path,
+        bridge.result.evaluation_report_path,
+        bridge.result.recommendation_artifact_path,
+        bridge.result.attempt_ledger_path,
+        bridge.result.sequential_trial_path,
+        bridge.result.cost_calibration_path,
+        bridge.result.candidate_generation_manifest_path,
+        bridge.result.evaluation_manifest_path,
+        bridge.result.recommendation_manifest_path,
+        *bridge.result.validation_artifact_paths.values(),
+    ]
+    return [str(path) for path in refs]
 
 
 def upsert_autonomy_no_signal_run(
@@ -1163,6 +1331,16 @@ def _decimal_or_zero(value: object) -> Decimal:
     return decimal_value
 
 
+def _decimal_or_none(value: object) -> Decimal | None:
+    try:
+        decimal_value = Decimal(str(value))
+    except Exception:
+        return None
+    if decimal_value.is_nan() or decimal_value.is_infinite():
+        return None
+    return decimal_value
+
+
 def _normalize_expert_weights(weights: Mapping[str, Decimal]) -> dict[str, Decimal]:
     total = Decimal("0")
     for value in weights.values():
@@ -1906,6 +2084,9 @@ def run_autonomous_lane(
     design_doc: str | None = None,
     governance_change: str = "autonomous-promotion",
     governance_reason: str | None = None,
+    alpha_train_prices_path: Path | None = None,
+    alpha_test_prices_path: Path | None = None,
+    alpha_gate_policy_path: Path | None = None,
 ) -> AutonomousLaneResult:
     """Run deterministic phase-1/2 autonomous lane and emit artifacts."""
 
@@ -2001,6 +2182,11 @@ def run_autonomous_lane(
     stage_trace_ids: dict[str, str] = {}
     hmm_state_posterior_payload: dict[str, Any] = {}
     expert_router_registry_payload: dict[str, Any] = {}
+    strategy_factory_bridge: _StrategyFactoryBridge | None = None
+    strategy_factory_allowed = True
+    strategy_factory_reasons: list[str] = []
+    strategy_factory_summary: dict[str, Any] = {}
+    strategy_factory_artifact_refs: list[str] = []
 
     factory = session_factory or SessionLocal
     if persist_results:
@@ -2016,6 +2202,35 @@ def run_autonomous_lane(
             now=now,
         )
     try:
+        strategy_factory_bridge = _build_strategy_factory_bridge(
+            output_dir=output_dir,
+            notes_artifact_root=notes_artifact_root,
+            train_prices_path=alpha_train_prices_path,
+            test_prices_path=alpha_test_prices_path,
+            alpha_gate_policy_path=alpha_gate_policy_path,
+            repository=resolved_governance_repository if isinstance(resolved_governance_repository, str) else repository,
+            base=resolved_governance_base if isinstance(resolved_governance_base, str) else base,
+            head=resolved_governance_head if isinstance(resolved_governance_head, str) else head,
+            priority_id=(
+                resolved_governance_priority_id
+                if isinstance(resolved_governance_priority_id, str)
+                else resolved_priority_id
+            ),
+            promotion_target=promotion_target,
+            now=now,
+        )
+        if strategy_factory_bridge is not None:
+            (
+                strategy_factory_allowed,
+                strategy_factory_reasons,
+                strategy_factory_summary,
+            ) = _strategy_factory_gate_summary(
+                strategy_factory_bridge,
+                promotion_target=promotion_target,
+            )
+            strategy_factory_artifact_refs = _strategy_factory_artifact_refs(
+                strategy_factory_bridge
+            )
         ordered_signals = sorted(
             signals, key=lambda item: (item.event_ts, item.symbol, item.seq or 0)
         )
@@ -2776,6 +2991,13 @@ def run_autonomous_lane(
                 "artifact_authority": _artifact_authority_for_evidence("promotion_rationale"),
             },
         }
+        if strategy_factory_bridge is not None:
+            gate_report_payload["promotion_evidence"]["strategy_factory"] = {
+                **strategy_factory_summary,
+                "artifact_authority": _artifact_authority_for_evidence(
+                    "strategy_factory"
+                ),
+            }
         gate_report_trace_id = _trace_id(gate_report_payload)
         gate_report_payload["dependency_quorum"] = candidate_dependency_quorum_payload
         gate_report_payload["alpha_readiness"] = candidate_alpha_readiness_payload
@@ -2911,6 +3133,76 @@ def run_autonomous_lane(
             "dependency_quorum": candidate_dependency_quorum_payload,
             "alpha_readiness": candidate_alpha_readiness_payload,
         }
+        if strategy_factory_bridge is not None:
+            research_spec["artifacts"].update(
+                {
+                    "strategy_factory_candidate_spec": str(
+                        strategy_factory_bridge.result.candidate_spec_path
+                    ),
+                    "strategy_factory_evaluation_report": str(
+                        strategy_factory_bridge.result.evaluation_report_path
+                    ),
+                    "strategy_factory_recommendation": str(
+                        strategy_factory_bridge.result.recommendation_artifact_path
+                    ),
+                    "strategy_factory_attempt_ledger": str(
+                        strategy_factory_bridge.result.attempt_ledger_path
+                    ),
+                    "strategy_factory_sequential_trial": str(
+                        strategy_factory_bridge.result.sequential_trial_path
+                    ),
+                    "strategy_factory_cost_calibration": str(
+                        strategy_factory_bridge.result.cost_calibration_path
+                    ),
+                    "strategy_factory_candidate_generation_manifest": str(
+                        strategy_factory_bridge.result.candidate_generation_manifest_path
+                    ),
+                    "strategy_factory_evaluation_manifest": str(
+                        strategy_factory_bridge.result.evaluation_manifest_path
+                    ),
+                    "strategy_factory_recommendation_manifest": str(
+                        strategy_factory_bridge.result.recommendation_manifest_path
+                    ),
+                }
+            )
+            for (
+                validation_name,
+                validation_path,
+            ) in strategy_factory_bridge.result.validation_artifact_paths.items():
+                research_spec["artifacts"][
+                    f"strategy_factory_validation_{validation_name}"
+                ] = str(validation_path)
+            research_spec["strategy_factory"] = {
+                **strategy_factory_bridge.candidate_spec_payload.get(
+                    "strategy_factory", {}
+                ),
+                "recommendation": strategy_factory_bridge.recommendation_payload.get(
+                    "recommendation"
+                ),
+                "evaluation_summary": strategy_factory_bridge.evaluation_payload.get(
+                    "evidence_summary"
+                ),
+                "attempt_ledger": strategy_factory_bridge.attempt_payload,
+                "validation_tests": list(
+                    strategy_factory_bridge.validation_payloads.values()
+                ),
+                "cost_calibration": strategy_factory_bridge.cost_calibration_payload,
+                "sequential_trial": strategy_factory_bridge.sequential_trial_payload,
+                "stage_manifest_refs": {
+                    "candidate-generation": str(
+                        strategy_factory_bridge.result.candidate_generation_manifest_path
+                    ),
+                    "evaluation": str(
+                        strategy_factory_bridge.result.evaluation_manifest_path
+                    ),
+                    "promotion-recommendation": str(
+                        strategy_factory_bridge.result.recommendation_manifest_path
+                    ),
+                },
+                "stage_trace_ids": dict(strategy_factory_bridge.result.stage_trace_ids),
+                "stage_lineage_root": strategy_factory_bridge.result.stage_lineage_root,
+                "gate_summary": strategy_factory_summary,
+            }
         if runtime_strategies:
             primary_strategy = runtime_strategies[0]
             if primary_strategy.compiler_source == "spec_v2" and primary_strategy.strategy_spec:
@@ -3106,6 +3398,7 @@ def run_autonomous_lane(
             promotion_check_reasons=promotion_check.reasons,
             rollback_check_reasons=rollback_check.reasons,
             promotion_target=promotion_target,
+            additional_reasons=strategy_factory_reasons,
         )
         promotion_recommendation = build_promotion_recommendation(
             run_id=run_id,
@@ -3115,7 +3408,7 @@ def run_autonomous_lane(
             gate_allowed=(
                 gate_report.promotion_allowed and bool(drift_gate_check["allowed"])
             ),
-            prerequisite_allowed=promotion_check.allowed,
+            prerequisite_allowed=promotion_check.allowed and strategy_factory_allowed,
             rollback_ready=rollback_check.ready,
             fold_metrics_count=fold_metrics_count,
             stress_metrics_count=stress_metrics_count,
@@ -3123,6 +3416,7 @@ def run_autonomous_lane(
             reasons=[
                 *gate_report.reasons,
                 *promotion_check.reasons,
+                *strategy_factory_reasons,
                 *rollback_check.reasons,
                 *[
                     str(item)
@@ -3152,6 +3446,7 @@ def run_autonomous_lane(
             "stress_case_count": len(stress_evidence),
             "deeplob_bdlob_contract_required": True,
             "advisor_fallback_slo_required": True,
+            "strategy_factory_required": strategy_factory_bridge is not None,
             "rationale_required": True,
             "rationale_reason_codes": promotion_reasons,
         }
@@ -3182,6 +3477,7 @@ def run_autonomous_lane(
                         str(janus_event_car_path),
                         str(janus_hgrm_reward_path),
                         str(recalibration_report_path),
+                        *strategy_factory_artifact_refs,
                     ],
                 },
                 "promotion_prerequisites": promotion_check.to_payload(),
@@ -3219,10 +3515,15 @@ def run_autonomous_lane(
                             if str(item).strip()
                         ],
                         str(recalibration_report_path),
+                        *strategy_factory_artifact_refs,
                     ]
                 )
             ),
         }
+        if strategy_factory_bridge is not None:
+            promotion_gate_payload["checks"]["strategy_factory"] = dict(
+                strategy_factory_summary
+            )
         promotion_gate_path.write_text(
             json.dumps(promotion_gate_payload, indent=2), encoding="utf-8"
         )
@@ -3380,6 +3681,13 @@ def run_autonomous_lane(
                 "artifact_authority": _artifact_authority_for_evidence("promotion_rationale"),
             },
         }
+        if strategy_factory_bridge is not None:
+            gate_report_payload["promotion_evidence"]["strategy_factory"] = {
+                **strategy_factory_summary,
+                "artifact_authority": _artifact_authority_for_evidence(
+                    "strategy_factory"
+                ),
+            }
         gate_report_payload["promotion_decision"] = {
             "candidate_id": candidate_id,
             "promotion_target": promotion_target,
@@ -3465,6 +3773,22 @@ def run_autonomous_lane(
                 "janus_event_car": janus_event_car_path,
                 "janus_hgrm_reward": janus_hgrm_reward_path,
                 "recalibration_report": recalibration_report_path,
+                **(
+                    {
+                        "strategy_factory_candidate_spec": strategy_factory_bridge.result.candidate_spec_path,
+                        "strategy_factory_evaluation_report": strategy_factory_bridge.result.evaluation_report_path,
+                        "strategy_factory_recommendation": strategy_factory_bridge.result.recommendation_artifact_path,
+                        "strategy_factory_attempt_ledger": strategy_factory_bridge.result.attempt_ledger_path,
+                        "strategy_factory_sequential_trial": strategy_factory_bridge.result.sequential_trial_path,
+                        "strategy_factory_cost_calibration": strategy_factory_bridge.result.cost_calibration_path,
+                        **{
+                            f"strategy_factory_validation_{name}": path
+                            for name, path in strategy_factory_bridge.result.validation_artifact_paths.items()
+                        },
+                    }
+                    if strategy_factory_bridge is not None
+                    else {}
+                ),
             },
             created_at=now,
         )
@@ -3488,6 +3812,7 @@ def run_autonomous_lane(
                 "drift_gate_allowed": bool(drift_gate_check.get("allowed")),
                 "rollback_ready": rollback_check.ready,
                 "prerequisite_allowed": promotion_check.allowed,
+                "strategy_factory_allowed": strategy_factory_allowed,
             },
             "artifact_refs": sorted(
                 set(
@@ -3508,6 +3833,7 @@ def run_autonomous_lane(
                         str(janus_event_car_path),
                         str(janus_hgrm_reward_path),
                         str(recalibration_report_path),
+                        *strategy_factory_artifact_refs,
                     ]
                 )
             ),
@@ -4937,6 +5263,31 @@ def _persist_run_outputs(
         if isinstance(candidate_spec_payload.get("alpha_readiness"), dict)
         else {}
     )
+    strategy_factory_payload = (
+        cast(dict[str, Any], candidate_spec_payload.get("strategy_factory"))
+        if isinstance(candidate_spec_payload.get("strategy_factory"), dict)
+        else {}
+    )
+    strategy_factory_attempt_payload = (
+        cast(dict[str, Any], strategy_factory_payload.get("attempt_ledger"))
+        if isinstance(strategy_factory_payload.get("attempt_ledger"), dict)
+        else {}
+    )
+    strategy_factory_cost_calibration_payload = (
+        cast(dict[str, Any], strategy_factory_payload.get("cost_calibration"))
+        if isinstance(strategy_factory_payload.get("cost_calibration"), dict)
+        else {}
+    )
+    strategy_factory_sequential_payload = (
+        cast(dict[str, Any], strategy_factory_payload.get("sequential_trial"))
+        if isinstance(strategy_factory_payload.get("sequential_trial"), dict)
+        else {}
+    )
+    strategy_factory_validation_payloads = [
+        cast(dict[str, Any], item)
+        for item in cast(list[Any], strategy_factory_payload.get("validation_tests", []))
+        if isinstance(item, dict)
+    ]
 
     with session_factory() as session:
         with session.begin():
@@ -4957,6 +5308,19 @@ def _persist_run_outputs(
             session.execute(
                 delete(ResearchFoldMetrics).where(
                     ResearchFoldMetrics.candidate_id == candidate_id
+                )
+            )
+            session.execute(
+                delete(ResearchAttempt).where(ResearchAttempt.run_id == run_id)
+            )
+            session.execute(
+                delete(ResearchValidationTest).where(
+                    ResearchValidationTest.candidate_id == candidate_id
+                )
+            )
+            session.execute(
+                delete(ResearchSequentialTrial).where(
+                    ResearchSequentialTrial.candidate_id == candidate_id
                 )
             )
             session.execute(
@@ -5024,6 +5388,15 @@ def _persist_run_outputs(
                     StrategyPromotionDecision.candidate_id == candidate_id
                 )
             )
+            calibration_id = _coerce_str(
+                strategy_factory_cost_calibration_payload.get("calibration_id")
+            )
+            if calibration_id:
+                session.execute(
+                    delete(ResearchCostCalibration).where(
+                        ResearchCostCalibration.calibration_id == calibration_id
+                    )
+                )
             should_promote = (
                 effective_promotion_allowed
                 and promotion_recommendation.action == "promote"
@@ -5084,6 +5457,27 @@ def _persist_run_outputs(
                     )
                 },
             }
+            if strategy_factory_payload:
+                metadata_bundle["strategy_factory"] = {
+                    "candidate_family": strategy_factory_payload.get("candidate_family"),
+                    "semantic_hash": strategy_factory_payload.get("semantic_hash"),
+                    "posterior_edge_summary": strategy_factory_payload.get(
+                        "posterior_edge_summary"
+                    ),
+                    "economic_validity_card": strategy_factory_payload.get(
+                        "economic_validity_card"
+                    ),
+                    "null_comparator_summary": strategy_factory_payload.get(
+                        "null_comparator_summary"
+                    ),
+                    "cost_calibration": strategy_factory_cost_calibration_payload,
+                    "sequential_trial": strategy_factory_sequential_payload,
+                    "validation_test_count": len(strategy_factory_validation_payloads),
+                    "attempt_count": len(
+                        cast(list[Any], strategy_factory_attempt_payload.get("attempts", []))
+                    ),
+                    "gate_summary": strategy_factory_payload.get("gate_summary"),
+                }
             recommended_mode = promotion_recommendation.recommended_mode
             lifecycle_payload = {
                 "role": "challenger",
@@ -5120,6 +5514,35 @@ def _persist_run_outputs(
                 lifecycle_status=candidate_status,
                 metadata_bundle=metadata_bundle,
                 recommendation_bundle=promotion_recommendation.to_payload(),
+                candidate_family=_coerce_str(strategy_factory_payload.get("candidate_family")),
+                canonical_spec=strategy_factory_payload.get("canonical_spec"),
+                semantic_hash=_coerce_str(strategy_factory_payload.get("semantic_hash")),
+                economic_rationale=_coerce_str(
+                    strategy_factory_payload.get("economic_rationale")
+                ),
+                complexity_score=_decimal_or_none(
+                    strategy_factory_payload.get("complexity_score")
+                ),
+                discovery_rank=_metric_counter_int(
+                    strategy_factory_payload.get("discovery_rank")
+                )
+                if strategy_factory_payload.get("discovery_rank") is not None
+                else None,
+                posterior_edge_summary=strategy_factory_payload.get(
+                    "posterior_edge_summary"
+                ),
+                economic_validity_card=strategy_factory_payload.get(
+                    "economic_validity_card"
+                ),
+                valid_regime_envelope=strategy_factory_payload.get(
+                    "valid_regime_envelope"
+                ),
+                invalidation_clauses=strategy_factory_payload.get(
+                    "invalidation_clauses"
+                ),
+                null_comparator_summary=strategy_factory_payload.get(
+                    "null_comparator_summary"
+                ),
             )
             session.add(candidate)
 
@@ -5170,6 +5593,16 @@ def _persist_run_outputs(
                         else report.metrics.cost_bps,
                         cost_assumptions=report.impact_assumptions.assumptions,
                         regime_label=regime_label,
+                        stat_bundle=(
+                            strategy_factory_payload.get("fold_stat_bundle")
+                            if fold_order == 1 and strategy_factory_payload
+                            else None
+                        ),
+                        purge_window=0 if strategy_factory_payload else None,
+                        embargo_window=0 if strategy_factory_payload else None,
+                        feature_availability_hash=(
+                            _coerce_str(strategy_factory_payload.get("semantic_hash")) or None
+                        ),
                     ),
                 )
 
@@ -5183,7 +5616,7 @@ def _persist_run_outputs(
                     )
                 )
 
-            evidence_bundle = {
+            evidence_bundle: dict[str, Any] = {
                 "fold_metrics_count": fold_metrics_count,
                 "stress_metrics_count": stress_metrics_count,
                 "rationale_present": bool(promotion_recommendation.rationale),
@@ -5244,6 +5677,10 @@ def _persist_run_outputs(
                     )
                 },
             }
+            if strategy_factory_payload:
+                evidence_bundle["strategy_factory"] = metadata_bundle.get(
+                    "strategy_factory"
+                )
             challenger_decision = {
                 "decision_type": "promotion",
                 "run_id": run_id,
@@ -5344,8 +5781,167 @@ def _persist_run_outputs(
             if run is not None:
                 run.gate_report_trace_id = gate_report_trace_id
                 run.recommendation_trace_id = recommendation_trace_id
+                if strategy_factory_payload:
+                    run.discovery_mode = "strategy_factory_autonomy_v1"
+                    run.generator_family = _coerce_str(
+                        strategy_factory_payload.get("candidate_family"),
+                        "strategy_factory_bridge_v1",
+                    )
+                    run.grammar_version = "strategy_factory.bridge.v1"
+                    run.selection_protocol_version = "autonomy-strategy-factory-v1"
+                    run.pilot_program_id = "torghut-strategy-factory-pilot-v1"
+                    run.kill_criteria_version = "pilot-kill-criteria-v1"
                 run.updated_at = now
                 session.add(run)
+
+            for attempt in cast(
+                list[dict[str, Any]],
+                strategy_factory_attempt_payload.get("attempts", []),
+            ):
+                session.add(
+                    ResearchAttempt(
+                        attempt_id=str(attempt["attempt_id"]),
+                        run_id=run_id,
+                        candidate_hash=cast(str | None, attempt.get("candidate_hash")),
+                        generator_family=cast(
+                            str | None, attempt.get("generator_family")
+                        ),
+                        attempt_stage=str(attempt["attempt_stage"]),
+                        status=str(attempt["status"]),
+                        reason_codes=attempt.get("reason_codes"),
+                        artifact_ref=cast(str | None, attempt.get("artifact_ref")),
+                        metadata_bundle=attempt.get("metadata_bundle"),
+                    )
+                )
+
+            for validation_payload in strategy_factory_validation_payloads:
+                session.add(
+                    ResearchValidationTest(
+                        candidate_id=candidate_id,
+                        test_name=str(validation_payload["test_name"]),
+                        status=str(validation_payload["status"]),
+                        metric_bundle=validation_payload,
+                        artifact_ref=_coerce_str(validation_payload.get("artifact_name"))
+                        or cast(str | None, validation_payload.get("artifact_ref")),
+                        computed_at=now,
+                    )
+                )
+
+            if strategy_factory_sequential_payload:
+                session.add(
+                    ResearchSequentialTrial(
+                        candidate_id=candidate_id,
+                        trial_stage=str(strategy_factory_sequential_payload["trial_stage"]),
+                        account=str(strategy_factory_sequential_payload["account"]),
+                        start_at=datetime.fromisoformat(
+                            str(strategy_factory_sequential_payload["start_at"])
+                        ),
+                        last_update_at=datetime.fromisoformat(
+                            str(strategy_factory_sequential_payload["last_update_at"])
+                        ),
+                        sample_count=_metric_counter_int(
+                            strategy_factory_sequential_payload.get("sample_count")
+                        ),
+                        confidence_sequence_lower=_decimal_or_none(
+                            strategy_factory_sequential_payload.get(
+                                "confidence_sequence_lower"
+                            )
+                        ),
+                        confidence_sequence_upper=_decimal_or_none(
+                            strategy_factory_sequential_payload.get(
+                                "confidence_sequence_upper"
+                            )
+                        ),
+                        posterior_edge_mean=_decimal_or_none(
+                            strategy_factory_sequential_payload.get(
+                                "posterior_edge_mean"
+                            )
+                        ),
+                        posterior_edge_lower=_decimal_or_none(
+                            strategy_factory_sequential_payload.get(
+                                "posterior_edge_lower"
+                            )
+                        ),
+                        status=str(strategy_factory_sequential_payload["status"]),
+                        reason_codes=strategy_factory_sequential_payload.get(
+                            "reason_codes"
+                        ),
+                    )
+                )
+
+            if strategy_factory_cost_calibration_payload:
+                computed_at_raw = _coerce_str(
+                    strategy_factory_cost_calibration_payload.get("computed_at")
+                )
+                session.add(
+                    ResearchCostCalibration(
+                        calibration_id=str(
+                            strategy_factory_cost_calibration_payload["calibration_id"]
+                        ),
+                        scope_type=str(
+                            strategy_factory_cost_calibration_payload["scope_type"]
+                        ),
+                        scope_id=str(
+                            strategy_factory_cost_calibration_payload["scope_id"]
+                        ),
+                        window_start=(
+                            datetime.fromisoformat(
+                                str(
+                                    strategy_factory_cost_calibration_payload[
+                                        "window_start"
+                                    ]
+                                )
+                            )
+                            if strategy_factory_cost_calibration_payload.get(
+                                "window_start"
+                            )
+                            else None
+                        ),
+                        window_end=(
+                            datetime.fromisoformat(
+                                str(
+                                    strategy_factory_cost_calibration_payload[
+                                        "window_end"
+                                    ]
+                                )
+                            )
+                            if strategy_factory_cost_calibration_payload.get(
+                                "window_end"
+                            )
+                            else None
+                        ),
+                        modeled_slippage_bps=_decimal_or_none(
+                            strategy_factory_cost_calibration_payload.get(
+                                "modeled_slippage_bps"
+                            )
+                        ),
+                        realized_slippage_bps=_decimal_or_none(
+                            strategy_factory_cost_calibration_payload.get(
+                                "realized_slippage_bps"
+                            )
+                        ),
+                        modeled_shortfall_bps=_decimal_or_none(
+                            strategy_factory_cost_calibration_payload.get(
+                                "modeled_shortfall_bps"
+                            )
+                        ),
+                        realized_shortfall_bps=_decimal_or_none(
+                            strategy_factory_cost_calibration_payload.get(
+                                "realized_shortfall_bps"
+                            )
+                        ),
+                        calibration_error_bundle=
+                        strategy_factory_cost_calibration_payload.get(
+                            "calibration_error_bundle"
+                        ),
+                        status=str(strategy_factory_cost_calibration_payload["status"]),
+                        computed_at=(
+                            datetime.fromisoformat(computed_at_raw)
+                            if computed_at_raw
+                            else now
+                        ),
+                    )
+                )
 
             _persist_vnext_objects(
                 session=session,
@@ -5544,6 +6140,11 @@ def _persist_hypothesis_governance_rows(
         if isinstance(candidate_spec_payload.get('dependency_quorum'), dict)
         else {}
     )
+    strategy_factory_payload = (
+        cast(dict[str, Any], candidate_spec_payload.get('strategy_factory'))
+        if isinstance(candidate_spec_payload.get('strategy_factory'), dict)
+        else {}
+    )
     matched_hypothesis_values = (
         cast(list[Any], alpha_readiness_payload.get('matched_hypothesis_ids'))
         if isinstance(alpha_readiness_payload.get('matched_hypothesis_ids'), list)
@@ -5656,6 +6257,7 @@ def _persist_hypothesis_governance_rows(
                 payload_json={
                     'alpha_readiness': alpha_readiness_payload,
                     'dependency_quorum': dependency_quorum_payload,
+                    'strategy_factory': strategy_factory_payload,
                     'runtime_observation': dict(runtime_observation_payload),
                     'runtime_observation_qualification': qualification_payload,
                     'shadow_live_deviation': dict(shadow_live_deviation_report_payload),
@@ -5684,6 +6286,7 @@ def _persist_hypothesis_governance_rows(
                     'effective_promotion_allowed': effective_promotion_allowed,
                     'promotion_target': promotion_target,
                     'promotion_recommendation': promotion_recommendation.to_payload(),
+                    'strategy_factory': strategy_factory_payload,
                 },
             )
         )
@@ -5700,6 +6303,7 @@ def _persist_hypothesis_governance_rows(
                     'promotion_recommendation': promotion_recommendation.to_payload(),
                     'alpha_readiness': alpha_readiness_payload,
                     'dependency_quorum': dependency_quorum_payload,
+                    'strategy_factory': strategy_factory_payload,
                 },
             )
         )
@@ -5759,6 +6363,11 @@ def _persist_vnext_objects(
     portfolio_payload = (
         cast(dict[str, Any], candidate_spec_payload.get("portfolio_promotion_v2"))
         if isinstance(candidate_spec_payload.get("portfolio_promotion_v2"), dict)
+        else {}
+    )
+    strategy_factory_payload = (
+        cast(dict[str, Any], candidate_spec_payload.get("strategy_factory"))
+        if isinstance(candidate_spec_payload.get("strategy_factory"), dict)
         else {}
     )
 
@@ -5894,6 +6503,7 @@ def _persist_vnext_objects(
                 "portfolio_promotion_v2": portfolio_payload,
                 "dependency_quorum": dependency_quorum_payload,
                 "alpha_readiness": alpha_readiness_payload,
+                "strategy_factory": strategy_factory_payload,
                 "experiment_spec_ref": str(experiment_payload.get("experiment_id") or "").strip()
                 or None,
                 "decision_count": report.metrics.decision_count,
@@ -5959,18 +6569,27 @@ def _build_promotion_rationale(
     promotion_check_reasons: list[str],
     rollback_check_reasons: list[str],
     promotion_target: str,
+    additional_reasons: Sequence[str] = (),
 ) -> str:
     if (
         gate_report.promotion_allowed
         and not promotion_check_reasons
         and not rollback_check_reasons
+        and not additional_reasons
     ):
         return (
             f"all_required_gates_passed_for_{promotion_target}_promotion_"
             f"recommended_mode_{gate_report.recommended_mode}"
         )
     reasons = sorted(
-        set([*gate_report.reasons, *promotion_check_reasons, *rollback_check_reasons])
+        set(
+            [
+                *gate_report.reasons,
+                *promotion_check_reasons,
+                *rollback_check_reasons,
+                *additional_reasons,
+            ]
+        )
     )
     if not reasons:
         return f"promotion_target_{promotion_target}_held_without_additional_reasons"

@@ -343,12 +343,33 @@ class ResearchRun(Base, TimestampMixin):
     recommendation_trace_id: Mapped[Optional[str]] = mapped_column(
         String(length=64), nullable=True
     )
+    discovery_mode: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    generator_family: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    grammar_version: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    search_budget: Mapped[Optional[int]] = mapped_column(BigInteger(), nullable=True)
+    selection_protocol_version: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    pilot_program_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    kill_criteria_version: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
 
     __table_args__ = (
         Index("ix_research_runs_status", "status"),
         Index("ix_research_runs_created_at", "created_at"),
         Index("ix_research_runs_gate_trace", "gate_report_trace_id"),
         Index("ix_research_runs_recommendation_trace", "recommendation_trace_id"),
+        Index("ix_research_runs_discovery_mode", "discovery_mode"),
+        Index("ix_research_runs_generator_family", "generator_family"),
     )
 
 
@@ -393,12 +414,41 @@ class ResearchCandidate(Base, CreatedAtMixin):
     recommendation_bundle: Mapped[Optional[Any]] = mapped_column(
         JSONType, nullable=True
     )
+    candidate_family: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    canonical_spec: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    semantic_hash: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    economic_rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    complexity_score: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    discovery_rank: Mapped[Optional[int]] = mapped_column(BigInteger(), nullable=True)
+    posterior_edge_summary: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
+    economic_validity_card: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
+    valid_regime_envelope: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
+    invalidation_clauses: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
+    null_comparator_summary: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
 
     __table_args__ = (
         Index("ix_research_candidates_run_id", "run_id"),
         Index("ix_research_candidates_candidate_id", "candidate_id"),
         Index("ix_research_candidates_lifecycle_role", "lifecycle_role"),
         Index("ix_research_candidates_lifecycle_status", "lifecycle_status"),
+        Index("ix_research_candidates_family", "candidate_family"),
+        Index("ix_research_candidates_semantic_hash", "semantic_hash"),
     )
 
 
@@ -440,10 +490,167 @@ class ResearchFoldMetrics(Base, CreatedAtMixin):
     regime_label: Mapped[Optional[str]] = mapped_column(
         String(length=64), nullable=True
     )
+    stat_bundle: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    purge_window: Mapped[Optional[int]] = mapped_column(BigInteger(), nullable=True)
+    embargo_window: Mapped[Optional[int]] = mapped_column(BigInteger(), nullable=True)
+    feature_availability_hash: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
 
     __table_args__ = (
         Index("ix_research_fold_metrics_candidate", "candidate_id"),
         Index("ix_research_fold_metrics_fold_order", "fold_order"),
+    )
+
+
+class ResearchAttempt(Base, CreatedAtMixin):
+    """Attempt ledger rows for search-space provenance."""
+
+    __tablename__ = "research_attempts"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    attempt_id: Mapped[str] = mapped_column(
+        String(length=64), nullable=False, unique=True
+    )
+    run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    candidate_hash: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    generator_family: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    attempt_stage: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    status: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    reason_codes: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    artifact_ref: Mapped[Optional[str]] = mapped_column(
+        String(length=255), nullable=True
+    )
+    metadata_bundle: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("ix_research_attempts_run_id", "run_id"),
+        Index("ix_research_attempts_stage", "attempt_stage"),
+        Index("ix_research_attempts_status", "status"),
+        Index("ix_research_attempts_generator_family", "generator_family"),
+    )
+
+
+class ResearchValidationTest(Base, CreatedAtMixin):
+    """Validation battery results for research candidates."""
+
+    __tablename__ = "research_validation_tests"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    candidate_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    test_name: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    status: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    metric_bundle: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    artifact_ref: Mapped[Optional[str]] = mapped_column(
+        String(length=255), nullable=True
+    )
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_research_validation_tests_candidate", "candidate_id"),
+        Index("ix_research_validation_tests_name", "test_name"),
+        Index("ix_research_validation_tests_status", "status"),
+        Index(
+            "uq_research_validation_tests_candidate_name",
+            "candidate_id",
+            "test_name",
+            unique=True,
+        ),
+    )
+
+
+class ResearchSequentialTrial(Base, CreatedAtMixin):
+    """Sequential promotion state bridging offline and paper/live evaluation."""
+
+    __tablename__ = "research_sequential_trials"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    candidate_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    trial_stage: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    account: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_update_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    sample_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, default=0, server_default=text("0")
+    )
+    confidence_sequence_lower: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    confidence_sequence_upper: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    posterior_edge_mean: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    posterior_edge_lower: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    reason_codes: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("ix_research_sequential_trials_candidate", "candidate_id"),
+        Index("ix_research_sequential_trials_stage", "trial_stage"),
+        Index("ix_research_sequential_trials_status", "status"),
+        Index(
+            "uq_research_sequential_trials_candidate_stage_account",
+            "candidate_id",
+            "trial_stage",
+            "account",
+            unique=True,
+        ),
+    )
+
+
+class ResearchCostCalibration(Base, CreatedAtMixin):
+    """Scope-specific execution cost calibration records."""
+
+    __tablename__ = "research_cost_calibrations"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    calibration_id: Mapped[str] = mapped_column(
+        String(length=64), nullable=False, unique=True
+    )
+    scope_type: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    scope_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    window_start: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    window_end: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    modeled_slippage_bps: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    realized_slippage_bps: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    modeled_shortfall_bps: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    realized_shortfall_bps: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    calibration_error_bundle: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_research_cost_calibrations_scope", "scope_type", "scope_id"),
+        Index("ix_research_cost_calibrations_status", "status"),
+        Index("ix_research_cost_calibrations_computed_at", "computed_at"),
     )
 
 
