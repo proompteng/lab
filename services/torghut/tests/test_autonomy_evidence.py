@@ -369,6 +369,128 @@ class TestEvidenceContinuity(TestCase):
 
         self.assertEqual(report.failed_runs, 0)
 
+    def test_requires_candidate_family_scoped_cost_calibration(self) -> None:
+        now = datetime(2026, 2, 19, 0, 0, tzinfo=timezone.utc)
+        with self.session_factory() as session:
+            session.add(
+                ResearchRun(
+                    run_id="run-strategy-factory-wrong-calibration-scope",
+                    status="passed",
+                    discovery_mode="strategy_factory_alpha_v1",
+                )
+            )
+            session.add(
+                ResearchCandidate(
+                    run_id="run-strategy-factory-wrong-calibration-scope",
+                    candidate_id="cand-strategy-factory-wrong-calibration-scope",
+                    decision_count=1,
+                    trade_count=1,
+                    promotion_target="paper",
+                    candidate_family="tsmom",
+                    economic_validity_card={"status": "pass"},
+                )
+            )
+            session.add(
+                ResearchFoldMetrics(
+                    candidate_id="cand-strategy-factory-wrong-calibration-scope",
+                    fold_name="fold-1",
+                    fold_order=1,
+                    train_start=now,
+                    train_end=now,
+                    test_start=now,
+                    test_end=now,
+                    decision_count=1,
+                    trade_count=1,
+                    gross_pnl=Decimal("1"),
+                    net_pnl=Decimal("1"),
+                    max_drawdown=Decimal("0.1"),
+                    turnover_ratio=Decimal("0.2"),
+                    cost_bps=Decimal("1"),
+                    regime_label="neutral",
+                )
+            )
+            session.add(
+                ResearchStressMetrics(
+                    candidate_id="cand-strategy-factory-wrong-calibration-scope",
+                    stress_case="spread",
+                    metric_bundle={"ok": True},
+                )
+            )
+            session.add(
+                ResearchAttempt(
+                    attempt_id="att-wrong-scope-001",
+                    run_id="run-strategy-factory-wrong-calibration-scope",
+                    candidate_hash="hash-1",
+                    generator_family="tsmom_grid_v1",
+                    attempt_stage="offline_search",
+                    status="selected",
+                )
+            )
+            session.add(
+                ResearchValidationTest(
+                    candidate_id="cand-strategy-factory-wrong-calibration-scope",
+                    test_name="formal_validity",
+                    status="pass",
+                    metric_bundle={"lookahead_safe": True},
+                    computed_at=now,
+                )
+            )
+            session.add(
+                ResearchSequentialTrial(
+                    candidate_id="cand-strategy-factory-wrong-calibration-scope",
+                    trial_stage="paper_canary",
+                    account="paper",
+                    start_at=now,
+                    last_update_at=now,
+                    sample_count=20,
+                    confidence_sequence_lower=Decimal("0.01"),
+                    confidence_sequence_upper=Decimal("0.02"),
+                    posterior_edge_mean=Decimal("0.01"),
+                    posterior_edge_lower=Decimal("0.005"),
+                    status="paper_ready",
+                    reason_codes=[],
+                )
+            )
+            session.add(
+                ResearchCostCalibration(
+                    calibration_id="cal-wrong-scope-001",
+                    scope_type="strategy",
+                    scope_id="tsmom",
+                    window_start=now,
+                    window_end=now,
+                    modeled_slippage_bps=Decimal("5"),
+                    realized_slippage_bps=Decimal("5"),
+                    modeled_shortfall_bps=Decimal("5"),
+                    realized_shortfall_bps=Decimal("5"),
+                    calibration_error_bundle={"slippage_error_bps": 0},
+                    status="calibrated",
+                    computed_at=now,
+                )
+            )
+            session.add(
+                ResearchPromotion(
+                    candidate_id="cand-strategy-factory-wrong-calibration-scope",
+                    requested_mode="paper",
+                    approved_mode="paper",
+                    approver="scheduler",
+                    approver_role="system",
+                    decision_action="promote",
+                    decision_rationale="promotion_allowed",
+                    evidence_bundle={
+                        "fold_metrics_count": 1,
+                        "stress_metrics_count": 1,
+                        "strategy_factory": {"ok": True},
+                    },
+                )
+            )
+            session.commit()
+
+            report = evaluate_evidence_continuity(session, run_limit=5)
+
+        self.assertEqual(report.failed_runs, 1)
+        missing = set(report.missing_runs[0]["missing_tables"])
+        self.assertIn("research_cost_calibrations", missing)
+
     def test_accepts_legacy_promotion_audit_reason_fields(self) -> None:
         now = datetime(2026, 2, 19, 0, 0, tzinfo=timezone.utc)
         with self.session_factory() as session:

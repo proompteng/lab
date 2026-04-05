@@ -643,11 +643,10 @@ def _persist_strategy_factory_results(
             delete(ResearchCandidate).where(ResearchCandidate.candidate_id == candidate_id)
         )
 
-        cost_scope_id = str(strategy_factory_summary['candidate_family'])
+        calibration_id = str(cost_calibration_payload['calibration_id'])
         session.execute(
             delete(ResearchCostCalibration).where(
-                ResearchCostCalibration.scope_type == 'candidate_family',
-                ResearchCostCalibration.scope_id == cost_scope_id,
+                ResearchCostCalibration.calibration_id == calibration_id
             )
         )
 

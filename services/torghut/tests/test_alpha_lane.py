@@ -4,6 +4,7 @@ import hashlib
 import json
 import tempfile
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from unittest import TestCase
 
@@ -493,6 +494,65 @@ class TestAlphaLane(TestCase):
                 self.assertEqual(calibration.scope_type, 'candidate_family')
                 self.assertIsInstance(promotion.evidence_bundle, dict)
                 self.assertIn('strategy_factory', promotion.evidence_bundle)
+        finally:
+            engine.dispose()
+
+    def test_lane_preserves_historical_cost_calibrations_for_same_family(self) -> None:
+        train, test = self._trend_frames()
+        engine = create_engine(
+            'sqlite+pysqlite:///:memory:',
+            future=True,
+            connect_args={'check_same_thread': False},
+        )
+        Base.metadata.create_all(engine)
+        session_factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                output_dir = Path(tmpdir) / 'alpha-ledger'
+                with session_factory() as session:
+                    session.add(
+                        ResearchCostCalibration(
+                            calibration_id='cal-existing-001',
+                            scope_type='candidate_family',
+                            scope_id='tsmom',
+                            modeled_slippage_bps=Decimal('4'),
+                            realized_slippage_bps=Decimal('4'),
+                            modeled_shortfall_bps=Decimal('4'),
+                            realized_shortfall_bps=Decimal('4'),
+                            calibration_error_bundle={'seeded': True},
+                            status='calibrated',
+                        )
+                    )
+                    session.commit()
+
+                result = run_alpha_discovery_lane(
+                    artifact_path=output_dir,
+                    train_prices=train,
+                    test_prices=test,
+                    persist_results=True,
+                    session_factory=session_factory,
+                    head='test-sha-2',
+                    repository='proompteng/lab',
+                )
+                current_calibration = json.loads(
+                    result.cost_calibration_path.read_text(encoding='utf-8')
+                )
+
+                with session_factory() as session:
+                    calibrations = session.execute(
+                        select(ResearchCostCalibration)
+                        .where(ResearchCostCalibration.scope_type == 'candidate_family')
+                        .where(ResearchCostCalibration.scope_id == 'tsmom')
+                    ).scalars().all()
+
+                self.assertEqual(len(calibrations), 2)
+                self.assertEqual(
+                    {calibration.calibration_id for calibration in calibrations},
+                    {
+                        'cal-existing-001',
+                        str(current_calibration['calibration_id']),
+                    },
+                )
         finally:
             engine.dispose()
 

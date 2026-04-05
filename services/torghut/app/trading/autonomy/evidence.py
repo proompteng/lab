@@ -225,7 +225,13 @@ def evaluate_evidence_continuity(
                 )
                 .join(
                     ResearchCostCalibration,
-                    ResearchCostCalibration.scope_id == ResearchCandidate.candidate_family,
+                    (
+                        ResearchCostCalibration.scope_type == 'candidate_family'
+                    )
+                    & (
+                        ResearchCostCalibration.scope_id
+                        == ResearchCandidate.candidate_family
+                    ),
                 )
                 .where(ResearchCandidate.run_id.in_(run_ids))
                 .group_by(ResearchCandidate.run_id)

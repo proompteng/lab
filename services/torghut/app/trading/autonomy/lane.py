@@ -2096,7 +2096,13 @@ def run_autonomous_lane(
         raise ValueError("signals fixture is empty")
 
     run_id = _deterministic_run_id(
-        signals_path, strategy_config_path, gate_policy_path, promotion_target
+        signals_path,
+        strategy_config_path,
+        gate_policy_path,
+        promotion_target,
+        alpha_train_prices_path=alpha_train_prices_path,
+        alpha_test_prices_path=alpha_test_prices_path,
+        alpha_gate_policy_path=alpha_gate_policy_path,
     )
     candidate_id = f"cand-{run_id[:12]}"
     research_dir, backtest_dir, gates_dir, paper_dir, rollout_dir = (
@@ -6810,12 +6816,24 @@ def _deterministic_run_id(
     strategy_config_path: Path,
     gate_policy_path: Path,
     promotion_target: PromotionTarget,
+    alpha_train_prices_path: Path | None = None,
+    alpha_test_prices_path: Path | None = None,
+    alpha_gate_policy_path: Path | None = None,
 ) -> str:
     hasher = hashlib.sha256()
     hasher.update(signals_path.read_bytes())
     hasher.update(strategy_config_path.read_bytes())
     hasher.update(gate_policy_path.read_bytes())
     hasher.update(promotion_target.encode("utf-8"))
+    for optional_path in (
+        alpha_train_prices_path,
+        alpha_test_prices_path,
+        alpha_gate_policy_path,
+    ):
+        if optional_path is None:
+            hasher.update(b"\x00")
+            continue
+        hasher.update(optional_path.read_bytes())
     return hasher.hexdigest()[:24]
 
 
