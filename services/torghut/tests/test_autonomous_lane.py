@@ -18,6 +18,7 @@ from typing import Any
 from scripts import run_autonomous_lane as run_autonomous_lane_script
 from app.trading.autonomy.lane import (
     _AUTONOMY_PHASE_ORDER,
+    _deterministic_run_id,
     _build_phase_manifest,
     _persist_hypothesis_governance_rows,
     _STRESS_METRICS_CASES,
@@ -671,6 +672,42 @@ class TestAutonomousLane(TestCase):
             self.assertIsNotNone(vnext_promotion_row)
             self.assertIn("strategy_factory", promotion_row.evidence_bundle)
             self.assertIn("strategy_factory", vnext_promotion_row.payload_json)
+
+    def test_deterministic_run_id_changes_when_strategy_factory_inputs_change(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "set-a").mkdir(parents=True, exist_ok=True)
+            (root / "set-b").mkdir(parents=True, exist_ok=True)
+            train_a, test_a = self._write_alpha_price_csvs(root / "set-a")
+            train_b, test_b = self._write_alpha_price_csvs(root / "set-b")
+            train_b.write_text(train_b.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+
+            run_id_a = _deterministic_run_id(
+                fixture_path,
+                strategy_config_path,
+                gate_policy_path,
+                "paper",
+                alpha_train_prices_path=train_a,
+                alpha_test_prices_path=test_a,
+            )
+            run_id_b = _deterministic_run_id(
+                fixture_path,
+                strategy_config_path,
+                gate_policy_path,
+                "paper",
+                alpha_train_prices_path=train_b,
+                alpha_test_prices_path=test_b,
+            )
+
+        self.assertNotEqual(run_id_a, run_id_b)
 
     def test_lane_progression_manifests_and_iteration_note(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
