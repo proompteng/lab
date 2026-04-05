@@ -23,7 +23,7 @@ spec:
       containers:
         - name: migrate
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:5b4e88f3fe5f76239721a10b28602220846916deb5c7e2a7027cf76dafbe5ff6
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:518a6f9d44772caf1f0408a127f78a708cf236ca5cf62f9b6949a42cf73f203e
           command:
             - /opt/venv/bin/alembic
           args:
