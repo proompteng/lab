@@ -8541,6 +8541,59 @@ class TestStartHistoricalSimulation(TestCase):
         self.assertFalse(config.persist_results)
         self.assertEqual(config.output_dir, resources.output_root / resources.run_token / 'autonomy')
 
+    def test_build_autonomy_lane_config_defaults_to_disabled(self) -> None:
+        resources = _build_resources('sim-1', {'dataset_id': 'dataset-a'})
+
+        config = _build_autonomy_lane_config(
+            {},
+            manifest_path=Path('/tmp/dataset.yaml'),
+            resources=resources,
+        )
+
+        self.assertFalse(config.enabled)
+
+    def test_build_autonomy_lane_config_rejects_invalid_promotion_target(self) -> None:
+        resources = _build_resources('sim-1', {'dataset_id': 'dataset-a'})
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            'autonomy.promotion_target must be one of: shadow,paper,live',
+        ):
+            _build_autonomy_lane_config(
+                {
+                    'autonomy': {
+                        'enabled': True,
+                        'promotion_target': 'invalid',
+                    }
+                },
+                manifest_path=Path('/tmp/dataset.yaml'),
+                resources=resources,
+            )
+
+    def test_run_simulation_autonomy_lane_requires_required_inputs(self) -> None:
+        resources = _build_resources('sim-1', {'dataset_id': 'dataset-a'})
+
+        self.assertIsNone(
+            start_historical_simulation._run_simulation_autonomy_lane(
+                resources=resources,
+                autonomy_config=start_historical_simulation.AutonomyLaneConfig(enabled=False),
+            )
+        )
+
+        with self.assertRaisesRegex(RuntimeError, 'autonomy.signals is required'):
+            start_historical_simulation._run_simulation_autonomy_lane(
+                resources=resources,
+                autonomy_config=start_historical_simulation.AutonomyLaneConfig(enabled=True),
+            )
+
+    def test_resolve_manifest_relative_path_rejects_missing_file(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, 'autonomy.signals not found'):
+            start_historical_simulation._resolve_manifest_relative_path(
+                '../missing/signals.json',
+                manifest_path=Path('/tmp/config/dataset.yaml'),
+                label='autonomy.signals',
+            )
+
     def test_run_rollouts_analysis_materializes_analysisrun_from_template(self) -> None:
         resources = _build_resources('sim-2026-03-06-open-hour', {'dataset_id': 'dataset-a'})
         manifest = {

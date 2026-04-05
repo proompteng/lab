@@ -15,6 +15,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from typing import Any
 
+from scripts import run_autonomous_lane as run_autonomous_lane_script
 from app.trading.autonomy.lane import (
     _AUTONOMY_PHASE_ORDER,
     _build_phase_manifest,
@@ -4213,3 +4214,65 @@ class TestAutonomousLane(TestCase):
             coerce_phase_status("blocked", default="skip"),
             "skip",
         )
+
+    def test_run_autonomous_lane_script_forwards_alpha_sidecar_args(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            signals_path = root / "signals.json"
+            strategy_config_path = root / "strategy.yaml"
+            gate_policy_path = root / "gate-policy.json"
+            output_dir = root / "autonomy-out"
+            alpha_train_path = root / "alpha-train.csv"
+            alpha_test_path = root / "alpha-test.csv"
+            alpha_gate_policy_path = root / "alpha-gate-policy.json"
+
+            argv = [
+                "run_autonomous_lane.py",
+                "--signals",
+                str(signals_path),
+                "--strategy-config",
+                str(strategy_config_path),
+                "--gate-policy",
+                str(gate_policy_path),
+                "--output-dir",
+                str(output_dir),
+                "--alpha-train-prices",
+                str(alpha_train_path),
+                "--alpha-test-prices",
+                str(alpha_test_path),
+                "--alpha-gate-policy",
+                str(alpha_gate_policy_path),
+            ]
+
+            with (
+                patch("sys.argv", argv),
+                patch.object(run_autonomous_lane_script, "_resolve_git_sha", return_value="git-sha"),
+                patch.object(run_autonomous_lane_script, "print"),
+                patch.object(
+                    run_autonomous_lane_script,
+                    "run_autonomous_lane",
+                    return_value=SimpleNamespace(
+                        run_id="auto-run",
+                        candidate_id="cand-123",
+                        output_dir=output_dir,
+                        gate_report_path=output_dir / "gates" / "gate-evaluation.json",
+                        actuation_intent_path=None,
+                        paper_patch_path=None,
+                        candidate_spec_path=output_dir / "research" / "candidate-spec.json",
+                        candidate_generation_manifest_path=output_dir / "stages" / "candidate-generation.json",
+                        evaluation_manifest_path=output_dir / "stages" / "evaluation.json",
+                        recommendation_manifest_path=output_dir / "stages" / "recommendation.json",
+                        profitability_manifest_path=output_dir / "profitability" / "stage.json",
+                        recommendation_artifact_path=output_dir / "gates" / "recommendation.json",
+                        benchmark_parity_path=output_dir / "gates" / "benchmark-parity.json",
+                        stage_trace_ids={},
+                        stage_lineage_root="lineage-root",
+                    ),
+                ) as run_mock,
+            ):
+                exit_code = run_autonomous_lane_script.main()
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(run_mock.call_args.kwargs["alpha_train_prices_path"], alpha_train_path)
+            self.assertEqual(run_mock.call_args.kwargs["alpha_test_prices_path"], alpha_test_path)
+            self.assertEqual(run_mock.call_args.kwargs["alpha_gate_policy_path"], alpha_gate_policy_path)

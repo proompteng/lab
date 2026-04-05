@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import TestCase
 
@@ -21,6 +22,7 @@ from app.models import (
     ResearchValidationTest,
 )
 from app.trading.alpha.lane import run_alpha_discovery_lane, _normalize_prices
+from app.trading.discovery.sequential_trials import build_sequential_trial_summary
 
 
 class TestAlphaLane(TestCase):
@@ -493,3 +495,40 @@ class TestAlphaLane(TestCase):
                 self.assertIn('strategy_factory', promotion.evidence_bundle)
         finally:
             engine.dispose()
+
+    def test_sequential_trial_summary_handles_empty_samples(self) -> None:
+        summary = build_sequential_trial_summary(
+            net_returns=pd.Series(dtype='float64'),
+            started_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 4, 2, tzinfo=timezone.utc),
+            cost_calibration_status='calibrated',
+            baseline_outperformed=True,
+        )
+
+        self.assertEqual(summary.status, 'observe_only')
+        self.assertIn('no_sequential_samples', summary.reason_codes)
+
+    def test_sequential_trial_summary_marks_single_sample_uncalibrated_baseline_failure(self) -> None:
+        summary = build_sequential_trial_summary(
+            net_returns=pd.Series([0.75], dtype='float64'),
+            started_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 4, 2, tzinfo=timezone.utc),
+            cost_calibration_status='stale',
+            baseline_outperformed=False,
+        )
+
+        self.assertEqual(summary.status, 'paper_only')
+        self.assertIn('cost_calibration_not_calibrated', summary.reason_codes)
+        self.assertIn('baseline_not_outperformed', summary.reason_codes)
+
+    def test_sequential_trial_summary_blocks_non_positive_posterior_edge(self) -> None:
+        summary = build_sequential_trial_summary(
+            net_returns=pd.Series([-0.25, -0.10], dtype='float64'),
+            started_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 4, 2, tzinfo=timezone.utc),
+            cost_calibration_status='calibrated',
+            baseline_outperformed=True,
+        )
+
+        self.assertEqual(summary.status, 'paper_only')
+        self.assertIn('posterior_edge_not_positive', summary.reason_codes)
