@@ -37,6 +37,10 @@ ALLOCATOR_CLIP_STRATEGY_BUDGET = "allocator_clip_strategy_budget"
 ALLOCATOR_CLIP_SYMBOL_BUDGET = "allocator_clip_symbol_budget"
 ALLOCATOR_CLIP_CORRELATION_CAPACITY = "allocator_clip_correlation_capacity"
 ALLOCATOR_REGIME_LOW_CONFIDENCE = "allocator_regime_low_confidence"
+ALLOCATOR_STRATEGY_FACTORY_OBSERVE_ONLY = "allocator_strategy_factory_observe_only"
+ALLOCATOR_STRATEGY_FACTORY_PAPER_ONLY = "allocator_strategy_factory_paper_only"
+ALLOCATOR_STRATEGY_FACTORY_UNCALIBRATED = "allocator_strategy_factory_uncalibrated"
+ALLOCATOR_STRATEGY_FACTORY_BASELINE_FAIL = "allocator_strategy_factory_baseline_fail"
 
 _SIZING_CAP_ZERO_REASON_BY_METHOD: dict[str, str] = {
     "cap_per_symbol_zero": "symbol_capacity_exhausted",
@@ -101,6 +105,15 @@ class _AllocationRuntime:
     strategy_usage: dict[str, Decimal]
     symbol_usage: dict[str, Decimal]
     correlation_usage: dict[str, Decimal]
+
+
+@dataclass(frozen=True)
+class _StrategyFactoryAllocationProfile:
+    score: Decimal
+    budget_multiplier: Decimal
+    capacity_multiplier: Decimal
+    reason_codes: tuple[str, ...]
+    payload: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -555,6 +568,11 @@ class PortfolioAllocator:
         fragility_adjustments = [
             self.fragility_monitor.evaluate(intent.decision) for intent in intents
         ]
+        intents_and_fragility = sorted(
+            zip(intents, fragility_adjustments, strict=False),
+            key=lambda item: self._strategy_factory_profile(item[0].decision.params).score,
+            reverse=True,
+        )
         enforce_fragility = self.fragility_monitor.config.mode == "enforce"
         portfolio_fragility_state = self.fragility_monitor.worst_state(
             [item.snapshot.fragility_state for item in fragility_adjustments]
@@ -573,9 +591,7 @@ class PortfolioAllocator:
 
         runtime = self._allocation_runtime(account=account, positions=positions)
         results: list[AllocationResult] = []
-        for intent, fragility_adjustment in zip(
-            intents, fragility_adjustments, strict=False
-        ):
+        for intent, fragility_adjustment in intents_and_fragility:
             results.append(
                 self._allocate_intent(
                     intent=intent,
@@ -602,8 +618,10 @@ class PortfolioAllocator:
         enforce_fragility: bool,
     ) -> list[AllocationResult]:
         passthrough_results: list[AllocationResult] = []
-        for intent, fragility_adjustment in zip(
-            intents, fragility_adjustments, strict=False
+        for intent, fragility_adjustment in sorted(
+            zip(intents, fragility_adjustments, strict=False),
+            key=lambda item: self._strategy_factory_profile(item[0].decision.params).score,
+            reverse=True,
         ):
             apply_fragility = enforce_fragility and _has_fragility_signal(
                 intent.decision
@@ -684,6 +702,14 @@ class PortfolioAllocator:
         )
         effective_budget_multiplier *= confidence_multiplier
         effective_capacity_multiplier *= confidence_multiplier
+        strategy_factory_profile = self._strategy_factory_profile(decision.params)
+        effective_budget_multiplier = self._effective_multiplier(
+            effective_budget_multiplier, strategy_factory_profile.budget_multiplier
+        )
+        effective_capacity_multiplier = self._effective_multiplier(
+            effective_capacity_multiplier, strategy_factory_profile.capacity_multiplier
+        )
+        reason_codes.extend(strategy_factory_profile.reason_codes)
         if low_confidence_applied:
             reason_codes.append(ALLOCATOR_REGIME_LOW_CONFIDENCE)
         if fragility_adjustment.stability_mode_active and apply_fragility:
@@ -719,6 +745,7 @@ class PortfolioAllocator:
             effective_capacity_multiplier=effective_capacity_multiplier,
             regime_confidence=regime_confidence,
             regime_low_confidence_applied=low_confidence_applied,
+            strategy_factory_profile=strategy_factory_profile,
         )
 
     def _effective_allocation_multipliers(
@@ -987,10 +1014,11 @@ class PortfolioAllocator:
         effective_capacity_multiplier: Decimal,
         regime_confidence: Optional[Decimal],
         regime_low_confidence_applied: bool,
+        strategy_factory_profile: _StrategyFactoryAllocationProfile,
     ) -> AllocationResult:
         unique_reason_codes = sorted(set(reason_codes))
         params = dict(decision.params)
-        allocator_payload = {
+        allocator_payload: dict[str, Any] = {
             "enabled": self.config.enabled,
             "regime_label": normalized_regime,
             "budget_multiplier": _decimal_str(effective_budget_multiplier),
@@ -1011,7 +1039,9 @@ class PortfolioAllocator:
             "regime_low_confidence_applied": regime_low_confidence_applied,
             "reason_codes": unique_reason_codes,
             "correlation_group": correlation_group,
+            "strategy_factory_score": _decimal_str(strategy_factory_profile.score),
         }
+        allocator_payload["strategy_factory"] = strategy_factory_profile.payload
         allocator_payload.update(fragility_adjustment.to_allocator_payload())
         allocator_payload["portfolio_fragility_state"] = portfolio_fragility_state
         params["fragility_snapshot"] = fragility_adjustment.snapshot.to_payload()
@@ -1053,6 +1083,79 @@ class PortfolioAllocator:
         return min(
             self.config.max_multiplier,
             max(self.config.min_multiplier, combined),
+        )
+
+    def _strategy_factory_profile(
+        self, params: Mapping[str, Any]
+    ) -> _StrategyFactoryAllocationProfile:
+        payload = _mapping(params.get("strategy_factory"))
+        if not payload:
+            payload = _mapping(params.get("research"))
+        evidence = _mapping(payload.get("strategy_factory")) if payload.get("strategy_factory") is not None else payload
+        posterior = _mapping(evidence.get("posterior_edge_summary"))
+        comparator = _mapping(evidence.get("null_comparator_summary"))
+        sequential = _mapping(evidence.get("sequential_trial"))
+        calibration = _mapping(evidence.get("cost_calibration"))
+        reason_codes: list[str] = []
+
+        lower_bps = _optional_decimal(
+            posterior.get("annualized_edge_lower_bps")
+            or sequential.get("posterior_edge_lower")
+        ) or Decimal("0")
+        mean_bps = _optional_decimal(
+            posterior.get("annualized_edge_mean_bps")
+            or sequential.get("posterior_edge_mean")
+        ) or Decimal("0")
+        score = max(lower_bps, Decimal("0")) + (max(mean_bps, Decimal("0")) / Decimal("2"))
+        sequential_status = str(sequential.get("status") or "").strip().lower()
+        calibration_status = str(calibration.get("status") or "").strip().lower()
+        baseline_outperformed = _coerce_bool(
+            comparator.get("baseline_outperformed"), default=True
+        )
+
+        budget_multiplier = Decimal("1")
+        capacity_multiplier = Decimal("1")
+        if not baseline_outperformed:
+            reason_codes.append(ALLOCATOR_STRATEGY_FACTORY_BASELINE_FAIL)
+            budget_multiplier = Decimal("0")
+            capacity_multiplier = Decimal("0")
+        elif sequential_status == "observe_only":
+            reason_codes.append(ALLOCATOR_STRATEGY_FACTORY_OBSERVE_ONLY)
+            budget_multiplier = Decimal("0")
+            capacity_multiplier = Decimal("0")
+        else:
+            if sequential_status == "paper_only":
+                reason_codes.append(ALLOCATOR_STRATEGY_FACTORY_PAPER_ONLY)
+                budget_multiplier = Decimal("0.50")
+                capacity_multiplier = Decimal("0.50")
+            if calibration_status and calibration_status != "calibrated":
+                reason_codes.append(ALLOCATOR_STRATEGY_FACTORY_UNCALIBRATED)
+                budget_multiplier = min(budget_multiplier, Decimal("0.75"))
+                capacity_multiplier = min(capacity_multiplier, Decimal("0.75"))
+            if not reason_codes and score > 0:
+                uplift = min(score / Decimal("100"), Decimal("0.50"))
+                budget_multiplier = Decimal("1") + uplift
+                capacity_multiplier = Decimal("1") + min(
+                    max(mean_bps, Decimal("0")) / Decimal("150"),
+                    Decimal("0.50"),
+                )
+
+        strategy_payload = {
+            "sequential_status": sequential_status or None,
+            "cost_calibration_status": calibration_status or None,
+            "baseline_outperformed": baseline_outperformed,
+            "annualized_edge_mean_bps": _decimal_str(mean_bps),
+            "annualized_edge_lower_bps": _decimal_str(lower_bps),
+            "budget_multiplier": _decimal_str(budget_multiplier),
+            "capacity_multiplier": _decimal_str(capacity_multiplier),
+            "reason_codes": sorted(set(reason_codes)),
+        }
+        return _StrategyFactoryAllocationProfile(
+            score=score,
+            budget_multiplier=budget_multiplier,
+            capacity_multiplier=capacity_multiplier,
+            reason_codes=tuple(sorted(set(reason_codes))),
+            payload=strategy_payload,
         )
 
     def _symbol_cap(self, equity: Optional[Decimal]) -> Optional[Decimal]:
@@ -1556,6 +1659,18 @@ def _optional_decimal(value: Optional[Decimal | str | float]) -> Optional[Decima
         return None
 
 
+def _coerce_bool(value: Any, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "y"}:
+            return True
+        if normalized in {"false", "0", "no", "n"}:
+            return False
+    return default
+
+
 def _decimal_str(value: Optional[Decimal]) -> Optional[str]:
     if value is None:
         return None
@@ -1783,6 +1898,10 @@ __all__ = [
     "ALLOCATOR_REJECT_STRATEGY_BUDGET",
     "ALLOCATOR_REJECT_ZERO_QTY",
     "ALLOCATOR_REGIME_LOW_CONFIDENCE",
+    "ALLOCATOR_STRATEGY_FACTORY_BASELINE_FAIL",
+    "ALLOCATOR_STRATEGY_FACTORY_OBSERVE_ONLY",
+    "ALLOCATOR_STRATEGY_FACTORY_PAPER_ONLY",
+    "ALLOCATOR_STRATEGY_FACTORY_UNCALIBRATED",
     "AggregatedIntent",
     "AllocationConfig",
     "AllocationResult",

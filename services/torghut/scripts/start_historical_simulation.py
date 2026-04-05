@@ -34,6 +34,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 import yaml
 from app.db import SessionLocal  # noqa: F401 - imported for unit-test patch targets
+from app.trading.autonomy.lane import run_autonomous_lane
 from app.trading.completion import (
     DOC29_SIMULATION_FULL_DAY_GATE,
     DOC29_SIMULATION_SMOKE_GATE,
@@ -557,6 +558,28 @@ class RolloutsAnalysisConfig:
     verify_poll_seconds: int
 
 
+@dataclass(frozen=True)
+class AutonomyLaneConfig:
+    enabled: bool
+    signals_path: Path | None = None
+    strategy_config_path: Path | None = None
+    gate_policy_path: Path | None = None
+    output_dir: Path | None = None
+    artifact_path: Path | None = None
+    repository: str | None = None
+    base: str | None = None
+    head: str | None = None
+    priority_id: str | None = None
+    design_doc: str | None = None
+    promotion_target: str = 'paper'
+    strategy_configmap_path: Path | None = None
+    approval_token: str | None = None
+    persist_results: bool = True
+    alpha_train_prices_path: Path | None = None
+    alpha_test_prices_path: Path | None = None
+    alpha_gate_policy_path: Path | None = None
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description='Plan/run/apply/report/teardown historical simulation runs with isolated Kafka and storage targets.',
@@ -730,6 +753,29 @@ def _safe_float(value: Any, *, default: float = 0.0) -> float:
             except ValueError:
                 return default
     return default
+
+
+def _truthy(value: Any) -> bool:
+    return str(value or 'false').strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _resolve_manifest_relative_path(
+    value: Any,
+    *,
+    manifest_path: Path,
+    label: str,
+    must_exist: bool = True,
+) -> Path | None:
+    text = _as_text(value)
+    if text is None:
+        return None
+    resolved = Path(text)
+    if not resolved.is_absolute():
+        resolved = manifest_path.parent / resolved
+    resolved = resolved.resolve()
+    if must_exist and not resolved.exists():
+        raise RuntimeError(f'{label} not found: {resolved}')
+    return resolved
 
 
 def _resolve_window_bounds(manifest: Mapping[str, Any]) -> tuple[datetime, datetime]:
@@ -1532,6 +1578,146 @@ def _build_rollouts_analysis_config(manifest: Mapping[str, Any]) -> RolloutsAnal
         verify_timeout_seconds=verify_timeout_seconds,
         verify_poll_seconds=verify_poll_seconds,
     )
+
+
+def _build_autonomy_lane_config(
+    manifest: Mapping[str, Any],
+    *,
+    manifest_path: Path,
+    resources: SimulationResources,
+) -> AutonomyLaneConfig:
+    autonomy = _as_mapping(manifest.get('autonomy'))
+    enabled = _truthy(autonomy.get('enabled'))
+    if not enabled:
+        return AutonomyLaneConfig(enabled=False)
+
+    promotion_target = (_as_text(autonomy.get('promotion_target')) or 'paper').lower()
+    if promotion_target not in {'shadow', 'paper', 'live'}:
+        raise RuntimeError('autonomy.promotion_target must be one of: shadow,paper,live')
+
+    output_dir = _resolve_manifest_relative_path(
+        autonomy.get('output_dir'),
+        manifest_path=manifest_path,
+        label='autonomy.output_dir',
+        must_exist=False,
+    )
+    artifact_path = _resolve_manifest_relative_path(
+        autonomy.get('artifact_path'),
+        manifest_path=manifest_path,
+        label='autonomy.artifact_path',
+        must_exist=False,
+    )
+    default_output_dir = resources.output_root / resources.run_token / 'autonomy'
+
+    return AutonomyLaneConfig(
+        enabled=True,
+        signals_path=_resolve_manifest_relative_path(
+            autonomy.get('signals'),
+            manifest_path=manifest_path,
+            label='autonomy.signals',
+        ),
+        strategy_config_path=_resolve_manifest_relative_path(
+            autonomy.get('strategy_config'),
+            manifest_path=manifest_path,
+            label='autonomy.strategy_config',
+        ),
+        gate_policy_path=_resolve_manifest_relative_path(
+            autonomy.get('gate_policy'),
+            manifest_path=manifest_path,
+            label='autonomy.gate_policy',
+        ),
+        output_dir=output_dir or default_output_dir,
+        artifact_path=artifact_path or output_dir or default_output_dir,
+        repository=_as_text(autonomy.get('repository')),
+        base=_as_text(autonomy.get('base')),
+        head=_as_text(autonomy.get('head')),
+        priority_id=_as_text(autonomy.get('priority_id')),
+        design_doc=_as_text(autonomy.get('design_doc')),
+        promotion_target=promotion_target,
+        strategy_configmap_path=_resolve_manifest_relative_path(
+            autonomy.get('strategy_configmap'),
+            manifest_path=manifest_path,
+            label='autonomy.strategy_configmap',
+        ),
+        approval_token=_as_text(autonomy.get('approval_token')),
+        persist_results=not _truthy(autonomy.get('no_persist_results')),
+        alpha_train_prices_path=_resolve_manifest_relative_path(
+            autonomy.get('alpha_train_prices'),
+            manifest_path=manifest_path,
+            label='autonomy.alpha_train_prices',
+        ),
+        alpha_test_prices_path=_resolve_manifest_relative_path(
+            autonomy.get('alpha_test_prices'),
+            manifest_path=manifest_path,
+            label='autonomy.alpha_test_prices',
+        ),
+        alpha_gate_policy_path=_resolve_manifest_relative_path(
+            autonomy.get('alpha_gate_policy'),
+            manifest_path=manifest_path,
+            label='autonomy.alpha_gate_policy',
+        ),
+    )
+
+
+def _run_simulation_autonomy_lane(
+    *,
+    resources: SimulationResources,
+    autonomy_config: AutonomyLaneConfig,
+) -> dict[str, Any] | None:
+    if not autonomy_config.enabled:
+        return None
+    if autonomy_config.signals_path is None:
+        raise RuntimeError('autonomy.signals is required when autonomy.enabled=true')
+    if autonomy_config.strategy_config_path is None:
+        raise RuntimeError('autonomy.strategy_config is required when autonomy.enabled=true')
+    if autonomy_config.gate_policy_path is None:
+        raise RuntimeError('autonomy.gate_policy is required when autonomy.enabled=true')
+    if autonomy_config.output_dir is None:
+        raise RuntimeError('autonomy.output_dir could not be resolved')
+
+    result = run_autonomous_lane(
+        signals_path=autonomy_config.signals_path,
+        strategy_config_path=autonomy_config.strategy_config_path,
+        gate_policy_path=autonomy_config.gate_policy_path,
+        output_dir=autonomy_config.output_dir,
+        repository=autonomy_config.repository,
+        base=autonomy_config.base,
+        head=autonomy_config.head,
+        artifact_path=str(autonomy_config.artifact_path) if autonomy_config.artifact_path is not None else None,
+        priority_id=autonomy_config.priority_id,
+        design_doc=autonomy_config.design_doc,
+        promotion_target=cast(Any, autonomy_config.promotion_target),
+        strategy_configmap_path=autonomy_config.strategy_configmap_path,
+        code_version='historical-simulation-wrapper',
+        approval_token=autonomy_config.approval_token,
+        persist_results=autonomy_config.persist_results,
+        alpha_train_prices_path=autonomy_config.alpha_train_prices_path,
+        alpha_test_prices_path=autonomy_config.alpha_test_prices_path,
+        alpha_gate_policy_path=autonomy_config.alpha_gate_policy_path,
+    )
+    report = {
+        'status': 'ok',
+        'run_id': result.run_id,
+        'candidate_id': result.candidate_id,
+        'output_dir': str(result.output_dir),
+        'gate_report_path': str(result.gate_report_path),
+        'actuation_intent_path': str(result.actuation_intent_path) if result.actuation_intent_path else None,
+        'paper_patch_path': str(result.paper_patch_path) if result.paper_patch_path else None,
+        'phase_manifest_path': str(result.phase_manifest_path),
+        'recommendation_artifact_path': str(result.recommendation_artifact_path),
+        'candidate_spec_path': str(result.candidate_spec_path),
+        'candidate_generation_manifest_path': str(result.candidate_generation_manifest_path),
+        'evaluation_manifest_path': str(result.evaluation_manifest_path),
+        'recommendation_manifest_path': str(result.recommendation_manifest_path),
+        'profitability_manifest_path': str(result.profitability_manifest_path),
+        'benchmark_parity_path': str(result.benchmark_parity_path),
+        'foundation_router_parity_path': str(result.foundation_router_parity_path),
+        'stage_trace_ids': dict(result.stage_trace_ids),
+        'stage_lineage_root': result.stage_lineage_root,
+        'promotion_target': autonomy_config.promotion_target,
+    }
+    _save_json(_artifact_path(resources, 'autonomy-report.json'), report)
+    return report
 
 
 def _ensure_supported_binary(name: str) -> None:
@@ -6945,6 +7131,7 @@ def _build_run_summary(
     monitor_report: Mapping[str, Any] | None,
     analytics_report: Mapping[str, Any] | None,
     strategy_proof_report: Mapping[str, Any] | None,
+    autonomy_report: Mapping[str, Any] | None,
     errors: Sequence[str],
 ) -> dict[str, Any]:
     monitor_payload = _as_mapping(monitor_report)
@@ -6966,6 +7153,7 @@ def _build_run_summary(
         'legacy_path_count': _safe_int(_as_mapping(strategy_proof_report).get('legacy_path_count')),
         'fallback_order_count': _safe_int(_as_mapping(strategy_proof_report).get('fallback_order_count')),
         'report_dir': _as_text(_as_mapping(analytics_report).get('report_dir')),
+        'autonomy': _as_mapping(autonomy_report),
         'errors': list(errors),
     }
 
@@ -7012,6 +7200,7 @@ def _existing_artifact_refs(resources: SimulationResources, analytics_report: Ma
         _artifact_path(resources, 'performance.json'),
         _artifact_path(resources, 'run-summary.json'),
         _artifact_path(resources, 'gate-input.json'),
+        _artifact_path(resources, 'autonomy-report.json'),
         _artifact_path(resources, 'gates/fill-price-error-budget-report-v1.json'),
     ]
     report_dir = _as_text(_as_mapping(analytics_report).get('report_dir'))
@@ -7184,6 +7373,7 @@ def _run_full_lifecycle(
     resources: SimulationResources,
     manifest: Mapping[str, Any],
     manifest_path: Path,
+    autonomy_config: AutonomyLaneConfig | None = None,
     kafka_config: KafkaRuntimeConfig,
     clickhouse_config: ClickHouseRuntimeConfig,
     postgres_config: PostgresRuntimeConfig,
@@ -7194,6 +7384,7 @@ def _run_full_lifecycle(
     skip_teardown: bool,
     report_only: bool,
 ) -> dict[str, Any]:
+    resolved_autonomy_config = autonomy_config or AutonomyLaneConfig(enabled=False)
     _ensure_supported_binary('kubectl')
     _validate_window_policy(manifest)
     _update_run_state(resources=resources, phase='preflight', status='ok')
@@ -7210,6 +7401,7 @@ def _run_full_lifecycle(
     run_summary_report: dict[str, Any] | None = None
     gate_input_report: dict[str, Any] | None = None
     fill_price_error_budget_report: dict[str, Any] | None = None
+    autonomy_report: dict[str, Any] | None = None
     teardown_report: dict[str, Any] | None = None
     rollouts_report: dict[str, Any] = {
         'enabled': bool(
@@ -7550,6 +7742,10 @@ def _run_full_lifecycle(
             fill_price_error_budget_report=fill_price_error_budget_report,
         )
         _save_json(_artifact_path(resources, 'gate-input.json'), gate_input_report)
+        autonomy_report = _run_simulation_autonomy_lane(
+            resources=resources,
+            autonomy_config=resolved_autonomy_config,
+        )
         run_summary_report = _build_run_summary(
             resources=resources,
             manifest=manifest,
@@ -7557,6 +7753,7 @@ def _run_full_lifecycle(
             monitor_report=monitor_report,
             analytics_report=analytics_report,
             strategy_proof_report=strategy_proof_report,
+            autonomy_report=autonomy_report,
             errors=errors,
         )
         _save_json(_artifact_path(resources, 'run-summary.json'), run_summary_report)
@@ -7717,6 +7914,7 @@ def _run_full_lifecycle(
         'performance': performance_report,
         'run_summary': run_summary_report,
         'gate_input': gate_input_report,
+        'autonomy': autonomy_report,
         'fill_price_error_budget': fill_price_error_budget_report,
         'teardown': teardown_report,
         'rollouts': rollouts_report,
@@ -7870,6 +8068,24 @@ def main() -> None:
         activity_template=rollouts_config.activity_template,
         teardown_template=rollouts_config.teardown_template,
     )
+    autonomy_config = _build_autonomy_lane_config(
+        manifest,
+        manifest_path=manifest_path,
+        resources=resources,
+    )
+    _log_script_event(
+        'autonomy_config_ready',
+        enabled=autonomy_config.enabled,
+        signals_path=str(autonomy_config.signals_path) if autonomy_config.signals_path is not None else None,
+        strategy_config_path=(
+            str(autonomy_config.strategy_config_path)
+            if autonomy_config.strategy_config_path is not None
+            else None
+        ),
+        gate_policy_path=str(autonomy_config.gate_policy_path) if autonomy_config.gate_policy_path is not None else None,
+        output_dir=str(autonomy_config.output_dir) if autonomy_config.output_dir is not None else None,
+        promotion_target=autonomy_config.promotion_target,
+    )
     postgres_config = _build_postgres_runtime_config(
         manifest,
         simulation_db=_default_simulation_postgres_db(resources),
@@ -7929,6 +8145,13 @@ def main() -> None:
             postgres_config=postgres_config,
             clickhouse_config=clickhouse_config,
         )
+        autonomy_report = _run_simulation_autonomy_lane(
+            resources=resources,
+            autonomy_config=autonomy_config,
+        )
+        if autonomy_report is not None:
+            report = dict(report)
+            report['autonomy'] = autonomy_report
         if not args.skip_teardown:
             teardown_report = _teardown(
                 resources=resources,
@@ -7949,6 +8172,7 @@ def main() -> None:
             resources=resources,
             manifest=manifest,
             manifest_path=manifest_path,
+            autonomy_config=autonomy_config,
             kafka_config=kafka_config,
             clickhouse_config=clickhouse_config,
             postgres_config=postgres_config,

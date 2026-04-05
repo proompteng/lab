@@ -3,12 +3,26 @@ from __future__ import annotations
 import hashlib
 import json
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import TestCase
 
 import pandas as pd
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
 
+from app.models import (
+    Base,
+    ResearchAttempt,
+    ResearchCandidate,
+    ResearchCostCalibration,
+    ResearchPromotion,
+    ResearchRun,
+    ResearchSequentialTrial,
+    ResearchValidationTest,
+)
 from app.trading.alpha.lane import run_alpha_discovery_lane, _normalize_prices
+from app.trading.discovery.sequential_trials import build_sequential_trial_summary
 
 
 class TestAlphaLane(TestCase):
@@ -401,3 +415,120 @@ class TestAlphaLane(TestCase):
             note_contents = notes[0].read_text(encoding="utf-8")
             self.assertIn("\n", note_contents)
             self.assertNotIn("\\n", note_contents)
+
+    def test_lane_persists_strategy_factory_research_chain_when_enabled(self) -> None:
+        train, test = self._trend_frames()
+        engine = create_engine(
+            'sqlite+pysqlite:///:memory:',
+            future=True,
+            connect_args={'check_same_thread': False},
+        )
+        Base.metadata.create_all(engine)
+        session_factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                output_dir = Path(tmpdir) / 'alpha-ledger'
+                result = run_alpha_discovery_lane(
+                    artifact_path=output_dir,
+                    train_prices=train,
+                    test_prices=test,
+                    persist_results=True,
+                    session_factory=session_factory,
+                    head='test-sha',
+                    repository='proompteng/lab',
+                )
+
+                candidate_spec = json.loads(
+                    result.candidate_spec_path.read_text(encoding='utf-8')
+                )
+                self.assertIn('strategy_factory', candidate_spec)
+                self.assertIn('attempt_ledger', candidate_spec['artifacts'])
+                self.assertIn('validation_formal_validity', candidate_spec['artifacts'])
+
+                with session_factory() as session:
+                    run_row = session.execute(
+                        select(ResearchRun).where(ResearchRun.run_id == result.run_id)
+                    ).scalar_one()
+                    candidate_row = session.execute(
+                        select(ResearchCandidate).where(
+                            ResearchCandidate.candidate_id == result.candidate_id
+                        )
+                    ).scalar_one()
+                    attempts = (
+                        session.execute(
+                            select(ResearchAttempt).where(
+                                ResearchAttempt.run_id == result.run_id
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    )
+                    validations = (
+                        session.execute(
+                            select(ResearchValidationTest).where(
+                                ResearchValidationTest.candidate_id == result.candidate_id
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    )
+                    sequential = session.execute(
+                        select(ResearchSequentialTrial).where(
+                            ResearchSequentialTrial.candidate_id == result.candidate_id
+                        )
+                    ).scalar_one()
+                    calibration = session.execute(select(ResearchCostCalibration)).scalar_one()
+                    promotion = session.execute(
+                        select(ResearchPromotion).where(
+                            ResearchPromotion.candidate_id == result.candidate_id
+                        )
+                    ).scalar_one()
+
+                self.assertEqual(run_row.discovery_mode, 'strategy_factory_alpha_v1')
+                self.assertEqual(candidate_row.candidate_family, 'tsmom')
+                self.assertIsInstance(candidate_row.economic_validity_card, dict)
+                self.assertGreaterEqual(len(attempts), 1)
+                self.assertGreaterEqual(len(validations), 8)
+                self.assertIn(sequential.status, {'paper_ready', 'paper_only'})
+                self.assertEqual(calibration.scope_type, 'candidate_family')
+                self.assertIsInstance(promotion.evidence_bundle, dict)
+                self.assertIn('strategy_factory', promotion.evidence_bundle)
+        finally:
+            engine.dispose()
+
+    def test_sequential_trial_summary_handles_empty_samples(self) -> None:
+        summary = build_sequential_trial_summary(
+            net_returns=pd.Series(dtype='float64'),
+            started_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 4, 2, tzinfo=timezone.utc),
+            cost_calibration_status='calibrated',
+            baseline_outperformed=True,
+        )
+
+        self.assertEqual(summary.status, 'observe_only')
+        self.assertIn('no_sequential_samples', summary.reason_codes)
+
+    def test_sequential_trial_summary_marks_single_sample_uncalibrated_baseline_failure(self) -> None:
+        summary = build_sequential_trial_summary(
+            net_returns=pd.Series([0.75], dtype='float64'),
+            started_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 4, 2, tzinfo=timezone.utc),
+            cost_calibration_status='stale',
+            baseline_outperformed=False,
+        )
+
+        self.assertEqual(summary.status, 'paper_only')
+        self.assertIn('cost_calibration_not_calibrated', summary.reason_codes)
+        self.assertIn('baseline_not_outperformed', summary.reason_codes)
+
+    def test_sequential_trial_summary_blocks_non_positive_posterior_edge(self) -> None:
+        summary = build_sequential_trial_summary(
+            net_returns=pd.Series([-0.25, -0.10], dtype='float64'),
+            started_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 4, 2, tzinfo=timezone.utc),
+            cost_calibration_status='calibrated',
+            baseline_outperformed=True,
+        )
+
+        self.assertEqual(summary.status, 'paper_only')
+        self.assertIn('posterior_edge_not_positive', summary.reason_codes)

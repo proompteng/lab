@@ -10,10 +10,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from unittest import TestCase
+import pandas as pd
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from typing import Any
 
+from scripts import run_autonomous_lane as run_autonomous_lane_script
 from app.trading.autonomy.lane import (
     _AUTONOMY_PHASE_ORDER,
     _build_phase_manifest,
@@ -51,11 +53,15 @@ from app.trading.models import SignalEnvelope, StrategyDecision
 from app.trading.reporting import PromotionEvidenceSummary, PromotionRecommendation
 from app.models import (
     Base,
+    ResearchAttempt,
     ResearchCandidate,
+    ResearchCostCalibration,
     ResearchFoldMetrics,
     ResearchPromotion,
     ResearchRun,
+    ResearchSequentialTrial,
     ResearchStressMetrics,
+    ResearchValidationTest,
     StrategyCapitalAllocation,
     StrategyHypothesis,
     StrategyHypothesisMetricWindow,
@@ -85,6 +91,28 @@ class TestAutonomousLane(TestCase):
         )
         Base.metadata.create_all(engine)
         return sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+    def _write_alpha_price_csvs(self, root: Path) -> tuple[Path, Path]:
+        index = pd.date_range("2025-01-01", periods=220, freq="D", tz="UTC")
+        train = pd.DataFrame(
+            {
+                "AAPL": [100 + (i * 0.2) for i in range(180)],
+                "MSFT": [200 + (i * 0.15) for i in range(180)],
+            },
+            index=index[:180],
+        )
+        test = pd.DataFrame(
+            {
+                "AAPL": [136 + (i * 0.25) for i in range(40)],
+                "MSFT": [227 + (i * 0.20) for i in range(40)],
+            },
+            index=index[180:220],
+        )
+        train_path = root / "alpha-train.csv"
+        test_path = root / "alpha-test.csv"
+        train.to_csv(train_path)
+        test.to_csv(test_path)
+        return train_path, test_path
 
     def test_gate_forecast_metrics_fail_closed_for_non_authoritative_router_outputs(self) -> None:
         signals = [
@@ -547,6 +575,102 @@ class TestAutonomousLane(TestCase):
                 )
             finally:
                 os.chdir(original_cwd)
+
+    def test_lane_bridges_strategy_factory_into_gate_and_persistence(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
+        strategy_config_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-strategy-sample.yaml"
+        )
+        gate_policy_path = (
+            Path(__file__).parent.parent / "config" / "autonomous-gate-policy.json"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output_dir = root / "lane-with-strategy-factory"
+            train_prices_path, test_prices_path = self._write_alpha_price_csvs(root)
+            session_factory = self._empty_session_factory()
+
+            result = run_autonomous_lane(
+                signals_path=fixture_path,
+                strategy_config_path=strategy_config_path,
+                gate_policy_path=gate_policy_path,
+                output_dir=output_dir,
+                promotion_target="paper",
+                code_version="test-sha",
+                persist_results=True,
+                session_factory=session_factory,
+                alpha_train_prices_path=train_prices_path,
+                alpha_test_prices_path=test_prices_path,
+            )
+
+            candidate_spec = json.loads(
+                result.candidate_spec_path.read_text(encoding="utf-8")
+            )
+            self.assertIn("strategy_factory", candidate_spec)
+            self.assertIn(
+                "strategy_factory_candidate_spec", candidate_spec["artifacts"]
+            )
+            self.assertIn(
+                "strategy_factory_evaluation_report", candidate_spec["artifacts"]
+            )
+
+            gate_payload = json.loads(
+                result.gate_report_path.read_text(encoding="utf-8")
+            )
+            strategy_factory_evidence = gate_payload["promotion_evidence"].get(
+                "strategy_factory"
+            )
+            self.assertIsInstance(strategy_factory_evidence, dict)
+            self.assertIn("candidate_spec_artifact", strategy_factory_evidence)
+            self.assertIn("sequential_status", strategy_factory_evidence)
+
+            with session_factory() as session:
+                run_row = session.execute(
+                    select(ResearchRun).where(ResearchRun.run_id == result.run_id)
+                ).scalar_one()
+                candidate_row = session.execute(
+                    select(ResearchCandidate).where(
+                        ResearchCandidate.candidate_id == result.candidate_id
+                    )
+                ).scalar_one()
+                attempts = session.execute(
+                    select(ResearchAttempt).where(ResearchAttempt.run_id == result.run_id)
+                ).scalars().all()
+                validation_rows = session.execute(
+                    select(ResearchValidationTest).where(
+                        ResearchValidationTest.candidate_id == result.candidate_id
+                    )
+                ).scalars().all()
+                sequential_row = session.execute(
+                    select(ResearchSequentialTrial).where(
+                        ResearchSequentialTrial.candidate_id == result.candidate_id
+                    )
+                ).scalar_one_or_none()
+                calibration_rows = session.execute(
+                    select(ResearchCostCalibration)
+                ).scalars().all()
+                promotion_row = session.execute(
+                    select(ResearchPromotion).where(
+                        ResearchPromotion.candidate_id == result.candidate_id
+                    )
+                ).scalar_one_or_none()
+                vnext_promotion_row = session.execute(
+                    select(VNextPromotionDecision).where(
+                        VNextPromotionDecision.candidate_id == result.candidate_id
+                    )
+                ).scalar_one_or_none()
+
+            self.assertEqual(run_row.discovery_mode, "strategy_factory_autonomy_v1")
+            self.assertTrue(bool(candidate_row.candidate_family))
+            self.assertGreater(len(attempts), 0)
+            self.assertGreater(len(validation_rows), 0)
+            self.assertIsNotNone(sequential_row)
+            self.assertGreater(len(calibration_rows), 0)
+            self.assertIsNotNone(promotion_row)
+            self.assertIsNotNone(vnext_promotion_row)
+            self.assertIn("strategy_factory", promotion_row.evidence_bundle)
+            self.assertIn("strategy_factory", vnext_promotion_row.payload_json)
 
     def test_lane_progression_manifests_and_iteration_note(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"
@@ -4090,3 +4214,65 @@ class TestAutonomousLane(TestCase):
             coerce_phase_status("blocked", default="skip"),
             "skip",
         )
+
+    def test_run_autonomous_lane_script_forwards_alpha_sidecar_args(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            signals_path = root / "signals.json"
+            strategy_config_path = root / "strategy.yaml"
+            gate_policy_path = root / "gate-policy.json"
+            output_dir = root / "autonomy-out"
+            alpha_train_path = root / "alpha-train.csv"
+            alpha_test_path = root / "alpha-test.csv"
+            alpha_gate_policy_path = root / "alpha-gate-policy.json"
+
+            argv = [
+                "run_autonomous_lane.py",
+                "--signals",
+                str(signals_path),
+                "--strategy-config",
+                str(strategy_config_path),
+                "--gate-policy",
+                str(gate_policy_path),
+                "--output-dir",
+                str(output_dir),
+                "--alpha-train-prices",
+                str(alpha_train_path),
+                "--alpha-test-prices",
+                str(alpha_test_path),
+                "--alpha-gate-policy",
+                str(alpha_gate_policy_path),
+            ]
+
+            with (
+                patch("sys.argv", argv),
+                patch.object(run_autonomous_lane_script, "_resolve_git_sha", return_value="git-sha"),
+                patch.object(run_autonomous_lane_script, "print"),
+                patch.object(
+                    run_autonomous_lane_script,
+                    "run_autonomous_lane",
+                    return_value=SimpleNamespace(
+                        run_id="auto-run",
+                        candidate_id="cand-123",
+                        output_dir=output_dir,
+                        gate_report_path=output_dir / "gates" / "gate-evaluation.json",
+                        actuation_intent_path=None,
+                        paper_patch_path=None,
+                        candidate_spec_path=output_dir / "research" / "candidate-spec.json",
+                        candidate_generation_manifest_path=output_dir / "stages" / "candidate-generation.json",
+                        evaluation_manifest_path=output_dir / "stages" / "evaluation.json",
+                        recommendation_manifest_path=output_dir / "stages" / "recommendation.json",
+                        profitability_manifest_path=output_dir / "profitability" / "stage.json",
+                        recommendation_artifact_path=output_dir / "gates" / "recommendation.json",
+                        benchmark_parity_path=output_dir / "gates" / "benchmark-parity.json",
+                        stage_trace_ids={},
+                        stage_lineage_root="lineage-root",
+                    ),
+                ) as run_mock,
+            ):
+                exit_code = run_autonomous_lane_script.main()
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(run_mock.call_args.kwargs["alpha_train_prices_path"], alpha_train_path)
+            self.assertEqual(run_mock.call_args.kwargs["alpha_test_prices_path"], alpha_test_path)
+            self.assertEqual(run_mock.call_args.kwargs["alpha_gate_policy_path"], alpha_gate_policy_path)

@@ -13,8 +13,11 @@ from app.trading.portfolio import (
     ALLOCATOR_CLIP_SYMBOL_BUDGET,
     ALLOCATOR_CLIP_STRATEGY_BUDGET,
     ALLOCATOR_REJECT_CORRELATION_CAPACITY,
+    ALLOCATOR_REJECT_GROSS_EXPOSURE,
     ALLOCATOR_REJECT_SYMBOL_CAPACITY,
     ALLOCATOR_REGIME_LOW_CONFIDENCE,
+    ALLOCATOR_STRATEGY_FACTORY_BASELINE_FAIL,
+    ALLOCATOR_STRATEGY_FACTORY_OBSERVE_ONLY,
     AllocationConfig,
     IntentAggregator,
     PortfolioAllocator,
@@ -365,6 +368,197 @@ class TestPortfolioSizing(TestCase):
         self.assertEqual(
             Decimal(result.decision.params["allocator"]["approved_qty"]),
             Decimal("10"),
+        )
+
+    def test_allocator_prioritizes_higher_strategy_factory_edge_under_shared_cap(
+        self,
+    ) -> None:
+        allocator = PortfolioAllocator(
+            AllocationConfig(
+                enabled=True,
+                default_regime="neutral",
+                default_budget_multiplier=Decimal("1.0"),
+                default_capacity_multiplier=Decimal("1.0"),
+                min_multiplier=Decimal("0"),
+                max_multiplier=Decimal("2"),
+                max_symbol_pct_equity=None,
+                max_symbol_notional=None,
+                max_gross_exposure=Decimal("1500"),
+                strategy_notional_caps={},
+                symbol_notional_caps={},
+                correlation_group_caps={},
+                symbol_correlation_groups={},
+                regime_budget_multipliers={},
+                regime_capacity_multipliers={},
+            )
+        )
+        high_edge = StrategyDecision(
+            strategy_id="high-edge",
+            symbol="MSFT",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("20"),
+            order_type="market",
+            time_in_force="day",
+            params={
+                "price": Decimal("100"),
+                "strategy_factory": {
+                    "posterior_edge_summary": {
+                        "annualized_edge_mean_bps": "80",
+                        "annualized_edge_lower_bps": "40",
+                    },
+                    "null_comparator_summary": {"baseline_outperformed": True},
+                    "sequential_trial": {"status": "paper_ready"},
+                    "cost_calibration": {"status": "calibrated"},
+                },
+            },
+        )
+        low_edge = high_edge.model_copy(
+            update={
+                "strategy_id": "low-edge",
+                "symbol": "NVDA",
+                "params": {
+                    "price": Decimal("100"),
+                    "strategy_factory": {
+                        "posterior_edge_summary": {
+                            "annualized_edge_mean_bps": "0",
+                            "annualized_edge_lower_bps": "0",
+                        },
+                        "null_comparator_summary": {"baseline_outperformed": True},
+                        "sequential_trial": {"status": "paper_ready"},
+                        "cost_calibration": {"status": "calibrated"},
+                    },
+                },
+            }
+        )
+
+        results = allocator.allocate(
+            [low_edge, high_edge],
+            account={"equity": "10000", "buying_power": "10000", "cash": "10000"},
+            positions=[],
+            regime_label="neutral",
+        )
+
+        self.assertEqual(
+            [item.decision.strategy_id for item in results],
+            ["high-edge", "low-edge"],
+        )
+        self.assertTrue(results[0].approved)
+        self.assertEqual(results[0].approved_notional, Decimal("1500"))
+        self.assertFalse(results[1].approved)
+        self.assertIn(ALLOCATOR_REJECT_GROSS_EXPOSURE, results[1].reason_codes)
+
+    def test_allocator_blocks_strategy_factory_observe_only_candidates(self) -> None:
+        allocator = PortfolioAllocator(
+            AllocationConfig(
+                enabled=True,
+                default_regime="neutral",
+                default_budget_multiplier=Decimal("1.0"),
+                default_capacity_multiplier=Decimal("1.0"),
+                min_multiplier=Decimal("0"),
+                max_multiplier=Decimal("2"),
+                max_symbol_pct_equity=None,
+                max_symbol_notional=Decimal("1000"),
+                max_gross_exposure=None,
+                strategy_notional_caps={},
+                symbol_notional_caps={},
+                correlation_group_caps={},
+                symbol_correlation_groups={},
+                regime_budget_multipliers={},
+                regime_capacity_multipliers={},
+            )
+        )
+        decision = StrategyDecision(
+            strategy_id="observe-only",
+            symbol="AAPL",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("5"),
+            order_type="market",
+            time_in_force="day",
+            params={
+                "price": Decimal("100"),
+                "strategy_factory": {
+                    "posterior_edge_summary": {
+                        "annualized_edge_mean_bps": "15",
+                        "annualized_edge_lower_bps": "5",
+                    },
+                    "null_comparator_summary": {"baseline_outperformed": True},
+                    "sequential_trial": {"status": "observe_only"},
+                    "cost_calibration": {"status": "calibrated"},
+                },
+            },
+        )
+
+        results = allocator.allocate(
+            [decision],
+            account={"equity": "10000", "buying_power": "10000", "cash": "10000"},
+            positions=[],
+            regime_label="neutral",
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0].approved)
+        self.assertIn(
+            ALLOCATOR_STRATEGY_FACTORY_OBSERVE_ONLY, results[0].reason_codes
+        )
+
+    def test_allocator_blocks_strategy_factory_baseline_fail_candidates(self) -> None:
+        allocator = PortfolioAllocator(
+            AllocationConfig(
+                enabled=True,
+                default_regime="neutral",
+                default_budget_multiplier=Decimal("1.0"),
+                default_capacity_multiplier=Decimal("1.0"),
+                min_multiplier=Decimal("0"),
+                max_multiplier=Decimal("2"),
+                max_symbol_pct_equity=None,
+                max_symbol_notional=Decimal("1000"),
+                max_gross_exposure=None,
+                strategy_notional_caps={},
+                symbol_notional_caps={},
+                correlation_group_caps={},
+                symbol_correlation_groups={},
+                regime_budget_multipliers={},
+                regime_capacity_multipliers={},
+            )
+        )
+        decision = StrategyDecision(
+            strategy_id="baseline-fail",
+            symbol="AAPL",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("5"),
+            order_type="market",
+            time_in_force="day",
+            params={
+                "price": Decimal("100"),
+                "strategy_factory": {
+                    "posterior_edge_summary": {
+                        "annualized_edge_mean_bps": "15",
+                        "annualized_edge_lower_bps": "5",
+                    },
+                    "null_comparator_summary": {"baseline_outperformed": False},
+                    "sequential_trial": {"status": "paper_ready"},
+                    "cost_calibration": {"status": "calibrated"},
+                },
+            },
+        )
+
+        results = allocator.allocate(
+            [decision],
+            account={"equity": "10000", "buying_power": "10000", "cash": "10000"},
+            positions=[],
+            regime_label="neutral",
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0].approved)
+        self.assertIn(
+            ALLOCATOR_STRATEGY_FACTORY_BASELINE_FAIL, results[0].reason_codes
         )
 
     def test_allocator_clips_by_strategy_budget(self) -> None:
