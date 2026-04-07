@@ -732,8 +732,7 @@ def _selected_normalization_regime(
     return template_allowed_normalizations[0] if template_allowed_normalizations else None
 
 
-def main() -> int:
-    args = _parse_args()
+def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str, Any]:
     sweep_config = _load_sweep_config(args.sweep_config.resolve())
     recent_days = _resolve_recent_trading_days(
         clickhouse_http_url=str(args.clickhouse_http_url),
@@ -1154,6 +1153,12 @@ def main() -> int:
         'candidate_count': len(scored),
         'top': scored[: max(1, int(args.top_n))],
     }
+    return payload
+
+
+def main() -> int:
+    args = _parse_args()
+    payload = run_consistent_profitability_frontier(args)
     if args.json_output:
         args.json_output.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding='utf-8')
     print(json.dumps(payload, indent=2, sort_keys=True))

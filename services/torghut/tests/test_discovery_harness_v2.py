@@ -208,6 +208,10 @@ class TestDiscoveryHarnessV2(TestCase):
         self.assertIn('quote_quality_veto', template.risk_controls)
         self.assertEqual(template.default_hard_vetoes['required_min_daily_notional'], '300000')
         self.assertEqual(
+            template.runtime_harness['strategy_name'],
+            'breakout-continuation-long-v1',
+        )
+        self.assertEqual(
             derive_family_template_id(explicit_id=' custom ', family='ignored'),
             'custom',
         )

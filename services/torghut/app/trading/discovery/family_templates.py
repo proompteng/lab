@@ -28,6 +28,7 @@ class FamilyTemplate:
     day_veto_rules: tuple[Mapping[str, Any], ...]
     default_hard_vetoes: Mapping[str, Any]
     default_selection_objectives: Mapping[str, Any]
+    runtime_harness: Mapping[str, Any]
     schema_version: str = _SCHEMA_VERSION
 
     def to_payload(self) -> dict[str, Any]:
@@ -47,6 +48,7 @@ class FamilyTemplate:
             'day_veto_rules': [dict(item) for item in self.day_veto_rules],
             'default_hard_vetoes': dict(self.default_hard_vetoes),
             'default_selection_objectives': dict(self.default_selection_objectives),
+            'runtime_harness': dict(self.runtime_harness),
         }
 
 
@@ -117,6 +119,7 @@ def load_family_template(
         day_veto_rules=_mapping_tuple(payload.get('day_veto_rules')),
         default_hard_vetoes=_mapping(payload.get('default_hard_vetoes')),
         default_selection_objectives=_mapping(payload.get('default_selection_objectives')),
+        runtime_harness=_mapping(payload.get('runtime_harness')),
     )
 
 
