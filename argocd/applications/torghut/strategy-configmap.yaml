@@ -15,7 +15,7 @@ data:
         strategy_type: intraday_tsmom_v1
         version: 1.1.0
         description: Intraday momentum strategy promoted from the March 30, 2026 through April 2, 2026 liquid-open simulation winner, version=1.1.0
-        enabled: true
+        enabled: false
         base_timeframe: "1Sec"
         universe_type: intraday_tsmom_v1
         universe_symbols: ["NVDA", "AAPL", "MSFT", "AMAT", "META", "AVGO", "AMD", "GOOG", "PLTR", "INTC"]
@@ -94,13 +94,13 @@ data:
         strategy_id: breakout_continuation_long_v1@research
         strategy_type: breakout_continuation_long_v1
         version: 1.0.0
-        description: Research-backed breakout continuation sleeve with spread and imbalance confirmation, version=1.0.0
-        enabled: false
+        description: Promoted breakout continuation sleeve tuned from the March 24, 2026 through April 2, 2026 replay composite winner, version=1.0.0
+        enabled: true
         base_timeframe: "1Sec"
         universe_type: breakout_continuation_long_v1
-        universe_symbols: ["AAPL", "AMAT", "AMD", "AVGO", "GOOG", "INTC", "META", "MSFT", "MU", "NVDA", "PLTR", "SHOP"]
-        max_notional_per_trade: 47385
-        max_position_pct_equity: 1.5
+        universe_symbols: ["AMAT", "GOOG", "INTC", "MSFT", "MU", "NVDA", "PLTR", "SHOP"]
+        max_notional_per_trade: 315900.2
+        max_position_pct_equity: 10.0
         params:
           bullish_hist_min: "0.003"
           min_bull_rsi: "54"
@@ -144,7 +144,7 @@ data:
           entry_end_minute_utc: "990"
           session_flatten_start_minute_utc: "1170"
           min_entry_minutes_before_flatten: "20"
-          max_gross_exposure_pct_equity: "3.0"
+          max_gross_exposure_pct_equity: "10.0"
           position_isolation_mode: "per_strategy"
           long_stop_loss_bps: "35"
           long_stop_loss_spread_bps_multiplier: "0.20"
@@ -153,24 +153,30 @@ data:
           long_trailing_stop_drawdown_bps: "10"
           long_trailing_stop_spread_bps_multiplier: "0.10"
           long_trailing_stop_volatility_bps_multiplier: "3"
-          entry_cooldown_seconds: "1200"
+          entry_cooldown_seconds: "600"
           exit_cooldown_seconds: "120"
           min_hold_seconds: "300"
           max_hold_seconds: "900"
           max_concurrent_positions: "3"
-          max_entries_per_session: "1"
+          max_entries_per_session: "3"
           max_negative_exits_per_session: "1"
           stop_loss_lockout_seconds: "14400"
           negative_exit_lockout_seconds: "7200"
           negative_exit_loss_bps: "8"
-          max_session_negative_exit_bps: "24"
+          max_session_negative_exit_bps: "8"
+          entry_notional_max_multiplier: "1.50"
+          isolated_same_day_min_session_open_rank: "0.80"
+          isolated_same_day_min_opening_window_return_rank: "0.75"
+          isolated_same_day_min_continuation_rank: "0.78"
+          isolated_same_day_min_microprice_bias_bps: "0.10"
+          isolated_same_day_min_recent_above_opening_window_close_ratio: "0.45"
           require_positive_price_for_signal_exit: "true"
       - name: mean-reversion-rebound-long-v1
         strategy_id: mean_reversion_rebound_long_v1@research
         strategy_type: mean_reversion_rebound_long_v1
         version: 1.0.0
         description: Research-backed intraday rebound sleeve after controlled downside dislocation, version=1.0.0
-        enabled: true
+        enabled: false
         base_timeframe: "1Sec"
         universe_type: mean_reversion_rebound_long_v1
         universe_symbols: ["AAPL", "AMAT", "AMD", "AVGO", "GOOG", "INTC", "META", "MSFT", "MU", "NVDA", "PLTR", "SHOP"]
@@ -219,12 +225,88 @@ data:
           max_hold_seconds: "420"
           max_concurrent_positions: "1"
           require_positive_price_for_signal_exit: "true"
+      - name: washout-rebound-long-v1
+        strategy_id: washout_rebound_long_v1@research
+        strategy_type: washout_rebound_long_v1
+        version: 1.0.0
+        description: Promoted washout rebound sleeve paired with the March 24, 2026 through April 2, 2026 replay composite winner, version=1.0.0
+        enabled: true
+        base_timeframe: "1Sec"
+        universe_type: washout_rebound_long_v1
+        universe_symbols: ["AMD", "INTC", "SHOP", "AMAT", "MU", "GOOG", "MSFT"]
+        max_notional_per_trade: 63180
+        max_position_pct_equity: 2.0
+        params:
+          min_session_open_selloff_bps: "24"
+          max_session_open_selloff_bps: "120"
+          max_session_open_selloff_range_multiplier: "3.5"
+          min_price_below_vwap_bps: "8"
+          max_price_below_vwap_bps: "120"
+          max_price_below_vwap_range_multiplier: "5.0"
+          min_price_below_ema12_bps: "1"
+          max_price_below_ema12_bps: "50"
+          min_bull_rsi: "34"
+          max_bull_rsi: "50"
+          rebound_hist_min: "-0.018"
+          rebound_hist_max: "0.010"
+          max_session_range_position: "0.45"
+          min_session_range_bps: "35"
+          min_price_vs_session_low_bps: "0"
+          max_price_vs_session_low_bps: "36"
+          vol_floor: "0.00005"
+          vol_ceil: "0.00075"
+          max_spread_bps: "20"
+          max_recent_spread_bps: "10"
+          max_recent_spread_bps_max: "30"
+          max_recent_quote_invalid_ratio: "0.15"
+          max_recent_quote_jump_bps: "55"
+          min_imbalance_pressure: "0.00"
+          min_recent_imbalance_pressure: "0.03"
+          min_recent_microprice_bias_bps: "0.10"
+          min_cross_section_reversal_rank: "0.60"
+          min_cross_section_recent_imbalance_rank: "0.45"
+          min_cross_section_positive_recent_imbalance_ratio: "0.35"
+          max_cross_section_continuation_rank: "0.80"
+          max_cross_section_opening_window_return_rank: "0.80"
+          entry_notional_min_multiplier: "0.20"
+          entry_notional_rank_floor: "0.65"
+          entry_notional_rank_ceiling: "0.95"
+          exit_price_vs_session_open_bps: "-4"
+          exit_macd_hist_max: "-0.004"
+          exit_rsi_min: "56"
+          exit_recent_imbalance_pressure_max: "-0.02"
+          exit_flow_stall_session_range_position_min: "0.35"
+          exit_session_range_position_min: "0.58"
+          entry_start_minute_utc: "850"
+          entry_end_minute_utc: "1050"
+          session_flatten_start_minute_utc: "1110"
+          max_gross_exposure_pct_equity: "4.0"
+          position_isolation_mode: "per_strategy"
+          entry_cooldown_seconds: "900"
+          exit_cooldown_seconds: "120"
+          min_hold_seconds: "120"
+          max_hold_seconds: "900"
+          max_concurrent_positions: "2"
+          max_entries_per_session: "2"
+          max_negative_exits_per_session: "1"
+          stop_loss_lockout_seconds: "10800"
+          negative_exit_lockout_seconds: "3600"
+          negative_exit_loss_bps: "8"
+          max_session_negative_exit_bps: "24"
+          long_stop_loss_bps: "20"
+          long_stop_loss_spread_bps_multiplier: "0.25"
+          long_stop_loss_volatility_bps_multiplier: "3"
+          long_trailing_stop_activation_profit_bps: "10"
+          long_trailing_stop_drawdown_bps: "5"
+          long_trailing_stop_spread_bps_multiplier: "0.10"
+          long_trailing_stop_volatility_bps_multiplier: "3"
+          require_positive_price_for_signal_exit: "true"
       - name: late-day-continuation-long-v1
         strategy_id: late_day_continuation_long_v1@research
         strategy_type: late_day_continuation_long_v1
         version: 1.0.0
         description: Research-backed late-day continuation sleeve for strong liquid equities into the close, version=1.0.0
-        enabled: true
+        enabled: false
         base_timeframe: "1Sec"
         universe_type: late_day_continuation_long_v1
         universe_symbols: ["AAPL", "AMAT", "AMD", "AVGO", "GOOG", "INTC", "META", "MSFT", "MU", "NVDA", "PLTR", "SHOP"]
@@ -300,7 +382,7 @@ data:
         strategy_type: end_of_day_reversal_long_v1
         version: 1.0.0
         description: Research-backed end-of-day reversal sleeve for intraday losers with late-session rebid confirmation, version=1.0.0
-        enabled: true
+        enabled: false
         base_timeframe: "1Sec"
         universe_type: end_of_day_reversal_long_v1
         universe_symbols: ["AAPL", "AMAT", "AMD", "AVGO", "GOOG", "INTC", "META", "MSFT", "MU", "NVDA", "PLTR", "SHOP"]

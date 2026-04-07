@@ -345,7 +345,7 @@ class DecisionEngine:
                     ),
                     rationale=",".join(explain),
                     params=_build_params(
-                        signal=signal,
+                        signal=normalized_signal,
                         macd=features.macd,
                         macd_signal=features.macd_signal,
                         rsi=features.rsi,
@@ -884,6 +884,9 @@ def _build_params(
     execution_advice = _resolve_execution_advice_payload(signal)
     if execution_advice is not None:
         params["execution_advice"] = execution_advice
+    execution_features = _resolve_execution_feature_payload(signal)
+    if execution_features is not None:
+        params["execution_features"] = execution_features
     fragility_snapshot = _resolve_fragility_snapshot_payload(signal)
     if fragility_snapshot is not None:
         params["fragility_snapshot"] = fragility_snapshot
@@ -1029,6 +1032,30 @@ def _resolve_execution_advice_payload(signal: SignalEnvelope) -> dict[str, Any] 
     if advice.get("event_ts") is None:
         advice["event_ts"] = signal.event_ts.isoformat()
     return advice
+
+
+def _resolve_execution_feature_payload(
+    signal: SignalEnvelope,
+) -> dict[str, Any] | None:
+    payload = signal.payload
+    feature_keys = (
+        "recent_imbalance_pressure_avg",
+        "recent_microprice_bias_bps_avg",
+        "cross_section_continuation_rank",
+        "cross_section_reversal_rank",
+        "cross_section_recent_imbalance_rank",
+        "cross_section_opening_window_return_rank",
+        "cross_section_session_open_rank",
+        "spread_bps",
+    )
+    execution_features = {
+        key: payload.get(key)
+        for key in feature_keys
+        if payload.get(key) is not None
+    }
+    if not execution_features:
+        return None
+    return execution_features
 
 
 def _resolve_fragility_snapshot_payload(
@@ -1808,6 +1835,7 @@ def _blocks_same_direction_reentry(strategy: Strategy) -> bool:
         "tsmom_intraday",
         "momentum_pullback_long_v1",
         "breakout_continuation_long_v1",
+        "washout_rebound_long_v1",
         "mean_reversion_rebound_long_v1",
         "late_day_continuation_long_v1",
         "end_of_day_reversal_long_v1",
@@ -1897,6 +1925,7 @@ def _treats_sell_as_exit_only(strategy: Strategy) -> bool:
         "tsmom_intraday",
         "momentum_pullback_long_v1",
         "breakout_continuation_long_v1",
+        "washout_rebound_long_v1",
         "mean_reversion_rebound_long_v1",
         "late_day_continuation_long_v1",
         "end_of_day_reversal_long_v1",

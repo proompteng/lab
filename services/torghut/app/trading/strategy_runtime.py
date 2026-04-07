@@ -24,6 +24,7 @@ from .research_sleeves import (
     evaluate_late_day_continuation_long,
     evaluate_mean_reversion_rebound_long,
     evaluate_momentum_pullback_long,
+    evaluate_washout_rebound_long,
 )
 from .strategy_specs import build_compiled_strategy_artifacts, strategy_type_supports_spec_v2
 
@@ -295,6 +296,7 @@ class StrategyRegistry:
             "momentum_pullback_long_v1": MomentumPullbackLongPlugin(),
             "breakout_continuation_long_v1": BreakoutContinuationLongPlugin(),
             "mean_reversion_rebound_long_v1": MeanReversionReboundLongPlugin(),
+            "washout_rebound_long_v1": WashoutReboundLongPlugin(),
             "late_day_continuation_long_v1": LateDayContinuationLongPlugin(),
             "end_of_day_reversal_long_v1": EndOfDayReversalLongPlugin(),
         }
@@ -977,6 +979,114 @@ class MeanReversionReboundLongPlugin:
             ),
             cross_section_reversal_rank=_decimal(
                 features.values.get("cross_section_reversal_rank")
+            ),
+        )
+        return _plugin_result_from_sleeve_result(
+            context=context,
+            features=features,
+            required_features=self.required_features,
+            evaluation=evaluation,
+        )
+
+
+class WashoutReboundLongPlugin:
+    plugin_id = "washout_rebound_long"
+    version = "1.0.0"
+    required_features: tuple[str, ...] = (
+        "price",
+        "ema12",
+        "macd",
+        "macd_signal",
+        "rsi14",
+        "vol_realized_w60s",
+        "vwap_session",
+        "spread_bps",
+        "imbalance_bid_sz",
+        "imbalance_ask_sz",
+        "price_vs_session_open_bps",
+        "price_vs_prev_session_close_bps",
+        "opening_window_return_bps",
+        "opening_window_return_from_prev_close_bps",
+        "price_position_in_session_range",
+        "price_vs_session_low_bps",
+        "price_vs_opening_range_low_bps",
+        "session_range_bps",
+        "recent_spread_bps_avg",
+        "recent_spread_bps_max",
+        "recent_imbalance_pressure_avg",
+        "recent_quote_invalid_ratio",
+        "recent_quote_jump_bps_max",
+        "recent_microprice_bias_bps_avg",
+        "recent_above_vwap_w5m_ratio",
+        "cross_section_opening_window_return_rank",
+        "cross_section_opening_window_return_from_prev_close_rank",
+        "cross_section_continuation_rank",
+        "cross_section_reversal_rank",
+        "cross_section_recent_imbalance_rank",
+        "cross_section_positive_recent_imbalance_ratio",
+    )
+
+    def evaluate(
+        self, context: StrategyContext, features: FeatureVectorV3
+    ) -> PluginEvaluationResult:
+        evaluation = evaluate_washout_rebound_long(
+            params=context.params,
+            strategy_id=context.strategy_id,
+            strategy_type=context.strategy_type,
+            symbol=context.symbol,
+            event_ts=context.event_ts,
+            timeframe=context.timeframe,
+            trace_enabled=context.trace_enabled,
+            price=_decimal(features.values.get("price")),
+            ema12=_decimal(features.values.get("ema12")),
+            macd=_decimal(features.values.get("macd")),
+            macd_signal=_decimal(features.values.get("macd_signal")),
+            rsi14=_decimal(features.values.get("rsi14")),
+            vol_realized_w60s=_decimal(features.values.get("vol_realized_w60s")),
+            vwap_session=_decimal(features.values.get("vwap_session")),
+            spread_bps=_decimal(features.values.get("spread_bps")),
+            imbalance_bid_sz=_decimal(features.values.get("imbalance_bid_sz")),
+            imbalance_ask_sz=_decimal(features.values.get("imbalance_ask_sz")),
+            price_vs_session_open_bps=_decimal(features.values.get("price_vs_session_open_bps")),
+            price_vs_prev_session_close_bps=_decimal(
+                features.values.get("price_vs_prev_session_close_bps")
+            ),
+            opening_window_return_bps=_decimal(features.values.get("opening_window_return_bps")),
+            opening_window_return_from_prev_close_bps=_decimal(
+                features.values.get("opening_window_return_from_prev_close_bps")
+            ),
+            price_position_in_session_range=_decimal(features.values.get("price_position_in_session_range")),
+            price_vs_session_low_bps=_decimal(features.values.get("price_vs_session_low_bps")),
+            price_vs_opening_range_low_bps=_decimal(features.values.get("price_vs_opening_range_low_bps")),
+            session_range_bps=_decimal(features.values.get("session_range_bps")),
+            recent_spread_bps_avg=_decimal(features.values.get("recent_spread_bps_avg")),
+            recent_spread_bps_max=_decimal(features.values.get("recent_spread_bps_max")),
+            recent_imbalance_pressure_avg=_decimal(features.values.get("recent_imbalance_pressure_avg")),
+            recent_quote_invalid_ratio=_decimal(features.values.get("recent_quote_invalid_ratio")),
+            recent_quote_jump_bps_max=_decimal(features.values.get("recent_quote_jump_bps_max")),
+            recent_microprice_bias_bps_avg=_decimal(
+                features.values.get("recent_microprice_bias_bps_avg")
+            ),
+            recent_above_vwap_w5m_ratio=_decimal(
+                features.values.get("recent_above_vwap_w5m_ratio")
+            ),
+            cross_section_opening_window_return_rank=_decimal(
+                features.values.get("cross_section_opening_window_return_rank")
+            ),
+            cross_section_opening_window_return_from_prev_close_rank=_decimal(
+                features.values.get("cross_section_opening_window_return_from_prev_close_rank")
+            ),
+            cross_section_continuation_rank=_decimal(
+                features.values.get("cross_section_continuation_rank")
+            ),
+            cross_section_reversal_rank=_decimal(
+                features.values.get("cross_section_reversal_rank")
+            ),
+            cross_section_recent_imbalance_rank=_decimal(
+                features.values.get("cross_section_recent_imbalance_rank")
+            ),
+            cross_section_positive_recent_imbalance_ratio=_decimal(
+                features.values.get("cross_section_positive_recent_imbalance_ratio")
             ),
         )
         return _plugin_result_from_sleeve_result(

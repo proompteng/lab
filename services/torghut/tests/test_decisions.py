@@ -159,6 +159,47 @@ class TestDecisionEngine(TestCase):
         self.assertEqual(snapshot.get("price"), "101.5")
         self.assertEqual(snapshot.get("spread"), "0.02")
 
+    def test_execution_features_attached_when_present_on_signal(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            name="test",
+            description=None,
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=None,
+            max_position_pct_equity=None,
+            max_notional_per_trade=None,
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            symbol="AAPL",
+            payload={
+                "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
+                "rsi14": Decimal("20"),
+                "price": Decimal("101.5"),
+                "spread_bps": Decimal("3.2"),
+                "recent_microprice_bias_bps_avg": Decimal("0.18"),
+                "cross_section_continuation_rank": Decimal("0.81"),
+            },
+            timeframe="1Min",
+        )
+
+        decisions = engine.evaluate(signal, [strategy])
+
+        self.assertEqual(len(decisions), 1)
+        execution_features = decisions[0].params.get("execution_features")
+        assert isinstance(execution_features, dict)
+        self.assertEqual(execution_features.get("spread_bps"), Decimal("3.2"))
+        self.assertEqual(
+            execution_features.get("recent_microprice_bias_bps_avg"),
+            Decimal("0.18"),
+        )
+        self.assertEqual(
+            execution_features.get("cross_section_continuation_rank"),
+            Decimal("0.81"),
+        )
+
     def test_legacy_buy_supports_fractional_equity_qty_when_enabled(self) -> None:
         original_fractional = settings.trading_fractional_equities_enabled
         original_allow_shorts = settings.trading_allow_shorts
@@ -1360,6 +1401,53 @@ class TestDecisionEngine(TestCase):
                 "spread": 0.04,
                 "imbalance_bid_sz": 4100,
                 "imbalance_ask_sz": 4900,
+            },
+        )
+
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+        ):
+            decisions = engine.evaluate(signal, [strategy], positions=[])
+
+        self.assertEqual(decisions, [])
+
+    def test_scheduler_runtime_washout_rebound_skips_exit_only_sell_without_long_inventory(
+        self,
+    ) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="washout-rebound",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="washout_rebound_long_v1",
+            universe_symbols=["MSFT"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 17, 31, 10, tzinfo=timezone.utc),
+            symbol="MSFT",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 372.85,
+                "ema12": 372.70,
+                "ema26": 372.10,
+                "macd": 0.002,
+                "macd_signal": 0.006,
+                "rsi14": 58,
+                "vol_realized_w60s": 0.00020,
+                "vwap_session": 372.60,
+                "spread": 0.04,
+                "imbalance_bid_sz": 4100,
+                "imbalance_ask_sz": 4900,
+                "price_vs_session_open_bps": 3,
+                "price_position_in_session_range": 0.62,
+                "price_vs_session_low_bps": 48,
+                "recent_imbalance_pressure_avg": -0.03,
             },
         )
 

@@ -117,6 +117,7 @@ class TestLocalIntradayTsmomReplay(TestCase):
         day_bucket = {
             "decision_count": 1,
             "filled_count": 0,
+            "filled_notional": Decimal("0"),
             "gross_pnl": Decimal("0"),
             "net_pnl": Decimal("0"),
             "cost_total": Decimal("0"),
@@ -143,6 +144,7 @@ class TestLocalIntradayTsmomReplay(TestCase):
         self.assertEqual(position.avg_entry_price, Decimal("523.28"))
         self.assertEqual(position.qty, Decimal("10"))
         self.assertEqual(day_bucket["filled_count"], 1)
+        self.assertEqual(day_bucket["filled_notional"], Decimal("5232.80"))
         self.assertLess(cash, Decimal("10000"))
 
     def test_quote_quality_rejects_wide_spread_outlier(self) -> None:
@@ -202,6 +204,37 @@ class TestLocalIntradayTsmomReplay(TestCase):
             time_in_force="day",
             rationale="session_flatten_exit",
             params={"position_exit": {"type": "session_flatten_minute_utc"}},
+        )
+        signal = self._signal(bid="524.90", ask="525.10", price="525.00")
+
+        updated = _apply_order_preferences(decision, signal)
+
+        self.assertEqual(updated.order_type, "market")
+        self.assertIsNone(updated.limit_price)
+
+    def test_high_conviction_breakout_entry_keeps_market_order(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="breakout-row-id",
+            symbol="META",
+            event_ts=datetime(2026, 3, 27, 19, 30, 0, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="buy",
+            qty=Decimal("10"),
+            order_type="market",
+            time_in_force="day",
+            rationale="breakout_entry",
+            params={
+                "execution_features": {
+                    "spread_bps": Decimal("4"),
+                    "recent_microprice_bias_bps_avg": Decimal("0.20"),
+                    "cross_section_continuation_rank": Decimal("0.82"),
+                },
+                "strategy_runtime": {
+                    "source_strategy_runtime": [
+                        {"strategy_type": "breakout_continuation_long_v1"}
+                    ]
+                },
+            },
         )
         signal = self._signal(bid="524.90", ask="525.10", price="525.00")
 
@@ -629,6 +662,7 @@ class TestLocalIntradayTsmomReplay(TestCase):
         day_bucket = {
             "decision_count": 1,
             "filled_count": 0,
+            "filled_notional": Decimal("0"),
             "gross_pnl": Decimal("0"),
             "net_pnl": Decimal("0"),
             "cost_total": Decimal("0"),
@@ -655,6 +689,7 @@ class TestLocalIntradayTsmomReplay(TestCase):
         )
 
         self.assertEqual(symbol_bucket["filled_count"], 1)
+        self.assertEqual(symbol_bucket["filled_notional"], Decimal("5232.80"))
         self.assertGreaterEqual(symbol_bucket["cost_total"], Decimal("0"))
 
         cash = _apply_filled_decision(
@@ -674,6 +709,7 @@ class TestLocalIntradayTsmomReplay(TestCase):
         self.assertGreater(symbol_bucket["gross_pnl"], Decimal("-1"))
         self.assertNotEqual(symbol_bucket["net_pnl"], Decimal("0"))
         self.assertEqual(symbol_bucket["closed_trade_count"], 1)
+        self.assertEqual(symbol_bucket["filled_notional"], Decimal("10465.00"))
         self.assertGreater(cash, Decimal("0"))
 
     def test_replay_main_writes_trace_funnel_and_near_miss_outputs(self) -> None:
@@ -1036,7 +1072,7 @@ class TestLocalIntradayTsmomReplay(TestCase):
         self.assertEqual(payload["funnel"]["buckets"][0]["trading_day"], "2026-03-26")
         self.assertGreaterEqual(payload["filled_count"], 2)
 
-    def test_run_replay_marks_passed_trace_rejected_after_runtime_filters(self) -> None:
+    def test_run_replay_marks_passed_trace_with_sizer_reject_reason(self) -> None:
         strategy = Strategy(
             name="breakout-continuation-long-v1",
             description=None,
@@ -1126,7 +1162,9 @@ class TestLocalIntradayTsmomReplay(TestCase):
                 _ = decision
                 _ = kwargs
                 return type(
-                    "SizingResult", (), {"approved": False, "decision": decision}
+                    "SizingResult",
+                    (),
+                    {"approved": False, "decision": decision, "reasons": []},
                 )()
 
         config = ReplayConfig(
@@ -1167,6 +1205,223 @@ class TestLocalIntradayTsmomReplay(TestCase):
         self.assertTrue(payload["trace"][0]["strategy_trace"]["passed"])
         self.assertFalse(payload["trace"][0]["decision_emitted"])
         self.assertEqual(payload["trace"][0]["fill_status"], "none")
+        self.assertEqual(payload["trace"][0]["block_reason"], "sizer_rejected")
+
+    def test_run_replay_marks_passed_trace_with_allocator_reject_reason(self) -> None:
+        strategy = Strategy(
+            name="breakout-continuation-long-v1",
+            description=None,
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="static",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=None,
+            max_notional_per_trade=None,
+        )
+        decision_strategy_id = str(strategy.id)
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 17, 30, 0, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": Decimal("99.95"),
+                "imbalance_bid_px": Decimal("99.90"),
+                "imbalance_ask_px": Decimal("100.00"),
+                "spread": Decimal("0.10"),
+            },
+        )
+        decision = StrategyDecision(
+            strategy_id=decision_strategy_id,
+            symbol="AAPL",
+            event_ts=signal.event_ts,
+            timeframe="1Sec",
+            action="buy",
+            qty=Decimal("2"),
+            order_type="limit",
+            time_in_force="day",
+            limit_price=Decimal("99.00"),
+            rationale="candidate_one",
+            params={},
+        )
+        passed_trace = StrategyTrace(
+            strategy_id=decision_strategy_id,
+            strategy_type="breakout_continuation_long",
+            symbol="AAPL",
+            event_ts=signal.event_ts.isoformat(),
+            timeframe="1Sec",
+            passed=True,
+            action="buy",
+            gates=(
+                GateTrace(
+                    gate="eligibility",
+                    category="eligibility",
+                    passed=True,
+                    thresholds=(),
+                ),
+            ),
+        )
+
+        class _Engine:
+            def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+                _ = args
+                _ = kwargs
+
+            def observe_signal(self, signal: SignalEnvelope) -> None:
+                _ = signal
+
+            def evaluate(
+                self, signal: SignalEnvelope, strategies, *, equity, positions
+            ):  # type: ignore[no-untyped-def]
+                _ = signal
+                _ = strategies
+                _ = equity
+                _ = positions
+                return [decision]
+
+            def consume_runtime_telemetry(self):  # type: ignore[no-untyped-def]
+                return type("Telemetry", (), {"traces": [passed_trace]})()
+
+        class _Allocator:
+            def allocate(self, raw_decisions, **kwargs):  # type: ignore[no-untyped-def]
+                _ = raw_decisions
+                _ = kwargs
+                return [
+                    type(
+                        "AllocationResult",
+                        (),
+                        {
+                            "approved": False,
+                            "decision": decision,
+                            "reason_codes": ("allocator_reject_symbol_capacity",),
+                        },
+                    )()
+                ]
+
+        config = ReplayConfig(
+            strategy_configmap_path=Path("/tmp/strategies.yaml"),
+            clickhouse_http_url="http://example.invalid:8123",
+            clickhouse_username=None,
+            clickhouse_password=None,
+            start_date=datetime(2026, 3, 26, tzinfo=timezone.utc).date(),
+            end_date=datetime(2026, 3, 26, tzinfo=timezone.utc).date(),
+            chunk_minutes=10,
+            flatten_eod=True,
+            start_equity=Decimal("10000"),
+            capture_traces=True,
+        )
+
+        with (
+            patch(
+                "scripts.local_intraday_tsmom_replay._load_strategies",
+                return_value=[strategy],
+            ),
+            patch(
+                "scripts.local_intraday_tsmom_replay._iter_signal_rows",
+                return_value=iter([signal]),
+            ),
+            patch("scripts.local_intraday_tsmom_replay.DecisionEngine", _Engine),
+            patch(
+                "scripts.local_intraday_tsmom_replay.allocator_from_settings",
+                return_value=_Allocator(),
+            ),
+        ):
+            payload = run_replay(config)
+
+        self.assertEqual(len(payload["trace"]), 1)
         self.assertEqual(
-            payload["trace"][0]["block_reason"], "post_runtime_filter_rejected"
+            payload["trace"][0]["block_reason"], "allocator_reject_symbol_capacity"
+        )
+
+    def test_run_replay_marks_passed_trace_with_engine_runtime_filter_reason(self) -> None:
+        strategy = Strategy(
+            name="breakout-continuation-long-v1",
+            description=None,
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="static",
+            universe_symbols=["AAPL"],
+            max_position_pct_equity=None,
+            max_notional_per_trade=None,
+        )
+        decision_strategy_id = str(strategy.id)
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 17, 30, 0, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": Decimal("99.95"),
+                "imbalance_bid_px": Decimal("99.90"),
+                "imbalance_ask_px": Decimal("100.00"),
+                "spread": Decimal("0.10"),
+            },
+        )
+        passed_trace = StrategyTrace(
+            strategy_id=decision_strategy_id,
+            strategy_type="breakout_continuation_long",
+            symbol="AAPL",
+            event_ts=signal.event_ts.isoformat(),
+            timeframe="1Sec",
+            passed=True,
+            action="buy",
+            gates=(
+                GateTrace(
+                    gate="eligibility",
+                    category="eligibility",
+                    passed=True,
+                    thresholds=(),
+                ),
+            ),
+        )
+
+        class _Engine:
+            def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+                _ = args
+                _ = kwargs
+
+            def observe_signal(self, signal: SignalEnvelope) -> None:
+                _ = signal
+
+            def evaluate(
+                self, signal: SignalEnvelope, strategies, *, equity, positions
+            ):  # type: ignore[no-untyped-def]
+                _ = signal
+                _ = strategies
+                _ = equity
+                _ = positions
+                return []
+
+            def consume_runtime_telemetry(self):  # type: ignore[no-untyped-def]
+                return type("Telemetry", (), {"traces": [passed_trace]})()
+
+        config = ReplayConfig(
+            strategy_configmap_path=Path("/tmp/strategies.yaml"),
+            clickhouse_http_url="http://example.invalid:8123",
+            clickhouse_username=None,
+            clickhouse_password=None,
+            start_date=datetime(2026, 3, 26, tzinfo=timezone.utc).date(),
+            end_date=datetime(2026, 3, 26, tzinfo=timezone.utc).date(),
+            chunk_minutes=10,
+            flatten_eod=True,
+            start_equity=Decimal("10000"),
+            capture_traces=True,
+        )
+
+        with (
+            patch(
+                "scripts.local_intraday_tsmom_replay._load_strategies",
+                return_value=[strategy],
+            ),
+            patch(
+                "scripts.local_intraday_tsmom_replay._iter_signal_rows",
+                return_value=iter([signal]),
+            ),
+            patch("scripts.local_intraday_tsmom_replay.DecisionEngine", _Engine),
+        ):
+            payload = run_replay(config)
+
+        self.assertEqual(len(payload["trace"]), 1)
+        self.assertEqual(
+            payload["trace"][0]["block_reason"], "engine_runtime_filter_rejected"
         )

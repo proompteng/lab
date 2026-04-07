@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import timezone
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, Iterable, Optional, cast
+from typing import Any, Iterable, Mapping, Optional, cast
 
 from ..config import settings
 from ..models import Strategy
@@ -45,6 +45,11 @@ MICROSTRUCTURE_LOW_DEPTH_RATE_SCALE = Decimal("0.75")
 MICROSTRUCTURE_STRESS_EXECUTION_SCALE = Decimal("1.40")
 MICROSTRUCTURE_PRESSURE_EXECUTION_SCALE = Decimal("1.10")
 MICROSTRUCTURE_EXECUTION_SCALE_EPSILON = Decimal("0.01")
+HIGH_CONVICTION_MARKET_SPREAD_BPS_MAX = Decimal("12")
+HIGH_CONVICTION_BREAKOUT_CONTINUATION_RANK_MIN = Decimal("0.70")
+HIGH_CONVICTION_BREAKOUT_MICROPRICE_BPS_MIN = Decimal("0.05")
+HIGH_CONVICTION_WASHOUT_REVERSAL_RANK_MIN = Decimal("0.55")
+HIGH_CONVICTION_WASHOUT_MICROPRICE_BPS_MIN = Decimal("0.05")
 _SIZING_LIMITING_CONSTRAINT_REASONS: frozenset[str] = frozenset(
     {
         "symbol_capacity_exhausted",
@@ -799,7 +804,16 @@ class ExecutionPolicy:
         limit_price = decision.limit_price
         stop_price = decision.stop_price
 
-        if decision.order_type == "market" and prefer_limit and price is not None:
+        if (
+            decision.order_type == "market"
+            and prefer_limit
+            and price is not None
+            and not _should_keep_market_order_for_high_conviction_entry(
+                decision,
+                price=price,
+                spread=spread,
+            )
+        ):
             selected_order_type = "limit"
             limit_price = _near_touch_limit_price(price, spread, decision.action)
 
@@ -829,6 +843,89 @@ class ExecutionPolicy:
             }
         )
         return updated, selected_order_type
+
+
+def _should_keep_market_order_for_high_conviction_entry(
+    decision: StrategyDecision,
+    *,
+    price: Decimal | None,
+    spread: Decimal | None,
+) -> bool:
+    if decision.action != "buy" or decision.order_type != "market":
+        return False
+    if decision.params.get("position_exit") is not None:
+        return False
+
+    runtime_payload_raw = decision.params.get("strategy_runtime")
+    if not isinstance(runtime_payload_raw, Mapping):
+        return False
+    runtime_payload = cast(Mapping[str, Any], runtime_payload_raw)
+    raw_sources = runtime_payload.get("source_strategy_runtime")
+    if not isinstance(raw_sources, list):
+        return False
+    raw_sources_list = cast(list[Any], raw_sources)
+    source_strategy_runtime: list[Mapping[str, Any]] = []
+    for source_item in raw_sources_list:
+        if isinstance(source_item, Mapping):
+            source_strategy_runtime.append(cast(Mapping[str, Any], source_item))
+    strategy_types = {
+        str(source_runtime.get("strategy_type") or "").strip()
+        for source_runtime in source_strategy_runtime
+    }
+    strategy_types.discard("")
+    if not strategy_types:
+        return False
+
+    execution_features_raw = decision.params.get("execution_features")
+    execution_features: Mapping[str, Any]
+    if isinstance(execution_features_raw, Mapping):
+        execution_features = cast(Mapping[str, Any], execution_features_raw)
+    else:
+        execution_features = {}
+
+    spread_bps = _optional_decimal(execution_features.get("spread_bps"))
+    if (
+        spread_bps is None
+        and spread is not None
+        and spread > 0
+        and price is not None
+        and price > 0
+    ):
+        spread_bps = (spread / price) * Decimal("10000")
+    if spread_bps is None or spread_bps > HIGH_CONVICTION_MARKET_SPREAD_BPS_MAX:
+        return False
+
+    continuation_rank = _optional_decimal(
+        execution_features.get("cross_section_continuation_rank")
+    )
+    reversal_rank = _optional_decimal(
+        execution_features.get("cross_section_reversal_rank")
+    )
+    microprice_bias_bps = _optional_decimal(
+        execution_features.get("recent_microprice_bias_bps_avg")
+    )
+
+    if "breakout_continuation_long_v1" in strategy_types:
+        if continuation_rank is None or continuation_rank < HIGH_CONVICTION_BREAKOUT_CONTINUATION_RANK_MIN:
+            return False
+        if (
+            microprice_bias_bps is not None
+            and microprice_bias_bps < HIGH_CONVICTION_BREAKOUT_MICROPRICE_BPS_MIN
+        ):
+            return False
+        return True
+
+    if "washout_rebound_long_v1" in strategy_types:
+        if reversal_rank is None or reversal_rank < HIGH_CONVICTION_WASHOUT_REVERSAL_RANK_MIN:
+            return False
+        if (
+            microprice_bias_bps is not None
+            and microprice_bias_bps < HIGH_CONVICTION_WASHOUT_MICROPRICE_BPS_MIN
+        ):
+            return False
+        return True
+
+    return False
 
 
 def _near_touch_limit_price(

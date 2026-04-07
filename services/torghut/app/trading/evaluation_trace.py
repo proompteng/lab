@@ -197,6 +197,7 @@ class ReplayFunnelBucket:
     gate_pass_counts: dict[str, int]
     decision_count: int
     filled_count: int
+    filled_notional: Decimal
     closed_trade_count: int
     gross_pnl: Decimal
     net_pnl: Decimal
@@ -213,6 +214,7 @@ class ReplayFunnelBucket:
             'gate_pass_counts': dict(sorted(self.gate_pass_counts.items())),
             'decision_count': self.decision_count,
             'filled_count': self.filled_count,
+            'filled_notional': str(self.filled_notional),
             'closed_trade_count': self.closed_trade_count,
             'gross_pnl': str(self.gross_pnl),
             'net_pnl': str(self.net_pnl),
