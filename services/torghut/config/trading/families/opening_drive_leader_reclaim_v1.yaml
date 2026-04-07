@@ -1,0 +1,44 @@
+schema_version: torghut.family-template.v1
+family_id: opening_drive_leader_reclaim_v1
+economic_mechanism: Opening-drive continuation after leader reclaim in liquid large-cap names.
+supported_markets:
+  - us_equities_intraday
+required_features:
+  - opening_drive_bps
+  - leader_rank
+  - quote_quality
+allowed_normalizations:
+  - price_scaled
+  - opening_window_scaled
+entry_motifs:
+  - opening_drive_reclaim
+exit_motifs:
+  - trailing_stop
+  - take_profit
+  - close_flatten
+risk_controls:
+  - quote_quality_veto
+  - daily_loss_cap
+activity_model:
+  min_active_day_ratio: '0.50'
+  min_daily_notional: '280000'
+liquidity_assumptions:
+  max_spread_bps: '28'
+  min_quote_valid_ratio: '0.94'
+regime_activation_rules:
+  - metric: market_breadth
+    comparator: gte
+    threshold: '0.50'
+day_veto_rules:
+  - rule: quote_quality
+    action: block_day
+default_hard_vetoes:
+  required_min_active_day_ratio: '0.50'
+  required_min_daily_notional: '280000'
+  required_max_best_day_share: '0.48'
+  required_max_worst_day_loss: '500'
+  required_max_drawdown: '1100'
+  required_min_regime_slice_pass_rate: '0.40'
+default_selection_objectives:
+  target_net_pnl_per_day: '275'
+  require_positive_day_ratio: '0.50'

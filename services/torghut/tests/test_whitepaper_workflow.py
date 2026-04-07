@@ -13,13 +13,19 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     Base,
+    VNextExperimentSpec,
     WhitepaperAnalysisRun,
     WhitepaperCodexAgentRun,
+    WhitepaperClaim,
+    WhitepaperClaimRelation,
+    WhitepaperContradictionEvent,
     WhitepaperDesignPullRequest,
     WhitepaperDocument,
     WhitepaperDocumentVersion,
     WhitepaperEngineeringTrigger,
+    WhitepaperExperimentSpec,
     WhitepaperRolloutTransition,
+    WhitepaperStrategyTemplate,
     WhitepaperSynthesis,
     WhitepaperViabilityVerdict,
 )
@@ -487,6 +493,112 @@ https://example.com/paper.pdf
             session.commit()
 
             self.assertEqual(indexed_run_ids, [run_row.run_id])
+
+    def test_finalize_persists_claim_graph_and_compiled_experiments(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+        service._submit_jangar_agentrun = (  # type: ignore[method-assign]
+            lambda _payload, *, idempotency_key: {
+                "ok": True,
+                "resource": {
+                    "metadata": {"name": f"agentrun-{idempotency_key}", "uid": "uid-1"},
+                    "status": {"phase": "Pending"},
+                },
+            }
+        )
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(
+                session,
+                self._issue_payload(),
+                source="api",
+            )
+            self.assertTrue(kickoff.accepted)
+            session.commit()
+
+            run_row = session.execute(select(WhitepaperAnalysisRun)).scalar_one()
+            finalize_payload = {
+                "status": "completed",
+                "synthesis": {
+                    "executive_summary": "Normalization and activity constraints matter.",
+                    "confidence": "0.88",
+                    "claims": [
+                        {
+                            "claim_id": "claim-1",
+                            "claim_type": "normalization_rule",
+                            "claim_text": "Normalization should match the execution mechanism.",
+                            "asset_scope": "us_equities_intraday",
+                            "horizon_scope": "intraday",
+                            "expected_direction": "positive",
+                            "confidence": "0.74",
+                        },
+                        {
+                            "claim_id": "claim-2",
+                            "claim_type": "negative_result",
+                            "claim_text": "The same rule fails under stressed quote-quality regimes.",
+                            "asset_scope": "us_equities_intraday",
+                            "horizon_scope": "intraday",
+                            "expected_direction": "negative",
+                            "confidence": "0.69",
+                        },
+                    ],
+                    "claim_relations": [
+                        {
+                            "relation_id": "rel-1",
+                            "relation_type": "contradicts",
+                            "source_claim_id": "claim-2",
+                            "target_claim_id": "claim-1",
+                            "target_run_id": "prior-run",
+                            "rationale": "Stress regimes invalidate the earlier broad claim.",
+                            "confidence": "0.81",
+                        }
+                    ],
+                    "strategy_templates": [
+                        {
+                            "template_id": "template-1",
+                            "family_template_id": "microstructure_continuation_matched_filter_v1",
+                            "economic_mechanism": "Continuation after information-arrival bursts with matched-filter normalization.",
+                            "hypothesis": "Matched-filter normalization improves continuation robustness.",
+                            "allowed_normalizations": ["trading_value_scaled", "market_cap_scaled"],
+                            "day_veto_rules": [{"rule": "quote_quality", "action": "block_day"}],
+                        }
+                    ],
+                },
+                "verdict": {
+                    "verdict": "implement",
+                    "score": "0.80",
+                    "confidence": "0.82",
+                    "requires_followup": False,
+                },
+            }
+            result = service.finalize_run(session, run_id=run_row.run_id, payload=finalize_payload)
+            self.assertEqual(result["status"], "completed")
+            session.commit()
+
+            claims = session.execute(select(WhitepaperClaim)).scalars().all()
+            self.assertEqual(len(claims), 2)
+
+            relations = session.execute(select(WhitepaperClaimRelation)).scalars().all()
+            self.assertEqual(len(relations), 1)
+            self.assertEqual(relations[0].relation_type, "contradicts")
+
+            templates = session.execute(select(WhitepaperStrategyTemplate)).scalars().all()
+            self.assertEqual(len(templates), 1)
+            self.assertEqual(templates[0].family_template_id, "microstructure_continuation_matched_filter_v1")
+
+            experiment_specs = session.execute(select(WhitepaperExperimentSpec)).scalars().all()
+            self.assertEqual(len(experiment_specs), 1)
+            self.assertEqual(experiment_specs[0].family_template_id, "microstructure_continuation_matched_filter_v1")
+            self.assertIsInstance(experiment_specs[0].payload_json, dict)
+
+            mirrored_vnext = session.execute(select(VNextExperimentSpec)).scalars().all()
+            self.assertEqual(len(mirrored_vnext), 1)
+            self.assertEqual(mirrored_vnext[0].run_id, run_row.run_id)
+
+            contradiction_events = session.execute(select(WhitepaperContradictionEvent)).scalars().all()
+            self.assertEqual(len(contradiction_events), 1)
+            self.assertEqual(contradiction_events[0].required_action, "revalidate_linked_family")
 
     def test_finalize_run_propagates_synthesis_indexing_failures(self) -> None:
         service = WhitepaperWorkflowService()

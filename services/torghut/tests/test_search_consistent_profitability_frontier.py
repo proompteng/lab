@@ -158,6 +158,9 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             holdout_days=3,
             full_window_start_date='',
             full_window_end_date='',
+            expected_last_trading_day='',
+            allow_stale_tape=False,
+            family_template_dir=Path(__file__).resolve().parents[1] / 'config' / 'trading' / 'families',
             prefetch_full_window_rows=False,
             top_n=10,
             json_output=json_output,
@@ -507,9 +510,29 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 )
 
             stdout = io.StringIO()
+            snapshot_receipt = SimpleNamespace(
+                snapshot_id='snap-test',
+                is_fresh=True,
+                stale_override_used=False,
+                to_payload=lambda: {
+                    'snapshot_id': 'snap-test',
+                    'source': 'ta',
+                    'window_size': 'PT1S',
+                    'start_day': '2026-03-18',
+                    'end_day': '2026-03-23',
+                    'expected_last_trading_day': '2026-03-23',
+                    'is_fresh': True,
+                    'missing_days': [],
+                    'row_count': 123,
+                    'stale_override_used': False,
+                    'witnesses': [],
+                },
+            )
             with (
                 patch('scripts.search_consistent_profitability_frontier._parse_args', return_value=args),
                 patch('scripts.search_consistent_profitability_frontier._resolve_recent_trading_days', return_value=recent_days),
+                patch('scripts.search_consistent_profitability_frontier.build_dataset_snapshot_receipt', return_value=snapshot_receipt),
+                patch('scripts.search_consistent_profitability_frontier.ensure_fresh_snapshot'),
                 patch('scripts.search_consistent_profitability_frontier.run_replay', side_effect=fake_run_replay),
                 redirect_stdout(stdout),
             ):
@@ -522,6 +545,9 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             top = payload['top'][0]
             self.assertEqual(top['replay_config']['params']['long_stop_loss_bps'], '18')
             self.assertEqual(top['full_window']['active_days'], 6)
+            self.assertEqual(payload['dataset_snapshot_receipt']['snapshot_id'], 'snap-test')
+            self.assertEqual(top['ranking']['method'], 'pareto_frontier_v2')
+            self.assertEqual(top['family_template_id'], 'intraday_tsmom_v2')
 
     def test_main_symbol_pruning_promotes_pruned_universe(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -570,6 +596,24 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             args.symbol_prune_candidates = 1
             args.symbol_prune_min_universe_size = 1
             recent_days = tuple(date(2026, 3, 18) + timedelta(days=index) for index in range(6))
+            snapshot_receipt = SimpleNamespace(
+                snapshot_id='snap-prune',
+                is_fresh=True,
+                stale_override_used=False,
+                to_payload=lambda: {
+                    'snapshot_id': 'snap-prune',
+                    'source': 'ta',
+                    'window_size': 'PT1S',
+                    'start_day': '2026-03-18',
+                    'end_day': '2026-03-23',
+                    'expected_last_trading_day': '2026-03-23',
+                    'is_fresh': True,
+                    'missing_days': [],
+                    'row_count': 123,
+                    'stale_override_used': False,
+                    'witnesses': [],
+                },
+            )
 
             def fake_run_replay(config: object) -> dict[str, object]:
                 configmap_path = Path(getattr(config, 'strategy_configmap_path'))
@@ -661,6 +705,8 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             with (
                 patch('scripts.search_consistent_profitability_frontier._parse_args', return_value=args),
                 patch('scripts.search_consistent_profitability_frontier._resolve_recent_trading_days', return_value=recent_days),
+                patch('scripts.search_consistent_profitability_frontier.build_dataset_snapshot_receipt', return_value=snapshot_receipt),
+                patch('scripts.search_consistent_profitability_frontier.ensure_fresh_snapshot'),
                 patch('scripts.search_consistent_profitability_frontier.run_replay', side_effect=fake_run_replay),
                 redirect_stdout(stdout),
             ):

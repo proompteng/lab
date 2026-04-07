@@ -1401,6 +1401,21 @@ class WhitepaperAnalysisRun(Base, TimestampMixin):
         uselist=False,
         cascade="all, delete-orphan",
     )
+    claims: Mapped[List["WhitepaperClaim"]] = relationship(
+        back_populates="analysis_run", cascade="all, delete-orphan"
+    )
+    claim_relations: Mapped[List["WhitepaperClaimRelation"]] = relationship(
+        back_populates="analysis_run", cascade="all, delete-orphan"
+    )
+    strategy_templates: Mapped[List["WhitepaperStrategyTemplate"]] = relationship(
+        back_populates="analysis_run", cascade="all, delete-orphan"
+    )
+    experiment_specs: Mapped[List["WhitepaperExperimentSpec"]] = relationship(
+        back_populates="analysis_run", cascade="all, delete-orphan"
+    )
+    contradiction_events: Mapped[List["WhitepaperContradictionEvent"]] = relationship(
+        back_populates="analysis_run", cascade="all, delete-orphan"
+    )
     artifacts: Mapped[List["WhitepaperArtifact"]] = relationship(
         back_populates="analysis_run"
     )
@@ -1816,6 +1831,202 @@ class WhitepaperArtifact(Base, CreatedAtMixin):
             "uq_whitepaper_artifacts_ceph_object",
             "ceph_bucket",
             "ceph_object_key",
+            unique=True,
+        ),
+    )
+
+
+class WhitepaperClaim(Base, TimestampMixin):
+    """Structured whitepaper claim cards extracted from a completed analysis run."""
+
+    __tablename__ = "whitepaper_claims"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    analysis_run_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("whitepaper_analysis_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    claim_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    claim_type: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    claim_text: Mapped[str] = mapped_column(Text, nullable=False)
+    asset_scope: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    horizon_scope: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    data_requirements_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    expected_direction: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    required_activity_conditions_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    liquidity_constraints_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    validation_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    confidence: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 4), nullable=True)
+    metadata_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    analysis_run: Mapped[WhitepaperAnalysisRun] = relationship(back_populates="claims")
+
+    __table_args__ = (
+        Index("ix_whitepaper_claims_run_id", "analysis_run_id"),
+        Index("ix_whitepaper_claims_type", "claim_type"),
+        Index("ix_whitepaper_claims_asset_scope", "asset_scope"),
+        Index(
+            "uq_whitepaper_claims_run_claim_id",
+            "analysis_run_id",
+            "claim_id",
+            unique=True,
+        ),
+    )
+
+
+class WhitepaperClaimRelation(Base, TimestampMixin):
+    """Relations between extracted whitepaper claims."""
+
+    __tablename__ = "whitepaper_claim_relations"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    analysis_run_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("whitepaper_analysis_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    relation_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    relation_type: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    source_claim_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    target_claim_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    target_run_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    confidence: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 4), nullable=True)
+    metadata_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    analysis_run: Mapped[WhitepaperAnalysisRun] = relationship(back_populates="claim_relations")
+
+    __table_args__ = (
+        Index("ix_whitepaper_claim_relations_run_id", "analysis_run_id"),
+        Index("ix_whitepaper_claim_relations_type", "relation_type"),
+        Index("ix_whitepaper_claim_relations_source", "source_claim_id"),
+        Index("ix_whitepaper_claim_relations_target", "target_claim_id"),
+        Index(
+            "uq_whitepaper_claim_relations_run_relation_id",
+            "analysis_run_id",
+            "relation_id",
+            unique=True,
+        ),
+    )
+
+
+class WhitepaperStrategyTemplate(Base, TimestampMixin):
+    """Family-template candidates compiled from whitepaper claims."""
+
+    __tablename__ = "whitepaper_strategy_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    analysis_run_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("whitepaper_analysis_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    template_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    family_template_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    economic_mechanism: Mapped[str] = mapped_column(Text, nullable=False)
+    hypothesis: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    supported_markets_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    required_features_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    allowed_normalizations_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    entry_motifs_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    exit_motifs_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    risk_controls_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    activity_model_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    liquidity_assumptions_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    regime_activation_rules_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    day_veto_rules_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    metadata_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    analysis_run: Mapped[WhitepaperAnalysisRun] = relationship(back_populates="strategy_templates")
+
+    __table_args__ = (
+        Index("ix_whitepaper_strategy_templates_run_id", "analysis_run_id"),
+        Index("ix_whitepaper_strategy_templates_family_id", "family_template_id"),
+        Index(
+            "uq_whitepaper_strategy_templates_run_template_id",
+            "analysis_run_id",
+            "template_id",
+            unique=True,
+        ),
+    )
+
+
+class WhitepaperExperimentSpec(Base, TimestampMixin):
+    """Claim-linked experiment specs compiled from whitepaper research."""
+
+    __tablename__ = "whitepaper_experiment_specs"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    analysis_run_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("whitepaper_analysis_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    experiment_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    family_template_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    template_id: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    hypothesis: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    paper_claim_links_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    dataset_snapshot_policy_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    template_overrides_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    feature_variants_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    veto_controller_variants_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    selection_objectives_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    hard_vetoes_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    expected_failure_modes_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    promotion_contract_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    analysis_run: Mapped[WhitepaperAnalysisRun] = relationship(back_populates="experiment_specs")
+
+    __table_args__ = (
+        Index("ix_whitepaper_experiment_specs_run_id", "analysis_run_id"),
+        Index("ix_whitepaper_experiment_specs_family_id", "family_template_id"),
+        Index(
+            "uq_whitepaper_experiment_specs_run_experiment_id",
+            "analysis_run_id",
+            "experiment_id",
+            unique=True,
+        ),
+    )
+
+
+class WhitepaperContradictionEvent(Base, TimestampMixin):
+    """Contradiction signals requiring revalidation of prior claim-linked families."""
+
+    __tablename__ = "whitepaper_contradiction_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    analysis_run_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("whitepaper_analysis_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    event_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    source_claim_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    target_claim_id: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    target_run_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(length=32),
+        nullable=False,
+        default="open",
+        server_default=text("'open'"),
+    )
+    required_action: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    analysis_run: Mapped[WhitepaperAnalysisRun] = relationship(back_populates="contradiction_events")
+
+    __table_args__ = (
+        Index("ix_whitepaper_contradiction_events_run_id", "analysis_run_id"),
+        Index("ix_whitepaper_contradiction_events_status", "status"),
+        Index("ix_whitepaper_contradiction_events_source_claim_id", "source_claim_id"),
+        Index(
+            "uq_whitepaper_contradiction_events_run_event_id",
+            "analysis_run_id",
+            "event_id",
             unique=True,
         ),
     )

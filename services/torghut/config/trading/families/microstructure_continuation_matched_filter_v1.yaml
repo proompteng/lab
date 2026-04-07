@@ -1,0 +1,51 @@
+schema_version: torghut.family-template.v1
+family_id: microstructure_continuation_matched_filter_v1
+economic_mechanism: Information-arrival continuation filtered by normalization matched to the execution mechanism.
+supported_markets:
+  - us_equities_intraday
+required_features:
+  - order_flow_imbalance
+  - microprice_bias
+  - quote_quality
+  - information_arrival_rate
+allowed_normalizations:
+  - price_scaled
+  - shares_scaled
+  - trading_value_scaled
+  - market_cap_scaled
+  - opening_window_scaled
+entry_motifs:
+  - microstructure_continuation
+  - leader_reclaim
+exit_motifs:
+  - trailing_stop
+  - close_flatten
+risk_controls:
+  - quote_quality_veto
+  - volatility_shock_veto
+activity_model:
+  min_active_day_ratio: '0.45'
+  min_daily_notional: '250000'
+liquidity_assumptions:
+  max_spread_bps: '30'
+  min_quote_valid_ratio: '0.93'
+regime_activation_rules:
+  - metric: information_arrival
+    comparator: gte
+    threshold: '0.55'
+day_veto_rules:
+  - rule: quote_quality
+    action: block_day
+  - rule: correlation_stress
+    action: reduce_activity
+default_hard_vetoes:
+  required_min_active_day_ratio: '0.45'
+  required_min_daily_notional: '250000'
+  required_max_best_day_share: '0.50'
+  required_max_worst_day_loss: '450'
+  required_max_drawdown: '1000'
+  required_min_regime_slice_pass_rate: '0.40'
+default_selection_objectives:
+  target_net_pnl_per_day: '250'
+  require_positive_day_ratio: '0.50'
+

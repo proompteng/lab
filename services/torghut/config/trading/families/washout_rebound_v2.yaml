@@ -1,0 +1,45 @@
+schema_version: torghut.family-template.v1
+family_id: washout_rebound_v2
+economic_mechanism: Oversold intraday washout rebound in liquid US equities with strict selloff and quote-quality constraints.
+supported_markets:
+  - us_equities_intraday
+required_features:
+  - session_open_selloff_bps
+  - price_vs_session_low_bps
+  - rsi14
+  - quote_quality
+allowed_normalizations:
+  - price_scaled
+  - opening_window_scaled
+entry_motifs:
+  - washout_rebound
+exit_motifs:
+  - mean_reversion_take_profit
+  - close_flatten
+risk_controls:
+  - long_stop_loss_bps
+  - max_session_negative_exit_bps
+activity_model:
+  min_active_day_ratio: '0.40'
+  min_daily_notional: '150000'
+liquidity_assumptions:
+  max_spread_bps: '40'
+  min_quote_valid_ratio: '0.90'
+regime_activation_rules:
+  - metric: information_arrival
+    comparator: gte
+    threshold: '0.40'
+day_veto_rules:
+  - rule: quote_quality
+    action: block_day
+default_hard_vetoes:
+  required_min_active_day_ratio: '0.40'
+  required_min_daily_notional: '150000'
+  required_max_best_day_share: '0.55'
+  required_max_worst_day_loss: '400'
+  required_max_drawdown: '900'
+  required_min_regime_slice_pass_rate: '0.30'
+default_selection_objectives:
+  target_net_pnl_per_day: '150'
+  require_positive_day_ratio: '0.45'
+
