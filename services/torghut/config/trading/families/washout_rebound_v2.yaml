@@ -42,4 +42,7 @@ default_hard_vetoes:
 default_selection_objectives:
   target_net_pnl_per_day: '150'
   require_positive_day_ratio: '0.45'
-
+runtime_harness:
+  family: washout_rebound_consistent
+  strategy_name: washout-rebound-long-v1
+  disable_other_strategies: false

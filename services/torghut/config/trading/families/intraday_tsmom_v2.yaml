@@ -41,4 +41,7 @@ default_hard_vetoes:
 default_selection_objectives:
   target_net_pnl_per_day: '200'
   require_positive_day_ratio: '0.50'
-
+runtime_harness:
+  family: intraday_tsmom_consistent
+  strategy_name: intraday-tsmom-profit-v3
+  disable_other_strategies: true
