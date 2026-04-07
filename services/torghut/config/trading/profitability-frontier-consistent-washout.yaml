@@ -1,5 +1,6 @@
 schema_version: torghut.replay-frontier-sweep.v1
 family: washout_rebound_consistent
+family_template_id: washout_rebound_v2
 strategy_name: washout-rebound-long-v1
 disable_other_strategies: false
 constraints:

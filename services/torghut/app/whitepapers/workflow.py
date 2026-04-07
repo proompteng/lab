@@ -22,20 +22,26 @@ from typing import Any, Mapping, cast
 from urllib.parse import quote, urljoin, urlparse
 
 import inngest
-from sqlalchemy import case, func, select, text
+from sqlalchemy import case, delete, func, select, text
 from sqlalchemy.orm import Session
 
 from ..models import (
+    VNextExperimentSpec,
     WhitepaperAnalysisRun,
     WhitepaperAnalysisStep,
     WhitepaperArtifact,
+    WhitepaperClaim,
+    WhitepaperClaimRelation,
+    WhitepaperContradictionEvent,
     WhitepaperCodexAgentRun,
     WhitepaperContent,
     WhitepaperDesignPullRequest,
     WhitepaperDocument,
     WhitepaperDocumentVersion,
     WhitepaperEngineeringTrigger,
+    WhitepaperExperimentSpec,
     WhitepaperRolloutTransition,
+    WhitepaperStrategyTemplate,
     WhitepaperSynthesis,
     WhitepaperViabilityVerdict,
     coerce_json_payload,
@@ -1670,6 +1676,7 @@ class WhitepaperWorkflowService:
         run = self._get_run_or_raise(session, run_id)
         self._upsert_synthesis(session, run, payload.get("synthesis"))
         self._upsert_verdict(session, run, payload.get("verdict"))
+        self._sync_structured_research_outputs(session, run, payload)
         self._upsert_design_pull_requests(session, run, payload.get("design_pull_request"))
         self._ingest_artifacts(session, run, payload.get("artifacts"))
         self._upsert_steps(session, run, payload.get("steps"))
@@ -3598,6 +3605,251 @@ class WhitepaperWorkflowService:
             "dspy_eval_report": dspy_payload,
         }
 
+    def _structured_output_list(self, payload: Mapping[str, Any], *, key: str) -> list[dict[str, Any]]:
+        direct = payload.get(key)
+        if isinstance(direct, list):
+            return [cast(dict[str, Any], item) for item in direct if isinstance(item, Mapping)]
+        synthesis_payload = payload.get('synthesis')
+        if isinstance(synthesis_payload, Mapping):
+            nested = synthesis_payload.get(key)
+            if isinstance(nested, list):
+                return [cast(dict[str, Any], item) for item in nested if isinstance(item, Mapping)]
+        return []
+
+    def _compiled_experiment_specs_from_templates(
+        self,
+        *,
+        run_id: str,
+        claims: list[dict[str, Any]],
+        templates: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not templates:
+            return []
+        linked_claim_ids = [
+            str(item.get('claim_id') or '').strip()
+            for item in claims
+            if str(item.get('claim_id') or '').strip()
+        ]
+        results: list[dict[str, Any]] = []
+        for index, template in enumerate(templates, start=1):
+            template_id = self._optional_text(template.get('template_id')) or f'template-{index}'
+            family_template_id = self._optional_text(template.get('family_template_id')) or 'unspecified_family'
+            hypothesis = (
+                self._optional_text(template.get('hypothesis'))
+                or self._optional_text(template.get('economic_mechanism'))
+                or f'Experiment for {family_template_id}'
+            )
+            results.append(
+                {
+                    'experiment_id': f'{run_id}-{template_id}-exp',
+                    'family_template_id': family_template_id,
+                    'template_id': template_id,
+                    'hypothesis': hypothesis,
+                    'paper_claim_links': linked_claim_ids,
+                    'dataset_snapshot_policy': {
+                        'source': 'historical_market_replay',
+                        'window_size': 'PT1S',
+                    },
+                    'template_overrides': {},
+                    'feature_variants': template.get('allowed_normalizations') or [],
+                    'veto_controller_variants': template.get('day_veto_rules') or [],
+                    'selection_objectives': template.get('selection_objectives') or {},
+                    'hard_vetoes': template.get('hard_vetoes') or {},
+                    'expected_failure_modes': [],
+                    'promotion_contract': {
+                        'requires_claim_review': True,
+                        'source': 'whitepaper_research_factory',
+                    },
+                }
+            )
+        return results
+
+    def _inferred_contradiction_events(
+        self,
+        relations: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        for relation in relations:
+            relation_type = _normalize_identifier(self._optional_text(relation.get('relation_type')) or '')
+            if relation_type not in {'contradicts', 'contradicting', 'conflicts_with', 'conflict'}:
+                continue
+            relation_id = self._optional_text(relation.get('relation_id')) or str(uuid.uuid4())
+            source_claim_id = self._optional_text(relation.get('source_claim_id'))
+            if not source_claim_id:
+                continue
+            events.append(
+                {
+                    'event_id': f'contradiction-{relation_id}',
+                    'source_claim_id': source_claim_id,
+                    'target_claim_id': self._optional_text(relation.get('target_claim_id')),
+                    'target_run_id': self._optional_text(relation.get('target_run_id')),
+                    'status': 'open',
+                    'required_action': 'revalidate_linked_family',
+                    'rationale': self._optional_text(relation.get('rationale')),
+                    'metadata': {'derived_from_relation_id': relation_id},
+                }
+            )
+        return events
+
+    def _sync_structured_research_outputs(
+        self,
+        session: Session,
+        run: WhitepaperAnalysisRun,
+        payload: Mapping[str, Any],
+    ) -> None:
+        claims = self._structured_output_list(payload, key='claims')
+        relations = self._structured_output_list(payload, key='claim_relations')
+        templates = self._structured_output_list(payload, key='strategy_templates')
+        experiment_specs = self._structured_output_list(payload, key='experiment_specs')
+        contradiction_events = self._structured_output_list(payload, key='contradiction_events')
+        if not experiment_specs:
+            experiment_specs = self._compiled_experiment_specs_from_templates(
+                run_id=run.run_id,
+                claims=claims,
+                templates=templates,
+            )
+        contradiction_events = [
+            *contradiction_events,
+            *self._inferred_contradiction_events(relations),
+        ]
+
+        session.execute(delete(WhitepaperClaimRelation).where(WhitepaperClaimRelation.analysis_run_id == run.id))
+        session.execute(delete(WhitepaperClaim).where(WhitepaperClaim.analysis_run_id == run.id))
+        session.execute(delete(WhitepaperStrategyTemplate).where(WhitepaperStrategyTemplate.analysis_run_id == run.id))
+        session.execute(delete(WhitepaperExperimentSpec).where(WhitepaperExperimentSpec.analysis_run_id == run.id))
+        session.execute(delete(WhitepaperContradictionEvent).where(WhitepaperContradictionEvent.analysis_run_id == run.id))
+        session.execute(
+            delete(VNextExperimentSpec).where(
+                VNextExperimentSpec.run_id == run.run_id,
+                VNextExperimentSpec.candidate_id.is_(None),
+            )
+        )
+
+        for claim in claims:
+            claim_id = self._optional_text(claim.get('claim_id'))
+            claim_text = self._optional_text(claim.get('claim_text')) or self._optional_text(claim.get('claim'))
+            if not claim_id or not claim_text:
+                continue
+            session.add(
+                WhitepaperClaim(
+                    analysis_run_id=run.id,
+                    claim_id=claim_id,
+                    claim_type=self._optional_text(claim.get('claim_type')) or 'signal_mechanism',
+                    claim_text=claim_text,
+                    asset_scope=self._optional_text(claim.get('asset_scope')),
+                    horizon_scope=self._optional_text(claim.get('horizon_scope')),
+                    data_requirements_json=self._optional_json(claim.get('data_requirements')),
+                    expected_direction=self._optional_text(claim.get('expected_direction')),
+                    required_activity_conditions_json=self._optional_json(claim.get('required_activity_conditions')),
+                    liquidity_constraints_json=self._optional_json(claim.get('liquidity_constraints')),
+                    validation_notes=self._optional_text(claim.get('validation_notes')),
+                    confidence=self._optional_decimal(claim.get('confidence')),
+                    metadata_json=self._optional_json(claim.get('metadata')),
+                )
+            )
+
+        for relation in relations:
+            relation_id = self._optional_text(relation.get('relation_id'))
+            source_claim_id = self._optional_text(relation.get('source_claim_id'))
+            target_claim_id = self._optional_text(relation.get('target_claim_id'))
+            if not relation_id or not source_claim_id or not target_claim_id:
+                continue
+            session.add(
+                WhitepaperClaimRelation(
+                    analysis_run_id=run.id,
+                    relation_id=relation_id,
+                    relation_type=self._optional_text(relation.get('relation_type')) or 'supports',
+                    source_claim_id=source_claim_id,
+                    target_claim_id=target_claim_id,
+                    target_run_id=self._optional_text(relation.get('target_run_id')),
+                    rationale=self._optional_text(relation.get('rationale')),
+                    confidence=self._optional_decimal(relation.get('confidence')),
+                    metadata_json=self._optional_json(relation.get('metadata')),
+                )
+            )
+
+        for template in templates:
+            template_id = self._optional_text(template.get('template_id'))
+            family_template_id = self._optional_text(template.get('family_template_id'))
+            economic_mechanism = self._optional_text(template.get('economic_mechanism'))
+            if not template_id or not family_template_id or not economic_mechanism:
+                continue
+            session.add(
+                WhitepaperStrategyTemplate(
+                    analysis_run_id=run.id,
+                    template_id=template_id,
+                    family_template_id=family_template_id,
+                    economic_mechanism=economic_mechanism,
+                    hypothesis=self._optional_text(template.get('hypothesis')),
+                    supported_markets_json=self._optional_json(template.get('supported_markets')),
+                    required_features_json=self._optional_json(template.get('required_features')),
+                    allowed_normalizations_json=self._optional_json(template.get('allowed_normalizations')),
+                    entry_motifs_json=self._optional_json(template.get('entry_motifs')),
+                    exit_motifs_json=self._optional_json(template.get('exit_motifs')),
+                    risk_controls_json=self._optional_json(template.get('risk_controls')),
+                    activity_model_json=self._optional_json(template.get('activity_model')),
+                    liquidity_assumptions_json=self._optional_json(template.get('liquidity_assumptions')),
+                    regime_activation_rules_json=self._optional_json(template.get('regime_activation_rules')),
+                    day_veto_rules_json=self._optional_json(template.get('day_veto_rules')),
+                    metadata_json=self._optional_json(template.get('metadata')),
+                )
+            )
+
+        for experiment in experiment_specs:
+            experiment_id = self._optional_text(experiment.get('experiment_id'))
+            family_template_id = self._optional_text(experiment.get('family_template_id'))
+            if not experiment_id or not family_template_id:
+                continue
+            payload_json = coerce_json_payload(dict(experiment))
+            session.add(
+                WhitepaperExperimentSpec(
+                    analysis_run_id=run.id,
+                    experiment_id=experiment_id,
+                    family_template_id=family_template_id,
+                    template_id=self._optional_text(experiment.get('template_id')),
+                    hypothesis=self._optional_text(experiment.get('hypothesis')),
+                    paper_claim_links_json=self._optional_json(experiment.get('paper_claim_links')),
+                    dataset_snapshot_policy_json=self._optional_json(experiment.get('dataset_snapshot_policy')),
+                    template_overrides_json=self._optional_json(experiment.get('template_overrides')),
+                    feature_variants_json=self._optional_json(experiment.get('feature_variants')),
+                    veto_controller_variants_json=self._optional_json(experiment.get('veto_controller_variants')),
+                    selection_objectives_json=self._optional_json(experiment.get('selection_objectives')),
+                    hard_vetoes_json=self._optional_json(experiment.get('hard_vetoes')),
+                    expected_failure_modes_json=self._optional_json(experiment.get('expected_failure_modes')),
+                    promotion_contract_json=self._optional_json(experiment.get('promotion_contract')),
+                    payload_json=payload_json,
+                )
+            )
+            session.add(
+                VNextExperimentSpec(
+                    run_id=run.run_id,
+                    candidate_id=None,
+                    experiment_id=experiment_id,
+                    payload_json=payload_json,
+                )
+            )
+
+        seen_event_ids: set[str] = set()
+        for event in contradiction_events:
+            event_id = self._optional_text(event.get('event_id'))
+            source_claim_id = self._optional_text(event.get('source_claim_id'))
+            if not event_id or not source_claim_id or event_id in seen_event_ids:
+                continue
+            seen_event_ids.add(event_id)
+            session.add(
+                WhitepaperContradictionEvent(
+                    analysis_run_id=run.id,
+                    event_id=event_id,
+                    source_claim_id=source_claim_id,
+                    target_claim_id=self._optional_text(event.get('target_claim_id')),
+                    target_run_id=self._optional_text(event.get('target_run_id')),
+                    status=self._optional_text(event.get('status')) or 'open',
+                    required_action=self._optional_text(event.get('required_action')),
+                    rationale=self._optional_text(event.get('rationale')),
+                    metadata_json=self._optional_json(event.get('metadata')),
+                )
+            )
+
     @staticmethod
     def _coerce_pr_payloads(pr_payload_raw: Any) -> list[dict[str, Any]]:
         if isinstance(pr_payload_raw, Mapping):
@@ -3918,7 +4170,8 @@ class WhitepaperWorkflowService:
                 "Requirements:",
                 "1) Read the full whitepaper end-to-end (no abstract-only shortcuts).",
                 "2) Produce synthesis.json with required keys: executive_summary, problem_statement, methodology_summary, key_findings, novelty_claims, risk_assessment, citations, implementation_plan_md, confidence.",
-                "3) Produce a viability verdict with score, confidence, rejection reasons (if any), and follow-up recommendations.",
+                "3) Include structured research outputs in synthesis.json: claims, claim_relations, strategy_templates, experiment_specs, contradiction_events.",
+                "4) Produce a viability verdict with score, confidence, rejection reasons (if any), and follow-up recommendations.",
                 *mode_specific_requirements,
                 "",
                 "Quality bar:",

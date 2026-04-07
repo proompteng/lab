@@ -1,5 +1,6 @@
 schema_version: torghut.replay-frontier-sweep.v1
 family: intraday_tsmom_consistent
+family_template_id: intraday_tsmom_v2
 strategy_name: intraday-tsmom-profit-v3
 disable_other_strategies: true
 constraints:

@@ -19,6 +19,27 @@ from unittest.mock import patch
 
 import yaml
 
+from app.trading.discovery.dataset_snapshot import (
+    build_dataset_snapshot_receipt,
+    ensure_fresh_snapshot,
+)
+from app.trading.discovery.decomposition import (
+    build_replay_decomposition,
+    max_family_contribution_share,
+    max_symbol_concentration_share,
+    regime_slice_pass_rate,
+)
+from app.trading.discovery.family_templates import (
+    derive_family_template_id,
+    family_template_dir,
+    load_family_template,
+)
+from app.trading.discovery.objectives import (
+    ObjectiveVetoPolicy,
+    build_scorecard,
+    evaluate_vetoes,
+    rank_scorecards,
+)
 from app.trading.reporting import (
     ProfitabilityConstraintPolicy,
     score_replay_profitability_candidate,
@@ -50,6 +71,9 @@ class FullWindowConsistencyPolicy:
     min_avg_filled_notional_per_day: Decimal
     min_avg_filled_notional_per_active_day: Decimal
     require_every_day_active: bool
+    min_regime_slice_pass_rate: Decimal = Decimal('0')
+    max_symbol_concentration_share: Decimal = Decimal('1')
+    max_entry_family_contribution_share: Decimal = Decimal('1')
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -64,6 +88,9 @@ class FullWindowConsistencyPolicy:
             'min_avg_filled_notional_per_day': str(self.min_avg_filled_notional_per_day),
             'min_avg_filled_notional_per_active_day': str(self.min_avg_filled_notional_per_active_day),
             'require_every_day_active': self.require_every_day_active,
+            'min_regime_slice_pass_rate': str(self.min_regime_slice_pass_rate),
+            'max_symbol_concentration_share': str(self.max_symbol_concentration_share),
+            'max_entry_family_contribution_share': str(self.max_entry_family_contribution_share),
         }
 
 
@@ -111,6 +138,21 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument('--full-window-start-date', default='')
     parser.add_argument('--full-window-end-date', default='')
     parser.add_argument(
+        '--expected-last-trading-day',
+        default='',
+        help='Optional ISO date freshness witness. If omitted, recent sweeps expect the latest completed trading day.',
+    )
+    parser.add_argument(
+        '--allow-stale-tape',
+        action='store_true',
+        help='Persist and continue even when the latest expected trading day is missing from PT1S tape.',
+    )
+    parser.add_argument(
+        '--family-template-dir',
+        type=Path,
+        default=family_template_dir(),
+    )
+    parser.add_argument(
         '--prefetch-full-window-rows',
         action='store_true',
         help='Fetch full-window replay rows once and reuse them for every candidate replay.',
@@ -136,6 +178,56 @@ def _parse_args() -> argparse.Namespace:
         help='Do not prune below this many symbols in the candidate universe.',
     )
     return parser.parse_args()
+
+
+def _rolling_lower_bound(daily_net: Mapping[str, Decimal], *, window: int) -> Decimal:
+    ordered = [daily_net[key] for key in sorted(daily_net)]
+    if not ordered:
+        return Decimal('0')
+    if len(ordered) < window:
+        return sum(ordered, Decimal('0')) / Decimal(len(ordered))
+    values: list[Decimal] = []
+    for index in range(len(ordered) - window + 1):
+        sample = ordered[index : index + window]
+        values.append(sum(sample, Decimal('0')) / Decimal(window))
+    return min(values) if values else Decimal('0')
+
+
+def _objective_veto_policy(
+    *,
+    consistency_policy: FullWindowConsistencyPolicy,
+    template_defaults: Mapping[str, Any],
+    trading_day_count: int,
+) -> ObjectiveVetoPolicy:
+    required_min_active_day_ratio = consistency_policy.min_active_ratio
+    if required_min_active_day_ratio <= 0 and trading_day_count > 0 and consistency_policy.min_active_days > 0:
+        required_min_active_day_ratio = Decimal(consistency_policy.min_active_days) / Decimal(trading_day_count)
+    return ObjectiveVetoPolicy(
+        required_min_active_day_ratio=max(
+            required_min_active_day_ratio,
+            Decimal(str(template_defaults.get('required_min_active_day_ratio', '0'))),
+        ),
+        required_min_daily_notional=max(
+            consistency_policy.min_avg_filled_notional_per_day,
+            Decimal(str(template_defaults.get('required_min_daily_notional', '0'))),
+        ),
+        required_max_best_day_share=min(
+            consistency_policy.max_best_day_share_of_total_pnl,
+            Decimal(str(template_defaults.get('required_max_best_day_share', '1'))),
+        ),
+        required_max_worst_day_loss=min(
+            consistency_policy.max_worst_day_loss,
+            Decimal(str(template_defaults.get('required_max_worst_day_loss', str(consistency_policy.max_worst_day_loss)))),
+        ),
+        required_max_drawdown=min(
+            consistency_policy.max_drawdown,
+            Decimal(str(template_defaults.get('required_max_drawdown', str(consistency_policy.max_drawdown)))),
+        ),
+        required_min_regime_slice_pass_rate=max(
+            consistency_policy.min_regime_slice_pass_rate,
+            Decimal(str(template_defaults.get('required_min_regime_slice_pass_rate', '0'))),
+        ),
+    )
 
 
 def _iter_strategy_override_candidates(
@@ -629,6 +721,17 @@ def _generate_symbol_prune_children(
     return children
 
 
+def _selected_normalization_regime(
+    *,
+    strategy_overrides: Mapping[str, Any],
+    template_allowed_normalizations: tuple[str, ...],
+) -> str | None:
+    override = str(strategy_overrides.get('normalization_regime') or '').strip()
+    if override:
+        return override
+    return template_allowed_normalizations[0] if template_allowed_normalizations else None
+
+
 def main() -> int:
     args = _parse_args()
     sweep_config = _load_sweep_config(args.sweep_config.resolve())
@@ -657,6 +760,13 @@ def main() -> int:
     strategy_name = str(sweep_config.get('strategy_name') or '').strip()
     if not family or not strategy_name:
         raise ValueError('sweep_config_missing_family_or_strategy_name')
+    family_template = load_family_template(
+        derive_family_template_id(
+            explicit_id=str(sweep_config.get('family_template_id') or '').strip() or None,
+            family=family,
+        ),
+        directory=args.family_template_dir,
+    )
     disable_other_strategies = bool(sweep_config.get('disable_other_strategies', True))
 
     parameter_grid = sweep_config.get('parameters')
@@ -702,6 +812,33 @@ def main() -> int:
         min_avg_filled_notional_per_day=Decimal(str(consistency_constraints.get('min_avg_filled_notional_per_day', '0'))),
         min_avg_filled_notional_per_active_day=Decimal(str(consistency_constraints.get('min_avg_filled_notional_per_active_day', '0'))),
         require_every_day_active=bool(consistency_constraints.get('require_every_day_active', True)),
+        min_regime_slice_pass_rate=Decimal(str(consistency_constraints.get('min_regime_slice_pass_rate', '0'))),
+        max_symbol_concentration_share=Decimal(str(consistency_constraints.get('max_symbol_concentration_share', '1'))),
+        max_entry_family_contribution_share=Decimal(str(consistency_constraints.get('max_entry_family_contribution_share', '1'))),
+    )
+    expected_last_trading_day = (
+        date.fromisoformat(str(args.expected_last_trading_day))
+        if str(args.expected_last_trading_day or '').strip()
+        else (full_window_end if str(args.full_window_end_date or '').strip() else None)
+    )
+    dataset_snapshot_receipt = build_dataset_snapshot_receipt(
+        clickhouse_http_url=str(args.clickhouse_http_url),
+        clickhouse_username=(str(args.clickhouse_username).strip() or None),
+        clickhouse_password=(str(args.clickhouse_password).strip() or None),
+        start_day=full_window_start,
+        end_day=full_window_end,
+        expected_last_trading_day=expected_last_trading_day,
+        expected_trading_days=window.train_days + window.holdout_days,
+        allow_stale_tape=bool(args.allow_stale_tape),
+    )
+    ensure_fresh_snapshot(
+        dataset_snapshot_receipt,
+        allow_stale_tape=bool(args.allow_stale_tape),
+    )
+    objective_veto_policy = _objective_veto_policy(
+        consistency_policy=consistency_policy,
+        template_defaults=family_template.default_hard_vetoes,
+        trading_day_count=len(window.train_days) + len(window.holdout_days),
     )
 
     symbols = tuple(
@@ -844,6 +981,8 @@ def main() -> int:
                 candidate_payload['consistency_penalty'] = str(consistency_penalty)
                 candidate_payload['adjusted_score'] = str(adjusted_score)
                 candidate_payload['search_iteration'] = prune_iteration
+                candidate_payload['family_template_id'] = family_template.family_id
+                candidate_payload['dataset_snapshot_id'] = dataset_snapshot_receipt.snapshot_id
                 if pruned_symbol is not None:
                     candidate_payload['pruned_symbol'] = pruned_symbol
                 if parent_candidate_id is not None:
@@ -851,6 +990,66 @@ def main() -> int:
                 symbol_contributions = _symbol_contributions_from_replay_payload(full_window_payload)
                 if symbol_contributions:
                     candidate_payload['symbol_contributions'] = symbol_contributions
+                normalization_regime = _selected_normalization_regime(
+                    strategy_overrides=override_candidate,
+                    template_allowed_normalizations=family_template.allowed_normalizations,
+                )
+                decomposition = build_replay_decomposition(
+                    replay_payload=full_window_payload,
+                    family_id=family_template.family_id,
+                    normalization_regime=normalization_regime,
+                )
+                summary = summarize_replay_profitability(full_window_payload)
+                total_filled_notional = sum(
+                    _daily_filled_notional(full_window_payload).values(),
+                    Decimal('0'),
+                )
+                positive_days = sum(1 for value in summary.daily_net.values() if value > 0)
+                negative_days = sum(1 for value in summary.daily_net.values() if value < 0)
+                objective_scorecard = build_scorecard(
+                    candidate_id=str(candidate_payload['candidate_id']),
+                    trading_day_count=summary.trading_day_count,
+                    net_pnl_per_day=summary.net_per_day,
+                    active_days=summary.active_days,
+                    positive_days=positive_days,
+                    avg_filled_notional_per_day=(
+                        total_filled_notional / Decimal(summary.trading_day_count)
+                        if summary.trading_day_count > 0
+                        else Decimal('0')
+                    ),
+                    avg_filled_notional_per_active_day=(
+                        total_filled_notional / Decimal(summary.active_days)
+                        if summary.active_days > 0
+                        else Decimal('0')
+                    ),
+                    worst_day_loss=abs(summary.worst_day_net) if summary.worst_day_net < 0 else Decimal('0'),
+                    max_drawdown=_max_drawdown_from_daily_net(summary.daily_net),
+                    best_day_share=_max_best_day_share_of_total_pnl(
+                        daily_net=summary.daily_net,
+                        total_net_pnl=summary.net_pnl,
+                    ),
+                    negative_day_count=negative_days,
+                    rolling_3d_lower_bound=_rolling_lower_bound(summary.daily_net, window=3),
+                    rolling_5d_lower_bound=_rolling_lower_bound(summary.daily_net, window=5),
+                    regime_slice_pass_rate=regime_slice_pass_rate(decomposition),
+                    symbol_concentration_share=max_symbol_concentration_share(decomposition),
+                    entry_family_contribution_share=max_family_contribution_share(decomposition),
+                )
+                hard_vetoes = list(
+                    evaluate_vetoes(
+                        objective_scorecard,
+                        policy=objective_veto_policy,
+                        is_fresh=(dataset_snapshot_receipt.is_fresh or bool(args.allow_stale_tape)),
+                    )
+                )
+                if objective_scorecard.symbol_concentration_share > consistency_policy.max_symbol_concentration_share:
+                    hard_vetoes.append('symbol_concentration_above_max')
+                if objective_scorecard.entry_family_contribution_share > consistency_policy.max_entry_family_contribution_share:
+                    hard_vetoes.append('entry_family_contribution_above_max')
+                candidate_payload['decomposition'] = decomposition.to_payload()
+                candidate_payload['normalization_regime'] = normalization_regime
+                candidate_payload['objective_scorecard'] = objective_scorecard.to_payload()
+                candidate_payload['hard_vetoes'] = sorted(dict.fromkeys(hard_vetoes))
                 if cached_rows is not None:
                     candidate_payload['prefetched_row_count'] = len(cached_rows)
                     candidate_payload['prefetched_symbols'] = list(prefetch_symbols)
@@ -875,18 +1074,61 @@ def main() -> int:
                             )
                         )
 
+    scorecards = {
+        str(item['candidate_id']): build_scorecard(
+            candidate_id=str(item['candidate_id']),
+            trading_day_count=int(item['full_window']['trading_day_count']),
+            net_pnl_per_day=Decimal(str(item['objective_scorecard']['net_pnl_per_day'])),
+            active_days=int(Decimal(str(item['objective_scorecard']['active_day_ratio'])) * Decimal(str(item['full_window']['trading_day_count']))),
+            positive_days=int(Decimal(str(item['objective_scorecard']['positive_day_ratio'])) * Decimal(str(item['full_window']['trading_day_count']))),
+            avg_filled_notional_per_day=Decimal(str(item['objective_scorecard']['avg_filled_notional_per_day'])),
+            avg_filled_notional_per_active_day=Decimal(str(item['objective_scorecard']['avg_filled_notional_per_active_day'])),
+            worst_day_loss=Decimal(str(item['objective_scorecard']['worst_day_loss'])),
+            max_drawdown=Decimal(str(item['objective_scorecard']['max_drawdown'])),
+            best_day_share=Decimal(str(item['objective_scorecard']['best_day_share'])),
+            negative_day_count=int(item['objective_scorecard']['negative_day_count']),
+            rolling_3d_lower_bound=Decimal(str(item['objective_scorecard']['rolling_3d_lower_bound'])),
+            rolling_5d_lower_bound=Decimal(str(item['objective_scorecard']['rolling_5d_lower_bound'])),
+            regime_slice_pass_rate=Decimal(str(item['objective_scorecard']['regime_slice_pass_rate'])),
+            symbol_concentration_share=Decimal(str(item['objective_scorecard']['symbol_concentration_share'])),
+            entry_family_contribution_share=Decimal(str(item['objective_scorecard']['entry_family_contribution_share'])),
+        )
+        for item in scored
+    }
+    ranked_scorecards = rank_scorecards(
+        scorecards.values(),
+        veto_lookup={
+            str(item['candidate_id']): tuple(cast(list[str], item.get('hard_vetoes') or []))
+            for item in scored
+        },
+    )
+    ranked_lookup = {
+        item.candidate_id: item
+        for item in ranked_scorecards
+    }
+    for item in scored:
+        ranked = ranked_lookup[str(item['candidate_id'])]
+        item['objective_scorecard'] = ranked.to_payload()
+        item['ranking'] = {
+            'method': 'pareto_frontier_v2',
+            'pareto_tier': ranked.pareto_tier,
+            'tie_breaker_score': str(ranked.tie_breaker_score),
+            'vetoed': bool(ranked.veto_reasons),
+        }
     scored.sort(
         key=lambda item: (
-            Decimal(str(item['adjusted_score'])),
-            Decimal(str(item['full_window']['net_per_day'])),
-            Decimal(str(item['score'])),
-        ),
-        reverse=True,
+            bool(item['ranking']['vetoed']),
+            int(item['ranking']['pareto_tier']),
+            -Decimal(str(item['ranking']['tie_breaker_score'])),
+            -Decimal(str(item['full_window']['net_per_day'])),
+        )
     )
     payload = {
         'schema_version': _SWEEP_SCHEMA_VERSION,
         'family': family,
         'strategy_name': strategy_name,
+        'family_template': family_template.to_payload(),
+        'dataset_snapshot_receipt': dataset_snapshot_receipt.to_payload(),
         'window': {
             'train_days': [item.isoformat() for item in window.train_days],
             'holdout_days': [item.isoformat() for item in window.holdout_days],
@@ -903,6 +1145,11 @@ def main() -> int:
                 'require_holdout_decisions': holdout_policy.require_holdout_decisions,
             },
             'consistency': consistency_policy.to_payload(),
+            'hard_vetoes': objective_veto_policy.to_payload(),
+        },
+        'ranking': {
+            'method': 'pareto_frontier_v2',
+            'stale_override_used': dataset_snapshot_receipt.stale_override_used,
         },
         'candidate_count': len(scored),
         'top': scored[: max(1, int(args.top_n))],

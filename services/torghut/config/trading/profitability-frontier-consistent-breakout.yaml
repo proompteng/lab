@@ -1,5 +1,6 @@
 schema_version: torghut.replay-frontier-sweep.v1
 family: breakout_continuation_consistent
+family_template_id: breakout_reclaim_v2
 strategy_name: breakout-continuation-long-v1
 disable_other_strategies: true
 constraints:

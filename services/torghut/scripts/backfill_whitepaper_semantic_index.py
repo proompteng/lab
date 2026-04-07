@@ -7,7 +7,7 @@ import argparse
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -108,6 +108,7 @@ def _process_run(
     *,
     run_id: str,
     dry_run: bool,
+    include_claim_graph: bool,
 ) -> dict[str, Any]:
     workflow = WhitepaperWorkflowService()
     with SessionLocal() as session:
@@ -145,6 +146,7 @@ def _process_run(
                 "status": "dry_run",
                 "full_text_chunks": full_text_chunk_count,
                 "synthesis_chunks": synthesis_chunk_count,
+                "claim_graph_synced": include_claim_graph and run_row.synthesis is not None,
             }
 
         indexed_full_text = {"indexed_chunks": 0}
@@ -161,6 +163,14 @@ def _process_run(
                 session,
                 run_id=run_id,
             )
+            if include_claim_graph and isinstance(run_row.synthesis.synthesis_json, dict):
+                workflow._sync_structured_research_outputs(  # type: ignore[attr-defined]
+                    session,
+                    run_row,
+                    {
+                        "synthesis": cast(dict[str, Any], run_row.synthesis.synthesis_json),
+                    },
+                )
 
         session.commit()
         return {
@@ -168,6 +178,7 @@ def _process_run(
             "status": "indexed",
             "full_text_chunks": int(indexed_full_text.get("indexed_chunks") or 0),
             "synthesis_chunks": int(indexed_synthesis.get("indexed_chunks") or 0),
+            "claim_graph_synced": include_claim_graph and run_row.synthesis is not None,
         }
 
 
@@ -188,6 +199,11 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=200, help="Max candidate runs to process.")
     parser.add_argument("--concurrency", type=int, default=2, help="Worker concurrency.")
     parser.add_argument("--dry-run", action="store_true", help="Preview candidates and chunk counts without writing.")
+    parser.add_argument(
+        "--include-claim-graph",
+        action="store_true",
+        help="Also backfill structured claim/template/experiment outputs from stored synthesis JSON.",
+    )
     args = parser.parse_args()
 
     statuses = _parse_statuses(args.statuses)
@@ -225,6 +241,7 @@ def main() -> int:
                 _process_run,
                 run_id=run_id,
                 dry_run=bool(args.dry_run),
+                include_claim_graph=bool(args.include_claim_graph),
             )
             for run_id in run_ids
         ]
