@@ -765,6 +765,20 @@ def _init_funnel_stats() -> dict[str, Any]:
     }
 
 
+def _ensure_replay_stats_bucket(bucket: dict[str, Any]) -> dict[str, Any]:
+    bucket.setdefault('decision_count', 0)
+    bucket.setdefault('filled_count', 0)
+    bucket.setdefault('filled_notional', Decimal('0'))
+    bucket.setdefault('gross_pnl', Decimal('0'))
+    bucket.setdefault('net_pnl', Decimal('0'))
+    bucket.setdefault('cost_total', Decimal('0'))
+    bucket.setdefault('wins', 0)
+    bucket.setdefault('losses', 0)
+    bucket.setdefault('closed_trades', [])
+    bucket.setdefault('closed_trade_count', 0)
+    return bucket
+
+
 def _record_trace_for_funnel(
     stats: dict[str, Any],
     trace: StrategyTrace,
@@ -1130,6 +1144,9 @@ def _apply_filled_decision(
     cash: Decimal,
     all_closed_trades: list[ClosedTrade],
 ) -> Decimal:
+    day_bucket = _ensure_replay_stats_bucket(day_bucket)
+    if symbol_bucket is not None:
+        symbol_bucket = _ensure_replay_stats_bucket(symbol_bucket)
     owner_strategy_id = _decision_position_owner(decision)
     position_key = _position_key(decision.symbol, owner_strategy_id)
     if decision.action == 'buy':

@@ -147,6 +147,40 @@ class TestLocalIntradayTsmomReplay(TestCase):
         self.assertEqual(day_bucket["filled_notional"], Decimal("5232.80"))
         self.assertLess(cash, Decimal("10000"))
 
+    def test_apply_filled_decision_backfills_missing_stats_bucket_fields(self) -> None:
+        signal = self._signal(bid="523.22", ask="523.28", price="523.25")
+        decision = self._decision(
+            action="buy", order_type="limit", limit_price="523.28"
+        )
+        positions: dict[tuple[str, str], PositionState] = {}
+        day_bucket = {
+            "decision_count": 1,
+            "filled_count": 0,
+            "gross_pnl": Decimal("0"),
+            "net_pnl": Decimal("0"),
+            "cost_total": Decimal("0"),
+            "wins": 0,
+            "losses": 0,
+            "closed_trades": [],
+        }
+
+        cash = _apply_filled_decision(
+            decision=decision,
+            signal=signal,
+            fill_price=Decimal("523.28"),
+            filled_at=signal.event_ts,
+            created_at=signal.event_ts,
+            positions=positions,
+            day_bucket=day_bucket,
+            cost_model=TransactionCostModel(),
+            cash=Decimal("10000"),
+            all_closed_trades=[],
+        )
+
+        self.assertEqual(day_bucket["filled_count"], 1)
+        self.assertEqual(day_bucket["filled_notional"], Decimal("5232.80"))
+        self.assertLess(cash, Decimal("10000"))
+
     def test_quote_quality_rejects_wide_spread_outlier(self) -> None:
         signal = self._signal(bid="239.11", ask="253.69", price="246.40")
         config = ReplayConfig(
