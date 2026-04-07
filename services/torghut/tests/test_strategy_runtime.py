@@ -6,7 +6,11 @@ from decimal import Decimal
 from unittest import TestCase
 
 from app.models import Strategy
-from app.strategies.catalog import StrategyConfig, _compose_strategy_description
+from app.strategies.catalog import (
+    StrategyCatalogConfig,
+    StrategyConfig,
+    _compose_strategy_description,
+)
 from app.trading.features import FeatureNormalizationError, normalize_feature_vector_v3
 from app.trading.models import SignalEnvelope
 from app.trading.strategy_runtime import (
@@ -4491,6 +4495,90 @@ class TestStrategyRuntime(TestCase):
         self.assertEqual(decision.plugin_id, "mean_reversion_rebound_long")
         self.assertIn("oversold_rebound", decision.intent.rationale)
 
+    def test_mean_reversion_rebound_plugin_can_use_session_open_reference_basis(self) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 17, 14, 12, tzinfo=timezone.utc),
+            symbol='META',
+            timeframe='1Sec',
+            seq=11,
+            payload={
+                'price': 593.90,
+                'ema12': 595.10,
+                'macd': 0.010,
+                'macd_signal': 0.004,
+                'rsi14': 45,
+                'vol_realized_w60s': 0.00022,
+                'vwap_session': 596.40,
+                'spread': 0.05,
+                'imbalance_bid_sz': 4700,
+                'imbalance_ask_sz': 4300,
+                'price_vs_session_open_bps': -42,
+                'price_vs_prev_session_close_bps': -8,
+                'opening_window_return_bps': -12,
+                'opening_window_return_from_prev_close_bps': 4,
+                'cross_section_opening_window_return_rank': 0.32,
+                'cross_section_opening_window_return_from_prev_close_rank': 0.82,
+                'price_position_in_session_range': 0.14,
+                'price_vs_opening_range_low_bps': 3,
+                'session_range_bps': 88,
+                'recent_spread_bps_avg': 0.82,
+                'recent_spread_bps_max': 1.44,
+                'recent_imbalance_pressure_avg': 0.05,
+            },
+        )
+
+        default_strategy = Strategy(
+            id=uuid.uuid4(),
+            name='mean-reversion-rebound-default',
+            description='version=1.0.0',
+            enabled=True,
+            base_timeframe='1Sec',
+            universe_type='mean_reversion_rebound_long_v1',
+            universe_symbols=['META'],
+            max_position_pct_equity=Decimal('1.0'),
+            max_notional_per_trade=Decimal('12000'),
+        )
+        session_open_strategy = Strategy(
+            id=uuid.uuid4(),
+            name='mean-reversion-rebound-session-open',
+            description=_compose_strategy_description(
+                StrategyCatalogConfig(
+                    strategies=[
+                        StrategyConfig(
+                            name='mean-reversion-rebound-session-open',
+                            strategy_id='mean_reversion_rebound_long_v1@research',
+                            strategy_type='mean_reversion_rebound_long_v1',
+                            version='1.0.0',
+                            params={
+                                'drive_reference_basis': 'session_open',
+                                'opening_window_reference_basis': 'session_open',
+                                'opening_window_rank_reference_basis': 'session_open',
+                            },
+                            base_timeframe='1Sec',
+                            universe_type='mean_reversion_rebound_long_v1',
+                            universe_symbols=['META'],
+                        )
+                    ]
+                ).strategies[0]
+            ),
+            enabled=True,
+            base_timeframe='1Sec',
+            universe_type='mean_reversion_rebound_long_v1',
+            universe_symbols=['META'],
+            max_position_pct_equity=Decimal('1.0'),
+            max_notional_per_trade=Decimal('12000'),
+        )
+
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+        default_decision = runtime.evaluate(default_strategy, feature_contract, timeframe='1Sec')
+        session_open_decision = runtime.evaluate(session_open_strategy, feature_contract, timeframe='1Sec')
+
+        self.assertIsNone(default_decision)
+        self.assertIsNotNone(session_open_decision)
+        assert session_open_decision is not None
+        self.assertEqual(session_open_decision.intent.action, 'buy')
+
     def test_mean_reversion_rebound_plugin_skips_when_liquidity_has_not_normalized(self) -> None:
         strategy = Strategy(
             id=uuid.uuid4(),
@@ -4532,6 +4620,175 @@ class TestStrategyRuntime(TestCase):
         feature_contract = normalize_feature_vector_v3(signal)
         runtime = StrategyRuntime()
         decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNone(decision)
+
+    def test_washout_rebound_plugin_emits_buy_after_active_selloff_recovery(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="washout-rebound",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="washout_rebound_long_v1",
+            universe_symbols=["AMD"],
+            max_position_pct_equity=Decimal("1.5"),
+            max_notional_per_trade=Decimal("18000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 25, 15, 12, 24, tzinfo=timezone.utc),
+            symbol="AMD",
+            timeframe="1Sec",
+            seq=3,
+            payload={
+                "price": 101.40,
+                "ema12": 101.85,
+                "macd": -0.006,
+                "macd_signal": -0.010,
+                "rsi14": 42,
+                "vol_realized_w60s": 0.00022,
+                "vwap_session": 102.10,
+                "spread": 0.04,
+                "imbalance_bid_sz": 5800,
+                "imbalance_ask_sz": 4300,
+                "price_vs_session_open_bps": -55,
+                "opening_window_return_bps": -18,
+                "price_position_in_session_range": 0.18,
+                "price_vs_session_low_bps": 9,
+                "price_vs_opening_range_low_bps": 6,
+                "session_range_bps": 82,
+                "recent_spread_bps_avg": 3.2,
+                "recent_spread_bps_max": 7.8,
+                "recent_imbalance_pressure_avg": 0.06,
+                "recent_quote_invalid_ratio": 0.03,
+                "recent_quote_jump_bps_max": 12,
+                "recent_microprice_bias_bps_avg": 0.45,
+                "recent_above_vwap_w5m_ratio": 0.22,
+                "cross_section_opening_window_return_rank": 0.22,
+                "cross_section_continuation_rank": 0.38,
+                "cross_section_reversal_rank": 0.89,
+                "cross_section_recent_imbalance_rank": 0.76,
+                "cross_section_positive_recent_imbalance_ratio": 0.58,
+            },
+        )
+
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.intent.action, "buy")
+        self.assertEqual(decision.plugin_id, "washout_rebound_long")
+        self.assertIn("activity_gated", decision.intent.rationale)
+
+    def test_washout_rebound_plugin_skips_without_bid_recovery_confirmation(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="washout-rebound",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="washout_rebound_long_v1",
+            universe_symbols=["AMD"],
+            max_position_pct_equity=Decimal("1.5"),
+            max_notional_per_trade=Decimal("18000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 25, 15, 12, 24, tzinfo=timezone.utc),
+            symbol="AMD",
+            timeframe="1Sec",
+            seq=4,
+            payload={
+                "price": 101.40,
+                "ema12": 101.85,
+                "macd": -0.006,
+                "macd_signal": -0.010,
+                "rsi14": 42,
+                "vol_realized_w60s": 0.00022,
+                "vwap_session": 102.10,
+                "spread": 0.04,
+                "imbalance_bid_sz": 4200,
+                "imbalance_ask_sz": 5600,
+                "price_vs_session_open_bps": -55,
+                "opening_window_return_bps": -18,
+                "price_position_in_session_range": 0.18,
+                "price_vs_session_low_bps": 9,
+                "price_vs_opening_range_low_bps": 6,
+                "session_range_bps": 82,
+                "recent_spread_bps_avg": 3.2,
+                "recent_spread_bps_max": 7.8,
+                "recent_imbalance_pressure_avg": -0.02,
+                "recent_quote_invalid_ratio": 0.03,
+                "recent_quote_jump_bps_max": 12,
+                "recent_microprice_bias_bps_avg": -0.10,
+                "recent_above_vwap_w5m_ratio": 0.22,
+                "cross_section_opening_window_return_rank": 0.22,
+                "cross_section_continuation_rank": 0.38,
+                "cross_section_reversal_rank": 0.51,
+                "cross_section_recent_imbalance_rank": 0.24,
+                "cross_section_positive_recent_imbalance_ratio": 0.18,
+            },
+        )
+
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNone(decision)
+
+    def test_washout_rebound_plugin_does_not_exit_on_shallow_recovery_touch(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name='washout-rebound',
+            description='version=1.0.0',
+            enabled=True,
+            base_timeframe='1Sec',
+            universe_type='washout_rebound_long_v1',
+            universe_symbols=['AMD'],
+            max_position_pct_equity=Decimal('1.5'),
+            max_notional_per_trade=Decimal('18000'),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 25, 16, 4, 12, tzinfo=timezone.utc),
+            symbol='AMD',
+            timeframe='1Sec',
+            seq=5,
+            payload={
+                'price': 101.88,
+                'ema12': 101.70,
+                'macd': -0.011,
+                'macd_signal': -0.009,
+                'rsi14': 51,
+                'vol_realized_w60s': 0.00022,
+                'vwap_session': 101.82,
+                'spread': 0.04,
+                'imbalance_bid_sz': 5100,
+                'imbalance_ask_sz': 4700,
+                'price_vs_session_open_bps': -11,
+                'opening_window_return_bps': -18,
+                'price_position_in_session_range': 0.34,
+                'price_vs_session_low_bps': 16,
+                'price_vs_opening_range_low_bps': 10,
+                'session_range_bps': 82,
+                'recent_spread_bps_avg': 3.2,
+                'recent_spread_bps_max': 7.8,
+                'recent_imbalance_pressure_avg': 0.03,
+                'recent_quote_invalid_ratio': 0.03,
+                'recent_quote_jump_bps_max': 12,
+                'recent_microprice_bias_bps_avg': 0.14,
+                'recent_above_vwap_w5m_ratio': 0.28,
+                'cross_section_opening_window_return_rank': 0.22,
+                'cross_section_continuation_rank': 0.38,
+                'cross_section_reversal_rank': 0.89,
+                'cross_section_recent_imbalance_rank': 0.76,
+                'cross_section_positive_recent_imbalance_ratio': 0.58,
+            },
+        )
+
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, feature_contract, timeframe='1Sec')
 
         self.assertIsNone(decision)
 

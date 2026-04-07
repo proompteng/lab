@@ -34,7 +34,10 @@ from app.trading.evaluation_trace import (
     ReplayTraceRecord,
     StrategyTrace,
 )
-from app.trading.execution_policy import _near_touch_limit_price
+from app.trading.execution_policy import (
+    _near_touch_limit_price,
+    _should_keep_market_order_for_high_conviction_entry,
+)
 from app.trading.models import SignalEnvelope, StrategyDecision
 from app.trading.portfolio import allocator_from_settings, sizer_from_settings
 from app.trading.quote_quality import (
@@ -405,6 +408,7 @@ def _parse_signal_row(parts: list[str]) -> SignalEnvelope | None:
         vwap_w5m,
         vol,
     ) = parts
+    price_value = _to_decimal(price)
     bid_px_value = _to_decimal(bid_px)
     ask_px_value = _to_decimal(ask_px)
     spread_value = _to_decimal(spread)
@@ -418,7 +422,7 @@ def _parse_signal_row(parts: list[str]) -> SignalEnvelope | None:
         'ema26': _to_decimal(ema26),
         'rsi14': _to_decimal(rsi14),
         'rsi': _to_decimal(rsi14),
-        'price': _to_decimal(price),
+        'price': price_value,
         'vwap_session': _to_decimal(vwap_session),
         'vwap_w5m': _to_decimal(vwap_w5m),
         'vol_realized_w60s': _to_decimal(vol),
@@ -435,6 +439,11 @@ def _parse_signal_row(parts: list[str]) -> SignalEnvelope | None:
             'spread': imbalance_spread_value if imbalance_spread_value is not None else spread_value,
         },
         'spread': spread_value,
+        'spread_bps': (
+            (spread_value / price_value) * Decimal('10000')
+            if spread_value is not None and price_value is not None and price_value > 0
+            else None
+        ),
         'window_size': 'PT1S',
         'window_step': 'PT1S',
     }
@@ -651,7 +660,7 @@ def _log_quote_skipped(
     has_open_position: bool,
     has_pending_order: bool,
 ) -> None:
-    logger.info(
+    logger.debug(
         'replay_quote_skipped ts=%s symbol=%s reason=%s spread_bps=%s jump_bps=%s open_position=%s pending_order=%s',
         signal.event_ts.isoformat(),
         signal.symbol,
@@ -711,6 +720,12 @@ def _apply_order_preferences(
         return decision
     price = _extract_price(signal)
     spread = _extract_spread(signal)
+    if _should_keep_market_order_for_high_conviction_entry(
+        decision,
+        price=price,
+        spread=spread,
+    ):
+        return decision
     return decision.model_copy(
         update={
             'order_type': 'limit',
@@ -723,6 +738,7 @@ def _init_day_stats() -> dict[str, Any]:
     return {
         'decision_count': 0,
         'filled_count': 0,
+        'filled_notional': Decimal('0'),
         'gross_pnl': Decimal('0'),
         'net_pnl': Decimal('0'),
         'cost_total': Decimal('0'),
@@ -741,6 +757,7 @@ def _init_funnel_stats() -> dict[str, Any]:
         'gate_pass_counts': defaultdict(int),
         'decision_count': 0,
         'filled_count': 0,
+        'filled_notional': Decimal('0'),
         'closed_trade_count': 0,
         'gross_pnl': Decimal('0'),
         'net_pnl': Decimal('0'),
@@ -879,6 +896,37 @@ def _decision_position_owner(decision: StrategyDecision) -> str:
         if isolation_mode == 'per_strategy':
             return decision.strategy_id
     return _SHARED_POSITION_OWNER
+
+
+def _first_reject_reason(
+    *,
+    reason_codes: Iterable[str],
+    default_reason: str,
+) -> str:
+    for reason_code in reason_codes:
+        cleaned = str(reason_code).strip()
+        if cleaned:
+            return cleaned
+    return default_reason
+
+
+def _resolve_passed_trace_block_reason(
+    *,
+    strategy_id: str,
+    raw_decision_strategy_ids: set[str],
+    allocation_reject_reason_by_strategy_id: dict[str, str],
+    sizing_reject_reason_by_strategy_id: dict[str, str],
+    emitted_strategy_ids: set[str],
+) -> str | None:
+    if strategy_id not in raw_decision_strategy_ids:
+        return 'engine_runtime_filter_rejected'
+    if strategy_id in allocation_reject_reason_by_strategy_id:
+        return allocation_reject_reason_by_strategy_id[strategy_id]
+    if strategy_id in sizing_reject_reason_by_strategy_id:
+        return sizing_reject_reason_by_strategy_id[strategy_id]
+    if strategy_id not in emitted_strategy_ids:
+        return 'post_runtime_filter_rejected'
+    return None
 
 
 def _pending_order_priority(decision: StrategyDecision) -> int:
@@ -1086,11 +1134,14 @@ def _apply_filled_decision(
     position_key = _position_key(decision.symbol, owner_strategy_id)
     if decision.action == 'buy':
         fill_cost = _estimate_trade_cost(model=cost_model, decision=decision, signal=signal)
+        fill_notional = fill_price * decision.qty
         day_bucket['cost_total'] += fill_cost
         day_bucket['filled_count'] += 1
+        day_bucket['filled_notional'] += fill_notional
         if symbol_bucket is not None:
             symbol_bucket['cost_total'] += fill_cost
             symbol_bucket['filled_count'] += 1
+            symbol_bucket['filled_notional'] += fill_notional
         cash -= (fill_price * decision.qty) + fill_cost
         existing = positions.get(position_key)
         if existing is None:
@@ -1122,13 +1173,16 @@ def _apply_filled_decision(
     existing = positions.get(position_key)
     if existing is None or existing.qty <= 0:
         return cash
+    sell_qty = min(decision.qty, existing.qty)
     fill_cost = _estimate_trade_cost(model=cost_model, decision=decision, signal=signal)
+    fill_notional = fill_price * sell_qty
     day_bucket['cost_total'] += fill_cost
     day_bucket['filled_count'] += 1
+    day_bucket['filled_notional'] += fill_notional
     if symbol_bucket is not None:
         symbol_bucket['cost_total'] += fill_cost
         symbol_bucket['filled_count'] += 1
-    sell_qty = min(decision.qty, existing.qty)
+        symbol_bucket['filled_notional'] += fill_notional
     cash += (fill_price * sell_qty) - fill_cost
     entry_cost_allocated = existing.entry_cost_total * (sell_qty / existing.qty)
     remaining, trade = _close_position(
@@ -1323,15 +1377,25 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
             allocator = allocator_from_settings(equity)
             account = {'equity': str(equity)}
             executable_decisions: list[StrategyDecision] = []
+            raw_decision_strategy_ids = {decision.strategy_id for decision in raw_decisions}
+            allocation_reject_reason_by_strategy_id: dict[str, str] = {}
+            sizing_reject_reason_by_strategy_id: dict[str, str] = {}
             for allocation_result in allocator.allocate(
                 raw_decisions,
                 account=account,
                 positions=live_positions,
                 regime_label=regime_label,
             ):
-                if not allocation_result.approved:
-                    continue
                 decision = allocation_result.decision
+                if not allocation_result.approved:
+                    allocation_reject_reason_by_strategy_id.setdefault(
+                        decision.strategy_id,
+                        _first_reject_reason(
+                            reason_codes=allocation_result.reason_codes,
+                            default_reason='allocator_rejected',
+                        ),
+                    )
+                    continue
                 strategy = strategies_by_id.get(decision.strategy_id)
                 if strategy is None:
                     executable_decisions.append(decision)
@@ -1342,6 +1406,13 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                     positions=live_positions,
                 )
                 if not sizing_result.approved:
+                    sizing_reject_reason_by_strategy_id.setdefault(
+                        decision.strategy_id,
+                        _first_reject_reason(
+                            reason_codes=sizing_result.reasons,
+                            default_reason='sizer_rejected',
+                        ),
+                    )
                     continue
                 executable_decisions.append(sizing_result.decision)
 
@@ -1350,8 +1421,16 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
             block_reason_by_strategy_id: dict[str, str] = {}
             if config.capture_traces:
                 for trace in telemetry_traces:
-                    if trace.passed and trace.strategy_id not in emitted_strategy_ids:
-                        block_reason_by_strategy_id[trace.strategy_id] = 'post_runtime_filter_rejected'
+                    if trace.passed:
+                        block_reason = _resolve_passed_trace_block_reason(
+                            strategy_id=trace.strategy_id,
+                            raw_decision_strategy_ids=raw_decision_strategy_ids,
+                            allocation_reject_reason_by_strategy_id=allocation_reject_reason_by_strategy_id,
+                            sizing_reject_reason_by_strategy_id=sizing_reject_reason_by_strategy_id,
+                            emitted_strategy_ids=emitted_strategy_ids,
+                        )
+                        if block_reason is not None:
+                            block_reason_by_strategy_id[trace.strategy_id] = block_reason
                     elif not trace.passed and trace.first_failed_gate is not None:
                         block_reason_by_strategy_id[trace.strategy_id] = trace.first_failed_gate
 
@@ -1470,6 +1549,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
     final_equity = _position_equity(cash=cash, positions=positions, last_prices=last_prices)
     total_decisions = sum(item['decision_count'] for item in day_stats.values())
     total_filled = sum(item['filled_count'] for item in day_stats.values())
+    total_filled_notional = sum((item['filled_notional'] for item in day_stats.values()), Decimal('0'))
     total_gross = sum((item['gross_pnl'] for item in day_stats.values()), Decimal('0'))
     total_net = final_equity - config.start_equity
     total_cost = sum((item['cost_total'] for item in day_stats.values()), Decimal('0'))
@@ -1489,6 +1569,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                 gate_pass_counts=dict(bucket['gate_pass_counts']),
                 decision_count=int(bucket['decision_count']),
                 filled_count=int(bucket['filled_count']),
+                filled_notional=bucket['filled_notional'],
                 closed_trade_count=int(bucket['closed_trade_count']),
                 gross_pnl=bucket['gross_pnl'],
                 net_pnl=bucket['net_pnl'],
@@ -1529,6 +1610,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
         'total_cost': str(total_cost),
         'decision_count': total_decisions,
         'filled_count': total_filled,
+        'filled_notional': str(total_filled_notional),
         'wins': wins,
         'losses': losses,
         'open_positions': {
@@ -1544,6 +1626,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
             key: {
                 'decision_count': value['decision_count'],
                 'filled_count': value['filled_count'],
+                'filled_notional': str(value['filled_notional']),
                 'gross_pnl': str(value['gross_pnl']),
                 'net_pnl': str(value['net_pnl']),
                 'cost_total': str(value['cost_total']),
@@ -1661,11 +1744,13 @@ def _flatten_positions(
         stats['net_pnl'] += trade.net_pnl
         stats['cost_total'] += exit_cost
         stats['filled_count'] += 1
+        stats['filled_notional'] += sell_value
         symbol_bucket = funnel_stats.setdefault((day.isoformat(), symbol), _init_funnel_stats())
         symbol_bucket['gross_pnl'] += trade.gross_pnl
         symbol_bucket['net_pnl'] += trade.net_pnl
         symbol_bucket['cost_total'] += exit_cost
         symbol_bucket['filled_count'] += 1
+        symbol_bucket['filled_notional'] += sell_value
         symbol_bucket['closed_trade_count'] += 1
         if trade.net_pnl > 0:
             stats['wins'] += 1

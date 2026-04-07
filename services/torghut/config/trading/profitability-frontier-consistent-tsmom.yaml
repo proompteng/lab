@@ -1,0 +1,46 @@
+schema_version: torghut.replay-frontier-sweep.v1
+family: intraday_tsmom_consistent
+strategy_name: intraday-tsmom-profit-v3
+disable_other_strategies: true
+constraints:
+  holdout_target_net_per_day: '200'
+  min_active_holdout_days: 2
+  max_worst_holdout_day_loss: '200'
+  min_profit_factor: '1.1'
+  require_training_decisions: true
+  require_holdout_decisions: true
+consistency_constraints:
+  target_net_per_day: '200'
+  min_active_days: 9
+  max_worst_day_loss: '250'
+  max_negative_days: 2
+  max_drawdown: '600'
+  require_every_day_active: true
+strategy_overrides:
+  universe_symbols:
+    - ['NVDA']
+    - ['NVDA', 'AMAT']
+    - ['NVDA', 'AMAT', 'AMD']
+  max_notional_per_trade:
+    - '15000'
+    - '25000'
+    - '35000'
+  max_position_pct_equity:
+    - '1.5'
+    - '2.0'
+parameters:
+  long_stop_loss_bps:
+    - '12'
+    - '18'
+  long_trailing_stop_activation_profit_bps:
+    - '8'
+    - '12'
+  long_trailing_stop_drawdown_bps:
+    - '4'
+    - '6'
+  max_session_negative_exit_bps:
+    - '8'
+    - '12'
+  min_cross_section_continuation_rank:
+    - '0.60'
+    - '0.70'

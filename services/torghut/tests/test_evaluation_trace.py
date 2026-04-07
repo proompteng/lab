@@ -133,6 +133,7 @@ class TestEvaluationTrace(TestCase):
             gate_pass_counts={'b:confirmation': 2, 'a:eligibility': 4},
             decision_count=2,
             filled_count=1,
+            filled_notional=Decimal('451.25'),
             closed_trade_count=1,
             gross_pnl=Decimal('10.50'),
             net_pnl=Decimal('9.75'),
