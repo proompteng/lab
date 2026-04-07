@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 from argparse import Namespace
 from contextlib import redirect_stdout
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
@@ -17,6 +19,56 @@ import scripts.search_consistent_profitability_frontier as frontier
 
 
 class TestSearchConsistentProfitabilityFrontier(TestCase):
+    def test_parse_args_supports_harness_v2_flags(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            strategy_configmap = root / 'strategies.yaml'
+            sweep_config = root / 'sweep.yaml'
+            family_dir = root / 'families'
+            strategy_configmap.write_text('apiVersion: v1\nkind: ConfigMap\n', encoding='utf-8')
+            sweep_config.write_text('family: breakout_reclaim\nstrategy_name: intraday-tsmom-profit-v3\n', encoding='utf-8')
+            family_dir.mkdir()
+            with patch.object(
+                sys,
+                'argv',
+                [
+                    'prog',
+                    '--strategy-configmap',
+                    str(strategy_configmap),
+                    '--sweep-config',
+                    str(sweep_config),
+                    '--expected-last-trading-day',
+                    '2026-04-07',
+                    '--allow-stale-tape',
+                    '--family-template-dir',
+                    str(family_dir),
+                ],
+            ):
+                args = frontier._parse_args()
+
+        self.assertEqual(args.expected_last_trading_day, '2026-04-07')
+        self.assertTrue(args.allow_stale_tape)
+        self.assertEqual(args.family_template_dir, family_dir)
+
+    def test_rolling_lower_bound_handles_empty_and_short_windows(self) -> None:
+        self.assertEqual(frontier._rolling_lower_bound({}, window=3), Decimal('0'))
+        self.assertEqual(
+            frontier._rolling_lower_bound(
+                {'2026-04-03': Decimal('30'), '2026-04-04': Decimal('60')},
+                window=5,
+            ),
+            Decimal('45'),
+        )
+
+    def test_selected_normalization_regime_prefers_override(self) -> None:
+        self.assertEqual(
+            frontier._selected_normalization_regime(
+                strategy_overrides={'normalization_regime': 'matched_filter'},
+                template_allowed_normalizations=('trading_value_scaled',),
+            ),
+            'matched_filter',
+        )
+
     def test_candidate_symbols_prefers_cli_filter_then_universe_override(self) -> None:
         self.assertEqual(
             frontier._candidate_symbols(
@@ -718,3 +770,118 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             self.assertEqual(top['replay_config']['strategy_overrides']['universe_symbols'], ['NVDA'])
             self.assertEqual(top['search_iteration'], 1)
             self.assertEqual(top['pruned_symbol'], 'AVGO')
+
+    def test_main_adds_concentration_hard_vetoes(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            strategy_configmap = self._write_strategy_configmap(root)
+            sweep_config = root / 'sweep.yaml'
+            sweep_config.write_text(
+                yaml.safe_dump(
+                    {
+                        'schema_version': 'torghut.replay-frontier-sweep.v1',
+                        'family': 'breakout_reclaim',
+                        'strategy_name': 'intraday-tsmom-profit-v3',
+                        'disable_other_strategies': True,
+                        'constraints': {
+                            'holdout_target_net_per_day': '100',
+                            'min_active_holdout_days': 1,
+                            'max_worst_holdout_day_loss': '500',
+                            'min_profit_factor': '1.0',
+                        },
+                        'consistency_constraints': {
+                            'target_net_per_day': '100',
+                            'min_active_days': 1,
+                            'max_worst_day_loss': '500',
+                            'max_negative_days': 3,
+                            'max_drawdown': '800',
+                            'require_every_day_active': False,
+                            'max_symbol_concentration_share': '0.50',
+                            'max_entry_family_contribution_share': '0.50',
+                        },
+                        'strategy_overrides': {
+                            'universe_symbols': [['NVDA', 'AMAT']],
+                        },
+                        'parameters': {
+                            'long_stop_loss_bps': ['12'],
+                        },
+                    },
+                    sort_keys=False,
+                ),
+                encoding='utf-8',
+            )
+            json_output = root / 'frontier.json'
+            args = self._make_args(
+                strategy_configmap=strategy_configmap,
+                sweep_config=sweep_config,
+                json_output=json_output,
+            )
+            recent_days = tuple(date(2026, 3, 18) + timedelta(days=index) for index in range(6))
+            snapshot_receipt = SimpleNamespace(
+                snapshot_id='snap-veto',
+                is_fresh=True,
+                stale_override_used=False,
+                to_payload=lambda: {
+                    'snapshot_id': 'snap-veto',
+                    'source': 'ta',
+                    'window_size': 'PT1S',
+                    'start_day': '2026-03-18',
+                    'end_day': '2026-03-23',
+                    'expected_last_trading_day': '2026-03-23',
+                    'is_fresh': True,
+                    'missing_days': [],
+                    'row_count': 123,
+                    'stale_override_used': False,
+                    'witnesses': [],
+                },
+            )
+
+            def fake_run_replay(config: object) -> dict[str, object]:
+                start_date = str(getattr(config, 'start_date'))
+                end_date = str(getattr(config, 'end_date'))
+                if start_date == '2026-03-18' and end_date == '2026-03-20':
+                    daily_net = {
+                        '2026-03-18': '200',
+                        '2026-03-19': '180',
+                        '2026-03-20': '160',
+                    }
+                else:
+                    daily_net = {
+                        '2026-03-21': '220',
+                        '2026-03-22': '210',
+                        '2026-03-23': '205',
+                    }
+                payload = self._payload(
+                    start_date=start_date,
+                    end_date=end_date,
+                    daily_net=daily_net,
+                    decision_count=3,
+                    filled_count=3,
+                    wins=3,
+                    losses=0,
+                )
+                payload['trace'] = []
+                return payload
+
+            fake_decomposition = SimpleNamespace(
+                to_payload=lambda: {'families': {}, 'symbols': {}},
+            )
+            stdout = io.StringIO()
+            with (
+                patch('scripts.search_consistent_profitability_frontier._parse_args', return_value=args),
+                patch('scripts.search_consistent_profitability_frontier._resolve_recent_trading_days', return_value=recent_days),
+                patch('scripts.search_consistent_profitability_frontier.build_dataset_snapshot_receipt', return_value=snapshot_receipt),
+                patch('scripts.search_consistent_profitability_frontier.ensure_fresh_snapshot'),
+                patch('scripts.search_consistent_profitability_frontier.run_replay', side_effect=fake_run_replay),
+                patch('scripts.search_consistent_profitability_frontier.build_replay_decomposition', return_value=fake_decomposition),
+                patch('scripts.search_consistent_profitability_frontier.regime_slice_pass_rate', return_value=Decimal('1')),
+                patch('scripts.search_consistent_profitability_frontier.max_symbol_concentration_share', return_value=Decimal('0.90')),
+                patch('scripts.search_consistent_profitability_frontier.max_family_contribution_share', return_value=Decimal('0.90')),
+                redirect_stdout(stdout),
+            ):
+                exit_code = frontier.main()
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(json_output.read_text(encoding='utf-8'))
+            self.assertIn('symbol_concentration_above_max', payload['top'][0]['hard_vetoes'])
+            self.assertIn('entry_family_contribution_above_max', payload['top'][0]['hard_vetoes'])

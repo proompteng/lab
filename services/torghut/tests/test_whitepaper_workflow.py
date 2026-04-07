@@ -600,6 +600,116 @@ https://example.com/paper.pdf
             self.assertEqual(len(contradiction_events), 1)
             self.assertEqual(contradiction_events[0].required_action, "revalidate_linked_family")
 
+    def test_structured_output_helpers_cover_direct_nested_and_gating_merge(self) -> None:
+        service = WhitepaperWorkflowService()
+        direct = service._structured_output_list(  # type: ignore[attr-defined]
+            {'claims': [{'claim_id': 'claim-1'}]},
+            key='claims',
+        )
+        nested = service._structured_output_list(  # type: ignore[attr-defined]
+            {'synthesis': {'claims': [{'claim_id': 'claim-2'}]}},
+            key='claims',
+        )
+        compiled = service._compiled_experiment_specs_from_templates(  # type: ignore[attr-defined]
+            run_id='run-1',
+            claims=[{'claim_id': 'claim-1'}],
+            templates=[
+                {
+                    'template_id': 'template-1',
+                    'family_template_id': 'family-1',
+                    'allowed_normalizations': ['matched_filter'],
+                    'day_veto_rules': [{'rule': 'quote_quality'}],
+                }
+            ],
+        )
+        contradictions = service._inferred_contradiction_events(  # type: ignore[attr-defined]
+            [
+                {'relation_id': 'rel-ignore', 'relation_type': 'supports', 'source_claim_id': 'claim-1'},
+                {'relation_id': 'rel-missing-source', 'relation_type': 'conflicts_with'},
+                {
+                    'relation_id': 'rel-1',
+                    'relation_type': 'conflicts_with',
+                    'source_claim_id': 'claim-2',
+                    'target_claim_id': 'claim-1',
+                },
+            ]
+        )
+        merged = service._build_verdict_gating_payload(  # type: ignore[attr-defined]
+            {'dspy_eval_report': {'score': 0.8}}
+        )
+
+        self.assertEqual(direct[0]['claim_id'], 'claim-1')
+        self.assertEqual(nested[0]['claim_id'], 'claim-2')
+        self.assertEqual(compiled[0]['feature_variants'], ['matched_filter'])
+        self.assertEqual(len(contradictions), 1)
+        self.assertEqual(contradictions[0]['source_claim_id'], 'claim-2')
+        self.assertEqual(merged, {'dspy_eval_report': {'score': 0.8}})
+
+    def test_sync_structured_outputs_skips_incomplete_records(self) -> None:
+        service = WhitepaperWorkflowService()
+        service.ceph_client = _FakeCephClient()
+        service._download_pdf = lambda _url: b"%PDF-1.7 sample"  # type: ignore[method-assign]
+        os.environ["WHITEPAPER_AGENTRUN_AUTO_DISPATCH"] = "false"
+
+        with Session(self.engine) as session:
+            kickoff = service.ingest_github_issue_event(
+                session,
+                self._issue_payload(issue_number=43),
+                source="api",
+            )
+            self.assertTrue(kickoff.accepted)
+            session.commit()
+
+            run_row = session.execute(
+                select(WhitepaperAnalysisRun).where(WhitepaperAnalysisRun.run_id == kickoff.run_id)
+            ).scalar_one()
+
+            service._sync_structured_research_outputs(  # type: ignore[attr-defined]
+                session,
+                run_row,
+                {
+                    'claims': [
+                        {'claim_id': 'claim-missing-text'},
+                        {'claim_id': 'claim-valid', 'claim_text': 'valid claim'},
+                    ],
+                    'claim_relations': [
+                        {'relation_id': 'rel-missing-target', 'source_claim_id': 'claim-valid'},
+                        {
+                            'relation_id': 'rel-valid',
+                            'source_claim_id': 'claim-valid',
+                            'target_claim_id': 'claim-valid',
+                        },
+                    ],
+                    'strategy_templates': [
+                        {'template_id': 'template-missing-mechanism', 'family_template_id': 'family-1'},
+                        {
+                            'template_id': 'template-valid',
+                            'family_template_id': 'family-1',
+                            'economic_mechanism': 'valid mechanism',
+                        },
+                    ],
+                    'experiment_specs': [
+                        {'experiment_id': 'exp-missing-family'},
+                        {
+                            'experiment_id': 'exp-valid',
+                            'family_template_id': 'family-1',
+                        },
+                    ],
+                    'contradiction_events': [
+                        {'event_id': 'event-missing-source'},
+                        {'event_id': 'event-valid', 'source_claim_id': 'claim-valid'},
+                        {'event_id': 'event-valid', 'source_claim_id': 'claim-valid'},
+                    ],
+                },
+            )
+            session.commit()
+
+            self.assertEqual(session.execute(select(WhitepaperClaim)).scalars().all()[0].claim_id, 'claim-valid')
+            self.assertEqual(len(session.execute(select(WhitepaperClaimRelation)).scalars().all()), 1)
+            self.assertEqual(len(session.execute(select(WhitepaperStrategyTemplate)).scalars().all()), 1)
+            self.assertEqual(len(session.execute(select(WhitepaperExperimentSpec)).scalars().all()), 1)
+            self.assertEqual(len(session.execute(select(WhitepaperContradictionEvent)).scalars().all()), 1)
+
     def test_finalize_run_propagates_synthesis_indexing_failures(self) -> None:
         service = WhitepaperWorkflowService()
         service.ceph_client = _FakeCephClient()
