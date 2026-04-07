@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import runpy
+import sys
 from argparse import Namespace
+from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
@@ -157,6 +160,143 @@ class TestRunStrategyFactoryV2(TestCase):
             persist_results=True,
         )
 
+    def test_parse_args_and_helpers_cover_edge_cases(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            seed_dir = Path(tmpdir)
+            (seed_dir / 'profitability-frontier-consistent-invalid.yaml').write_text('[]', encoding='utf-8')
+            (seed_dir / 'profitability-frontier-consistent-other.yaml').write_text(
+                yaml.safe_dump({'family_template_id': 'other-family'}, sort_keys=False),
+                encoding='utf-8',
+            )
+            with patch.object(
+                sys,
+                'argv',
+                [
+                    'run_strategy_factory_v2.py',
+                    '--output-dir',
+                    tmpdir,
+                    '--experiment-id',
+                    'exp-1',
+                    '--paper-run-id',
+                    'paper-1',
+                    '--limit',
+                    '2',
+                    '--allow-stale-tape',
+                    '--prefetch-full-window-rows',
+                    '--no-persist-results',
+                ],
+            ):
+                parsed = runner._parse_args()
+
+        self.assertEqual(parsed.output_dir, Path(tmpdir))
+        self.assertEqual(parsed.experiment_id, ['exp-1'])
+        self.assertEqual(parsed.paper_run_id, ['paper-1'])
+        self.assertEqual(parsed.limit, 2)
+        self.assertTrue(parsed.allow_stale_tape)
+        self.assertTrue(parsed.prefetch_full_window_rows)
+        self.assertFalse(parsed.persist_results)
+        self.assertEqual(runner._list_of_strings('not-a-list'), [])
+        self.assertEqual(runner._coerce_decimal(Decimal('1.25'), default='0'), Decimal('1.25'))
+        self.assertEqual(runner._coerce_decimal(7, default='0'), Decimal('7'))
+        self.assertEqual(runner._coerce_ratio_days(ratio=Decimal('0'), total_days=5), 0)
+        self.assertIsNone(runner._load_seed_sweep_config('missing-family', seed_dir=seed_dir))
+
+    def test_load_source_experiment_specs_applies_filters(self) -> None:
+        with Session(self.engine) as session:
+            session.add_all(
+                [
+                    VNextExperimentSpec(
+                        run_id='paper-keep',
+                        candidate_id=None,
+                        experiment_id='exp-keep',
+                        payload_json={'family_template_id': 'breakout_reclaim_v2'},
+                    ),
+                    VNextExperimentSpec(
+                        run_id='paper-other',
+                        candidate_id=None,
+                        experiment_id='exp-other',
+                        payload_json={'family_template_id': 'breakout_reclaim_v2'},
+                    ),
+                ]
+            )
+            session.commit()
+
+        args = Namespace(experiment_id=['exp-keep'], paper_run_id=['paper-keep'], limit=10)
+        with patch(
+            'scripts.run_strategy_factory_v2.SessionLocal',
+            side_effect=lambda: Session(self.engine),
+        ):
+            rows = runner._load_source_experiment_specs(args)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].experiment_id, 'exp-keep')
+        self.assertEqual(rows[0].run_id, 'paper-keep')
+
+    def test_compile_sweep_config_raises_for_missing_template_or_runtime_harness(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            family_dir = root / 'families'
+            family_dir.mkdir()
+            seed_dir = root / 'seed'
+            seed_dir.mkdir()
+            (family_dir / 'incomplete_family.yaml').write_text(
+                yaml.safe_dump(
+                    {
+                        'schema_version': 'torghut.family-template.v1',
+                        'family_id': 'incomplete_family',
+                        'economic_mechanism': 'Incomplete.',
+                        'supported_markets': ['us_equities_intraday'],
+                        'required_features': [],
+                        'allowed_normalizations': ['price_scaled'],
+                        'entry_motifs': ['breakout'],
+                        'exit_motifs': ['stop'],
+                        'risk_controls': ['stop_loss'],
+                        'activity_model': {},
+                        'liquidity_assumptions': {},
+                        'regime_activation_rules': [],
+                        'day_veto_rules': [],
+                        'default_hard_vetoes': {},
+                        'default_selection_objectives': {},
+                        'runtime_harness': {},
+                    },
+                    sort_keys=False,
+                ),
+                encoding='utf-8',
+            )
+
+            missing_template_row = VNextExperimentSpec(
+                run_id='paper-run-1',
+                candidate_id=None,
+                experiment_id='exp-missing-template',
+                payload_json={},
+            )
+            with self.assertRaisesRegex(ValueError, 'experiment_family_template_missing:exp-missing-template'):
+                runner._compile_sweep_config(
+                    experiment_row=missing_template_row,
+                    family_dir=family_dir,
+                    seed_dir=seed_dir,
+                    train_days=6,
+                    holdout_days=3,
+                )
+
+            incomplete_runtime_row = VNextExperimentSpec(
+                run_id='paper-run-2',
+                candidate_id=None,
+                experiment_id='exp-incomplete-runtime',
+                payload_json={'family_template_id': 'incomplete_family'},
+            )
+            with self.assertRaisesRegex(
+                ValueError,
+                'family_template_runtime_harness_incomplete:incomplete_family',
+            ):
+                runner._compile_sweep_config(
+                    experiment_row=incomplete_runtime_row,
+                    family_dir=family_dir,
+                    seed_dir=seed_dir,
+                    train_days=6,
+                    holdout_days=3,
+                )
+
     def test_run_strategy_factory_v2_compiles_executes_and_persists(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -284,3 +424,37 @@ class TestRunStrategyFactoryV2(TestCase):
                 )
 
         self.assertEqual(result, {'status': 'no_experiments', 'count': 0, 'experiments': []})
+
+    def test_main_and_dunder_main_entrypoint(self) -> None:
+        with patch.object(runner, '_parse_args', return_value=Namespace()), patch.object(
+            runner,
+            'run_strategy_factory_v2',
+            return_value={'status': 'ok', 'count': 0},
+        ), patch('builtins.print') as mock_print:
+            exit_code = runner.main()
+
+        self.assertEqual(exit_code, 0)
+        mock_print.assert_called_once_with(
+            json.dumps({'status': 'ok', 'count': 0}, indent=2, sort_keys=True)
+        )
+
+        with TemporaryDirectory() as tmpdir, patch(
+            'app.db.SessionLocal',
+            side_effect=lambda: Session(self.engine),
+        ), patch.object(
+            sys,
+            'argv',
+            [
+                str(Path(runner.__file__).resolve()),
+                '--output-dir',
+                tmpdir,
+                '--no-persist-results',
+            ],
+        ), patch('builtins.print') as mock_dunder_print:
+            with self.assertRaises(SystemExit) as excinfo:
+                runpy.run_path(str(Path(runner.__file__).resolve()), run_name='__main__')
+
+        self.assertEqual(excinfo.exception.code, 0)
+        mock_dunder_print.assert_called_once_with(
+            json.dumps({'status': 'no_experiments', 'count': 0, 'experiments': []}, indent=2, sort_keys=True)
+        )
