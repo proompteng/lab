@@ -138,6 +138,11 @@ Current source-state priority is narrower:
 - `67-torghut-trading-engine-glossary-and-mechanics-2026-03-29.md` now provides one onboarding glossary for the
   current Torghut runtime, replay, decision-persistence, and profitability vocabulary so a new engineer can map terms
   directly to active code paths and diagnostics.
+- `69-torghut-harness-v2-strategy-discovery-and-whitepaper-research-factory-2026-04-07.md` now defines the next
+  research iteration after the promoted breakout-plus-washout composite: fail discovery closed on stale tape, replace
+  scalar replay penalties with a constrained multi-objective frontier, move from sleeve-first sweeps to family
+  templates plus veto controllers, and turn whitepaper indexing into relation-aware claim extraction and
+  experiment-spec generation.
 - `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md` now makes the next step
   explicit: non-observe capital depends on one certificate that consumes Jangar witness quorum, Jangar market-context
   and quant evidence, toggle parity, and typed options auth/bootstrap escrow rather than local gate optimism.
