@@ -6,7 +6,7 @@ import { errorResponse, normalizeNamespace, okResponse } from '~/server/primitiv
 export const Route = createFileRoute('/api/agents/control-plane/status')({
   server: {
     handlers: {
-      GET: async ({ request }) => getControlPlaneStatus(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getControlPlaneStatus(request),
     },
   },
 })

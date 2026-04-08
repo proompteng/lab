@@ -21,7 +21,7 @@ type AtlasSearchItem = {
 export const Route = createFileRoute('/api/search')({
   server: {
     handlers: {
-      GET: async ({ request }) => getAtlasSearchHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getAtlasSearchHandler(request),
       POST: async () => new Response('Method Not Allowed', { status: 405 }),
     },
   },

@@ -5,7 +5,7 @@ import { getTorghutDecisionRun, isTorghutDecisionEngineEnabled } from '~/server/
 export const Route = createFileRoute('/api/torghut/decision-engine/runs/$id')({
   server: {
     handlers: {
-      GET: async ({ params }) => getDecisionRunStatus(params.id),
+      GET: async ({ params }: JangarServerRouteArgs) => getDecisionRunStatus(params.id),
     },
   },
 })

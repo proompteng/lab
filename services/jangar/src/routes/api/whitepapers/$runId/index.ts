@@ -5,8 +5,9 @@ import { approveTorghutWhitepaperForImplementation, getTorghutWhitepaperDetail }
 export const Route = createFileRoute('/api/whitepapers/$runId/')({
   server: {
     handlers: {
-      GET: async ({ params }) => getWhitepaperDetailHandler(params.runId),
-      POST: async ({ params, request }) => approveWhitepaperImplementationHandler(params.runId, request),
+      GET: async ({ params }: JangarServerRouteArgs) => getWhitepaperDetailHandler(params.runId),
+      POST: async ({ params, request }: JangarServerRouteArgs) =>
+        approveWhitepaperImplementationHandler(params.runId, request),
     },
   },
 })

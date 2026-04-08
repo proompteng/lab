@@ -10,7 +10,7 @@ import { getOpenWebUiRenderStore } from '~/server/openwebui-render-store'
 export const Route = createFileRoute('/api/openwebui/rich-ui/render/$renderId')({
   server: {
     handlers: {
-      GET: async ({ request, params }) => getOpenWebUIRenderHandler(request, params.renderId),
+      GET: async ({ request, params }: JangarServerRouteArgs) => getOpenWebUIRenderHandler(request, params.renderId),
     },
   },
 })

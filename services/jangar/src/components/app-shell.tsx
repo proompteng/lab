@@ -13,9 +13,12 @@ import {
 import { Link, useRouterState } from '@tanstack/react-router'
 import * as React from 'react'
 import { AppSidebar } from '@/components/app-sidebar'
+import { getRouter } from '@/router'
+
+type JangarRouterState = ReturnType<typeof getRouter>['state']
 
 export function AppShell({ mainId, children }: { mainId: string; children: React.ReactNode }) {
-  const location = useRouterState({ select: (state) => state.location })
+  const location = useRouterState({ select: (state: JangarRouterState) => state.location })
   const { pathname, searchStr } = location
   const breadcrumbs = React.useMemo(() => buildBreadcrumbs(pathname, searchStr), [pathname, searchStr])
   const isFullscreen = pathname.endsWith('/fullscreen')

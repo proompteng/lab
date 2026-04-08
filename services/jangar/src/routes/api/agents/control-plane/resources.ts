@@ -13,7 +13,7 @@ import {
 export const Route = createFileRoute('/api/agents/control-plane/resources')({
   server: {
     handlers: {
-      GET: async ({ request }) => listPrimitiveResources(request),
+      GET: async ({ request }: JangarServerRouteArgs) => listPrimitiveResources(request),
     },
   },
 })

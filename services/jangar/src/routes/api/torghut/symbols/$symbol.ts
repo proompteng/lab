@@ -5,8 +5,8 @@ import { deleteTorghutSymbol, setTorghutSymbolEnabled } from '~/server/torghut-s
 export const Route = createFileRoute('/api/torghut/symbols/$symbol')({
   server: {
     handlers: {
-      PATCH: async ({ params, request }) => patchSymbolHandler(params.symbol, request),
-      DELETE: async ({ params, request }) => deleteSymbolHandler(params.symbol, request),
+      PATCH: async ({ params, request }: JangarServerRouteArgs) => patchSymbolHandler(params.symbol, request),
+      DELETE: async ({ params, request }: JangarServerRouteArgs) => deleteSymbolHandler(params.symbol, request),
     },
   },
 })

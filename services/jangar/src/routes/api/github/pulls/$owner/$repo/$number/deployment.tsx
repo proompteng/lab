@@ -8,8 +8,10 @@ import {
 export const Route = createFileRoute('/api/github/pulls/$owner/$repo/$number/deployment')({
   server: {
     handlers: {
-      POST: async ({ request, params }) => postPullDeploymentEvidenceHandler(request, params),
-      GET: async ({ request, params }) => getPullDeploymentEvidenceSummaryHandler(request, params),
+      POST: async ({ request, params }: JangarServerRouteArgsWith<JangarGithubPullRouteParams>) =>
+        postPullDeploymentEvidenceHandler(request, params),
+      GET: async ({ request, params }: JangarServerRouteArgsWith<JangarGithubPullRouteParams>) =>
+        getPullDeploymentEvidenceSummaryHandler(request, params),
     },
   },
 })

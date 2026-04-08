@@ -23,7 +23,7 @@ const parseNumberParam = (value: string | undefined) => {
 export const Route = createFileRoute('/api/github/pulls/$owner/$repo/$number/judge-runs')({
   server: {
     handlers: {
-      GET: async ({ params }) => {
+      GET: async ({ params }: JangarServerRouteArgsWith<JangarGithubPullRouteParams>) => {
         const prNumber = parseNumberParam(params.number)
         if (!prNumber) {
           return jsonResponse({ ok: false, error: 'Invalid pull request number' }, 400)

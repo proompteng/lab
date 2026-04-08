@@ -33,7 +33,7 @@ export const Route = createFileRoute('/api/enrich')({
   server: {
     handlers: {
       GET: async () => new Response('Method Not Allowed', { status: 405 }),
-      POST: async ({ request }) => postEnrichHandler(request),
+      POST: async ({ request }: JangarServerRouteArgs) => postEnrichHandler(request),
     },
   },
 })

@@ -5,7 +5,7 @@ import { getMarketContextProviderResult } from '~/server/torghut-market-context-
 export const Route = createFileRoute('/api/torghut/market-context/providers/fundamentals')({
   server: {
     handlers: {
-      GET: async ({ request }) => getFundamentalsProviderHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getFundamentalsProviderHandler(request),
     },
   },
 })

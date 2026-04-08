@@ -6,8 +6,8 @@ import { cancelTorghutSimulationRun, syncTorghutSimulationRun } from '~/server/t
 export const Route = createFileRoute('/api/torghut/simulation/runs/$id')({
   server: {
     handlers: {
-      GET: async ({ params }) => getSimulationRunHandler(params.id),
-      DELETE: async ({ params }) => cancelSimulationRunHandler(params.id),
+      GET: async ({ params }: JangarServerRouteArgs) => getSimulationRunHandler(params.id),
+      DELETE: async ({ params }: JangarServerRouteArgs) => cancelSimulationRunHandler(params.id),
     },
   },
 })

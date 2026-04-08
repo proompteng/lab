@@ -13,7 +13,7 @@ import {
 export const Route = createFileRoute('/api/torghut/trading/control-plane/quant/stream')({
   server: {
     handlers: {
-      GET: async ({ request }) => streamQuantEvents(request),
+      GET: async ({ request }: JangarServerRouteArgs) => streamQuantEvents(request),
     },
   },
 })

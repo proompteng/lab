@@ -6,7 +6,7 @@ import { createKubernetesClient } from '~/server/primitives-kube'
 export const Route = createFileRoute('/api/agents/control-plane/events')({
   server: {
     handlers: {
-      GET: async ({ request }) => listPrimitiveEvents(request),
+      GET: async ({ request }: JangarServerRouteArgs) => listPrimitiveEvents(request),
     },
   },
 })

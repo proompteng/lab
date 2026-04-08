@@ -7,13 +7,98 @@ declare module '@xterm/addon-ligatures/lib/addon-ligatures.mjs' {
   export { LigaturesAddon } from '@xterm/addon-ligatures'
 }
 
-declare module 'nitro/runtime' {
-  export const defineNitroPlugin: (plugin: (nitroApp?: unknown) => void) => unknown
+type JangarServerRouteArgs = {
+  request: Request
+  params: Record<string, string>
 }
 
-declare module 'virtual:tanstack-start-server-entry' {
-  const entry: {
-    fetch: (request: Request) => Promise<Response>
+type JangarServerRouteArgsWith<TParams extends Record<string, string>> = {
+  request: Request
+  params: TParams
+}
+
+type JangarServerRouteHandler = (args: JangarServerRouteArgs) => Response | Promise<Response>
+
+type JangarServerRouteHandlers = Partial<Record<'DELETE' | 'GET' | 'PATCH' | 'POST' | 'PUT', JangarServerRouteHandler>>
+
+type JangarGithubPullRouteParams = {
+  owner: string
+  repo: string
+  number: string
+}
+
+type JangarGithubPullThreadRouteParams = JangarGithubPullRouteParams & {
+  threadId: string
+}
+
+declare module '@tanstack/router-core' {
+  interface FilebaseRouteOptionsInterface<
+    TRegister,
+    TParentRoute extends import('@tanstack/router-core').AnyRoute = import('@tanstack/router-core').AnyRoute,
+    TId extends string = string,
+    TPath extends string = string,
+    TSearchValidator = undefined,
+    TParams = {},
+    TLoaderDeps extends Record<string, any> = {},
+    TLoaderFn = undefined,
+    TRouterContext = {},
+    TRouteContextFn = import('@tanstack/router-core').AnyContext,
+    TBeforeLoadFn = import('@tanstack/router-core').AnyContext,
+    TRemountDepsFn = import('@tanstack/router-core').AnyContext,
+    TSSR = unknown,
+    TServerMiddlewares = unknown,
+    THandlers = undefined,
+  > {
+    server?: {
+      handlers?: JangarServerRouteHandlers
+    }
   }
-  export default entry
+}
+
+declare module '@tanstack/router-core/dist/esm/route' {
+  interface FilebaseRouteOptionsInterface<
+    TRegister,
+    TParentRoute extends import('@tanstack/router-core').AnyRoute = import('@tanstack/router-core').AnyRoute,
+    TId extends string = string,
+    TPath extends string = string,
+    TSearchValidator = undefined,
+    TParams = {},
+    TLoaderDeps extends Record<string, any> = {},
+    TLoaderFn = undefined,
+    TRouterContext = {},
+    TRouteContextFn = import('@tanstack/router-core').AnyContext,
+    TBeforeLoadFn = import('@tanstack/router-core').AnyContext,
+    TRemountDepsFn = import('@tanstack/router-core').AnyContext,
+    TSSR = unknown,
+    TServerMiddlewares = unknown,
+    THandlers = undefined,
+  > {
+    server?: {
+      handlers?: JangarServerRouteHandlers
+    }
+  }
+}
+
+declare module '@tanstack/router-core/dist/esm/route.js' {
+  interface FilebaseRouteOptionsInterface<
+    TRegister,
+    TParentRoute extends import('@tanstack/router-core').AnyRoute = import('@tanstack/router-core').AnyRoute,
+    TId extends string = string,
+    TPath extends string = string,
+    TSearchValidator = undefined,
+    TParams = {},
+    TLoaderDeps extends Record<string, any> = {},
+    TLoaderFn = undefined,
+    TRouterContext = {},
+    TRouteContextFn = import('@tanstack/router-core').AnyContext,
+    TBeforeLoadFn = import('@tanstack/router-core').AnyContext,
+    TRemountDepsFn = import('@tanstack/router-core').AnyContext,
+    TSSR = unknown,
+    TServerMiddlewares = unknown,
+    THandlers = undefined,
+  > {
+    server?: {
+      handlers?: JangarServerRouteHandlers
+    }
+  }
 }

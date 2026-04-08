@@ -49,7 +49,7 @@ const pickDefaultPod = (pods: AgentRunPod[]) => pods.find((pod) => pod.phase ===
 export const Route = createFileRoute('/api/agents/control-plane/logs')({
   server: {
     handlers: {
-      GET: async ({ request }) => getAgentRunLogs(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getAgentRunLogs(request),
     },
   },
 })

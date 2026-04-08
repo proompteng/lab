@@ -19,7 +19,7 @@ import { createPrimitivesStore } from '~/server/primitives-store'
 export const Route = createFileRoute('/v1/orchestrations')({
   server: {
     handlers: {
-      POST: async ({ request }) => postOrchestrationsHandler(request),
+      POST: async ({ request }: JangarServerRouteArgs) => postOrchestrationsHandler(request),
     },
   },
 })

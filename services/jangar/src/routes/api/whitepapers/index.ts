@@ -5,7 +5,7 @@ import { listTorghutWhitepapers } from '~/server/torghut-whitepapers'
 export const Route = createFileRoute('/api/whitepapers/')({
   server: {
     handlers: {
-      GET: async ({ request }) => getWhitepapersHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getWhitepapersHandler(request),
     },
   },
 })

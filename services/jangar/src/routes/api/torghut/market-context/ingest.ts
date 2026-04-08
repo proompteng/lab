@@ -9,7 +9,7 @@ import { recordTorghutMarketContextIngestRequest, recordTorghutMarketContextRunE
 export const Route = createFileRoute('/api/torghut/market-context/ingest')({
   server: {
     handlers: {
-      POST: async ({ request }) => postMarketContextIngestHandler(request),
+      POST: async ({ request }: JangarServerRouteArgs) => postMarketContextIngestHandler(request),
     },
   },
 })

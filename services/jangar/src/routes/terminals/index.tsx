@@ -311,7 +311,7 @@ function TerminalsIndexPage() {
                       <Link
                         to="/terminals/$sessionId"
                         params={{ sessionId: session.id }}
-                        onClick={(event) => {
+                        onClick={(event: React.MouseEvent<HTMLAnchorElement>) => {
                           if (session.status !== 'ready') event.preventDefault()
                         }}
                         aria-disabled={session.status !== 'ready'}

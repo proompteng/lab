@@ -10,7 +10,7 @@ import { recordSseConnection, recordSseError } from '~/server/metrics'
 export const Route = createFileRoute('/api/agents/events')({
   server: {
     handlers: {
-      GET: async ({ request }) => getAgentEvents(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getAgentEvents(request),
     },
   },
 })

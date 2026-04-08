@@ -5,7 +5,7 @@ export const Route = createFileRoute('/mcp')({
   server: {
     handlers: {
       GET: async () => new Response('Method Not Allowed', { status: 405 }),
-      POST: async ({ request }) => handleMcpRequest(request),
+      POST: async ({ request }: JangarServerRouteArgs) => handleMcpRequest(request),
     },
   },
 })

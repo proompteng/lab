@@ -6,7 +6,7 @@ import { syncTorghutSimulationRun } from '~/server/torghut-simulation-control-pl
 export const Route = createFileRoute('/api/torghut/simulation/stream')({
   server: {
     handlers: {
-      GET: async ({ request }) => streamSimulationRun(request),
+      GET: async ({ request }: JangarServerRouteArgs) => streamSimulationRun(request),
     },
   },
 })

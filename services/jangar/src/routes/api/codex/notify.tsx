@@ -5,7 +5,7 @@ import { handleNotify } from '~/server/codex-judge'
 export const Route = createFileRoute('/api/codex/notify')({
   server: {
     handlers: {
-      POST: async ({ request }) => postNotify(request),
+      POST: async ({ request }: JangarServerRouteArgs) => postNotify(request),
       GET: async () => new Response('Method Not Allowed', { status: 405 }),
     },
   },

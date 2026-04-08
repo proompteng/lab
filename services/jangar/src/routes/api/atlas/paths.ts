@@ -11,7 +11,7 @@ import {
 export const Route = createFileRoute('/api/atlas/paths')({
   server: {
     handlers: {
-      GET: async ({ request }) => getAtlasPathsHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getAtlasPathsHandler(request),
     },
   },
 })

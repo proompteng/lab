@@ -4,8 +4,8 @@ import { createTerminalSession, listTerminalSessions } from '~/server/terminals'
 export const Route = createFileRoute('/api/terminals')({
   server: {
     handlers: {
-      GET: async ({ request }) => listSessionsHandler(request),
-      POST: async ({ request }) => createSessionHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => listSessionsHandler(request),
+      POST: async ({ request }: JangarServerRouteArgs) => createSessionHandler(request),
     },
   },
 })

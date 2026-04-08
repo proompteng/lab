@@ -6,7 +6,7 @@ import { isMarketContextIngestAuthorized, startMarketContextProviderRun } from '
 export const Route = createFileRoute('/api/torghut/market-context/runs/start')({
   server: {
     handlers: {
-      POST: async ({ request }) => postMarketContextRunStartHandler(request),
+      POST: async ({ request }: JangarServerRouteArgs) => postMarketContextRunStartHandler(request),
     },
   },
 })

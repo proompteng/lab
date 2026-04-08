@@ -5,7 +5,7 @@ import { handleRerunRequest } from '~/server/codex-judge'
 export const Route = createFileRoute('/api/codex/rerun')({
   server: {
     handlers: {
-      POST: async ({ request }) => postRerun(request),
+      POST: async ({ request }: JangarServerRouteArgs) => postRerun(request),
       GET: async () => new Response('Method Not Allowed', { status: 405 }),
     },
   },

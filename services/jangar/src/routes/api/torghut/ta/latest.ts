@@ -5,7 +5,7 @@ import { parseTaLatestParams } from '~/server/torghut-ta'
 export const Route = createFileRoute('/api/torghut/ta/latest')({
   server: {
     handlers: {
-      GET: async ({ request }) => getLatestHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getLatestHandler(request),
     },
   },
 })

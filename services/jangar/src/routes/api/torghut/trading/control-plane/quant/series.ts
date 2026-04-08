@@ -12,7 +12,7 @@ import { computeWindowBoundsUtc } from '~/server/torghut-quant-windows'
 export const Route = createFileRoute('/api/torghut/trading/control-plane/quant/series')({
   server: {
     handlers: {
-      GET: async ({ request }) => getQuantSeriesHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getQuantSeriesHandler(request),
     },
   },
 })

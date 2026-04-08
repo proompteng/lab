@@ -5,7 +5,7 @@ import { listQuantAlerts } from '~/server/torghut-quant-metrics-store'
 export const Route = createFileRoute('/api/torghut/trading/control-plane/quant/alerts')({
   server: {
     handlers: {
-      GET: async ({ request }) => getQuantAlertsHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getQuantAlertsHandler(request),
     },
   },
 })

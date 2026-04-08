@@ -5,7 +5,7 @@ import { listTorghutSimulationArtifacts } from '~/server/torghut-simulation-cont
 export const Route = createFileRoute('/api/torghut/simulation/artifacts')({
   server: {
     handlers: {
-      GET: async ({ request }) => listSimulationArtifactsHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => listSimulationArtifactsHandler(request),
     },
   },
 })

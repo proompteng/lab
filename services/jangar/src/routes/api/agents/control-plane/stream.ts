@@ -15,7 +15,7 @@ import { buildResourceFingerprint } from '~/server/status-utils'
 export const Route = createFileRoute('/api/agents/control-plane/stream')({
   server: {
     handlers: {
-      GET: async ({ request }) => streamControlPlaneEvents(request),
+      GET: async ({ request }: JangarServerRouteArgs) => streamControlPlaneEvents(request),
     },
   },
 })

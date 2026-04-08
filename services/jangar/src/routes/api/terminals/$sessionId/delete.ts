@@ -4,7 +4,7 @@ import { deleteTerminalSession, formatSessionId } from '~/server/terminals'
 export const Route = createFileRoute('/api/terminals/$sessionId/delete')({
   server: {
     handlers: {
-      POST: async ({ params }) => deleteSessionHandler(params.sessionId),
+      POST: async ({ params }: JangarServerRouteArgs) => deleteSessionHandler(params.sessionId),
     },
   },
 })
