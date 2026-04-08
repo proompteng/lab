@@ -413,37 +413,35 @@ ENTRY
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
 
-FROM tools AS codex-build
+FROM tools AS workspace-tools-deps
 WORKDIR /app
 COPY json/ .
-RUN --mount=type=cache,id=bun-install-cache-codex-build,target=/root/.bun/install/cache \
-  bun install --no-save --ignore-scripts --filter @proompteng/codex
+RUN --mount=type=cache,id=bun-install-cache-workspace-tools,target=/root/.bun/install/cache \
+  bun install --no-save --ignore-scripts \
+    --filter @proompteng/codex \
+    --filter @proompteng/otel \
+    --filter @proompteng/temporal-bun-sdk \
+    --filter @proompteng/cx-tools
+
+FROM workspace-tools-deps AS codex-build
+WORKDIR /app
 COPY full/packages/codex ./packages/codex
 RUN bun --cwd=packages/codex run build
 
-FROM tools AS otel-build
+FROM workspace-tools-deps AS otel-build
 WORKDIR /app
-COPY json/ .
-RUN --mount=type=cache,id=bun-install-cache-otel-build,target=/root/.bun/install/cache \
-  bun install --no-save --ignore-scripts --filter @proompteng/otel
 COPY full/packages/otel ./packages/otel
 RUN bun --cwd=packages/otel run build
 
-FROM tools AS temporal-bun-sdk-build
+FROM workspace-tools-deps AS temporal-bun-sdk-build
 WORKDIR /app
-COPY json/ .
-RUN --mount=type=cache,id=bun-install-cache-temporal-bun-sdk-build,target=/root/.bun/install/cache \
-  bun install --no-save --ignore-scripts --filter @proompteng/temporal-bun-sdk
 COPY full/packages/otel ./packages/otel
 COPY full/packages/temporal-bun-sdk ./packages/temporal-bun-sdk
 COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
 RUN bun --cwd=packages/temporal-bun-sdk run build
 
-FROM tools AS cx-tools-build
+FROM workspace-tools-deps AS cx-tools-build
 WORKDIR /app
-COPY json/ .
-RUN --mount=type=cache,id=bun-install-cache-cx-tools-build,target=/root/.bun/install/cache \
-  bun install --no-save --ignore-scripts --filter @proompteng/cx-tools
 COPY full/packages/cx-tools ./packages/cx-tools
 RUN bun --cwd=packages/cx-tools run build
 
