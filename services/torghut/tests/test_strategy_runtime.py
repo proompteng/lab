@@ -1147,6 +1147,50 @@ class TestStrategyRuntime(TestCase):
         self.assertEqual(decision.plugin_id, "momentum_pullback_long")
         self.assertIn("pullback_entry", decision.intent.rationale)
 
+    def test_momentum_pullback_plugin_emits_sell_outside_entry_window_when_exit_triggers(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="momentum-pullback",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="momentum_pullback_long_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 20, 10, 0, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 593.20,
+                "ema12": 593.10,
+                "ema26": 593.40,
+                "macd": -0.010,
+                "macd_signal": -0.004,
+                "rsi14": 44,
+                "vol_realized_w60s": 0.00018,
+                "spread": 0.05,
+                "imbalance_bid_sz": 3800,
+                "imbalance_ask_sz": 4200,
+                "price_vs_session_open_bps": 88,
+                "recent_spread_bps_avg": 0.84,
+                "recent_imbalance_pressure_avg": -0.04,
+            },
+        )
+
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.intent.action, "sell")
+        self.assertEqual(decision.plugin_id, "momentum_pullback_long")
+        self.assertIn("momentum_pullback_exit", decision.intent.rationale)
+
     def test_breakout_continuation_plugin_emits_buy_with_vwap_and_imbalance_confirmation(
         self,
     ) -> None:

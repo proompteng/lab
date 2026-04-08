@@ -1,0 +1,51 @@
+schema_version: torghut.replay-frontier-sweep.v1
+family: washout_rebound_consistent
+family_template_id: washout_rebound_v2
+strategy_name: washout-rebound-long-v1
+disable_other_strategies: false
+constraints:
+  holdout_target_net_per_day: '500'
+  min_active_holdout_days: 3
+  max_worst_holdout_day_loss: '250'
+  min_profit_factor: '1.05'
+  require_training_decisions: true
+  require_holdout_decisions: true
+consistency_constraints:
+  target_net_per_day: '500'
+  min_active_days: 8
+  min_active_ratio: '1.0'
+  min_positive_days: 5
+  max_worst_day_loss: '350'
+  max_negative_days: 2
+  max_drawdown: '900'
+  max_best_day_share_of_total_pnl: '0.30'
+  min_avg_filled_notional_per_day: '300000'
+  min_avg_filled_notional_per_active_day: '350000'
+  min_regime_slice_pass_rate: '0.45'
+  require_every_day_active: true
+strategy_overrides:
+  universe_symbols:
+    - ['AMD', 'AMAT', 'GOOG', 'INTC', 'MSFT', 'MU', 'SHOP']
+    - ['AAPL', 'AMD', 'AMAT', 'AVGO', 'GOOG', 'INTC', 'META', 'MSFT', 'MU', 'NVDA', 'SHOP']
+  max_notional_per_trade:
+    - '63180'
+    - '94770'
+    - '126360'
+  max_position_pct_equity:
+    - '2.0'
+    - '3.0'
+    - '4.0'
+parameters:
+  min_session_open_selloff_bps:
+    - '20'
+    - '24'
+    - '28'
+  max_price_vs_session_low_bps:
+    - '24'
+    - '36'
+  min_recent_microprice_bias_bps:
+    - '0.05'
+    - '0.15'
+  min_cross_section_reversal_rank:
+    - '0.65'
+    - '0.75'

@@ -1,0 +1,87 @@
+schema_version: torghut.replay-frontier-sweep.v1
+family: breakout_continuation_consistent
+family_template_id: opening_drive_leader_reclaim_v1
+strategy_name: breakout-continuation-long-v1
+disable_other_strategies: true
+constraints:
+  holdout_target_net_per_day: '325'
+  min_active_holdout_days: 2
+  max_worst_holdout_day_loss: '300'
+  min_profit_factor: '1.15'
+  require_training_decisions: true
+  require_holdout_decisions: true
+consistency_constraints:
+  target_net_per_day: '325'
+  min_active_days: 5
+  min_active_ratio: '0.55'
+  min_positive_days: 4
+  max_worst_day_loss: '350'
+  max_negative_days: 2
+  max_drawdown: '950'
+  max_best_day_share_of_total_pnl: '0.45'
+  min_avg_filled_notional_per_day: '250000'
+  min_avg_filled_notional_per_active_day: '325000'
+  min_regime_slice_pass_rate: '0.40'
+  require_every_day_active: false
+strategy_overrides:
+  universe_symbols:
+    - ['AAPL', 'AMAT', 'GOOG', 'MSFT', 'NVDA', 'SHOP']
+    - ['AAPL', 'AMAT', 'GOOG', 'MSFT', 'MU', 'NVDA', 'SHOP']
+  max_position_pct_equity:
+    - '8.0'
+    - '10.0'
+  max_notional_per_trade:
+    - '157950.10'
+    - '236925.15'
+parameters:
+  min_cross_section_continuation_rank:
+    - '0.60'
+    - '0.70'
+  min_cross_section_opening_window_return_rank:
+    - '0.55'
+    - '0.65'
+  max_gross_exposure_pct_equity:
+    - '8.0'
+    - '10.0'
+  entry_notional_max_multiplier:
+    - '1.00'
+    - '1.25'
+  max_entries_per_session:
+    - '1'
+    - '2'
+  entry_cooldown_seconds:
+    - '600'
+    - '900'
+  isolated_same_day_min_session_open_rank:
+    - '0.78'
+    - '0.85'
+  isolated_same_day_min_opening_window_return_rank:
+    - '0.72'
+    - '0.80'
+  isolated_same_day_min_continuation_rank:
+    - '0.72'
+    - '0.80'
+  isolated_same_day_min_microprice_bias_bps:
+    - '0.08'
+    - '0.12'
+  isolated_same_day_min_recent_above_opening_window_close_ratio:
+    - '0.40'
+    - '0.50'
+  leader_reclaim_start_minutes_since_open:
+    - '30'
+    - '45'
+  leader_reclaim_min_recent_imbalance_pressure:
+    - '0.08'
+    - '0.12'
+  leader_reclaim_min_recent_microprice_bias_bps:
+    - '0.15'
+    - '0.25'
+  long_stop_loss_bps:
+    - '10'
+    - '12'
+  long_trailing_stop_activation_profit_bps:
+    - '6'
+    - '8'
+  long_trailing_stop_drawdown_bps:
+    - '3'
+    - '4'

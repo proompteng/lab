@@ -1640,10 +1640,7 @@ def _build_runtime_position_exit_overlay(
         strategies=eligible_strategies,
     )
 
-    exit_type: str | None = None
-    exit_rationale: str | None = None
-    trigger_threshold_bps: Decimal | None = None
-    trigger_drawdown_bps: Decimal | None = None
+    exit_candidates: list[tuple[str, str, Decimal | None, Decimal | None]] = []
     position_age_seconds = _position_age_seconds_for_symbol(
         positions,
         signal.symbol,
@@ -1678,43 +1675,53 @@ def _build_runtime_position_exit_overlay(
                     or trailing_stop_structure_loss_confirmed
                 )
             ):
-                exit_type = "long_trailing_stop_bps"
-                exit_rationale = "position_trailing_stop_exit"
-                trigger_threshold_bps = trailing_stop_threshold_bps
-                trigger_drawdown_bps = peak_drawdown_bps
+                exit_candidates.append(
+                    (
+                        "long_trailing_stop_bps",
+                        "position_trailing_stop_exit",
+                        trailing_stop_threshold_bps,
+                        peak_drawdown_bps,
+                    )
+                )
 
     if (
-        exit_type is None
-        and hard_stop_threshold_bps is not None
+        hard_stop_threshold_bps is not None
         and hard_stop_threshold_bps > 0
         and entry_drawdown_bps >= hard_stop_threshold_bps
     ):
-        exit_type = "long_stop_loss_bps"
-        exit_rationale = "position_stop_loss_exit"
-        trigger_threshold_bps = hard_stop_threshold_bps
-        trigger_drawdown_bps = entry_drawdown_bps
+        exit_candidates.append(
+            (
+                "long_stop_loss_bps",
+                "position_stop_loss_exit",
+                hard_stop_threshold_bps,
+                entry_drawdown_bps,
+            )
+        )
 
     if (
-        exit_type is None
-        and max_hold_seconds is not None
+        max_hold_seconds is not None
         and max_hold_seconds > 0
         and position_age_seconds is not None
         and position_age_seconds >= int(max_hold_seconds)
     ):
-        exit_type = "max_hold_seconds"
-        exit_rationale = "position_time_exit"
-        trigger_threshold_bps = max_hold_seconds
+        exit_candidates.append(
+            ("max_hold_seconds", "position_time_exit", max_hold_seconds, None)
+        )
 
     if (
-        exit_type is None
-        and flatten_start_minute_utc is not None
+        flatten_start_minute_utc is not None
         and minute_of_day_utc >= flatten_start_minute_utc
     ):
-        exit_type = "session_flatten_minute_utc"
-        exit_rationale = "session_flatten_exit"
-        trigger_threshold_bps = flatten_start_minute_utc
+        exit_candidates.append(
+            (
+                "session_flatten_minute_utc",
+                "session_flatten_exit",
+                flatten_start_minute_utc,
+                None,
+            )
+        )
 
-    if exit_type is None or exit_rationale is None:
+    if not exit_candidates:
         return None
 
     reference_exit_price = _reference_exit_price(
@@ -1726,13 +1733,31 @@ def _build_runtime_position_exit_overlay(
         avg_entry_price=avg_entry_price,
         exit_price=reference_exit_price,
     )
-    if (
-        exit_type not in {"long_stop_loss_bps", "max_hold_seconds", "session_flatten_minute_utc"}
-        and not _passes_exit_profit_policy(
-        strategies=eligible_strategies,
-        realized_bps=realized_bps,
-        )
-    ):
+    exit_type: str | None = None
+    exit_rationale: str | None = None
+    trigger_threshold_bps: Decimal | None = None
+    trigger_drawdown_bps: Decimal | None = None
+    for (
+        candidate_exit_type,
+        candidate_exit_rationale,
+        candidate_threshold_bps,
+        candidate_drawdown_bps,
+    ) in exit_candidates:
+        if (
+            candidate_exit_type
+            not in {"long_stop_loss_bps", "max_hold_seconds", "session_flatten_minute_utc"}
+            and not _passes_exit_profit_policy(
+                strategies=eligible_strategies,
+                realized_bps=realized_bps,
+            )
+        ):
+            continue
+        exit_type = candidate_exit_type
+        exit_rationale = candidate_exit_rationale
+        trigger_threshold_bps = candidate_threshold_bps
+        trigger_drawdown_bps = candidate_drawdown_bps
+        break
+    if exit_type is None or exit_rationale is None:
         return None
 
     qty, sizing_meta = _resolve_qty_for_aggregated(

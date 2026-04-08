@@ -355,6 +355,44 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         )
         self.assertFalse(strategies['late-day']['enabled'])
 
+    def test_apply_candidate_to_configmap_with_overrides_skips_search_only_normalization_override(self) -> None:
+        configmap_payload = {
+            'apiVersion': 'v1',
+            'kind': 'ConfigMap',
+            'data': {
+                'strategies.yaml': yaml.safe_dump(
+                    {
+                        'strategies': [
+                            {
+                                'name': 'intraday-tsmom-profit-v3',
+                                'enabled': True,
+                                'max_notional_per_trade': '25000',
+                                'params': {'long_stop_loss_bps': '18'},
+                            },
+                        ]
+                    },
+                    sort_keys=False,
+                )
+            },
+        }
+
+        updated = frontier.apply_candidate_to_configmap_with_overrides(
+            configmap_payload=configmap_payload,
+            strategy_name='intraday-tsmom-profit-v3',
+            candidate_params={'long_stop_loss_bps': '12'},
+            strategy_overrides={
+                'normalization_regime': 'opening_window_scaled',
+                'universe_symbols': ['NVDA', 'AMAT'],
+            },
+            disable_other_strategies=True,
+        )
+
+        catalog = yaml.safe_load(updated['data']['strategies.yaml'])
+        strategy = catalog['strategies'][0]
+        self.assertEqual(strategy['params']['long_stop_loss_bps'], '12')
+        self.assertEqual(strategy['universe_symbols'], ['NVDA', 'AMAT'])
+        self.assertNotIn('normalization_regime', strategy)
+
     def test_symbol_contributions_from_replay_payload_aggregates_downside_and_activity(self) -> None:
         payload = {
             'funnel': {
@@ -600,6 +638,146 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             self.assertEqual(payload['dataset_snapshot_receipt']['snapshot_id'], 'snap-test')
             self.assertEqual(top['ranking']['method'], 'pareto_frontier_v2')
             self.assertEqual(top['family_template_id'], 'intraday_tsmom_v2')
+
+    def test_run_frontier_writes_partial_json_output_between_candidates(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            strategy_configmap = self._write_strategy_configmap(root)
+            sweep_config = root / 'sweep.yaml'
+            sweep_config.write_text(
+                yaml.safe_dump(
+                    {
+                        'schema_version': 'torghut.replay-frontier-sweep.v1',
+                        'family': 'intraday_tsmom_consistent',
+                        'strategy_name': 'intraday-tsmom-profit-v3',
+                        'disable_other_strategies': True,
+                        'constraints': {
+                            'holdout_target_net_per_day': '200',
+                            'min_active_holdout_days': 2,
+                            'max_worst_holdout_day_loss': '200',
+                            'min_profit_factor': '1.0',
+                        },
+                        'consistency_constraints': {
+                            'target_net_per_day': '200',
+                            'min_active_days': 2,
+                            'max_worst_day_loss': '300',
+                            'max_negative_days': 1,
+                            'max_drawdown': '400',
+                            'require_every_day_active': False,
+                        },
+                        'strategy_overrides': {
+                            'universe_symbols': [['NVDA']],
+                        },
+                        'parameters': {
+                            'long_stop_loss_bps': ['12', '18'],
+                        },
+                    },
+                    sort_keys=False,
+                ),
+                encoding='utf-8',
+            )
+            json_output = root / 'frontier.json'
+            args = self._make_args(
+                strategy_configmap=strategy_configmap,
+                sweep_config=sweep_config,
+                json_output=json_output,
+            )
+            recent_days = tuple(date(2026, 3, 18) + timedelta(days=index) for index in range(6))
+            snapshot_receipt = SimpleNamespace(
+                snapshot_id='snap-partial',
+                is_fresh=True,
+                stale_override_used=False,
+                to_payload=lambda: {
+                    'snapshot_id': 'snap-partial',
+                    'source': 'ta',
+                    'window_size': 'PT1S',
+                    'start_day': '2026-03-18',
+                    'end_day': '2026-03-23',
+                    'expected_last_trading_day': '2026-03-23',
+                    'is_fresh': True,
+                    'missing_days': [],
+                    'row_count': 123,
+                    'stale_override_used': False,
+                    'witnesses': [],
+                },
+            )
+            replay_call_count = {'count': 0}
+
+            def fake_run_replay(config: object) -> dict[str, object]:
+                replay_call_count['count'] += 1
+                if replay_call_count['count'] == 4:
+                    partial_payload = json.loads(json_output.read_text(encoding='utf-8'))
+                    self.assertEqual(partial_payload['status'], 'running')
+                    self.assertEqual(partial_payload['candidate_count'], 1)
+                    self.assertEqual(partial_payload['progress']['evaluated_candidates'], 1)
+                    self.assertGreaterEqual(partial_payload['progress']['pending_candidates'], 0)
+                    self.assertEqual(len(partial_payload['top']), 1)
+
+                configmap_path = Path(getattr(config, 'strategy_configmap_path'))
+                payload = yaml.safe_load(configmap_path.read_text(encoding='utf-8'))
+                strategy = next(
+                    item
+                    for item in yaml.safe_load(payload['data']['strategies.yaml'])['strategies']
+                    if item['name'] == 'intraday-tsmom-profit-v3'
+                )
+                stop = str(strategy['params']['long_stop_loss_bps'])
+                start_date = str(getattr(config, 'start_date'))
+                end_date = str(getattr(config, 'end_date'))
+                if start_date == '2026-03-18' and end_date == '2026-03-20':
+                    daily_net = (
+                        {'2026-03-18': '90', '2026-03-19': '95', '2026-03-20': '100'}
+                        if stop == '18'
+                        else {'2026-03-18': '60', '2026-03-19': '55', '2026-03-20': '50'}
+                    )
+                elif start_date == '2026-03-21' and end_date == '2026-03-23':
+                    daily_net = (
+                        {'2026-03-21': '220', '2026-03-22': '210', '2026-03-23': '205'}
+                        if stop == '18'
+                        else {'2026-03-21': '120', '2026-03-22': '115', '2026-03-23': '110'}
+                    )
+                else:
+                    daily_net = (
+                        {
+                            '2026-03-18': '90',
+                            '2026-03-19': '95',
+                            '2026-03-20': '100',
+                            '2026-03-21': '220',
+                            '2026-03-22': '210',
+                            '2026-03-23': '205',
+                        }
+                        if stop == '18'
+                        else {
+                            '2026-03-18': '60',
+                            '2026-03-19': '55',
+                            '2026-03-20': '50',
+                            '2026-03-21': '120',
+                            '2026-03-22': '115',
+                            '2026-03-23': '110',
+                        }
+                    )
+                return self._payload(
+                    start_date=start_date,
+                    end_date=end_date,
+                    daily_net=daily_net,
+                    decision_count=3,
+                    filled_count=3,
+                    wins=3,
+                    losses=0,
+                )
+
+            with (
+                patch('scripts.search_consistent_profitability_frontier._resolve_recent_trading_days', return_value=recent_days),
+                patch('scripts.search_consistent_profitability_frontier.build_dataset_snapshot_receipt', return_value=snapshot_receipt),
+                patch('scripts.search_consistent_profitability_frontier.ensure_fresh_snapshot'),
+                patch('scripts.search_consistent_profitability_frontier.run_replay', side_effect=fake_run_replay),
+            ):
+                payload = frontier.run_consistent_profitability_frontier(args)
+
+            self.assertEqual(payload['status'], 'completed')
+            self.assertEqual(payload['candidate_count'], 2)
+            persisted = json.loads(json_output.read_text(encoding='utf-8'))
+            self.assertEqual(persisted['status'], 'completed')
+            self.assertEqual(persisted['candidate_count'], 2)
 
     def test_main_symbol_pruning_promotes_pruned_universe(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -885,3 +1063,111 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             payload = json.loads(json_output.read_text(encoding='utf-8'))
             self.assertIn('symbol_concentration_above_max', payload['top'][0]['hard_vetoes'])
             self.assertIn('entry_family_contribution_above_max', payload['top'][0]['hard_vetoes'])
+
+    def test_main_keeps_min_active_days_disabled_for_widened_full_window(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            strategy_configmap = self._write_strategy_configmap(root)
+            sweep_config = root / 'widened-sweep.yaml'
+            sweep_config.write_text(
+                yaml.safe_dump(
+                    {
+                        'schema_version': 'torghut.replay-frontier-sweep.v1',
+                        'family': 'intraday_tsmom_consistent',
+                        'strategy_name': 'intraday-tsmom-profit-v3',
+                        'disable_other_strategies': True,
+                        'constraints': {
+                            'holdout_target_net_per_day': '100',
+                            'min_active_holdout_days': 1,
+                            'max_worst_holdout_day_loss': '500',
+                            'min_profit_factor': '1.0',
+                        },
+                        'consistency_constraints': {
+                            'target_net_per_day': '100',
+                            'min_active_ratio': '0',
+                            'max_worst_day_loss': '500',
+                            'max_negative_days': 7,
+                            'max_drawdown': '900',
+                            'require_every_day_active': False,
+                        },
+                        'strategy_overrides': {
+                            'universe_symbols': [['NVDA']],
+                        },
+                        'parameters': {
+                            'long_stop_loss_bps': ['12'],
+                        },
+                    },
+                    sort_keys=False,
+                ),
+                encoding='utf-8',
+            )
+            json_output = root / 'frontier.json'
+            args = self._make_args(
+                strategy_configmap=strategy_configmap,
+                sweep_config=sweep_config,
+                json_output=json_output,
+            )
+            args.full_window_start_date = '2026-03-17'
+            args.full_window_end_date = '2026-03-23'
+            recent_days = tuple(date(2026, 3, 18) + timedelta(days=index) for index in range(6))
+            snapshot_receipt = SimpleNamespace(
+                snapshot_id='snap-wide',
+                is_fresh=True,
+                stale_override_used=False,
+                to_payload=lambda: {
+                    'snapshot_id': 'snap-wide',
+                    'source': 'ta',
+                    'window_size': 'PT1S',
+                    'start_day': '2026-03-17',
+                    'end_day': '2026-03-23',
+                    'expected_last_trading_day': '2026-03-23',
+                    'is_fresh': True,
+                    'missing_days': [],
+                    'row_count': 321,
+                    'stale_override_used': False,
+                    'witnesses': [],
+                },
+            )
+
+            daily_net = {
+                '2026-03-17': '90',
+                '2026-03-18': '110',
+                '2026-03-19': '95',
+                '2026-03-20': '120',
+                '2026-03-21': '130',
+                '2026-03-22': '115',
+                '2026-03-23': '125',
+            }
+
+            def fake_run_replay(config: object) -> dict[str, object]:
+                start_date = str(getattr(config, 'start_date'))
+                end_date = str(getattr(config, 'end_date'))
+                subset = {
+                    day: value
+                    for day, value in daily_net.items()
+                    if start_date <= day <= end_date
+                }
+                return self._payload(
+                    start_date=start_date,
+                    end_date=end_date,
+                    daily_net=subset,
+                    decision_count=max(1, len(subset)),
+                    filled_count=max(1, len(subset)),
+                    wins=max(1, len(subset)),
+                    losses=0,
+                )
+
+            stdout = io.StringIO()
+            with (
+                patch('scripts.search_consistent_profitability_frontier._parse_args', return_value=args),
+                patch('scripts.search_consistent_profitability_frontier._resolve_recent_trading_days', return_value=recent_days),
+                patch('scripts.search_consistent_profitability_frontier.build_dataset_snapshot_receipt', return_value=snapshot_receipt),
+                patch('scripts.search_consistent_profitability_frontier.ensure_fresh_snapshot'),
+                patch('scripts.search_consistent_profitability_frontier.run_replay', side_effect=fake_run_replay),
+                redirect_stdout(stdout),
+            ):
+                exit_code = frontier.main()
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(json_output.read_text(encoding='utf-8'))
+            self.assertEqual(payload['constraints']['consistency']['min_active_days'], 0)

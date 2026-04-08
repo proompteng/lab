@@ -1,0 +1,313 @@
+schema_version: torghut.strategy-autoresearch.v1
+program_id: strict_daily_profit_autoresearch_v1
+description: >
+  Strict outer loop for daily-active strategy discovery: no flat days, low concentration, and
+  enough notional to matter. Families that cannot trade most sessions should fail fast.
+objective:
+  target_net_pnl_per_day: '500'
+  min_active_day_ratio: '1.0'
+  min_positive_day_ratio: '0.625'
+  min_daily_notional: '300000'
+  max_best_day_share: '0.30'
+  max_worst_day_loss: '350'
+  max_drawdown: '900'
+  require_every_day_active: true
+  min_regime_slice_pass_rate: '0.45'
+  stop_when_objective_met: true
+research_sources:
+  - source_id: interpretable_hypothesis_driven_trading_2025
+    title: Interpretable Hypothesis-Driven Trading
+    url: https://arxiv.org/abs/2512.12924
+    published_at: '2025-12-15'
+    claims:
+      - claim_id: walk_forward_honesty
+        summary: Honest walk-forward validation with realistic costs matters more than headline returns.
+        implication: Reject candidates that only look good in aggregate or depend on one day.
+      - claim_id: interpretability_over_noise
+        summary: Interpretable families age better than opaque threshold soup.
+        implication: Prefer bounded family search over unconstrained parameter hacking.
+  - source_id: optimal_signal_extraction_order_flow_2026
+    title: Optimal Signal Extraction from Order Flow
+    url: https://arxiv.org/abs/2512.18648
+    published_at: '2026-02-20'
+    claims:
+      - claim_id: matched_filter_normalization
+        summary: Feature normalization should match the signal-generation mechanism.
+        implication: Search allowed normalization regimes directly.
+  - source_id: liquidity_constrained_portfolio_2025
+    title: Sharpe-Driven Stock Selection and Liquidity-Constrained Portfolio Optimization
+    url: https://arxiv.org/abs/2511.13251
+    published_at: '2025-11-17'
+    claims:
+      - claim_id: liquidity_upstream
+        summary: Liquidity and notional constraints belong upstream in candidate definition.
+        implication: Reject low-notional or low-participation families directly in the objective.
+families:
+  - family_template_id: breakout_reclaim_v2
+    seed_sweep_config: ../profitability-frontier-strict-daily-breakout-reclaim.yaml
+    max_iterations: 2
+    keep_top_candidates: 1
+    frontier_top_n: 4
+    force_keep_top_candidate_if_all_vetoed: true
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 1
+    symbol_prune_min_universe_size: 5
+    parameter_mutations:
+      max_entries_per_session:
+        mode: numeric_step
+        deltas: ['-1', '0', '1']
+        minimum: '1'
+        maximum: '4'
+      entry_cooldown_seconds:
+        mode: numeric_step
+        deltas: ['-300', '0', '300']
+        minimum: '300'
+        maximum: '1500'
+      long_stop_loss_bps:
+        mode: numeric_step
+        deltas: ['-2', '0', '2']
+        minimum: '8'
+        maximum: '16'
+      long_trailing_stop_activation_profit_bps:
+        mode: numeric_step
+        deltas: ['-2', '0', '2']
+        minimum: '4'
+        maximum: '12'
+      long_trailing_stop_drawdown_bps:
+        mode: numeric_step
+        deltas: ['-1', '0', '1']
+        minimum: '2'
+        maximum: '6'
+    strategy_override_mutations:
+      normalization_regime:
+        mode: allowed_normalizations
+  - family_template_id: washout_rebound_v2
+    seed_sweep_config: ../profitability-frontier-strict-daily-washout.yaml
+    max_iterations: 2
+    keep_top_candidates: 1
+    frontier_top_n: 4
+    force_keep_top_candidate_if_all_vetoed: true
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 1
+    symbol_prune_min_universe_size: 4
+    parameter_mutations:
+      min_session_open_selloff_bps:
+        mode: numeric_step
+        deltas: ['-8', '0', '8']
+        minimum: '12'
+        maximum: '40'
+      max_price_vs_session_low_bps:
+        mode: numeric_step
+        deltas: ['-6', '0', '6']
+        minimum: '12'
+        maximum: '48'
+      min_cross_section_reversal_rank:
+        mode: numeric_step
+        deltas: ['-0.05', '0', '0.05']
+        minimum: '0.55'
+        maximum: '0.85'
+    strategy_override_mutations:
+      normalization_regime:
+        mode: allowed_normalizations
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['63180', '94770', '126360']
+  - family_template_id: momentum_pullback_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-momentum-pullback.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: true
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    parameter_mutations:
+      exit_macd_hist_max:
+        mode: numeric_step
+        deltas: ['-0.002', '0', '0.002']
+        minimum: '-0.010'
+        maximum: '-0.001'
+      max_hold_seconds:
+        mode: numeric_step
+        deltas: ['-120', '0', '120']
+        minimum: '300'
+        maximum: '1200'
+      long_stop_loss_bps:
+        mode: numeric_step
+        deltas: ['-4', '0', '4']
+        minimum: '12'
+        maximum: '32'
+      long_trailing_stop_activation_profit_bps:
+        mode: numeric_step
+        deltas: ['-2', '0', '2']
+        minimum: '6'
+        maximum: '20'
+      long_trailing_stop_drawdown_bps:
+        mode: numeric_step
+        deltas: ['-1', '0', '1']
+        minimum: '3'
+        maximum: '10'
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['63180', '126360', '189540']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['2.0', '4.0']
+  - family_template_id: mean_reversion_rebound_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-mean-reversion.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: true
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    parameter_mutations:
+      min_bull_rsi:
+        mode: numeric_step
+        deltas: ['-2', '0', '2']
+        minimum: '34'
+        maximum: '48'
+      min_price_below_vwap_bps:
+        mode: numeric_step
+        deltas: ['-4', '0', '4']
+        minimum: '6'
+        maximum: '20'
+      max_price_vs_session_open_bps:
+        mode: numeric_step
+        deltas: ['-10', '0', '10']
+        minimum: '-45'
+        maximum: '-10'
+      min_cross_section_reversal_rank:
+        mode: numeric_step
+        deltas: ['-0.05', '0', '0.05']
+        minimum: '0.60'
+        maximum: '0.90'
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['63180', '126360', '189540']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['2.0', '4.0']
+  - family_template_id: end_of_day_reversal_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-end-of-day-reversal.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: true
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    parameter_mutations:
+      min_bull_rsi:
+        mode: numeric_step
+        deltas: ['-2', '0', '2']
+        minimum: '30'
+        maximum: '42'
+      max_price_vs_session_open_bps:
+        mode: numeric_step
+        deltas: ['-10', '0', '10']
+        minimum: '-60'
+        maximum: '-20'
+      min_cross_section_reversal_rank:
+        mode: numeric_step
+        deltas: ['-0.05', '0', '0.05']
+        minimum: '0.65'
+        maximum: '0.90'
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['63180', '126360', '189540']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['2.0', '4.0']
+  - family_template_id: intraday_tsmom_v2
+    seed_sweep_config: ../profitability-frontier-strict-daily-tsmom.yaml
+    max_iterations: 3
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: true
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    parameter_mutations:
+      long_stop_loss_bps:
+        mode: numeric_step
+        deltas: ['-2', '0', '2']
+        minimum: '8'
+        maximum: '20'
+      long_trailing_stop_activation_profit_bps:
+        mode: numeric_step
+        deltas: ['-2', '0', '2']
+        minimum: '4'
+        maximum: '16'
+      long_trailing_stop_drawdown_bps:
+        mode: numeric_step
+        deltas: ['-1', '0', '1']
+        minimum: '2'
+        maximum: '8'
+      max_session_negative_exit_bps:
+        mode: numeric_step
+        deltas: ['-2', '0', '2']
+        minimum: '6'
+        maximum: '16'
+      min_cross_section_continuation_rank:
+        mode: numeric_step
+        deltas: ['-0.05', '0', '0.05']
+        minimum: '0.45'
+        maximum: '0.75'
+    strategy_override_mutations:
+      normalization_regime:
+        mode: allowed_normalizations
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['63180', '126360', '189540', '252720']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['2.0', '3.0', '4.0']
+  - family_template_id: microstructure_continuation_matched_filter_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-microstructure.yaml
+    max_iterations: 2
+    keep_top_candidates: 1
+    frontier_top_n: 4
+    force_keep_top_candidate_if_all_vetoed: true
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 1
+    symbol_prune_min_universe_size: 4
+    parameter_mutations:
+      max_entries_per_session:
+        mode: numeric_step
+        deltas: ['-1', '0', '1']
+        minimum: '1'
+        maximum: '4'
+      entry_cooldown_seconds:
+        mode: numeric_step
+        deltas: ['-300', '0', '300']
+        minimum: '300'
+        maximum: '1800'
+    strategy_override_mutations:
+      normalization_regime:
+        mode: allowed_normalizations
+  - family_template_id: opening_drive_leader_reclaim_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-opening-drive.yaml
+    max_iterations: 2
+    keep_top_candidates: 1
+    frontier_top_n: 4
+    force_keep_top_candidate_if_all_vetoed: true
+    symbol_prune_iterations: 0
+    symbol_prune_candidates: 1
+    symbol_prune_min_universe_size: 4
+    parameter_mutations:
+      leader_reclaim_start_minutes_since_open:
+        mode: explicit_values
+        values: ['30', '45', '60']
+      entry_cooldown_seconds:
+        mode: numeric_step
+        deltas: ['-300', '0', '300']
+        minimum: '300'
+        maximum: '1200'
+    strategy_override_mutations:
+      normalization_regime:
+        mode: allowed_normalizations

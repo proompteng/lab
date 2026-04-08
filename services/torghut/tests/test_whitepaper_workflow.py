@@ -195,6 +195,28 @@ https://example.com/paper.pdf
         urls = extract_pdf_urls(body)
         self.assertEqual(urls, ["https://example.com/paper.pdf"])
 
+    def test_extract_pdf_text_uses_pypdf_fallback(self) -> None:
+        from pypdf import PdfWriter
+
+        writer = PdfWriter()
+        writer.add_blank_page(width=300, height=300)
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as handle:
+            writer.write(handle)
+            handle.flush()
+            handle.seek(0)
+            pdf_bytes = handle.read()
+
+        with patch.object(
+            WhitepaperWorkflowService,
+            "_extract_pdf_text_with_pdftotext",
+            return_value=None,
+        ):
+            extracted = WhitepaperWorkflowService()._extract_pdf_text(pdf_bytes)
+
+        self.assertEqual(extracted["metadata"]["extract_method"], "pypdf")
+        self.assertEqual(extracted["metadata"]["page_count"], 1)
+
     def test_normalize_github_issue_event(self) -> None:
         event = normalize_github_issue_event(self._issue_payload())
         self.assertIsNotNone(event)

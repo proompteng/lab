@@ -341,38 +341,15 @@ def evaluate_momentum_pullback_long(
         )
 
     ts = _parse_event_ts(event_ts)
-    if not _within_utc_window(
+    entry_start_minute = _minute_param(params, 'entry_start_minute_utc', 14 * 60)
+    within_entry_window = _within_utc_window(
         ts,
-        start_minute=_minute_param(params, 'entry_start_minute_utc', 14 * 60),
+        start_minute=entry_start_minute,
         end_minute=_effective_entry_end_minute(
             params,
             default_end_minute=19 * 60 + 50,
         ),
-    ):
-        return _sleeve_result(
-            strategy_id=strategy_id,
-            strategy_type=strategy_type,
-            symbol=symbol,
-            event_ts=event_ts,
-            timeframe=timeframe,
-            signal=None,
-            gates=(
-                _gate(
-                    name='eligibility',
-                    category='eligibility',
-                    thresholds=(
-                        _threshold_bool(
-                            metric='within_entry_window',
-                            passed=False,
-                            threshold='entry_window',
-                        ),
-                    ),
-                    context={'entry_start_minute_utc': _minute_param(params, 'entry_start_minute_utc', 14 * 60)},
-                ),
-            ),
-            trace_enabled=trace_enabled,
-            context=trace_context,
-        )
+    )
 
     macd_hist = macd - macd_signal
     price_vs_ema12_bps = _bps_delta(price, ema12)
@@ -517,7 +494,7 @@ def evaluate_momentum_pullback_long(
             ),
         ),
     )
-    if all(gate.passed for gate in buy_gates):
+    if within_entry_window and all(gate.passed for gate in buy_gates):
         confidence = Decimal('0.66')
         if imbalance_pressure > Decimal('0.05'):
             confidence += Decimal('0.03')
@@ -597,6 +574,33 @@ def evaluate_momentum_pullback_long(
                 ),
             ),
             gates=(exit_gate,),
+            trace_enabled=trace_enabled,
+            context=trace_context,
+        )
+
+    if not within_entry_window:
+        return _sleeve_result(
+            strategy_id=strategy_id,
+            strategy_type=strategy_type,
+            symbol=symbol,
+            event_ts=event_ts,
+            timeframe=timeframe,
+            signal=None,
+            gates=(
+                _gate(
+                    name='eligibility',
+                    category='eligibility',
+                    thresholds=(
+                        _threshold_bool(
+                            metric='within_entry_window',
+                            passed=False,
+                            threshold='entry_window',
+                        ),
+                    ),
+                    context={'entry_start_minute_utc': entry_start_minute},
+                ),
+                exit_gate,
+            ),
             trace_enabled=trace_enabled,
             context=trace_context,
         )
