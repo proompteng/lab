@@ -13,7 +13,7 @@ const MAX_PREVIEW_CHARS = 120_000
 export const Route = createFileRoute('/api/atlas/file')({
   server: {
     handlers: {
-      GET: async ({ request }) => getAtlasFileHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getAtlasFileHandler(request),
       POST: async () => new Response('Method Not Allowed', { status: 405 }),
     },
   },

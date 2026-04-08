@@ -6,7 +6,7 @@ import { resolveTradingDayInterval } from '~/server/torghut-trading-time'
 export const Route = createFileRoute('/api/torghut/trading/decisions')({
   server: {
     handlers: {
-      GET: async ({ request }) => getDecisionsHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getDecisionsHandler(request),
     },
   },
 })

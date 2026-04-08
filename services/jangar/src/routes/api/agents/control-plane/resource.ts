@@ -23,9 +23,9 @@ import {
 export const Route = createFileRoute('/api/agents/control-plane/resource')({
   server: {
     handlers: {
-      GET: async ({ request }) => getPrimitiveResource(request),
-      POST: async ({ request }) => postPrimitiveResource(request),
-      DELETE: async ({ request }) => deletePrimitiveResource(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getPrimitiveResource(request),
+      POST: async ({ request }: JangarServerRouteArgs) => postPrimitiveResource(request),
+      DELETE: async ({ request }: JangarServerRouteArgs) => deletePrimitiveResource(request),
     },
   },
 })

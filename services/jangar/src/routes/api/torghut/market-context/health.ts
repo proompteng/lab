@@ -5,7 +5,7 @@ import { normalizeTorghutSymbol } from '~/server/torghut-symbols'
 export const Route = createFileRoute('/api/torghut/market-context/health')({
   server: {
     handlers: {
-      GET: async ({ request }) => getMarketContextHealthHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getMarketContextHealthHandler(request),
     },
   },
 })

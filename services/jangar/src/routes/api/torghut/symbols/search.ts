@@ -5,7 +5,7 @@ import { isValidTorghutSymbol, normalizeTorghutSymbol } from '~/server/torghut-s
 export const Route = createFileRoute('/api/torghut/symbols/search')({
   server: {
     handlers: {
-      GET: async ({ request }) => searchTorghutSymbolsHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => searchTorghutSymbolsHandler(request),
     },
   },
 })

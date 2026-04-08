@@ -5,7 +5,7 @@ import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 export const Route = createFileRoute('/v1/orchestrations/$id')({
   server: {
     handlers: {
-      GET: async ({ params, request }) => getOrchestrationHandler(params.id, request),
+      GET: async ({ params, request }: JangarServerRouteArgs) => getOrchestrationHandler(params.id, request),
     },
   },
 })

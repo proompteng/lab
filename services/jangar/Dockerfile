@@ -510,12 +510,7 @@ ENV JANGAR_BUILD_LOG_LEVEL=${JANGAR_BUILD_LOG_LEVEL}
 RUN if [ -f .output/server/index.mjs ] && [ -f .output/server/proto/proompteng/jangar/v1/agentctl.proto ]; then \
     echo "Using complete prebuilt .output from build context"; \
   else \
-    if [ "$JANGAR_BUILD_LOG_LEVEL" = "info" ]; then \
-      bun --bun vite build; \
-    else \
-      bun --bun vite build --logLevel "$JANGAR_BUILD_LOG_LEVEL"; \
-    fi; \
-    bun run copy:grpc-proto; \
+    bun run build; \
   fi
 
 FROM tools AS jangar-deps-prod
@@ -629,5 +624,5 @@ COPY skills/ /root/.codex/skills/
 RUN ln -sf /app/services/jangar/scripts/codex/codex-implement.ts /usr/local/bin/codex-implement \
   && chmod +x /usr/local/bin/agent-runner /usr/local/bin/codex-nats-publish /usr/local/bin/codex-nats-soak /app/services/jangar/scripts/codex/codex-implement.ts
 
-# Start the compiled Nitro server produced by `bun --bun vite build`
+# Start the compiled Jangar server produced by the Vite client/server build
 CMD ["bun", "run", ".output/server/index.mjs"]

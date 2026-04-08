@@ -10,8 +10,8 @@ import {
 export const Route = createFileRoute('/api/torghut/simulation/runs')({
   server: {
     handlers: {
-      GET: async ({ request }) => listSimulationRunsHandler(request),
-      POST: async ({ request }) => submitSimulationRunHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => listSimulationRunsHandler(request),
+      POST: async ({ request }: JangarServerRouteArgs) => submitSimulationRunHandler(request),
     },
   },
 })

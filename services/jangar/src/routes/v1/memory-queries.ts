@@ -14,7 +14,7 @@ import { createKubernetesClient } from '~/server/primitives-kube'
 export const Route = createFileRoute('/v1/memory-queries')({
   server: {
     handlers: {
-      POST: async ({ request }) => postMemoryQueriesHandler(request),
+      POST: async ({ request }: JangarServerRouteArgs) => postMemoryQueriesHandler(request),
     },
   },
 })

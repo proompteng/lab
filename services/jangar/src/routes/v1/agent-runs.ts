@@ -29,8 +29,8 @@ import { createPrimitivesStore } from '~/server/primitives-store'
 export const Route = createFileRoute('/v1/agent-runs')({
   server: {
     handlers: {
-      GET: async ({ request }) => getAgentRunsHandler(request),
-      POST: async ({ request }) => postAgentRunsHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getAgentRunsHandler(request),
+      POST: async ({ request }: JangarServerRouteArgs) => postAgentRunsHandler(request),
     },
   },
 })

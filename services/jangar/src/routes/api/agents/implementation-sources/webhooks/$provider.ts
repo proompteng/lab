@@ -6,7 +6,7 @@ export const Route = createFileRoute('/api/agents/implementation-sources/webhook
   server: {
     handlers: {
       GET: async () => new Response('Method Not Allowed', { status: 405 }),
-      POST: async ({ params, request }) => {
+      POST: async ({ params, request }: JangarServerRouteArgs) => {
         const leaderResponse = requireLeaderForMutationHttp()
         if (leaderResponse) return leaderResponse
         return postImplementationSourceWebhookHandler(params.provider, request)

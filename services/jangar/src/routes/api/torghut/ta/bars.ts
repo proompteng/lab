@@ -5,7 +5,7 @@ import { computeFallbackRange, parseTaRangeParams, queryLatestTaTableEventTs } f
 export const Route = createFileRoute('/api/torghut/ta/bars')({
   server: {
     handlers: {
-      GET: async ({ request }) => getBarsHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getBarsHandler(request),
     },
   },
 })

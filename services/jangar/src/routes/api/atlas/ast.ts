@@ -17,7 +17,7 @@ const MAX_LIMIT = 1000
 export const Route = createFileRoute('/api/atlas/ast')({
   server: {
     handlers: {
-      GET: async ({ request }) => getAtlasAstHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getAtlasAstHandler(request),
       POST: async () => new Response('Method Not Allowed', { status: 405 }),
     },
   },

@@ -5,7 +5,7 @@ import { handleRunComplete } from '~/server/codex-judge'
 export const Route = createFileRoute('/api/codex/run-complete')({
   server: {
     handlers: {
-      POST: async ({ request }) => postRunComplete(request),
+      POST: async ({ request }: JangarServerRouteArgs) => postRunComplete(request),
       GET: async () => new Response('Method Not Allowed', { status: 405 }),
     },
   },

@@ -1,194 +1,64 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
 import { devtools } from '@tanstack/devtools-vite'
-import { rootRouteId } from '@tanstack/router-core'
-import {
-  type TanStackStartInputConfig,
-  TanStackStartVitePluginCore,
-  VITE_ENVIRONMENT_NAMES,
-} from '@tanstack/start-plugin-core'
-import { VIRTUAL_MODULES } from '@tanstack/start-server-core'
 import viteReact from '@vitejs/plugin-react'
-import { nitro } from 'nitro/vite'
-import path from 'pathe'
-import { joinURL } from 'ufo'
 import { defineConfig } from 'vite'
 import viteTsConfigPaths from 'vite-tsconfig-paths'
 
-const ssrExternals = ['kysely', 'nats', 'pg', 'node-pty']
-const bunShimEnabled = process.env.JANGAR_BUN_SHIM === '1'
-const bunShimPath = fileURLToPath(new URL('./src/server/bun-node-shim.ts', import.meta.url))
 const buildMinify = process.env.JANGAR_BUILD_MINIFY !== '0'
+const backendPort = process.env.JANGAR_API_PORT ?? '3001'
+const backendTarget = process.env.JANGAR_API_BASE_URL ?? `http://127.0.0.1:${backendPort}`
 const includeTanStackDevtools = process.env.NODE_ENV !== 'production' && process.env.JANGAR_ENABLE_DEVTOOLS !== '0'
 const reportCompressedSize = process.env.CI !== 'true'
-const ssrCallerShimPath = fileURLToPath(new URL('./src/server/server-fn-ssr-caller.ts', import.meta.url))
-const resolveAliases: Record<string, string> = {
-  ...(bunShimEnabled ? { bun: bunShimPath } : {}),
-  '@tanstack/start-server-core/server-fn-ssr-caller': ssrCallerShimPath,
-}
-const configDir = path.dirname(fileURLToPath(import.meta.url))
-const repoRoot = path.resolve(configDir, '../..')
-const defaultEntryDir = path.resolve(repoRoot, 'node_modules/@tanstack/react-start/dist/plugin/default-entry')
-const localEntryDir = path.resolve(configDir, 'node_modules/@tanstack/react-start/dist/plugin/default-entry')
-const resolvedEntryDir = existsSync(defaultEntryDir) ? defaultEntryDir : localEntryDir
-const defaultEntryPaths = {
-  client: path.resolve(resolvedEntryDir, 'client.tsx'),
-  server: path.resolve(resolvedEntryDir, 'server.ts'),
-  start: path.resolve(resolvedEntryDir, 'start.ts'),
-}
-const isInsideRouterMonoRepo = path.basename(path.resolve(repoRoot, '..')) === 'packages'
-const startManifestModuleId = `\0${VIRTUAL_MODULES.startManifest}`
-const startClientEntryId = 'virtual:tanstack-start-client-entry'
+const serverRoutePattern = /createFileRoute\(\s*(['"`])([^'"`]+)\1\s*\)/
 
-const isFullUrl = (value: string): boolean => {
-  try {
-    new URL(value)
-    return true
-  } catch {
-    return false
-  }
-}
+const stubServerRoutesForClient = () => ({
+  name: 'jangar-stub-server-routes-for-client',
+  enforce: 'pre' as const,
+  transform(code: string, id: string, options?: { ssr?: boolean }) {
+    if (options?.ssr) return null
+    if (!id.includes('/src/routes/')) return null
+    if (!code.includes('server:')) return null
 
-const ensureRoutesManifestPlugin = () => ({
-  name: 'jangar-ensure-start-routes-manifest',
-  applyToEnvironment: (env: { name: string }) => env.name === VITE_ENVIRONMENT_NAMES.server || env.name === 'nitro',
-  buildStart() {
-    const routes = (
-      globalThis as typeof globalThis & {
-        TSS_ROUTES_MANIFEST?: Record<string, { filePath?: string; children?: string[] }>
-      }
-    ).TSS_ROUTES_MANIFEST
-    if (!routes) return
+    const match = serverRoutePattern.exec(code)
+    const routePath = match?.[2]
+    if (!routePath) return null
 
-    if (!routes[rootRouteId]) {
-      routes[rootRouteId] = {
-        children: Object.keys(routes),
-      }
-    }
+    return {
+      code: `
+        import { createFileRoute } from '@tanstack/react-router'
 
-    for (const route of Object.values(routes)) {
-      if (route?.children) {
-        route.children = route.children.filter((child) => Boolean(child && routes[child]))
-      }
+        const ServerRoutePlaceholder = () => null
+
+        export const Route = createFileRoute(${JSON.stringify(routePath)})({
+          component: ServerRoutePlaceholder,
+        })
+      `,
+      map: null,
     }
   },
 })
 
-const nitroStartManifestPlugin = () => {
-  let manifestSource: string | null = null
-  let viteAppBase = '/'
-
-  return {
-    name: 'jangar-start-manifest-nitro',
-    enforce: 'pre',
-    applyToEnvironment: (env: { name: string }) => env.name === VITE_ENVIRONMENT_NAMES.server || env.name === 'nitro',
-    configResolved(config: { base?: string }) {
-      const base = config.base ?? '/'
-      viteAppBase = isFullUrl(base) ? base : `/${base}`.replace(/\/{2,}/g, '/').replace(/\/?$/, '/')
-    },
-    resolveId(id: string) {
-      if (id === VIRTUAL_MODULES.startManifest) {
-        return startManifestModuleId
-      }
-    },
-    load(id: string) {
-      if (id !== startManifestModuleId || this.environment.name !== 'nitro') return
-      if (this.environment.config.command === 'serve') {
-        return `export const tsrStartManifest = () => ({
-          routes: {},
-          clientEntry: '${joinURL(viteAppBase, '@id', startClientEntryId)}',
-        })`
-      }
-      if (!manifestSource) {
-        const manifestDir = path.resolve(configDir, '.nitro/vite/services/ssr/assets')
-        const manifestEntry = readdirSync(manifestDir, { withFileTypes: true }).find(
-          (entry) => entry.isFile() && entry.name.startsWith('_tanstack-start-manifest_v-'),
-        )
-        if (!manifestEntry) {
-          this.error('[jangar] Start manifest chunk not found for nitro build.')
-        }
-        manifestSource = readFileSync(path.join(manifestDir, manifestEntry.name), 'utf8')
-      }
-      return manifestSource
-    },
-  }
-}
-
-const tanstackStartNitro = (options?: TanStackStartInputConfig) => [
-  {
-    name: 'tanstack-react-start:config',
-    configEnvironment(environmentName: string, envOptions: { resolve?: { noExternal?: boolean } } = {}) {
-      return {
-        resolve: {
-          dedupe: ['react', 'react-dom', '@tanstack/react-start', '@tanstack/react-router'],
-          external:
-            envOptions.resolve?.noExternal === true || !isInsideRouterMonoRepo
-              ? undefined
-              : ['@tanstack/react-router', '@tanstack/react-router-devtools'],
-        },
-        optimizeDeps:
-          environmentName === VITE_ENVIRONMENT_NAMES.client ||
-          (environmentName === VITE_ENVIRONMENT_NAMES.server && options?.optimizeDeps?.noDiscovery === false)
-            ? {
-                exclude: [
-                  '@tanstack/react-start',
-                  '@tanstack/react-router',
-                  '@tanstack/react-router-devtools',
-                  '@tanstack/start-static-server-functions',
-                ],
-                include: [
-                  'react',
-                  'react/jsx-runtime',
-                  'react/jsx-dev-runtime',
-                  'react-dom',
-                  ...(environmentName === VITE_ENVIRONMENT_NAMES.client ? ['react-dom/client'] : ['react-dom/server']),
-                  '@tanstack/react-router > @tanstack/react-store',
-                  ...(options?.optimizeDeps?.exclude?.find((entry) => entry === '@tanstack/react-form')
-                    ? ['@tanstack/react-form > @tanstack/react-store']
-                    : []),
-                ],
-              }
-            : undefined,
-      }
-    },
-  },
-  ...TanStackStartVitePluginCore(
-    {
-      framework: 'react',
-      defaultEntryPaths,
-      serverFn: { providerEnv: VITE_ENVIRONMENT_NAMES.server },
-    },
-    options ?? {},
-  ),
-]
-
 const config = defineConfig({
   server: {
     allowedHosts: ['host.docker.internal', 'localhost-docker.internal', 'jangar', 'jangar.ide-newton.ts.net'],
-  },
-  resolve: {
-    alias: resolveAliases,
-  },
-  ssr: {
-    external: ssrExternals,
-    noExternal: ['@tanstack/react-start', '@tanstack/react-start-server', '@tanstack/start-server-core'],
+    proxy: {
+      '^/(api|health|mcp|openai|ready|v1)(?:/|$)': {
+        target: backendTarget,
+        changeOrigin: true,
+        ws: true,
+      },
+    },
   },
   build: {
+    outDir: '.output/public',
+    emptyOutDir: false,
     minify: buildMinify,
     cssMinify: buildMinify,
     reportCompressedSize,
-    rollupOptions: {
-      external: ssrExternals,
-    },
   },
   plugins: [
     ...(includeTanStackDevtools ? [devtools()] : []),
-    nitroStartManifestPlugin(),
-    ...tanstackStartNitro(),
-    ensureRoutesManifestPlugin(),
-    nitro(),
-    // this is the plugin that enables path aliases
+    stubServerRoutesForClient(),
     viteTsConfigPaths({
       projects: ['./tsconfig.paths.json'],
     }),

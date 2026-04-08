@@ -5,8 +5,8 @@ import { listTorghutSymbols, upsertTorghutSymbols } from '~/server/torghut-symbo
 export const Route = createFileRoute('/api/torghut/symbols')({
   server: {
     handlers: {
-      GET: async ({ request }) => getSymbolsHandler(request),
-      POST: async ({ request }) => upsertSymbolsHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getSymbolsHandler(request),
+      POST: async ({ request }: JangarServerRouteArgs) => upsertSymbolsHandler(request),
     },
   },
 })

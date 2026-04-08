@@ -5,7 +5,7 @@ import { type CodexJudgeStore, createCodexJudgeStore } from '~/server/codex-judg
 export const Route = createFileRoute('/api/codex/runs/recent')({
   server: {
     handlers: {
-      GET: async ({ request }) => getCodexRecentRunsHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getCodexRecentRunsHandler(request),
       POST: async () => new Response('Method Not Allowed', { status: 405 }),
     },
   },

@@ -5,7 +5,7 @@ import { getTorghutWhitepaperPdfLocator, streamTorghutWhitepaperPdf } from '~/se
 export const Route = createFileRoute('/api/whitepapers/$runId/pdf')({
   server: {
     handlers: {
-      GET: async ({ params }) => getWhitepaperPdfHandler(params.runId),
+      GET: async ({ params }: JangarServerRouteArgs) => getWhitepaperPdfHandler(params.runId),
     },
   },
 })

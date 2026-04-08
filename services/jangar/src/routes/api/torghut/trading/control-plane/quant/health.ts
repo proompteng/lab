@@ -7,7 +7,7 @@ import { getTorghutQuantRuntimeStatus, startTorghutQuantRuntime } from '~/server
 export const Route = createFileRoute('/api/torghut/trading/control-plane/quant/health')({
   server: {
     handlers: {
-      GET: async ({ request }) => getQuantHealthHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getQuantHealthHandler(request),
     },
   },
 })

@@ -7,7 +7,7 @@ import { createPrimitivesStore } from '~/server/primitives-store'
 export const Route = createFileRoute('/v1/memories/$id')({
   server: {
     handlers: {
-      GET: async ({ params, request }) => getMemoryHandler(params.id, request),
+      GET: async ({ params, request }: JangarServerRouteArgs) => getMemoryHandler(params.id, request),
     },
   },
 })

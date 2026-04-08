@@ -4,7 +4,7 @@ import { searchTorghutWhitepapersSemantic } from '~/server/torghut-whitepapers'
 export const Route = createFileRoute('/api/whitepapers/search')({
   server: {
     handlers: {
-      GET: async ({ request }) => getWhitepaperSemanticSearchHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getWhitepaperSemanticSearchHandler(request),
     },
   },
 })

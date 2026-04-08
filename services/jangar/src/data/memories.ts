@@ -1,4 +1,3 @@
-import { createServerFn } from '@tanstack/react-start'
 import { Effect, Layer, ManagedRuntime } from 'effect'
 
 import { Memories, MemoriesLive } from '../server/memories'
@@ -39,61 +38,54 @@ const toJsonMemoryRecord = (record: MemoryRecord): MemoryRecordJson => ({
   metadata: record.metadata as JsonObject,
 })
 
-export const persistNote = createServerFn({ method: 'POST' })
-  .inputValidator((input) => (input ?? {}) as PersistNoteInput)
-  .handler(async ({ data }): Promise<PersistNoteResult> => {
-    const payload = data as Record<string, unknown>
-    const parsed = parsePersistMemoryInput(payload)
-    if (!parsed.ok) return { ok: false, message: parsed.message }
+export const persistNote = async (input: PersistNoteInput): Promise<PersistNoteResult> => {
+  const payload = (input ?? {}) as Record<string, unknown>
+  const parsed = parsePersistMemoryInput(payload)
+  if (!parsed.ok) return { ok: false, message: parsed.message }
 
-    const memoryResult = await handlerRuntime.runPromise(
-      Effect.either(
-        Effect.gen(function* () {
-          const service = yield* Memories
-          return yield* service.persist(parsed.value)
-        }),
-      ),
-    )
+  const memoryResult = await handlerRuntime.runPromise(
+    Effect.either(
+      Effect.gen(function* () {
+        const service = yield* Memories
+        return yield* service.persist(parsed.value)
+      }),
+    ),
+  )
 
-    if (memoryResult._tag === 'Left') return { ok: false, message: memoryResult.left.message }
-    return { ok: true, memory: toJsonMemoryRecord(memoryResult.right) }
-  })
+  if (memoryResult._tag === 'Left') return { ok: false, message: memoryResult.left.message }
+  return { ok: true, memory: toJsonMemoryRecord(memoryResult.right) }
+}
 
-export const retrieveNotes = createServerFn({ method: 'POST' })
-  .inputValidator((input) => (input ?? {}) as RetrieveNotesInput)
-  .handler(async ({ data }): Promise<RetrieveNotesResult> => {
-    const payload = data as Record<string, unknown>
-    const parsed = parseRetrieveMemoryInput(payload)
-    if (!parsed.ok) return { ok: false, message: parsed.message }
+export const retrieveNotes = async (input: RetrieveNotesInput): Promise<RetrieveNotesResult> => {
+  const payload = (input ?? {}) as Record<string, unknown>
+  const parsed = parseRetrieveMemoryInput(payload)
+  if (!parsed.ok) return { ok: false, message: parsed.message }
 
-    const memoriesResult = await handlerRuntime.runPromise(
-      Effect.either(
-        Effect.gen(function* () {
-          const service = yield* Memories
-          return yield* service.retrieve(parsed.value)
-        }),
-      ),
-    )
+  const memoriesResult = await handlerRuntime.runPromise(
+    Effect.either(
+      Effect.gen(function* () {
+        const service = yield* Memories
+        return yield* service.retrieve(parsed.value)
+      }),
+    ),
+  )
 
-    if (memoriesResult._tag === 'Left') return { ok: false, message: memoriesResult.left.message }
-    return { ok: true, memories: memoriesResult.right.map(toJsonMemoryRecord) }
-  })
+  if (memoriesResult._tag === 'Left') return { ok: false, message: memoriesResult.left.message }
+  return { ok: true, memories: memoriesResult.right.map(toJsonMemoryRecord) }
+}
 
-export const countMemories = createServerFn({ method: 'POST' })
-  .inputValidator((input) => (input ?? {}) as CountMemoriesInput)
-  .handler(async ({ data }): Promise<CountMemoriesResult> => {
-    const payload = data as Partial<CountMemoriesInput>
-    const namespace = normalizeOptionalNamespace(payload.namespace)
+export const countMemories = async (input: CountMemoriesInput = {}): Promise<CountMemoriesResult> => {
+  const namespace = normalizeOptionalNamespace(input.namespace)
 
-    const countResult = await handlerRuntime.runPromise(
-      Effect.either(
-        Effect.gen(function* () {
-          const service = yield* Memories
-          return yield* service.count({ namespace })
-        }),
-      ),
-    )
+  const countResult = await handlerRuntime.runPromise(
+    Effect.either(
+      Effect.gen(function* () {
+        const service = yield* Memories
+        return yield* service.count({ namespace })
+      }),
+    ),
+  )
 
-    if (countResult._tag === 'Left') return { ok: false, message: countResult.left.message }
-    return { ok: true, count: countResult.right }
-  })
+  if (countResult._tag === 'Left') return { ok: false, message: countResult.left.message }
+  return { ok: true, count: countResult.right }
+}

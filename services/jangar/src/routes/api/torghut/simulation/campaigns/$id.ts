@@ -5,7 +5,7 @@ import { getTorghutSimulationCampaign } from '~/server/torghut-simulation-contro
 export const Route = createFileRoute('/api/torghut/simulation/campaigns/$id')({
   server: {
     handlers: {
-      GET: async ({ params }) => getSimulationCampaignHandler(params.id),
+      GET: async ({ params }: JangarServerRouteArgs) => getSimulationCampaignHandler(params.id),
     },
   },
 })

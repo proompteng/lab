@@ -5,13 +5,18 @@
     "noEmit": true,
     "strict": true,
     "strictNullChecks": true,
-    "baseUrl": "./src",
+    "types": ["vite/client"],
     "paths": {
-      "@/*": ["./*"],
-      "~/*": ["./*"],
-      "@proompteng/codex": ["../../../packages/codex/src/index.ts"],
-      "@proompteng/codex/*": ["../../../packages/codex/src/*"]
+      "@/*": ["./src/*"],
+      "~/*": ["./src/*"],
+      "@proompteng/bumba/*": ["../bumba/*"],
+      "@proompteng/codex": ["../../packages/codex/src/index.ts"],
+      "@proompteng/codex/*": ["../../packages/codex/src/*"],
+      "@proompteng/design": ["../../packages/design/src/index.ts"],
+      "@proompteng/design/*": ["../../packages/design/src/*"],
+      "@proompteng/temporal-bun-sdk": ["../../packages/temporal-bun-sdk"],
+      "@proompteng/temporal-bun-sdk/*": ["../../packages/temporal-bun-sdk/*"]
     }
   },
-  "include": ["./src/**/*", "./server/**/*", "./nitro.config.ts"]
+  "include": ["./src/**/*", "./vite.config.ts", "./vite.server.config.ts"]
 }

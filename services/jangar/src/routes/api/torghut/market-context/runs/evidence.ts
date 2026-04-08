@@ -9,7 +9,7 @@ import {
 export const Route = createFileRoute('/api/torghut/market-context/runs/evidence')({
   server: {
     handlers: {
-      POST: async ({ request }) => postMarketContextRunEvidenceHandler(request),
+      POST: async ({ request }: JangarServerRouteArgs) => postMarketContextRunEvidenceHandler(request),
     },
   },
 })

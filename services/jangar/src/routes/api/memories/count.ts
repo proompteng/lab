@@ -7,7 +7,7 @@ import { normalizeOptionalNamespace } from '~/server/memories-http'
 export const Route = createFileRoute('/api/memories/count')({
   server: {
     handlers: {
-      GET: async ({ request }) => getMemoriesCountHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getMemoriesCountHandler(request),
     },
   },
 })

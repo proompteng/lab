@@ -34,6 +34,9 @@ import {
 } from '@tabler/icons-react'
 import { Link, useRouterState } from '@tanstack/react-router'
 import * as React from 'react'
+import { getRouter } from '@/router'
+
+type JangarRouterState = ReturnType<typeof getRouter>['state']
 
 type AppNavItem = {
   to: string
@@ -111,7 +114,7 @@ const torghutNav = [
 ] as const
 
 export function AppSidebar() {
-  const pathname = useRouterState({ select: (state) => state.location.pathname })
+  const pathname = useRouterState({ select: (state: JangarRouterState) => state.location.pathname })
   const { state: sidebarState } = useSidebar()
   const isCollapsed = sidebarState === 'collapsed'
   const isControlPlaneRoute = pathname === '/control-plane' || pathname.startsWith('/control-plane/')

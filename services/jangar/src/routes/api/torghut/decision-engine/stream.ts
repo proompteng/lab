@@ -14,7 +14,7 @@ import {
 export const Route = createFileRoute('/api/torghut/decision-engine/stream')({
   server: {
     handlers: {
-      POST: async ({ request }) => streamDecisionRun(request),
+      POST: async ({ request }: JangarServerRouteArgs) => streamDecisionRun(request),
     },
   },
 })

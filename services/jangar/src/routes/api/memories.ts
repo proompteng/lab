@@ -7,8 +7,8 @@ import { parsePersistMemoryInput, parseRetrieveMemoryInput } from '~/server/memo
 export const Route = createFileRoute('/api/memories')({
   server: {
     handlers: {
-      GET: async ({ request }) => getMemoriesHandler(request),
-      POST: async ({ request }) => postMemoriesHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getMemoriesHandler(request),
+      POST: async ({ request }: JangarServerRouteArgs) => postMemoriesHandler(request),
     },
   },
 })

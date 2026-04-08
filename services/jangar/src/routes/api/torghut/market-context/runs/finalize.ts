@@ -9,7 +9,7 @@ import {
 export const Route = createFileRoute('/api/torghut/market-context/runs/finalize')({
   server: {
     handlers: {
-      POST: async ({ request }) => postMarketContextRunFinalizeHandler(request),
+      POST: async ({ request }: JangarServerRouteArgs) => postMarketContextRunFinalizeHandler(request),
     },
   },
 })

@@ -18,7 +18,7 @@ export const Route = createFileRoute('/api/code-search')({
   server: {
     handlers: {
       GET: async () => new Response('Method Not Allowed', { status: 405 }),
-      POST: async ({ request }) => postCodeSearchHandler(request),
+      POST: async ({ request }: JangarServerRouteArgs) => postCodeSearchHandler(request),
     },
   },
 })

@@ -10,7 +10,7 @@ import {
 export const Route = createFileRoute('/api/terminals/$sessionId/resize')({
   server: {
     handlers: {
-      POST: async ({ params, request }) => postResizeHandler(params.sessionId, request),
+      POST: async ({ params, request }: JangarServerRouteArgs) => postResizeHandler(params.sessionId, request),
     },
   },
 })

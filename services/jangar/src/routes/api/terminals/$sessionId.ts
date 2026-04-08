@@ -4,7 +4,7 @@ import { formatSessionId, getTerminalSession } from '~/server/terminals'
 export const Route = createFileRoute('/api/terminals/$sessionId')({
   server: {
     handlers: {
-      GET: async ({ params }) => getSessionHandler(params.sessionId),
+      GET: async ({ params }: JangarServerRouteArgs) => getSessionHandler(params.sessionId),
     },
   },
 })

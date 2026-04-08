@@ -5,7 +5,7 @@ import { createIssueHandler } from '~/server/github-issue-handlers'
 export const Route = createFileRoute('/api/github/issues')({
   server: {
     handlers: {
-      POST: async ({ request }) => createIssueHandler(request),
+      POST: async ({ request }: JangarServerRouteArgs) => createIssueHandler(request),
       GET: async () => new Response('Method Not Allowed', { status: 405 }),
     },
   },

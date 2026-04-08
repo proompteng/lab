@@ -5,7 +5,7 @@ import { handleGithubWebhookEvent } from '~/server/codex-judge'
 export const Route = createFileRoute('/api/codex/github-events')({
   server: {
     handlers: {
-      POST: async ({ request }) => postGithubEvents(request),
+      POST: async ({ request }: JangarServerRouteArgs) => postGithubEvents(request),
       GET: async () => new Response('Method Not Allowed', { status: 405 }),
     },
   },

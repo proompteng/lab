@@ -4,7 +4,7 @@ import { formatSessionId, getTerminalSession, terminateTerminalSession } from '~
 export const Route = createFileRoute('/api/terminals/$sessionId/terminate')({
   server: {
     handlers: {
-      POST: async ({ params }) => postTerminateHandler(params.sessionId),
+      POST: async ({ params }: JangarServerRouteArgs) => postTerminateHandler(params.sessionId),
     },
   },
 })

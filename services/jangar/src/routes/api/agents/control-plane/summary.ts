@@ -12,7 +12,7 @@ import {
 export const Route = createFileRoute('/api/agents/control-plane/summary')({
   server: {
     handlers: {
-      GET: async ({ request }) => getControlPlaneSummary(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getControlPlaneSummary(request),
     },
   },
 })

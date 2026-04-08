@@ -11,7 +11,7 @@ import {
 export const Route = createFileRoute('/api/torghut/trading/control-plane/quant/snapshot')({
   server: {
     handlers: {
-      GET: async ({ request }) => getQuantSnapshotHandler(request),
+      GET: async ({ request }: JangarServerRouteArgs) => getQuantSnapshotHandler(request),
     },
   },
 })

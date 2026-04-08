@@ -5,7 +5,7 @@ import { ensureTerminalSessionExists, formatSessionId, getTerminalSession, sendT
 export const Route = createFileRoute('/api/terminals/$sessionId/input')({
   server: {
     handlers: {
-      POST: async ({ params, request }) => postInputHandler(params.sessionId, request),
+      POST: async ({ params, request }: JangarServerRouteArgs) => postInputHandler(params.sessionId, request),
     },
   },
 })

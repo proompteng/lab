@@ -9,7 +9,7 @@ import {
 export const Route = createFileRoute('/api/torghut/decision-engine/runs')({
   server: {
     handlers: {
-      POST: async ({ request }) => submitDecisionRun(request),
+      POST: async ({ request }: JangarServerRouteArgs) => submitDecisionRun(request),
     },
   },
 })
