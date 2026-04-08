@@ -24,6 +24,8 @@ from app.trading.discovery.autoresearch_notebooks import write_autoresearch_note
 from app.trading.discovery.family_templates import family_template_dir
 from scripts.search_consistent_profitability_frontier import run_consistent_profitability_frontier
 
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -44,7 +46,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         '--strategy-configmap',
         type=Path,
-        default=Path('argocd/applications/torghut/strategy-configmap.yaml'),
+        default=_REPO_ROOT / 'argocd/applications/torghut/strategy-configmap.yaml',
     )
     parser.add_argument(
         '--family-template-dir',

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from argparse import Namespace
 from decimal import Decimal
 from pathlib import Path
@@ -54,6 +55,15 @@ def _family_template() -> FamilyTemplate:
 
 
 class TestStrategyAutoresearch(TestCase):
+    def test_parse_args_defaults_strategy_configmap_to_repo_root(self) -> None:
+        with patch.object(sys, 'argv', ['run_strategy_autoresearch_loop.py', '--program', 'program.yaml', '--output-dir', '/tmp/out']):
+            args = runner._parse_args()
+
+        self.assertEqual(
+            args.strategy_configmap,
+            Path('/Users/gregkonush/.codex/worktrees/dbbf/lab/argocd/applications/torghut/strategy-configmap.yaml'),
+        )
+
     def _write_program_fixture(self, root: Path) -> tuple[Path, Path]:
         family_dir = root / 'families'
         family_dir.mkdir()
