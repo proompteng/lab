@@ -21,6 +21,14 @@ vi.mock('crossws/adapters/bun', () => ({
   })),
 }))
 
+vi.mock('~/server/terminal-pty-manager', () => ({
+  getTerminalPtyManager: vi.fn(() => ({
+    getSession: vi.fn(() => null),
+    startSession: vi.fn(),
+  })),
+  resetTerminalPtyManager: vi.fn(),
+}))
+
 import { createJangarRuntime } from '../app'
 
 const clientDir = fileURLToPath(new URL('../../../.output/public/', import.meta.url))
