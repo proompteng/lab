@@ -1,5 +1,5 @@
 import { stat } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { isAbsolute, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import wsAdapter from 'crossws/adapters/bun'
 import { createApp, defineEventHandler, getRouterParams, toWebHandler } from 'h3'
@@ -108,9 +108,33 @@ const hasRegularFile = async (path: string) => {
 
 const getClientOutputDir = () => resolve(fileURLToPath(new URL('../../.output/public/', import.meta.url)))
 
+const isPathInsideDirectory = (rootDir: string, targetPath: string) => {
+  const relativePath = relative(rootDir, targetPath)
+  return relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath))
+}
+
+const getFirstPathSegment = (pathname: string) => pathname.split('/').find(Boolean) ?? null
+
+const getServerRouteRoots = (definitions: ServerRouteDefinition[]) =>
+  new Set(
+    definitions
+      .map(({ routePath }) => getFirstPathSegment(normalizeRoutePath(routePath)))
+      .filter((segment): segment is string => segment !== null),
+  )
+
+const shouldServeClientPath = (pathname: string, serverRouteRoots: ReadonlySet<string>) => {
+  const firstSegment = getFirstPathSegment(pathname)
+  return firstSegment === null || !serverRouteRoots.has(firstSegment)
+}
+
 const resolveStaticFile = async (pathname: string) => {
   const clientDir = getClientOutputDir()
-  const decodedPath = decodeURIComponent(pathname)
+  let decodedPath: string
+  try {
+    decodedPath = decodeURIComponent(pathname)
+  } catch {
+    return null
+  }
 
   if (decodedPath === '/') {
     const indexPath = resolve(clientDir, 'index.html')
@@ -118,7 +142,7 @@ const resolveStaticFile = async (pathname: string) => {
   }
 
   const target = resolve(clientDir, `.${decodedPath}`)
-  if (!target.startsWith(clientDir)) return null
+  if (!isPathInsideDirectory(clientDir, target)) return null
   if (await hasRegularFile(target)) return target
 
   return null
@@ -172,9 +196,7 @@ const loadServerRoutes = async (): Promise<ServerRouteDefinition[]> => {
   return definitions
 }
 
-const registerServerRoutes = async (app: ReturnType<typeof createApp>) => {
-  const definitions = await loadServerRoutes()
-
+const registerServerRoutes = (app: ReturnType<typeof createApp>, definitions: ServerRouteDefinition[]) => {
   for (const definition of definitions) {
     for (const method of serverMethods) {
       const handler = definition.handlers[method]
@@ -238,10 +260,19 @@ export const createJangarRuntime = async (options: { serveClient?: boolean } = {
     }),
   )
 
-  await registerServerRoutes(app)
+  const serverRouteDefinitions = await loadServerRoutes()
+  const serverRouteRoots = getServerRouteRoots(serverRouteDefinitions)
+  registerServerRoutes(app, serverRouteDefinitions)
 
   if (options.serveClient !== false) {
-    const serveClient = defineEventHandler((event) => serveClientResponse(getEventRequest(event)))
+    const serveClient = defineEventHandler((event) => {
+      const request = getEventRequest(event)
+      const { pathname } = new URL(request.url)
+      if (!shouldServeClientPath(pathname, serverRouteRoots)) {
+        return new Response('Not Found', { status: 404 })
+      }
+      return serveClientResponse(request)
+    })
     app.get('/**', serveClient)
     app.head('/**', serveClient)
   }
