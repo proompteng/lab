@@ -95,8 +95,7 @@ jobs:
           bun install --cwd "$PRUNE_DIR/full" --ignore-scripts --filter @proompteng/otel --filter @proompteng/temporal-bun-sdk --filter @proompteng/jangar
           bun run --cwd "$PRUNE_DIR/full" --filter @proompteng/otel build
           bun run --cwd "$PRUNE_DIR/full" --filter @proompteng/temporal-bun-sdk build
-          if timeout 8m bun --cwd "$PRUNE_DIR/full/services/jangar" run build; then
-          else
+          if ! timeout 8m bun --cwd "$PRUNE_DIR/full/services/jangar" run build; then
             echo "Prebuild failed or timed out; continuing with Docker image build."
           fi
 
