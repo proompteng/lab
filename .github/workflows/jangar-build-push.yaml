@@ -99,29 +99,19 @@ jobs:
             echo "Prebuild failed or timed out; continuing with Docker image build."
           fi
 
-      - name: Build and push jangar image
+      - name: Build and push jangar images
         env:
           JANGAR_BUILD_CONTEXT: ${{ steps.prune.outputs.context }}
           JANGAR_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
           JANGAR_IMAGE_PLATFORMS: linux/arm64
           JANGAR_BUILD_CACHE_REF: registry.ide-newton.ts.net/lab/jangar:buildcache
-          JANGAR_BUILD_CACHE_MODE: min
+          JANGAR_CONTROL_PLANE_BUILD_CACHE_REF: registry.ide-newton.ts.net/lab/jangar-control-plane:buildcache
+          JANGAR_BUILD_CACHE_MODE: max
           JANGAR_BUILD_NODE_OPTIONS: --max-old-space-size=4096
           JANGAR_BUILD_SOURCEMAP: '0'
           JANGAR_BUILD_CI: 'true'
           JANGAR_BUILD_LOG_LEVEL: warn
-        run: bun run packages/scripts/src/jangar/build-image.ts
-
-      - name: Build and push jangar control-plane image
-        env:
-          JANGAR_BUILD_CONTEXT: ${{ steps.prune.outputs.context }}
-          JANGAR_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
-          JANGAR_IMAGE_PLATFORMS: linux/arm64
-          JANGAR_BUILD_NODE_OPTIONS: --max-old-space-size=4096
-          JANGAR_BUILD_SOURCEMAP: '0'
-          JANGAR_BUILD_CI: 'true'
-          JANGAR_BUILD_LOG_LEVEL: warn
-        run: bun run packages/scripts/src/jangar/build-control-plane-image.ts
+        run: bun run packages/scripts/src/jangar/build-images.ts
 
       - name: Resolve pushed image digest
         id: digest

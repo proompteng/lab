@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, relative, resolve } from 'node:path'
+
 import { ensureCli, repoRoot, run } from './cli'
 
 export type DockerCacheMode = 'max' | 'min'
@@ -23,6 +27,20 @@ export type DockerBuildResult = DockerBuildOptions & {
   image: string
 }
 
+export type DockerBakeTargetOptions = DockerBuildOptions & {
+  name: string
+}
+
+export type DockerBakeOptions = {
+  cwd?: string
+  targets: DockerBakeTargetOptions[]
+}
+
+export type DockerBakeResult = {
+  cwd: string
+  targets: Array<DockerBuildResult & { name: string }>
+}
+
 type SpawnSync = typeof Bun.spawnSync
 
 let spawnSyncImpl: SpawnSync = Bun.spawnSync
@@ -39,6 +57,23 @@ const normalizeCacheMode = (value: string | undefined): DockerCacheMode => {
   if (!value) return 'max'
   const normalized = value.trim().toLowerCase()
   return normalized === 'min' ? 'min' : 'max'
+}
+
+const collectBakeFsReadAllowlist = (cwd: string, targets: DockerBakeTargetOptions[]): string[] => {
+  const paths = new Set<string>()
+
+  for (const target of targets) {
+    const candidates = [target.context, target.codexAuthPath].filter((value): value is string => Boolean(value))
+    for (const candidate of candidates) {
+      const resolved = resolve(candidate)
+      const relativePath = relative(cwd, resolved)
+      if (relativePath.startsWith('..') || relativePath === '') {
+        paths.add(resolved)
+      }
+    }
+  }
+
+  return [...paths]
 }
 
 export const buildAndPushDockerImage = async (options: DockerBuildOptions): Promise<DockerBuildResult> => {
@@ -133,6 +168,136 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
   }
 
   return { ...options, image }
+}
+
+export const buildAndPushDockerImages = async (options: DockerBakeOptions): Promise<DockerBakeResult> => {
+  if (options.targets.length === 0) {
+    throw new Error('buildAndPushDockerImages requires at least one target')
+  }
+
+  ensureCli('docker')
+
+  const cwd = options.cwd ?? repoRoot
+  const targets = options.targets.map((target) => ({
+    ...target,
+    image: `${target.registry}/${target.repository}:${target.tag}`,
+  }))
+
+  const needsBuildx = targets.some(
+    (target) => target.useBuildx !== false || Boolean(target.cacheRef) || Boolean(target.platforms?.length),
+  )
+  if (!needsBuildx || !isDockerBuildxAvailable()) {
+    if (needsBuildx) {
+      console.warn('docker buildx is unavailable; falling back to sequential docker build + push.')
+    }
+
+    const results: DockerBakeResult['targets'] = []
+    for (const target of targets) {
+      const result = await buildAndPushDockerImage(target)
+      results.push({ ...result, name: target.name })
+    }
+    return { cwd, targets: results }
+  }
+
+  const ghTokenEnv = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
+  const dockerEnv = { DOCKER_BUILDKIT: process.env.DOCKER_BUILDKIT ?? '1' }
+  const secretSpecs = [
+    ...new Set(
+      targets.flatMap((target) => {
+        const secrets: string[] = []
+        if (target.codexAuthPath) {
+          secrets.push(`id=codexauth,src=${target.codexAuthPath}`)
+        }
+        if (ghTokenEnv) {
+          secrets.push('id=github_token,env=GH_TOKEN')
+        }
+        return secrets
+      }),
+    ),
+  ]
+
+  const buildxDriver = getDockerBuildxDriver()
+  const allowRegistryCache =
+    buildxDriver !== 'docker' || isTruthyEnv(process.env.DOCKER_BUILDX_ALLOW_DOCKER_DRIVER_CACHE)
+
+  const bakeDefinition = {
+    group: {
+      default: {
+        targets: targets.map((target) => target.name),
+      },
+    },
+    target: Object.fromEntries(
+      targets.map((target) => {
+        const noCache =
+          target.noCache ?? (isTruthyEnv(process.env.DOCKER_NO_CACHE) || isTruthyEnv(process.env.NO_CACHE))
+        const cacheMode = normalizeCacheMode(target.cacheMode ?? process.env.DOCKER_BUILD_CACHE_MODE)
+        const cacheRef = allowRegistryCache ? target.cacheRef : undefined
+
+        if (target.cacheRef && !cacheRef) {
+          console.warn(
+            `docker buildx is using the docker driver; registry cache export is unsupported. Skipping remote cache for ${target.name}.`,
+          )
+        }
+
+        const definition: Record<string, unknown> = {
+          context: target.context,
+          dockerfile: target.dockerfile,
+          tags: [target.image],
+        }
+
+        if (target.target) definition.target = target.target
+        if (target.platforms && target.platforms.length > 0) definition.platforms = target.platforms
+        if (target.buildArgs && Object.keys(target.buildArgs).length > 0) definition.args = target.buildArgs
+        if (secretSpecs.length > 0) definition.secret = secretSpecs
+        if (noCache) definition['no-cache'] = true
+        if (cacheRef) {
+          definition['cache-from'] = [`type=registry,ref=${cacheRef}`]
+          definition['cache-to'] = [`type=registry,ref=${cacheRef},mode=${cacheMode}`]
+        }
+
+        return [target.name, definition]
+      }),
+    ),
+  }
+
+  console.log(
+    'Building Docker images with shared Buildx Bake configuration:',
+    targets.map((target) => ({
+      name: target.name,
+      image: target.image,
+      context: target.context,
+      dockerfile: target.dockerfile,
+      target: target.target,
+      platforms: target.platforms && target.platforms.length > 0 ? target.platforms : undefined,
+      cacheRef: target.cacheRef,
+      cacheMode: target.cacheRef
+        ? normalizeCacheMode(target.cacheMode ?? process.env.DOCKER_BUILD_CACHE_MODE)
+        : undefined,
+      buildArgs: Object.keys(target.buildArgs ?? {}).length ? target.buildArgs : undefined,
+    })),
+  )
+
+  const bakeFile = resolve(mkdtempSync(resolve(tmpdir(), 'docker-bake-')), 'docker-bake.json')
+  try {
+    writeFileSync(bakeFile, JSON.stringify(bakeDefinition, null, 2))
+    const bakeArgs = ['buildx', 'bake']
+    for (const fsReadPath of collectBakeFsReadAllowlist(cwd, targets)) {
+      bakeArgs.push('--allow', `fs.read=${fsReadPath}`)
+    }
+    bakeArgs.push('--push', '--file', bakeFile, ...targets.map((target) => target.name))
+
+    await run('docker', bakeArgs, {
+      cwd,
+      env: dockerEnv,
+    })
+  } finally {
+    rmSync(dirname(bakeFile), { recursive: true, force: true })
+  }
+
+  return {
+    cwd,
+    targets: targets.map((target) => ({ ...target, image: target.image })),
+  }
 }
 
 const isDockerBuildxAvailable = (): boolean => {
