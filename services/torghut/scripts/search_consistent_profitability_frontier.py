@@ -57,6 +57,8 @@ from scripts.search_profitability_frontier import (
     resolve_sweep_window,
 )
 
+_LOCAL_ONLY_OVERRIDE_KEYS = frozenset({'normalization_regime'})
+
 
 @dataclass(frozen=True)
 class FullWindowConsistencyPolicy:
@@ -333,7 +335,13 @@ def _candidate_search_key(
     return json.dumps(
         {
             'params': _normalize(params_candidate),
-            'strategy_overrides': _normalize(strategy_overrides),
+            'strategy_overrides': _normalize(
+                {
+                    str(key): value
+                    for key, value in strategy_overrides.items()
+                    if str(key) not in _LOCAL_ONLY_OVERRIDE_KEYS
+                }
+            ),
         },
         sort_keys=True,
         separators=(',', ':'),
@@ -430,7 +438,6 @@ def apply_candidate_to_configmap_with_overrides(
     strategy_overrides: Mapping[str, Any],
     disable_other_strategies: bool,
 ) -> dict[str, Any]:
-    local_only_override_keys = {'normalization_regime'}
     root = apply_candidate_to_configmap(
         configmap_payload=configmap_payload,
         strategy_name=strategy_name,
@@ -464,7 +471,7 @@ def apply_candidate_to_configmap_with_overrides(
         for key, value in strategy_overrides.items():
             if key == 'params':
                 raise ValueError('strategy_override_key_reserved:params')
-            if key in local_only_override_keys:
+            if key in _LOCAL_ONLY_OVERRIDE_KEYS:
                 continue
             item[key] = value
         break

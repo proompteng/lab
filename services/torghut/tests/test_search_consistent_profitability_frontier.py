@@ -69,6 +69,24 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             'matched_filter',
         )
 
+    def test_candidate_search_key_ignores_local_only_overrides(self) -> None:
+        left = frontier._candidate_search_key(
+            params_candidate={'long_stop_loss_bps': '12'},
+            strategy_overrides={
+                'universe_symbols': ['NVDA', 'AMAT'],
+                'normalization_regime': 'price_scaled',
+            },
+        )
+        right = frontier._candidate_search_key(
+            params_candidate={'long_stop_loss_bps': '12'},
+            strategy_overrides={
+                'universe_symbols': ['NVDA', 'AMAT'],
+                'normalization_regime': 'matched_filter',
+            },
+        )
+
+        self.assertEqual(left, right)
+
     def test_candidate_symbols_prefers_cli_filter_then_universe_override(self) -> None:
         self.assertEqual(
             frontier._candidate_symbols(

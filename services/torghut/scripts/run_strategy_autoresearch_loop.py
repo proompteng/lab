@@ -421,10 +421,10 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                         dataset_snapshot_id=dataset_snapshot_id,
                     )
                 )
-                if candidate_status != 'keep':
-                    continue
                 if candidate_objective_met:
                     objective_met = True
+                if candidate_status != 'keep':
+                    continue
                 if current.iteration >= current.family_plan.max_iterations:
                     continue
                 next_sweep_config, mutation_label = build_mutated_sweep_config(
