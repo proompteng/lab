@@ -679,19 +679,24 @@ spec:
     env: agentctlEnv,
   })
 
-  await waitForAgentRun(namespace, agentRunName, 60_000)
+  try {
+    await waitForAgentRun(namespace, agentRunName, 60_000)
 
-  const expectedSteps = workflowStepsExpectedEnv
-    ? Number.parseInt(workflowStepsExpectedEnv, 10)
-    : await getWorkflowSteps(namespace, agentRunName)
+    const expectedSteps = workflowStepsExpectedEnv
+      ? Number.parseInt(workflowStepsExpectedEnv, 10)
+      : await getWorkflowSteps(namespace, agentRunName)
 
-  if (!expectedSteps || Number.isNaN(expectedSteps) || expectedSteps < 1) {
-    await run('kubectl', ['-n', namespace, 'get', 'agentrun', agentRunName, '-o', 'yaml'])
-    fatal(`Workflow steps expected must be >= 1 (got ${expectedSteps}).`)
+    if (!expectedSteps || Number.isNaN(expectedSteps) || expectedSteps < 1) {
+      await run('kubectl', ['-n', namespace, 'get', 'agentrun', agentRunName, '-o', 'yaml'])
+      fatal(`Workflow steps expected must be >= 1 (got ${expectedSteps}).`)
+    }
+
+    await waitForJobs(namespace, agentRunName, expectedSteps, timeoutMs)
+    await waitForPhase(namespace, agentRunName, 'Succeeded', timeoutMs)
+  } catch (error) {
+    await dumpNamespaceDiagnostics(namespace, releaseName)
+    throw error
   }
-
-  await waitForJobs(namespace, agentRunName, expectedSteps, timeoutMs)
-  await waitForPhase(namespace, agentRunName, 'Succeeded', timeoutMs)
 
   log('Smoke test succeeded.')
 }

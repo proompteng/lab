@@ -1,4 +1,11 @@
-import { CoreV1Api, KubeConfig, KubernetesObjectApi, PatchStrategy, loadAllYaml } from '@kubernetes/client-node'
+import {
+  CoreV1Api,
+  CustomObjectsApi,
+  KubeConfig,
+  KubernetesObjectApi,
+  PatchStrategy,
+  loadAllYaml,
+} from '@kubernetes/client-node'
 
 import { asRecord, asString } from '~/server/primitives-http'
 
@@ -40,6 +47,7 @@ type BuiltinResourceTarget = {
 type KubeClients = {
   kubeConfig: KubeConfig
   objects: KubernetesObjectApi
+  customObjects: CustomObjectsApi
   core: CoreV1Api
 }
 
@@ -140,6 +148,24 @@ const resolveCustomApiVersion = (resource: string) => {
   return `${group}/v1alpha1`
 }
 
+const resolveCustomTargetFromResource = (resource: string) => {
+  const apiVersion = resolveCustomApiVersion(resource)
+  if (!apiVersion) return null
+  const separator = resource.indexOf('.')
+  if (separator === -1) return null
+  const plural = resource.slice(0, separator)
+  const kind = RESOURCE_KIND_LOOKUP[resource]
+  const { group, version } = apiVersionToGroupVersion(apiVersion)
+  if (!plural || !kind || !group) return null
+  return {
+    apiVersion,
+    group,
+    version,
+    plural,
+    kind,
+  }
+}
+
 const RESOURCE_KIND_LOOKUP = Object.fromEntries(
   Object.entries({
     Agent: 'agents.agents.proompteng.ai',
@@ -200,6 +226,19 @@ const resolveTargetFromObject = (resource: Record<string, unknown>) => {
   }
 }
 
+const resolveCustomTargetFromObject = (resource: Record<string, unknown>) => {
+  const target = resolveTargetFromObject(resource)
+  const resourceKey = RESOURCE_MAP[target.kind as keyof typeof RESOURCE_MAP]
+  if (!resourceKey) return null
+  const customTarget = resolveCustomTargetFromResource(resourceKey)
+  if (!customTarget || customTarget.apiVersion !== target.apiVersion) return null
+  return {
+    ...customTarget,
+    namespace: target.namespace ?? 'default',
+    name: target.name,
+  }
+}
+
 const ensureResourceVersion = async (
   objects: KubernetesObjectApi,
   resource: Record<string, unknown>,
@@ -237,6 +276,7 @@ const getKubeClients = (): KubeClients => {
   globalState.__jangarNativeKubeClients = {
     kubeConfig,
     objects: KubernetesObjectApi.makeApiClient(kubeConfig),
+    customObjects: kubeConfig.makeApiClient(CustomObjectsApi),
     core: kubeConfig.makeApiClient(CoreV1Api),
   }
 
@@ -253,6 +293,18 @@ const readObject = async (objects: KubernetesObjectApi, resource: string, name: 
       ...(target.namespaceScoped ? { namespace } : {}),
     },
   })
+}
+
+const readCustomObject = async (customObjects: CustomObjectsApi, resource: string, name: string, namespace: string) => {
+  const target = resolveCustomTargetFromResource(resource)
+  if (!target) throw new Error(`unsupported custom kubernetes resource: ${resource}`)
+  return customObjects.getNamespacedCustomObject({
+    group: target.group,
+    version: target.version,
+    namespace,
+    plural: target.plural,
+    name,
+  }) as Promise<Record<string, unknown>>
 }
 
 const listObjects = async (
@@ -273,6 +325,25 @@ const listObjects = async (
     fieldSelector,
     labelSelector,
   )
+}
+
+const listCustomObjects = async (
+  customObjects: CustomObjectsApi,
+  resource: string,
+  namespace: string,
+  labelSelector?: string,
+  fieldSelector?: string,
+) => {
+  const target = resolveCustomTargetFromResource(resource)
+  if (!target) throw new Error(`unsupported custom kubernetes resource: ${resource}`)
+  return customObjects.listNamespacedCustomObject({
+    group: target.group,
+    version: target.version,
+    namespace,
+    plural: target.plural,
+    ...(fieldSelector ? { fieldSelector } : {}),
+    ...(labelSelector ? { labelSelector } : {}),
+  }) as Promise<Record<string, unknown>>
 }
 
 const createObject = async (objects: KubernetesObjectApi, resource: Record<string, unknown>) => {
@@ -305,16 +376,48 @@ const upsertObject = async (objects: KubernetesObjectApi, resource: Record<strin
 
 const isCustomObjectTarget = (apiVersion: string) => apiVersion.includes('/')
 
-const applyStatusResource = async (objects: KubernetesObjectApi, resource: Record<string, unknown>) => {
+const patchCustomObject = async (
+  customObjects: CustomObjectsApi,
+  resource: string,
+  name: string,
+  namespace: string,
+  patch: Record<string, unknown>,
+) => {
+  const target = resolveCustomTargetFromResource(resource)
+  if (!target) throw new Error(`unsupported custom kubernetes resource: ${resource}`)
+  const patchBody = cloneRecord(patch)
+  const patchMetadata = (asRecord(patchBody.metadata) ?? {}) as Record<string, unknown>
+  return customObjects.patchNamespacedCustomObject(
+    {
+      group: target.group,
+      version: target.version,
+      namespace,
+      plural: target.plural,
+      name,
+      body: {
+        apiVersion: target.apiVersion,
+        kind: target.kind,
+        ...patchBody,
+        metadata: {
+          name,
+          namespace,
+          ...patchMetadata,
+        },
+      },
+    },
+    { headers: { 'Content-Type': PatchStrategy.MergePatch } } as never,
+  ) as Promise<Record<string, unknown>>
+}
+
+const applyStatusResource = async (clients: KubeClients, resource: Record<string, unknown>) => {
   const target = resolveTargetFromObject(resource)
   if (!target.name) throw new Error('status resource.metadata.name is required')
+  const customTarget = resolveCustomTargetFromObject(resource)
+  const resourceKey = RESOURCE_MAP[target.kind as keyof typeof RESOURCE_MAP] ?? `${target.kind.toLowerCase()}s`
 
-  const current = await readObject(
-    objects,
-    RESOURCE_MAP[target.kind as keyof typeof RESOURCE_MAP] ?? `${target.kind.toLowerCase()}s`,
-    target.name,
-    target.namespace ?? 'default',
-  )
+  const current = customTarget
+    ? await readCustomObject(clients.customObjects, resourceKey, target.name, target.namespace ?? 'default')
+    : await readObject(clients.objects, resourceKey, target.name, target.namespace ?? 'default')
   const resourceVersion = asString(asRecord(current.metadata)?.resourceVersion)
   const metadata = {
     name: target.name,
@@ -328,11 +431,23 @@ const applyStatusResource = async (objects: KubernetesObjectApi, resource: Recor
     status: asRecord(resource.status) ?? resource.status ?? {},
   }
 
-  if (!isCustomObjectTarget(target.apiVersion)) {
-    return objects.patch(statusResource, undefined, undefined, undefined, undefined, PatchStrategy.MergePatch)
+  if (!isCustomObjectTarget(target.apiVersion) || !customTarget) {
+    return clients.objects.patch(statusResource, undefined, undefined, undefined, undefined, PatchStrategy.MergePatch)
   }
 
-  return objects.patch(statusResource, undefined, undefined, 'jangar-status', true, PatchStrategy.MergePatch)
+  return clients.customObjects.patchNamespacedCustomObjectStatus(
+    {
+      group: customTarget.group,
+      version: customTarget.version,
+      namespace: customTarget.namespace,
+      plural: customTarget.plural,
+      name: target.name,
+      body: statusResource,
+      fieldManager: 'jangar-status',
+      force: true,
+    },
+    { headers: { 'Content-Type': PatchStrategy.MergePatch } } as never,
+  ) as Promise<Record<string, unknown>>
 }
 
 export const createKubernetesClient = (): KubernetesClient => ({
@@ -353,8 +468,8 @@ export const createKubernetesClient = (): KubernetesClient => ({
     return last
   },
   applyStatus: async (resource) => {
-    const objects = getKubeClients().objects
-    return applyStatusResource(objects, cloneRecord(resource)) as Promise<Record<string, unknown>>
+    const clients = getKubeClients()
+    return applyStatusResource(clients, cloneRecord(resource)) as Promise<Record<string, unknown>>
   },
   createManifest: async (manifest, namespace) => {
     const objects = getKubeClients().objects
@@ -398,19 +513,28 @@ export const createKubernetesClient = (): KubernetesClient => ({
     }
   },
   patch: async (resource, name, namespace, patch) => {
-    const objects = getKubeClients().objects
+    const clients = getKubeClients()
     const target = resolveTargetFromResource(resource)
+    const patchBody = cloneRecord(patch)
+    const patchMetadata = (asRecord(patchBody.metadata) ?? {}) as Record<string, unknown>
     const body = {
       apiVersion: target.apiVersion,
       kind: target.kind,
+      ...patchBody,
       metadata: {
         name,
         ...(target.namespaceScoped ? { namespace } : {}),
+        ...patchMetadata,
       },
-      ...cloneRecord(patch),
     }
     try {
-      return (await objects.patch(
+      if (resolveCustomTargetFromResource(resource)) {
+        return (await patchCustomObject(clients.customObjects, resource, name, namespace, patch)) as Record<
+          string,
+          unknown
+        >
+      }
+      return (await clients.objects.patch(
         body,
         undefined,
         undefined,
@@ -423,18 +547,30 @@ export const createKubernetesClient = (): KubernetesClient => ({
     }
   },
   get: async (resource, name, namespace) => {
-    const objects = getKubeClients().objects
+    const clients = getKubeClients()
     try {
-      return (await readObject(objects, resource, name, namespace)) as Record<string, unknown>
+      if (resolveCustomTargetFromResource(resource)) {
+        return (await readCustomObject(clients.customObjects, resource, name, namespace)) as Record<string, unknown>
+      }
+      return (await readObject(clients.objects, resource, name, namespace)) as Record<string, unknown>
     } catch (error) {
       if (isNotFound(error)) return null
       throw new Error(`kubernetes get failed: ${normalizeKubeErrorMessage(error)}`)
     }
   },
   list: async (resource, namespace, labelSelector) => {
-    const objects = getKubeClients().objects
+    const clients = getKubeClients()
     try {
-      return (await listObjects(objects, resource, namespace, labelSelector)) as unknown as Record<string, unknown>
+      if (resolveCustomTargetFromResource(resource)) {
+        return (await listCustomObjects(clients.customObjects, resource, namespace, labelSelector)) as Record<
+          string,
+          unknown
+        >
+      }
+      return (await listObjects(clients.objects, resource, namespace, labelSelector)) as unknown as Record<
+        string,
+        unknown
+      >
     } catch (error) {
       throw new Error(`kubernetes list failed: ${normalizeKubeErrorMessage(error)}`)
     }
