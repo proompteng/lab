@@ -1,7 +1,14 @@
-import { describe, expect, it, vi } from 'vitest'
+import { EventEmitter } from 'node:events'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { KubeGatewayError, createKubeGateway } from '~/server/kube-gateway'
 import type { KubernetesClient } from '~/server/primitives-kube'
+
+const childProcessMocks = vi.hoisted(() => ({
+  spawn: vi.fn(),
+}))
+
+vi.mock('node:child_process', () => childProcessMocks)
 
 const createClient = (overrides: Partial<KubernetesClient>): KubernetesClient =>
   ({
@@ -18,7 +25,37 @@ const createClient = (overrides: Partial<KubernetesClient>): KubernetesClient =>
     ...overrides,
   }) as unknown as KubernetesClient
 
+const createMockKubectlProcess = (code: number, options: { stderr?: string; stdout?: string } = {}) => {
+  const stdout = new EventEmitter() as EventEmitter & { setEncoding: () => void }
+  const stderr = new EventEmitter() as EventEmitter & { setEncoding: () => void }
+  stdout.setEncoding = () => {}
+  stderr.setEncoding = () => {}
+
+  const child = new EventEmitter() as EventEmitter & {
+    stdout: typeof stdout
+    stderr: typeof stderr
+  }
+  child.stdout = stdout
+  child.stderr = stderr
+
+  queueMicrotask(() => {
+    if (options.stdout) {
+      stdout.emit('data', options.stdout)
+    }
+    if (options.stderr) {
+      stderr.emit('data', options.stderr)
+    }
+    child.emit('close', code)
+  })
+
+  return child
+}
+
 describe('kube gateway', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
   it('parses deployment rollout fields from the kubectl adapter', async () => {
     const client = createClient({
       list: vi.fn(async () => ({
@@ -149,5 +186,40 @@ describe('kube gateway', () => {
       kind: 'invalid_payload',
       message: 'kube deployments list returned invalid list payload',
     } satisfies Partial<KubeGatewayError>)
+  })
+
+  it('lists namespaces through the shared kubectl boundary', async () => {
+    childProcessMocks.spawn.mockReturnValue(
+      createMockKubectlProcess(0, {
+        stdout: JSON.stringify({
+          items: [{ metadata: { name: 'agents' } }, { metadata: { name: 'torghut' } }],
+        }),
+      }),
+    )
+
+    const gateway = createKubeGateway(createClient({}))
+
+    await expect(gateway.listNamespaces()).resolves.toEqual(['agents', 'torghut'])
+    expect(childProcessMocks.spawn).toHaveBeenCalledWith('kubectl', ['get', 'namespaces', '-o', 'json'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+  })
+
+  it('classifies namespaced resource access results', async () => {
+    const gateway = createKubeGateway(
+      createClient({
+        list: vi
+          .fn()
+          .mockResolvedValueOnce({ items: [] })
+          .mockRejectedValueOnce(new Error('kubectl list failed: Error from server (Forbidden): forbidden'))
+          .mockRejectedValueOnce(
+            new Error('kubectl list failed: the server does not have a resource type "swarms.swarm.proompteng.ai"'),
+          ),
+      }),
+    )
+
+    await expect(gateway.probeNamespacedResource('tools.tools.proompteng.ai', 'agents')).resolves.toBe('ok')
+    await expect(gateway.probeNamespacedResource('tools.tools.proompteng.ai', 'agents')).resolves.toBe('forbidden')
+    await expect(gateway.probeNamespacedResource('swarms.swarm.proompteng.ai', 'agents')).resolves.toBe('missing')
   })
 })

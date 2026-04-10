@@ -4,6 +4,7 @@ import { createTemporalClient, loadTemporalConfig } from '@proompteng/temporal-b
 import { Context, Effect, Layer, ManagedRuntime } from 'effect'
 import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
 import { createGitHubClient } from '~/server/github-client'
+import { createKubeGateway, type KubeGateway } from '~/server/kube-gateway'
 import { startResourceWatch } from '~/server/kube-watch'
 import {
   recordAgentConcurrency,
@@ -843,26 +844,14 @@ const resolveCrdCheckNamespace = () => {
   return namespaces[0] ?? 'default'
 }
 
-const resolveNamespaces = async () => {
+const resolveNamespaces = async (kubeGateway: Pick<KubeGateway, 'listNamespaces'> = createKubeGateway()) => {
   const namespaces = parseNamespaces()
   if (!namespaces.includes('*')) {
     return namespaces
   }
-  const result = await runKubectl(['get', 'namespace', '-o', 'json'])
-  if (result.code !== 0) {
-    throw new Error(result.stderr || result.stdout || 'failed to list namespaces')
-  }
-  const payload = JSON.parse(result.stdout) as Record<string, unknown>
-  const items = Array.isArray(payload.items) ? payload.items : []
-  const resolved = items
-    .map((item) => {
-      const metadata = item && typeof item === 'object' ? (item as Record<string, unknown>).metadata : null
-      const name = metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>).name : null
-      return typeof name === 'string' ? name : null
-    })
-    .filter((value): value is string => Boolean(value))
+  const resolved = await kubeGateway.listNamespaces()
   if (resolved.length === 0) {
-    throw new Error('no namespaces returned by kubectl')
+    throw new Error('no namespaces returned by kube gateway')
   }
   return resolved
 }
@@ -1693,6 +1682,7 @@ const startAgentsControllerInternal = async () => {
     }
     return
   }
+  const kubeGateway = createKubeGateway()
   let crdsReady: CrdCheckState
   try {
     crdsReady = await checkCrds({
@@ -1700,6 +1690,7 @@ const startAgentsControllerInternal = async () => {
       resolveCrdCheckNamespace,
       resolveNatsDependency,
       nowIso,
+      kubeGateway,
     })
     runtimeMutableState.crdCheckState = crdsReady
     controllerState.crdCheckState = crdsReady
@@ -1723,7 +1714,7 @@ const startAgentsControllerInternal = async () => {
   const handles: Array<{ stop: () => void }> = []
   let startupCommitted = false
   try {
-    const namespaces = await resolveNamespaces()
+    const namespaces = await resolveNamespaces(kubeGateway)
     if (runtimeMutableState.lifecycleToken !== token) return
     controllerState.namespaces = namespaces
     logAgentsControllerInfo('startup_namespace_scope', { namespaces })

@@ -1,7 +1,6 @@
-import { spawn } from 'node:child_process'
-
 import { assessAgentRunIngestion } from '~/server/agents-controller'
 import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
+import { createKubeGateway, type KubeGateway } from '~/server/kube-gateway'
 import { startResourceWatch } from '~/server/kube-watch'
 import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
@@ -105,61 +104,20 @@ const parseNamespaces = () => {
   return namespaces
 }
 
-const runKubectl = (args: string[]) =>
-  new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve) => {
-    const child = spawn('kubectl', args, { stdio: ['ignore', 'pipe', 'pipe'] })
-    let stdout = ''
-    let stderr = ''
-    let settled = false
-    const finish = (payload: { stdout: string; stderr: string; code: number | null }) => {
-      if (settled) return
-      settled = true
-      resolve(payload)
-    }
-    child.stdout.setEncoding('utf8')
-    child.stderr.setEncoding('utf8')
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk
-    })
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk
-    })
-    child.on('error', (error) => {
-      finish({
-        stdout,
-        stderr: stderr || (error instanceof Error ? error.message : String(error)),
-        code: 1,
-      })
-    })
-    child.on('close', (code) => finish({ stdout, stderr, code }))
-  })
-
 const resolveCrdCheckNamespace = () => {
   const namespaces = parseNamespaces()
   if (namespaces.includes('*')) return 'default'
   return namespaces[0] ?? 'default'
 }
 
-const resolveNamespaces = async () => {
+const resolveNamespaces = async (kubeGateway: Pick<KubeGateway, 'listNamespaces'> = createKubeGateway()) => {
   const namespaces = parseNamespaces()
   if (!namespaces.includes('*')) {
     return namespaces
   }
-  const result = await runKubectl(['get', 'namespace', '-o', 'json'])
-  if (result.code !== 0) {
-    throw new Error(result.stderr || result.stdout || 'failed to list namespaces')
-  }
-  const payload = JSON.parse(result.stdout) as Record<string, unknown>
-  const items = Array.isArray(payload.items) ? payload.items : []
-  const resolved = items
-    .map((item) => {
-      const metadata = item && typeof item === 'object' ? (item as Record<string, unknown>).metadata : null
-      const name = metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>).name : null
-      return typeof name === 'string' ? name : null
-    })
-    .filter((value): value is string => Boolean(value))
+  const resolved = await kubeGateway.listNamespaces()
   if (resolved.length === 0) {
-    throw new Error('no namespaces returned by kubectl')
+    throw new Error('no namespaces returned by kube gateway')
   }
   return resolved
 }
@@ -172,16 +130,16 @@ const resolveConfiguredNamespaces = () => {
   }
 }
 
-const checkCrds = async (): Promise<CrdCheckState> => {
+const checkCrds = async (
+  kubeGateway: Pick<KubeGateway, 'probeNamespacedResource'> = createKubeGateway(),
+): Promise<CrdCheckState> => {
   const namespace = resolveCrdCheckNamespace()
   const missing: string[] = []
   const forbidden: string[] = []
   for (const name of REQUIRED_CRDS) {
-    const resource = name.split('.')[0] ?? name
-    const result = await runKubectl(['get', resource, '-n', namespace, '-o', 'json'])
-    if (result.code !== 0) {
-      const details = (result.stderr || result.stdout || '').toLowerCase()
-      if (details.includes('forbidden') || details.includes('unauthorized')) {
+    const access = await kubeGateway.probeNamespacedResource(name, namespace)
+    if (access !== 'ok') {
+      if (access === 'forbidden') {
         forbidden.push(name)
       } else {
         missing.push(name)
@@ -191,9 +149,8 @@ const checkCrds = async (): Promise<CrdCheckState> => {
   const optionalUnavailable: string[] = []
   optionalCrdsReady.clear()
   for (const name of OPTIONAL_CRDS) {
-    const resource = name.split('.')[0] ?? name
-    const result = await runKubectl(['get', resource, '-n', namespace, '-o', 'json'])
-    if (result.code === 0) {
+    const access = await kubeGateway.probeNamespacedResource(name, namespace)
+    if (access === 'ok') {
       optionalCrdsReady.add(name)
       continue
     }
@@ -318,10 +275,11 @@ const refreshOptionalSwarmWatches = async (
   kube: ReturnType<typeof createKubernetesClient>,
   namespaces: string[],
   token: number,
+  kubeGateway: Pick<KubeGateway, 'probeNamespacedResource'>,
 ) => {
   if (lifecycleToken !== token || !started) return
   if (swarmWatchersStarted) return
-  const crds = await checkCrds()
+  const crds = await checkCrds(kubeGateway)
   if (lifecycleToken !== token || !started) return
   if (!crds.ok || !optionalCrdsReady.has(RESOURCE_MAP.Swarm)) return
   startSwarmWatchers(kube, namespaces, watchHandles)
@@ -3172,7 +3130,9 @@ export const startSupportingPrimitivesController = async () => {
     }
     return
   }
-  const crdsReady = await checkCrds()
+  const kube = createKubernetesClient()
+  const kubeGateway = createKubeGateway(kube)
+  const crdsReady = await checkCrds(kubeGateway)
   if (!crdsReady.ok) {
     console.error('[jangar] supporting controller will not start without CRDs')
     starting = false
@@ -3180,8 +3140,7 @@ export const startSupportingPrimitivesController = async () => {
   }
   const handles: Array<{ stop: () => void }> = []
   try {
-    const kube = createKubernetesClient()
-    const namespaces = await resolveNamespaces()
+    const namespaces = await resolveNamespaces(kubeGateway)
     if (lifecycleToken !== token) return
     controllerState.namespaces = namespaces
     void reconcileAll(kube, namespaces)
@@ -3294,7 +3253,7 @@ export const startSupportingPrimitivesController = async () => {
       if (swarmCrdsRefreshHandle) clearInterval(swarmCrdsRefreshHandle)
       swarmCrdsRefreshHandle = setInterval(() => {
         if (!started) return
-        void refreshOptionalSwarmWatches(kube, namespaces, token)
+        void refreshOptionalSwarmWatches(kube, namespaces, token, kubeGateway)
       }, SWARM_CRD_REFRESH_INTERVAL_MS)
     }
 

@@ -26,6 +26,10 @@ import { getRegisteredMigrationNames } from '~/server/kysely-migrations'
 const createTestKubeGateway = (overrides: Partial<KubeGateway> = {}): KubeGateway => ({
   listDeployments: vi.fn(async () => []),
   listJobs: vi.fn(async () => []),
+  listNamespaces: vi.fn(async () => []),
+  listCustomResourceDefinitions: vi.fn(async () => []),
+  probeNamespacedResource: vi.fn(async () => 'ok' as const),
+  serviceExists: vi.fn(async () => true),
   listSwarms: vi.fn(async () => []),
   ...overrides,
 })
