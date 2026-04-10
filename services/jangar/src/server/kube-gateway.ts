@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process'
+
 import { asRecord, asString } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP, type KubernetesClient } from '~/server/primitives-kube'
 
@@ -61,13 +63,20 @@ export type KubeGatewaySwarm = {
   status: Record<string, unknown>
 }
 
+export type KubeGatewayResourceAccess = 'ok' | 'missing' | 'forbidden'
+
 export type KubeGateway = {
   listDeployments: (namespace: string) => Promise<KubeGatewayDeployment[]>
   listJobs: (namespace: string, labelSelector?: string) => Promise<KubeGatewayJob[]>
+  listNamespaces: () => Promise<string[]>
+  listCustomResourceDefinitions: () => Promise<string[]>
+  probeNamespacedResource: (resource: string, namespace: string) => Promise<KubeGatewayResourceAccess>
+  serviceExists: (namespace: string, name: string) => Promise<boolean>
   listSwarms: (namespace: string) => Promise<KubeGatewaySwarm[]>
 }
 
 const normalizeMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
+const isForbiddenMessage = (value: string) => value.includes('forbidden') || value.includes('unauthorized')
 
 const asNonNegativeInteger = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.floor(value))
@@ -140,6 +149,51 @@ const wrapTransport = async <T>(context: string, run: () => Promise<T>): Promise
   }
 }
 
+const runKubectl = (args: string[]) =>
+  new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve) => {
+    const command = spawn('kubectl', args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    let stdout = ''
+    let stderr = ''
+    command.stdout.setEncoding('utf8')
+    command.stderr.setEncoding('utf8')
+    command.stdout.on('data', (chunk) => {
+      stdout += chunk
+    })
+    command.stderr.on('data', (chunk) => {
+      stderr += chunk
+    })
+    command.on('close', (code) => resolve({ stdout, stderr, code }))
+    command.on('error', (error) =>
+      resolve({
+        stdout,
+        stderr: stderr || normalizeMessage(error),
+        code: 1,
+      }),
+    )
+  })
+
+const readClusterListItems = async (resource: string, context: string) => {
+  const result = await runKubectl(['get', resource, '-o', 'json'])
+  if (result.code !== 0) {
+    const details = result.stderr.trim() || result.stdout.trim() || `exit ${result.code}`
+    throw new KubeGatewayError('transport', `${context}: ${details}`)
+  }
+
+  let payload: unknown
+  try {
+    payload = JSON.parse(result.stdout)
+  } catch (error) {
+    throw new KubeGatewayError('invalid_payload', `${context} returned invalid JSON`, { cause: error })
+  }
+
+  return parseListItems(payload, context)
+}
+
+const parseItemNames = (items: Record<string, unknown>[]) =>
+  items
+    .map((item) => parseMetadata(item.metadata)?.name ?? asString(asRecord(item.metadata)?.name))
+    .filter((entry): entry is string => Boolean(entry))
+
 export const createKubeGateway = (client: KubernetesClient = createKubernetesClient()): KubeGateway => ({
   listDeployments: async (namespace) =>
     wrapTransport('kube deployments list failed', async () => {
@@ -192,6 +246,31 @@ export const createKubeGateway = (client: KubernetesClient = createKubernetesCli
           }
         })
         .filter((entry): entry is KubeGatewayJob => entry !== null)
+    }),
+  listNamespaces: async () =>
+    wrapTransport('kube namespaces list failed', async () => {
+      const items = await readClusterListItems('namespaces', 'kube namespaces list')
+      return parseItemNames(items)
+    }),
+  listCustomResourceDefinitions: async () =>
+    wrapTransport('kube crds list failed', async () => {
+      const items = await readClusterListItems('crd', 'kube crds list')
+      return parseItemNames(items)
+    }),
+  probeNamespacedResource: async (resource, namespace) => {
+    try {
+      await client.list(resource, namespace)
+      return 'ok'
+    } catch (error) {
+      const message = normalizeMessage(error).toLowerCase()
+      if (isForbiddenMessage(message)) return 'forbidden'
+      return 'missing'
+    }
+  },
+  serviceExists: async (namespace, name) =>
+    wrapTransport('kube service get failed', async () => {
+      const service = await client.get('service', name, namespace)
+      return service !== null
     }),
   listSwarms: async (namespace) =>
     wrapTransport('kube swarms list failed', async () => {

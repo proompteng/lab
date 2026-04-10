@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 
+import { createKubeGateway, type KubeGateway } from '~/server/kube-gateway'
 import { parseBooleanEnv, parseEnvRecord, parseNumberEnv, parseOptionalNumber } from './env-config'
 import { normalizeRepositoryKey, type RepoConcurrencyConfig } from './queue-state'
 
@@ -148,32 +149,53 @@ export const checkCrds = async (options: {
   resolveCrdCheckNamespace: () => string
   nowIso: () => string
   resolveNatsDependency?: () => NatsDependency
+  kubeGateway?: Pick<KubeGateway, 'listCustomResourceDefinitions' | 'serviceExists'>
   runKubectlCommand?: typeof runKubectl
 }) => {
   const kubectl = options.runKubectlCommand ?? runKubectl
+  const kubeGateway = options.runKubectlCommand ? null : (options.kubeGateway ?? createKubeGateway())
   const requiredCrds = options.resolveRequiredCrds()
-  const crdResult = await kubectl(['get', 'crd', '-o', 'jsonpath={range .items[*]}{.metadata.name}{"\\n"}{end}'])
   const missing: string[] = []
   const forbidden: string[] = []
-  if (crdResult.code !== 0) {
-    const details = (crdResult.stderr || crdResult.stdout || '').toLowerCase()
-    if (details.includes('forbidden') || details.includes('unauthorized')) {
-      forbidden.push(...requiredCrds)
-    } else {
-      missing.push(...requiredCrds)
+  let availableCrds = new Set<string>()
+  if (kubeGateway) {
+    try {
+      availableCrds = new Set(await kubeGateway.listCustomResourceDefinitions())
+    } catch (error) {
+      const details = (error instanceof Error ? error.message : String(error)).toLowerCase()
+      if (details.includes('forbidden') || details.includes('unauthorized')) {
+        forbidden.push(...requiredCrds)
+      } else {
+        missing.push(...requiredCrds)
+      }
+      return {
+        ok: false,
+        missing: [...missing, ...forbidden],
+        checkedAt: options.nowIso(),
+      }
     }
-    return {
-      ok: false,
-      missing: [...missing, ...forbidden],
-      checkedAt: options.nowIso(),
+  } else {
+    const crdResult = await kubectl(['get', 'crd', '-o', 'jsonpath={range .items[*]}{.metadata.name}{"\\n"}{end}'])
+    if (crdResult.code !== 0) {
+      const details = (crdResult.stderr || crdResult.stdout || '').toLowerCase()
+      if (details.includes('forbidden') || details.includes('unauthorized')) {
+        forbidden.push(...requiredCrds)
+      } else {
+        missing.push(...requiredCrds)
+      }
+      return {
+        ok: false,
+        missing: [...missing, ...forbidden],
+        checkedAt: options.nowIso(),
+      }
     }
+    availableCrds = new Set(
+      crdResult.stdout
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean),
+    )
   }
-  const availableCrds = new Set(
-    crdResult.stdout
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean),
-  )
   for (const name of requiredCrds) {
     if (!availableCrds.has(name)) {
       missing.push(name)
@@ -185,16 +207,11 @@ export const checkCrds = async (options: {
   if (natsDependency?.enabled) {
     const serviceReference = resolveKubernetesServiceReferenceFromUrl(natsDependency.url, namespace)
     if (serviceReference) {
-      const serviceResult = await kubectl([
-        'get',
-        'svc',
-        '-n',
-        serviceReference.namespace,
-        serviceReference.name,
-        '-o',
-        'name',
-      ])
-      if (serviceResult.code !== 0) {
+      const serviceExists = kubeGateway
+        ? await kubeGateway.serviceExists(serviceReference.namespace, serviceReference.name).catch(() => false)
+        : (await kubectl(['get', 'svc', '-n', serviceReference.namespace, serviceReference.name, '-o', 'name']))
+            .code === 0
+      if (!serviceExists) {
         return {
           ok: false,
           missing: [...missing, `service:${serviceReference.name}@${serviceReference.namespace}`],

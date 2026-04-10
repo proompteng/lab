@@ -41,7 +41,7 @@ import {
 const TEST_RUNNER_IMAGE =
   'registry.ide-newton.ts.net/lab/jangar:test@sha256:1111111111111111111111111111111111111111111111111111111111111111'
 
-const createMockKubectlProcess = (code: number, stderr = '') => {
+const createMockKubectlProcess = (code: number, options: { stderr?: string; stdout?: string } = {}) => {
   const stdout = new EventEmitter() as EventEmitter & { setEncoding: () => void }
   const stderrStream = new EventEmitter() as EventEmitter & { setEncoding: () => void }
   stdout.setEncoding = () => {}
@@ -57,8 +57,11 @@ const createMockKubectlProcess = (code: number, stderr = '') => {
   child.kill = () => {}
 
   queueMicrotask(() => {
-    if (stderr) {
-      stderrStream.emit('data', stderr)
+    if (options.stdout) {
+      stdout.emit('data', options.stdout)
+    }
+    if (options.stderr) {
+      stderrStream.emit('data', options.stderr)
     }
     child.emit('close', code)
   })
@@ -102,11 +105,26 @@ describe('supporting primitives controller', () => {
       const count = (kubectlCalls.get(resource) ?? 0) + 1
       kubectlCalls.set(resource, count)
       const result = resolveSwarmAvailability(normalizedResource, count)
-      return createMockKubectlProcess(result.code, result.stderr ?? '')
+      return createMockKubectlProcess(result.code, {
+        stderr: result.stderr,
+        stdout: result.code === 0 ? JSON.stringify({ items: [] }) : undefined,
+      })
     })
-    primitivesKubeMocks.createKubernetesClient.mockReturnValue({
-      list: vi.fn(async () => ({ items: [] })),
-    })
+    primitivesKubeMocks.createKubernetesClient.mockImplementation(
+      () =>
+        ({
+          list: vi.fn(async (resource: string) => {
+            const count = (kubectlCalls.get(resource) ?? 0) + 1
+            kubectlCalls.set(resource, count)
+            const normalizedResource = resource.split('.').at(0) ?? resource
+            const result = resolveSwarmAvailability(normalizedResource, count)
+            if (result.code !== 0) {
+              throw new Error(result.stderr ?? `failed to list ${resource}`)
+            }
+            return { items: [] }
+          }),
+        }) as unknown as KubernetesClient,
+    )
     process.env.JANGAR_AGENT_RUNNER_IMAGE = TEST_RUNNER_IMAGE
     delete process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED
     delete process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY
