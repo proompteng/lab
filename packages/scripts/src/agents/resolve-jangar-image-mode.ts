@@ -15,7 +15,6 @@ const LOCAL_IMAGE_PREFIXES = [
 const LOCAL_IMAGE_EXACT_PATHS = new Set([
   'bun.lock',
   'package.json',
-  '.github/workflows/jangar-build-push.yaml',
   'packages/scripts/src/jangar/build-control-plane-image.ts',
   'packages/scripts/src/jangar/build-image.ts',
   'packages/scripts/src/shared/docker.ts',

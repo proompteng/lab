@@ -28,6 +28,20 @@ describe('classifyJangarImageMode', () => {
     })
   })
 
+  it('reuses the published image for jangar build workflow-only changes', () => {
+    expect(
+      classifyJangarImageMode([
+        '.github/workflows/jangar-build-push.yaml',
+        '.github/workflows/jangar-release.yml',
+        '.github/workflows/jangar-post-deploy-verify.yml',
+      ]),
+    ).toEqual({
+      mode: 'reuse-published-image',
+      needsLocalJangarImage: false,
+      matchedPaths: [],
+    })
+  })
+
   it('builds a local image for jangar changes', () => {
     const result = classifyJangarImageMode(['services/jangar/src/server/control-plane-status.ts'])
     expect(result.mode).toBe('build-local-image')
