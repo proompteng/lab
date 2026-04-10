@@ -51,7 +51,6 @@ resources:
   - jangar-primitives-sub-orchestration.yaml
   - jangar-primitives-orchestrationrun.yaml
   - jangar-primitives-agentrun.yaml
-
 helmCharts:
   - name: open-webui
     repo: https://helm.openwebui.com
@@ -59,8 +58,7 @@ helmCharts:
     releaseName: jangar-openwebui
     namespace: jangar
     valuesFile: openwebui-values.yaml
-
 images:
   - name: registry.ide-newton.ts.net/lab/jangar
-    newTag: "d929a82e"
-    digest: sha256:22d72b8132fe59f1aba358d073174d9f5730bccb724b0a4daf035ae293129f05
+    newTag: 3dec9638
+    digest: sha256:ccdef8eb458c5bfd99ee9b11c8bdda84f6d2c4f21d5ca1d4b11e3359083917f2

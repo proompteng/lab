@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: "2026-04-10T06:36:10Z"
+    deploy.knative.dev/rollout: 2026-04-10T17:01:03Z
 spec:
   replicas: 1
   strategy:
@@ -28,15 +28,20 @@ spec:
         - name: bootstrap-workspace
           image: registry.ide-newton.ts.net/lab/jangar
           imagePullPolicy: IfNotPresent
-          command: ['sh', '-c']
+          command:
+            - sh
+            - -c
           args:
-            - |
+            - >
               set -eu
+
               if [ ! -d /workspace/lab/.git ]; then
                 rm -rf /workspace/lab
                 git clone --depth 1 https://github.com/proompteng/lab.git /workspace/lab
               fi
-              mkdir -p /workspace/lab/.worktrees /workspace/lab/torghut /workspace/.bun-install-cache /workspace/.ovscode
+
+              mkdir -p /workspace/lab/.worktrees /workspace/lab/torghut /workspace/.bun-install-cache
+              /workspace/.ovscode
           volumeMounts:
             - name: workspace
               mountPath: /workspace
@@ -150,7 +155,7 @@ spec:
             - name: JANGAR_CODEX_MAX_ATTEMPTS
               value: "3"
             - name: JANGAR_CODEX_BACKOFF_SCHEDULE_MS
-              value: "300000,900000,2700000"
+              value: 300000,900000,2700000
             - name: FACTEUR_INTERNAL_URL
               value: http://facteur-internal.facteur.svc.cluster.local
             - name: MINIO_ENDPOINT
@@ -395,9 +400,10 @@ spec:
         - name: docker
           image: docker:25.0-dind
           imagePullPolicy: IfNotPresent
-          command: ["dockerd-entrypoint.sh"]
+          command:
+            - dockerd-entrypoint.sh
           args:
-            - "--host=unix:///var/run/docker.sock"
+            - --host=unix:///var/run/docker.sock
           env:
             - name: DOCKER_TLS_CERTDIR
               value: ""
