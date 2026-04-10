@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: jangar-worker
     app.kubernetes.io/part-of: lab
   annotations:
-    kubectl.kubernetes.io/restartedAt: 2026-04-10T18:21:52Z
+    kubectl.kubernetes.io/restartedAt: 2026-04-10T18:39:40Z
 spec:
   replicas: 1
   strategy:
