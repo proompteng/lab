@@ -6,6 +6,8 @@ metadata:
   labels:
     app.kubernetes.io/name: jangar-worker
     app.kubernetes.io/part-of: lab
+  annotations:
+    kubectl.kubernetes.io/restartedAt: 2026-04-10T17:01:03Z
 spec:
   replicas: 1
   strategy:
@@ -20,13 +22,15 @@ spec:
         app.kubernetes.io/name: jangar-worker
         app.kubernetes.io/part-of: lab
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-04-10T06:36:10Z"
+        kubectl.kubernetes.io/restartedAt: 2026-04-10T06:36:10Z
     spec:
       initContainers:
         - name: bootstrap-workspace
           image: registry.ide-newton.ts.net/lab/jangar
           imagePullPolicy: IfNotPresent
-          command: ['sh', '-c']
+          command:
+            - sh
+            - -c
           args:
             - |
               set -eu
@@ -56,7 +60,9 @@ spec:
         - name: jangar-worker
           image: registry.ide-newton.ts.net/lab/jangar:latest
           imagePullPolicy: Always
-          command: ['bun', '/app/services/jangar/src/worker.ts']
+          command:
+            - bun
+            - /app/services/jangar/src/worker.ts
           ports:
             - name: health
               containerPort: 3002
