@@ -168,6 +168,20 @@ describe('kube gateway', () => {
   })
 
   it('gets, creates, and replaces leases through the shared kubernetes client boundary', async () => {
+    const applyMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        apiVersion: 'coordination.k8s.io/v1',
+        kind: 'Lease',
+        metadata: { name: 'jangar-controller-leader', namespace: 'agents', resourceVersion: '8' },
+        spec: { holderIdentity: 'pod-1', leaseDurationSeconds: 30 },
+      })
+      .mockResolvedValueOnce({
+        apiVersion: 'coordination.k8s.io/v1',
+        kind: 'Lease',
+        metadata: { name: 'jangar-controller-leader', namespace: 'agents', resourceVersion: '9' },
+        spec: { holderIdentity: 'pod-2', leaseDurationSeconds: 30 },
+      })
     const client = createClient({
       get: vi.fn(async () => ({
         apiVersion: 'coordination.k8s.io/v1',
@@ -175,18 +189,7 @@ describe('kube gateway', () => {
         metadata: { name: 'jangar-controller-leader', namespace: 'agents', resourceVersion: '7' },
         spec: { holderIdentity: 'pod-1', leaseDurationSeconds: 30 },
       })),
-      createManifest: vi.fn(async () => ({
-        apiVersion: 'coordination.k8s.io/v1',
-        kind: 'Lease',
-        metadata: { name: 'jangar-controller-leader', namespace: 'agents', resourceVersion: '8' },
-        spec: { holderIdentity: 'pod-1', leaseDurationSeconds: 30 },
-      })),
-      apply: vi.fn(async () => ({
-        apiVersion: 'coordination.k8s.io/v1',
-        kind: 'Lease',
-        metadata: { name: 'jangar-controller-leader', namespace: 'agents', resourceVersion: '9' },
-        spec: { holderIdentity: 'pod-2', leaseDurationSeconds: 30 },
-      })),
+      apply: applyMock,
     })
     const gateway = createKubeGateway(client)
 
@@ -210,8 +213,15 @@ describe('kube gateway', () => {
       }),
     ).resolves.toMatchObject({ metadata: { resourceVersion: '9' } })
     expect(client.get).toHaveBeenCalledWith('lease', 'jangar-controller-leader', 'agents')
-    expect(client.createManifest).toHaveBeenCalledTimes(1)
-    expect(client.apply).toHaveBeenCalledTimes(1)
+    expect(client.apply).toHaveBeenCalledTimes(2)
+    expect(client.apply).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        apiVersion: 'coordination.k8s.io/v1',
+        kind: 'Lease',
+        metadata: expect.objectContaining({ name: 'jangar-controller-leader', namespace: 'agents' }),
+      }),
+    )
   })
 
   it('classifies namespaced resource access results', async () => {

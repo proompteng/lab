@@ -239,7 +239,7 @@ export const buildPodHealthProbeArgs = (namespace: string, pod: string) => {
     '  echo "node-or-bun-unavailable"',
     '  exit 1',
     'fi',
-  ].join('; ')
+  ].join('\n')
 
   return ['kubectl', '-n', namespace, 'exec', pod, '--', 'sh', '-lc', shellScript]
 }

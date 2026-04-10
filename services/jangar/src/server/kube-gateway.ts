@@ -240,7 +240,7 @@ export const createKubeGateway = (client: KubernetesClient = createKubernetesCli
     }),
   createLease: async (namespace, lease) =>
     wrapTransport('kube lease create failed', async () => {
-      return (await client.createManifest(JSON.stringify(withLeaseNamespace(namespace, lease)), namespace)) as V1Lease
+      return (await client.apply(withLeaseNamespace(namespace, lease) as unknown as Record<string, unknown>)) as V1Lease
     }),
   replaceLease: async (namespace, lease) =>
     wrapTransport('kube lease replace failed', async () => {

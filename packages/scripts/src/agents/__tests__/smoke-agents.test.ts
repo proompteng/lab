@@ -135,8 +135,8 @@ describe('buildPodHealthProbeArgs', () => {
       '-lc',
       expect.stringContaining('http://127.0.0.1:8080/health'),
     ])
-    expect(args[8]).toContain('; elif command -v bun >/dev/null 2>&1; then;')
-    expect(args[8]).toContain('; fi')
+    expect(args[8]).toContain('\nelif command -v bun >/dev/null 2>&1; then\n')
+    expect(args[8]).toContain('\nfi')
   })
 })
 
