@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { Duration, Effect, Layer, ManagedRuntime, pipe } from 'effect'
 
 import { Atlas, AtlasLive } from '~/server/atlas'
+import { resolveAtlasRuntimeConfig } from '~/server/atlas-config'
 import { DEFAULT_REF, MAX_SEARCH_LIMIT, parseAtlasCodeSearchInput } from '~/server/atlas-http'
 import type { AtlasCodeSearchMatch } from '~/server/atlas-store'
 
@@ -125,8 +126,7 @@ export const postCodeSearchHandlerEffect = (request: Request) =>
   )
 
 export const postCodeSearchHandler = async (request: Request) => {
-  const timeoutMs = Number.parseInt(process.env.ATLAS_CODE_SEARCH_TIMEOUT_MS ?? '25000', 10)
-  const effectiveTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 25_000
+  const effectiveTimeoutMs = resolveAtlasRuntimeConfig(process.env).codeSearchTimeoutMs
 
   return Promise.race([
     handlerRuntime.runPromise(postCodeSearchHandlerEffect(request)),

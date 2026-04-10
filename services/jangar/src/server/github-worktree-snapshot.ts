@@ -10,11 +10,12 @@ import {
   runGitWithLockRecovery,
 } from '~/server/git-lock-recovery'
 import { withWorktreeLock } from '~/server/git-worktree-lock'
+import { resolveRepoWorkspaceConfig } from '~/server/runtime-tooling-config'
 import { createGithubReviewStore, type GithubPrFile } from '~/server/github-review-store'
 
 const WORKTREE_DIR_NAME = '.worktrees'
 
-const resolveRepoRoot = () => process.env.CODEX_CWD?.trim() || process.cwd()
+const resolveRepoRoot = () => resolveRepoWorkspaceConfig(process.env).repoRoot
 
 const resolveWorktreeRoot = () => join(resolveRepoRoot(), WORKTREE_DIR_NAME)
 

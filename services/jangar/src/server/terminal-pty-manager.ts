@@ -4,6 +4,7 @@ import { readFile, readlink } from 'node:fs/promises'
 import { hostname } from 'node:os'
 
 import { spawn } from 'node-pty'
+import { resolveTerminalRuntimeConfig } from './runtime-tooling-config'
 
 const DEFAULT_BUFFER_BYTES = 4 * 1024 * 1024
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60_000
@@ -112,8 +113,9 @@ type SpawnPtyOptions = {
 const isBunRuntime = Boolean((globalThis as { Bun?: typeof Bun }).Bun)
 
 const resolveScriptBinary = () => {
-  if (process.env.SCRIPT_BIN && process.env.SCRIPT_BIN.length > 0) {
-    return process.env.SCRIPT_BIN
+  const configured = resolveTerminalRuntimeConfig(process.env).scriptBin
+  if (configured && configured.length > 0) {
+    return configured
   }
   if (existsSync('/usr/bin/script')) return '/usr/bin/script'
   if (existsSync('/bin/script')) return '/bin/script'
@@ -289,7 +291,7 @@ const spawnNativePty = (shell: string, options: SpawnPtyOptions): PtyAdapter => 
   }
 }
 
-const resolvePtyMode = () => (process.env.JANGAR_PTY_MODE ?? '').toLowerCase()
+const resolvePtyMode = () => resolveTerminalRuntimeConfig(process.env).ptyMode
 
 const spawnPty = (shell: string, options: SpawnPtyOptions): PtyAdapter => {
   const mode = resolvePtyMode()
@@ -342,7 +344,7 @@ export class TerminalPtyManager {
   startSession(input: { sessionId: string; worktreePath: string; worktreeName?: string | null }) {
     const existing = this.sessions.get(input.sessionId)
     if (existing && !existing.closed) return existing
-    const shell = process.env.SHELL || '/bin/bash'
+    const shell = resolveTerminalRuntimeConfig(process.env).shell
     const baseEnv = Object.fromEntries(
       Object.entries(process.env).filter(([, value]) => typeof value === 'string'),
     ) as Record<string, string>

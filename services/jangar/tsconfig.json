@@ -5,7 +5,18 @@
     "noEmit": true,
     "strict": true,
     "strictNullChecks": true,
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    "paths": {
+      "@/*": ["./src/*"],
+      "~/*": ["./src/*"],
+      "@proompteng/bumba/*": ["../bumba/*"],
+      "@proompteng/codex": ["../../packages/codex/src/index.ts"],
+      "@proompteng/codex/*": ["../../packages/codex/src/*"],
+      "@proompteng/design": ["../../packages/design/src/index.ts"],
+      "@proompteng/design/*": ["../../packages/design/src/*"],
+      "@proompteng/temporal-bun-sdk": ["../../packages/temporal-bun-sdk"],
+      "@proompteng/temporal-bun-sdk/*": ["../../packages/temporal-bun-sdk/*"]
+    }
   },
   "include": ["./src/**/*", "./vite.config.ts", "./vite.server.config.ts"]
 }

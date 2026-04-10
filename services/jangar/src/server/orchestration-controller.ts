@@ -1,9 +1,11 @@
-import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 
 import { emitAuditEventBestEffort } from '~/server/audit-client'
+import { resolveOrchestrationControllerConfig } from '~/server/controller-runtime-config'
 import { resolveRepositoryFromParameters } from '~/server/audit-logging'
+import { isRuntimeTestEnv } from '~/server/control-plane-config'
 import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
+import { createKubeGateway } from '~/server/kube-gateway'
 import { startResourceWatch } from '~/server/kube-watch'
 import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
@@ -105,32 +107,21 @@ const isJobComplete = (job: Record<string, unknown>) => hasJobCondition(job, 'Co
 const isJobFailed = (job: Record<string, unknown>) => hasJobCondition(job, 'Failed')
 
 const shouldStart = () => {
-  if (process.env.NODE_ENV === 'test') return false
-  const flag = (process.env.JANGAR_ORCHESTRATION_CONTROLLER_ENABLED ?? '1').trim().toLowerCase()
-  return flag !== '0' && flag !== 'false'
+  if (isRuntimeTestEnv()) return false
+  return resolveOrchestrationControllerConfig().enabled
 }
 
 const shouldStartWithFeatureFlag = async () => {
-  if (process.env.NODE_ENV === 'test') return false
+  if (isRuntimeTestEnv()) return false
   return resolveBooleanFeatureToggle({
-    key: DEFAULT_ORCHESTRATION_CONTROLLER_ENABLED_FLAG_KEY,
+    key: resolveOrchestrationControllerConfig().enabledFlagKey || DEFAULT_ORCHESTRATION_CONTROLLER_ENABLED_FLAG_KEY,
     keyEnvVar: 'JANGAR_ORCHESTRATION_CONTROLLER_ENABLED_FLAG_KEY',
     fallbackEnvVar: 'JANGAR_ORCHESTRATION_CONTROLLER_ENABLED',
     defaultValue: shouldStart(),
   })
 }
 
-const parseNamespaces = () => {
-  const raw = process.env.JANGAR_ORCHESTRATION_CONTROLLER_NAMESPACES
-  if (!raw) return DEFAULT_NAMESPACES
-  const list = raw
-    .split(',')
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0)
-  const namespaces = list.length > 0 ? list : DEFAULT_NAMESPACES
-  assertClusterScopedForWildcard(namespaces, 'orchestration controller')
-  return namespaces
-}
+const parseNamespaces = () => resolveOrchestrationControllerConfig().namespaces
 
 const resolveCrdCheckNamespace = () => {
   const namespaces = parseNamespaces()
@@ -146,49 +137,17 @@ const resolveConfiguredNamespaces = () => {
   }
 }
 
-const runKubectl = (args: string[]) =>
-  new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve) => {
-    const child = spawn('kubectl', args, { stdio: ['ignore', 'pipe', 'pipe'] })
-    let stdout = ''
-    let stderr = ''
-    let settled = false
-    const finish = (payload: { stdout: string; stderr: string; code: number | null }) => {
-      if (settled) return
-      settled = true
-      resolve(payload)
-    }
-    child.stdout.setEncoding('utf8')
-    child.stderr.setEncoding('utf8')
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk
-    })
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk
-    })
-    child.on('error', (error) => {
-      finish({
-        stdout,
-        stderr: stderr || (error instanceof Error ? error.message : String(error)),
-        code: 1,
-      })
-    })
-    child.on('close', (code) => finish({ stdout, stderr, code }))
-  })
-
 const checkCrds = async (): Promise<CrdCheckState> => {
   const namespace = resolveCrdCheckNamespace()
+  const kubeGateway = createKubeGateway()
   const missing: string[] = []
   const forbidden: string[] = []
   for (const name of REQUIRED_CRDS) {
-    const resource = name.split('.')[0] ?? name
-    const result = await runKubectl(['get', resource, '-n', namespace, '-o', 'json'])
-    if (result.code !== 0) {
-      const details = (result.stderr || result.stdout || '').toLowerCase()
-      if (details.includes('forbidden') || details.includes('unauthorized')) {
-        forbidden.push(name)
-      } else {
-        missing.push(name)
-      }
+    const access = await kubeGateway.probeNamespacedResource(name, namespace)
+    if (access === 'forbidden') {
+      forbidden.push(name)
+    } else if (access === 'missing') {
+      missing.push(name)
     }
   }
   const state = {

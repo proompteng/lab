@@ -19,6 +19,8 @@ import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 import { createPrimitivesStore } from '~/server/primitives-store'
 import { shouldApplyStatus } from '~/server/status-utils'
+import { resolveAgentCommsSubscriberConfig } from '~/server/integrations-config'
+import { resolveWhitepaperControlConfig, resolveWhitepaperGitHubConfig } from '~/server/whitepaper-config'
 import { createAgentRunReconciler } from './agent-run-reconciler'
 import {
   buildArtifactsLimitMessage,
@@ -26,7 +28,7 @@ import {
   resolveAgentRunArtifactsLimitConfig,
 } from './agentrun-artifacts'
 import { deriveStandardConditionUpdates, normalizeConditions, upsertCondition } from './conditions'
-import { checkCrds, parseConcurrency, parseQueueLimits, parseRateLimits, runKubectl } from './controller-config'
+import { checkCrds, parseConcurrency, parseQueueLimits, parseRateLimits } from './controller-config'
 import { parseBooleanEnv, parseNumberEnv, parseOptionalNumber } from './env-config'
 import { createImplementationContractTools } from './implementation-contract'
 import {
@@ -59,6 +61,7 @@ import {
 import { buildInFlightCounts } from './queue-state'
 import { resetControllerRateState as resetControllerRateStateMaps } from './rate-limits'
 import { createResourceReconcilers } from './resource-reconcilers'
+import { resolveAgentRunnerDefaultsConfig, resolveAgentsControllerBehaviorConfig } from './runtime-config'
 import { resolveParam, resolveParameters } from './run-utils'
 import { createTemporalRuntimeTools } from './temporal-runtime'
 import { resolveVcsAuthMethod, validateVcsAuthConfig } from './vcs-auth'
@@ -110,10 +113,11 @@ const BASE_REQUIRED_CRDS = [
 ]
 const VCS_PROVIDER_CRD = 'versioncontrolproviders.agents.proompteng.ai'
 
-const isVcsProvidersEnabled = () => parseBooleanEnv(process.env.JANGAR_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED, true)
+const isVcsProvidersEnabled = () => resolveAgentsControllerBehaviorConfig(process.env).vcsProvidersEnabled
 
-const isAgentRunImmutabilityEnforced = () => parseBooleanEnv(process.env.JANGAR_AGENTRUN_IMMUTABILITY_ENFORCED, true)
-const isAgentCommsSubscriberEnabled = () => !parseBooleanEnv(process.env.JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED, false)
+const isAgentRunImmutabilityEnforced = () =>
+  resolveAgentsControllerBehaviorConfig(process.env).agentRunImmutabilityEnforced
+const isAgentCommsSubscriberEnabled = () => !resolveAgentCommsSubscriberConfig(process.env).disabled
 
 const resolveRequiredCrds = () => {
   if (!isVcsProvidersEnabled()) return BASE_REQUIRED_CRDS
@@ -122,7 +126,7 @@ const resolveRequiredCrds = () => {
 
 const resolveNatsDependency = () => ({
   enabled: isAgentCommsSubscriberEnabled(),
-  url: process.env.NATS_URL?.trim(),
+  url: resolveAgentCommsSubscriberConfig(process.env).natsUrl,
 })
 
 type ControllerHealthState = {
@@ -193,18 +197,10 @@ const initializeRuntimeMutableStateForLayer = () => {
 const nowIso = () => new Date().toISOString()
 
 const resolveAgentRunResyncIntervalSeconds = () =>
-  parseNumberEnv(
-    process.env.JANGAR_AGENTS_CONTROLLER_RESYNC_INTERVAL_SECONDS,
-    DEFAULT_AGENTRUN_RESYNC_INTERVAL_SECONDS,
-    1,
-  )
+  resolveAgentsControllerBehaviorConfig(process.env).resyncIntervalSeconds
 
 const resolveAgentRunUntouchedWarnAfterSeconds = () =>
-  parseNumberEnv(
-    process.env.JANGAR_AGENTS_CONTROLLER_UNTOUCHED_WARN_AFTER_SECONDS,
-    DEFAULT_AGENTRUN_UNTOUCHED_WARN_AFTER_SECONDS,
-    1,
-  )
+  resolveAgentsControllerBehaviorConfig(process.env).untouchedWarnAfterSeconds
 
 const createDefaultAgentRunIngestionRuntimeState = (): AgentRunIngestionRuntimeState => ({
   lastWatchEventAtMs: null,
@@ -372,38 +368,27 @@ const parseRepositoryParts = (repository: string) => {
   return { owner, repo }
 }
 
-const whitepaperFinalizeEnabled = () => parseBooleanEnv(process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED, true)
+const whitepaperFinalizeEnabled = () => resolveWhitepaperControlConfig(process.env).enabled
 
-const resolveWhitepaperOutputFetchAttempts = () =>
-  parseNumberEnv(process.env.JANGAR_WHITEPAPER_OUTPUT_FETCH_ATTEMPTS, DEFAULT_WHITEPAPER_OUTPUT_FETCH_ATTEMPTS, 1)
+const resolveWhitepaperOutputFetchAttempts = () => resolveWhitepaperControlConfig(process.env).outputFetchAttempts
 
-const resolveWhitepaperOutputFetchDelayMs = () =>
-  parseNumberEnv(process.env.JANGAR_WHITEPAPER_OUTPUT_FETCH_DELAY_MS, DEFAULT_WHITEPAPER_OUTPUT_FETCH_DELAY_MS, 0)
+const resolveWhitepaperOutputFetchDelayMs = () => resolveWhitepaperControlConfig(process.env).outputFetchDelayMs
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const resolveWhitepaperFinalizeBaseUrl = () => {
-  const fromEnv = asString(process.env.JANGAR_WHITEPAPER_FINALIZE_BASE_URL)?.trim()
-  if (fromEnv) return fromEnv
-  const fallback = asString(process.env.TORGHUT_BASE_URL)?.trim()
-  if (fallback) return fallback
-  return DEFAULT_WHITEPAPER_FINALIZE_BASE_URL
+  return resolveWhitepaperControlConfig(process.env).baseUrl
 }
 
 const resolveWhitepaperFinalizeToken = async () => {
-  const explicitToken =
-    asString(process.env.JANGAR_WHITEPAPER_FINALIZE_TOKEN)?.trim() ||
-    asString(process.env.WHITEPAPER_WORKFLOW_API_TOKEN)?.trim() ||
-    asString(process.env.JANGAR_API_KEY)?.trim()
+  const control = resolveWhitepaperControlConfig(process.env)
+  const explicitToken = control.token
   if (explicitToken) return explicitToken
 
-  const useServiceAccountToken = parseBooleanEnv(process.env.JANGAR_WHITEPAPER_FINALIZE_USE_SERVICE_ACCOUNT_TOKEN, true)
-  if (!useServiceAccountToken) return null
-  const tokenPath = asString(process.env.JANGAR_WHITEPAPER_SERVICE_ACCOUNT_TOKEN_PATH)?.trim()
-  const resolvedPath = tokenPath || DEFAULT_SERVICE_ACCOUNT_TOKEN_PATH
+  if (!control.useServiceAccountToken) return null
 
   try {
-    const token = (await readFile(resolvedPath, 'utf8')).trim()
+    const token = (await readFile(control.serviceAccountTokenPath, 'utf8')).trim()
     return token || null
   } catch {
     return null
@@ -514,14 +499,15 @@ const fetchWhitepaperOutputFromBranch = async (input: {
   branch: string
   runId: string
 }): Promise<WhitepaperOutputBranchResult> => {
-  const githubToken = asString(process.env.GITHUB_TOKEN)?.trim() || asString(process.env.GH_TOKEN)?.trim() || null
+  const githubConfig = resolveWhitepaperGitHubConfig(process.env)
+  const githubToken = githubConfig.token
   if (!githubToken) {
     return {
       status: 'missing_token',
       detail: 'GITHUB_TOKEN or GH_TOKEN is required to fetch whitepaper outputs from GitHub',
     }
   }
-  const githubApiBaseUrl = asString(process.env.GITHUB_API_BASE_URL)?.trim() || DEFAULT_GITHUB_API_BASE_URL
+  const githubApiBaseUrl = githubConfig.apiBaseUrl
   const github = createGitHubClient({
     token: githubToken,
     apiBaseUrl: githubApiBaseUrl,
@@ -817,12 +803,11 @@ const isJobComplete = (job: Record<string, unknown>) => hasJobCondition(job, 'Co
 const isJobFailed = (job: Record<string, unknown>) => hasJobCondition(job, 'Failed')
 
 const shouldStart = () => {
-  if (process.env.NODE_ENV === 'test') return false
-  return parseBooleanEnv(process.env.JANGAR_AGENTS_CONTROLLER_ENABLED, true)
+  return resolveAgentsControllerBehaviorConfig(process.env).enabled
 }
 
 const shouldStartWithFeatureFlag = async () => {
-  if (process.env.NODE_ENV === 'test') return false
+  if (resolveAgentsControllerBehaviorConfig(process.env).enabled === false) return false
   return resolveBooleanFeatureToggle({
     key: DEFAULT_AGENTS_CONTROLLER_ENABLED_FLAG_KEY,
     keyEnvVar: 'JANGAR_AGENTS_CONTROLLER_ENABLED_FLAG_KEY',
@@ -874,10 +859,10 @@ export const getAgentsControllerHealth = (): AgentsControllerHealth => ({
   agentRunIngestion: controllerState.agentRunIngestion,
 })
 
-const isAgentRunIdempotencyEnabled = () => parseBooleanEnv(process.env.JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED, true)
+const isAgentRunIdempotencyEnabled = () => resolveAgentsControllerBehaviorConfig(process.env).agentRunIdempotencyEnabled
 
 const resolveAgentRunIdempotencyRetentionDays = () =>
-  parseNumberEnv(process.env.JANGAR_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS, DEFAULT_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS, 1)
+  resolveAgentsControllerBehaviorConfig(process.env).agentRunIdempotencyRetentionDays
 
 const getPrimitivesStore = async () => {
   if (runtimeMutableState.primitivesStoreRef) return runtimeMutableState.primitivesStoreRef
@@ -1013,7 +998,7 @@ const setStatus = async (
 }
 
 const resolveJobImage = (workload: Record<string, unknown>) =>
-  asString(workload.image) ?? process.env.JANGAR_AGENT_RUNNER_IMAGE ?? process.env.JANGAR_AGENT_IMAGE ?? null
+  asString(workload.image) ?? resolveAgentRunnerDefaultsConfig(process.env).defaultRunnerImage
 
 const getTemporalClient = async () => {
   if (!runtimeMutableState.temporalClientPromise) {
@@ -1033,8 +1018,8 @@ const getTemporalClient = async () => {
 }
 
 const parseAgentRunRetentionSeconds = () => {
-  const parsed = parseOptionalNumber(process.env.JANGAR_AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS)
-  if (parsed === undefined || parsed < 0) return DEFAULT_AGENTRUN_RETENTION_SECONDS
+  const parsed = resolveAgentsControllerBehaviorConfig(process.env).agentRunRetentionSeconds
+  if (parsed == null || parsed < 0) return DEFAULT_AGENTRUN_RETENTION_SECONDS
   return Math.floor(parsed)
 }
 
@@ -1277,7 +1262,6 @@ const { reconcileAgentRun } = createAgentRunReconciler({
   resolveJobImage,
   resolveAgentRunRetentionSeconds,
   getPrimitivesStore,
-  runKubectl,
   getTemporalClient,
   reconcileWorkflowRun,
   submitJobRun,

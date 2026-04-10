@@ -1,8 +1,8 @@
 import { bootRuntimeProfile } from './runtime-boot'
 import { JANGAR_RUNTIME_PROFILES } from './runtime-profile'
+import { resolveHttpServerListenConfig } from './runtime-entry-config'
 
-const port = Number.parseInt(process.env.PORT ?? process.env.JANGAR_PORT ?? '3000', 10)
-const hostname = process.env.HOST?.trim() || '0.0.0.0'
+const { port, hostname } = resolveHttpServerListenConfig()
 const runtimeProfile = JANGAR_RUNTIME_PROFILES.httpServer
 
 bootRuntimeProfile(runtimeProfile)

@@ -170,9 +170,10 @@ describe('supporting primitives controller', () => {
   it('builds schedule runner command with runtime delivery id substitution', () => {
     const command = __test__.buildScheduleRunnerCommand()
 
-    expect(command).toContain('DELIVERY_ID=$(cat /proc/sys/kernel/random/uuid);')
-    expect(command).toContain('s/__JANGAR_DELIVERY_ID__/${DELIVERY_ID}/g')
-    expect(command).not.toContain('\\${DELIVERY_ID}')
+    expect(command).toContain("replaceAll('__JANGAR_DELIVERY_ID__', randomUUID())")
+    expect(command).toContain('const targetByKind = {')
+    expect(command).toContain("method: 'POST'")
+    expect(command).not.toContain('kubectl create -f -')
   })
 
   it('staggers hourly stage cadence deterministically per stage', () => {
@@ -457,8 +458,10 @@ describe('supporting primitives controller', () => {
 
   it('resolves startup gate from feature flags with env fallback default', async () => {
     const previousNodeEnv = process.env.NODE_ENV
+    const previousVitest = process.env.VITEST
     try {
       process.env.NODE_ENV = 'production'
+      delete process.env.VITEST
       process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED = 'false'
       const resolveBooleanFeatureToggleMock = vi.mocked(resolveBooleanFeatureToggle)
       resolveBooleanFeatureToggleMock.mockResolvedValueOnce(true)
@@ -474,12 +477,19 @@ describe('supporting primitives controller', () => {
       })
     } finally {
       process.env.NODE_ENV = previousNodeEnv
+      if (previousVitest === undefined) {
+        delete process.env.VITEST
+      } else {
+        process.env.VITEST = previousVitest
+      }
     }
   })
 
   it('starts swarm watches when optional swarm CRD appears after startup', async () => {
     const previousNodeEnv = process.env.NODE_ENV
+    const previousVitest = process.env.VITEST
     process.env.NODE_ENV = 'production'
+    delete process.env.VITEST
     try {
       await startSupportingPrimitivesController()
 
@@ -497,6 +507,11 @@ describe('supporting primitives controller', () => {
       )
     } finally {
       process.env.NODE_ENV = previousNodeEnv
+      if (previousVitest === undefined) {
+        delete process.env.VITEST
+      } else {
+        process.env.VITEST = previousVitest
+      }
     }
   })
 

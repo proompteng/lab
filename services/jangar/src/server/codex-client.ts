@@ -2,21 +2,13 @@ import { CodexAppServerClient } from '@proompteng/codex'
 import { Effect } from 'effect'
 
 import { MockCodexAppServerClient, shouldUseMockCodexClient } from './mock-codex-client'
+import { resolveCodexClientConfig } from './runtime-tooling-config'
 
 type Factory = (options?: { defaultModel?: string }) => CodexAppServerClient
 
-const resolveMcpUrl = () => {
-  const envUrl = process.env.JANGAR_MCP_URL?.trim()
-  if (envUrl && envUrl.length > 0) return envUrl
+const resolveMcpUrl = () => resolveCodexClientConfig(process.env).mcpUrl
 
-  const port = (process.env.UI_PORT ?? process.env.PORT ?? '8080').trim()
-  return `http://127.0.0.1:${port}/mcp`
-}
-
-const resolveCodexBinary = () => {
-  const envPath = process.env.JANGAR_CODEX_BINARY?.trim()
-  return envPath && envPath.length > 0 ? envPath : 'codex'
-}
+const resolveCodexBinary = () => resolveCodexClientConfig(process.env).binaryPath
 
 const defaultFactory: Factory = (options) => {
   if (shouldUseMockCodexClient()) {

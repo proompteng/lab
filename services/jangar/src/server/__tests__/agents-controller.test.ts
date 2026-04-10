@@ -212,7 +212,9 @@ const buildVcsProvider = (overrides: Record<string, unknown> = {}) => ({
 describe('agents controller startup', () => {
   it('avoids duplicate startup when feature flag lookup is pending', async () => {
     const previousNodeEnv = process.env.NODE_ENV
+    const previousVitest = process.env.VITEST
     process.env.NODE_ENV = 'development'
+    delete process.env.VITEST
     let resolveFlag!: (value: boolean) => void
     const flagPromise = new Promise<boolean>((resolve) => {
       resolveFlag = resolve
@@ -231,6 +233,11 @@ describe('agents controller startup', () => {
         delete process.env.NODE_ENV
       } else {
         process.env.NODE_ENV = previousNodeEnv
+      }
+      if (previousVitest === undefined) {
+        delete process.env.VITEST
+      } else {
+        process.env.VITEST = previousVitest
       }
     }
   })
@@ -1187,7 +1194,7 @@ describe('agents controller reconcileAgentRun', () => {
   it('ignores NotFound when adding AgentRun finalizer', async () => {
     const patchMock = vi.fn(async () => {
       throw new Error(
-        'kubectl patch failed: Error from server (NotFound): agentruns.agents.proompteng.ai "run-1" not found',
+        'kubernetes patch failed: Error from server (NotFound): agentruns.agents.proompteng.ai "run-1" not found',
       )
     })
     const kube = buildKube({ patch: patchMock })
@@ -1206,7 +1213,7 @@ describe('agents controller reconcileAgentRun', () => {
   it('ignores NotFound when removing AgentRun finalizer during deletion', async () => {
     const patchMock = vi.fn(async () => {
       throw new Error(
-        'kubectl patch failed: Error from server (NotFound): agentruns.agents.proompteng.ai "run-1" not found',
+        'kubernetes patch failed: Error from server (NotFound): agentruns.agents.proompteng.ai "run-1" not found',
       )
     })
     const kube = buildKube({ patch: patchMock })

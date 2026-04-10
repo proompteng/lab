@@ -25,6 +25,7 @@ import {
   validatePolicies,
 } from '~/server/primitives-policy'
 import { createPrimitivesStore } from '~/server/primitives-store'
+import { resolveAgentRunAdmissionConfig } from '~/server/agents-controller/controller-config'
 
 export const Route = createFileRoute('/v1/agent-runs')({
   server: {
@@ -94,33 +95,8 @@ const normalizeVcsMode = (value?: string | null) => {
   return 'read-write'
 }
 
-const parseBooleanEnv = (value: string | undefined, fallback: boolean) => {
-  if (value == null) return fallback
-  const normalized = value.trim().toLowerCase()
-  if (['1', 'true', 'yes', 'y'].includes(normalized)) return true
-  if (['0', 'false', 'no', 'n'].includes(normalized)) return false
-  return fallback
-}
-
-const isVcsProvidersEnabled = () => parseBooleanEnv(process.env.JANGAR_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED, true)
-const isAgentRunIdempotencyEnabled = () => parseBooleanEnv(process.env.JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED, true)
-const DEFAULT_AGENTRUN_IDEMPOTENCY_RESERVATION_TTL_SECONDS = 10 * 60
-
-const DEFAULT_CONCURRENCY = {
-  perNamespace: 10,
-  cluster: 100,
-}
-const DEFAULT_QUEUE_LIMITS = {
-  perNamespace: 200,
-  perRepo: 50,
-  cluster: 1000,
-}
-const DEFAULT_RATE_LIMITS = {
-  windowSeconds: 60,
-  perNamespace: 120,
-  perRepo: 30,
-  cluster: 600,
-}
+const isVcsProvidersEnabled = () => resolveAgentRunAdmissionConfig('agents', process.env).vcsProvidersEnabled
+const isAgentRunIdempotencyEnabled = () => resolveAgentRunAdmissionConfig('agents', process.env).idempotencyEnabled
 
 const QUEUED_PHASES = new Set(['pending', 'queued', 'progressing', 'inprogress'])
 const RUNNING_PHASE = 'running'
@@ -131,13 +107,6 @@ const admissionRateState = {
   cluster: { count: 0, resetAt: 0 } as RateBucket,
   perNamespace: new Map<string, RateBucket>(),
   perRepo: new Map<string, RateBucket>(),
-}
-
-const parseNumberEnv = (value: string | undefined, fallback: number, min = 0) => {
-  if (!value) return fallback
-  const parsed = Number.parseInt(value, 10)
-  if (!Number.isFinite(parsed) || parsed < min) return fallback
-  return parsed
 }
 
 const parseTimestampMs = (value: unknown): number | null => {
@@ -153,59 +122,24 @@ const parseTimestampMs = (value: unknown): number | null => {
 }
 
 const isIdempotencyReservationStale = (createdAt: unknown) => {
-  const ttlSeconds = parseNumberEnv(
-    process.env.JANGAR_AGENTRUN_IDEMPOTENCY_RESERVATION_TTL_SECONDS,
-    DEFAULT_AGENTRUN_IDEMPOTENCY_RESERVATION_TTL_SECONDS,
-    0,
-  )
+  const ttlSeconds = resolveAgentRunAdmissionConfig('agents', process.env).idempotencyReservationTtlSeconds
   if (ttlSeconds <= 0) return false
   const createdAtMs = parseTimestampMs(createdAt)
   if (createdAtMs == null) return false
   return Date.now() - createdAtMs >= ttlSeconds * 1000
 }
 
-const parseAdmissionNamespaces = (namespace: string) => {
-  const raw = process.env.JANGAR_AGENTS_CONTROLLER_NAMESPACES
-  if (!raw) return { namespaces: [namespace], includeCluster: true }
-  const list = raw
-    .split(',')
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0)
-  if (list.length === 0) return { namespaces: [namespace], includeCluster: true }
-  if (list.includes('*')) {
-    return { namespaces: [namespace], includeCluster: false }
-  }
-  return { namespaces: list, includeCluster: true }
-}
+const parseAdmissionNamespaces = (namespace: string) =>
+  resolveAgentRunAdmissionConfig(namespace, process.env).admissionNamespaces
 
-const parseAdmissionLimits = () => ({
-  concurrency: {
-    perNamespace: parseNumberEnv(
-      process.env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_NAMESPACE,
-      DEFAULT_CONCURRENCY.perNamespace,
-      1,
-    ),
-    cluster: parseNumberEnv(process.env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_CLUSTER, DEFAULT_CONCURRENCY.cluster, 1),
-  },
-  queue: {
-    perNamespace: parseNumberEnv(
-      process.env.JANGAR_AGENTS_CONTROLLER_QUEUE_NAMESPACE,
-      DEFAULT_QUEUE_LIMITS.perNamespace,
-    ),
-    perRepo: parseNumberEnv(process.env.JANGAR_AGENTS_CONTROLLER_QUEUE_REPO, DEFAULT_QUEUE_LIMITS.perRepo),
-    cluster: parseNumberEnv(process.env.JANGAR_AGENTS_CONTROLLER_QUEUE_CLUSTER, DEFAULT_QUEUE_LIMITS.cluster),
-  },
-  rate: {
-    windowSeconds: parseNumberEnv(
-      process.env.JANGAR_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS,
-      DEFAULT_RATE_LIMITS.windowSeconds,
-      1,
-    ),
-    perNamespace: parseNumberEnv(process.env.JANGAR_AGENTS_CONTROLLER_RATE_NAMESPACE, DEFAULT_RATE_LIMITS.perNamespace),
-    perRepo: parseNumberEnv(process.env.JANGAR_AGENTS_CONTROLLER_RATE_REPO, DEFAULT_RATE_LIMITS.perRepo),
-    cluster: parseNumberEnv(process.env.JANGAR_AGENTS_CONTROLLER_RATE_CLUSTER, DEFAULT_RATE_LIMITS.cluster),
-  },
-})
+const parseAdmissionLimits = () => {
+  const config = resolveAgentRunAdmissionConfig('agents', process.env)
+  return {
+    concurrency: config.concurrency,
+    queue: config.queue,
+    rate: config.rate,
+  }
+}
 
 const normalizeRepository = (value: string) => value.trim().toLowerCase()
 

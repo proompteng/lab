@@ -35,6 +35,11 @@ export type PrimitiveDetailResult =
   | { ok: true; resource: PrimitiveResource; kind: AgentPrimitiveKind; namespace: string }
   | { ok: false; message: string; status?: number; raw?: unknown }
 
+export type AgentOption = {
+  name: string
+  provider: string | null
+}
+
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
 
@@ -542,6 +547,32 @@ export const fetchPrimitiveDetail = async (params: {
   const resource = normalizePrimitiveResource(record.resource)
   const namespace = typeof record.namespace === 'string' ? record.namespace : params.namespace
   return { ok: true, resource, kind: params.kind, namespace }
+}
+
+export const fetchAgentOptions = async (namespace: string) => {
+  const result = await fetchPrimitiveList({ kind: 'Agent', namespace, limit: 200 })
+  if (!result.ok) {
+    return result
+  }
+
+  const items = result.items
+    .map((item) => {
+      const metadata = asRecord(item.metadata) ?? {}
+      const spec = asRecord(item.spec) ?? {}
+      const providerRef = asRecord(spec.providerRef) ?? {}
+      const name = typeof metadata.name === 'string' ? metadata.name.trim() : ''
+      if (!name) return null
+      const provider = typeof providerRef.name === 'string' ? providerRef.name.trim() : null
+      return { name, provider: provider || null } satisfies AgentOption
+    })
+    .filter((item): item is AgentOption => Boolean(item))
+    .sort((left, right) => left.name.localeCompare(right.name))
+
+  return {
+    ok: true as const,
+    items,
+    namespace: result.namespace,
+  }
 }
 
 export const deletePrimitiveResource = async (params: {

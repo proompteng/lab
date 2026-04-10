@@ -25,10 +25,12 @@ import {
   updateTerminalSessionRecord,
   upsertTerminalSessionRecord,
 } from '~/server/terminal-sessions-store'
+import { resolveTerminalsConfig } from '~/server/terminals-config'
 
 const SESSION_PREFIX = 'jangar-terminal-'
 const WORKTREE_DIR_NAME = '.worktrees'
-const DEFAULT_BASE_REF = process.env.JANGAR_TERMINAL_BASE_REF?.trim() || 'origin/main'
+const terminalsConfig = resolveTerminalsConfig()
+const DEFAULT_BASE_REF = terminalsConfig.baseRef
 const FALLBACK_BASE_REF = 'main'
 const MAX_WORKTREE_ATTEMPTS = 6
 const SESSION_ID_PATTERN = /^jangar-terminal-[a-z0-9-]+$/
@@ -37,24 +39,22 @@ const parseNumber = (value: string | undefined, fallback: number) => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
-const MAIN_FETCH_ENABLED = (process.env.JANGAR_TERMINAL_FETCH_MAIN ?? 'true') !== 'false'
+const MAIN_FETCH_ENABLED = terminalsConfig.mainFetchEnabled
 const FETCH_TIMEOUT_MS = 30_000
-const WORKTREE_TIMEOUT_MS = parseNumber(process.env.JANGAR_TERMINAL_WORKTREE_TIMEOUT_MS, 180_000)
+const WORKTREE_TIMEOUT_MS = terminalsConfig.worktreeTimeoutMs
 const REUSE_REFRESH_TIMEOUT_MS = 15_000
-const DEFER_WORKTREE_CHECKOUT = (process.env.JANGAR_TERMINAL_DEFER_CHECKOUT ?? 'true') !== 'false'
-const DEFAULT_BUFFER_BYTES = 4 * 1024 * 1024
-const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60_000
+const DEFER_WORKTREE_CHECKOUT = terminalsConfig.deferWorktreeCheckout
 
-const bufferBytes = parseNumber(process.env.JANGAR_TERMINAL_BUFFER_BYTES, DEFAULT_BUFFER_BYTES)
-const idleTimeoutMs = parseNumber(process.env.JANGAR_TERMINAL_IDLE_TIMEOUT_MS, DEFAULT_IDLE_TIMEOUT_MS)
-const publicTerminalUrl = process.env.JANGAR_TERMINAL_PUBLIC_URL?.trim() || null
+const bufferBytes = terminalsConfig.bufferBytes
+const idleTimeoutMs = terminalsConfig.idleTimeoutMs
+const publicTerminalUrl = terminalsConfig.publicTerminalUrl
 
 const resolveRepoRoot = () => resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 
 const resolveCodexBaseCwd = () => {
-  const envCwd = process.env.CODEX_CWD?.trim()
+  const envCwd = terminalsConfig.codexCwdOverride
   if (envCwd) return envCwd
-  return process.env.NODE_ENV === 'production' ? '/workspace/lab' : resolveRepoRoot()
+  return terminalsConfig.isProduction ? '/workspace/lab' : resolveRepoRoot()
 }
 
 const resolveWorktreeRoot = () => join(resolveCodexBaseCwd(), WORKTREE_DIR_NAME)
@@ -388,7 +388,7 @@ const buildManager = () => {
   return getTerminalPtyManager({
     bufferBytes,
     idleTimeoutMs,
-    instanceId: process.env.JANGAR_TERMINAL_BACKEND_ID ?? undefined,
+    instanceId: terminalsConfig.backendId ?? undefined,
     onExit: async (sessionId, detail) => {
       const record = await getTerminalSessionRecord(sessionId)
       if (!record) return

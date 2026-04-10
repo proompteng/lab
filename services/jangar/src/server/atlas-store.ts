@@ -2,6 +2,7 @@ import { sql } from 'kysely'
 
 import { resolveStoreDb, type Db } from '~/server/db'
 import { ensureMigrations } from '~/server/kysely-migrations'
+import { resolveEmbeddingConfig } from './memory-config'
 
 export type RepositoryRecord = {
   id: string
@@ -412,29 +413,11 @@ const isHostedOpenAiBaseUrl = (rawBaseUrl: string) => {
   }
 }
 
-const loadEmbeddingDimension = (fallback: number) => {
-  const dimension = Number.parseInt(process.env.OPENAI_EMBEDDING_DIMENSION ?? String(fallback), 10)
-  if (!Number.isFinite(dimension) || dimension <= 0) {
-    throw new Error('OPENAI_EMBEDDING_DIMENSION must be a positive integer')
-  }
-  return dimension
-}
+const loadEmbeddingDimension = (_fallback: number) => resolveEmbeddingConfig(process.env).dimension
 
-const loadEmbeddingTimeoutMs = () => {
-  const timeoutMs = Number.parseInt(process.env.OPENAI_EMBEDDING_TIMEOUT_MS ?? '15000', 10)
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw new Error('OPENAI_EMBEDDING_TIMEOUT_MS must be a positive integer')
-  }
-  return timeoutMs
-}
+const loadEmbeddingTimeoutMs = () => resolveEmbeddingConfig(process.env).timeoutMs
 
-const loadEmbeddingMaxInputChars = () => {
-  const maxInputChars = Number.parseInt(process.env.OPENAI_EMBEDDING_MAX_INPUT_CHARS ?? '60000', 10)
-  if (!Number.isFinite(maxInputChars) || maxInputChars <= 0) {
-    throw new Error('OPENAI_EMBEDDING_MAX_INPUT_CHARS must be a positive integer')
-  }
-  return maxInputChars
-}
+const loadEmbeddingMaxInputChars = () => resolveEmbeddingConfig(process.env).maxInputChars
 
 const resolveEmbeddingDefaults = (apiBaseUrl: string) => {
   const hosted = isHostedOpenAiBaseUrl(apiBaseUrl)
@@ -495,18 +478,18 @@ const countIdentifierMatches = (haystack: string, identifiers: string[]) => {
 }
 
 const loadEmbeddingConfig = () => {
-  const apiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? DEFAULT_OPENAI_API_BASE_URL
-  const apiKey = process.env.OPENAI_API_KEY?.trim() || null
+  const config = resolveEmbeddingConfig(process.env)
+  const apiBaseUrl = config.apiBaseUrl
+  const apiKey = config.apiKey
   if (!apiKey && isHostedOpenAiBaseUrl(apiBaseUrl)) {
     throw new Error(
       'missing OPENAI_API_KEY; set it or point OPENAI_API_BASE_URL at an OpenAI-compatible endpoint (e.g. Ollama)',
     )
   }
-  const defaults = resolveEmbeddingDefaults(apiBaseUrl)
-  const model = process.env.OPENAI_EMBEDDING_MODEL ?? defaults.model
-  const dimension = loadEmbeddingDimension(defaults.dimension)
-  const timeoutMs = loadEmbeddingTimeoutMs()
-  const maxInputChars = loadEmbeddingMaxInputChars()
+  const model = config.model
+  const dimension = config.dimension
+  const timeoutMs = config.timeoutMs
+  const maxInputChars = config.maxInputChars
 
   return { apiKey, apiBaseUrl, model, dimension, timeoutMs, maxInputChars }
 }
@@ -608,10 +591,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
   }
   const db = resolved.db
   let schemaReady: Promise<void> | null = null
-  const defaults = resolveEmbeddingDefaults(
-    process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? DEFAULT_OPENAI_API_BASE_URL,
-  )
-  const expectedEmbeddingDimension = loadEmbeddingDimension(defaults.dimension)
+  const expectedEmbeddingDimension = resolveEmbeddingConfig(process.env).dimension
 
   const ensureEmbeddingDimensionMatches = async () => {
     const { rows } = await sql<{ embedding_type: string | null }>`

@@ -1,12 +1,6 @@
-const CACHE_STALE_SECONDS_DEFAULT = 120
-const CACHE_BOOL_TRUE = new Set(['1', 'true', 'yes', 'on', 'enabled'])
+import { resolveControlPlaneCacheFreshnessConfig, type ControlPlaneCacheFreshnessConfig } from './control-plane-config'
 
 type TimestampValue = string | Date | null | undefined
-
-export type CacheFreshnessConfig = {
-  maxAgeSeconds: number
-  allowStale: boolean
-}
 
 export type CacheFreshnessState = {
   isFresh: boolean
@@ -18,18 +12,6 @@ export type CacheFreshnessState = {
   ageSeconds: number | null
 }
 
-const parseBoolean = (value: string | undefined) => {
-  if (!value) return null
-  return CACHE_BOOL_TRUE.has(value.trim().toLowerCase())
-}
-
-const parsePositiveSeconds = (value: string | undefined, fallback: number) => {
-  if (!value) return fallback
-  const parsed = Number.parseInt(value.trim(), 10)
-  if (!Number.isFinite(parsed) || parsed < 0) return fallback
-  return parsed
-}
-
 const parseTimestamp = (value: TimestampValue) => {
   if (!value) return null
   if (value instanceof Date && Number.isFinite(value.getTime())) return value
@@ -39,18 +21,13 @@ const parseTimestamp = (value: TimestampValue) => {
   return normalized
 }
 
-export const resolveCacheFreshnessConfig = (): CacheFreshnessConfig => ({
-  maxAgeSeconds: parsePositiveSeconds(
-    process.env.JANGAR_CONTROL_PLANE_CACHE_STALE_SECONDS,
-    CACHE_STALE_SECONDS_DEFAULT,
-  ),
-  allowStale: parseBoolean(process.env.JANGAR_CONTROL_PLANE_CACHE_ALLOW_STALE) ?? true,
-})
+export const resolveCacheFreshnessConfig = (): ControlPlaneCacheFreshnessConfig =>
+  resolveControlPlaneCacheFreshnessConfig(process.env)
 
 export const buildCacheFreshnessState = (
   lastSeenAt: TimestampValue,
   checkedAt = new Date(),
-  config: CacheFreshnessConfig = resolveCacheFreshnessConfig(),
+  config: ControlPlaneCacheFreshnessConfig = resolveCacheFreshnessConfig(),
 ): CacheFreshnessState => {
   const parsed = parseTimestamp(lastSeenAt)
   const maxAgeMs = config.maxAgeSeconds * 1000

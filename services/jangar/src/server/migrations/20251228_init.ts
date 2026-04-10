@@ -1,33 +1,9 @@
 import { type Kysely, sql } from 'kysely'
 
 import type { Database } from '../db'
+import { resolveEmbeddingConfig } from '../memory-config'
 
-const DEFAULT_OPENAI_API_BASE_URL = 'https://api.openai.com/v1'
-const DEFAULT_OPENAI_EMBEDDING_DIMENSION = 1536
-const DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION = 1024
-
-const isHostedOpenAiBaseUrl = (rawBaseUrl: string) => {
-  try {
-    return new URL(rawBaseUrl).hostname === 'api.openai.com'
-  } catch {
-    return rawBaseUrl.includes('api.openai.com')
-  }
-}
-
-const loadEmbeddingDimension = (fallback: number) => {
-  const dimension = Number.parseInt(process.env.OPENAI_EMBEDDING_DIMENSION ?? String(fallback), 10)
-  if (!Number.isFinite(dimension) || dimension <= 0) {
-    throw new Error('OPENAI_EMBEDDING_DIMENSION must be a positive integer')
-  }
-  return dimension
-}
-
-const resolveEmbeddingDimension = () => {
-  const apiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE ?? DEFAULT_OPENAI_API_BASE_URL
-  const hosted = isHostedOpenAiBaseUrl(apiBaseUrl)
-  const fallback = hosted ? DEFAULT_OPENAI_EMBEDDING_DIMENSION : DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION
-  return loadEmbeddingDimension(fallback)
-}
+const resolveEmbeddingDimension = () => resolveEmbeddingConfig(process.env).dimension
 
 export const up = async (db: Kysely<Database>) => {
   const embeddingDimension = resolveEmbeddingDimension()

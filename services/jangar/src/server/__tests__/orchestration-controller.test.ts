@@ -343,8 +343,14 @@ describe('orchestration controller', () => {
 
   it('resolves startup gate from feature flags with env fallback default', async () => {
     const previousNodeEnv = process.env.NODE_ENV
+    const previousVitest = process.env.VITEST
+    const previousVitestPoolId = process.env.VITEST_POOL_ID
+    const previousVitestWorkerId = process.env.VITEST_WORKER_ID
     try {
       process.env.NODE_ENV = 'production'
+      delete process.env.VITEST
+      delete process.env.VITEST_POOL_ID
+      delete process.env.VITEST_WORKER_ID
       process.env.JANGAR_ORCHESTRATION_CONTROLLER_ENABLED = 'false'
       const resolveBooleanFeatureToggleMock = vi.mocked(resolveBooleanFeatureToggle)
       resolveBooleanFeatureToggleMock.mockResolvedValueOnce(true)
@@ -359,7 +365,26 @@ describe('orchestration controller', () => {
         defaultValue: false,
       })
     } finally {
-      process.env.NODE_ENV = previousNodeEnv
+      if (previousNodeEnv === undefined) {
+        delete process.env.NODE_ENV
+      } else {
+        process.env.NODE_ENV = previousNodeEnv
+      }
+      if (previousVitest === undefined) {
+        delete process.env.VITEST
+      } else {
+        process.env.VITEST = previousVitest
+      }
+      if (previousVitestPoolId === undefined) {
+        delete process.env.VITEST_POOL_ID
+      } else {
+        process.env.VITEST_POOL_ID = previousVitestPoolId
+      }
+      if (previousVitestWorkerId === undefined) {
+        delete process.env.VITEST_WORKER_ID
+      } else {
+        process.env.VITEST_WORKER_ID = previousVitestWorkerId
+      }
     }
   })
 })

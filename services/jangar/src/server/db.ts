@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 
 import { type Generated, Kysely, PostgresDialect } from 'kysely'
 import { Pool } from 'pg'
+import { resolveDatabaseConfig } from './storage-config'
 
 export type Db = Kysely<Database>
 export type StoreDbResolution = {
@@ -925,7 +926,7 @@ const resolveEffectiveSslMode = (rawUrl: string) => {
   const urlMode = resolveSslMode(rawUrl)
   if (urlMode) return urlMode
 
-  const envMode = process.env.PGSSLMODE?.trim()
+  const envMode = resolveDatabaseConfig().sslMode
   if (envMode) return envMode.toLowerCase()
 
   return DEFAULT_SSLMODE
@@ -947,19 +948,12 @@ const resolveSslConfig = (sslmode: string | null, caCertPath?: string) => {
 const createDbClient = (rawUrl: string): Db => {
   const url = rawUrl.trim()
   const sslmode = resolveEffectiveSslMode(url)
-  const caCertPath = process.env.PGSSLROOTCERT?.trim() || process.env.JANGAR_DB_CA_CERT?.trim()
+  const databaseConfig = resolveDatabaseConfig()
+  const caCertPath = databaseConfig.caCertPath ?? undefined
   const ssl = resolveSslConfig(sslmode, caCertPath)
 
-  const connectionTimeoutMillis = parsePositiveInt(
-    process.env.PGCONNECT_TIMEOUT_MS?.trim(),
-    'PGCONNECT_TIMEOUT_MS',
-    DEFAULT_CONNECT_TIMEOUT_MS,
-  )
-  const queryTimeoutMillis = parsePositiveInt(
-    process.env.PGQUERY_TIMEOUT_MS?.trim(),
-    'PGQUERY_TIMEOUT_MS',
-    DEFAULT_QUERY_TIMEOUT_MS,
-  )
+  const connectionTimeoutMillis = databaseConfig.connectTimeoutMs || DEFAULT_CONNECT_TIMEOUT_MS
+  const queryTimeoutMillis = databaseConfig.queryTimeoutMs || DEFAULT_QUERY_TIMEOUT_MS
 
   const pool = new Pool({
     connectionString: url,
@@ -981,7 +975,7 @@ const normalizeDbUrl = (value: string | undefined) => value?.trim() ?? ''
 
 const shouldReuseSharedDb = (options: { url?: string; createDb?: (url: string) => Db }) => {
   if (options.createDb) return false
-  const envUrl = normalizeDbUrl(process.env.DATABASE_URL)
+  const envUrl = normalizeDbUrl(resolveDatabaseConfig().url ?? undefined)
   const resolvedUrl = normalizeDbUrl(options.url) || envUrl
   return resolvedUrl.length > 0 && resolvedUrl === envUrl
 }
@@ -989,7 +983,7 @@ const shouldReuseSharedDb = (options: { url?: string; createDb?: (url: string) =
 export const getDb = () => {
   if (db !== undefined) return db
 
-  const url = normalizeDbUrl(process.env.DATABASE_URL)
+  const url = normalizeDbUrl(resolveDatabaseConfig().url ?? undefined)
   if (!url) {
     db = null
     return db
@@ -1002,7 +996,7 @@ export const getDb = () => {
 export const createKyselyDb = (url: string) => createDbClient(url)
 
 export const resolveStoreDb = (options: { url?: string; createDb?: (url: string) => Db } = {}): StoreDbResolution => {
-  const url = normalizeDbUrl(options.url) || normalizeDbUrl(process.env.DATABASE_URL)
+  const url = normalizeDbUrl(options.url) || normalizeDbUrl(resolveDatabaseConfig().url ?? undefined)
   if (!url) {
     return { db: null, shared: false, url: null }
   }

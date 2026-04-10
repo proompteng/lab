@@ -2,6 +2,7 @@ import { Effect, pipe } from 'effect'
 
 import { createBunRedisClient, type BunRedisClient } from './bun-redis-client'
 import { parseTranscriptSignature, type TranscriptEntry } from './chat-transcript'
+import { resolveRedisConfig } from './storage-config'
 
 export const TRANSCRIPT_TTL_SECONDS = 60 * 60 * 24 * 7
 const DEFAULT_PREFIX = 'openwebui:transcript'
@@ -22,12 +23,13 @@ const redisError = (message: string, error: unknown) =>
   new Error(`${message}: ${error instanceof Error ? error.message : String(error)}`)
 
 export const createRedisChatTranscriptStore = (options: ChatTranscriptStoreOptions = {}): ChatTranscriptStore => {
-  const url = options.url ?? process.env.JANGAR_REDIS_URL
+  const redisConfig = resolveRedisConfig(process.env)
+  const url = options.url ?? redisConfig.url
   if (!url) {
     throw new Error('JANGAR_REDIS_URL is required for OpenWebUI chat transcript storage')
   }
 
-  const prefix = (options.prefix ?? process.env.JANGAR_TRANSCRIPT_KEY_PREFIX ?? DEFAULT_PREFIX).replace(/:+$/, '')
+  const prefix = (options.prefix ?? redisConfig.transcriptKeyPrefix ?? DEFAULT_PREFIX).replace(/:+$/, '')
   let redisPromise: Promise<BunRedisClient> | null = null
 
   const getRedis = async () => {

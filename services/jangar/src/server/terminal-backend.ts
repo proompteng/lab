@@ -1,14 +1,6 @@
-const DEFAULT_BACKEND_TIMEOUT_MS = 15_000
+import { resolveTerminalBackendConfig } from '~/server/terminals-config'
 
-const rawBackendUrl = process.env.JANGAR_TERMINAL_BACKEND_URL?.trim()
-export const terminalBackendUrl = rawBackendUrl && rawBackendUrl.length > 0 ? rawBackendUrl : null
-
-const parseNumber = (value: string | undefined, fallback: number) => {
-  const parsed = Number.parseInt(value ?? '', 10)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
-}
-
-const backendTimeoutMs = parseNumber(process.env.JANGAR_TERMINAL_BACKEND_TIMEOUT_MS, DEFAULT_BACKEND_TIMEOUT_MS)
+export const terminalBackendUrl = resolveTerminalBackendConfig().backendUrl
 
 export const isTerminalBackendProxyEnabled = () => Boolean(terminalBackendUrl)
 
@@ -24,7 +16,7 @@ export const buildTerminalBackendUrl = (path: string, query?: URLSearchParams) =
 }
 
 export const fetchTerminalBackend = async (path: string, init: RequestInit = {}, timeoutOverride?: number) => {
-  const timeoutMs = timeoutOverride === undefined ? backendTimeoutMs : timeoutOverride
+  const timeoutMs = timeoutOverride === undefined ? resolveTerminalBackendConfig().timeoutMs : timeoutOverride
   const controller = new AbortController()
   let timeout: ReturnType<typeof setTimeout> | null = null
   if (timeoutMs > 0) {

@@ -1,10 +1,13 @@
 import { assessAgentRunIngestion } from '~/server/agents-controller'
+import { isRuntimeTestEnv } from '~/server/agents-controller/runtime-config'
+import { resolveSupportingControllerConfig } from '~/server/controller-runtime-config'
 import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
 import { createKubeGateway, type KubeGateway } from '~/server/kube-gateway'
 import { startResourceWatch } from '~/server/kube-watch'
 import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
+import { resolveSupportingPrimitivesConfig } from '~/server/supporting-primitives-config'
 import { shouldApplyStatus } from '~/server/status-utils'
 
 const DEFAULT_NAMESPACES = ['agents']
@@ -73,36 +76,28 @@ const scheduleRunnerStatusReconcileThrottleByKey = new Map<string, number>()
 
 const SWARM_STATUS_ONLY_RECONCILE_INTERVAL_MS = 30_000
 const SCHEDULE_RUNNER_STATUS_RECONCILE_INTERVAL_MS = 30_000
+const SCHEDULE_RUNNER_NAMESPACE_ENV = 'JANGAR_POD_NAMESPACE'
+const KUBERNETES_SERVICE_HOST_ENV = 'KUBERNETES_SERVICE_HOST'
+const KUBERNETES_SERVICE_PORT_ENV = 'KUBERNETES_SERVICE_PORT'
 
 const nowIso = () => new Date().toISOString()
 
 const shouldStart = () => {
-  if (process.env.NODE_ENV === 'test') return false
-  const flag = (process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED ?? '1').trim().toLowerCase()
-  return flag !== '0' && flag !== 'false'
+  if (isRuntimeTestEnv()) return false
+  return resolveSupportingControllerConfig().enabled
 }
 
 const shouldStartWithFeatureFlag = async () => {
-  if (process.env.NODE_ENV === 'test') return false
+  if (isRuntimeTestEnv()) return false
   return resolveBooleanFeatureToggle({
-    key: DEFAULT_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY,
+    key: resolveSupportingControllerConfig().enabledFlagKey || DEFAULT_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY,
     keyEnvVar: 'JANGAR_SUPPORTING_CONTROLLER_ENABLED_FLAG_KEY',
     fallbackEnvVar: 'JANGAR_SUPPORTING_CONTROLLER_ENABLED',
     defaultValue: shouldStart(),
   })
 }
 
-const parseNamespaces = () => {
-  const raw = process.env.JANGAR_SUPPORTING_CONTROLLER_NAMESPACES
-  if (!raw) return DEFAULT_NAMESPACES
-  const list = raw
-    .split(',')
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0)
-  const namespaces = list.length > 0 ? list : DEFAULT_NAMESPACES
-  assertClusterScopedForWildcard(namespaces, 'supporting controller')
-  return namespaces
-}
+const parseNamespaces = () => resolveSupportingControllerConfig().namespaces
 
 const resolveCrdCheckNamespace = () => {
   const namespaces = parseNamespaces()
@@ -687,11 +682,9 @@ const STAGE_HOURLY_STAGGER_OFFSET: Record<StageName, number> = {
 const TERMINAL_SUCCESS_PHASES = new Set(['succeeded', 'success', 'completed'])
 const TERMINAL_FAILURE_PHASES = new Set(['failed', 'error', 'cancelled'])
 const ACTIVE_PHASES = new Set(['pending', 'running', 'inprogress', 'progressing', 'queued'])
-const SWARM_REQUIREMENT_MAX_DISPATCH_PER_RECONCILE = (() => {
-  const raw = Number(process.env.JANGAR_SWARM_REQUIREMENT_MAX_DISPATCH_PER_RECONCILE ?? '5')
-  if (!Number.isFinite(raw) || raw < 1) return 5
-  return Math.floor(raw)
-})()
+const SWARM_REQUIREMENT_MAX_DISPATCH_PER_RECONCILE = resolveSupportingPrimitivesConfig(
+  process.env,
+).swarmRequirementMaxDispatchPerReconcile
 const SWARM_REQUIREMENT_LABEL_TYPE = 'swarm.proompteng.ai/type'
 const SWARM_REQUIREMENT_LABEL_TO = 'swarm.proompteng.ai/to'
 const SWARM_REQUIREMENT_LABEL_FROM = 'swarm.proompteng.ai/from'
@@ -712,24 +705,12 @@ const SWARM_SCHEDULE_ANNOTATION_HULY_SKILL_REF = 'swarm.proompteng.ai/huly-skill
 const SWARM_SCHEDULE_ANNOTATION_HULY_TOKEN_KEY = 'swarm.proompteng.ai/huly-token-key'
 const SWARM_SCHEDULE_ANNOTATION_HULY_EXPECTED_ACTOR_KEY = 'swarm.proompteng.ai/huly-expected-actor-key'
 const SWARM_SCHEDULE_ANNOTATION_HUMAN_NAME = 'swarm.proompteng.ai/human-name'
-const SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT = (() => {
-  const raw = Number(process.env.JANGAR_SWARM_REQUIREMENT_MAX_PAYLOAD_BYTES ?? '16384')
-  if (!Number.isFinite(raw) || raw < 1) return 16_384
-  return Math.floor(raw)
-})()
-const SWARM_DEFAULT_HULY_BASE_URL = (() => {
-  const value = asString(process.env.JANGAR_SWARM_HULY_BASE_URL)?.trim()
-  return value && value.length > 0 ? value : 'https://huly.proompteng.ai'
-})()
-const SWARM_DEFAULT_HULY_SKILL_REF = (() => {
-  const value = asString(process.env.JANGAR_SWARM_HULY_SKILL_REF)?.trim()
-  return value && value.length > 0 ? value : 'skills/huly-api/SKILL.md'
-})()
-const SWARM_REQUIREMENT_MAX_ATTEMPTS = (() => {
-  const raw = Number(process.env.JANGAR_SWARM_REQUIREMENT_MAX_ATTEMPTS ?? '3')
-  if (!Number.isFinite(raw) || raw < 1) return 3
-  return Math.floor(raw)
-})()
+const SWARM_REQUIREMENT_SCOPE_FIELD_LIMIT = resolveSupportingPrimitivesConfig(
+  process.env,
+).swarmRequirementMaxPayloadBytes
+const SWARM_DEFAULT_HULY_BASE_URL = resolveSupportingPrimitivesConfig(process.env).swarmDefaultHulyBaseUrl
+const SWARM_DEFAULT_HULY_SKILL_REF = resolveSupportingPrimitivesConfig(process.env).swarmDefaultHulySkillRef
+const SWARM_REQUIREMENT_MAX_ATTEMPTS = resolveSupportingPrimitivesConfig(process.env).swarmRequirementMaxAttempts
 
 const deriveStageStaggerMinute = (swarmName: string, stage: StageName) => {
   const base = Number.parseInt(hashNameSuffix(swarmName), 36)
@@ -933,8 +914,7 @@ const normalizeLabelValue = (value: string) => {
 }
 
 const resolveDefaultWorkloadImage = () => {
-  const candidate =
-    asString(process.env.JANGAR_AGENT_RUNNER_IMAGE)?.trim() ?? asString(process.env.JANGAR_AGENT_IMAGE)?.trim() ?? ''
+  const candidate = resolveSupportingPrimitivesConfig(process.env).defaultWorkloadImage ?? ''
   return candidate.length > 0 ? candidate : null
 }
 
@@ -1836,8 +1816,57 @@ const resolveScheduleTarget = async (
 
 const buildScheduleRunnerCommand = (): string =>
   [
-    'DELIVERY_ID=$(cat /proc/sys/kernel/random/uuid);',
-    'sed "s/__JANGAR_DELIVERY_ID__/${DELIVERY_ID}/g" /config/run.json | kubectl create -f -',
+    "import { randomUUID } from 'node:crypto'",
+    "import { readFileSync } from 'node:fs'",
+    "import { request } from 'node:https'",
+    '',
+    "const manifest = JSON.parse(readFileSync('/config/run.json', 'utf8').replaceAll('__JANGAR_DELIVERY_ID__', randomUUID()))",
+    'const targetByKind = {',
+    "  AgentRun: { group: 'agents.proompteng.ai', version: 'v1alpha1', plural: 'agentruns' },",
+    "  OrchestrationRun: { group: 'orchestration.proompteng.ai', version: 'v1alpha1', plural: 'orchestrationruns' },",
+    '}',
+    'const target = targetByKind[String(manifest.kind)]',
+    "if (!target) throw new Error(`unsupported schedule target kind: ${String(manifest.kind) || 'unknown'}`)",
+    "const readEnv = (name) => process.env[name]?.trim() ?? ''",
+    `const namespace = String(manifest?.metadata?.namespace ?? readEnv(${JSON.stringify(SCHEDULE_RUNNER_NAMESPACE_ENV)}) || 'agents')`,
+    "const token = readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf8').trim()",
+    "const ca = readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/ca.crt', 'utf8')",
+    `const serviceHost = readEnv(${JSON.stringify(KUBERNETES_SERVICE_HOST_ENV)})`,
+    `const servicePort = readEnv(${JSON.stringify(KUBERNETES_SERVICE_PORT_ENV)})`,
+    "if (!serviceHost || !servicePort) throw new Error('missing kubernetes service environment')",
+    'const apiBase = `https://${serviceHost}:${servicePort}`',
+    'const url = new URL(`/apis/${target.group}/${target.version}/namespaces/${namespace}/${target.plural}`, apiBase)',
+    'const body = JSON.stringify(manifest)',
+    'await new Promise((resolve, reject) => {',
+    '  const req = request(',
+    '    url,',
+    '    {',
+    "      method: 'POST',",
+    '      ca,',
+    '      headers: {',
+    '        authorization: `Bearer ${token}`,',
+    "        accept: 'application/json',",
+    "        'content-type': 'application/json',",
+    "        'content-length': String(Buffer.byteLength(body)),",
+    '      },',
+    '    },',
+    '    (res) => {',
+    "      let responseBody = ''",
+    "      res.setEncoding('utf8')",
+    "      res.on('data', (chunk) => { responseBody += chunk })",
+    "      res.on('end', () => {",
+    '        if ((res.statusCode ?? 500) >= 200 && (res.statusCode ?? 500) < 300) {',
+    '          resolve(undefined)',
+    '          return',
+    '        }',
+    '        reject(new Error(`schedule runner create failed: ${res.statusCode ?? 500} ${responseBody}`))',
+    '      })',
+    '    },',
+    '  )',
+    "  req.on('error', reject)",
+    '  req.write(body)',
+    '  req.end()',
+    '})',
   ].join(' ')
 
 const reconcileScheduleRunnerStatus = async (
@@ -1907,15 +1936,14 @@ const reconcileSchedule = async (
     }
     await applyResourceIfChanged(kube, configMap)
 
-    const image =
-      process.env.JANGAR_SCHEDULE_RUNNER_IMAGE || process.env.JANGAR_IMAGE || 'ghcr.io/proompteng/jangar:latest'
-    const podNamespace = process.env.JANGAR_POD_NAMESPACE
-    const scheduleServiceAccount =
-      process.env.JANGAR_SCHEDULE_SERVICE_ACCOUNT || process.env.JANGAR_SERVICE_ACCOUNT_NAME
+    const supportingConfig = resolveSupportingPrimitivesConfig(process.env)
+    const image = supportingConfig.scheduleRunnerImage
+    const podNamespace = supportingConfig.podNamespace
+    const scheduleServiceAccount = supportingConfig.scheduleServiceAccount ?? supportingConfig.serviceAccountName
     const serviceAccountName =
       scheduleServiceAccount && podNamespace === namespace
         ? scheduleServiceAccount
-        : process.env.JANGAR_SCHEDULE_SERVICE_ACCOUNT || undefined
+        : (supportingConfig.scheduleServiceAccount ?? undefined)
     const cronJobName = makeName(scheduleName, 'cron')
     const cronJob = {
       apiVersion: 'batch/v1',
@@ -1943,7 +1971,7 @@ const reconcileSchedule = async (
                   {
                     name: 'schedule-runner',
                     image,
-                    command: ['/bin/sh', '-ec', buildScheduleRunnerCommand()],
+                    command: ['bun', '-e', buildScheduleRunnerCommand()],
                     volumeMounts: [{ name: 'schedule-template', mountPath: '/config' }],
                   },
                 ],

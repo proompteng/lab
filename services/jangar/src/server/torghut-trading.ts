@@ -1,5 +1,6 @@
 import type { Pool } from 'pg'
 
+import { resolveTorghutEndpointsConfig } from '~/server/torghut-config'
 import { computeRealizedPnlAverageCostLongOnly, type FilledExecutionForPnl } from '~/server/torghut-trading-pnl'
 
 export type TorghutStrategyRow = {
@@ -153,10 +154,7 @@ const classifyRejectClass = (decision: TorghutRejectedDecisionRow) => {
 const decisionReasonTokens = (decision: TorghutRejectedDecisionRow) =>
   decision.rejectReasonAtomic.length > 0 ? decision.rejectReasonAtomic : decision.riskReasons.flatMap(splitRiskReason)
 
-const TORGHUT_API_BASE_URL = (process.env.TORGHUT_API_BASE_URL ?? 'http://torghut.torghut.svc.cluster.local').replace(
-  /\/+$/,
-  '',
-)
+const TORGHUT_API_BASE_URL = resolveTorghutEndpointsConfig(process.env).apiBaseUrl
 
 const SUBMITTED_DECISION_STATUSES = new Set(['submitted', 'filled', 'canceled', 'cancelled', 'expired'])
 const SUBMIT_ATTEMPT_DECISION_STAGES = new Set(['submit_requested', 'submitted', 'rejected_submit'])

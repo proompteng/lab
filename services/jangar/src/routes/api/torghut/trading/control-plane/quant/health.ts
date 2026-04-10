@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
+import { resolveTorghutEndpointsConfig } from '~/server/torghut-config'
 import { parseQuantAccount, parseQuantStrategyId, parseQuantWindow } from '~/server/torghut-quant-http'
 import { getQuantLatestStoreStatus, listLatestQuantPipelineHealth } from '~/server/torghut-quant-metrics-store'
 import { getTorghutQuantRuntimeStatus, startTorghutQuantRuntime } from '~/server/torghut-quant-runtime'
@@ -47,10 +48,7 @@ export const getQuantHealthHandler = async (request: Request) => {
     const count = latestStore.count
     const lagSeconds = updatedAt ? Math.max(0, Math.floor((Date.now() - Date.parse(updatedAt)) / 1000)) : null
     const emptyLatestStoreAlarm = count === 0
-    const missingUpdateThresholdSeconds = Number.parseInt(
-      process.env.JANGAR_TORGHUT_QUANT_HEALTH_MISSING_UPDATE_SECONDS ?? '15',
-      10,
-    )
+    const missingUpdateThresholdSeconds = resolveTorghutEndpointsConfig(process.env).quantHealthMissingUpdateSeconds
     const duringMarketHours = isMarketHoursNy()
     const missingUpdateAlarm =
       duringMarketHours &&

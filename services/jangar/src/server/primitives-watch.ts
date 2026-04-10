@@ -1,6 +1,7 @@
-import { spawn } from 'node:child_process'
+import { Watch } from '@kubernetes/client-node'
 
 import { safeJsonStringify } from '~/server/chat-text'
+import { buildKubernetesResourceCollectionPath, getNativeKubeClients } from '~/server/primitives-kube'
 
 export type KubectlWatchEvent = {
   type: string
@@ -14,33 +15,79 @@ type KubectlWatchOptions = {
   heartbeatMs?: number
 }
 
-const parseWatchEvent = (line: string): KubectlWatchEvent | null => {
-  const trimmed = line.trim()
-  if (!trimmed) return null
-  try {
-    const parsed = JSON.parse(trimmed) as Record<string, unknown>
-    if (!parsed || typeof parsed !== 'object') return null
-    const type = typeof parsed.type === 'string' ? parsed.type : null
-    const object =
-      parsed.object && typeof parsed.object === 'object' && !Array.isArray(parsed.object)
-        ? (parsed.object as Record<string, unknown>)
-        : null
-    if (!type || !object) return null
-    return { type, object }
-  } catch {
-    return null
+type ParsedWatchArgs = {
+  resource: string
+  namespace: string
+  labelSelector?: string
+  fieldSelector?: string
+}
+
+const parseWatchArgs = (args: string[]): ParsedWatchArgs => {
+  if (args[0] !== 'get' || !args[1]) {
+    throw new Error(`unsupported watch command: ${args.join(' ')}`)
   }
+
+  const resource = args[1]
+  let index = 2
+  let name: string | null = null
+  if (args[index] && !args[index]?.startsWith('-')) {
+    name = args[index] ?? null
+    index += 1
+  }
+
+  let namespace = 'default'
+  let labelSelector: string | undefined
+  let fieldSelector: string | undefined
+
+  while (index < args.length) {
+    const token = args[index]
+    const next = args[index + 1]
+    if (!token) break
+
+    if (token === '-n' && next) {
+      namespace = next
+      index += 2
+      continue
+    }
+    if (token === '-l' && next) {
+      labelSelector = next
+      index += 2
+      continue
+    }
+    if (token === '--field-selector' && next) {
+      fieldSelector = next
+      index += 2
+      continue
+    }
+    index += 1
+  }
+
+  const namedFieldSelector = name ? `metadata.name=${name}` : null
+  return {
+    resource,
+    namespace,
+    labelSelector,
+    fieldSelector:
+      fieldSelector && namedFieldSelector
+        ? `${fieldSelector},${namedFieldSelector}`
+        : (fieldSelector ?? namedFieldSelector ?? undefined),
+  }
+}
+
+const buildWatchPath = async (input: ParsedWatchArgs) => {
+  return buildKubernetesResourceCollectionPath(input.resource, input.namespace)
 }
 
 export const createKubectlWatchStream = ({ request, args, onEvent, heartbeatMs = 5000 }: KubectlWatchOptions) => {
   const encoder = new TextEncoder()
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      const child = spawn('kubectl', args, { stdio: ['ignore', 'pipe', 'pipe'] })
-      let buffer = ''
+      const parsed = parseWatchArgs(args)
+      const { kubeConfig } = getNativeKubeClients()
+      const watch = new Watch(kubeConfig)
       let closed = false
       let heartbeat: ReturnType<typeof setInterval> | null = null
-      let lastError: string | null = null
+      let abortController: AbortController | null = null
 
       const safeEnqueue = (value: string) => {
         if (closed) return
@@ -67,11 +114,7 @@ export const createKubectlWatchStream = ({ request, args, onEvent, heartbeatMs =
           clearInterval(heartbeat)
           heartbeat = null
         }
-        try {
-          child.kill()
-        } catch {
-          // ignore
-        }
+        abortController?.abort()
         comment(`closed: ${reason}`)
         try {
           controller.close()
@@ -81,7 +124,6 @@ export const createKubectlWatchStream = ({ request, args, onEvent, heartbeatMs =
       }
 
       const handleAbort = () => cleanup('abort')
-
       request.signal.addEventListener('abort', handleAbort)
 
       safeEnqueue('retry: 1000\n\n')
@@ -91,29 +133,37 @@ export const createKubectlWatchStream = ({ request, args, onEvent, heartbeatMs =
         comment('keep-alive')
       }, heartbeatMs)
 
-      child.stdout?.on('data', (chunk: Buffer) => {
-        buffer += chunk.toString('utf8')
-        const lines = buffer.split('\n')
-        buffer = lines.pop() ?? ''
-        for (const line of lines) {
-          const event = parseWatchEvent(line)
-          if (!event) continue
-          const payload = onEvent(event)
-          if (payload) push(payload)
-        }
-      })
-
-      child.stderr?.on('data', (chunk: Buffer) => {
-        lastError = chunk.toString('utf8').trim() || lastError
-      })
-
-      child.on('close', (code) => {
-        if (closed) return
-        if (code && code !== 0) {
-          push({ type: 'ERROR', error: lastError ?? `kubectl exited with ${code}` })
-        }
-        cleanup('closed')
-      })
+      void buildWatchPath(parsed)
+        .then((path) =>
+          watch.watch(
+            path,
+            {
+              ...(parsed.labelSelector ? { labelSelector: parsed.labelSelector } : {}),
+              ...(parsed.fieldSelector ? { fieldSelector: parsed.fieldSelector } : {}),
+              allowWatchBookmarks: true,
+            },
+            (type, object) => {
+              if (!object || typeof object !== 'object' || Array.isArray(object)) return
+              const payload = onEvent({ type, object: object as Record<string, unknown> })
+              if (payload) push(payload)
+            },
+            (error) => {
+              if (closed) return
+              if (error) {
+                push({ type: 'ERROR', error: error instanceof Error ? error.message : String(error) })
+              }
+              cleanup(error ? 'error' : 'closed')
+            },
+          ),
+        )
+        .then((controllerHandle) => {
+          abortController = controllerHandle
+        })
+        .catch((error) => {
+          if (closed) return
+          push({ type: 'ERROR', error: error instanceof Error ? error.message : String(error) })
+          cleanup('error')
+        })
     },
   })
 

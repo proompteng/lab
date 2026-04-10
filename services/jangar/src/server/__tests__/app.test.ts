@@ -1,8 +1,7 @@
-import { readFileSync } from 'node:fs'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterAll, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('../metrics', () => ({
   getPrometheusMetricsPath: () => '/metrics',
@@ -32,15 +31,6 @@ const indexPath = resolve(clientDir, 'index.html')
 const traversalTargetPath = resolve(clientDir, '../public-review-secret.txt')
 const clientIndexHtml = '<!doctype html><html><body>jangar client shell</body></html>'
 const traversalSecret = 'top-secret-review-artifact'
-const originalBun = globalThis.Bun
-
-;(globalThis as typeof globalThis & { Bun?: typeof Bun }).Bun = {
-  file: (path: string | URL) => {
-    const filePath = path instanceof URL ? fileURLToPath(path) : path
-    const type = filePath.endsWith('.html') ? 'text/html; charset=utf-8' : filePath.endsWith('.txt') ? 'text/plain' : ''
-    return new Blob([readFileSync(filePath)], { type }) as unknown as ReturnType<typeof Bun.file>
-  },
-} as unknown as typeof Bun
 
 const readIfExists = async (path: string) => {
   try {
@@ -49,15 +39,6 @@ const readIfExists = async (path: string) => {
     return null
   }
 }
-
-afterAll(() => {
-  if (originalBun) {
-    ;(globalThis as typeof globalThis & { Bun?: typeof Bun }).Bun = originalBun
-    return
-  }
-
-  Reflect.deleteProperty(globalThis as object, 'Bun')
-})
 
 const withTempFile = async (path: string, contents: string) => {
   const original = await readIfExists(path)

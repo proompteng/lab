@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 
 import { Pool } from 'pg'
 
+import { resolveEmbeddingConfig } from './memory-config'
 import { type KubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 
 type MemoryConnection = {
@@ -17,7 +18,17 @@ type MemoryQueryResult = {
   metadata: Record<string, unknown>
 }
 
+type EnvSource = Record<string, string | undefined>
+
 const DEFAULT_EMBEDDING_DIMENSION = 1536
+const DEFAULT_OPENAI_API_BASE_URL = 'https://api.openai.com/v1'
+const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small'
+const DEFAULT_SELF_HOSTED_EMBEDDING_MODEL = 'qwen3-embedding-saigak:0.6b'
+const DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION = 1024
+
+const globalState = globalThis as typeof globalThis & {
+  __jangarMemoryProviderPools?: Map<string, Pool>
+}
 
 const asString = (value: unknown) => (typeof value === 'string' && value.trim().length > 0 ? value.trim() : null)
 
@@ -71,21 +82,92 @@ const generateFallbackEmbedding = (text: string, dimension: number) => {
   return vector
 }
 
-const embedText = async (text: string, dimension: number) => {
-  const apiBaseUrl = process.env.OPENAI_API_BASE_URL ?? process.env.OPENAI_API_BASE
-  const apiKey = process.env.OPENAI_API_KEY
-  const model = process.env.OPENAI_EMBEDDING_MODEL ?? 'text-embedding-3-small'
+const isHostedOpenAiBaseUrl = (rawBaseUrl: string) => {
+  try {
+    return new URL(rawBaseUrl).hostname === 'api.openai.com'
+  } catch {
+    return rawBaseUrl.includes('api.openai.com')
+  }
+}
 
-  if (!apiBaseUrl || !apiKey) {
+const resolveEmbeddingDefaults = (apiBaseUrl: string) => {
+  const hosted = isHostedOpenAiBaseUrl(apiBaseUrl)
+  return {
+    model: hosted ? DEFAULT_OPENAI_EMBEDDING_MODEL : DEFAULT_SELF_HOSTED_EMBEDDING_MODEL,
+    dimension: hosted ? DEFAULT_EMBEDDING_DIMENSION : DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION,
+  }
+}
+
+const loadEmbeddingDimension = (env: EnvSource, fallback: number) => {
+  const dimension = Number.parseInt(env.OPENAI_EMBEDDING_DIMENSION ?? String(fallback), 10)
+  if (!Number.isFinite(dimension) || dimension <= 0) {
+    throw new Error('OPENAI_EMBEDDING_DIMENSION must be a positive integer')
+  }
+  return dimension
+}
+
+const resolveEmbeddingApiBaseUrl = (env: EnvSource) =>
+  env.OPENAI_EMBEDDING_API_BASE_URL ?? env.OPENAI_API_BASE_URL ?? env.OPENAI_API_BASE ?? DEFAULT_OPENAI_API_BASE_URL
+
+export const loadEmbeddingConfig = (env: EnvSource = process.env) => resolveEmbeddingConfig(env)
+
+const getPoolCache = () => {
+  if (!globalState.__jangarMemoryProviderPools) {
+    globalState.__jangarMemoryProviderPools = new Map<string, Pool>()
+  }
+  return globalState.__jangarMemoryProviderPools
+}
+
+const getMemoryPool = (connectionString: string) => {
+  const pools = getPoolCache()
+  const existing = pools.get(connectionString)
+  if (existing) return existing
+
+  const created = new Pool({ connectionString, ssl: { rejectUnauthorized: false } })
+  pools.set(connectionString, created)
+  return created
+}
+
+export const closeMemoryProviderPools = async () => {
+  const pools = getPoolCache()
+  const activePools = [...pools.values()]
+  pools.clear()
+  await Promise.all(activePools.map((pool) => pool.end()))
+}
+
+const embedText = async (text: string, dimension: number) => {
+  const embeddingConfig = resolveEmbeddingConfig(process.env)
+  if (!embeddingConfig.hasExplicitBaseUrl && !embeddingConfig.apiKey && embeddingConfig.allowDevFallback) {
     return generateFallbackEmbedding(text, dimension)
+  }
+
+  const { apiBaseUrl, apiKey, model, dimension: configuredDimension } = embeddingConfig
+  if (embeddingConfig.hosted && !apiKey) {
+    throw new Error(
+      'missing OPENAI_API_KEY; set it or point OPENAI_EMBEDDING_API_BASE_URL/OPENAI_API_BASE_URL at an OpenAI-compatible endpoint',
+    )
+  }
+  if (configuredDimension !== dimension) {
+    const error = new Error(
+      `memory embedding dimension mismatch: expected ${dimension} but OPENAI_EMBEDDING_DIMENSION is ${configuredDimension}`,
+    )
+    if (embeddingConfig.allowDevFallback) {
+      console.warn('[jangar] memory provider using fallback embeddings', error.message)
+      return generateFallbackEmbedding(text, dimension)
+    }
+    throw error
+  }
+
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+  }
+  if (apiKey) {
+    headers.authorization = `Bearer ${apiKey}`
   }
 
   const response = await fetch(`${apiBaseUrl.replace(/\/+$/, '')}/embeddings`, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${apiKey}`,
-    },
+    headers,
     body: JSON.stringify({ model, input: text }),
   })
 
@@ -100,7 +182,12 @@ const embedText = async (text: string, dimension: number) => {
     throw new Error('embedding response missing data[0].embedding')
   }
   if (embedding.length !== dimension) {
-    return generateFallbackEmbedding(text, dimension)
+    const error = new Error(`embedding dimension mismatch: expected ${dimension} but got ${embedding.length}`)
+    if (embeddingConfig.allowDevFallback) {
+      console.warn('[jangar] memory provider using fallback embeddings', error.message)
+      return generateFallbackEmbedding(text, dimension)
+    }
+    throw error
   }
   return embedding
 }
@@ -146,7 +233,10 @@ export const resolveMemoryConnection = async (
   }
 
   const connectionString = buildConnectionString(decodedSecret, secretKey)
-  const embeddingDimension = DEFAULT_EMBEDDING_DIMENSION
+  const embeddingDimension = loadEmbeddingDimension(
+    process.env,
+    resolveEmbeddingDefaults(resolveEmbeddingApiBaseUrl(process.env)).dimension,
+  )
 
   return { dataset, schema, embeddingDimension, connectionString }
 }
@@ -156,30 +246,22 @@ export const writeMemoryEvent = async (
   eventType: string,
   payload: Record<string, unknown>,
 ) => {
-  const pool = new Pool({ connectionString: connection.connectionString, ssl: { rejectUnauthorized: false } })
-  try {
-    await pool.query(
-      `INSERT INTO ${connection.schema}.memory_events (dataset, event_type, payload) VALUES ($1, $2, $3)`,
-      [connection.dataset, eventType, payload],
-    )
-  } finally {
-    await pool.end()
-  }
+  const pool = getMemoryPool(connection.connectionString)
+  await pool.query(
+    `INSERT INTO ${connection.schema}.memory_events (dataset, event_type, payload) VALUES ($1, $2, $3)`,
+    [connection.dataset, eventType, payload],
+  )
 }
 
 export const writeMemoryKv = async (connection: MemoryConnection, key: string, value: Record<string, unknown>) => {
-  const pool = new Pool({ connectionString: connection.connectionString, ssl: { rejectUnauthorized: false } })
-  try {
-    await pool.query(
-      `INSERT INTO ${connection.schema}.memory_kv (dataset, key, value)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (dataset, key)
-       DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
-      [connection.dataset, key, value],
-    )
-  } finally {
-    await pool.end()
-  }
+  const pool = getMemoryPool(connection.connectionString)
+  await pool.query(
+    `INSERT INTO ${connection.schema}.memory_kv (dataset, key, value)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (dataset, key)
+     DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+    [connection.dataset, key, value],
+  )
 }
 
 export const writeMemoryEmbedding = async (
@@ -190,16 +272,12 @@ export const writeMemoryEmbedding = async (
 ) => {
   const embedding = await embedText(text, connection.embeddingDimension)
   const vector = vectorToPg(embedding)
-  const pool = new Pool({ connectionString: connection.connectionString, ssl: { rejectUnauthorized: false } })
-  try {
-    await pool.query(
-      `INSERT INTO ${connection.schema}.memory_embeddings (dataset, key, embedding, metadata)
-       VALUES ($1, $2, $3::vector, $4)`,
-      [connection.dataset, key, vector, metadata],
-    )
-  } finally {
-    await pool.end()
-  }
+  const pool = getMemoryPool(connection.connectionString)
+  await pool.query(
+    `INSERT INTO ${connection.schema}.memory_embeddings (dataset, key, embedding, metadata)
+     VALUES ($1, $2, $3::vector, $4)`,
+    [connection.dataset, key, vector, metadata],
+  )
 }
 
 export const queryMemory = async (
@@ -209,22 +287,18 @@ export const queryMemory = async (
 ): Promise<MemoryQueryResult[]> => {
   const embedding = await embedText(query, connection.embeddingDimension)
   const vector = vectorToPg(embedding)
-  const pool = new Pool({ connectionString: connection.connectionString, ssl: { rejectUnauthorized: false } })
-  try {
-    const { rows } = await pool.query(
-      `SELECT key, metadata, (1 - (embedding <=> $1::vector)) as score
-       FROM ${connection.schema}.memory_embeddings
-       WHERE dataset = $2
-       ORDER BY embedding <=> $1::vector
-       LIMIT $3`,
-      [vector, connection.dataset, limit],
-    )
-    return rows.map((row: { key: string; score: number | null; metadata: Record<string, unknown> }) => ({
-      key: row.key,
-      score: row.score,
-      metadata: row.metadata ?? {},
-    }))
-  } finally {
-    await pool.end()
-  }
+  const pool = getMemoryPool(connection.connectionString)
+  const { rows } = await pool.query(
+    `SELECT key, metadata, (1 - (embedding <=> $1::vector)) as score
+     FROM ${connection.schema}.memory_embeddings
+     WHERE dataset = $2
+     ORDER BY embedding <=> $1::vector
+     LIMIT $3`,
+    [vector, connection.dataset, limit],
+  )
+  return rows.map((row: { key: string; score: number | null; metadata: Record<string, unknown> }) => ({
+    key: row.key,
+    score: row.score,
+    metadata: row.metadata ?? {},
+  }))
 }

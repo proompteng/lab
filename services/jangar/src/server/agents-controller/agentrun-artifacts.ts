@@ -1,4 +1,5 @@
 import { asRecord } from '~/server/primitives-http'
+import { resolveAgentsControllerBehaviorConfig } from './runtime-config'
 
 export const DEFAULT_AGENTRUN_ARTIFACTS_MAX = 50
 export const AGENTRUN_ARTIFACT_URL_MAX_LENGTH = 2048
@@ -44,15 +45,12 @@ const normalizeArtifactString = (value: unknown) => {
 export const resolveAgentRunArtifactsLimitConfig = (
   overrides: Partial<AgentRunArtifactsLimitConfig> = {},
 ): AgentRunArtifactsLimitConfig => {
-  const parsedMax = parseOptionalNumber(process.env.JANGAR_AGENTRUN_ARTIFACTS_MAX)
-  const maxFromEnv =
-    parsedMax === undefined || !Number.isFinite(parsedMax) || parsedMax < 0 ? DEFAULT_AGENTRUN_ARTIFACTS_MAX : parsedMax
-
+  const controllerConfig = resolveAgentsControllerBehaviorConfig(process.env)
   const maxEntries = Math.min(
     DEFAULT_AGENTRUN_ARTIFACTS_MAX,
-    Math.max(0, Math.floor(overrides.maxEntries ?? maxFromEnv)),
+    Math.max(0, Math.floor(overrides.maxEntries ?? controllerConfig.artifactsMaxEntries)),
   )
-  const strict = overrides.strict ?? parseBooleanEnv(process.env.JANGAR_AGENTRUN_ARTIFACTS_STRICT, false)
+  const strict = overrides.strict ?? controllerConfig.artifactsStrict
   return {
     maxEntries,
     strict,

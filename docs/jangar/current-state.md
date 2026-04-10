@@ -1,4 +1,12 @@
-# Jangar service current state (2025-12-14)
+# Jangar service current state (historical note from 2025-12-14)
+
+This document is historical context for the original chat-completions subsystem audit. For the current application
+architecture, use these as the operational sources of truth instead:
+
+- `services/jangar/README.md`
+- `docs/jangar/application-architecture.md`
+- `docs/jangar/architecture-inventory.md`
+- `docs/jangar/build-contract.md`
 
 This note describes the current Jangar OpenAI-compatible chat-completions proxy and its supporting services. Source of truth:
 
@@ -54,13 +62,13 @@ flowchart TD
 
 ## Endpoint surface
 
-- POST `/openai/v1/chat/completions` (streaming only).
+- POST `/openai/v1/chat/completions` supports both streaming SSE responses and OpenAI-style non-stream responses.
 - Handler chain:
   - Route wiring: `services/jangar/src/routes/openai/v1/chat/completions.ts`
   - Logic: `services/jangar/src/server/chat.ts` (`handleChatCompletionEffect` → `toSseResponse`)
 - Request schema highlights:
   - `messages`: non-empty array of `{ role, content, name? }`
-  - `stream` must be `true` (otherwise an SSE error payload + `[DONE]`)
+  - optional `stream`
   - optional `model`
   - optional `stream_options`:
     - `include_usage: boolean` (default `false`)

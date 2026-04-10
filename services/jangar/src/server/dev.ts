@@ -2,11 +2,11 @@ import { createServer as createViteServer } from 'vite'
 
 import { bootRuntimeProfile } from './runtime-boot'
 import { JANGAR_RUNTIME_PROFILES } from './runtime-profile'
+import { resolveHttpServerListenConfig } from './runtime-entry-config'
 
 type JangarRuntime = Awaited<ReturnType<typeof import('./app').createJangarRuntime>>
 
-const port = Number.parseInt(process.env.PORT ?? process.env.JANGAR_API_PORT ?? '3001', 10)
-const hostname = process.env.HOST?.trim() || '127.0.0.1'
+const { port, hostname } = resolveHttpServerListenConfig(process.env, { dev: true })
 const runtimeProfile = JANGAR_RUNTIME_PROFILES.viteDevApi
 
 bootRuntimeProfile(runtimeProfile)

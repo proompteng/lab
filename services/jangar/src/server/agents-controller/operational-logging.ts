@@ -1,4 +1,4 @@
-import { parseBooleanEnv } from './env-config'
+import { resolveAgentsControllerBehaviorConfig } from './runtime-config'
 
 type LogLevel = 'info' | 'warn' | 'error'
 
@@ -26,8 +26,7 @@ const writeLog = (level: LogLevel, event: string, payload: LogPayload = {}) => {
   console.info(message, entry)
 }
 
-export const isAgentsControllerDebugLoggingEnabled = () =>
-  parseBooleanEnv(process.env.JANGAR_AGENTS_CONTROLLER_DEBUG_LOGS, false)
+export const isAgentsControllerDebugLoggingEnabled = () => resolveAgentsControllerBehaviorConfig(process.env).debugLogs
 
 export const logAgentsControllerInfo = (event: string, payload?: LogPayload) => {
   writeLog('info', event, payload)

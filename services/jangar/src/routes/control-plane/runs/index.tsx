@@ -93,12 +93,35 @@ const resolveSpecLabel = (resource: PrimitiveResource) => {
 const resolveAgentName = (resource: PrimitiveResource) =>
   readNestedString(resource, ['spec', 'agentRef', 'name']) ?? '—'
 
+const loadAgentRunsPageData = (params: {
+  namespace: string
+  labelSelector?: string
+  phase?: string
+  runtime?: string
+}) =>
+  fetchPrimitiveList({
+    kind: 'AgentRun',
+    namespace: params.namespace,
+    labelSelector: params.labelSelector,
+    phase: params.phase,
+    runtime: params.runtime,
+  })
+
 export const Route = createFileRoute('/control-plane/runs/')({
   validateSearch: parseAgentRunsSearch,
+  loaderDeps: ({ search }: { search: ReturnType<typeof parseAgentRunsSearch> }) => ({
+    namespace: search.namespace,
+    labelSelector: search.labelSelector,
+    phase: search.phase,
+    runtime: search.runtime,
+  }),
+  loader: async ({ deps }: { deps: { namespace: string; labelSelector?: string; phase?: string; runtime?: string } }) =>
+    loadAgentRunsPageData(deps),
   component: AgentRunsListPage,
 })
 
 function AgentRunsListPage() {
+  const initialData = Route.useLoaderData() as Awaited<ReturnType<typeof loadAgentRunsPageData>>
   const searchState = Route.useSearch()
   const navigate = Route.useNavigate()
 
@@ -106,9 +129,9 @@ function AgentRunsListPage() {
   const [labelSelector, setLabelSelector] = React.useState(searchState.labelSelector ?? '')
   const [phase, setPhase] = React.useState(searchState.phase ?? '')
   const [runtime, setRuntime] = React.useState(searchState.runtime ?? '')
-  const [items, setItems] = React.useState<PrimitiveResource[]>([])
-  const [total, setTotal] = React.useState(0)
-  const [error, setError] = React.useState<string | null>(null)
+  const [items, setItems] = React.useState<PrimitiveResource[]>(() => (initialData.ok ? initialData.items : []))
+  const [total, setTotal] = React.useState(() => (initialData.ok ? initialData.total : 0))
+  const [error, setError] = React.useState<string | null>(() => (initialData.ok ? null : initialData.message))
   const [isLoading, setIsLoading] = React.useState(false)
   const [isDeleting, setIsDeleting] = React.useState(false)
   const [deleteError, setDeleteError] = React.useState<string | null>(null)
@@ -138,18 +161,25 @@ function AgentRunsListPage() {
     }
   }, [selectedKeys.size])
 
+  React.useEffect(() => {
+    if (initialData.ok) {
+      setItems(initialData.items)
+      setTotal(initialData.total)
+      setError(null)
+      return
+    }
+
+    setItems([])
+    setTotal(0)
+    setError(initialData.message)
+  }, [initialData])
+
   const load = React.useCallback(
     async (params: { namespace: string; labelSelector?: string; phase?: string; runtime?: string }) => {
       setIsLoading(true)
       setError(null)
       try {
-        const result = await fetchPrimitiveList({
-          kind: 'AgentRun',
-          namespace: params.namespace,
-          labelSelector: params.labelSelector,
-          phase: params.phase,
-          runtime: params.runtime,
-        })
+        const result = await loadAgentRunsPageData(params)
         if (!result.ok) {
           setItems([])
           setTotal(0)
@@ -168,15 +198,6 @@ function AgentRunsListPage() {
     },
     [],
   )
-
-  React.useEffect(() => {
-    void load({
-      namespace: searchState.namespace,
-      labelSelector: searchState.labelSelector,
-      phase: searchState.phase,
-      runtime: searchState.runtime,
-    })
-  }, [load, searchState.labelSelector, searchState.namespace, searchState.phase, searchState.runtime])
 
   React.useEffect(() => {
     const timer = window.setInterval(() => {

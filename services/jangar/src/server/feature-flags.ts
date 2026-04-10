@@ -1,6 +1,8 @@
 import * as S from '@effect/schema/Schema'
 import * as Either from 'effect/Either'
 
+import { resolveFeatureFlagsClientConfig } from './integrations-config'
+
 type BooleanFlagRequest = {
   key: string
   defaultValue: boolean
@@ -12,10 +14,6 @@ type BooleanFeatureToggleRequest = {
   keyEnvVar?: string
   defaultValue: boolean
 }
-
-const DEFAULT_TIMEOUT_MS = 500
-const DEFAULT_NAMESPACE_KEY = 'default'
-const DEFAULT_ENTITY_ID = 'jangar'
 
 const BooleanEnabledSchema = S.Boolean
 
@@ -44,26 +42,6 @@ const parseBoolean = (value: string | undefined, fallback: boolean) => {
   return fallback
 }
 
-const resolveFeatureFlagsEndpoint = () => {
-  const value = readNonEmptyEnv(process.env.JANGAR_FEATURE_FLAGS_URL)
-  if (!value) return null
-  return value.replace(/\/+$/, '')
-}
-
-const resolveTimeoutMs = () => parsePositiveInt(process.env.JANGAR_FEATURE_FLAGS_TIMEOUT_MS, DEFAULT_TIMEOUT_MS)
-
-const isFeatureFlagsClientEnabled = () => parseBoolean(process.env.JANGAR_FEATURE_FLAGS_ENABLED, true)
-
-const resolveNamespaceKey = () => {
-  const value = readNonEmptyEnv(process.env.JANGAR_FEATURE_FLAGS_NAMESPACE)
-  return value || DEFAULT_NAMESPACE_KEY
-}
-
-const resolveEntityId = () => {
-  const value = readNonEmptyEnv(process.env.JANGAR_FEATURE_FLAGS_ENTITY_ID)
-  return value || DEFAULT_ENTITY_ID
-}
-
 const resolveBooleanFallback = (request: BooleanFeatureToggleRequest) => {
   if (!request.fallbackEnvVar) return request.defaultValue
   return parseBoolean(process.env[request.fallbackEnvVar], request.defaultValue)
@@ -78,26 +56,23 @@ export const getBooleanFeatureFlag = async (request: BooleanFlagRequest): Promis
   const key = request.key.trim()
   if (!key) return request.defaultValue
 
-  if (!isFeatureFlagsClientEnabled()) return request.defaultValue
-
-  const endpoint = resolveFeatureFlagsEndpoint()
-  if (!endpoint) return request.defaultValue
+  const config = resolveFeatureFlagsClientConfig(process.env)
+  if (!config.enabled || !config.endpoint) return request.defaultValue
 
   const controller = new AbortController()
-  const timeoutMs = resolveTimeoutMs()
-  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  const timeout = setTimeout(() => controller.abort(), config.timeoutMs)
 
   try {
-    const response = await fetch(`${endpoint}/evaluate/v1/boolean`, {
+    const response = await fetch(`${config.endpoint}/evaluate/v1/boolean`, {
       method: 'POST',
       headers: {
         accept: 'application/json',
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        namespaceKey: resolveNamespaceKey(),
+        namespaceKey: config.namespaceKey,
         flagKey: key,
-        entityId: resolveEntityId(),
+        entityId: config.entityId,
         context: {},
       }),
       signal: controller.signal,

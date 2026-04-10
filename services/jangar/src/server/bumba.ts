@@ -4,6 +4,7 @@ import { relative, resolve, sep } from 'node:path'
 import { createTemporalClient, loadTemporalConfig, type TemporalClient } from '@proompteng/temporal-bun-sdk'
 import { Context, Effect, Layer, pipe } from 'effect'
 import * as TSemaphore from 'effect/TSemaphore'
+import { resolveBumbaRuntimeConfig } from './runtime-tooling-config'
 
 const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
 const DEFAULT_TEMPORAL_PORT = 7233
@@ -74,20 +75,12 @@ const normalizeRepositorySlug = (value: string) =>
     .replace(/^github\.com\//, '')
 
 const resolveRepositorySlug = (value?: string) => {
-  const candidate =
-    normalizeOptionalText(value) ??
-    normalizeOptionalText(process.env.CODEX_REPO_SLUG) ??
-    normalizeOptionalText(process.env.REPOSITORY) ??
-    normalizeOptionalText(process.env.CODEX_REPO_URL)
+  const candidate = normalizeOptionalText(value) ?? resolveBumbaRuntimeConfig(process.env).repositoryHint
   if (!candidate) return undefined
   return normalizeRepositorySlug(candidate)
 }
 
-const resolveBaseRepoRoot = () =>
-  normalizeOptionalText(process.env.BUMBA_WORKSPACE_ROOT) ??
-  normalizeOptionalText(process.env.CODEX_CWD) ??
-  normalizeOptionalText(process.env.VSCODE_DEFAULT_FOLDER) ??
-  process.cwd()
+const resolveBaseRepoRoot = () => resolveBumbaRuntimeConfig(process.env).workspaceRoot
 
 const resolveWorktreePath = (baseRepoRoot: string) => resolve(baseRepoRoot, WORKTREE_DIR_NAME, BUMBA_WORKTREE_NAME)
 
@@ -292,9 +285,7 @@ const buildRepositoryWorkflowId = (repository?: string, ref?: string, commit?: s
 }
 
 const resolveTaskQueue = () =>
-  normalizeOptionalText(process.env.JANGAR_BUMBA_TASK_QUEUE) ??
-  normalizeOptionalText(process.env.TEMPORAL_TASK_QUEUE) ??
-  DEFAULT_TASK_QUEUE
+  normalizeOptionalText(resolveBumbaRuntimeConfig(process.env).taskQueue) ?? DEFAULT_TASK_QUEUE
 
 const normalizeError = (message: string, error: unknown) =>
   new Error(`${message}: ${error instanceof Error ? error.message : String(error)}`)

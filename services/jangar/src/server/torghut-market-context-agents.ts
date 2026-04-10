@@ -14,6 +14,10 @@ import {
   recordTorghutMarketContextBatchRunSymbols,
 } from '~/server/metrics'
 import { clearMarketContextCache } from '~/server/torghut-market-context'
+import {
+  resolveMarketContextIngestAuthConfig,
+  resolveMarketContextRuntimeConfig,
+} from '~/server/torghut-market-context-config'
 import { normalizeTorghutSymbol } from '~/server/torghut-symbols'
 
 export type MarketContextProviderDomain = 'fundamentals' | 'news'
@@ -347,26 +351,16 @@ const coerceEvidenceItems = (value: unknown): RunEvidenceItem[] => {
 }
 
 const resolveSettings = () => {
+  const config = resolveMarketContextRuntimeConfig(process.env)
   return {
-    fundamentalsMaxFreshnessSeconds: parsePositiveInt(
-      process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_MAX_FRESHNESS_SECONDS,
-      DEFAULT_FUNDAMENTALS_MAX_FRESHNESS_SECONDS,
-    ),
-    newsMaxFreshnessSeconds: parsePositiveInt(
-      process.env.JANGAR_MARKET_CONTEXT_NEWS_MAX_FRESHNESS_SECONDS,
-      DEFAULT_NEWS_MAX_FRESHNESS_SECONDS,
-    ),
-    batchRequireOpenSession: parseBoolean(process.env.JANGAR_MARKET_CONTEXT_BATCH_REQUIRE_OPEN_SESSION, true),
-    batchTradingStatusUrl:
-      process.env.JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_URL?.trim() ||
-      'http://torghut.torghut.svc.cluster.local/trading/status',
-    batchTradingStatusTimeoutMs: parsePositiveInt(
-      process.env.JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_TIMEOUT_MS,
-      2000,
-    ),
-    providerChain: parseProviderChain(process.env.JANGAR_MARKET_CONTEXT_PROVIDER_CHAIN, ['codex-spark', 'codex']),
-    providerFailureThreshold: parsePositiveInt(process.env.JANGAR_MARKET_CONTEXT_PROVIDER_FAILURE_THRESHOLD, 3),
-    providerCooldownSeconds: parsePositiveInt(process.env.JANGAR_MARKET_CONTEXT_PROVIDER_COOLDOWN_SECONDS, 900),
+    fundamentalsMaxFreshnessSeconds: config.fundamentalsMaxFreshnessSeconds,
+    newsMaxFreshnessSeconds: config.newsMaxFreshnessSeconds,
+    batchRequireOpenSession: config.batchRequireOpenSession,
+    batchTradingStatusUrl: config.batchTradingStatusUrl,
+    batchTradingStatusTimeoutMs: config.batchTradingStatusTimeoutMs,
+    providerChain: parseProviderChain(config.providerChain.join(','), ['codex-spark', 'codex']),
+    providerFailureThreshold: config.providerFailureThreshold,
+    providerCooldownSeconds: config.providerCooldownSeconds,
   }
 }
 
@@ -1812,13 +1806,7 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
 let authApi: AuthenticationV1Api | null | undefined
 
 const resolveAllowedServiceAccountPrefixes = () => {
-  const raw = process.env.JANGAR_MARKET_CONTEXT_INGEST_ALLOWED_SERVICE_ACCOUNT_PREFIXES?.trim()
-  if (!raw) return [DEFAULT_ALLOWED_SERVICE_ACCOUNT_PREFIX]
-  const prefixes = raw
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0)
-  return prefixes.length > 0 ? prefixes : [DEFAULT_ALLOWED_SERVICE_ACCOUNT_PREFIX]
+  return resolveMarketContextIngestAuthConfig(process.env).allowedServiceAccountPrefixes
 }
 
 const resolveAuthApi = () => {
@@ -1884,9 +1872,10 @@ const resolveTokenReviewAuthorization = (response: unknown, method: string) => {
 }
 
 const createTokenReviewWithInClusterHttps = async (body: V1TokenReview): Promise<unknown | null> => {
-  const host = process.env.KUBERNETES_SERVICE_HOST?.trim()
+  const ingestAuth = resolveMarketContextIngestAuthConfig(process.env)
+  const host = ingestAuth.kubernetesServiceHost
   if (!host) return null
-  const port = process.env.KUBERNETES_SERVICE_PORT?.trim() || '443'
+  const port = ingestAuth.kubernetesServicePort
 
   let reviewerToken = ''
   let caCertificate = ''
@@ -1988,12 +1977,11 @@ const verifyServiceAccountTokenWithTokenReview = async (token: string) => {
 }
 
 const resolveSharedIngestToken = () => {
-  const token = process.env.JANGAR_MARKET_CONTEXT_INGEST_TOKEN?.trim()
-  return token && token.length > 0 ? token : null
+  return resolveMarketContextIngestAuthConfig(process.env).sharedIngestToken
 }
 
 const resolveServiceAccountTokenAuthEnabled = () =>
-  parseBoolean(process.env.JANGAR_MARKET_CONTEXT_INGEST_ALLOW_SERVICE_ACCOUNT_TOKEN, true)
+  resolveMarketContextIngestAuthConfig(process.env).allowServiceAccountToken
 
 const safeEquals = (left: string, right: string) => {
   const leftBuffer = Buffer.from(left)

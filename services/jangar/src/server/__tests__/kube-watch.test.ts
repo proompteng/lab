@@ -1,16 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { EventEmitter } from 'node:events'
 
-const childProcessMocks = vi.hoisted(() => ({
-  spawn: vi.fn(),
-  spawnSync: vi.fn(),
+const watchMock = vi.hoisted(() => vi.fn())
+const specUriPathMock = vi.hoisted(() =>
+  vi.fn(async () => '/apis/agents.proompteng.ai/v1alpha1/namespaces/agents/agentruns'),
+)
+
+vi.mock('@kubernetes/client-node', () => ({
+  Watch: class MockWatch {
+    watch = watchMock
+  },
 }))
-
-vi.mock('node:child_process', () => childProcessMocks)
 
 const recordWatchEventMock = vi.hoisted(() => vi.fn())
 const recordWatchErrorMock = vi.hoisted(() => vi.fn())
 const recordWatchRestartMock = vi.hoisted(() => vi.fn())
+const recordReliabilityEventMock = vi.hoisted(() => vi.fn())
+const recordReliabilityErrorMock = vi.hoisted(() => vi.fn())
+const recordReliabilityRestartMock = vi.hoisted(() => vi.fn())
 
 vi.mock('~/server/metrics', () => ({
   recordKubeWatchEvent: (...args: unknown[]) => recordWatchEventMock(...args),
@@ -18,43 +24,55 @@ vi.mock('~/server/metrics', () => ({
   recordKubeWatchRestart: (...args: unknown[]) => recordWatchRestartMock(...args),
 }))
 
+vi.mock('~/server/control-plane-watch-reliability', () => ({
+  recordWatchReliabilityEvent: (...args: unknown[]) => recordReliabilityEventMock(...args),
+  recordWatchReliabilityError: (...args: unknown[]) => recordReliabilityErrorMock(...args),
+  recordWatchReliabilityRestart: (...args: unknown[]) => recordReliabilityRestartMock(...args),
+}))
+
+vi.mock('~/server/primitives-kube', () => ({
+  getNativeKubeClients: () => ({
+    kubeConfig: {},
+    objects: {
+      specUriPath: specUriPathMock,
+    },
+  }),
+  buildKubernetesResourceCollectionPath: () => '/apis/agents.proompteng.ai/v1alpha1/namespaces/agents/agentruns',
+  resolveKubernetesResourceTarget: () => ({
+    apiVersion: 'agents.proompteng.ai/v1alpha1',
+    kind: 'AgentRun',
+    namespaceScoped: true,
+  }),
+}))
+
 import { resetKubectlWatchCompatibilityCacheForTests, startResourceWatch } from '~/server/kube-watch'
 
-type MockWatchProcess = EventEmitter & {
-  stdout: EventEmitter & { setEncoding: (encoding: string | undefined) => void }
-  stderr: EventEmitter & { setEncoding: (encoding: string | undefined) => void }
-  kill: ReturnType<typeof vi.fn>
+type WatchCall = {
+  path: string
+  query: Record<string, unknown>
+  callback: (type: string, object: unknown) => void
+  done: (error: Error | null) => void
 }
 
-const createMockWatchProcess = () => {
-  const mockProcess = new EventEmitter() as MockWatchProcess
-  const stdout = new EventEmitter() as EventEmitter & { setEncoding: (encoding: string | undefined) => void }
-  const stderr = new EventEmitter() as EventEmitter & { setEncoding: (encoding: string | undefined) => void }
-  stdout.setEncoding = () => {}
-  stderr.setEncoding = () => {}
-
-  mockProcess.stdout = stdout
-  mockProcess.stderr = stderr
-  mockProcess.kill = vi.fn()
-  return mockProcess
+const flush = async () => {
+  await Promise.resolve()
+  await Promise.resolve()
 }
 
 describe('kube-watch', () => {
-  const spawnMocks = childProcessMocks.spawn
-  const spawnSyncMocks = childProcessMocks.spawnSync
   let watchHandle: ReturnType<typeof startResourceWatch> | null = null
 
   beforeEach(() => {
     vi.useFakeTimers()
-    spawnMocks.mockReset()
-    spawnSyncMocks.mockReset()
-    spawnSyncMocks.mockReturnValue({
-      stdout: '    --resource-version="":\n',
-      stderr: '',
-    })
+    watchMock.mockReset()
+    specUriPathMock.mockClear()
     recordWatchEventMock.mockReset()
     recordWatchErrorMock.mockReset()
     recordWatchRestartMock.mockReset()
+    recordReliabilityEventMock.mockReset()
+    recordReliabilityErrorMock.mockReset()
+    recordReliabilityRestartMock.mockReset()
+    watchMock.mockImplementation(async () => ({ abort: vi.fn() }))
     resetKubectlWatchCompatibilityCacheForTests()
   })
 
@@ -66,10 +84,17 @@ describe('kube-watch', () => {
     vi.useRealTimers()
   })
 
-  it('records watch events and forwards payloads to the event handler', () => {
-    const watchProcess = createMockWatchProcess()
-    spawnMocks.mockReturnValue(watchProcess)
+  const getWatchCall = (index = 0): WatchCall => {
+    const call = watchMock.mock.calls[index]
+    return {
+      path: call?.[0] as string,
+      query: (call?.[1] as Record<string, unknown>) ?? {},
+      callback: call?.[2] as (type: string, object: unknown) => void,
+      done: call?.[3] as (error: Error | null) => void,
+    }
+  }
 
+  it('records watch events and forwards payloads to the event handler', async () => {
     const onEvent = vi.fn()
     watchHandle = startResourceWatch({
       resource: 'agentruns',
@@ -77,7 +102,11 @@ describe('kube-watch', () => {
       onEvent,
     })
 
-    ;(watchProcess.stdout as MockWatchProcess['stdout']).emit('data', '{"type":"ADDED","object":{"kind":"AgentRun"}}')
+    await flush()
+    const watchCall = getWatchCall()
+    watchCall.callback('ADDED', { kind: 'AgentRun' })
+    watchCall.callback('BOOKMARK', { kind: 'AgentRun' })
+
     expect(onEvent).toHaveBeenCalledTimes(1)
     expect(onEvent).toHaveBeenCalledWith({ type: 'ADDED', object: { kind: 'AgentRun' } })
     expect(recordWatchEventMock).toHaveBeenCalledWith({
@@ -85,76 +114,41 @@ describe('kube-watch', () => {
       namespace: 'agents',
       type: 'ADDED',
     })
-
-    ;(watchProcess.stdout as MockWatchProcess['stdout']).emit('data', '{"type":"BOOKMARK"}')
-    expect(onEvent).toHaveBeenCalledTimes(1)
-    expect(recordWatchEventMock).toHaveBeenCalledTimes(1)
-  })
-
-  it('records parse errors and forwards them to onError', () => {
-    const watchProcess = createMockWatchProcess()
-    spawnMocks.mockReturnValue(watchProcess)
-
-    const onError = vi.fn()
-    startResourceWatch({
+    expect(recordReliabilityEventMock).toHaveBeenCalledWith({
       resource: 'agentruns',
       namespace: 'agents',
-      onEvent: vi.fn(),
-      onError,
-    })
-
-    ;(watchProcess.stdout as MockWatchProcess['stdout']).emit('data', '{type:"BAD"}')
-    expect(onError).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: expect.stringContaining('failed to parse watch event'),
-      }),
-    )
-    expect(recordWatchErrorMock).toHaveBeenCalledWith({
-      resource: 'agentruns',
-      namespace: 'agents',
-      reason: 'parse_error',
     })
   })
 
-  it('restarts watch and records restart metrics when the process exits non-zero', () => {
-    const watchProcesses: MockWatchProcess[] = []
-    spawnMocks.mockImplementation(() => {
-      const watchProcess = createMockWatchProcess()
-      watchProcesses.push(watchProcess)
-      return watchProcess
-    })
-
+  it('restarts watch and records restart metrics when the native watch errors', async () => {
     watchHandle = startResourceWatch({
       resource: 'agentruns',
       namespace: 'agents',
       onEvent: vi.fn(),
       restartDelayMs: 2000,
     })
-    expect(spawnMocks).toHaveBeenCalledTimes(1)
 
-    const first = watchProcesses[0]
-    expect(first).toBeDefined()
-    first.emit('close', 1)
+    await flush()
+    const first = getWatchCall()
+    first.done(new Error('boom'))
 
     expect(recordWatchErrorMock).toHaveBeenCalledWith({
       resource: 'agentruns',
       namespace: 'agents',
-      reason: 'close_1',
+      reason: 'watch_error',
     })
     expect(recordWatchRestartMock).toHaveBeenCalledWith({
       resource: 'agentruns',
       namespace: 'agents',
-      reason: 'nonzero_exit',
+      reason: 'watch_error',
     })
 
     vi.advanceTimersByTime(2000)
-    expect(spawnMocks).toHaveBeenCalledTimes(2)
+    await flush()
+    expect(watchMock).toHaveBeenCalledTimes(2)
   })
 
-  it('invokes onRestart with the restart reason when the process exits non-zero', () => {
-    const watchProcess = createMockWatchProcess()
-    spawnMocks.mockReturnValue(watchProcess)
-
+  it('invokes onRestart with the restart reason when the watch errors', async () => {
     const onRestart = vi.fn()
     watchHandle = startResourceWatch({
       resource: 'agentruns',
@@ -164,15 +158,13 @@ describe('kube-watch', () => {
       restartDelayMs: 2000,
     })
 
-    watchProcess.emit('close', 1)
+    await flush()
+    getWatchCall().done(new Error('boom'))
 
-    expect(onRestart).toHaveBeenCalledWith('nonzero_exit')
+    expect(onRestart).toHaveBeenCalledWith('watch_error')
   })
 
-  it('starts the watch with the requested resource version', () => {
-    const watchProcess = createMockWatchProcess()
-    spawnMocks.mockReturnValue(watchProcess)
-
+  it('starts the watch with the requested resource version', async () => {
     watchHandle = startResourceWatch({
       resource: 'agentruns',
       namespace: 'agents',
@@ -180,21 +172,13 @@ describe('kube-watch', () => {
       onEvent: vi.fn(),
     })
 
-    expect(spawnMocks).toHaveBeenCalledWith(
-      'kubectl',
-      expect.arrayContaining(['--resource-version=12345']),
-      expect.any(Object),
-    )
+    await flush()
+    expect(getWatchCall().query).toMatchObject({
+      resourceVersion: '12345',
+    })
   })
 
-  it('restarts from the latest observed resource version after a non-zero exit', () => {
-    const watchProcesses: MockWatchProcess[] = []
-    spawnMocks.mockImplementation(() => {
-      const watchProcess = createMockWatchProcess()
-      watchProcesses.push(watchProcess)
-      return watchProcess
-    })
-
+  it('restarts from the latest observed resource version after a watch error', async () => {
     watchHandle = startResourceWatch({
       resource: 'agentruns',
       namespace: 'agents',
@@ -203,30 +187,21 @@ describe('kube-watch', () => {
       restartDelayMs: 2000,
     })
 
-    expect(spawnMocks.mock.calls[0]?.[1]).toContain('--resource-version=12345')
+    await flush()
+    expect(getWatchCall().query.resourceVersion).toBe('12345')
 
-    const first = watchProcesses[0]
-    expect(first).toBeDefined()
-    ;(first.stdout as MockWatchProcess['stdout']).emit(
-      'data',
-      '{"type":"MODIFIED","object":{"kind":"AgentRun","metadata":{"resourceVersion":"12399"}}}',
-    )
-    first.emit('close', 1)
+    const first = getWatchCall()
+    first.callback('MODIFIED', { metadata: { resourceVersion: '12399' } })
+    first.done(new Error('boom'))
 
     vi.advanceTimersByTime(2000)
+    await flush()
 
-    expect(spawnMocks).toHaveBeenCalledTimes(2)
-    expect(spawnMocks.mock.calls[1]?.[1]).toContain('--resource-version=12399')
+    expect(watchMock).toHaveBeenCalledTimes(2)
+    expect(getWatchCall(1).query.resourceVersion).toBe('12399')
   })
 
-  it('drops the carried resource version when a restarted watch exits before any event', () => {
-    const watchProcesses: MockWatchProcess[] = []
-    spawnMocks.mockImplementation(() => {
-      const watchProcess = createMockWatchProcess()
-      watchProcesses.push(watchProcess)
-      return watchProcess
-    })
-
+  it('drops the carried resource version when a restarted watch dies before any event', async () => {
     watchHandle = startResourceWatch({
       resource: 'agentruns',
       namespace: 'agents',
@@ -235,40 +210,13 @@ describe('kube-watch', () => {
       restartDelayMs: 2000,
     })
 
-    expect(spawnMocks.mock.calls[0]?.[1]).toContain('--resource-version=12345')
+    await flush()
+    expect(getWatchCall().query.resourceVersion).toBe('12345')
 
-    const first = watchProcesses[0]
-    expect(first).toBeDefined()
-    first.emit('close', 1)
-
+    getWatchCall().done(new Error('boom'))
     vi.advanceTimersByTime(2000)
+    await flush()
 
-    expect(spawnMocks).toHaveBeenCalledTimes(2)
-    expect(spawnMocks.mock.calls[1]?.[1]).not.toContain('--resource-version=12345')
-  })
-
-  it('skips the resource version flag when kubectl get does not support it', () => {
-    const watchProcess = createMockWatchProcess()
-    spawnMocks.mockReturnValue(watchProcess)
-    spawnSyncMocks.mockReturnValue({
-      stdout: '    --watch-only=false:\n',
-      stderr: '',
-    })
-
-    watchHandle = startResourceWatch({
-      resource: 'approvalpolicies.approvals.proompteng.ai',
-      namespace: 'agents',
-      resourceVersion: '12345',
-      onEvent: vi.fn(),
-    })
-
-    expect(spawnSyncMocks).toHaveBeenCalledWith(
-      'kubectl',
-      ['get', '--help'],
-      expect.objectContaining({
-        encoding: 'utf8',
-      }),
-    )
-    expect(spawnMocks.mock.calls[0]?.[1]).not.toContain('--resource-version=12345')
+    expect(getWatchCall(1).query.resourceVersion).toBeUndefined()
   })
 })

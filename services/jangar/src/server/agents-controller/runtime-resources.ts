@@ -1,14 +1,7 @@
 import { asRecord, asString } from '~/server/primitives-http'
+import type { KubernetesClient } from '~/server/primitives-kube'
 
 export type RuntimeRef = Record<string, unknown>
-
-type RunKubectlResult = {
-  code: number | null
-  stdout: string
-  stderr: string
-}
-
-export type RunKubectl = (args: string[]) => Promise<RunKubectlResult>
 
 type TemporalHandle = {
   workflowId: string
@@ -36,43 +29,41 @@ export const buildRuntimeRef = (
   ...extra,
 })
 
-export const deleteRuntimeResource = async (runKubectl: RunKubectl, kind: string, name: string, namespace: string) => {
-  const result = await runKubectl(['delete', kind, name, '-n', namespace])
-  if (result.code !== 0) {
-    throw new Error(result.stderr || result.stdout || `failed to delete ${kind}/${name}`)
-  }
+export const deleteRuntimeResource = async (
+  kube: Pick<KubernetesClient, 'delete'>,
+  kind: string,
+  name: string,
+  namespace: string,
+) => {
+  await kube.delete(kind, name, namespace, { wait: false })
 }
 
 export const cancelRuntime = async (input: {
   runtimeRef: RuntimeRef
   namespace: string
-  runKubectl: RunKubectl
+  kube: Pick<KubernetesClient, 'delete' | 'list'>
   getTemporalClient?: () => Promise<TemporalClient>
 }) => {
-  const { runtimeRef, namespace, runKubectl, getTemporalClient } = input
+  const { runtimeRef, namespace, kube, getTemporalClient } = input
   const type = asString(runtimeRef.type) ?? ''
   const name = asString(runtimeRef.name) ?? ''
   const runtimeNamespace = asString(runtimeRef.namespace) ?? namespace
   if (!name) return
 
   if (type === 'job') {
-    await deleteRuntimeResource(runKubectl, 'job', name, runtimeNamespace)
+    await deleteRuntimeResource(kube, 'job', name, runtimeNamespace)
     return
   }
 
   if (type === 'workflow') {
     const runName = asString(runtimeRef.runName) ?? name
-    const result = await runKubectl([
-      'delete',
-      'job',
-      '-n',
-      runtimeNamespace,
-      '-l',
-      `agents.proompteng.ai/agent-run=${runName}`,
-      '--ignore-not-found',
-    ])
-    if (result.code !== 0) {
-      throw new Error(result.stderr || result.stdout || `failed to delete workflow jobs for ${runName}`)
+    const listed = await kube.list('jobs.batch', runtimeNamespace, `agents.proompteng.ai/agent-run=${runName}`)
+    const items = Array.isArray(listed.items) ? listed.items : []
+    for (const item of items) {
+      const metadata = asRecord(item?.metadata)
+      const jobName = asString(metadata?.name)
+      if (!jobName) continue
+      await kube.delete('job', jobName, runtimeNamespace, { wait: false })
     }
     return
   }

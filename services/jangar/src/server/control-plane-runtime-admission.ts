@@ -13,6 +13,7 @@ import type {
   RuntimeKitDecision,
   RuntimeKitStatus,
 } from '~/data/agents-control-plane'
+import { resolveHulyApiScriptPathCandidatesFromConfig, resolveRuntimeAdmissionConfig } from './runtime-tooling-config'
 
 const DEFAULT_PYTHON_BIN = 'python3'
 const DEFAULT_WORKTREE = '/workspace/lab'
@@ -53,7 +54,7 @@ const addMs = (value: Date, ms: number) => new Date(value.getTime() + ms)
 const unique = <T>(values: T[]) => [...new Set(values)]
 
 const resolveWorktree = (value?: string) => {
-  const configured = value?.trim() || process.env.WORKTREE?.trim()
+  const configured = value?.trim() || resolveRuntimeAdmissionConfig(process.env).worktree
   if (configured && configured.length > 0) {
     return configured
   }
@@ -64,11 +65,7 @@ const resolveWorktree = (value?: string) => {
 const normalizeCandidate = (value: string | undefined | null) => value?.trim() ?? ''
 
 const resolveHulyBaseUrl = (configuredValue?: string) =>
-  configuredValue?.trim() ||
-  process.env.HULY_API_BASE_URL?.trim() ||
-  process.env.HULY_BASE_URL?.trim() ||
-  process.env.hulyApiBaseUrl?.trim() ||
-  ''
+  configuredValue?.trim() || resolveRuntimeAdmissionConfig(process.env).hulyBaseUrl
 
 export const resolveHulyApiScriptPathCandidates = ({
   worktree,
@@ -79,23 +76,17 @@ export const resolveHulyApiScriptPathCandidates = ({
   configuredPath?: string
   cwd?: string
 } = {}) => {
-  const resolvedWorktree = resolveWorktree(worktree)
   const resolvedCwd = normalizeCandidate(cwd) || process.cwd()
-  const configured = normalizeCandidate(configuredPath)
-
-  if (configured.length > 0) {
-    return [configured]
-  }
-
   return unique(
-    [
-      join(resolvedCwd, HULY_API_SCRIPT_RELATIVE_PATH),
-      join(resolvedWorktree, HULY_API_SCRIPT_RELATIVE_PATH),
-      WORKSPACE_HULY_API_PATH,
-      TMP_WORKSPACE_HULY_API_PATH,
-      APP_HULY_API_PATH,
-      BUNDLED_HULY_API_PATH,
-    ].filter((candidate) => candidate.length > 0),
+    resolveHulyApiScriptPathCandidatesFromConfig(
+      {
+        ...resolveRuntimeAdmissionConfig(process.env),
+        worktree: resolveWorktree(worktree),
+        hulyApiScriptPath:
+          normalizeCandidate(configuredPath) || resolveRuntimeAdmissionConfig(process.env).hulyApiScriptPath,
+      },
+      resolvedCwd,
+    ),
   )
 }
 
@@ -110,7 +101,7 @@ const resolveCommandCandidate = (command: string) => {
     return existsSync(trimmed) ? trimmed : undefined
   }
 
-  const pathEntries = (process.env.PATH ?? '').split(':').filter((entry) => entry.length > 0)
+  const pathEntries = resolveRuntimeAdmissionConfig(process.env).pathEntries
   for (const entry of pathEntries) {
     const candidate = join(entry, trimmed)
     if (existsSync(candidate)) {
@@ -390,15 +381,15 @@ export const findAdmissionPassport = ({
 
 export const buildRuntimeAdmissionSnapshot = (input: RuntimeAdmissionInput = {}): RuntimeAdmissionSnapshot => {
   const now = input.now ?? new Date()
-  const imageRef = process.env.JANGAR_RUNTIME_IMAGE?.trim() || process.env.IMAGE_REF?.trim() || 'runtime:local'
+  const runtimeConfig = resolveRuntimeAdmissionConfig(process.env)
+  const imageRef = runtimeConfig.runtimeImage
   const worktree = resolveWorktree(input.worktree)
-  const pythonRef =
-    input.pythonBin?.trim() || process.env.PYTHON_BIN?.trim() || process.env.PYTHON?.trim() || DEFAULT_PYTHON_BIN
+  const pythonRef = input.pythonBin?.trim() || runtimeConfig.pythonBin || DEFAULT_PYTHON_BIN
   const resolvedPythonPath = resolveCommandCandidate(pythonRef)
   const hulyApiBaseUrl = resolveHulyBaseUrl(input.hulyApiBaseUrl)
   const hulyApiCandidates = resolveHulyApiScriptPathCandidates({
     worktree,
-    configuredPath: input.hulyApiScriptPath?.trim() || process.env.HULY_API_SCRIPT_PATH?.trim(),
+    configuredPath: (input.hulyApiScriptPath?.trim() || runtimeConfig.hulyApiScriptPath) ?? undefined,
   })
   const resolvedHulyApiPath = findExistingCandidate(hulyApiCandidates)
 

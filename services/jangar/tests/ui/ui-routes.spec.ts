@@ -281,6 +281,216 @@ const githubPullThreadsResponse = {
     },
   ],
 }
+const controlPlaneImplementationSpecResponse = {
+  resource: {
+    apiVersion: 'agents.proompteng.ai/v1alpha1',
+    kind: 'ImplementationSpec',
+    metadata: {
+      name: 'ship-trading-ui',
+      namespace: 'agents',
+      uid: 'spec-1',
+      creationTimestamp: '2024-01-01T00:00:00.000Z',
+      generation: 3,
+    },
+    spec: {
+      summary: 'Ship trading UI',
+      description: 'Deliver the production trading operator flow.',
+      text: 'Implement the remaining Jangar operator route cleanup.',
+      acceptanceCriteria: ['Loader-backed spec page', 'Behavior coverage for trading'],
+      contract: {
+        requiredKeys: ['repository', 'issueNumber', 'head'],
+      },
+    },
+  },
+  namespace: 'agents',
+}
+const controlPlaneAgentsResponse = {
+  items: [
+    {
+      apiVersion: 'agents.proompteng.ai/v1alpha1',
+      kind: 'Agent',
+      metadata: {
+        name: 'codex-operator',
+        namespace: 'agents',
+      },
+      spec: {
+        providerRef: {
+          name: 'codex',
+        },
+      },
+    },
+  ],
+  total: 1,
+  namespace: 'agents',
+}
+const controlPlaneAgentRunsResponse = {
+  items: [
+    {
+      apiVersion: 'agents.proompteng.ai/v1alpha1',
+      kind: 'AgentRun',
+      metadata: {
+        name: 'run-1',
+        namespace: 'agents',
+      },
+      spec: {
+        agentRef: {
+          name: 'codex-operator',
+        },
+        implementationSpecRef: {
+          name: 'ship-trading-ui',
+        },
+        runtime: {
+          type: 'workflow',
+        },
+      },
+      status: {
+        phase: 'Running',
+        conditions: [
+          {
+            type: 'Ready',
+            status: 'True',
+          },
+        ],
+      },
+    },
+  ],
+  total: 1,
+  namespace: 'agents',
+}
+const tradingStrategiesResponse = {
+  ok: true,
+  items: [
+    {
+      id: 'strategy-1',
+      name: 'Momentum',
+      enabled: true,
+      baseTimeframe: '1D',
+      universeSymbols: ['AAPL', 'MSFT'],
+    },
+  ],
+}
+const tradingSummaryResponse = {
+  ok: true,
+  summary: {
+    interval: {
+      tz: 'America/New_York',
+      day: '2024-01-03',
+      startUtc: '2024-01-03T14:30:00.000Z',
+      endUtc: '2024-01-03T21:00:00.000Z',
+    },
+    strategy: {
+      id: 'strategy-1',
+      name: 'Momentum',
+    },
+    realizedPnl: {
+      value: 1234.56,
+      closedQty: 10,
+      winRate: 0.6,
+      winCount: 6,
+      lossCount: 4,
+      series: [
+        { ts: '2024-01-03T15:00:00.000Z', realizedPnl: 0 },
+        { ts: '2024-01-03T20:45:00.000Z', realizedPnl: 1234.56 },
+      ],
+      warnings: [],
+    },
+    executions: {
+      filledCount: 10,
+    },
+    decisions: {
+      generatedCount: 10,
+      plannedCount: 8,
+      blockedCount: 2,
+      stalePlannedCount: 0,
+      executionSubmitAttempts: 8,
+      topBlockedReasons: [{ reason: 'risk', count: 2 }],
+      submissionFunnel: {
+        generatedCount: 10,
+        blockedCount: 2,
+        submittedCount: 8,
+        filledCount: 6,
+        rejectedCount: 2,
+      },
+    },
+    rejections: {
+      rejectedCount: 2,
+      topReasons: [{ reason: 'risk', count: 2 }],
+    },
+    equity: {
+      available: true,
+      byAccount: [
+        {
+          alpacaAccountLabel: 'paper',
+          delta: 321.12,
+          series: [
+            { ts: '2024-01-03T15:00:00.000Z', equity: 100000 },
+            { ts: '2024-01-03T20:45:00.000Z', equity: 100321.12 },
+          ],
+        },
+      ],
+    },
+    runtime: {
+      profitability: {
+        available: true,
+        schemaVersion: 'v1',
+        lookbackHours: 24,
+        decisionCount: 10,
+        executionCount: 6,
+        tcaSampleCount: 6,
+        realizedPnlProxyNotional: 120.5,
+        avgAbsSlippageBps: 3.4,
+        caveatCodes: [],
+        error: null,
+      },
+      controlPlane: {
+        available: true,
+        activeRevision: 'abc1234',
+        capitalStage: 'paper',
+        capitalStageTotals: [{ stage: 'paper', count: 1 }],
+        criticalToggleParity: {
+          status: 'ok',
+          mismatches: [],
+        },
+        error: null,
+      },
+    },
+  },
+}
+const tradingExecutionsResponse = {
+  ok: true,
+  items: [
+    {
+      executionId: 'exec-1',
+      tradeDecisionId: 'decision-1',
+      strategyId: 'strategy-1',
+      strategyName: 'Momentum',
+      createdAt: '2024-01-03T20:30:00.000Z',
+      symbol: 'AAPL',
+      side: 'buy',
+      filledQty: 10,
+      avgFillPrice: 191.23,
+      timeframe: '1D',
+      alpacaAccountLabel: 'paper',
+    },
+  ],
+}
+const tradingDecisionsResponse = {
+  ok: true,
+  items: [
+    {
+      id: 'decision-2',
+      createdAt: '2024-01-03T16:00:00.000Z',
+      alpacaAccountLabel: 'paper',
+      symbol: 'MSFT',
+      timeframe: '1D',
+      status: 'blocked',
+      rationale: 'Risk limits exceeded',
+      riskReasons: ['max position'],
+      strategyId: 'strategy-1',
+      strategyName: 'Momentum',
+    },
+  ],
+}
 
 const disableMotionStyles = `
   *, *::before, *::after {
@@ -311,6 +521,13 @@ test.beforeEach(async ({ page }) => {
       githubPullJudgeRunsResponseValue,
       githubPullRefreshFilesResponseValue,
       githubPullThreadsResponseValue,
+      controlPlaneImplementationSpecResponseValue,
+      controlPlaneAgentsResponseValue,
+      controlPlaneAgentRunsResponseValue,
+      tradingStrategiesResponseValue,
+      tradingSummaryResponseValue,
+      tradingExecutionsResponseValue,
+      tradingDecisionsResponseValue,
     }) => {
       const originalFetch = window.fetch.bind(window)
       window.fetch = async (input, init) => {
@@ -357,6 +574,22 @@ test.beforeEach(async ({ page }) => {
           return jsonResponse(githubPullRefreshFilesResponseValue)
         if (pathname === '/api/github/pulls/proompteng/lab/42/threads')
           return jsonResponse(githubPullThreadsResponseValue)
+        if (pathname === '/api/agents/control-plane/resource') {
+          const kind = resolvedUrl.searchParams.get('kind')
+          const name = resolvedUrl.searchParams.get('name')
+          if (kind === 'ImplementationSpec' && name === 'ship-trading-ui') {
+            return jsonResponse(controlPlaneImplementationSpecResponseValue)
+          }
+        }
+        if (pathname === '/api/agents/control-plane/resources') {
+          const kind = resolvedUrl.searchParams.get('kind')
+          if (kind === 'Agent') return jsonResponse(controlPlaneAgentsResponseValue)
+          if (kind === 'AgentRun') return jsonResponse(controlPlaneAgentRunsResponseValue)
+        }
+        if (pathname === '/api/torghut/trading/strategies') return jsonResponse(tradingStrategiesResponseValue)
+        if (pathname === '/api/torghut/trading/summary') return jsonResponse(tradingSummaryResponseValue)
+        if (pathname === '/api/torghut/trading/executions') return jsonResponse(tradingExecutionsResponseValue)
+        if (pathname === '/api/torghut/trading/decisions') return jsonResponse(tradingDecisionsResponseValue)
 
         return originalFetch(input, init)
       }
@@ -378,6 +611,13 @@ test.beforeEach(async ({ page }) => {
       githubPullJudgeRunsResponseValue: githubPullJudgeRunsResponse,
       githubPullRefreshFilesResponseValue: githubPullRefreshFilesResponse,
       githubPullThreadsResponseValue: githubPullThreadsResponse,
+      controlPlaneImplementationSpecResponseValue: controlPlaneImplementationSpecResponse,
+      controlPlaneAgentsResponseValue: controlPlaneAgentsResponse,
+      controlPlaneAgentRunsResponseValue: controlPlaneAgentRunsResponse,
+      tradingStrategiesResponseValue: tradingStrategiesResponse,
+      tradingSummaryResponseValue: tradingSummaryResponse,
+      tradingExecutionsResponseValue: tradingExecutionsResponse,
+      tradingDecisionsResponseValue: tradingDecisionsResponse,
     },
   )
 
@@ -477,4 +717,34 @@ test('github pull detail route screenshot', async ({ page }) => {
   await expect(page.getByText('Merge controls')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Submit review' })).toBeEnabled()
   await expect(page).toHaveScreenshot('github-pull-detail.png', { fullPage: true, animations: 'disabled' })
+})
+
+test('control-plane implementation spec route loads spec and agents', async ({ page }) => {
+  await page.goto('/control-plane/implementation-specs/ship-trading-ui?namespace=agents')
+  await expect(page.getByRole('heading', { name: 'Run spec' })).toBeVisible()
+  await expect(page.getByText('Ship trading UI', { exact: true }).last()).toBeVisible()
+  await expect(page.getByRole('combobox', { name: 'Agent' })).toContainText('codex-operator')
+  await expect(page.getByRole('button', { name: 'Run agent' })).toBeVisible()
+})
+
+test('control-plane runs route shows loader-backed runs', async ({ page }) => {
+  await page.goto('/control-plane/runs?namespace=agents')
+  await expect(page.getByRole('button', { name: 'Delete selected' })).toBeVisible()
+  await expect(page.getByText('run-1')).toBeVisible()
+  await expect(page.getByText('ship-trading-ui')).toBeVisible()
+})
+
+test('control-plane primitive aliases render real pages without redirecting', async ({ page }) => {
+  await page.goto('/control-plane/agents?namespace=agents')
+  await expect(page).toHaveURL(/\/control-plane\/agents\?namespace=agents$/)
+  await expect(page.getByRole('heading', { name: 'Agents' })).toBeVisible()
+  await expect(page.getByText('codex-operator')).toBeVisible()
+})
+
+test('torghut trading route loads trading summary data', async ({ page }) => {
+  await page.goto('/torghut/trading')
+  await expect(page.getByRole('heading', { name: 'Trading' })).toBeVisible()
+  await expect(page.getByRole('combobox', { name: 'Strategy' })).toContainText('Momentum')
+  await expect(page.getByText('$1,234.56')).toBeVisible()
+  await expect(page.getByText('paper:')).toBeVisible()
 })

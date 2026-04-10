@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { resolveTorghutEndpointsConfig } from '~/server/torghut-config'
 
 type RolloutStage = 'stage0' | 'stage1' | 'stage2' | 'stage3' | 'unknown'
 
@@ -57,8 +58,7 @@ const jsonResponse = (payload: unknown, status = 200) => {
 
 const TORGHUT_STATUS_PATH = '/trading/status'
 
-const resolveTorghutBaseUrl = () =>
-  (process.env.TORGHUT_API_BASE_URL ?? 'http://torghut.torghut.svc.cluster.local').replace(/\/+$/, '')
+const resolveTorghutBaseUrl = () => resolveTorghutEndpointsConfig(process.env).apiBaseUrl
 
 const parseIsoEpochSeconds = (value: unknown): number | null => {
   if (typeof value !== 'string' || !value.trim()) return null

@@ -7,6 +7,7 @@ import type {
   GithubReviewStore,
   GithubReviewThread,
 } from '~/server/github-review-store'
+import { loadGithubReviewConfig } from '~/server/github-review-config'
 import { createGithubReviewStore } from '~/server/github-review-store'
 import { refreshWorktreeSnapshot } from '~/server/github-worktree-snapshot'
 
@@ -46,11 +47,7 @@ const getStore = () => {
 
 const getWorktreeSnapshot = () => globalOverrides.__githubWorktreeSnapshotMock ?? refreshWorktreeSnapshot
 
-const resolveWorktreeRefreshFailureTtlMs = () => {
-  const rawTtl = process.env.JANGAR_GITHUB_WORKTREE_REFRESH_FAILURE_TTL_SECONDS?.trim()
-  const parsed = rawTtl ? Number.parseInt(rawTtl, 10) : NaN
-  return Number.isFinite(parsed) && parsed > 0 ? parsed * 1_000 : 60_000
-}
+const resolveWorktreeRefreshFailureTtlMs = () => loadGithubReviewConfig(process.env).worktreeRefreshFailureTtlMs
 
 const WORKTREE_REFRESH_FAILURE_TTL_MS = resolveWorktreeRefreshFailureTtlMs()
 const REFRESH_WORKTREE_NOT_FOUND_ERROR = /Unable to resolve git ref:/

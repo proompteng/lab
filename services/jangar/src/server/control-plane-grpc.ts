@@ -1,6 +1,7 @@
 import { connect } from 'node:net'
 
 import type { GrpcStatus } from '~/server/control-plane-status'
+import { resolveGrpcRuntimeConfig } from './runtime-tooling-config'
 
 const DEFAULT_GRPC_PORT = 50051
 const DEFAULT_GRPC_HEALTH_TIMEOUT_MS = 750
@@ -42,13 +43,7 @@ const parseGrpcPort = (portInput: string, fallback: number): number | null => {
   return port
 }
 
-const parseGrpcTimeoutMs = (): number => {
-  const timeout = Number(process.env.JANGAR_GRPC_HEALTH_TIMEOUT_MS?.trim() ?? '')
-  if (!Number.isFinite(timeout) || timeout <= 0) {
-    return DEFAULT_GRPC_HEALTH_TIMEOUT_MS
-  }
-  return timeout
-}
+const parseGrpcTimeoutMs = (): number => resolveGrpcRuntimeConfig(process.env).healthTimeoutMs
 
 const parseGrpcAddress = (addressInput: string) => {
   const address = addressInput.trim()
@@ -93,13 +88,14 @@ const checkGrpcEndpointReachability = async (host: string, port: number, timeout
 }
 
 export const resolveGrpcStatus = async (): Promise<GrpcStatus> => {
-  const parsedEnabled = parseBooleanFlag((process.env.JANGAR_GRPC_ENABLED ?? '').trim())
+  const grpcConfig = resolveGrpcRuntimeConfig(process.env)
+  const parsedEnabled = parseBooleanFlag(grpcConfig.enabledRaw)
   if (!parsedEnabled.valid) {
     return {
       enabled: false,
       address: '',
       status: 'degraded',
-      message: `invalid JANGAR_GRPC_ENABLED value ${JSON.stringify(process.env.JANGAR_GRPC_ENABLED ?? '').trim()}`,
+      message: `invalid JANGAR_GRPC_ENABLED value ${JSON.stringify(grpcConfig.enabledRaw).trim()}`,
     }
   }
 
@@ -112,17 +108,17 @@ export const resolveGrpcStatus = async (): Promise<GrpcStatus> => {
     }
   }
 
-  const host = (process.env.JANGAR_GRPC_HOST ?? '').trim() || '127.0.0.1'
+  const host = grpcConfig.host
 
-  const addressOverride = process.env.JANGAR_GRPC_ADDRESS?.trim()
+  const addressOverride = grpcConfig.address
   if (!addressOverride) {
-    const resolvedPort = parseGrpcPort(process.env.JANGAR_GRPC_PORT ?? '', DEFAULT_GRPC_PORT)
+    const resolvedPort = parseGrpcPort(grpcConfig.port, DEFAULT_GRPC_PORT)
     if (resolvedPort === null) {
       return {
         enabled: true,
         address: '',
         status: 'degraded',
-        message: `invalid JANGAR_GRPC_PORT value ${JSON.stringify(process.env.JANGAR_GRPC_PORT ?? '').trim()}`,
+        message: `invalid JANGAR_GRPC_PORT value ${JSON.stringify(grpcConfig.port).trim()}`,
       }
     }
 

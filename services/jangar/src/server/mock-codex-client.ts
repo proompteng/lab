@@ -1,4 +1,5 @@
 import type { CodexAppServerClient } from '@proompteng/codex'
+import { resolveMockCodexConfig } from './runtime-tooling-config'
 
 type MockStreamDelta =
   | { type: 'message' | 'reasoning'; delta: string }
@@ -33,13 +34,9 @@ const parseBooleanEnv = (value: string | undefined) => {
   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on'
 }
 
-export const shouldUseMockCodexClient = () =>
-  parseBooleanEnv(process.env.JANGAR_MOCK_CODEX) || Boolean(process.env.JANGAR_MOCK_CODEX_SCENARIO?.trim())
+export const shouldUseMockCodexClient = () => resolveMockCodexConfig(process.env).enabled
 
-const resolveMockCodexScenario = () => {
-  const value = process.env.JANGAR_MOCK_CODEX_SCENARIO?.trim()
-  return value && value.length > 0 ? value : 'openwebui-e2e'
-}
+const resolveMockCodexScenario = () => resolveMockCodexConfig(process.env).scenario
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 

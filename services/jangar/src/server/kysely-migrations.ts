@@ -1,6 +1,7 @@
 import { type Migration, type MigrationProvider, Migrator, sql } from 'kysely'
 
 import type { Db } from '~/server/db'
+import { resolveMigrationsConfig } from '~/server/migrations-config'
 import * as initMigration from '~/server/migrations/20251228_init'
 import * as codexJudgeRunMetadataMigration from '~/server/migrations/20251229_codex_judge_run_metadata'
 import * as codexJudgeTimeoutsMigration from '~/server/migrations/20251229_codex_judge_timeouts'
@@ -70,19 +71,9 @@ export const getRegisteredMigrationNames = () => Object.keys(migrations).sort()
 const migrationProvider = new StaticMigrationProvider(migrations)
 const migrationPromises = new WeakMap<Db, Promise<void>>()
 
-const resolveMigrationsMode = () => {
-  const raw = process.env.JANGAR_MIGRATIONS?.trim().toLowerCase()
-  if (!raw) return 'auto'
-  if (['skip', 'disabled', 'false', '0', 'off'].includes(raw)) return 'skip'
-  return 'auto'
-}
+const resolveMigrationsMode = () => resolveMigrationsConfig(process.env).mode
 
-const resolveAllowUnorderedMigrations = () => {
-  const raw = process.env.JANGAR_ALLOW_UNORDERED_MIGRATIONS?.trim().toLowerCase()
-  if (!raw) return true
-  if (['false', '0', 'off', 'disabled', 'no'].includes(raw)) return false
-  return true
-}
+const resolveAllowUnorderedMigrations = () => resolveMigrationsConfig(process.env).allowUnorderedMigrations
 
 const ensureExtensions = async (db: Db) => {
   const { rows: extensionRows } = await sql<{ extname: string }>`
@@ -124,7 +115,7 @@ const runMigrations = async (db: Db) => {
 }
 
 export const ensureMigrations = async (db: Db) => {
-  if (process.env.JANGAR_SKIP_MIGRATIONS === '1' || resolveMigrationsMode() === 'skip') {
+  if (resolveMigrationsConfig(process.env).skipMigrations || resolveMigrationsMode() === 'skip') {
     return
   }
   let ready = migrationPromises.get(db)
