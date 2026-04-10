@@ -15,6 +15,13 @@ import {
 } from '~/server/git-lock-recovery'
 import { withWorktreeLock } from '~/server/git-worktree-lock'
 import {
+  type ChatConfig,
+  type OpenWebUIRenderRuntime,
+  loadChatConfig,
+  resolveChatConfig,
+  resolveOpenWebUIRenderRuntime as resolveConfiguredOpenWebUIRenderRuntime,
+} from './chat-config'
+import {
   ChatCompletionEncoder,
   type ChatCompletionEncoderService,
   chatCompletionEncoderLive,
@@ -24,14 +31,13 @@ import { safeJsonStringify, stripTerminalControl } from './chat-text'
 import { ChatToolEventRenderer, chatToolEventRendererLive, type ToolRenderer } from './chat-tool-event-renderer'
 import { buildTranscriptSignature, compareTranscript, fitPromptMessages, type TranscriptEntry } from './chat-transcript'
 import { getCodexClient, releaseCodexClient, resetCodexClient, setCodexClientFactory } from './codex-client'
-import { loadConfig } from './config'
 import {
   recordOpenWebUIDetailTurn,
   recordOpenWebUITextOnlyFallback,
   recordSseConnection,
   recordSseError,
 } from './metrics'
-import { createSignedOpenWebUIRenderHref, resolveOpenWebUIRenderSigningSecret } from './openwebui-render-signing'
+import { createSignedOpenWebUIRenderHref } from './openwebui-render-signing'
 import { getOpenWebUiRenderStore } from './openwebui-render-store'
 import { ThreadState, ThreadStateLive, type ThreadStateService, ThreadStateUnavailableError } from './thread-state'
 import {
@@ -169,7 +175,6 @@ const resolveChatClientKind = (request: Request, hasOpenWebUIChatId: boolean): C
 const WORKTREE_DIR_NAME = '.worktrees'
 const WORKTREE_NAME_PATTERN = /^[a-z0-9-]+$/
 const TRADE_EXECUTION_DIR_NAME = 'torghut'
-const DEFAULT_CODEX_MAX_INPUT_CHARS = 1_048_576
 
 const MISSING_UPSTREAM_THREAD_MESSAGE_FRAGMENTS = ['conversation not found', 'thread not found'] as const
 
@@ -185,39 +190,20 @@ class MissingUpstreamThreadError extends Error {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-const parseBooleanEnv = (value: string | undefined) => {
-  if (!value) return false
-  const normalized = value.trim().toLowerCase()
-  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on'
-}
-
-const normalizeExternalBaseUrl = (value: string | undefined) => {
-  const trimmed = value?.trim()
-  return trimmed ? trimmed.replace(/\/+$/g, '') : null
-}
-
-type OpenWebUIRenderRuntime = {
-  baseUrl: string
-  secret: string
-}
-
-const isOpenWebUIDetailLinksEnabled = (chatClientKind: ChatClientKind) => {
+const isOpenWebUIDetailLinksEnabled = (chatClientKind: ChatClientKind, config: ChatConfig) => {
   if (chatClientKind !== 'openwebui') return false
-  if (!parseBooleanEnv(process.env.JANGAR_OPENWEBUI_RICH_RENDER_ENABLED)) return false
+  if (!config.openWebUIRichRenderEnabled) return false
   return true
 }
 
-const shouldEmitExperimentalOpenWebUIJangarEvent = (chatClientKind: ChatClientKind, request: Request) => {
-  if (!isOpenWebUIDetailLinksEnabled(chatClientKind)) return false
+const shouldEmitExperimentalOpenWebUIJangarEvent = (
+  chatClientKind: ChatClientKind,
+  request: Request,
+  config: ChatConfig,
+) => {
+  if (!isOpenWebUIDetailLinksEnabled(chatClientKind, config)) return false
   const requestedMode = request.headers.get('x-jangar-openwebui-render-mode')?.trim().toLowerCase()
   return requestedMode === 'rich-ui-v1'
-}
-
-const resolveOpenWebUIRenderRuntime = (): OpenWebUIRenderRuntime | null => {
-  const baseUrl = normalizeExternalBaseUrl(process.env.JANGAR_OPENWEBUI_EXTERNAL_BASE_URL)
-  const secret = resolveOpenWebUIRenderSigningSecret()
-  if (!baseUrl || !secret) return null
-  return { baseUrl, secret }
 }
 
 let hasLoggedMissingOpenWebUIRenderRuntime = false
@@ -259,29 +245,21 @@ const isErrno = (error: unknown): error is NodeJS.ErrnoException =>
   typeof error === 'object' && error !== null && 'code' in error
 
 const shouldSkipGitWorktree = () => {
-  if (process.env.NODE_ENV === 'test') return true
+  if (resolveChatConfig().isTest) return true
   return typeof (globalThis as { Bun?: unknown }).Bun === 'undefined'
 }
 
 const resolveRepoRoot = () => resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 
 const resolveCodexBaseCwd = () => {
-  const envCwd = process.env.CODEX_CWD?.trim()
-  if (envCwd) return envCwd
-  return process.env.NODE_ENV === 'production' ? '/workspace/lab' : resolveRepoRoot()
+  const config = resolveChatConfig()
+  if (config.codexCwdOverride) return config.codexCwdOverride
+  return config.isProduction ? '/workspace/lab' : resolveRepoRoot()
 }
 
 const resolveCodexCwd = (worktreePath?: string) => worktreePath ?? resolveCodexBaseCwd()
 
-const resolveCodexMaxInputChars = () => {
-  const raw = process.env.JANGAR_CODEX_MAX_INPUT_CHARS?.trim()
-  if (!raw) return DEFAULT_CODEX_MAX_INPUT_CHARS
-  const parsed = Number.parseInt(raw, 10)
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error('JANGAR_CODEX_MAX_INPUT_CHARS must be a positive integer')
-  }
-  return parsed
-}
+const resolveCodexMaxInputChars = () => resolveChatConfig().codexMaxInputChars
 
 const resolveWorktreeRoot = () => join(resolveCodexBaseCwd(), WORKTREE_DIR_NAME)
 const resolveTradeExecutionRoot = () => join(resolveCodexBaseCwd(), TRADE_EXECUTION_DIR_NAME)
@@ -459,7 +437,7 @@ const toSseResponse = (
   const created = Math.floor(Date.now() / 1000)
   const id = `chatcmpl-${crypto.randomUUID()}`
   const heartbeatIntervalMs = 5_000
-  const enableHeartbeat = process.env.NODE_ENV !== 'test'
+  const enableHeartbeat = !resolveChatConfig().isTest
   let connectionClosed = false
   let handleClientDisconnect: (() => void) | null = null
 
@@ -956,19 +934,22 @@ export const handleChatCompletionEffect = (request: Request) =>
               : new RequestError(400, 'invalid_request_error', 'Invalid chat request headers'),
         })
         const tradeExecutionRequest = chatClientKind === 'trade-execution'
-        const statefulTranscriptEnabled =
-          chatClientKind === 'openwebui' && process.env.JANGAR_STATEFUL_CHAT_MODE !== '0'
         const shouldTrackConversationState = chatClientKind === 'openwebui' || chatClientKind === 'discord'
 
         const { config, toolRenderer, encoder } = yield* Effect.all({
-          config: loadConfig,
+          config: loadChatConfig,
           toolRenderer: ChatToolEventRenderer,
           encoder: ChatCompletionEncoder,
         })
-        const openWebUIDetailLinksRequested = isOpenWebUIDetailLinksEnabled(chatClientKind)
-        const openWebUIRenderRuntime = resolveOpenWebUIRenderRuntime()
+        const statefulTranscriptEnabled = chatClientKind === 'openwebui' && config.statefulChatModeEnabled
+        const openWebUIDetailLinksRequested = isOpenWebUIDetailLinksEnabled(chatClientKind, config)
+        const openWebUIRenderRuntime = resolveConfiguredOpenWebUIRenderRuntime(config)
         const openWebUIDetailLinksEnabled = openWebUIDetailLinksRequested && openWebUIRenderRuntime !== null
-        const experimentalJangarEventEnabled = shouldEmitExperimentalOpenWebUIJangarEvent(chatClientKind, request)
+        const experimentalJangarEventEnabled = shouldEmitExperimentalOpenWebUIJangarEvent(
+          chatClientKind,
+          request,
+          config,
+        )
 
         if (chatClientKind === 'openwebui') {
           recordOpenWebUIDetailTurn(

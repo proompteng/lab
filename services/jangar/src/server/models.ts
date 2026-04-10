@@ -1,8 +1,8 @@
 import { Effect } from 'effect'
-import { loadConfig } from './config'
+import { loadChatConfig } from './chat-config'
 
 export const listModels = Effect.gen(function* () {
-  const config = yield* loadConfig
+  const config = yield* loadChatConfig
   const now = Math.floor(Date.now() / 1000)
   return {
     object: 'list' as const,

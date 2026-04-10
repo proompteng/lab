@@ -1,13 +1,13 @@
-import { createJangarRuntime } from './app'
+import { bootRuntimeProfile } from './runtime-boot'
 import { JANGAR_RUNTIME_PROFILES } from './runtime-profile'
-import { ensureRuntimeStartup } from './runtime-startup'
 
 const port = Number.parseInt(process.env.PORT ?? process.env.JANGAR_PORT ?? '3000', 10)
 const hostname = process.env.HOST?.trim() || '0.0.0.0'
 const runtimeProfile = JANGAR_RUNTIME_PROFILES.httpServer
 
-ensureRuntimeStartup(runtimeProfile.startup)
+bootRuntimeProfile(runtimeProfile)
 
+const { createJangarRuntime } = await import('./app')
 const runtime = await createJangarRuntime({ serveClient: runtimeProfile.serveClient })
 
 const server = Bun.serve({
