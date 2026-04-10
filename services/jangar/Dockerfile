@@ -558,6 +558,7 @@ WORKDIR /app/services/jangar
 COPY --from=jangar-build /app/services/jangar/.output ./.output
 COPY --from=jangar-build /app/services/jangar/package.json ./package.json
 COPY --from=jangar-build /app/services/jangar/src/worker.ts ./src/worker.ts
+COPY --from=jangar-build /app/services/jangar/src/server/runtime-entry-config.ts ./src/server/runtime-entry-config.ts
 COPY --from=jangar-pty /tmp/node-pty/build /app/services/jangar/.output/server/node_modules/node-pty/build
 COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/services/jangar/.output/server/node_modules/node-pty/prebuilds
 WORKDIR /app
@@ -606,6 +607,7 @@ WORKDIR /app/services/jangar
 COPY --from=jangar-build /app/services/jangar/.output ./.output
 COPY --from=jangar-build /app/services/jangar/package.json ./package.json
 COPY --from=jangar-build /app/services/jangar/src/worker.ts ./src/worker.ts
+COPY --from=jangar-build /app/services/jangar/src/server/runtime-entry-config.ts ./src/server/runtime-entry-config.ts
 COPY --from=jangar-pty /tmp/node-pty/build /app/services/jangar/.output/server/node_modules/node-pty/build
 COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/services/jangar/.output/server/node_modules/node-pty/prebuilds
 WORKDIR /app
