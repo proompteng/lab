@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import yaml
 
+import app.trading.discovery.autoresearch as autoresearch
 from app.trading.discovery.autoresearch import (
     FamilyAutoresearchPlan,
     MutationSpace,
@@ -55,6 +56,43 @@ def _family_template() -> FamilyTemplate:
 
 
 class TestStrategyAutoresearch(TestCase):
+    def test_autoresearch_helper_branches_cover_edge_cases(self) -> None:
+        self.assertEqual(autoresearch._string_list('not-a-list'), ())
+        self.assertEqual(autoresearch._string_list(['', ' NVDA ', None]), ('NVDA',))
+        self.assertEqual(
+            autoresearch._stable_value_key({'b': 2, 'a': 1}),
+            '{"a":1,"b":2}',
+        )
+        self.assertIsNone(autoresearch._decimal_from_candidate(None))
+        self.assertIsNone(autoresearch._decimal_from_candidate('not-a-number'))
+        self.assertEqual(
+            autoresearch._format_numeric_like(Decimal('3'), current_value='2'),
+            '3',
+        )
+        self.assertEqual(
+            autoresearch._format_numeric_like(Decimal('3.125'), current_value='2.00'),
+            '3.12',
+        )
+        self.assertEqual(
+            autoresearch._format_numeric_like(Decimal('3.1400'), current_value=''),
+            '3.14',
+        )
+
+    def test_load_mutation_space_rejects_invalid_mode(self) -> None:
+        with self.assertRaisesRegex(ValueError, 'autoresearch_mutation_mode_invalid'):
+            autoresearch._load_mutation_space({'mode': 'bad-mode'})
+
+    def test_resolve_seed_sweep_path_keeps_absolute_path(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            absolute = root / 'seed.yaml'
+            resolved = autoresearch._resolve_seed_sweep_path(
+                program_path=root / 'program.yaml',
+                raw_path=str(absolute),
+            )
+
+        self.assertEqual(resolved, absolute)
+
     def test_parse_args_defaults_strategy_configmap_to_repo_root(self) -> None:
         with patch.object(sys, 'argv', ['run_strategy_autoresearch_loop.py', '--program', 'program.yaml', '--output-dir', '/tmp/out']):
             args = runner._parse_args()
@@ -204,6 +242,116 @@ class TestStrategyAutoresearch(TestCase):
             self.assertEqual(updated['consistency_constraints']['max_best_day_share_of_total_pnl'], '0.35')
             self.assertEqual(updated['consistency_constraints']['min_active_days'], 8)
 
+    def test_load_program_rejects_non_mapping_schema_and_missing_families(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            program_path = root / 'program.yaml'
+
+            program_path.write_text('- item\n', encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'autoresearch_program_not_mapping'):
+                load_strategy_autoresearch_program(program_path, family_dir=root)
+
+            program_path.write_text(
+                yaml.safe_dump({'schema_version': 'wrong', 'families': []}, sort_keys=False),
+                encoding='utf-8',
+            )
+            with self.assertRaisesRegex(ValueError, 'autoresearch_program_schema_invalid'):
+                load_strategy_autoresearch_program(program_path, family_dir=root)
+
+            program_path.write_text(
+                yaml.safe_dump(
+                    {
+                        'schema_version': 'torghut.strategy-autoresearch.v1',
+                        'program_id': 'empty',
+                        'description': 'missing families',
+                        'objective': {},
+                        'families': [],
+                    },
+                    sort_keys=False,
+                ),
+                encoding='utf-8',
+            )
+            with self.assertRaisesRegex(ValueError, 'autoresearch_program_missing_families'):
+                load_strategy_autoresearch_program(program_path, family_dir=root)
+
+    def test_load_program_skips_invalid_source_and_claim_entries(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            family_dir = root / 'families'
+            family_dir.mkdir()
+            (family_dir / 'breakout_reclaim_v2.yaml').write_text(
+                yaml.safe_dump(
+                    {
+                        'schema_version': 'torghut.family-template.v1',
+                        'family_id': 'breakout_reclaim_v2',
+                        'economic_mechanism': 'Breakout reclaim.',
+                        'supported_markets': ['us_equities_intraday'],
+                        'required_features': ['quote_quality'],
+                        'allowed_normalizations': ['price_scaled'],
+                        'entry_motifs': ['breakout_reclaim'],
+                        'exit_motifs': ['trailing_stop'],
+                        'risk_controls': ['stop_loss'],
+                        'activity_model': {'min_active_day_ratio': '0.50', 'min_daily_notional': '200000'},
+                        'liquidity_assumptions': {'max_spread_bps': '30'},
+                        'regime_activation_rules': [],
+                        'day_veto_rules': [],
+                        'default_hard_vetoes': {},
+                        'default_selection_objectives': {},
+                        'runtime_harness': {'family': 'breakout', 'strategy_name': 'breakout-v1'},
+                    },
+                    sort_keys=False,
+                ),
+                encoding='utf-8',
+            )
+            sweep_path = root / 'seed.yaml'
+            sweep_path.write_text('schema_version: torghut.replay-frontier-sweep.v1\n', encoding='utf-8')
+            program_path = root / 'program.yaml'
+            program_path.write_text(
+                yaml.safe_dump(
+                    {
+                        'schema_version': 'torghut.strategy-autoresearch.v1',
+                        'program_id': 'valid-ish',
+                        'description': 'fixture',
+                        'objective': {},
+                        'research_sources': [
+                            'skip-me',
+                            {
+                                'source_id': '',
+                                'title': 'missing id',
+                                'claims': [{'claim_id': 'claim-ignored'}],
+                            },
+                            {
+                                'source_id': 'paper-1',
+                                'title': 'Paper 1',
+                                'url': 'https://example.com',
+                                'published_at': '2026-01-01',
+                                'claims': [
+                                    'skip-claim',
+                                    {'claim_id': '', 'summary': 'missing id'},
+                                    {'claim_id': 'claim-1', 'summary': 'ok', 'implication': 'use it'},
+                                ],
+                            },
+                        ],
+                        'families': [
+                            'skip-family',
+                            {
+                                'family_template_id': 'breakout_reclaim_v2',
+                                'seed_sweep_config': str(sweep_path),
+                            },
+                        ],
+                    },
+                    sort_keys=False,
+                ),
+                encoding='utf-8',
+            )
+
+            program = load_strategy_autoresearch_program(program_path, family_dir=family_dir)
+
+        self.assertEqual(len(program.research_sources), 1)
+        self.assertEqual(program.research_sources[0].source_id, 'paper-1')
+        self.assertEqual(len(program.research_sources[0].claims), 1)
+        self.assertEqual(program.research_sources[0].claims[0].claim_id, 'claim-1')
+
     def test_apply_program_objective_skips_full_window_counts_when_unknown(self) -> None:
         updated = apply_program_objective(
             sweep_config={'constraints': {}, 'consistency_constraints': {}},
@@ -284,6 +432,69 @@ class TestStrategyAutoresearch(TestCase):
         self.assertEqual(mutated['strategy_overrides']['universe_symbols'], [['AMAT', 'NVDA']])
         self.assertEqual(mutated['strategy_overrides']['normalization_regime'], ['price_scaled', 'opening_window_scaled'])
         self.assertIn('max_entries_per_session', description)
+
+    def test_build_mutated_sweep_config_falls_back_when_mutation_values_are_filtered_out(self) -> None:
+        family_plan = FamilyAutoresearchPlan(
+            family_template=_family_template(),
+            seed_sweep_config=Path('/tmp/example.yaml'),
+            max_iterations=2,
+            keep_top_candidates=1,
+            frontier_top_n=2,
+            force_keep_top_candidate_if_all_vetoed=True,
+            symbol_prune_iterations=0,
+            symbol_prune_candidates=1,
+            symbol_prune_min_universe_size=2,
+            parameter_mutations={
+                'entry_cooldown_seconds': MutationSpace(
+                    mode='numeric_step',
+                    deltas=(Decimal('-1000'),),
+                    minimum=Decimal('1'),
+                    maximum=Decimal('1200'),
+                ),
+                'normalization_regime': MutationSpace(
+                    mode='explicit_values',
+                    values=('matched_filter',),
+                ),
+            },
+            strategy_override_mutations={
+                'max_position_pct_equity': MutationSpace(
+                    mode='numeric_step',
+                    deltas=(Decimal('100'),),
+                    minimum=Decimal('0'),
+                    maximum=Decimal('20'),
+                )
+            },
+        )
+        base_sweep = {
+            'parameters': {
+                'entry_cooldown_seconds': ['600'],
+            },
+            'strategy_overrides': {
+                'max_position_pct_equity': ['10.0'],
+            },
+        }
+        candidate = {
+            'candidate_id': 'candidate-2',
+            'replay_config': {
+                'params': {
+                    'entry_cooldown_seconds': '600',
+                },
+                'strategy_overrides': {
+                    'max_position_pct_equity': '10.0',
+                },
+            },
+        }
+
+        mutated, description = build_mutated_sweep_config(
+            base_sweep_config=base_sweep,
+            candidate_payload=candidate,
+            family_plan=family_plan,
+        )
+
+        self.assertEqual(mutated['parameters']['entry_cooldown_seconds'], ['600'])
+        self.assertEqual(mutated['parameters']['normalization_regime'], ['matched_filter'])
+        self.assertEqual(mutated['strategy_overrides']['max_position_pct_equity'], ['10.0'])
+        self.assertIn('candidate-2', description)
 
     def test_candidate_meets_objective_respects_vetoes(self) -> None:
         objective = StrategyObjective(
@@ -854,3 +1065,165 @@ class TestStrategyAutoresearch(TestCase):
             self.assertTrue((run_root / 'results.tsv').exists())
             self.assertTrue((run_root / 'research_dossier.json').exists())
             self.assertTrue((run_root / 'strategy-discovery-history.ipynb').exists())
+
+    def test_run_strategy_autoresearch_loop_honors_max_frontier_runs_and_dedupes_seen_sweeps(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            program_path, family_dir = self._write_program_fixture(root)
+            program_payload = yaml.safe_load(program_path.read_text(encoding='utf-8'))
+            program_payload['families'].append(dict(program_payload['families'][0]))
+            program_path.write_text(yaml.safe_dump(program_payload, sort_keys=False), encoding='utf-8')
+            configmap_path = root / 'strategy-configmap.yaml'
+            configmap_path.write_text(
+                yaml.safe_dump(
+                    {'apiVersion': 'v1', 'kind': 'ConfigMap', 'data': {'strategies.yaml': 'strategies: []\n'}},
+                    sort_keys=False,
+                ),
+                encoding='utf-8',
+            )
+            args = Namespace(
+                program=program_path,
+                output_dir=root / 'out',
+                strategy_configmap=configmap_path,
+                family_template_dir=family_dir,
+                clickhouse_http_url='http://example.invalid:8123',
+                clickhouse_username='torghut',
+                clickhouse_password='secret',
+                start_equity='31590.02',
+                chunk_minutes=10,
+                symbols='',
+                progress_log_seconds=30,
+                train_days=6,
+                holdout_days=3,
+                full_window_start_date='2026-03-20',
+                full_window_end_date='',
+                expected_last_trading_day='',
+                allow_stale_tape=False,
+                prefetch_full_window_rows=False,
+                max_frontier_runs=1,
+                json_output=None,
+            )
+            frontier_payload = {
+                'dataset_snapshot_receipt': {'snapshot_id': 'snap-1'},
+                'top': [],
+            }
+
+            with patch(
+                'scripts.run_strategy_autoresearch_loop.run_consistent_profitability_frontier',
+                return_value=frontier_payload,
+            ) as mock_frontier:
+                payload = runner.run_strategy_autoresearch_loop(args)
+
+        self.assertEqual(payload['status'], 'ok')
+        self.assertEqual(payload['frontier_run_count'], 1)
+        mock_frontier.assert_called_once()
+
+    def test_run_strategy_autoresearch_loop_force_keeps_top_candidate_when_all_vetoed(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            program_path, family_dir = self._write_program_fixture(root)
+            configmap_path = root / 'strategy-configmap.yaml'
+            configmap_path.write_text(
+                yaml.safe_dump(
+                    {'apiVersion': 'v1', 'kind': 'ConfigMap', 'data': {'strategies.yaml': 'strategies: []\n'}},
+                    sort_keys=False,
+                ),
+                encoding='utf-8',
+            )
+            args = Namespace(
+                program=program_path,
+                output_dir=root / 'out',
+                strategy_configmap=configmap_path,
+                family_template_dir=family_dir,
+                clickhouse_http_url='http://example.invalid:8123',
+                clickhouse_username='torghut',
+                clickhouse_password='secret',
+                start_equity='31590.02',
+                chunk_minutes=10,
+                symbols='',
+                progress_log_seconds=30,
+                train_days=6,
+                holdout_days=3,
+                full_window_start_date='',
+                full_window_end_date='',
+                expected_last_trading_day='',
+                allow_stale_tape=False,
+                prefetch_full_window_rows=False,
+                max_frontier_runs=2,
+                json_output=None,
+            )
+            frontier_responses = [
+                {
+                    'dataset_snapshot_receipt': {'snapshot_id': 'snap-1'},
+                    'top': [
+                        {
+                            'candidate_id': 'vetoed-seed',
+                            'hard_vetoes': ['bad'],
+                            'ranking': {'pareto_tier': 1, 'tie_breaker_score': '1', 'vetoed': True},
+                            'objective_scorecard': {
+                                'net_pnl_per_day': '0',
+                                'active_day_ratio': '0',
+                                'positive_day_ratio': '0',
+                                'avg_filled_notional_per_day': '0',
+                                'avg_filled_notional_per_active_day': '0',
+                                'best_day_share': '1',
+                                'worst_day_loss': '999',
+                                'max_drawdown': '999',
+                                'regime_slice_pass_rate': '0',
+                            },
+                            'full_window': {'trading_day_count': 9, 'active_days': 0, 'daily_net': {}, 'daily_filled_notional': {}},
+                            'replay_config': {
+                                'params': {'max_entries_per_session': '2', 'entry_cooldown_seconds': '600'},
+                                'strategy_overrides': {'universe_symbols': ['AMAT', 'NVDA']},
+                            },
+                        }
+                    ],
+                },
+                {
+                    'dataset_snapshot_receipt': {'snapshot_id': 'snap-2'},
+                    'top': [],
+                },
+            ]
+
+            with patch(
+                'scripts.run_strategy_autoresearch_loop.run_consistent_profitability_frontier',
+                side_effect=frontier_responses,
+            ):
+                payload = runner.run_strategy_autoresearch_loop(args)
+
+            self.assertEqual(payload['frontier_run_count'], 2)
+            history = (Path(payload['run_root']) / 'history.jsonl').read_text(encoding='utf-8')
+            self.assertIn('"candidate_id": "vetoed-seed"', history)
+
+    def test_main_writes_json_output_and_returns_nonzero_for_error_payload(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            program_path = root / 'program.yaml'
+            program_path.write_text('schema_version: torghut.strategy-autoresearch.v1\nfamilies: []\n', encoding='utf-8')
+            output_dir = root / 'out'
+            json_output = root / 'summary.json'
+
+            with (
+                patch.object(
+                    sys,
+                    'argv',
+                    [
+                        'run_strategy_autoresearch_loop.py',
+                        '--program',
+                        str(program_path),
+                        '--output-dir',
+                        str(output_dir),
+                        '--json-output',
+                        str(json_output),
+                    ],
+                ),
+                patch.object(
+                    runner,
+                    'run_strategy_autoresearch_loop',
+                    return_value={'status': 'error', 'run_root': str(output_dir)},
+                ),
+            ):
+                exit_code = runner.main()
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(json.loads(json_output.read_text(encoding='utf-8'))['status'], 'error')

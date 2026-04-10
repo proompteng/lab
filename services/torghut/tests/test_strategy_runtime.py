@@ -1191,6 +1191,46 @@ class TestStrategyRuntime(TestCase):
         self.assertEqual(decision.plugin_id, "momentum_pullback_long")
         self.assertIn("momentum_pullback_exit", decision.intent.rationale)
 
+    def test_momentum_pullback_plugin_skips_outside_entry_window_without_exit_trigger(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="momentum-pullback",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="momentum_pullback_long_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 20, 10, 0, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=2,
+            payload={
+                "price": 593.62,
+                "ema12": 594.10,
+                "ema26": 593.70,
+                "macd": 0.041,
+                "macd_signal": 0.022,
+                "rsi14": 59,
+                "vol_realized_w60s": 0.00018,
+                "spread": 0.05,
+                "imbalance_bid_sz": 4200,
+                "imbalance_ask_sz": 3800,
+                "price_vs_session_open_bps": 88,
+                "recent_spread_bps_avg": 0.84,
+                "recent_imbalance_pressure_avg": 0.06,
+            },
+        )
+
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNone(decision)
+
     def test_breakout_continuation_plugin_emits_buy_with_vwap_and_imbalance_confirmation(
         self,
     ) -> None:
@@ -4835,6 +4875,105 @@ class TestStrategyRuntime(TestCase):
         decision = runtime.evaluate(strategy, feature_contract, timeframe='1Sec')
 
         self.assertIsNone(decision)
+
+    def test_mean_reversion_exhaustion_short_plugin_emits_sell_after_controlled_extension(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name='mean-reversion-exhaustion-short',
+            description='version=1.0.0',
+            enabled=True,
+            base_timeframe='1Sec',
+            universe_type='mean_reversion_exhaustion_short_v1',
+            universe_symbols=['META'],
+            max_position_pct_equity=Decimal('1.0'),
+            max_notional_per_trade=Decimal('12000'),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 17, 18, 12, tzinfo=timezone.utc),
+            symbol='META',
+            timeframe='1Sec',
+            seq=21,
+            payload={
+                'price': 598.40,
+                'ema12': 596.90,
+                'macd': 0.002,
+                'macd_signal': -0.002,
+                'rsi14': 58,
+                'vol_realized_w60s': 0.00022,
+                'vwap_session': 595.90,
+                'spread': 0.05,
+                'imbalance_bid_sz': 4300,
+                'imbalance_ask_sz': 4700,
+                'price_vs_session_open_bps': 42,
+                'price_position_in_session_range': 0.86,
+                'price_vs_opening_range_high_bps': 4,
+                'session_range_bps': 88,
+                'recent_spread_bps_avg': 0.82,
+                'recent_spread_bps_max': 1.44,
+                'recent_imbalance_pressure_avg': -0.05,
+                'recent_microprice_bias_bps_avg': -0.20,
+                'cross_section_opening_window_return_rank': 0.86,
+                'cross_section_continuation_rank': 0.38,
+                'cross_section_reversal_rank': 0.80,
+            },
+        )
+
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, feature_contract, timeframe='1Sec')
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.intent.action, 'sell')
+        self.assertEqual(decision.plugin_id, 'mean_reversion_exhaustion_short')
+        self.assertIn('overbought_fade', decision.intent.rationale)
+
+    def test_mean_reversion_exhaustion_short_plugin_emits_buy_after_fade_completes(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name='mean-reversion-exhaustion-short',
+            description='version=1.0.0',
+            enabled=True,
+            base_timeframe='1Sec',
+            universe_type='mean_reversion_exhaustion_short_v1',
+            universe_symbols=['META'],
+            max_position_pct_equity=Decimal('1.0'),
+            max_notional_per_trade=Decimal('12000'),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 17, 26, 12, tzinfo=timezone.utc),
+            symbol='META',
+            timeframe='1Sec',
+            seq=22,
+            payload={
+                'price': 595.80,
+                'ema12': 596.20,
+                'macd': 0.004,
+                'macd_signal': 0.000,
+                'rsi14': 41,
+                'vol_realized_w60s': 0.00022,
+                'vwap_session': 596.40,
+                'spread': 0.05,
+                'imbalance_bid_sz': 4700,
+                'imbalance_ask_sz': 4300,
+                'price_vs_session_open_bps': 8,
+                'price_position_in_session_range': 0.38,
+                'price_vs_opening_range_high_bps': -22,
+                'session_range_bps': 88,
+                'recent_spread_bps_avg': 0.82,
+                'recent_spread_bps_max': 1.44,
+                'recent_imbalance_pressure_avg': 0.04,
+            },
+        )
+
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, feature_contract, timeframe='1Sec')
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.intent.action, 'buy')
+        self.assertEqual(decision.plugin_id, 'mean_reversion_exhaustion_short')
 
     def test_end_of_day_reversal_plugin_emits_buy_for_late_intraday_loser(self) -> None:
         strategy = Strategy(
