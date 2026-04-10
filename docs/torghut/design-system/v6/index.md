@@ -143,6 +143,9 @@ Current source-state priority is narrower:
   scalar replay penalties with a constrained multi-objective frontier, move from sleeve-first sweeps to family
   templates plus veto controllers, and turn whitepaper indexing into relation-aware claim extraction and
   experiment-spec generation.
+- `70-torghut-runtime-parity-and-promotion-approval-contract-2026-04-09.md` now closes the false-positive promotion
+  gap by making scheduler-v3 replay the only approval authority, banning research-only winners from promotion, and
+  requiring runtime parity before any discovery candidate may be called promotable.
 - `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md` now makes the next step
   explicit: non-observe capital depends on one certificate that consumes Jangar witness quorum, Jangar market-context
   and quant evidence, toggle parity, and typed options auth/bootstrap escrow rather than local gate optimism.
