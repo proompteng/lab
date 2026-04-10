@@ -45,6 +45,6 @@ export const validateRuntimeProfileConfiguration = (
   })
   if (profile.name !== 'test' && chatConfig.isProduction) {
     validateStorageConfig(env, { enforceProductionDatabase: true })
-    validateMemoryConfig(env)
+    validateMemoryConfig(env, { requireApiKeyInProduction: false })
   }
 }
