@@ -1,10 +1,14 @@
 import { ensureAgentCommsRuntime } from './agent-comms-runtime'
 import { startAgentctlGrpcServer } from './agentctl-grpc'
 import { startControlPlaneCache } from './control-plane-cache'
+import type { JangarRuntimeStartup } from './runtime-profile'
 import { startTorghutQuantRuntime } from './torghut-quant-runtime'
 
 type StartupState = {
-  started: boolean
+  agentCommsStarted: boolean
+  controlPlaneCacheStarted: boolean
+  torghutQuantRuntimeStarted: boolean
+  grpcBootAttempted: boolean
   grpcShutdownInstalled: boolean
 }
 
@@ -15,7 +19,10 @@ const globalState = globalThis as typeof globalThis & {
 const getState = (): StartupState => {
   if (!globalState.__jangarRuntimeStartup) {
     globalState.__jangarRuntimeStartup = {
-      started: false,
+      agentCommsStarted: false,
+      controlPlaneCacheStarted: false,
+      torghutQuantRuntimeStarted: false,
+      grpcBootAttempted: false,
       grpcShutdownInstalled: false,
     }
   }
@@ -23,19 +30,31 @@ const getState = (): StartupState => {
   return globalState.__jangarRuntimeStartup
 }
 
-export const ensureRuntimeStartup = () => {
+export const ensureRuntimeStartup = (startup: JangarRuntimeStartup) => {
   const state = getState()
-  if (state.started) return
 
-  state.started = true
+  if (startup.agentComms && !state.agentCommsStarted) {
+    state.agentCommsStarted = true
+    ensureAgentCommsRuntime()
+  }
 
-  ensureAgentCommsRuntime()
-  void startControlPlaneCache()
-  startTorghutQuantRuntime()
+  if (startup.controlPlaneCache && !state.controlPlaneCacheStarted) {
+    state.controlPlaneCacheStarted = true
+    void startControlPlaneCache()
+  }
 
+  if (startup.torghutQuantRuntime && !state.torghutQuantRuntimeStarted) {
+    state.torghutQuantRuntimeStarted = true
+    startTorghutQuantRuntime()
+  }
+
+  if (!startup.agentctlGrpc || state.grpcBootAttempted) return
+
+  state.grpcBootAttempted = true
   const instance = startAgentctlGrpcServer()
-  if (!instance || state.grpcShutdownInstalled) return
+  if (!instance) return
 
+  if (state.grpcShutdownInstalled) return
   state.grpcShutdownInstalled = true
   const shutdown = () => {
     instance.server.tryShutdown((error) => {

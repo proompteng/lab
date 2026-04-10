@@ -10,10 +10,6 @@ vi.mock('../metrics', () => ({
   renderPrometheusMetrics: vi.fn(),
 }))
 
-vi.mock('../runtime-startup', () => ({
-  ensureRuntimeStartup: vi.fn(),
-}))
-
 vi.mock('crossws/adapters/bun', () => ({
   default: vi.fn(() => ({
     handleUpgrade: vi.fn(async () => null),
@@ -83,7 +79,7 @@ describe('createJangarRuntime client serving', () => {
     const restoreIndex = await withTempFile(indexPath, clientIndexHtml)
 
     try {
-      const runtime = await createJangarRuntime()
+      const runtime = await createJangarRuntime({ serveClient: true })
 
       const clientRouteResponse = await runtime.handleRequest(new Request('http://localhost/dashboard'))
       expect(clientRouteResponse.status).toBe(200)
@@ -102,7 +98,7 @@ describe('createJangarRuntime client serving', () => {
     const restoreSecret = await withTempFile(traversalTargetPath, traversalSecret)
 
     try {
-      const runtime = await createJangarRuntime()
+      const runtime = await createJangarRuntime({ serveClient: true })
 
       const response = await runtime.handleRequest(new Request('http://localhost/%2e%2e/public-review-secret.txt'))
       expect(response.status).toBe(200)
@@ -113,6 +109,19 @@ describe('createJangarRuntime client serving', () => {
       expect(text).not.toContain(traversalSecret)
     } finally {
       await restoreSecret()
+      await restoreIndex()
+    }
+  })
+
+  it('does not serve the client shell unless the caller opts into it', async () => {
+    const restoreIndex = await withTempFile(indexPath, clientIndexHtml)
+
+    try {
+      const runtime = await createJangarRuntime()
+      const response = await runtime.handleRequest(new Request('http://localhost/dashboard'))
+
+      expect(response.status).toBe(404)
+    } finally {
       await restoreIndex()
     }
   })

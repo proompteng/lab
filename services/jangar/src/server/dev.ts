@@ -1,9 +1,15 @@
 import { createServer as createViteServer } from 'vite'
 
+import { JANGAR_RUNTIME_PROFILES } from './runtime-profile'
+import { ensureRuntimeStartup } from './runtime-startup'
+
 type JangarRuntime = Awaited<ReturnType<typeof import('./app').createJangarRuntime>>
 
 const port = Number.parseInt(process.env.PORT ?? process.env.JANGAR_API_PORT ?? '3001', 10)
 const hostname = process.env.HOST?.trim() || '127.0.0.1'
+const runtimeProfile = JANGAR_RUNTIME_PROFILES.viteDevApi
+
+ensureRuntimeStartup(runtimeProfile.startup)
 
 const vite = await createViteServer({
   configFile: './vite.server.config.ts',
@@ -19,7 +25,7 @@ let currentRuntime: JangarRuntime | null = null
 const loadRuntime = async () => {
   runtimePromise ??= vite
     .ssrLoadModule('/src/server/app.ts')
-    .then((module) => module.createJangarRuntime({ serveClient: false }))
+    .then((module) => module.createJangarRuntime({ serveClient: runtimeProfile.serveClient }))
   currentRuntime = await runtimePromise
   return currentRuntime
 }

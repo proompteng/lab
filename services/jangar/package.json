@@ -23,6 +23,8 @@
     "test:e2e:openwebui:existing": "OPENWEBUI_E2E_USE_EXISTING_STACK=1 OPENWEBUI_BASE_URL=${OPENWEBUI_BASE_URL:-http://127.0.0.1:8080} ./scripts/openwebui-e2e.sh",
     "test:ui": "bunx playwright test",
     "test:ui:update": "bunx playwright test --update-snapshots",
+    "docs:inventory:write": "bun run scripts/generate-architecture-inventory.ts --write",
+    "docs:inventory:check": "bun run scripts/generate-architecture-inventory.ts --check",
     "tsc": "bunx tsc --noEmit -p tsconfig.app.json",
     "lint": "bunx oxfmt --check src",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",

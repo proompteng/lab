@@ -6,6 +6,11 @@ OpenAI-compatible (streaming) chat completions endpoint backed by the Codex app-
 
 More detailed write-up: `docs/jangar/current-state.md`.
 
+Runtime boot is now explicit: `src/server/app.ts` only builds the HTTP surface, while `src/server/index.ts` and
+`src/server/dev.ts` opt into startup behavior through `src/server/runtime-profile.ts`. The tech-debt program source of
+truth lives in `docs/agents/designs/jangar-application-tech-debt-cleanup-plan-2026-04-08.md`.
+The generated architecture inventory lives in `docs/jangar/architecture-inventory.md`.
+
 ```mermaid
 flowchart TD
   subgraph Client["Clients"]
