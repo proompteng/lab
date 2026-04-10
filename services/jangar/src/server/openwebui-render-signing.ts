@@ -1,5 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 
+import { resolveChatConfig } from './chat-config'
 import { OPENWEBUI_RENDER_BLOB_TTL_SECONDS } from './openwebui-render-store'
 
 type RenderSignaturePayload = {
@@ -95,6 +96,5 @@ export const validateOpenWebUIRenderSignature = (args: {
 }
 
 export const resolveOpenWebUIRenderSigningSecret = () => {
-  const value = process.env.JANGAR_OPENWEBUI_RENDER_SIGNING_SECRET?.trim()
-  return value && value.length > 0 ? value : null
+  return resolveChatConfig().openWebUIRenderSigningSecret
 }

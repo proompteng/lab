@@ -1,11 +1,4 @@
-import {
-  type Counter,
-  DiagConsoleLogger,
-  DiagLogLevel,
-  diag,
-  type Histogram,
-  metrics as otelMetrics,
-} from '@proompteng/otel/api'
+import { type Counter, diag, type Histogram, metrics as otelMetrics } from '@proompteng/otel/api'
 import { OTLPMetricExporter } from '@proompteng/otel/exporter-metrics-otlp-http'
 import { Resource } from '@proompteng/otel/resources'
 import { MeterProvider, PeriodicExportingMetricReader, type ResourceMetrics } from '@proompteng/otel/sdk-metrics'
@@ -14,6 +7,7 @@ import {
   SEMRESATTRS_SERVICE_NAME,
   SEMRESATTRS_SERVICE_NAMESPACE,
 } from '@proompteng/otel/semantic-conventions'
+import { resolveMetricsConfig } from './metrics-config'
 
 type JangarMetrics = {
   sseConnections: Counter
@@ -69,13 +63,9 @@ type AgentCommsErrorStage = 'fetch' | 'insert' | 'decode' | 'unknown'
 
 type MetricsAttributes = Record<string, string>
 
-const DEFAULT_METRICS_ENDPOINT = 'http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics'
-
 const globalState = globalThis as typeof globalThis & {
   __jangarMetrics?: MetricsState
 }
-
-diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.ERROR)
 
 const recordCounter = (counter: Counter | undefined, value: number, attributes?: MetricsAttributes) => {
   if (!counter) return
@@ -343,104 +333,6 @@ export const recordKubeWatchRestart = (params: { resource: string; namespace: st
   })
 }
 
-type OtlpProtocol = 'http/json' | 'http/protobuf' | 'grpc'
-
-const resolveOtlpProtocol = (value: string | undefined): OtlpProtocol => {
-  if (!value) return 'http/json'
-  const normalized = value.trim().toLowerCase()
-  switch (normalized) {
-    case 'http/protobuf':
-    case 'http/proto':
-    case 'protobuf':
-    case 'proto':
-    case 'http':
-      return 'http/protobuf'
-    case 'http/json':
-    case 'json':
-      return 'http/json'
-    case 'grpc':
-      return 'grpc'
-    default:
-      diag.warn(
-        `Unknown OTLP protocol '${value}', expected grpc, http/protobuf, or http/json. Falling back to http/json.`,
-      )
-      return 'http/json'
-  }
-}
-
-const resolveMetricsEndpoint = (protocol: OtlpProtocol): string | null => {
-  const explicit = process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT?.trim()
-  if (explicit) return protocol === 'grpc' ? stripEndpointPath(explicit) : explicit
-  const lgtm = process.env.LGTM_MIMIR_METRICS_ENDPOINT?.trim()
-  if (lgtm) return protocol === 'grpc' ? stripEndpointPath(lgtm) : lgtm
-  const base = process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim()
-  if (base) {
-    if (protocol === 'grpc') {
-      return stripEndpointPath(base)
-    }
-    if (base.endsWith('/v1/metrics')) return base
-    const trimmed = base.replace(/\/+$/, '')
-    return `${trimmed}/v1/metrics`
-  }
-  return protocol === 'grpc' ? stripEndpointPath(DEFAULT_METRICS_ENDPOINT) : DEFAULT_METRICS_ENDPOINT
-}
-
-const stripEndpointPath = (value: string): string => {
-  try {
-    const url = new URL(value)
-    url.pathname = ''
-    url.search = ''
-    url.hash = ''
-    return url.toString().replace(/\/$/, '')
-  } catch {
-    return value.replace(/\/+$/, '')
-  }
-}
-
-const parseHeaders = (value?: string) => {
-  if (!value) return undefined
-  const result: Record<string, string> = {}
-  for (const pair of value.split(',')) {
-    const [rawKey, ...rawRest] = pair.split('=')
-    if (!rawKey || rawRest.length === 0) continue
-    const key = rawKey.trim()
-    const rawValue = rawRest.join('=').trim()
-    if (!key || !rawValue) continue
-    result[key] = rawValue
-  }
-  return Object.keys(result).length > 0 ? result : undefined
-}
-
-const mergeHeaders = (...headers: Array<Record<string, string> | undefined>): Record<string, string> | undefined => {
-  const merged: Record<string, string> = {}
-  for (const header of headers) {
-    if (!header) continue
-    Object.assign(merged, header)
-  }
-  return Object.keys(merged).length > 0 ? merged : undefined
-}
-
-const parseTimeoutMillis = (value?: string) => {
-  if (!value) return undefined
-  const parsed = Number.parseInt(value, 10)
-  if (!Number.isFinite(parsed) || parsed <= 0) return undefined
-  return parsed
-}
-
-const resolveBoolean = (value: string | undefined, fallback: boolean) => {
-  if (!value) return fallback
-  const normalized = value.trim().toLowerCase()
-  if (['1', 'true', 'yes', 'y', 'on', 'enabled'].includes(normalized)) return true
-  if (['0', 'false', 'no', 'n', 'off', 'disabled'].includes(normalized)) return false
-  return fallback
-}
-
-const normalizePrometheusPath = (value: string) => {
-  const trimmed = value.trim()
-  if (!trimmed) return '/metrics'
-  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`
-}
-
 const sanitizePrometheusName = (name: string) => name.replace(/[^A-Za-z0-9_:]/g, '_')
 
 const sanitizePrometheusLabelKey = (key: string) => key.replace(/[^A-Za-z0-9_]/g, '_')
@@ -546,69 +438,42 @@ const serializeResourceMetricsToPrometheus = (resourceMetrics: ResourceMetrics |
 }
 
 const createMetricsState = (): MetricsState => {
-  if (process.env.NODE_ENV === 'test' || process.env.VITEST) {
+  const config = resolveMetricsConfig()
+  if (config.disabledForTest) {
     return { enabled: false }
   }
 
-  const prometheusEnabled = resolveBoolean(process.env.JANGAR_PROMETHEUS_METRICS_ENABLED, true)
-  const prometheusPath = normalizePrometheusPath(process.env.JANGAR_PROMETHEUS_METRICS_PATH ?? '/metrics')
-
-  const exporter = (process.env.OTEL_METRICS_EXPORTER ?? '').trim().toLowerCase()
-  let otlpEnabled = !(exporter === 'none' || exporter === 'false' || exporter === '0')
-  let metricsProtocol: OtlpProtocol = 'http/json'
-  let metricsEndpoint: string | null = null
-  if (otlpEnabled) {
-    metricsProtocol = resolveOtlpProtocol(
-      process.env.OTEL_EXPORTER_OTLP_METRICS_PROTOCOL ?? process.env.OTEL_EXPORTER_OTLP_PROTOCOL,
-    )
-    metricsEndpoint = resolveMetricsEndpoint(metricsProtocol)
-    if (!metricsEndpoint) {
-      otlpEnabled = false
+  if (!config.enabled) {
+    return {
+      enabled: false,
+      prometheusEnabled: config.prometheusEnabled,
+      prometheusPath: config.prometheusPath,
     }
   }
 
-  if (!otlpEnabled && !prometheusEnabled) {
-    return { enabled: false, prometheusEnabled, prometheusPath }
-  }
-
   try {
-    const serviceName = process.env.OTEL_SERVICE_NAME ?? 'jangar'
-    const serviceNamespace =
-      process.env.OTEL_SERVICE_NAMESPACE ?? process.env.POD_NAMESPACE ?? process.env.KUBERNETES_NAMESPACE ?? 'default'
-    const serviceInstanceId =
-      process.env.OTEL_SERVICE_INSTANCE_ID ?? process.env.POD_NAME ?? process.env.HOSTNAME ?? process.pid.toString()
-
     const resource = Resource.default().merge(
       new Resource({
-        [SEMRESATTRS_SERVICE_NAME]: serviceName,
-        [SEMRESATTRS_SERVICE_NAMESPACE]: serviceNamespace,
-        [SEMRESATTRS_SERVICE_INSTANCE_ID]: serviceInstanceId,
+        [SEMRESATTRS_SERVICE_NAME]: config.serviceName,
+        [SEMRESATTRS_SERVICE_NAMESPACE]: config.serviceNamespace,
+        [SEMRESATTRS_SERVICE_INSTANCE_ID]: config.serviceInstanceId,
       }),
     )
 
-    const exportInterval = parseInt(process.env.OTEL_METRIC_EXPORT_INTERVAL ?? '15000', 10)
-    const exportIntervalMillis = Number.isFinite(exportInterval) ? Math.max(exportInterval, 5000) : 15000
-
-    const sharedHeaders = parseHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS)
-    const metricHeaders = mergeHeaders(sharedHeaders, parseHeaders(process.env.OTEL_EXPORTER_OTLP_METRICS_HEADERS))
-
-    const timeoutMillis =
-      parseTimeoutMillis(process.env.OTEL_EXPORTER_OTLP_METRICS_TIMEOUT) ??
-      parseTimeoutMillis(process.env.OTEL_EXPORTER_OTLP_TIMEOUT)
     const meterProvider = new MeterProvider({ resource })
     let exporterInstance: OTLPMetricExporter | null = null
     let reader: PeriodicExportingMetricReader | null = null
-    if (otlpEnabled && metricsEndpoint) {
+    if (config.otlpEnabled && config.metricsEndpoint) {
       exporterInstance = new OTLPMetricExporter({
-        url: metricsEndpoint,
-        headers: metricHeaders,
-        protocol: metricsProtocol,
-        ...(timeoutMillis ? { timeoutMillis } : {}),
+        url: config.metricsEndpoint,
+        headers: config.headers,
+        protocol: config.metricsProtocol,
+        ...(config.timeoutMillis ? { timeoutMillis: config.timeoutMillis } : {}),
       })
 
       reader = new PeriodicExportingMetricReader({
         exporter: exporterInstance,
-        exportIntervalMillis,
+        exportIntervalMillis: config.exportIntervalMillis,
       })
 
       meterProvider.addMetricReader(reader)
@@ -758,8 +623,8 @@ const createMetricsState = (): MetricsState => {
       enabled: true,
       metrics,
       shutdown,
-      prometheusEnabled,
-      prometheusPath,
+      prometheusEnabled: config.prometheusEnabled,
+      prometheusPath: config.prometheusPath,
       meterProvider,
     }
   } catch (error) {
