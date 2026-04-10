@@ -5,7 +5,6 @@ import wsAdapter from 'crossws/adapters/bun'
 import { createApp, defineEventHandler, getRouterParams, toWebHandler } from 'h3'
 
 import { getPrometheusMetricsPath, isPrometheusMetricsEnabled, renderPrometheusMetrics } from './metrics'
-import { ensureRuntimeStartup } from './runtime-startup'
 
 type ServerRouteHandler = (args: { request: Request; params: Record<string, string> }) => Response | Promise<Response>
 
@@ -233,8 +232,6 @@ const registerServerRoutes = (app: ReturnType<typeof createApp>, definitions: Se
 }
 
 export const createJangarRuntime = async (options: { serveClient?: boolean } = {}): Promise<JangarRuntime> => {
-  ensureRuntimeStartup()
-
   const app = createApp()
 
   app.use(
@@ -264,7 +261,7 @@ export const createJangarRuntime = async (options: { serveClient?: boolean } = {
   const serverRouteRoots = getServerRouteRoots(serverRouteDefinitions)
   registerServerRoutes(app, serverRouteDefinitions)
 
-  if (options.serveClient !== false) {
+  if (options.serveClient === true) {
     const serveClient = defineEventHandler((event) => {
       const request = getEventRequest(event)
       const { pathname } = new URL(request.url)
