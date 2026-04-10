@@ -1,7 +1,8 @@
+import { readFileSync } from 'node:fs'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../metrics', () => ({
   getPrometheusMetricsPath: () => '/metrics',
@@ -32,6 +33,13 @@ const traversalTargetPath = resolve(clientDir, '../public-review-secret.txt')
 const clientIndexHtml = '<!doctype html><html><body>jangar client shell</body></html>'
 const traversalSecret = 'top-secret-review-artifact'
 
+const detectMimeType = (path: string) => {
+  if (path.endsWith('.html')) return 'text/html; charset=utf-8'
+  if (path.endsWith('.js')) return 'application/javascript; charset=utf-8'
+  if (path.endsWith('.css')) return 'text/css; charset=utf-8'
+  return 'application/octet-stream'
+}
+
 const readIfExists = async (path: string) => {
   try {
     return await readFile(path)
@@ -56,6 +64,38 @@ const withTempFile = async (path: string, contents: string) => {
 }
 
 describe('createJangarRuntime client serving', () => {
+  let hadBun = false
+  let originalBunFile: typeof Bun.file | undefined
+  const bunFileStub = ((path: string) =>
+    new Blob([readFileSync(path)], {
+      type: detectMimeType(path),
+    })) as typeof Bun.file
+
+  beforeEach(() => {
+    hadBun = 'Bun' in globalThis
+    originalBunFile = hadBun ? Bun.file : undefined
+
+    if (hadBun) {
+      ;(Bun as unknown as { file: typeof Bun.file }).file = bunFileStub
+      return
+    }
+
+    Object.defineProperty(globalThis, 'Bun', {
+      configurable: true,
+      writable: true,
+      value: { file: bunFileStub } satisfies Partial<typeof Bun>,
+    })
+  })
+
+  afterEach(() => {
+    if (hadBun && originalBunFile) {
+      ;(Bun as unknown as { file: typeof Bun.file }).file = originalBunFile
+      return
+    }
+
+    delete (globalThis as Record<string, unknown>).Bun
+  })
+
   it('finds the client output directory for bundled server chunks', () => {
     const candidates = getClientOutputDirCandidates({
       cwd: '/tmp/jangar-test-cwd',

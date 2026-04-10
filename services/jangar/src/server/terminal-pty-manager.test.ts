@@ -2,7 +2,7 @@ import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const spawnMock = vi.hoisted(() =>
   vi.fn(() => {
@@ -48,11 +48,27 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 4000) => {
 }
 
 describe('TerminalPtyManager', () => {
+  let hadBun = false
+  let originalBunSpawn: typeof Bun.spawn | undefined
+
+  beforeEach(() => {
+    hadBun = 'Bun' in globalThis
+    originalBunSpawn = hadBun ? Bun.spawn : undefined
+  })
+
+  afterEach(() => {
+    if (hadBun && originalBunSpawn) {
+      ;(Bun as unknown as { spawn: typeof Bun.spawn }).spawn = originalBunSpawn
+      return
+    }
+
+    delete (globalThis as Record<string, unknown>).Bun
+  })
+
   it('starts an interactive shell when using script fallback', async () => {
     resetTerminalPtyManager()
     const originalPtyMode = process.env.JANGAR_PTY_MODE
     const originalScriptBin = process.env.SCRIPT_BIN
-    const originalBunSpawn = Bun.spawn
 
     const bunSpawn = vi.fn(() => ({
       stdin: { write: vi.fn() },
@@ -63,7 +79,15 @@ describe('TerminalPtyManager', () => {
       kill: vi.fn(),
     }))
 
-    ;(Bun as unknown as { spawn: typeof Bun.spawn }).spawn = bunSpawn as unknown as typeof Bun.spawn
+    if (hadBun) {
+      ;(Bun as unknown as { spawn: typeof Bun.spawn }).spawn = bunSpawn as unknown as typeof Bun.spawn
+    } else {
+      Object.defineProperty(globalThis, 'Bun', {
+        configurable: true,
+        writable: true,
+        value: { spawn: bunSpawn as unknown as typeof Bun.spawn } satisfies Partial<typeof Bun>,
+      })
+    }
     try {
       process.env.JANGAR_PTY_MODE = 'script'
       process.env.SCRIPT_BIN = '/usr/bin/script'
@@ -80,7 +104,6 @@ describe('TerminalPtyManager', () => {
       expect(args.join(' ')).toContain('-l -i')
     } finally {
       resetTerminalPtyManager()
-      ;(Bun as unknown as { spawn: typeof Bun.spawn }).spawn = originalBunSpawn
       if (originalPtyMode === undefined) {
         delete process.env.JANGAR_PTY_MODE
       } else {
