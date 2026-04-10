@@ -22,6 +22,7 @@ from .research_sleeves import (
     evaluate_breakout_continuation_long,
     evaluate_end_of_day_reversal_long,
     evaluate_late_day_continuation_long,
+    evaluate_mean_reversion_exhaustion_short,
     evaluate_mean_reversion_rebound_long,
     evaluate_momentum_pullback_long,
     evaluate_washout_rebound_long,
@@ -96,6 +97,325 @@ def _plugin_result_from_sleeve_result(
             required_features=required_features,
         ),
         trace=evaluation.trace,
+    )
+
+
+def _microbar_minutes_elapsed(
+    *,
+    context: "StrategyContext",
+    features: FeatureVectorV3,
+) -> int | None:
+    raw_minutes = features.values.get("session_minutes_elapsed")
+    if raw_minutes is not None:
+        try:
+            return max(0, int(raw_minutes))
+        except (TypeError, ValueError):
+            return None
+    try:
+        event_ts = datetime.fromisoformat(context.event_ts)
+    except ValueError:
+        return None
+    session_open = event_ts.replace(hour=13, minute=30, second=0, microsecond=0)
+    return max(0, int((event_ts - session_open).total_seconds() // 60))
+
+
+def _microbar_exit_minute_after_open(params: dict[str, Any]) -> int | None:
+    raw_value = params.get("exit_minute_after_open")
+    if raw_value is None:
+        return None
+    normalized = str(raw_value).strip().lower()
+    if not normalized:
+        return None
+    if normalized == "close":
+        return 390
+    try:
+        return max(0, int(normalized))
+    except ValueError:
+        return None
+
+
+def _microbar_universe_size(
+    *,
+    context: "StrategyContext",
+    params: dict[str, Any],
+) -> int:
+    raw_value = params.get("universe_size")
+    if raw_value is not None:
+        try:
+            resolved = int(str(raw_value).strip())
+        except ValueError:
+            resolved = 0
+        if resolved > 1:
+            return resolved
+    raw_symbols = params.get("universe_symbols")
+    if isinstance(raw_symbols, list):
+        resolved_symbols = [
+            symbol
+            for item in cast(list[object], raw_symbols)
+            if (symbol := str(item).strip())
+        ]
+        if len(resolved_symbols) > 1:
+            return len(resolved_symbols)
+    strategy_spec_symbols = context.strategy_spec.get("universe_symbols")
+    if isinstance(strategy_spec_symbols, list):
+        return max(2, len(cast(list[object], strategy_spec_symbols)))
+    return 2
+
+
+def _microbar_rank_thresholds(
+    *,
+    universe_size: int,
+    top_n: int,
+) -> tuple[Decimal, Decimal]:
+    if universe_size <= 1:
+        return (Decimal("0"), Decimal("1"))
+    resolved_top_n = min(max(1, top_n), universe_size)
+    denominator = Decimal(universe_size - 1)
+    low_threshold = Decimal(resolved_top_n - 1) / denominator
+    high_threshold = Decimal(universe_size - resolved_top_n) / denominator
+    return (low_threshold, high_threshold)
+
+
+def _evaluate_microbar_cross_sectional(
+    *,
+    context: "StrategyContext",
+    features: FeatureVectorV3,
+    entry_action: Literal["buy", "sell"],
+    exit_action: Literal["buy", "sell"],
+) -> PluginEvaluationResult:
+    params = context.params
+    minutes_elapsed = _microbar_minutes_elapsed(context=context, features=features)
+    if minutes_elapsed is None:
+        return PluginEvaluationResult(
+            intent=None,
+            trace=_generic_plugin_trace(
+                context=context,
+                gate="schedule",
+                passed=False,
+                gate_context={"reason": "missing_session_minutes_elapsed"},
+            ),
+        )
+
+    entry_minute = max(0, int(_decimal(params.get("entry_minute_after_open")) or Decimal("0")))
+    exit_minute = _microbar_exit_minute_after_open(params)
+    if exit_minute is not None and minutes_elapsed >= exit_minute:
+        rationale = (
+            "microbar_time_exit",
+            str(params.get("signal_motif") or "").strip().lower(),
+        )
+        return PluginEvaluationResult(
+            intent=StrategyIntent(
+                strategy_id=context.strategy_id,
+                symbol=context.symbol,
+                direction=exit_action,
+                confidence=Decimal("0.51"),
+                target_notional=_resolved_target_notional(params),
+                horizon=context.timeframe,
+                explain=rationale,
+                feature_snapshot_hash=features.normalization_hash,
+                required_features=(
+                    "session_minutes_elapsed",
+                    "cross_section_continuation_breadth",
+                    "cross_section_session_open_rank",
+                    "cross_section_vwap_w5m_rank",
+                ),
+            ),
+            trace=_generic_plugin_trace(
+                context=context,
+                gate="time_exit",
+                passed=True,
+                action=exit_action,
+                rationale=rationale,
+                gate_context={
+                    "minutes_elapsed": minutes_elapsed,
+                    "exit_minute_after_open": exit_minute,
+                },
+            ),
+        )
+
+    if minutes_elapsed != entry_minute:
+        return PluginEvaluationResult(
+            intent=None,
+            trace=_generic_plugin_trace(
+                context=context,
+                gate="schedule",
+                passed=False,
+                gate_context={
+                    "minutes_elapsed": minutes_elapsed,
+                    "entry_minute_after_open": entry_minute,
+                },
+            ),
+        )
+
+    gate_feature = str(params.get("gate_feature") or "").strip()
+    gate_value = _decimal(features.values.get(gate_feature)) if gate_feature else None
+    gate_min = _decimal(params.get("gate_min"))
+    gate_max = _decimal(params.get("gate_max"))
+    if gate_feature:
+        passed_min = gate_min is None or (gate_value is not None and gate_value >= gate_min)
+        passed_max = gate_max is None or (gate_value is not None and gate_value <= gate_max)
+        if not (passed_min and passed_max):
+            thresholds: list[ThresholdTrace] = []
+            if gate_min is not None:
+                thresholds.append(
+                    ThresholdTrace(
+                        metric=f"{gate_feature}_min",
+                        comparator="min_gte",
+                        value=gate_value,
+                        threshold=gate_min,
+                        passed=passed_min,
+                        missing_policy="fail_closed",
+                        distance_to_pass=(
+                            Decimal("0")
+                            if passed_min
+                            else (
+                                gate_min
+                                if gate_value is None
+                                else max(Decimal("0"), gate_min - gate_value)
+                            )
+                        ),
+                    )
+                )
+            if gate_max is not None:
+                thresholds.append(
+                    ThresholdTrace(
+                        metric=f"{gate_feature}_max",
+                        comparator="max_lte",
+                        value=gate_value,
+                        threshold=gate_max,
+                        passed=passed_max,
+                        missing_policy="fail_closed",
+                        distance_to_pass=(
+                            Decimal("0")
+                            if passed_max
+                            else (
+                                gate_max
+                                if gate_value is None
+                                else max(Decimal("0"), gate_value - gate_max)
+                            )
+                        ),
+                    )
+                )
+            return PluginEvaluationResult(
+                intent=None,
+                trace=_generic_plugin_trace(
+                    context=context,
+                    gate="regime_gate",
+                    passed=False,
+                    thresholds=tuple(thresholds),
+                    gate_context={gate_feature: gate_value},
+                ),
+            )
+
+    rank_feature = str(params.get("rank_feature") or "").strip()
+    rank_value = _decimal(features.values.get(rank_feature))
+    if rank_value is None:
+        return PluginEvaluationResult(
+            intent=None,
+            trace=_generic_plugin_trace(
+                context=context,
+                gate="rank_selection",
+                passed=False,
+                gate_context={"reason": "missing_rank_feature", "rank_feature": rank_feature},
+            ),
+        )
+
+    selection_mode = str(params.get("selection_mode") or "continuation").strip().lower()
+    top_n = max(1, int(_decimal(params.get("top_n")) or Decimal("1")))
+    universe_size = _microbar_universe_size(context=context, params=params)
+    low_threshold, high_threshold = _microbar_rank_thresholds(
+        universe_size=universe_size,
+        top_n=top_n,
+    )
+    should_trade = False
+    comparator = "gte"
+    threshold_value = high_threshold
+    if selection_mode == "reversal":
+        if entry_action == "buy":
+            comparator = "lte"
+            threshold_value = low_threshold
+            should_trade = rank_value <= low_threshold
+        else:
+            comparator = "gte"
+            threshold_value = high_threshold
+            should_trade = rank_value >= high_threshold
+    else:
+        if entry_action == "buy":
+            comparator = "gte"
+            threshold_value = high_threshold
+            should_trade = rank_value >= high_threshold
+        else:
+            comparator = "lte"
+            threshold_value = low_threshold
+            should_trade = rank_value <= low_threshold
+
+    entry_rationale = (
+        "microbar_cross_sectional_entry",
+        str(params.get("signal_motif") or "").strip().lower(),
+        f"selection_mode:{selection_mode}",
+        f"rank_feature:{rank_feature}",
+        f"top_n:{top_n}",
+    )
+    trace = _generic_plugin_trace(
+        context=context,
+        gate="rank_selection",
+        passed=should_trade,
+        action=entry_action if should_trade else None,
+        rationale=entry_rationale if should_trade else (),
+        thresholds=(
+            ThresholdTrace(
+                metric=rank_feature,
+                comparator="min_gte" if comparator == "gte" else "max_lte",
+                value=rank_value,
+                threshold=threshold_value,
+                passed=should_trade,
+                missing_policy="fail_closed",
+                distance_to_pass=(
+                    Decimal("0")
+                    if should_trade
+                    else (
+                        max(Decimal("0"), threshold_value - rank_value)
+                        if comparator == "gte"
+                        else max(Decimal("0"), rank_value - threshold_value)
+                    )
+                ),
+            ),
+        ),
+        gate_context={
+            "minutes_elapsed": minutes_elapsed,
+            "entry_minute_after_open": entry_minute,
+            "selection_mode": selection_mode,
+            "top_n": top_n,
+            "universe_size": universe_size,
+        },
+    )
+    if not should_trade:
+        return PluginEvaluationResult(intent=None, trace=trace)
+
+    rank_distance = (
+        rank_value - threshold_value
+        if comparator == "gte"
+        else threshold_value - rank_value
+    )
+    confidence = min(Decimal("0.95"), Decimal("0.55") + max(Decimal("0"), rank_distance))
+    return PluginEvaluationResult(
+        intent=StrategyIntent(
+            strategy_id=context.strategy_id,
+            symbol=context.symbol,
+            direction=entry_action,
+            confidence=confidence,
+            target_notional=_resolved_target_notional(params),
+            horizon=context.timeframe,
+            explain=entry_rationale,
+            feature_snapshot_hash=features.normalization_hash,
+            required_features=(
+                "session_minutes_elapsed",
+                "cross_section_continuation_breadth",
+                "cross_section_session_open_rank",
+                "cross_section_vwap_w5m_rank",
+            ),
+        ),
+        trace=trace,
     )
 
 
@@ -296,6 +616,9 @@ class StrategyRegistry:
             "momentum_pullback_long_v1": MomentumPullbackLongPlugin(),
             "breakout_continuation_long_v1": BreakoutContinuationLongPlugin(),
             "mean_reversion_rebound_long_v1": MeanReversionReboundLongPlugin(),
+            "mean_reversion_exhaustion_short_v1": MeanReversionExhaustionShortPlugin(),
+            "microbar_cross_sectional_long_v1": MicrobarCrossSectionalLongPlugin(),
+            "microbar_cross_sectional_short_v1": MicrobarCrossSectionalShortPlugin(),
             "washout_rebound_long_v1": WashoutReboundLongPlugin(),
             "late_day_continuation_long_v1": LateDayContinuationLongPlugin(),
             "end_of_day_reversal_long_v1": EndOfDayReversalLongPlugin(),
@@ -986,6 +1309,152 @@ class MeanReversionReboundLongPlugin:
             features=features,
             required_features=self.required_features,
             evaluation=evaluation,
+        )
+
+
+class MeanReversionExhaustionShortPlugin:
+    plugin_id = "mean_reversion_exhaustion_short"
+    version = "1.0.0"
+    required_features: tuple[str, ...] = (
+        "price",
+        "ema12",
+        "macd",
+        "macd_signal",
+        "rsi14",
+        "vol_realized_w60s",
+        "spread_bps",
+        "vwap_session",
+        "imbalance_bid_sz",
+        "imbalance_ask_sz",
+        "price_vs_session_open_bps",
+        "price_vs_prev_session_close_bps",
+        "opening_window_return_bps",
+        "opening_window_return_from_prev_close_bps",
+        "price_position_in_session_range",
+        "price_vs_opening_range_high_bps",
+        "session_range_bps",
+        "recent_spread_bps_avg",
+        "recent_spread_bps_max",
+        "recent_imbalance_pressure_avg",
+        "recent_quote_invalid_ratio",
+        "recent_quote_jump_bps_max",
+        "recent_microprice_bias_bps_avg",
+        "cross_section_opening_window_return_rank",
+        "cross_section_opening_window_return_from_prev_close_rank",
+        "cross_section_continuation_rank",
+        "cross_section_reversal_rank",
+    )
+
+    def evaluate(
+        self, context: StrategyContext, features: FeatureVectorV3
+    ) -> PluginEvaluationResult:
+        evaluation = evaluate_mean_reversion_exhaustion_short(
+            params=context.params,
+            strategy_id=context.strategy_id,
+            strategy_type=context.strategy_type,
+            symbol=context.symbol,
+            event_ts=context.event_ts,
+            timeframe=context.timeframe,
+            trace_enabled=context.trace_enabled,
+            price=_decimal(features.values.get("price")),
+            ema12=_decimal(features.values.get("ema12")),
+            macd=_decimal(features.values.get("macd")),
+            macd_signal=_decimal(features.values.get("macd_signal")),
+            rsi14=_decimal(features.values.get("rsi14")),
+            vol_realized_w60s=_decimal(features.values.get("vol_realized_w60s")),
+            vwap_session=_decimal(features.values.get("vwap_session")),
+            spread_bps=_decimal(features.values.get("spread_bps")),
+            imbalance_bid_sz=_decimal(features.values.get("imbalance_bid_sz")),
+            imbalance_ask_sz=_decimal(features.values.get("imbalance_ask_sz")),
+            price_vs_session_open_bps=_decimal(features.values.get("price_vs_session_open_bps")),
+            price_vs_prev_session_close_bps=_decimal(
+                features.values.get("price_vs_prev_session_close_bps")
+            ),
+            opening_window_return_bps=_decimal(features.values.get("opening_window_return_bps")),
+            opening_window_return_from_prev_close_bps=_decimal(
+                features.values.get("opening_window_return_from_prev_close_bps")
+            ),
+            price_position_in_session_range=_decimal(features.values.get("price_position_in_session_range")),
+            price_vs_opening_range_high_bps=_decimal(
+                features.values.get("price_vs_opening_range_high_bps")
+            ),
+            session_range_bps=_decimal(features.values.get("session_range_bps")),
+            recent_spread_bps_avg=_decimal(features.values.get("recent_spread_bps_avg")),
+            recent_spread_bps_max=_decimal(features.values.get("recent_spread_bps_max")),
+            recent_imbalance_pressure_avg=_decimal(features.values.get("recent_imbalance_pressure_avg")),
+            recent_quote_invalid_ratio=_decimal(features.values.get("recent_quote_invalid_ratio")),
+            recent_quote_jump_bps_max=_decimal(features.values.get("recent_quote_jump_bps_max")),
+            recent_microprice_bias_bps_avg=_decimal(
+                features.values.get("recent_microprice_bias_bps_avg")
+            ),
+            cross_section_opening_window_return_rank=_decimal(
+                features.values.get("cross_section_opening_window_return_rank")
+            ),
+            cross_section_opening_window_return_from_prev_close_rank=_decimal(
+                features.values.get("cross_section_opening_window_return_from_prev_close_rank")
+            ),
+            cross_section_continuation_rank=_decimal(
+                features.values.get("cross_section_continuation_rank")
+            ),
+            cross_section_reversal_rank=_decimal(
+                features.values.get("cross_section_reversal_rank")
+            ),
+        )
+        return _plugin_result_from_sleeve_result(
+            context=context,
+            features=features,
+            required_features=self.required_features,
+            evaluation=evaluation,
+        )
+
+
+class MicrobarCrossSectionalLongPlugin:
+    plugin_id = "microbar_cross_sectional_long"
+    version = "1.0.0"
+    required_features: tuple[str, ...] = (
+        "price",
+        "macd",
+        "macd_signal",
+        "rsi14",
+        "session_minutes_elapsed",
+        "cross_section_continuation_breadth",
+        "cross_section_session_open_rank",
+        "cross_section_vwap_w5m_rank",
+    )
+
+    def evaluate(
+        self, context: StrategyContext, features: FeatureVectorV3
+    ) -> PluginEvaluationResult:
+        return _evaluate_microbar_cross_sectional(
+            context=context,
+            features=features,
+            entry_action="buy",
+            exit_action="sell",
+        )
+
+
+class MicrobarCrossSectionalShortPlugin:
+    plugin_id = "microbar_cross_sectional_short"
+    version = "1.0.0"
+    required_features: tuple[str, ...] = (
+        "price",
+        "macd",
+        "macd_signal",
+        "rsi14",
+        "session_minutes_elapsed",
+        "cross_section_continuation_breadth",
+        "cross_section_session_open_rank",
+        "cross_section_vwap_w5m_rank",
+    )
+
+    def evaluate(
+        self, context: StrategyContext, features: FeatureVectorV3
+    ) -> PluginEvaluationResult:
+        return _evaluate_microbar_cross_sectional(
+            context=context,
+            features=features,
+            entry_action="sell",
+            exit_action="buy",
         )
 
 
