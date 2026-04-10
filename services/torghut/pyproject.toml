@@ -25,6 +25,7 @@ dependencies = [
   "alembic>=1.13.2,<2.0",
   "pyyaml>=6.0.2,<7.0",
   "inngest>=0.5.15,<1.0",
+  "pypdf>=5.4.0,<6.0",
 ]
 
 [project.optional-dependencies]
@@ -36,6 +37,7 @@ dev = [
   "pyright>=1.1.389,<2.0",
   "pytest>=8.4.0,<9.0",
   "pytest-cov>=7.0.0,<8.0",
+  "pytest-xdist>=3.8.0,<4.0",
   "ruff>=0.9.0,<1.0",
 ]
 

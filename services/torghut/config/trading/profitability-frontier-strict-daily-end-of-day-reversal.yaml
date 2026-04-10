@@ -1,0 +1,71 @@
+schema_version: torghut.replay-frontier-sweep.v1
+family: end_of_day_reversal_consistent
+family_template_id: end_of_day_reversal_v1
+strategy_name: end-of-day-reversal-long-v1
+disable_other_strategies: true
+constraints:
+  holdout_target_net_per_day: '500'
+  min_active_holdout_days: 3
+  max_worst_holdout_day_loss: '250'
+  min_profit_factor: '1.05'
+  require_training_decisions: true
+  require_holdout_decisions: true
+consistency_constraints:
+  target_net_per_day: '500'
+  min_active_days: 8
+  min_active_ratio: '1.0'
+  min_positive_days: 5
+  max_worst_day_loss: '350'
+  max_negative_days: 2
+  max_drawdown: '900'
+  max_best_day_share_of_total_pnl: '0.30'
+  min_avg_filled_notional_per_day: '250000'
+  min_avg_filled_notional_per_active_day: '300000'
+  min_regime_slice_pass_rate: '0.45'
+  require_every_day_active: true
+strategy_overrides:
+  universe_symbols:
+    - ['AAPL', 'AMAT', 'AMD', 'GOOG', 'INTC', 'META', 'MSFT', 'MU', 'NVDA', 'PLTR', 'SHOP']
+  max_position_pct_equity:
+    - '2.0'
+    - '4.0'
+  max_notional_per_trade:
+    - '63180'
+    - '126360'
+parameters:
+  min_bull_rsi:
+    - '34'
+    - '38'
+  max_bull_rsi:
+    - '48'
+  min_macd_hist:
+    - '-0.012'
+    - '-0.010'
+  max_macd_hist:
+    - '0.012'
+  max_price_vs_session_open_bps:
+    - '-35'
+    - '-45'
+  max_opening_window_return_bps:
+    - '-10'
+    - '-15'
+  max_cross_section_continuation_rank:
+    - '0.35'
+    - '0.45'
+  min_cross_section_reversal_rank:
+    - '0.72'
+    - '0.78'
+  entry_start_minute_utc:
+    - '1150'
+    - '1160'
+  entry_end_minute_utc:
+    - '1188'
+  max_gross_exposure_pct_equity:
+    - '4.0'
+  entry_cooldown_seconds:
+    - '3600'
+    - '7200'
+  min_hold_seconds:
+    - '60'
+  max_hold_seconds:
+    - '480'

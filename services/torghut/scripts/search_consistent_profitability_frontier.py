@@ -57,6 +57,8 @@ from scripts.search_profitability_frontier import (
     resolve_sweep_window,
 )
 
+_LOCAL_ONLY_OVERRIDE_KEYS = frozenset({'normalization_regime'})
+
 
 @dataclass(frozen=True)
 class FullWindowConsistencyPolicy:
@@ -92,6 +94,12 @@ class FullWindowConsistencyPolicy:
             'max_symbol_concentration_share': str(self.max_symbol_concentration_share),
             'max_entry_family_contribution_share': str(self.max_entry_family_contribution_share),
         }
+
+
+def _optional_int(value: Any, *, default: int) -> int:
+    if value is None:
+        return default
+    return int(value)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -327,7 +335,13 @@ def _candidate_search_key(
     return json.dumps(
         {
             'params': _normalize(params_candidate),
-            'strategy_overrides': _normalize(strategy_overrides),
+            'strategy_overrides': _normalize(
+                {
+                    str(key): value
+                    for key, value in strategy_overrides.items()
+                    if str(key) not in _LOCAL_ONLY_OVERRIDE_KEYS
+                }
+            ),
         },
         sort_keys=True,
         separators=(',', ':'),
@@ -457,6 +471,8 @@ def apply_candidate_to_configmap_with_overrides(
         for key, value in strategy_overrides.items():
             if key == 'params':
                 raise ValueError('strategy_override_key_reserved:params')
+            if key in _LOCAL_ONLY_OVERRIDE_KEYS:
+                continue
             item[key] = value
         break
     if not matched:
@@ -721,6 +737,128 @@ def _generate_symbol_prune_children(
     return children
 
 
+def _rank_scored_candidates(scored: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not scored:
+        return []
+    scorecards = {
+        str(item['candidate_id']): build_scorecard(
+            candidate_id=str(item['candidate_id']),
+            trading_day_count=int(item['full_window']['trading_day_count']),
+            net_pnl_per_day=Decimal(str(item['objective_scorecard']['net_pnl_per_day'])),
+            active_days=int(
+                Decimal(str(item['objective_scorecard']['active_day_ratio']))
+                * Decimal(str(item['full_window']['trading_day_count']))
+            ),
+            positive_days=int(
+                Decimal(str(item['objective_scorecard']['positive_day_ratio']))
+                * Decimal(str(item['full_window']['trading_day_count']))
+            ),
+            avg_filled_notional_per_day=Decimal(str(item['objective_scorecard']['avg_filled_notional_per_day'])),
+            avg_filled_notional_per_active_day=Decimal(
+                str(item['objective_scorecard']['avg_filled_notional_per_active_day'])
+            ),
+            worst_day_loss=Decimal(str(item['objective_scorecard']['worst_day_loss'])),
+            max_drawdown=Decimal(str(item['objective_scorecard']['max_drawdown'])),
+            best_day_share=Decimal(str(item['objective_scorecard']['best_day_share'])),
+            negative_day_count=int(item['objective_scorecard']['negative_day_count']),
+            rolling_3d_lower_bound=Decimal(str(item['objective_scorecard']['rolling_3d_lower_bound'])),
+            rolling_5d_lower_bound=Decimal(str(item['objective_scorecard']['rolling_5d_lower_bound'])),
+            regime_slice_pass_rate=Decimal(str(item['objective_scorecard']['regime_slice_pass_rate'])),
+            symbol_concentration_share=Decimal(str(item['objective_scorecard']['symbol_concentration_share'])),
+            entry_family_contribution_share=Decimal(
+                str(item['objective_scorecard']['entry_family_contribution_share'])
+            ),
+        )
+        for item in scored
+    }
+    ranked_scorecards = rank_scorecards(
+        scorecards.values(),
+        veto_lookup={
+            str(item['candidate_id']): tuple(cast(list[str], item.get('hard_vetoes') or []))
+            for item in scored
+        },
+    )
+    ranked_lookup = {
+        item.candidate_id: item
+        for item in ranked_scorecards
+    }
+    ranked_items = [dict(item) for item in scored]
+    for item in ranked_items:
+        ranked = ranked_lookup[str(item['candidate_id'])]
+        item['objective_scorecard'] = ranked.to_payload()
+        item['ranking'] = {
+            'method': 'pareto_frontier_v2',
+            'pareto_tier': ranked.pareto_tier,
+            'tie_breaker_score': str(ranked.tie_breaker_score),
+            'vetoed': bool(ranked.veto_reasons),
+        }
+    ranked_items.sort(
+        key=lambda item: (
+            bool(item['ranking']['vetoed']),
+            int(item['ranking']['pareto_tier']),
+            -Decimal(str(item['ranking']['tie_breaker_score'])),
+            -Decimal(str(item['full_window']['net_per_day'])),
+        )
+    )
+    return ranked_items
+
+
+def _build_frontier_payload(
+    *,
+    scored: list[dict[str, Any]],
+    family: str,
+    strategy_name: str,
+    family_template: Any,
+    dataset_snapshot_receipt: Any,
+    window: Any,
+    full_window_start: date,
+    full_window_end: date,
+    holdout_policy: ProfitabilityConstraintPolicy,
+    consistency_policy: FullWindowConsistencyPolicy,
+    objective_veto_policy: ObjectiveVetoPolicy,
+    top_n: int,
+    status: str,
+    pending_candidates: int,
+) -> dict[str, Any]:
+    ranked_items = _rank_scored_candidates(scored)
+    return {
+        'schema_version': _SWEEP_SCHEMA_VERSION,
+        'status': status,
+        'family': family,
+        'strategy_name': strategy_name,
+        'family_template': family_template.to_payload(),
+        'dataset_snapshot_receipt': dataset_snapshot_receipt.to_payload(),
+        'window': {
+            'train_days': [item.isoformat() for item in window.train_days],
+            'holdout_days': [item.isoformat() for item in window.holdout_days],
+            'full_window_start_date': full_window_start.isoformat(),
+            'full_window_end_date': full_window_end.isoformat(),
+        },
+        'constraints': {
+            'holdout': {
+                'holdout_target_net_per_day': str(holdout_policy.holdout_target_net_per_day),
+                'min_active_holdout_days': holdout_policy.min_active_holdout_days,
+                'max_worst_holdout_day_loss': str(holdout_policy.max_worst_holdout_day_loss),
+                'min_profit_factor': str(holdout_policy.min_profit_factor),
+                'require_training_decisions': holdout_policy.require_training_decisions,
+                'require_holdout_decisions': holdout_policy.require_holdout_decisions,
+            },
+            'consistency': consistency_policy.to_payload(),
+            'hard_vetoes': objective_veto_policy.to_payload(),
+        },
+        'ranking': {
+            'method': 'pareto_frontier_v2',
+            'stale_override_used': dataset_snapshot_receipt.stale_override_used,
+        },
+        'progress': {
+            'evaluated_candidates': len(scored),
+            'pending_candidates': pending_candidates,
+        },
+        'candidate_count': len(scored),
+        'top': ranked_items[: max(1, int(top_n))],
+    }
+
+
 def _selected_normalization_regime(
     *,
     strategy_overrides: Mapping[str, Any],
@@ -801,7 +939,9 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
     )
     consistency_policy = FullWindowConsistencyPolicy(
         target_net_per_day=Decimal(str(consistency_constraints.get('target_net_per_day', '200'))),
-        min_active_days=int(consistency_constraints.get('min_active_days', len(window.train_days) + len(window.holdout_days))),
+        # Widened full-window evaluations intentionally omit count-based activity thresholds
+        # because train+holdout counts are not authoritative for the larger window.
+        min_active_days=_optional_int(consistency_constraints.get('min_active_days'), default=0),
         min_active_ratio=Decimal(str(consistency_constraints.get('min_active_ratio', '0'))),
         min_positive_days=int(consistency_constraints.get('min_positive_days', 0)),
         max_worst_day_loss=Decimal(str(consistency_constraints.get('max_worst_day_loss', '250'))),
@@ -1072,87 +1212,46 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                                 str(candidate_payload['candidate_id']),
                             )
                         )
+                if args.json_output is not None:
+                    partial_payload = _build_frontier_payload(
+                        scored=scored,
+                        family=family,
+                        strategy_name=strategy_name,
+                        family_template=family_template,
+                        dataset_snapshot_receipt=dataset_snapshot_receipt,
+                        window=window,
+                        full_window_start=full_window_start,
+                        full_window_end=full_window_end,
+                        holdout_policy=holdout_policy,
+                        consistency_policy=consistency_policy,
+                        objective_veto_policy=objective_veto_policy,
+                        top_n=max(1, int(args.top_n)),
+                        status='running',
+                        pending_candidates=len(worklist),
+                    )
+                    args.json_output.write_text(
+                        json.dumps(partial_payload, indent=2, sort_keys=True),
+                        encoding='utf-8',
+                    )
 
-    scorecards = {
-        str(item['candidate_id']): build_scorecard(
-            candidate_id=str(item['candidate_id']),
-            trading_day_count=int(item['full_window']['trading_day_count']),
-            net_pnl_per_day=Decimal(str(item['objective_scorecard']['net_pnl_per_day'])),
-            active_days=int(Decimal(str(item['objective_scorecard']['active_day_ratio'])) * Decimal(str(item['full_window']['trading_day_count']))),
-            positive_days=int(Decimal(str(item['objective_scorecard']['positive_day_ratio'])) * Decimal(str(item['full_window']['trading_day_count']))),
-            avg_filled_notional_per_day=Decimal(str(item['objective_scorecard']['avg_filled_notional_per_day'])),
-            avg_filled_notional_per_active_day=Decimal(str(item['objective_scorecard']['avg_filled_notional_per_active_day'])),
-            worst_day_loss=Decimal(str(item['objective_scorecard']['worst_day_loss'])),
-            max_drawdown=Decimal(str(item['objective_scorecard']['max_drawdown'])),
-            best_day_share=Decimal(str(item['objective_scorecard']['best_day_share'])),
-            negative_day_count=int(item['objective_scorecard']['negative_day_count']),
-            rolling_3d_lower_bound=Decimal(str(item['objective_scorecard']['rolling_3d_lower_bound'])),
-            rolling_5d_lower_bound=Decimal(str(item['objective_scorecard']['rolling_5d_lower_bound'])),
-            regime_slice_pass_rate=Decimal(str(item['objective_scorecard']['regime_slice_pass_rate'])),
-            symbol_concentration_share=Decimal(str(item['objective_scorecard']['symbol_concentration_share'])),
-            entry_family_contribution_share=Decimal(str(item['objective_scorecard']['entry_family_contribution_share'])),
-        )
-        for item in scored
-    }
-    ranked_scorecards = rank_scorecards(
-        scorecards.values(),
-        veto_lookup={
-            str(item['candidate_id']): tuple(cast(list[str], item.get('hard_vetoes') or []))
-            for item in scored
-        },
+    payload = _build_frontier_payload(
+        scored=scored,
+        family=family,
+        strategy_name=strategy_name,
+        family_template=family_template,
+        dataset_snapshot_receipt=dataset_snapshot_receipt,
+        window=window,
+        full_window_start=full_window_start,
+        full_window_end=full_window_end,
+        holdout_policy=holdout_policy,
+        consistency_policy=consistency_policy,
+        objective_veto_policy=objective_veto_policy,
+        top_n=max(1, int(args.top_n)),
+        status='completed',
+        pending_candidates=0,
     )
-    ranked_lookup = {
-        item.candidate_id: item
-        for item in ranked_scorecards
-    }
-    for item in scored:
-        ranked = ranked_lookup[str(item['candidate_id'])]
-        item['objective_scorecard'] = ranked.to_payload()
-        item['ranking'] = {
-            'method': 'pareto_frontier_v2',
-            'pareto_tier': ranked.pareto_tier,
-            'tie_breaker_score': str(ranked.tie_breaker_score),
-            'vetoed': bool(ranked.veto_reasons),
-        }
-    scored.sort(
-        key=lambda item: (
-            bool(item['ranking']['vetoed']),
-            int(item['ranking']['pareto_tier']),
-            -Decimal(str(item['ranking']['tie_breaker_score'])),
-            -Decimal(str(item['full_window']['net_per_day'])),
-        )
-    )
-    payload = {
-        'schema_version': _SWEEP_SCHEMA_VERSION,
-        'family': family,
-        'strategy_name': strategy_name,
-        'family_template': family_template.to_payload(),
-        'dataset_snapshot_receipt': dataset_snapshot_receipt.to_payload(),
-        'window': {
-            'train_days': [item.isoformat() for item in window.train_days],
-            'holdout_days': [item.isoformat() for item in window.holdout_days],
-            'full_window_start_date': full_window_start.isoformat(),
-            'full_window_end_date': full_window_end.isoformat(),
-        },
-        'constraints': {
-            'holdout': {
-                'holdout_target_net_per_day': str(holdout_policy.holdout_target_net_per_day),
-                'min_active_holdout_days': holdout_policy.min_active_holdout_days,
-                'max_worst_holdout_day_loss': str(holdout_policy.max_worst_holdout_day_loss),
-                'min_profit_factor': str(holdout_policy.min_profit_factor),
-                'require_training_decisions': holdout_policy.require_training_decisions,
-                'require_holdout_decisions': holdout_policy.require_holdout_decisions,
-            },
-            'consistency': consistency_policy.to_payload(),
-            'hard_vetoes': objective_veto_policy.to_payload(),
-        },
-        'ranking': {
-            'method': 'pareto_frontier_v2',
-            'stale_override_used': dataset_snapshot_receipt.stale_override_used,
-        },
-        'candidate_count': len(scored),
-        'top': scored[: max(1, int(args.top_n))],
-    }
+    if args.json_output is not None:
+        args.json_output.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding='utf-8')
     return payload
 
 

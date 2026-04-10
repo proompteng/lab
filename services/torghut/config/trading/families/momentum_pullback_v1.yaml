@@ -1,0 +1,50 @@
+schema_version: torghut.family-template.v1
+family_id: momentum_pullback_v1
+economic_mechanism: Mid-session pullback entry into an already-established intraday trend with order-flow confirmation.
+supported_markets:
+  - us_equities_intraday
+required_features:
+  - pullback_bps
+  - continuation_rank
+  - imbalance_pressure
+  - quote_quality
+allowed_normalizations:
+  - price_scaled
+  - opening_window_scaled
+entry_motifs:
+  - momentum_pullback
+  - trend_resume
+exit_motifs:
+  - momentum_rollover
+  - trailing_stop
+  - close_flatten
+risk_controls:
+  - quote_quality_veto
+  - long_stop_loss_bps
+activity_model:
+  min_active_day_ratio: '0.55'
+  min_daily_notional: '240000'
+liquidity_assumptions:
+  max_spread_bps: '12'
+  min_quote_valid_ratio: '0.88'
+regime_activation_rules:
+  - metric: market_breadth
+    comparator: gte
+    threshold: '0.35'
+day_veto_rules:
+  - rule: quote_quality
+    action: block_day
+default_hard_vetoes:
+  required_min_active_day_ratio: '0.55'
+  required_min_daily_notional: '240000'
+  required_max_best_day_share: '0.45'
+  required_max_worst_day_loss: '500'
+  required_max_drawdown: '1000'
+  required_min_regime_slice_pass_rate: '0.35'
+default_selection_objectives:
+  target_net_pnl_per_day: '250'
+  require_positive_day_ratio: '0.50'
+runtime_harness:
+  family: momentum_pullback_consistent
+  strategy_name: momentum-pullback-long-v1
+  disable_other_strategies: true

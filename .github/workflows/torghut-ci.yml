@@ -90,6 +90,8 @@ jobs:
         working-directory: services/torghut
         run: >
           uv run --frozen pytest
+          -n auto
+          --dist=worksteal
           --cov
           --cov-branch
           --cov-report=term-missing

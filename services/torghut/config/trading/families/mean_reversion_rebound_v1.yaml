@@ -1,0 +1,50 @@
+schema_version: torghut.family-template.v1
+family_id: mean_reversion_rebound_v1
+economic_mechanism: Controlled intraday oversold rebound after downside dislocation with rebid confirmation.
+supported_markets:
+  - us_equities_intraday
+required_features:
+  - session_drawdown
+  - reversal_rank
+  - quote_quality
+  - rebid_confirmation
+allowed_normalizations:
+  - price_scaled
+  - opening_window_scaled
+entry_motifs:
+  - mean_reversion_rebound
+  - downside_dislocation
+exit_motifs:
+  - vwap_recovery
+  - momentum_rollover
+  - close_flatten
+risk_controls:
+  - long_stop_loss_bps
+  - quote_quality_veto
+activity_model:
+  min_active_day_ratio: '0.55'
+  min_daily_notional: '250000'
+liquidity_assumptions:
+  max_spread_bps: '20'
+  min_quote_valid_ratio: '0.90'
+regime_activation_rules:
+  - metric: information_arrival
+    comparator: gte
+    threshold: '0.40'
+day_veto_rules:
+  - rule: quote_quality
+    action: block_day
+default_hard_vetoes:
+  required_min_active_day_ratio: '0.55'
+  required_min_daily_notional: '250000'
+  required_max_best_day_share: '0.45'
+  required_max_worst_day_loss: '500'
+  required_max_drawdown: '1000'
+  required_min_regime_slice_pass_rate: '0.35'
+default_selection_objectives:
+  target_net_pnl_per_day: '250'
+  require_positive_day_ratio: '0.50'
+runtime_harness:
+  family: mean_reversion_rebound_consistent
+  strategy_name: mean-reversion-rebound-long-v1
+  disable_other_strategies: true

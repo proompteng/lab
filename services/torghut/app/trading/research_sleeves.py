@@ -341,38 +341,15 @@ def evaluate_momentum_pullback_long(
         )
 
     ts = _parse_event_ts(event_ts)
-    if not _within_utc_window(
+    entry_start_minute = _minute_param(params, 'entry_start_minute_utc', 14 * 60)
+    within_entry_window = _within_utc_window(
         ts,
-        start_minute=_minute_param(params, 'entry_start_minute_utc', 14 * 60),
+        start_minute=entry_start_minute,
         end_minute=_effective_entry_end_minute(
             params,
             default_end_minute=19 * 60 + 50,
         ),
-    ):
-        return _sleeve_result(
-            strategy_id=strategy_id,
-            strategy_type=strategy_type,
-            symbol=symbol,
-            event_ts=event_ts,
-            timeframe=timeframe,
-            signal=None,
-            gates=(
-                _gate(
-                    name='eligibility',
-                    category='eligibility',
-                    thresholds=(
-                        _threshold_bool(
-                            metric='within_entry_window',
-                            passed=False,
-                            threshold='entry_window',
-                        ),
-                    ),
-                    context={'entry_start_minute_utc': _minute_param(params, 'entry_start_minute_utc', 14 * 60)},
-                ),
-            ),
-            trace_enabled=trace_enabled,
-            context=trace_context,
-        )
+    )
 
     macd_hist = macd - macd_signal
     price_vs_ema12_bps = _bps_delta(price, ema12)
@@ -517,7 +494,7 @@ def evaluate_momentum_pullback_long(
             ),
         ),
     )
-    if all(gate.passed for gate in buy_gates):
+    if within_entry_window and all(gate.passed for gate in buy_gates):
         confidence = Decimal('0.66')
         if imbalance_pressure > Decimal('0.05'):
             confidence += Decimal('0.03')
@@ -597,6 +574,33 @@ def evaluate_momentum_pullback_long(
                 ),
             ),
             gates=(exit_gate,),
+            trace_enabled=trace_enabled,
+            context=trace_context,
+        )
+
+    if not within_entry_window:
+        return _sleeve_result(
+            strategy_id=strategy_id,
+            strategy_type=strategy_type,
+            symbol=symbol,
+            event_ts=event_ts,
+            timeframe=timeframe,
+            signal=None,
+            gates=(
+                _gate(
+                    name='eligibility',
+                    category='eligibility',
+                    thresholds=(
+                        _threshold_bool(
+                            metric='within_entry_window',
+                            passed=False,
+                            threshold='entry_window',
+                        ),
+                    ),
+                    context={'entry_start_minute_utc': entry_start_minute},
+                ),
+                exit_gate,
+            ),
             trace_enabled=trace_enabled,
             context=trace_context,
         )
@@ -2185,6 +2189,451 @@ def evaluate_mean_reversion_rebound_long(
         timeframe=timeframe,
         signal=None,
         gates=buy_gates,
+        trace_enabled=trace_enabled,
+        context=trace_context,
+    )
+
+
+def evaluate_mean_reversion_exhaustion_short(
+    *,
+    params: Mapping[str, Any],
+    strategy_id: str | None,
+    strategy_type: str | None,
+    symbol: str,
+    event_ts: str,
+    timeframe: str | None,
+    trace_enabled: bool,
+    price: Decimal | None,
+    ema12: Decimal | None,
+    macd: Decimal | None,
+    macd_signal: Decimal | None,
+    rsi14: Decimal | None,
+    vol_realized_w60s: Decimal | None,
+    vwap_session: Decimal | None,
+    spread_bps: Decimal | None,
+    imbalance_bid_sz: Decimal | None,
+    imbalance_ask_sz: Decimal | None,
+    price_vs_session_open_bps: Decimal | None,
+    price_vs_prev_session_close_bps: Decimal | None,
+    opening_window_return_bps: Decimal | None,
+    opening_window_return_from_prev_close_bps: Decimal | None,
+    price_position_in_session_range: Decimal | None,
+    price_vs_opening_range_high_bps: Decimal | None,
+    session_range_bps: Decimal | None,
+    recent_spread_bps_avg: Decimal | None,
+    recent_spread_bps_max: Decimal | None,
+    recent_imbalance_pressure_avg: Decimal | None,
+    recent_quote_invalid_ratio: Decimal | None,
+    recent_quote_jump_bps_max: Decimal | None,
+    recent_microprice_bias_bps_avg: Decimal | None,
+    cross_section_opening_window_return_rank: Decimal | None,
+    cross_section_opening_window_return_from_prev_close_rank: Decimal | None,
+    cross_section_continuation_rank: Decimal | None,
+    cross_section_reversal_rank: Decimal | None,
+) -> SleeveSignalResult:
+    trace_context = {'family': 'mean_reversion_exhaustion_short'}
+    required_fields = {
+        'price': price is not None,
+        'ema12': ema12 is not None,
+        'macd': macd is not None,
+        'macd_signal': macd_signal is not None,
+        'rsi14': rsi14 is not None,
+    }
+    if not all(required_fields.values()):
+        return _sleeve_result(
+            strategy_id=strategy_id,
+            strategy_type=strategy_type,
+            symbol=symbol,
+            event_ts=event_ts,
+            timeframe=timeframe,
+            signal=None,
+            gates=(_required_inputs_gate(fields=required_fields),),
+            trace_enabled=trace_enabled,
+            context=trace_context,
+        )
+
+    ts = _parse_event_ts(event_ts)
+    entry_start_minute = _minute_param(params, 'entry_start_minute_utc', 14 * 60)
+    entry_end_minute = _effective_entry_end_minute(
+        params,
+        default_end_minute=18 * 60 + 45,
+    )
+    within_window = _within_utc_window(
+        ts,
+        start_minute=entry_start_minute,
+        end_minute=entry_end_minute,
+    )
+    if not within_window:
+        return _sleeve_result(
+            strategy_id=strategy_id,
+            strategy_type=strategy_type,
+            symbol=symbol,
+            event_ts=event_ts,
+            timeframe=timeframe,
+            signal=None,
+            gates=(
+                _entry_window_gate(
+                    within_window=within_window,
+                    start_minute=entry_start_minute,
+                    end_minute=entry_end_minute,
+                ),
+            ),
+            trace_enabled=trace_enabled,
+            context=trace_context,
+        )
+
+    assert price is not None
+    assert ema12 is not None
+    assert macd is not None
+    assert macd_signal is not None
+    assert rsi14 is not None
+    macd_hist = macd - macd_signal
+    price_vs_ema12_bps = _bps_delta(price, ema12)
+    price_vs_vwap_bps = _bps_delta(price, vwap_session) if vwap_session is not None else price_vs_ema12_bps
+    effective_spread_bps = _nonnegative_decimal(spread_bps)
+    imbalance_pressure = _imbalance_pressure(imbalance_bid_sz, imbalance_ask_sz)
+    effective_price_drive_bps = _select_reference_decimal(
+        params=params,
+        key='drive_reference_basis',
+        default_basis='prev_close',
+        session_open_value=price_vs_session_open_bps,
+        prev_close_value=price_vs_prev_session_close_bps,
+    )
+    effective_opening_window_return_bps = _select_reference_decimal(
+        params=params,
+        key='opening_window_reference_basis',
+        default_basis='prev_close',
+        session_open_value=opening_window_return_bps,
+        prev_close_value=opening_window_return_from_prev_close_bps,
+    )
+    effective_opening_window_return_rank = _select_reference_decimal(
+        params=params,
+        key='opening_window_rank_reference_basis',
+        default_basis='prev_close',
+        session_open_value=cross_section_opening_window_return_rank,
+        prev_close_value=cross_section_opening_window_return_from_prev_close_rank,
+    )
+    min_session_open_drive_bps = _optional_decimal_param(
+        params,
+        'min_price_vs_session_open_bps',
+        Decimal('20'),
+    )
+    min_opening_window_return_bps = _optional_decimal_param(
+        params,
+        'min_opening_window_return_bps',
+        Decimal('5'),
+    )
+    min_session_range_position = _optional_decimal_param(
+        params,
+        'min_session_range_position',
+        Decimal('0.68'),
+    )
+    min_session_range_bps = _optional_decimal_param(params, 'min_session_range_bps', Decimal('30'))
+    min_price_vs_opening_range_high_bps = _optional_decimal_param(
+        params,
+        'min_price_vs_opening_range_high_bps',
+        Decimal('-8'),
+    )
+    max_price_vs_opening_range_high_bps = _optional_decimal_param(
+        params,
+        'max_price_vs_opening_range_high_bps',
+        Decimal('12'),
+    )
+    max_recent_spread_bps = _optional_decimal_param(params, 'max_recent_spread_bps', Decimal('8'))
+    max_recent_spread_bps_max = _optional_decimal_param(params, 'max_recent_spread_bps_max', Decimal('16'))
+    max_recent_imbalance_pressure = _optional_decimal_param(
+        params,
+        'max_recent_imbalance_pressure',
+        Decimal('-0.02'),
+    )
+    max_recent_quote_invalid_ratio = _optional_decimal_param(
+        params,
+        'max_recent_quote_invalid_ratio',
+        Decimal('0.18'),
+    )
+    max_recent_quote_jump_bps = _optional_decimal_param(
+        params,
+        'max_recent_quote_jump_bps',
+        Decimal('55'),
+    )
+    max_recent_microprice_bias_bps = _optional_decimal_param(
+        params,
+        'max_recent_microprice_bias_bps',
+        Decimal('-0.10'),
+    )
+    spread_cap_bps = _decimal_param(params, 'max_spread_bps', Decimal('8'))
+    min_cross_section_opening_window_return_rank = _optional_decimal_param(
+        params,
+        'min_cross_section_opening_window_return_rank',
+        None,
+    )
+    max_cross_section_continuation_rank = _optional_decimal_param(
+        params,
+        'max_cross_section_continuation_rank',
+        None,
+    )
+    min_cross_section_reversal_rank = _optional_decimal_param(
+        params,
+        'min_cross_section_reversal_rank',
+        None,
+    )
+    price_above_vwap_bps = price_vs_vwap_bps
+    price_above_ema12_bps = price_vs_ema12_bps
+    sell_gates = (
+        _gate(
+            name='structure',
+            category='structure',
+            thresholds=(
+                *_threshold_range(
+                    metric='price_above_vwap_bps',
+                    value=price_above_vwap_bps,
+                    floor=_decimal_param(params, 'min_price_above_vwap_bps', Decimal('8')),
+                    ceil=_decimal_param(params, 'max_price_above_vwap_bps', Decimal('70')),
+                    required=True,
+                ),
+                *_threshold_range(
+                    metric='price_above_ema12_bps',
+                    value=price_above_ema12_bps,
+                    floor=_decimal_param(params, 'min_price_above_ema12_bps', Decimal('2')),
+                    ceil=_decimal_param(params, 'max_price_above_ema12_bps', Decimal('35')),
+                    required=True,
+                ),
+                *_threshold_range(
+                    metric='rsi14',
+                    value=rsi14,
+                    floor=_decimal_param(params, 'min_bear_rsi', Decimal('52')),
+                    ceil=_decimal_param(params, 'max_bear_rsi', Decimal('64')),
+                    required=True,
+                ),
+                *_threshold_range(
+                    metric='macd_hist',
+                    value=macd_hist,
+                    floor=_decimal_param(params, 'min_macd_hist', Decimal('-0.010')),
+                    ceil=_decimal_param(params, 'max_macd_hist', Decimal('0.012')),
+                    required=True,
+                ),
+                _threshold_min(
+                    metric='effective_price_drive_bps',
+                    value=effective_price_drive_bps,
+                    floor=min_session_open_drive_bps,
+                    required=False,
+                ),
+                _threshold_min(
+                    metric='effective_opening_window_return_bps',
+                    value=effective_opening_window_return_bps,
+                    floor=min_opening_window_return_bps,
+                    required=False,
+                ),
+                _threshold_min(
+                    metric='price_position_in_session_range',
+                    value=price_position_in_session_range,
+                    floor=min_session_range_position,
+                    required=False,
+                ),
+                _threshold_min(
+                    metric='session_range_bps',
+                    value=session_range_bps,
+                    floor=min_session_range_bps,
+                    required=False,
+                ),
+                _threshold_min(
+                    metric='price_vs_opening_range_high_bps',
+                    value=price_vs_opening_range_high_bps,
+                    floor=min_price_vs_opening_range_high_bps,
+                    required=False,
+                ),
+                _threshold_max(
+                    metric='price_vs_opening_range_high_bps',
+                    value=price_vs_opening_range_high_bps,
+                    ceil=max_price_vs_opening_range_high_bps,
+                    required=False,
+                ),
+            ),
+        ),
+        _gate(
+            name='feed_quality',
+            category='feed_quality',
+            thresholds=(
+                _threshold_max(
+                    metric='spread_bps',
+                    value=effective_spread_bps,
+                    ceil=spread_cap_bps,
+                    required=True,
+                ),
+                _threshold_max(
+                    metric='recent_spread_bps_avg',
+                    value=recent_spread_bps_avg,
+                    ceil=max_recent_spread_bps,
+                    required=False,
+                ),
+                _threshold_max(
+                    metric='recent_spread_bps_max',
+                    value=recent_spread_bps_max,
+                    ceil=max_recent_spread_bps_max,
+                    required=False,
+                ),
+                _threshold_max(
+                    metric='recent_quote_invalid_ratio',
+                    value=recent_quote_invalid_ratio,
+                    ceil=max_recent_quote_invalid_ratio,
+                    required=False,
+                ),
+                _threshold_max(
+                    metric='recent_quote_jump_bps_max',
+                    value=recent_quote_jump_bps_max,
+                    ceil=max_recent_quote_jump_bps,
+                    required=False,
+                ),
+                *_threshold_range(
+                    metric='vol_realized_w60s',
+                    value=vol_realized_w60s,
+                    floor=_optional_decimal_param(params, 'vol_floor', Decimal('0.00005')),
+                    ceil=_optional_decimal_param(params, 'vol_ceil', Decimal('0.00055')),
+                    required=False,
+                ),
+            ),
+        ),
+        _gate(
+            name='confirmation',
+            category='confirmation',
+            thresholds=(
+                _threshold_max(
+                    metric='imbalance_pressure',
+                    value=imbalance_pressure,
+                    ceil=_decimal_param(params, 'max_imbalance_pressure', Decimal('-0.02')),
+                    required=True,
+                ),
+                _threshold_max(
+                    metric='recent_imbalance_pressure_avg',
+                    value=recent_imbalance_pressure_avg,
+                    ceil=max_recent_imbalance_pressure,
+                    required=False,
+                ),
+                _threshold_max(
+                    metric='recent_microprice_bias_bps_avg',
+                    value=recent_microprice_bias_bps_avg,
+                    ceil=max_recent_microprice_bias_bps,
+                    required=False,
+                ),
+                _threshold_max(
+                    metric='cross_section_continuation_rank',
+                    value=cross_section_continuation_rank,
+                    ceil=max_cross_section_continuation_rank,
+                    required=False,
+                ),
+                _threshold_min(
+                    metric='cross_section_reversal_rank',
+                    value=cross_section_reversal_rank,
+                    floor=min_cross_section_reversal_rank,
+                    required=False,
+                ),
+                _threshold_min(
+                    metric='effective_opening_window_return_rank',
+                    value=effective_opening_window_return_rank,
+                    floor=min_cross_section_opening_window_return_rank,
+                    required=False,
+                ),
+            ),
+        ),
+    )
+
+    if all(gate.passed for gate in sell_gates):
+        confidence = Decimal('0.64')
+        if price_vs_vwap_bps is not None and price_vs_vwap_bps >= Decimal('16'):
+            confidence += Decimal('0.03')
+        if imbalance_pressure <= Decimal('-0.06'):
+            confidence += Decimal('0.02')
+        if price_position_in_session_range is not None and price_position_in_session_range >= Decimal('0.82'):
+            confidence += Decimal('0.02')
+        if recent_imbalance_pressure_avg is not None and recent_imbalance_pressure_avg <= Decimal('-0.06'):
+            confidence += Decimal('0.02')
+        if (
+            effective_opening_window_return_rank is not None
+            and effective_opening_window_return_rank >= Decimal('0.85')
+        ):
+            confidence += Decimal('0.03')
+        if (
+            recent_microprice_bias_bps_avg is not None
+            and recent_microprice_bias_bps_avg <= Decimal('-0.75')
+        ):
+            confidence += Decimal('0.02')
+        selected_rank = _prefer_primary_decimal(
+            effective_opening_window_return_rank,
+            cross_section_reversal_rank,
+        )
+        return _sleeve_result(
+            strategy_id=strategy_id,
+            strategy_type=strategy_type,
+            symbol=symbol,
+            event_ts=event_ts,
+            timeframe=timeframe,
+            signal=SleeveSignalEvaluation(
+                action='sell',
+                confidence=min(confidence, Decimal('0.81')),
+                rationale=(
+                    'mean_reversion_exhaustion_short',
+                    'overbought_fade',
+                    'above_vwap',
+                    'session_overextension',
+                    'offer_pressure_confirmed',
+                ),
+                notional_multiplier=_resolve_entry_notional_multiplier(
+                    params=params,
+                    confidence=min(confidence, Decimal('0.81')),
+                    rank=selected_rank,
+                    spread_bps=effective_spread_bps,
+                    spread_cap_bps=spread_cap_bps,
+                ),
+            ),
+            gates=sell_gates,
+            trace_enabled=trace_enabled,
+            context=trace_context,
+        )
+
+    exit_reasons: dict[str, bool] = {
+        'vwap_reversion': (vwap_session is not None and price <= vwap_session)
+        or (vwap_session is None and price <= ema12),
+        'rsi_cooled': rsi14 <= _decimal_param(params, 'exit_rsi_max', Decimal('42')),
+        'macd_rebound': macd_hist >= _decimal_param(params, 'exit_macd_hist_min', Decimal('0.003')),
+        'imbalance_reversal': (
+            recent_imbalance_pressure_avg is not None
+            and recent_imbalance_pressure_avg
+            >= _decimal_param(params, 'exit_recent_imbalance_pressure_min', Decimal('0.03'))
+        ),
+        'range_reversion': (
+            price_position_in_session_range is not None
+            and price_position_in_session_range
+            <= _decimal_param(params, 'exit_session_range_position_max', Decimal('0.44'))
+        ),
+    }
+    exit_gate = _exit_trigger_gate(reason_flags=exit_reasons)
+    if exit_gate.passed:
+        return _sleeve_result(
+            strategy_id=strategy_id,
+            strategy_type=strategy_type,
+            symbol=symbol,
+            event_ts=event_ts,
+            timeframe=timeframe,
+            signal=SleeveSignalEvaluation(
+                action='buy',
+                confidence=Decimal('0.61'),
+                rationale=(
+                    'mean_reversion_exhaustion_short_exit',
+                    'fade_complete',
+                ),
+            ),
+            gates=(exit_gate,),
+            trace_enabled=trace_enabled,
+            context=trace_context,
+        )
+    return _sleeve_result(
+        strategy_id=strategy_id,
+        strategy_type=strategy_type,
+        symbol=symbol,
+        event_ts=event_ts,
+        timeframe=timeframe,
+        signal=None,
+        gates=sell_gates,
         trace_enabled=trace_enabled,
         context=trace_context,
     )

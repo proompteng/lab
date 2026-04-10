@@ -1,0 +1,74 @@
+schema_version: torghut.replay-frontier-sweep.v1
+family: mean_reversion_rebound_consistent
+family_template_id: mean_reversion_rebound_v1
+strategy_name: mean-reversion-rebound-long-v1
+disable_other_strategies: true
+constraints:
+  holdout_target_net_per_day: '500'
+  min_active_holdout_days: 3
+  max_worst_holdout_day_loss: '250'
+  min_profit_factor: '1.05'
+  require_training_decisions: true
+  require_holdout_decisions: true
+consistency_constraints:
+  target_net_per_day: '500'
+  min_active_days: 8
+  min_active_ratio: '1.0'
+  min_positive_days: 5
+  max_worst_day_loss: '350'
+  max_negative_days: 2
+  max_drawdown: '900'
+  max_best_day_share_of_total_pnl: '0.30'
+  min_avg_filled_notional_per_day: '300000'
+  min_avg_filled_notional_per_active_day: '350000'
+  min_regime_slice_pass_rate: '0.45'
+  require_every_day_active: true
+strategy_overrides:
+  universe_symbols:
+    - ['AAPL', 'AMAT', 'AMD', 'GOOG', 'INTC', 'META', 'MSFT', 'MU', 'NVDA', 'PLTR', 'SHOP']
+  max_position_pct_equity:
+    - '2.0'
+    - '4.0'
+  max_notional_per_trade:
+    - '63180'
+    - '126360'
+parameters:
+  min_bull_rsi:
+    - '40'
+    - '43'
+  max_bull_rsi:
+    - '50'
+  min_price_below_vwap_bps:
+    - '8'
+    - '12'
+  max_price_below_vwap_bps:
+    - '40'
+    - '55'
+  max_price_vs_session_open_bps:
+    - '-20'
+    - '-30'
+  max_opening_window_return_bps:
+    - '-5'
+    - '-10'
+  max_cross_section_continuation_rank:
+    - '0.45'
+    - '0.55'
+  min_cross_section_reversal_rank:
+    - '0.70'
+    - '0.78'
+  min_recent_imbalance_pressure:
+    - '0.02'
+    - '0.03'
+  entry_start_minute_utc:
+    - '840'
+  entry_end_minute_utc:
+    - '1080'
+  max_gross_exposure_pct_equity:
+    - '4.0'
+  entry_cooldown_seconds:
+    - '900'
+    - '1200'
+  min_hold_seconds:
+    - '120'
+  max_hold_seconds:
+    - '420'

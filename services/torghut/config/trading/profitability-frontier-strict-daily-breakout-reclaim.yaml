@@ -1,0 +1,100 @@
+schema_version: torghut.replay-frontier-sweep.v1
+family: breakout_continuation_consistent
+family_template_id: breakout_reclaim_v2
+strategy_name: breakout-continuation-long-v1
+disable_other_strategies: true
+constraints:
+  holdout_target_net_per_day: '500'
+  min_active_holdout_days: 3
+  max_worst_holdout_day_loss: '250'
+  min_profit_factor: '1.05'
+  require_training_decisions: true
+  require_holdout_decisions: true
+consistency_constraints:
+  target_net_per_day: '500'
+  min_active_days: 8
+  min_active_ratio: '1.0'
+  min_positive_days: 5
+  max_worst_day_loss: '350'
+  max_negative_days: 2
+  max_drawdown: '900'
+  max_best_day_share_of_total_pnl: '0.30'
+  min_avg_filled_notional_per_day: '300000'
+  min_avg_filled_notional_per_active_day: '350000'
+  min_regime_slice_pass_rate: '0.45'
+  require_every_day_active: true
+strategy_overrides:
+  universe_symbols:
+    - ['AAPL', 'AMAT', 'AMD', 'GOOG', 'INTC', 'META', 'MSFT', 'MU', 'NVDA', 'PLTR', 'SHOP']
+    - ['AMAT', 'GOOG', 'INTC', 'META', 'MSFT', 'MU', 'NVDA', 'PLTR', 'SHOP']
+  max_position_pct_equity:
+    - '10.0'
+  max_notional_per_trade:
+    - '315900.20'
+parameters:
+  min_cross_section_continuation_rank:
+    - '0.55'
+    - '0.60'
+  min_cross_section_opening_window_return_rank:
+    - '0.45'
+    - '0.50'
+  max_gross_exposure_pct_equity:
+    - '10.0'
+  entry_notional_max_multiplier:
+    - '1.25'
+    - '1.50'
+  max_entries_per_session:
+    - '2'
+    - '3'
+  entry_cooldown_seconds:
+    - '300'
+    - '600'
+  max_session_negative_exit_bps:
+    - '8'
+  isolated_same_day_min_session_open_rank:
+    - '0.72'
+    - '0.80'
+  isolated_same_day_min_opening_window_return_rank:
+    - '0.70'
+    - '0.75'
+  isolated_same_day_min_continuation_rank:
+    - '0.72'
+    - '0.78'
+  isolated_same_day_min_microprice_bias_bps:
+    - '0.08'
+    - '0.10'
+  isolated_same_day_min_recent_above_opening_window_close_ratio:
+    - '0.40'
+    - '0.45'
+  leader_reclaim_start_minutes_since_open:
+    - '30'
+    - '45'
+    - '60'
+  leader_reclaim_min_recent_imbalance_pressure:
+    - '0.08'
+    - '0.10'
+  leader_reclaim_min_recent_microprice_bias_bps:
+    - '0.15'
+    - '0.25'
+  leader_reclaim_min_recent_above_opening_window_close_ratio:
+    - '0.55'
+    - '0.65'
+  leader_reclaim_min_recent_above_vwap_w5m_ratio:
+    - '0.55'
+    - '0.60'
+  leader_reclaim_min_session_range_position:
+    - '0.65'
+    - '0.70'
+  leader_reclaim_min_price_vs_vwap_w5m_bps:
+    - '-8'
+  leader_reclaim_max_price_vs_vwap_w5m_bps:
+    - '18'
+  long_stop_loss_bps:
+    - '10'
+    - '12'
+  long_trailing_stop_activation_profit_bps:
+    - '6'
+    - '8'
+  long_trailing_stop_drawdown_bps:
+    - '3'
+    - '4'

@@ -11,14 +11,22 @@ from app.strategies.catalog import (
     StrategyConfig,
     _compose_strategy_description,
 )
-from app.trading.features import FeatureNormalizationError, normalize_feature_vector_v3
+from app.trading.features import FeatureNormalizationError, FeatureVectorV3, normalize_feature_vector_v3
 from app.trading.models import SignalEnvelope
+from app.trading.research_sleeves import evaluate_mean_reversion_exhaustion_short
 from app.trading.strategy_runtime import (
     LegacyMacdRsiPlugin,
+    MicrobarCrossSectionalLongPlugin,
+    MicrobarCrossSectionalShortPlugin,
     StrategyContext,
     StrategyIntent,
     StrategyRegistry,
     StrategyRuntime,
+    _evaluate_microbar_cross_sectional,
+    _microbar_exit_minute_after_open,
+    _microbar_minutes_elapsed,
+    _microbar_rank_thresholds,
+    _microbar_universe_size,
 )
 
 
@@ -73,6 +81,24 @@ class _SellPlugin:
             feature_snapshot_hash=features.normalization_hash,
             required_features=self.required_features,
         )
+
+
+def _test_feature_vector(
+    values: dict[str, object],
+    *,
+    event_ts: datetime | None = None,
+    symbol: str = "META",
+) -> FeatureVectorV3:
+    return FeatureVectorV3(
+        event_ts=event_ts or datetime(2026, 3, 24, 14, 30, 0, tzinfo=timezone.utc),
+        symbol=symbol,
+        timeframe="1Sec",
+        seq=1,
+        source="unit-test",
+        feature_schema_version="v3",
+        values=values,
+        normalization_hash="unit-hash",
+    )
 
 
 class TestStrategyRuntime(TestCase):
@@ -1146,6 +1172,90 @@ class TestStrategyRuntime(TestCase):
         self.assertEqual(decision.intent.action, "buy")
         self.assertEqual(decision.plugin_id, "momentum_pullback_long")
         self.assertIn("pullback_entry", decision.intent.rationale)
+
+    def test_momentum_pullback_plugin_emits_sell_outside_entry_window_when_exit_triggers(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="momentum-pullback",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="momentum_pullback_long_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 20, 10, 0, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 593.20,
+                "ema12": 593.10,
+                "ema26": 593.40,
+                "macd": -0.010,
+                "macd_signal": -0.004,
+                "rsi14": 44,
+                "vol_realized_w60s": 0.00018,
+                "spread": 0.05,
+                "imbalance_bid_sz": 3800,
+                "imbalance_ask_sz": 4200,
+                "price_vs_session_open_bps": 88,
+                "recent_spread_bps_avg": 0.84,
+                "recent_imbalance_pressure_avg": -0.04,
+            },
+        )
+
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.intent.action, "sell")
+        self.assertEqual(decision.plugin_id, "momentum_pullback_long")
+        self.assertIn("momentum_pullback_exit", decision.intent.rationale)
+
+    def test_momentum_pullback_plugin_skips_outside_entry_window_without_exit_trigger(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="momentum-pullback",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="momentum_pullback_long_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("14000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 20, 10, 0, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=2,
+            payload={
+                "price": 593.62,
+                "ema12": 594.10,
+                "ema26": 593.70,
+                "macd": 0.041,
+                "macd_signal": 0.022,
+                "rsi14": 59,
+                "vol_realized_w60s": 0.00018,
+                "spread": 0.05,
+                "imbalance_bid_sz": 4200,
+                "imbalance_ask_sz": 3800,
+                "price_vs_session_open_bps": 88,
+                "recent_spread_bps_avg": 0.84,
+                "recent_imbalance_pressure_avg": 0.06,
+            },
+        )
+
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
+
+        self.assertIsNone(decision)
 
     def test_breakout_continuation_plugin_emits_buy_with_vwap_and_imbalance_confirmation(
         self,
@@ -4792,6 +4902,105 @@ class TestStrategyRuntime(TestCase):
 
         self.assertIsNone(decision)
 
+    def test_mean_reversion_exhaustion_short_plugin_emits_sell_after_controlled_extension(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name='mean-reversion-exhaustion-short',
+            description='version=1.0.0',
+            enabled=True,
+            base_timeframe='1Sec',
+            universe_type='mean_reversion_exhaustion_short_v1',
+            universe_symbols=['META'],
+            max_position_pct_equity=Decimal('1.0'),
+            max_notional_per_trade=Decimal('12000'),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 17, 18, 12, tzinfo=timezone.utc),
+            symbol='META',
+            timeframe='1Sec',
+            seq=21,
+            payload={
+                'price': 598.40,
+                'ema12': 596.90,
+                'macd': 0.002,
+                'macd_signal': -0.002,
+                'rsi14': 58,
+                'vol_realized_w60s': 0.00022,
+                'vwap_session': 595.90,
+                'spread': 0.05,
+                'imbalance_bid_sz': 4300,
+                'imbalance_ask_sz': 4700,
+                'price_vs_session_open_bps': 42,
+                'price_position_in_session_range': 0.86,
+                'price_vs_opening_range_high_bps': 4,
+                'session_range_bps': 88,
+                'recent_spread_bps_avg': 0.82,
+                'recent_spread_bps_max': 1.44,
+                'recent_imbalance_pressure_avg': -0.05,
+                'recent_microprice_bias_bps_avg': -0.20,
+                'cross_section_opening_window_return_rank': 0.86,
+                'cross_section_continuation_rank': 0.38,
+                'cross_section_reversal_rank': 0.80,
+            },
+        )
+
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, feature_contract, timeframe='1Sec')
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.intent.action, 'sell')
+        self.assertEqual(decision.plugin_id, 'mean_reversion_exhaustion_short')
+        self.assertIn('overbought_fade', decision.intent.rationale)
+
+    def test_mean_reversion_exhaustion_short_plugin_emits_buy_after_fade_completes(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name='mean-reversion-exhaustion-short',
+            description='version=1.0.0',
+            enabled=True,
+            base_timeframe='1Sec',
+            universe_type='mean_reversion_exhaustion_short_v1',
+            universe_symbols=['META'],
+            max_position_pct_equity=Decimal('1.0'),
+            max_notional_per_trade=Decimal('12000'),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 17, 26, 12, tzinfo=timezone.utc),
+            symbol='META',
+            timeframe='1Sec',
+            seq=22,
+            payload={
+                'price': 595.80,
+                'ema12': 596.20,
+                'macd': 0.004,
+                'macd_signal': 0.000,
+                'rsi14': 41,
+                'vol_realized_w60s': 0.00022,
+                'vwap_session': 596.40,
+                'spread': 0.05,
+                'imbalance_bid_sz': 4700,
+                'imbalance_ask_sz': 4300,
+                'price_vs_session_open_bps': 8,
+                'price_position_in_session_range': 0.38,
+                'price_vs_opening_range_high_bps': -22,
+                'session_range_bps': 88,
+                'recent_spread_bps_avg': 0.82,
+                'recent_spread_bps_max': 1.44,
+                'recent_imbalance_pressure_avg': 0.04,
+            },
+        )
+
+        feature_contract = normalize_feature_vector_v3(signal)
+        runtime = StrategyRuntime()
+        decision = runtime.evaluate(strategy, feature_contract, timeframe='1Sec')
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.intent.action, 'buy')
+        self.assertEqual(decision.plugin_id, 'mean_reversion_exhaustion_short')
+
     def test_end_of_day_reversal_plugin_emits_buy_for_late_intraday_loser(self) -> None:
         strategy = Strategy(
             id=uuid.uuid4(),
@@ -5154,3 +5363,393 @@ class TestStrategyRuntime(TestCase):
             definition.strategy_spec["feature_view_spec_ref"],
             "features/intraday-momentum-v1",
         )
+
+
+class TestStrategyRuntimeMicrobarCoverage(TestCase):
+    def _context(
+        self,
+        *,
+        params: dict[str, object] | None = None,
+        event_ts: str = "2026-03-24T14:30:00+00:00",
+        strategy_type: str = "microbar_cross_sectional_long_v1",
+        strategy_spec: dict[str, object] | None = None,
+    ) -> StrategyContext:
+        return StrategyContext(
+            strategy_id="strategy-1",
+            strategy_name="microbar-test",
+            declared_strategy_id="microbar-test",
+            strategy_type=strategy_type,
+            strategy_version="1.0.0",
+            event_ts=event_ts,
+            symbol="META",
+            timeframe="1Sec",
+            params=dict(params or {}),
+            trace_enabled=True,
+            strategy_spec=dict(strategy_spec or {}),
+        )
+
+    def test_microbar_helper_parsers_cover_raw_fallback_and_invalid_inputs(self) -> None:
+        context = self._context()
+        self.assertEqual(
+            _microbar_minutes_elapsed(
+                context=context,
+                features=_test_feature_vector({"session_minutes_elapsed": "61"}),
+            ),
+            61,
+        )
+        self.assertIsNone(
+            _microbar_minutes_elapsed(
+                context=context,
+                features=_test_feature_vector({"session_minutes_elapsed": "bad-value"}),
+            )
+        )
+        self.assertEqual(
+            _microbar_minutes_elapsed(
+                context=self._context(event_ts="2026-03-24T14:35:00+00:00"),
+                features=_test_feature_vector({}),
+            ),
+            65,
+        )
+        self.assertIsNone(
+            _microbar_minutes_elapsed(
+                context=self._context(event_ts="not-a-timestamp"),
+                features=_test_feature_vector({}),
+            )
+        )
+
+        self.assertIsNone(_microbar_exit_minute_after_open({}))
+        self.assertIsNone(_microbar_exit_minute_after_open({"exit_minute_after_open": ""}))
+        self.assertEqual(_microbar_exit_minute_after_open({"exit_minute_after_open": "close"}), 390)
+        self.assertEqual(_microbar_exit_minute_after_open({"exit_minute_after_open": "75"}), 75)
+        self.assertIsNone(_microbar_exit_minute_after_open({"exit_minute_after_open": "bad-value"}))
+
+    def test_microbar_universe_and_rank_threshold_helpers_cover_fallbacks(self) -> None:
+        self.assertEqual(
+            _microbar_universe_size(
+                context=self._context(),
+                params={"universe_size": "6"},
+            ),
+            6,
+        )
+        self.assertEqual(
+            _microbar_universe_size(
+                context=self._context(),
+                params={"universe_size": "bad-value", "universe_symbols": ["META", "NVDA", "AAPL", ""]},
+            ),
+            3,
+        )
+        self.assertEqual(
+            _microbar_universe_size(
+                context=self._context(strategy_spec={"universe_symbols": ["META"]}),
+                params={},
+            ),
+            2,
+        )
+        self.assertEqual(
+            _microbar_universe_size(
+                context=self._context(strategy_spec={"universe_symbols": ["META", "NVDA", "AAPL", "MSFT"]}),
+                params={},
+            ),
+            4,
+        )
+        self.assertEqual(_microbar_rank_thresholds(universe_size=1, top_n=3), (Decimal("0"), Decimal("1")))
+        self.assertEqual(
+            _microbar_rank_thresholds(universe_size=5, top_n=2),
+            (Decimal("0.25"), Decimal("0.75")),
+        )
+
+    def test_microbar_cross_sectional_helper_covers_early_rejection_paths(self) -> None:
+        base_params: dict[str, object] = {
+            "entry_minute_after_open": "60",
+            "exit_minute_after_open": "close",
+            "signal_motif": "vwap_close_continuation",
+            "gate_feature": "cross_section_continuation_breadth",
+            "gate_min": "0.05",
+            "gate_max": "0.20",
+            "rank_feature": "cross_section_vwap_w5m_rank",
+            "top_n": "2",
+        }
+
+        missing_minutes = _evaluate_microbar_cross_sectional(
+            context=self._context(params=base_params, event_ts="bad-timestamp"),
+            features=_test_feature_vector({}),
+            entry_action="buy",
+            exit_action="sell",
+        )
+        self.assertIsNone(missing_minutes.intent)
+        assert missing_minutes.trace is not None
+        self.assertEqual(missing_minutes.trace.first_failed_gate, "schedule")
+
+        mismatched_minute = _evaluate_microbar_cross_sectional(
+            context=self._context(params=base_params),
+            features=_test_feature_vector({"session_minutes_elapsed": 59}),
+            entry_action="buy",
+            exit_action="sell",
+        )
+        self.assertIsNone(mismatched_minute.intent)
+        assert mismatched_minute.trace is not None
+        self.assertEqual(mismatched_minute.trace.first_failed_gate, "schedule")
+
+        regime_reject = _evaluate_microbar_cross_sectional(
+            context=self._context(params=base_params),
+            features=_test_feature_vector(
+                {
+                    "session_minutes_elapsed": 60,
+                    "cross_section_continuation_breadth": Decimal("0.30"),
+                    "cross_section_vwap_w5m_rank": Decimal("0.10"),
+                }
+            ),
+            entry_action="buy",
+            exit_action="sell",
+        )
+        self.assertIsNone(regime_reject.intent)
+        assert regime_reject.trace is not None
+        self.assertEqual(regime_reject.trace.first_failed_gate, "regime_gate")
+        self.assertEqual(len(regime_reject.trace.gates[0].thresholds), 2)
+
+        missing_rank = _evaluate_microbar_cross_sectional(
+            context=self._context(params=base_params),
+            features=_test_feature_vector(
+                {
+                    "session_minutes_elapsed": 60,
+                    "cross_section_continuation_breadth": Decimal("0.10"),
+                }
+            ),
+            entry_action="buy",
+            exit_action="sell",
+        )
+        self.assertIsNone(missing_rank.intent)
+        assert missing_rank.trace is not None
+        self.assertEqual(missing_rank.trace.first_failed_gate, "rank_selection")
+
+    def test_microbar_cross_sectional_plugins_cover_entry_exit_and_selection_modes(self) -> None:
+        long_plugin = MicrobarCrossSectionalLongPlugin()
+        short_plugin = MicrobarCrossSectionalShortPlugin()
+
+        exit_result = long_plugin.evaluate(
+            self._context(
+                params={
+                    "entry_minute_after_open": "60",
+                    "exit_minute_after_open": "close",
+                    "signal_motif": "vwap_close_continuation",
+                    "rank_feature": "cross_section_vwap_w5m_rank",
+                    "selection_mode": "continuation",
+                    "top_n": "2",
+                }
+            ),
+            _test_feature_vector(
+                {
+                    "session_minutes_elapsed": 390,
+                    "cross_section_vwap_w5m_rank": Decimal("0.02"),
+                }
+            ),
+        )
+        self.assertIsNotNone(exit_result.intent)
+        assert exit_result.intent is not None
+        self.assertEqual(exit_result.intent.action, "sell")
+
+        continuation_buy = long_plugin.evaluate(
+            self._context(
+                params={
+                    "entry_minute_after_open": "60",
+                    "signal_motif": "open_window_continuation",
+                    "rank_feature": "cross_section_session_open_rank",
+                    "selection_mode": "continuation",
+                    "top_n": "2",
+                    "universe_size": "6",
+                }
+            ),
+            _test_feature_vector(
+                {
+                    "session_minutes_elapsed": 60,
+                    "cross_section_session_open_rank": Decimal("0.95"),
+                }
+            ),
+        )
+        self.assertIsNotNone(continuation_buy.intent)
+        assert continuation_buy.intent is not None
+        self.assertEqual(continuation_buy.intent.action, "buy")
+
+        continuation_skip = _evaluate_microbar_cross_sectional(
+            context=self._context(
+                params={
+                    "entry_minute_after_open": "60",
+                    "signal_motif": "open_window_continuation",
+                    "rank_feature": "cross_section_session_open_rank",
+                    "selection_mode": "continuation",
+                    "top_n": "2",
+                    "universe_size": "6",
+                }
+            ),
+            features=_test_feature_vector(
+                {
+                    "session_minutes_elapsed": 60,
+                    "cross_section_session_open_rank": Decimal("0.20"),
+                }
+            ),
+            entry_action="buy",
+            exit_action="sell",
+        )
+        self.assertIsNone(continuation_skip.intent)
+        assert continuation_skip.trace is not None
+        self.assertEqual(continuation_skip.trace.first_failed_gate, "rank_selection")
+
+        reversal_buy = _evaluate_microbar_cross_sectional(
+            context=self._context(
+                params={
+                    "entry_minute_after_open": "60",
+                    "signal_motif": "open_window_reversal",
+                    "rank_feature": "cross_section_session_open_rank",
+                    "selection_mode": "reversal",
+                    "top_n": "2",
+                    "universe_size": "6",
+                }
+            ),
+            features=_test_feature_vector(
+                {
+                    "session_minutes_elapsed": 60,
+                    "cross_section_session_open_rank": Decimal("0.05"),
+                }
+            ),
+            entry_action="buy",
+            exit_action="sell",
+        )
+        self.assertIsNotNone(reversal_buy.intent)
+        assert reversal_buy.intent is not None
+        self.assertEqual(reversal_buy.intent.action, "buy")
+
+        reversal_sell = short_plugin.evaluate(
+            self._context(
+                params={
+                    "entry_minute_after_open": "60",
+                    "signal_motif": "open_window_reversal",
+                    "rank_feature": "cross_section_session_open_rank",
+                    "selection_mode": "reversal",
+                    "top_n": "2",
+                    "universe_size": "6",
+                },
+                strategy_type="microbar_cross_sectional_short_v1",
+            ),
+            _test_feature_vector(
+                {
+                    "session_minutes_elapsed": 60,
+                    "cross_section_session_open_rank": Decimal("0.95"),
+                }
+            ),
+        )
+        self.assertIsNotNone(reversal_sell.intent)
+        assert reversal_sell.intent is not None
+        self.assertEqual(reversal_sell.intent.action, "sell")
+
+        continuation_sell = short_plugin.evaluate(
+            self._context(
+                params={
+                    "entry_minute_after_open": "60",
+                    "signal_motif": "vwap_close_continuation",
+                    "rank_feature": "cross_section_vwap_w5m_rank",
+                    "selection_mode": "continuation",
+                    "top_n": "2",
+                    "universe_size": "6",
+                },
+                strategy_type="microbar_cross_sectional_short_v1",
+            ),
+            _test_feature_vector(
+                {
+                    "session_minutes_elapsed": 60,
+                    "cross_section_vwap_w5m_rank": Decimal("0.05"),
+                }
+            ),
+        )
+        self.assertIsNotNone(continuation_sell.intent)
+        assert continuation_sell.intent is not None
+        self.assertEqual(continuation_sell.intent.action, "sell")
+
+
+class TestMeanReversionExhaustionShortSleeveCoverage(TestCase):
+    def _base_kwargs(self) -> dict[str, object]:
+        return {
+            "params": {},
+            "strategy_id": "strategy-1",
+            "strategy_type": "mean_reversion_exhaustion_short_v1",
+            "symbol": "META",
+            "event_ts": "2026-03-24T17:18:12+00:00",
+            "timeframe": "1Sec",
+            "trace_enabled": True,
+            "price": Decimal("598.40"),
+            "ema12": Decimal("596.90"),
+            "macd": Decimal("0.002"),
+            "macd_signal": Decimal("-0.002"),
+            "rsi14": Decimal("58"),
+            "vol_realized_w60s": Decimal("0.00022"),
+            "vwap_session": Decimal("595.90"),
+            "spread_bps": Decimal("0.84"),
+            "imbalance_bid_sz": Decimal("4300"),
+            "imbalance_ask_sz": Decimal("4700"),
+            "price_vs_session_open_bps": Decimal("42"),
+            "price_vs_prev_session_close_bps": None,
+            "opening_window_return_bps": Decimal("12"),
+            "opening_window_return_from_prev_close_bps": None,
+            "price_position_in_session_range": Decimal("0.86"),
+            "price_vs_opening_range_high_bps": Decimal("4"),
+            "session_range_bps": Decimal("88"),
+            "recent_spread_bps_avg": Decimal("0.82"),
+            "recent_spread_bps_max": Decimal("1.44"),
+            "recent_imbalance_pressure_avg": Decimal("-0.07"),
+            "recent_quote_invalid_ratio": Decimal("0.01"),
+            "recent_quote_jump_bps_max": Decimal("10"),
+            "recent_microprice_bias_bps_avg": Decimal("-0.80"),
+            "cross_section_opening_window_return_rank": Decimal("0.86"),
+            "cross_section_opening_window_return_from_prev_close_rank": None,
+            "cross_section_continuation_rank": Decimal("0.38"),
+            "cross_section_reversal_rank": Decimal("0.80"),
+        }
+
+    def test_mean_reversion_exhaustion_short_evaluator_covers_required_and_window_guards(self) -> None:
+        missing_input = evaluate_mean_reversion_exhaustion_short(
+            **(self._base_kwargs() | {"rsi14": None})
+        )
+        self.assertIsNone(missing_input.signal)
+        assert missing_input.trace is not None
+        self.assertEqual(missing_input.trace.first_failed_gate, "eligibility")
+
+        outside_window = evaluate_mean_reversion_exhaustion_short(
+            **(self._base_kwargs() | {"event_ts": "2026-03-24T13:15:00+00:00"})
+        )
+        self.assertIsNone(outside_window.signal)
+        assert outside_window.trace is not None
+        self.assertEqual(outside_window.trace.first_failed_gate, "eligibility")
+
+    def test_mean_reversion_exhaustion_short_evaluator_covers_confidence_bonuses_and_no_signal(self) -> None:
+        sell_result = evaluate_mean_reversion_exhaustion_short(**self._base_kwargs())
+        self.assertIsNotNone(sell_result.signal)
+        assert sell_result.signal is not None
+        self.assertEqual(sell_result.signal.action, "sell")
+        self.assertEqual(sell_result.signal.confidence, Decimal("0.76"))
+
+        no_signal_result = evaluate_mean_reversion_exhaustion_short(
+            **(
+                self._base_kwargs()
+                | {
+                    "price": Decimal("595.30"),
+                    "ema12": Decimal("595.20"),
+                    "macd": Decimal("0.000"),
+                    "macd_signal": Decimal("0.000"),
+                    "rsi14": Decimal("50"),
+                    "vwap_session": Decimal("595.00"),
+                    "imbalance_bid_sz": Decimal("4500"),
+                    "imbalance_ask_sz": Decimal("4500"),
+                    "price_vs_session_open_bps": Decimal("5"),
+                    "opening_window_return_bps": Decimal("2"),
+                    "price_position_in_session_range": Decimal("0.50"),
+                    "price_vs_opening_range_high_bps": Decimal("-20"),
+                    "recent_imbalance_pressure_avg": Decimal("0.00"),
+                    "recent_microprice_bias_bps_avg": Decimal("0.00"),
+                    "cross_section_opening_window_return_rank": Decimal("0.40"),
+                    "cross_section_continuation_rank": Decimal("0.50"),
+                    "cross_section_reversal_rank": Decimal("0.40"),
+                }
+            )
+        )
+        self.assertIsNone(no_signal_result.signal)
+        assert no_signal_result.trace is not None
+        self.assertEqual(no_signal_result.trace.first_failed_gate, "structure")

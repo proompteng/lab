@@ -1,0 +1,49 @@
+schema_version: torghut.family-template.v1
+family_id: end_of_day_reversal_v1
+economic_mechanism: Late-session reversal in intraday losers after rebid confirmation and temporary price pressure exhaustion.
+supported_markets:
+  - us_equities_intraday
+required_features:
+  - late_day_drawdown
+  - reversal_rank
+  - quote_quality
+  - rebid_confirmation
+allowed_normalizations:
+  - price_scaled
+  - opening_window_scaled
+entry_motifs:
+  - end_of_day_reversal
+  - close_reversion
+exit_motifs:
+  - vwap_recovery
+  - close_flatten
+risk_controls:
+  - long_stop_loss_bps
+  - quote_quality_veto
+activity_model:
+  min_active_day_ratio: '0.45'
+  min_daily_notional: '200000'
+liquidity_assumptions:
+  max_spread_bps: '18'
+  min_quote_valid_ratio: '0.92'
+regime_activation_rules:
+  - metric: information_arrival
+    comparator: gte
+    threshold: '0.40'
+day_veto_rules:
+  - rule: quote_quality
+    action: block_day
+default_hard_vetoes:
+  required_min_active_day_ratio: '0.45'
+  required_min_daily_notional: '200000'
+  required_max_best_day_share: '0.45'
+  required_max_worst_day_loss: '450'
+  required_max_drawdown: '900'
+  required_min_regime_slice_pass_rate: '0.35'
+default_selection_objectives:
+  target_net_pnl_per_day: '225'
+  require_positive_day_ratio: '0.50'
+runtime_harness:
+  family: end_of_day_reversal_consistent
+  strategy_name: end-of-day-reversal-long-v1
+  disable_other_strategies: true

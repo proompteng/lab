@@ -149,37 +149,121 @@ def _process_run(
                 "claim_graph_synced": include_claim_graph and run_row.synthesis is not None,
             }
 
+        claim_graph_synced = False
+        work_completed: list[str] = []
+        errors: list[str] = []
+
+        synthesis_json = run_row.synthesis.synthesis_json if run_row.synthesis is not None else None
+        if include_claim_graph and isinstance(synthesis_json, dict):
+            workflow._sync_structured_research_outputs(  # type: ignore[attr-defined]
+                session,
+                run_row,
+                {
+                    "synthesis": cast(dict[str, Any], synthesis_json),
+                },
+            )
+            claim_graph_synced = True
+            work_completed.append("claim_graph_sync")
+
         indexed_full_text = {"indexed_chunks": 0}
         if full_text.strip():
-            indexed_full_text = workflow.index_full_text_semantic_content(
-                session,
-                run_id=run_id,
-                full_text=full_text,
-            )
+            try:
+                indexed_full_text = workflow.index_full_text_semantic_content(
+                    session,
+                    run_id=run_id,
+                    full_text=full_text,
+                )
+                work_completed.append("full_text_index")
+            except Exception as exc:
+                errors.append(f"full_text_index:{exc}")
 
         indexed_synthesis = {"indexed_chunks": 0}
         if run_row.synthesis is not None:
-            indexed_synthesis = workflow.index_synthesis_semantic_content(
-                session,
-                run_id=run_id,
-            )
-            if include_claim_graph and isinstance(run_row.synthesis.synthesis_json, dict):
-                workflow._sync_structured_research_outputs(  # type: ignore[attr-defined]
+            try:
+                indexed_synthesis = workflow.index_synthesis_semantic_content(
                     session,
-                    run_row,
-                    {
-                        "synthesis": cast(dict[str, Any], run_row.synthesis.synthesis_json),
-                    },
+                    run_id=run_id,
                 )
+                work_completed.append("synthesis_index")
+            except Exception as exc:
+                errors.append(f"synthesis_index:{exc}")
+
+        if not work_completed and errors:
+            raise RuntimeError(";".join(errors))
 
         session.commit()
         return {
             "run_id": run_id,
-            "status": "indexed",
+            "status": "partial" if errors else "indexed",
             "full_text_chunks": int(indexed_full_text.get("indexed_chunks") or 0),
             "synthesis_chunks": int(indexed_synthesis.get("indexed_chunks") or 0),
-            "claim_graph_synced": include_claim_graph and run_row.synthesis is not None,
+            "claim_graph_synced": claim_graph_synced,
+            "errors": errors,
         }
+
+
+def run_backfill_whitepaper_semantic_index(
+    *,
+    statuses: list[str],
+    selected_run_ids: list[str],
+    limit: int,
+    concurrency: int,
+    dry_run: bool,
+    include_claim_graph: bool,
+) -> dict[str, Any]:
+    started_at = datetime.now(timezone.utc)
+    if not statuses:
+        raise ValueError('at least one status is required')
+
+    if selected_run_ids:
+        run_ids = selected_run_ids
+    else:
+        with SessionLocal() as session:
+            run_ids = _list_candidate_run_ids(
+                session,
+                statuses=statuses,
+                limit=max(1, min(int(limit), 5000)),
+            )
+
+    if not run_ids:
+        return {
+            'mode': 'dry_run' if dry_run else 'apply',
+            'started_at': started_at.isoformat(),
+            'statuses': statuses,
+            'candidates': 0,
+            'results': [],
+        }
+
+    results: list[dict[str, Any]] = []
+    max_workers = max(1, min(int(concurrency), 16))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [
+            executor.submit(
+                _process_run,
+                run_id=run_id,
+                dry_run=bool(dry_run),
+                include_claim_graph=bool(include_claim_graph),
+            )
+            for run_id in run_ids
+        ]
+        for future in as_completed(futures):
+            try:
+                results.append(future.result())
+            except Exception as exc:
+                results.append({'status': 'failed', 'error': str(exc)})
+
+    ended_at = datetime.now(timezone.utc)
+    return {
+        'mode': 'dry_run' if dry_run else 'apply',
+        'started_at': started_at.isoformat(),
+        'ended_at': ended_at.isoformat(),
+        'statuses': statuses,
+        'candidates': len(run_ids),
+        'processed': len(results),
+        'succeeded': len([item for item in results if item.get('status') in {'indexed', 'partial', 'dry_run'}]),
+        'failed': len([item for item in results if item.get('status') == 'failed']),
+        'results': results,
+    }
 
 
 def main() -> int:
@@ -211,58 +295,14 @@ def main() -> int:
         raise SystemExit("at least one status is required")
 
     selected_run_ids = [str(item).strip() for item in args.run_id if str(item).strip()]
-    if selected_run_ids:
-        run_ids = selected_run_ids
-    else:
-        with SessionLocal() as session:
-            run_ids = _list_candidate_run_ids(
-                session,
-                statuses=statuses,
-                limit=max(1, min(int(args.limit), 5000)),
-            )
-
-    started_at = datetime.now(timezone.utc)
-    if not run_ids:
-        report = {
-            "mode": "dry_run" if args.dry_run else "apply",
-            "started_at": started_at.isoformat(),
-            "statuses": statuses,
-            "candidates": 0,
-            "results": [],
-        }
-        print(json.dumps(report, indent=2))
-        return 0
-
-    results: list[dict[str, Any]] = []
-    max_workers = max(1, min(int(args.concurrency), 16))
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [
-            executor.submit(
-                _process_run,
-                run_id=run_id,
-                dry_run=bool(args.dry_run),
-                include_claim_graph=bool(args.include_claim_graph),
-            )
-            for run_id in run_ids
-        ]
-        for future in as_completed(futures):
-            try:
-                results.append(future.result())
-            except Exception as exc:
-                results.append({"status": "failed", "error": str(exc)})
-
-    ended_at = datetime.now(timezone.utc)
-    report = {
-        "mode": "dry_run" if args.dry_run else "apply",
-        "started_at": started_at.isoformat(),
-        "ended_at": ended_at.isoformat(),
-        "statuses": statuses,
-        "candidates": len(run_ids),
-        "processed": len(results),
-        "succeeded": len([item for item in results if item.get("status") in {"indexed", "dry_run"}]),
-        "failed": len([item for item in results if item.get("status") == "failed"]),
-        "results": results,
-    }
+    report = run_backfill_whitepaper_semantic_index(
+        statuses=statuses,
+        selected_run_ids=selected_run_ids,
+        limit=int(args.limit),
+        concurrency=int(args.concurrency),
+        dry_run=bool(args.dry_run),
+        include_claim_graph=bool(args.include_claim_graph),
+    )
     print(json.dumps(report, indent=2))
     return 0
 

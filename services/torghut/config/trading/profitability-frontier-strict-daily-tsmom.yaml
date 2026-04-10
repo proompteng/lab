@@ -1,0 +1,59 @@
+schema_version: torghut.replay-frontier-sweep.v1
+family: intraday_tsmom_consistent
+family_template_id: intraday_tsmom_v2
+strategy_name: intraday-tsmom-profit-v3
+disable_other_strategies: true
+constraints:
+  holdout_target_net_per_day: '500'
+  min_active_holdout_days: 3
+  max_worst_holdout_day_loss: '250'
+  min_profit_factor: '1.05'
+  require_training_decisions: true
+  require_holdout_decisions: true
+consistency_constraints:
+  target_net_per_day: '500'
+  min_active_days: 8
+  min_active_ratio: '1.0'
+  min_positive_days: 5
+  max_worst_day_loss: '350'
+  max_negative_days: 2
+  max_drawdown: '900'
+  max_best_day_share_of_total_pnl: '0.30'
+  min_avg_filled_notional_per_day: '300000'
+  min_avg_filled_notional_per_active_day: '300000'
+  min_regime_slice_pass_rate: '0.45'
+  require_every_day_active: true
+strategy_overrides:
+  universe_symbols:
+    - ['AAPL', 'AMAT', 'AMD', 'GOOG', 'INTC', 'MSFT', 'MU', 'NVDA', 'SHOP']
+    - ['AAPL', 'AMAT', 'GOOG', 'INTC', 'META', 'MSFT', 'MU', 'NVDA', 'PLTR', 'SHOP']
+    - ['AAPL', 'AMD', 'GOOG', 'META', 'MSFT', 'MU', 'NVDA', 'PLTR', 'SHOP']
+  max_notional_per_trade:
+    - '63180'
+    - '126360'
+    - '189540'
+  max_position_pct_equity:
+    - '2.0'
+    - '3.0'
+    - '4.0'
+parameters:
+  long_stop_loss_bps:
+    - '10'
+    - '12'
+    - '16'
+  long_trailing_stop_activation_profit_bps:
+    - '6'
+    - '8'
+    - '12'
+  long_trailing_stop_drawdown_bps:
+    - '3'
+    - '4'
+    - '6'
+  max_session_negative_exit_bps:
+    - '8'
+    - '10'
+    - '12'
+  min_cross_section_continuation_rank:
+    - '0.50'
+    - '0.60'
+    - '0.70'

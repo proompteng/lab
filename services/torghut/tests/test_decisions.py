@@ -1616,7 +1616,7 @@ class TestDecisionEngine(TestCase):
             name="breakout-continuation",
             description=(
                 "version=1.0.0\n[catalog_metadata]\n"
-                '{"params":{"entry_cooldown_seconds":"300","bullish_hist_min":"0.001","min_bull_rsi":"50","max_bull_rsi":"80","max_spread_bps":"100","min_session_open_drive_bps":"0","min_opening_window_return_bps":"0","min_session_high_above_opening_range_high_bps":"0","min_price_vs_opening_range_high_bps":"-100","max_price_vs_opening_range_high_bps":"100","min_price_vs_opening_window_close_bps":"-100","max_price_vs_opening_window_close_bps":"100","min_opening_range_width_bps":"0","min_session_range_bps":"0","min_session_range_position":"0","min_price_vs_vwap_w5m_bps":"-100","max_price_vs_vwap_w5m_bps":"100","max_recent_spread_bps":"100","max_recent_spread_bps_max":"200","max_recent_quote_jump_bps":"200","min_recent_imbalance_pressure":"-1"},"strategy_type":"breakout_continuation_long_v1","version":"1.0.0"}'
+                '{"params":{"entry_cooldown_seconds":"300","bullish_hist_min":"0.001","min_bull_rsi":"50","max_bull_rsi":"80","max_spread_bps":"100","min_session_open_drive_bps":"0","min_opening_window_return_bps":"0","min_session_open_return_efficiency":"0","min_session_high_above_opening_range_high_bps":"0","min_price_vs_opening_range_high_bps":"-100","max_price_vs_opening_range_high_bps":"100","min_price_vs_opening_window_close_bps":"-100","max_price_vs_opening_window_close_bps":"100","min_opening_range_width_bps":"0","min_session_range_bps":"0","min_session_range_position":"0","min_price_vs_vwap_w5m_bps":"-100","max_price_vs_vwap_w5m_bps":"100","max_recent_spread_bps":"100","max_recent_spread_bps_max":"200","max_recent_quote_jump_bps":"200","min_recent_imbalance_pressure":"-1"},"strategy_type":"breakout_continuation_long_v1","version":"1.0.0"}'
             ),
             enabled=True,
             base_timeframe="1Sec",
@@ -1700,7 +1700,7 @@ class TestDecisionEngine(TestCase):
             name="breakout-continuation",
             description=(
                 "version=1.0.0\n[catalog_metadata]\n"
-                '{"params":{"bullish_hist_min":"0.001","min_bull_rsi":"50","max_bull_rsi":"80","max_spread_bps":"100","min_session_open_drive_bps":"0","min_opening_window_return_bps":"0","min_session_high_above_opening_range_high_bps":"0","min_price_vs_opening_range_high_bps":"-100","max_price_vs_opening_range_high_bps":"100","min_price_vs_opening_window_close_bps":"-100","max_price_vs_opening_window_close_bps":"100","min_opening_range_width_bps":"0","min_session_range_bps":"0","min_session_range_position":"0","min_price_vs_vwap_w5m_bps":"-100","max_price_vs_vwap_w5m_bps":"100","max_recent_spread_bps":"100","max_recent_spread_bps_max":"200","max_recent_quote_jump_bps":"200","min_recent_imbalance_pressure":"-1"},"strategy_type":"breakout_continuation_long_v1","version":"1.0.0"}'
+                '{"params":{"bullish_hist_min":"0.001","min_bull_rsi":"50","max_bull_rsi":"80","max_spread_bps":"100","min_session_open_drive_bps":"0","min_opening_window_return_bps":"0","min_session_open_return_efficiency":"0","min_session_high_above_opening_range_high_bps":"0","min_price_vs_opening_range_high_bps":"-100","max_price_vs_opening_range_high_bps":"100","min_price_vs_opening_window_close_bps":"-100","max_price_vs_opening_window_close_bps":"100","min_opening_range_width_bps":"0","min_session_range_bps":"0","min_session_range_position":"0","min_price_vs_vwap_w5m_bps":"-100","max_price_vs_vwap_w5m_bps":"100","max_recent_spread_bps":"100","max_recent_spread_bps_max":"200","max_recent_quote_jump_bps":"200","min_recent_imbalance_pressure":"-1"},"strategy_type":"breakout_continuation_long_v1","version":"1.0.0"}'
             ),
             enabled=True,
             base_timeframe="1Sec",
@@ -1785,7 +1785,7 @@ class TestDecisionEngine(TestCase):
             name="breakout-continuation",
             description=(
                 "version=1.0.0\n[catalog_metadata]\n"
-                '{"params":{"max_entries_per_session":"1","bullish_hist_min":"0.001","min_bull_rsi":"50","max_bull_rsi":"80","max_spread_bps":"100","min_session_open_drive_bps":"0","min_opening_window_return_bps":"0","min_session_high_above_opening_range_high_bps":"0","min_price_vs_opening_range_high_bps":"-100","max_price_vs_opening_range_high_bps":"100","min_price_vs_opening_window_close_bps":"-100","max_price_vs_opening_window_close_bps":"100","min_opening_range_width_bps":"0","min_session_range_bps":"0","min_session_range_position":"0","min_price_vs_vwap_w5m_bps":"-100","max_price_vs_vwap_w5m_bps":"100","max_recent_spread_bps":"100","max_recent_spread_bps_max":"200","max_recent_quote_jump_bps":"200","min_recent_imbalance_pressure":"-1"},"strategy_type":"breakout_continuation_long_v1","version":"1.0.0"}'
+                '{"params":{"max_entries_per_session":"1","bullish_hist_min":"0.001","min_bull_rsi":"50","max_bull_rsi":"80","max_spread_bps":"100","min_session_open_drive_bps":"0","min_opening_window_return_bps":"0","min_session_open_return_efficiency":"0","min_session_high_above_opening_range_high_bps":"0","min_price_vs_opening_range_high_bps":"-100","max_price_vs_opening_range_high_bps":"100","min_price_vs_opening_window_close_bps":"-100","max_price_vs_opening_window_close_bps":"100","min_opening_range_width_bps":"0","min_session_range_bps":"0","min_session_range_position":"0","min_price_vs_vwap_w5m_bps":"-100","max_price_vs_vwap_w5m_bps":"100","max_recent_spread_bps":"100","max_recent_spread_bps_max":"200","max_recent_quote_jump_bps":"200","min_recent_imbalance_pressure":"-1"},"strategy_type":"breakout_continuation_long_v1","version":"1.0.0"}'
             ),
             enabled=True,
             base_timeframe="1Sec",
@@ -2977,6 +2977,96 @@ class TestDecisionEngine(TestCase):
         trailing_exit = decision.params.get("position_exit")
         assert isinstance(trailing_exit, dict)
         self.assertEqual(trailing_exit.get("type"), "long_trailing_stop_bps")
+
+    def test_scheduler_runtime_position_exit_overlay_falls_through_to_max_hold_when_trailing_stop_fails_profit_floor(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="momentum-pullback-max-hold-fallback",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="momentum-pullback-max-hold-fallback",
+                    strategy_id="momentum_pullback_long_v1@research",
+                    strategy_type="momentum_pullback_long_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="momentum_pullback_long_v1",
+                    universe_symbols=["GOOG"],
+                    max_position_pct_equity=Decimal("2.0"),
+                    max_notional_per_trade=Decimal("63180"),
+                    params={
+                        "position_isolation_mode": "per_strategy",
+                        "long_trailing_stop_activation_profit_bps": "8",
+                        "long_trailing_stop_drawdown_bps": "4",
+                        "max_hold_seconds": "420",
+                        "require_positive_price_for_signal_exit": "true",
+                        "min_signal_exit_profit_bps": "8",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="momentum_pullback_long_v1",
+            universe_symbols=["GOOG"],
+            max_position_pct_equity=Decimal("2.0"),
+            max_notional_per_trade=Decimal("63180"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 14, 57, 51, tzinfo=timezone.utc),
+            symbol="GOOG",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 284.975,
+                "spread": 0.07,
+                "ema12": 285.04,
+                "ema26": 285.02,
+                "macd": 0.010,
+                "macd_signal": 0.008,
+                "rsi14": 53.2,
+                "vol_realized_w60s": 0.00019,
+            },
+        )
+        positions = [
+            {
+                "symbol": "GOOG",
+                "strategy_id": str(strategy.id),
+                "qty": "170.7465",
+                "side": "long",
+                "market_value": "48658.4838375",
+                "avg_entry_price": "285.45",
+                "opened_at": "2026-03-26T14:50:46+00:00",
+            }
+        ]
+
+        decision = _build_runtime_position_exit_overlay(
+            signal=signal,
+            strategies=[strategy],
+            timeframe="1Sec",
+            decisions=[],
+            positions=positions,
+            equity=Decimal("31590.02"),
+            price=Decimal("284.975"),
+            features=extract_signal_features(signal),
+            snapshot=None,
+            raw_runtime_by_strategy_id={},
+            runtime_eval=SimpleNamespace(
+                observation=SimpleNamespace(intent_conflicts_total=0),
+                errors=[],
+            ),
+            position_peak_price=Decimal("285.76"),
+            aggregated=False,
+            position_isolation_mode="per_strategy",
+        )
+
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual(decision.action, "sell")
+        self.assertEqual(decision.rationale, "position_time_exit")
+        position_exit = decision.params.get("position_exit")
+        assert isinstance(position_exit, dict)
+        self.assertEqual(position_exit.get("type"), "max_hold_seconds")
 
     def test_scheduler_runtime_position_exit_overlay_emits_session_flatten_exit(
         self,
