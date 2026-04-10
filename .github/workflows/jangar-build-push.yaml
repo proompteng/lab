@@ -25,6 +25,9 @@ concurrency:
   group: jangar-build-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   build-and-push:
     runs-on: arc-arm64
