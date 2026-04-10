@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const objectApiMock = vi.hoisted(() => ({
@@ -49,11 +50,12 @@ vi.mock('@kubernetes/client-node', () => ({
   loadAllYaml: loadAllYamlMock,
 }))
 
-import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
+import { __private, createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 
 describe('primitives-kube', () => {
   beforeEach(() => {
     delete (globalThis as typeof globalThis & { __jangarNativeKubeClients?: unknown }).__jangarNativeKubeClients
+    delete (globalThis as typeof globalThis & { __jangarNativeKubeTlsCache?: unknown }).__jangarNativeKubeTlsCache
     objectApiFactoryMock.mockClear()
     makeApiClientMock.mockClear()
     loadAllYamlMock.mockClear()
@@ -192,5 +194,26 @@ describe('primitives-kube', () => {
         middleware: expect.any(Array),
       }),
     )
+  })
+
+  it('materializes inline kubeconfig tls data for Bun transport', () => {
+    const tls = __private.buildBunFetchTlsAssetPaths({
+      getCurrentCluster: () => ({
+        caData: Buffer.from('CA DATA').toString('base64'),
+        skipTLSVerify: false,
+      }),
+      getCurrentUser: () => ({
+        certData: Buffer.from('CERT DATA').toString('base64'),
+        keyData: Buffer.from('KEY DATA').toString('base64'),
+      }),
+    } as never)
+
+    expect(tls.rejectUnauthorized).toBe(true)
+    expect(tls.caPaths).toHaveLength(1)
+    expect(tls.certPath).toBeTruthy()
+    expect(tls.keyPath).toBeTruthy()
+    expect(readFileSync(tls.caPaths[0]!, 'utf8')).toBe('CA DATA')
+    expect(readFileSync(tls.certPath!, 'utf8')).toBe('CERT DATA')
+    expect(readFileSync(tls.keyPath!, 'utf8')).toBe('KEY DATA')
   })
 })
