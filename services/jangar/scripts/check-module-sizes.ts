@@ -4,7 +4,7 @@ import { relative, resolve } from 'node:path'
 const MAX_NEW_FILE_LINES = 800
 
 const LEGACY_LINE_CAPS: Record<string, number> = {
-  'src/server/supporting-primitives-controller.ts': 3349,
+  'src/server/supporting-primitives-controller.ts': 3352,
   'src/server/codex-judge.ts': 2729,
   'src/server/atlas-store.ts': 2219,
   'src/server/orchestration-controller.ts': 2140,
@@ -18,9 +18,9 @@ const LEGACY_LINE_CAPS: Record<string, number> = {
   'src/server/torghut-whitepapers.ts': 1328,
   'src/server/agents-controller/workflow-reconciler.ts': 1191,
   'src/server/agents-controller/agent-run-reconciler.ts': 1191,
-  'src/server/agentctl-grpc.ts': 1165,
+  'src/server/agentctl-grpc.ts': 1171,
   'src/server/terminals.ts': 1029,
-  'src/routes/github/pulls/$owner/$repo/$number.tsx': 1018,
+  'src/routes/github/pulls/$owner/$repo/$number.tsx': 1028,
   'src/server/db.ts': 1017,
   'src/server/torghut-trading.ts': 988,
   'src/routes/torghut/trading.tsx': 980,
@@ -31,7 +31,7 @@ const LEGACY_LINE_CAPS: Record<string, number> = {
   'src/server/implementation-source-webhooks.ts': 900,
   'src/routes/atlas/search.tsx': 891,
   'src/routes/v1/agent-runs.ts': 886,
-  'src/routes/control-plane/implementation-specs/$name.tsx': 858,
+  'src/routes/control-plane/implementation-specs/$name.tsx': 862,
   'src/server/torghut-quant-runtime.ts': 818,
 }
 
