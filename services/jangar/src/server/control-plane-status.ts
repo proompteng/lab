@@ -17,9 +17,14 @@ import {
   type ControlPlaneHeartbeatRow,
   type ControlPlaneHeartbeatStoreGetInput,
 } from '~/server/control-plane-heartbeat-store'
-import { asRecord, asString, readNested } from '~/server/primitives-http'
+import {
+  createKubeGateway,
+  type KubeGateway,
+  type KubeGatewayCondition,
+  type KubeGatewayDeployment,
+} from '~/server/kube-gateway'
+import { asRecord, asString } from '~/server/primitives-http'
 import { parseNamespaceScopeEnv } from '~/server/namespace-scope'
-import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 import { parseEnvStringList, parseOptionalNumber } from '~/server/agents-controller/env-config'
 import { buildRuntimeAdmissionSnapshot, type RuntimeAdmissionSnapshot } from '~/server/control-plane-runtime-admission'
 import type {
@@ -56,7 +61,6 @@ const MAX_WORKFLOW_COLLECTION_ERROR_SAMPLE = 3
 const MIN_WINDOW_MINUTES = 1
 const MAX_WINDOW_MINUTES = 24 * 60
 
-const WORKFLOW_JOB_RESOURCE = 'jobs.batch'
 const WORKFLOW_SCHEDULE_LABEL_SELECTOR = 'schedules.proompteng.ai/schedule'
 const SWARM_LABEL_SELECTOR = 'swarm.proompteng.ai/name'
 const SWARM_STAGE_NAMES = ['discover', 'plan', 'implement', 'verify'] as const
@@ -73,7 +77,7 @@ type WorkflowsReliabilityStatusInput = {
   namespaces: string[]
   windowMinutes: number
   swarms: string[]
-  kube: KubernetesClient
+  kube: KubeGateway
 }
 
 type HeartbeatAuthoritySource = {
@@ -241,6 +245,7 @@ export type ControlPlaneStatusDeps = {
   resolveEmpiricalServices?: () => Promise<EmpiricalServicesStatus>
   resolveExecutionTrust?: (input: ExecutionTrustInput) => Promise<ExecutionTrustSnapshot>
   resolveRuntimeAdmission?: (input: { now: Date; executionTrust: ExecutionTrustStatus }) => RuntimeAdmissionSnapshot
+  kubeGateway?: KubeGateway
 }
 
 export type ExecutionTrustSnapshot = {
@@ -253,7 +258,7 @@ type ExecutionTrustInput = {
   namespace: string
   now: Date
   swarms: string[]
-  kube?: KubernetesClient
+  kube?: KubeGateway
   summaryLimit?: number
 }
 
@@ -503,7 +508,7 @@ export const buildExecutionTrust = async ({
   namespace,
   now,
   swarms,
-  kube = createKubernetesClient(),
+  kube = createKubeGateway(),
   summaryLimit = DEFAULT_EXECUTION_TRUST_SUMMARY_LIMIT,
 }: ExecutionTrustInput): Promise<ExecutionTrustSnapshot> => {
   const nowMs = now.getTime()
@@ -514,10 +519,9 @@ export const buildExecutionTrust = async ({
     blockingWindows: [] as ExecutionTrustBlock[],
   }
 
-  let resources: unknown[] = []
+  let resources: Awaited<ReturnType<KubeGateway['listSwarms']>> = []
   try {
-    const list = await kube.list(RESOURCE_MAP.Swarm, namespace)
-    resources = parseItems(list)
+    resources = await kube.listSwarms(namespace)
   } catch (error) {
     return {
       executionTrust: {
@@ -532,13 +536,9 @@ export const buildExecutionTrust = async ({
     }
   }
 
-  const byName = new Map<string, Record<string, unknown>>()
-  for (const resource of resources.filter((item): item is Record<string, unknown> => {
-    return item !== null && typeof item === 'object' && !Array.isArray(item)
-  })) {
-    const metadata = asRecord(resource.metadata) ?? {}
-    const name = asString(metadata.name)
-    if (name) byName.set(name, resource)
+  const byName = new Map<string, (typeof resources)[number]>()
+  for (const resource of resources) {
+    byName.set(resource.metadata.name, resource)
   }
 
   for (const swarmName of resolvedSwarms) {
@@ -569,8 +569,8 @@ export const buildExecutionTrust = async ({
       continue
     }
 
-    const metadata = asRecord(rawResource.metadata) ?? {}
-    const status = asRecord(rawResource.status) ?? {}
+    const metadata = rawResource.metadata
+    const status = rawResource.status
     const stageStates = asRecord(status.stageStates) ?? {}
 
     const lastDiscoveredAt = asString(status[SWARM_STAGE_LAST_RUN_KEY.discover])
@@ -1330,20 +1330,6 @@ const readRolloutDeploymentNames = () => {
   return [...DEFAULT_ROLLOUT_DEPLOYMENTS]
 }
 
-const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
-
-const readDeploymentCondition = (deployment: Record<string, unknown>, conditionType: string) => {
-  const status = asRecord(deployment.status)
-  const conditions = status ? asArray(status.conditions) : []
-  for (const item of conditions) {
-    const parsedCondition = asRecord(item)
-    if (parsedCondition && asString(parsedCondition.type) === conditionType) {
-      return parsedCondition
-    }
-  }
-  return null
-}
-
 const safeDeploymentNumber = (value: unknown) => {
   if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.floor(value))
   if (typeof value === 'string') {
@@ -1353,33 +1339,13 @@ const safeDeploymentNumber = (value: unknown) => {
   return 0
 }
 
-const buildDeploymentRolloutEntry = (
-  deployment: Record<string, unknown>,
-  namespace: string,
-): DeploymentRolloutStatus => {
-  const metadata = asRecord(deployment.metadata)
-  const status = asRecord(deployment.status)
-  const spec = asRecord(deployment.spec)
-  if (!metadata || !status || !spec) {
-    return {
-      name: asString(deployment.name) ?? '',
-      namespace,
-      status: 'unknown',
-      desired_replicas: 0,
-      ready_replicas: 0,
-      available_replicas: 0,
-      updated_replicas: 0,
-      unavailable_replicas: 0,
-      message: 'invalid deployment status payload',
-    }
-  }
-
-  const name = asString(metadata.name) ?? ''
-  const desiredReplicas = safeDeploymentNumber(spec.replicas)
-  const readyReplicas = safeDeploymentNumber(status.readyReplicas)
-  const availableReplicas = safeDeploymentNumber(status.availableReplicas)
-  const updatedReplicas = safeDeploymentNumber(status.updatedReplicas)
-  const unavailableReplicas = safeDeploymentNumber(status.unavailableReplicas)
+const buildDeploymentRolloutEntry = (deployment: KubeGatewayDeployment, namespace: string): DeploymentRolloutStatus => {
+  const name = deployment.metadata.name
+  const desiredReplicas = safeDeploymentNumber(deployment.spec.replicas)
+  const readyReplicas = safeDeploymentNumber(deployment.status.readyReplicas)
+  const availableReplicas = safeDeploymentNumber(deployment.status.availableReplicas)
+  const updatedReplicas = safeDeploymentNumber(deployment.status.updatedReplicas)
+  const unavailableReplicas = safeDeploymentNumber(deployment.status.unavailableReplicas)
 
   if (desiredReplicas === 0) {
     return {
@@ -1395,10 +1361,11 @@ const buildDeploymentRolloutEntry = (
     }
   }
 
-  const availableCondition = readDeploymentCondition(deployment, 'Available')
-  const progressingCondition = readDeploymentCondition(deployment, 'Progressing')
-  const availableConditionHealthy = (asString(availableCondition?.status) ?? '').toLowerCase() === 'true'
-  const progressingConditionHealthy = (asString(progressingCondition?.status) ?? '').toLowerCase() === 'true'
+  const availableCondition = deployment.status.conditions.find((condition) => condition.type === 'Available') ?? null
+  const progressingCondition =
+    deployment.status.conditions.find((condition) => condition.type === 'Progressing') ?? null
+  const availableConditionHealthy = (availableCondition?.status ?? '').toLowerCase() === 'true'
+  const progressingConditionHealthy = (progressingCondition?.status ?? '').toLowerCase() === 'true'
   const isReplicaMismatch =
     readyReplicas < desiredReplicas ||
     availableReplicas < desiredReplicas ||
@@ -1542,18 +1509,13 @@ const buildRolloutHealth = async ({
   kube,
 }: {
   namespace: string
-  kube: KubernetesClient
+  kube: KubeGateway
 }): Promise<ControlPlaneRolloutHealth> => {
   const names = readRolloutDeploymentNames()
-  const response = await kube.list('deployments', namespace)
-  const items = parseItems(response)
-  const byName = new Map<string, Record<string, unknown>>()
+  const items = await kube.listDeployments(namespace)
+  const byName = new Map<string, KubeGatewayDeployment>()
   for (const item of items) {
-    const metadata = asRecord(item.metadata) ?? {}
-    const itemName = asString(metadata.name)
-    if (itemName) {
-      byName.set(itemName, item)
-    }
+    byName.set(item.metadata.name, item)
   }
 
   const deployments: DeploymentRolloutStatus[] = names.map((name) => {
@@ -1597,27 +1559,7 @@ const parseIsoMs = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-const parseItems = (payload: unknown) => {
-  const parsed = asRecord(payload)
-  if (!parsed) return []
-  const rawItems = parsed.items
-  if (!Array.isArray(rawItems)) return []
-  return rawItems.filter((item): item is Record<string, unknown> => {
-    return item !== null && typeof item === 'object' && !Array.isArray(item)
-  })
-}
-
-const extractJobConditions = (job: Record<string, unknown>) => {
-  const status = asRecord(job.status) ?? {}
-  const conditions = status.conditions
-  if (!Array.isArray(conditions)) return []
-  return conditions.filter((condition): condition is Record<string, unknown> => {
-    return condition !== null && typeof condition === 'object' && !Array.isArray(condition)
-  })
-}
-
-const isBackoffLimitExceededCondition = (condition: Record<string, unknown>) =>
-  asString(condition.reason) === 'BackoffLimitExceeded'
+const isBackoffLimitExceededCondition = (condition: KubeGatewayCondition) => condition.reason === 'BackoffLimitExceeded'
 
 const resolveWorkflowsReliabilityStatus = async ({
   now,
@@ -1651,32 +1593,24 @@ const resolveWorkflowsReliabilityStatus = async ({
 
   for (const currentNamespace of namespaceScope) {
     try {
-      const jobsPayload = await kube.list(WORKFLOW_JOB_RESOURCE, currentNamespace, labelSelector)
-      const jobs = parseItems(jobsPayload)
+      const jobs = await kube.listJobs(currentNamespace, labelSelector)
       collectedNamespaces += 1
 
       for (const job of jobs) {
-        const metadata = asRecord(job.metadata) ?? {}
-        const labels = asRecord(metadata.labels) ?? {}
-        const swarm = asString(labels[SWARM_LABEL_SELECTOR])
+        const swarm = job.metadata.labels[SWARM_LABEL_SELECTOR] ?? null
         if (!swarm || !scopeSwarms.has(swarm)) {
           continue
         }
 
-        const status = asRecord(job.status) ?? {}
-        const active = safeNumber(status.active)
+        const active = safeNumber(job.status.active)
         if (active !== undefined && active > 0) {
           activeJobRuns += 1
         }
 
-        const failed = safeNumber(status.failed)
-        const completionTimeMs = parseIsoMs(readNested(job, ['status', 'completionTime']))
-        const creationTimeMs = parseIsoMs(readNested(job, ['metadata', 'creationTimestamp']))
-        const referenceMs =
-          completionTimeMs ??
-          parseIsoMs(readNested(job, ['status', 'startTime'])) ??
-          parseIsoMs(readNested(job, ['status', 'lastTransitionTime'])) ??
-          creationTimeMs
+        const failed = safeNumber(job.status.failed)
+        const completionTimeMs = parseIsoMs(job.status.completionTime)
+        const creationTimeMs = parseIsoMs(job.metadata.creationTimestamp)
+        const referenceMs = completionTimeMs ?? parseIsoMs(job.status.startTime) ?? creationTimeMs
 
         if (
           failed !== undefined &&
@@ -1691,9 +1625,9 @@ const resolveWorkflowsReliabilityStatus = async ({
         const conditionReasons = new Set<string>()
         let hasBackoffLimitExceeded = false
 
-        for (const condition of extractJobConditions(job)) {
-          const reason = asString(condition.reason)
-          const transitionMs = parseIsoMs(readNested(condition, ['lastTransitionTime']))
+        for (const condition of job.status.conditions) {
+          const reason = condition.reason
+          const transitionMs = parseIsoMs(condition.lastTransitionTime)
           const eventMs = transitionMs ?? referenceMs
           if (!reason || eventMs === null || eventMs < windowStartMs || eventMs > nowMs) continue
 
@@ -2007,6 +1941,7 @@ export const buildControlPlaneStatus = async (
   deps: ControlPlaneStatusDeps = {},
 ): Promise<ControlPlaneStatus> => {
   const now = (deps.now ?? (() => new Date()))()
+  const kubeGateway = deps.kubeGateway ?? createKubeGateway()
   const heartbeatResolver = deps.getHeartbeat ?? defaultGetHeartbeat
   const agentsHealth = (deps.getAgentsControllerHealth ?? getAgentsControllerHealth)()
   const supportingHealth = (deps.getSupportingControllerHealth ?? getSupportingControllerHealth)()
@@ -2083,7 +2018,7 @@ export const buildControlPlaneStatus = async (
   const watchReliability = (deps.getWatchReliabilitySummary ?? getWatchReliabilitySummary)()
   let rolloutHealth: ControlPlaneRolloutHealth
   try {
-    rolloutHealth = await buildRolloutHealth({ namespace: options.namespace, kube: createKubernetesClient() })
+    rolloutHealth = await buildRolloutHealth({ namespace: options.namespace, kube: kubeGateway })
   } catch {
     rolloutHealth = unknownRolloutHealth()
   }
@@ -2135,7 +2070,7 @@ export const buildControlPlaneStatus = async (
     namespace: options.namespace,
     now,
     swarms: resolveExecutionTrustSwarms(),
-    kube: createKubernetesClient(),
+    kube: kubeGateway,
     summaryLimit: resolveExecutionTrustSummaryLimit(),
   }).catch(
     (error: unknown): ExecutionTrustSnapshot => ({
@@ -2157,7 +2092,7 @@ export const buildControlPlaneStatus = async (
     namespaces: resolveWorkflowNamespaces(options.namespace),
     windowMinutes: resolveWorkflowWindowMinutes(),
     swarms: resolveWorkflowSwarms(),
-    kube: createKubernetesClient(),
+    kube: kubeGateway,
   })
   const empiricalServices = await (deps.resolveEmpiricalServices ?? resolveEmpiricalServices)()
   const runtimeAdmission = (deps.resolveRuntimeAdmission ?? buildRuntimeAdmissionSnapshot)({
