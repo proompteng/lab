@@ -25,7 +25,7 @@ vi.mock('~/server/terminal-pty-manager', () => ({
   resetTerminalPtyManager: vi.fn(),
 }))
 
-import { createJangarRuntime } from '../app'
+import { createJangarRuntime, getClientOutputDirCandidates } from '../app'
 
 const clientDir = fileURLToPath(new URL('../../../.output/public/', import.meta.url))
 const indexPath = resolve(clientDir, 'index.html')
@@ -75,6 +75,15 @@ const withTempFile = async (path: string, contents: string) => {
 }
 
 describe('createJangarRuntime client serving', () => {
+  it('finds the client output directory for bundled server chunks', () => {
+    const candidates = getClientOutputDirCandidates({
+      cwd: '/tmp/jangar-test-cwd',
+      moduleUrl: 'file:///app/services/jangar/.output/server/chunks/app-123.mjs',
+    })
+
+    expect(candidates).toContain('/app/services/jangar/.output/public')
+  })
+
   it('serves the client shell for SPA routes but not API namespaces', async () => {
     const restoreIndex = await withTempFile(indexPath, clientIndexHtml)
 

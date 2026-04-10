@@ -105,7 +105,21 @@ const hasRegularFile = async (path: string) => {
   }
 }
 
-const getClientOutputDir = () => resolve(fileURLToPath(new URL('../../.output/public/', import.meta.url)))
+export const getClientOutputDirCandidates = ({
+  cwd = process.cwd(),
+  moduleUrl = import.meta.url,
+}: {
+  cwd?: string
+  moduleUrl?: string
+} = {}) =>
+  Array.from(
+    new Set([
+      resolve(cwd, '.output/public'),
+      resolve(fileURLToPath(new URL('../../.output/public/', moduleUrl))),
+      resolve(fileURLToPath(new URL('../public/', moduleUrl))),
+      resolve(fileURLToPath(new URL('../../public/', moduleUrl))),
+    ]),
+  )
 
 const isPathInsideDirectory = (rootDir: string, targetPath: string) => {
   const relativePath = relative(rootDir, targetPath)
@@ -126,8 +140,16 @@ const shouldServeClientPath = (pathname: string, serverRouteRoots: ReadonlySet<s
   return firstSegment === null || !serverRouteRoots.has(firstSegment)
 }
 
+const resolveClientIndexPath = async () => {
+  for (const clientDir of getClientOutputDirCandidates()) {
+    const indexPath = resolve(clientDir, 'index.html')
+    if (await hasRegularFile(indexPath)) return indexPath
+  }
+
+  return null
+}
+
 const resolveStaticFile = async (pathname: string) => {
-  const clientDir = getClientOutputDir()
   let decodedPath: string
   try {
     decodedPath = decodeURIComponent(pathname)
@@ -135,14 +157,17 @@ const resolveStaticFile = async (pathname: string) => {
     return null
   }
 
-  if (decodedPath === '/') {
-    const indexPath = resolve(clientDir, 'index.html')
-    return (await hasRegularFile(indexPath)) ? indexPath : null
-  }
+  for (const clientDir of getClientOutputDirCandidates()) {
+    if (decodedPath === '/') {
+      const indexPath = resolve(clientDir, 'index.html')
+      if (await hasRegularFile(indexPath)) return indexPath
+      continue
+    }
 
-  const target = resolve(clientDir, `.${decodedPath}`)
-  if (!isPathInsideDirectory(clientDir, target)) return null
-  if (await hasRegularFile(target)) return target
+    const target = resolve(clientDir, `.${decodedPath}`)
+    if (!isPathInsideDirectory(clientDir, target)) continue
+    if (await hasRegularFile(target)) return target
+  }
 
   return null
 }
@@ -157,8 +182,8 @@ const serveClientResponse = async (request: Request) => {
     })
   }
 
-  const indexPath = resolve(getClientOutputDir(), 'index.html')
-  if (!(await hasRegularFile(indexPath))) {
+  const indexPath = await resolveClientIndexPath()
+  if (!indexPath) {
     return new Response('Client build output missing. Run `bun run build` for services/jangar.', { status: 503 })
   }
 
