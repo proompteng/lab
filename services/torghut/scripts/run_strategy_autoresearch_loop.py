@@ -22,6 +22,10 @@ from app.trading.discovery.autoresearch import (
 )
 from app.trading.discovery.autoresearch_notebooks import write_autoresearch_notebooks
 from app.trading.discovery.family_templates import family_template_dir
+from app.trading.discovery.promotion_contract import (
+    blocked_research_candidate_promotion_readiness,
+    summary_promotion_readiness,
+)
 from scripts.search_consistent_profitability_frontier import run_consistent_profitability_frontier
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -102,6 +106,14 @@ def _slug(value: str) -> str:
     return '-'.join(part for part in normalized.split('-') if part)
 
 
+def _promotion_readiness_payload(*, family_plan: FamilyAutoresearchPlan) -> dict[str, Any]:
+    return blocked_research_candidate_promotion_readiness(
+        candidate_id='',
+        family_template_id=family_plan.family_template.family_id,
+        runtime_harness=family_plan.family_template.runtime_harness,
+    )
+
+
 def _frontier_args(
     *,
     args: argparse.Namespace,
@@ -171,6 +183,7 @@ def _history_record(
     full_window = _mapping(candidate_payload.get('full_window'))
     scorecard = _mapping(candidate_payload.get('objective_scorecard'))
     ranking = _mapping(candidate_payload.get('ranking'))
+    promotion_readiness = _promotion_readiness_payload(family_plan=family_plan)
     return {
         'runner_run_id': runner_run_id,
         'experiment_index': experiment_index,
@@ -200,6 +213,15 @@ def _history_record(
         'daily_net': _mapping(full_window.get('daily_net')),
         'daily_filled_notional': _mapping(full_window.get('daily_filled_notional')),
         'pruned_symbol': _string(candidate_payload.get('pruned_symbol')),
+        'objective_scope': 'research_only',
+        'promotion_stage': promotion_readiness['stage'],
+        'promotion_status': promotion_readiness['status'],
+        'promotable': promotion_readiness['promotable'],
+        'promotion_reason': promotion_readiness['reason'],
+        'promotion_blockers': list(cast(list[str], promotion_readiness['blockers'])),
+        'promotion_required_evidence': list(cast(list[str], promotion_readiness['required_evidence'])),
+        'runtime_family': _string(_mapping(promotion_readiness['runtime_harness']).get('family')),
+        'runtime_strategy_name': _string(_mapping(promotion_readiness['runtime_harness']).get('strategy_name')),
     }
 
 
@@ -278,6 +300,7 @@ def _persist_run_outputs(
     results_tsv_path = run_root / 'results.tsv'
     research_dossier_path = run_root / 'research_dossier.json'
     summary_path = run_root / 'summary.json'
+    promotion_readiness_path = run_root / 'promotion_readiness.json'
     _write_history_jsonl(history_path, history)
     _write_results_tsv(results_tsv_path, history)
     research_dossier_path.write_text(
@@ -292,14 +315,22 @@ def _persist_run_outputs(
         'run_root': str(run_root),
         'frontier_run_count': frontier_runs,
         'objective_met': objective_met,
+        'objective_scope': 'research_only',
         'history_path': str(history_path),
         'results_tsv_path': str(results_tsv_path),
         'research_dossier_path': str(research_dossier_path),
+        'promotion_readiness_path': str(promotion_readiness_path),
         'notebooks': [str(path) for path in notebook_paths],
         'best_candidate': _best_history_record(history),
     }
+    best_candidate = cast(dict[str, Any] | None, summary['best_candidate'])
+    summary['promotion_readiness'] = summary_promotion_readiness(best_candidate)
     if error is not None:
         summary['error'] = dict(error)
+    promotion_readiness_path.write_text(
+        json.dumps(summary['promotion_readiness'], indent=2, sort_keys=True),
+        encoding='utf-8',
+    )
     summary_path.write_text(
         json.dumps(summary, indent=2, sort_keys=True),
         encoding='utf-8',

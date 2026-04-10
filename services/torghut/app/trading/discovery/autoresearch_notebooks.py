@@ -195,7 +195,9 @@ def build_strategy_discovery_history_notebook(run_root: Path) -> dict[str, Any]:
         _markdown_cell(
             '# Strategy Discovery History\n\n'
             'This notebook shows the autoresearch loop over time: which candidates were kept, '
-            'how the frontier improved, and where concentration or inactivity still remains.'
+            'how the frontier improved, and where concentration or inactivity still remains.\n\n'
+            '> Results in this notebook are research candidates only. They are not promotable until '
+            'the same family passes runtime parity, scheduler-v3 approval replay, and shadow validation.'
         ),
         _code_cell(_shared_loader_code(run_root)),
         _code_cell(
@@ -208,6 +210,28 @@ _display_rows(objective_rows, columns=['metric', 'target'])
 best = SUMMARY.get('best_candidate') or {}
 display(Markdown('## Best Candidate Summary'))
 _display_rows([best])
+
+promotion = SUMMARY.get('promotion_readiness') or {}
+if promotion:
+    display(Markdown('## Promotion Guardrail'))
+    _display_rows(
+        [
+            {
+                'candidate_id': promotion.get('candidate_id'),
+                'family_template_id': promotion.get('family_template_id'),
+                'status': promotion.get('status'),
+                'stage': promotion.get('stage'),
+                'promotable': promotion.get('promotable'),
+                'runtime_family': promotion.get('runtime_family'),
+                'runtime_strategy_name': promotion.get('runtime_strategy_name'),
+                'reason': promotion.get('reason'),
+            }
+        ]
+    )
+    blockers = promotion.get('blockers') or []
+    if blockers:
+        display(Markdown('### Missing Promotion Evidence'))
+        _display_rows([{'blocker': blocker} for blocker in blockers], columns=['blocker'])
 """
         ),
         _code_cell(
@@ -264,6 +288,8 @@ else:
         'max_drawdown',
         'pareto_tier',
         'mutation_label',
+        'promotion_status',
+        'runtime_strategy_name',
     ]
     _display_rows(_project_rows(HISTORY, ledger_columns), columns=ledger_columns)
 """
@@ -336,7 +362,9 @@ def build_strategy_research_dossier_notebook(run_root: Path) -> dict[str, Any]:
     cells = [
         _markdown_cell(
             '# Strategy Research Dossier\n\n'
-            'This notebook focuses on the paper claims and family plans that drove the discovery loop.'
+            'This notebook focuses on the paper claims and family plans that drove the discovery loop.\n\n'
+            '> Discovery evidence is not promotion evidence. Use runtime parity and scheduler-v3 approval replay '
+            'before calling any candidate a winner.'
         ),
         _code_cell(_shared_loader_code(run_root)),
         _code_cell(
@@ -360,6 +388,11 @@ for family in RESEARCH.get('families', []):
         }
     )
 _display_rows(family_rows)
+
+promotion = SUMMARY.get('promotion_readiness') or {}
+if promotion:
+    display(Markdown('## Promotion Status'))
+    _display_rows([promotion])
 """
         ),
         _code_cell(
