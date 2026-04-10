@@ -61,7 +61,7 @@ class TestStrategyAutoresearch(TestCase):
 
         self.assertEqual(
             args.strategy_configmap,
-            Path('/Users/gregkonush/.codex/worktrees/dbbf/lab/argocd/applications/torghut/strategy-configmap.yaml'),
+            runner._REPO_ROOT / 'argocd/applications/torghut/strategy-configmap.yaml',
         )
 
     def _write_program_fixture(self, root: Path) -> tuple[Path, Path]:
