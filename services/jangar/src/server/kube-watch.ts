@@ -1,10 +1,9 @@
-import { Watch } from '@kubernetes/client-node'
-
 import {
   recordWatchReliabilityError,
   recordWatchReliabilityEvent,
   recordWatchReliabilityRestart,
 } from '~/server/control-plane-watch-reliability'
+import { startKubernetesWatch } from '~/server/kubernetes-watch-client'
 import { recordKubeWatchError, recordKubeWatchEvent, recordKubeWatchRestart } from '~/server/metrics'
 import { buildKubernetesResourceCollectionPath, getNativeKubeClients } from '~/server/primitives-kube'
 
@@ -55,7 +54,6 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
   } = options
 
   const { kubeConfig } = getNativeKubeClients()
-  const watch = new Watch(kubeConfig)
 
   let stopped = false
   let restartTimer: NodeJS.Timeout | null = null
@@ -98,7 +96,8 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
 
     void buildWatchPath(resource, namespace)
       .then((path) =>
-        watch.watch(
+        startKubernetesWatch(
+          kubeConfig,
           path,
           {
             ...(labelSelector ? { labelSelector } : {}),

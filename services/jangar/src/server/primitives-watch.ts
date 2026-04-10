@@ -1,6 +1,5 @@
-import { Watch } from '@kubernetes/client-node'
-
 import { safeJsonStringify } from '~/server/chat-text'
+import { startKubernetesWatch } from '~/server/kubernetes-watch-client'
 import { buildKubernetesResourceCollectionPath, getNativeKubeClients } from '~/server/primitives-kube'
 
 export type KubectlWatchEvent = {
@@ -84,7 +83,6 @@ export const createKubectlWatchStream = ({ request, args, onEvent, heartbeatMs =
     start(controller) {
       const parsed = parseWatchArgs(args)
       const { kubeConfig } = getNativeKubeClients()
-      const watch = new Watch(kubeConfig)
       let closed = false
       let heartbeat: ReturnType<typeof setInterval> | null = null
       let abortController: AbortController | null = null
@@ -135,7 +133,8 @@ export const createKubectlWatchStream = ({ request, args, onEvent, heartbeatMs =
 
       void buildWatchPath(parsed)
         .then((path) =>
-          watch.watch(
+          startKubernetesWatch(
+            kubeConfig,
             path,
             {
               ...(parsed.labelSelector ? { labelSelector: parsed.labelSelector } : {}),

@@ -123,7 +123,8 @@ describe('CRD bootstrap kubectl args', () => {
 
 describe('buildPodHealthProbeArgs', () => {
   it('execs into the pod and fetches the readiness endpoint with node or bun', () => {
-    expect(buildPodHealthProbeArgs('agents-ci', 'agents-ci-abc123')).toEqual([
+    const args = buildPodHealthProbeArgs('agents-ci', 'agents-ci-abc123')
+    expect(args).toEqual([
       'kubectl',
       '-n',
       'agents-ci',
@@ -134,6 +135,8 @@ describe('buildPodHealthProbeArgs', () => {
       '-lc',
       expect.stringContaining('http://127.0.0.1:8080/health'),
     ])
+    expect(args[8]).toContain('; elif command -v bun >/dev/null 2>&1; then;')
+    expect(args[8]).toContain('; fi')
   })
 })
 

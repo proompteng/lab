@@ -38,11 +38,13 @@ vi.mock('~/server/primitives-kube', () => ({
     },
   }),
   buildKubernetesResourceCollectionPath: () => '/apis/agents.proompteng.ai/v1alpha1/namespaces/agents/agentruns',
+  buildBunKubernetesFetchInit: vi.fn(async () => ({ method: 'GET', headers: new Headers() })),
   resolveKubernetesResourceTarget: () => ({
     apiVersion: 'agents.proompteng.ai/v1alpha1',
     kind: 'AgentRun',
     namespaceScoped: true,
   }),
+  shouldUseBunKubernetesTransport: () => false,
 }))
 
 import { resetKubectlWatchCompatibilityCacheForTests, startResourceWatch } from '~/server/kube-watch'

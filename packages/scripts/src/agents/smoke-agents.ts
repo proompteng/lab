@@ -239,7 +239,7 @@ export const buildPodHealthProbeArgs = (namespace: string, pod: string) => {
     '  echo "node-or-bun-unavailable"',
     '  exit 1',
     'fi',
-  ].join(' ')
+  ].join('; ')
 
   return ['kubectl', '-n', namespace, 'exec', pod, '--', 'sh', '-lc', shellScript]
 }
@@ -471,6 +471,7 @@ const waitForJobs = async (namespace: string, name: string, expected: number, ti
     '-o',
     'yaml',
   ])
+  await runDiagnosticsCommand(['kubectl', '-n', namespace, 'get', 'agentrun', name, '-o', 'yaml'])
   failSmoke(`Timed out waiting for ${expected} job(s).`)
 }
 

@@ -62,6 +62,15 @@ type KubeClients = {
   core: CoreV1Api
 }
 
+type BunKubernetesFetchInit = RequestInit & {
+  tls?: {
+    rejectUnauthorized: boolean
+    ca?: ReturnType<typeof Bun.file>[]
+    cert?: ReturnType<typeof Bun.file>
+    key?: ReturnType<typeof Bun.file>
+  }
+}
+
 const globalState = globalThis as typeof globalThis & {
   __jangarNativeKubeClients?: KubeClients
   __jangarNativeKubeTlsCache?: Map<string, string>
@@ -117,7 +126,7 @@ const normalizeKubeErrorMessage = (error: unknown) => {
   return bodyMessage ?? error.message
 }
 
-const shouldUseBunKubernetesTransport = (env: Record<string, string | undefined> = process.env) =>
+export const shouldUseBunKubernetesTransport = (env: Record<string, string | undefined> = process.env) =>
   typeof Bun !== 'undefined' && !env.VITEST && !env.VITEST_POOL_ID && !env.VITEST_WORKER_ID
 
 const getBunTlsCache = () => {
@@ -156,6 +165,15 @@ const normalizeTlsList = (value: unknown, label: string): string[] => {
   }
 
   return []
+}
+
+const mergeHeaders = (left: Headers | HeadersInit | undefined, right: Headers | HeadersInit | undefined) => {
+  const headers = new Headers(left)
+  if (!right) return headers
+  new Headers(right).forEach((value, key) => {
+    headers.set(key, value)
+  })
+  return headers
 }
 
 const buildBunFetchTlsAssetPaths = (kubeConfig: KubeConfig) => {
@@ -210,6 +228,37 @@ const createBunFetchHttpApi = (kubeConfig: KubeConfig) => {
       )
     },
   })
+}
+
+export const buildBunKubernetesFetchInit = async (
+  kubeConfig: KubeConfig,
+  init: RequestInit = {},
+): Promise<BunKubernetesFetchInit> => {
+  const headerEntries = (() => {
+    if (!init.headers) return undefined
+    const entries: Record<string, string> = {}
+    new Headers(init.headers).forEach((value, key) => {
+      entries[key] = value
+    })
+    return entries
+  })()
+  const fetchOptions = await kubeConfig.applyToFetchOptions({
+    method: init.method,
+    headers: headerEntries,
+  })
+  const tlsAssetPaths = buildBunFetchTlsAssetPaths(kubeConfig)
+
+  return {
+    ...init,
+    method: init.method ?? fetchOptions.method ?? 'GET',
+    headers: mergeHeaders(fetchOptions.headers as HeadersInit | undefined, init.headers),
+    tls: {
+      rejectUnauthorized: tlsAssetPaths.rejectUnauthorized,
+      ...(tlsAssetPaths.caPaths.length > 0 ? { ca: tlsAssetPaths.caPaths.map((path) => Bun.file(path)) } : {}),
+      ...(tlsAssetPaths.certPath ? { cert: Bun.file(tlsAssetPaths.certPath) } : {}),
+      ...(tlsAssetPaths.keyPath ? { key: Bun.file(tlsAssetPaths.keyPath) } : {}),
+    },
+  }
 }
 
 type ApiClientConstructor<T> = new (configuration: ReturnType<typeof createConfiguration>) => T
