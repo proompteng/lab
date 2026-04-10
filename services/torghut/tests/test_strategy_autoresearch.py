@@ -532,7 +532,22 @@ class TestStrategyAutoresearch(TestCase):
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             (root / 'summary.json').write_text(
-                json.dumps({'best_candidate': {'candidate_id': 'c-1'}, 'program_id': 'program-1'}),
+                json.dumps(
+                    {
+                        'best_candidate': {'candidate_id': 'c-1'},
+                        'program_id': 'program-1',
+                        'promotion_readiness': {
+                            'candidate_id': 'c-1',
+                            'status': 'blocked_pending_runtime_parity',
+                            'stage': 'research_candidate',
+                            'promotable': False,
+                            'runtime_family': 'breakout_continuation_consistent',
+                            'runtime_strategy_name': 'breakout-continuation-long-v1',
+                            'reason': 'research only',
+                            'blockers': ['scheduler_v3_parity_missing'],
+                        },
+                    }
+                ),
                 encoding='utf-8',
             )
             (root / 'research_dossier.json').write_text(
@@ -581,6 +596,8 @@ class TestStrategyAutoresearch(TestCase):
             self.assertIn('except ModuleNotFoundError', joined_source)
             all_sources = '\n'.join(''.join(cell.get('source', [])) for cell in payload['cells'])
             self.assertIn('Live Experiment Snapshots', all_sources)
+            self.assertIn('Promotion Guardrail', all_sources)
+            self.assertIn('research candidates only', all_sources)
 
     def test_generated_history_notebook_avoids_hard_pandas_dependency(self) -> None:
         payload = build_strategy_discovery_history_notebook(Path('/tmp/example-run'))
@@ -768,8 +785,18 @@ class TestStrategyAutoresearch(TestCase):
             self.assertTrue((run_root / 'history.jsonl').exists())
             self.assertTrue((run_root / 'results.tsv').exists())
             self.assertTrue((run_root / 'strategy-discovery-history.ipynb').exists())
+            self.assertTrue((run_root / 'promotion_readiness.json').exists())
             summary = json.loads((run_root / 'summary.json').read_text(encoding='utf-8'))
             self.assertEqual(summary['best_candidate']['candidate_id'], 'mutated-1')
+            self.assertEqual(summary['objective_scope'], 'research_only')
+            self.assertFalse(summary['promotion_readiness']['promotable'])
+            self.assertEqual(summary['promotion_readiness']['stage'], 'research_candidate')
+            self.assertIn('scheduler_v3_parity_missing', summary['promotion_readiness']['blockers'])
+            self.assertEqual(summary['best_candidate']['promotion_status'], 'blocked_pending_runtime_parity')
+            self.assertEqual(summary['best_candidate']['runtime_strategy_name'], 'breakout-continuation-long-v1')
+            promotion_readiness = json.loads((run_root / 'promotion_readiness.json').read_text(encoding='utf-8'))
+            self.assertEqual(promotion_readiness['candidate_id'], 'mutated-1')
+            self.assertFalse(promotion_readiness['promotable'])
 
     def test_run_strategy_autoresearch_loop_flushes_visible_progress_between_experiments(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -1065,6 +1092,10 @@ class TestStrategyAutoresearch(TestCase):
             self.assertTrue((run_root / 'results.tsv').exists())
             self.assertTrue((run_root / 'research_dossier.json').exists())
             self.assertTrue((run_root / 'strategy-discovery-history.ipynb').exists())
+            self.assertTrue((run_root / 'promotion_readiness.json').exists())
+            promotion_readiness = json.loads((run_root / 'promotion_readiness.json').read_text(encoding='utf-8'))
+            self.assertEqual(promotion_readiness['status'], 'blocked_no_candidate')
+            self.assertIn('best_candidate_missing', promotion_readiness['blockers'])
 
     def test_run_strategy_autoresearch_loop_honors_max_frontier_runs_and_dedupes_seen_sweeps(self) -> None:
         with TemporaryDirectory() as tmpdir:

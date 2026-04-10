@@ -373,6 +373,11 @@ class TestRunStrategyFactoryV2(TestCase):
             self.assertEqual(result['experiments'][0]['experiment_id'], 'exp-breakout-1')
             self.assertEqual(result['experiments'][0]['top_candidate_id'], 'cand-1')
             self.assertEqual(result['experiments'][0]['dataset_snapshot_id'], 'snap-1')
+            self.assertFalse(result['experiments'][0]['promotion_readiness']['promotable'])
+            self.assertEqual(
+                result['experiments'][0]['promotion_readiness']['runtime_strategy_name'],
+                'breakout-continuation-long-v1',
+            )
             mock_frontier.assert_called_once()
 
             compiled_sweep_path = output_dir / 'exp-breakout-1' / 'compiled-sweep.yaml'
@@ -403,6 +408,11 @@ class TestRunStrategyFactoryV2(TestCase):
                     .where(VNextExperimentSpec.run_id != 'paper-run-1')
                 ).scalar_one()
                 self.assertEqual(persisted_spec.candidate_id, 'cand-1')
+                self.assertFalse(persisted_spec.payload_json['promotion_readiness']['promotable'])
+                self.assertEqual(
+                    persisted_spec.payload_json['promotion_readiness']['status'],
+                    'blocked_pending_runtime_parity',
+                )
 
     def test_run_strategy_factory_v2_returns_no_experiments_when_source_empty(self) -> None:
         with TemporaryDirectory() as tmpdir:

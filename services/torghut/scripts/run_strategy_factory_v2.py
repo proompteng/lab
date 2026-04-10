@@ -17,6 +17,7 @@ from sqlalchemy import delete, select
 from app.db import SessionLocal
 from app.models import VNextExperimentRun, VNextExperimentSpec
 from app.trading.discovery.family_templates import FamilyTemplate, family_template_dir, load_family_template
+from app.trading.discovery.promotion_contract import blocked_research_candidate_promotion_readiness
 from scripts.search_consistent_profitability_frontier import (
     run_consistent_profitability_frontier,
 )
@@ -357,6 +358,11 @@ def _persist_result(
         if top_candidates
         else None
     ) or None
+    promotion_readiness = blocked_research_candidate_promotion_readiness(
+        candidate_id=best_candidate_id or '',
+        family_template_id=experiment.family_template.family_id,
+        runtime_harness=experiment.family_template.runtime_harness,
+    )
     experiment_payload = {
         **experiment.experiment_payload,
         'compiled_family_template': experiment.family_template.to_payload(),
@@ -364,6 +370,7 @@ def _persist_result(
         'result_path': str(result_path),
         'runner': 'run_strategy_factory_v2',
         'runner_run_id': runner_run_id,
+        'promotion_readiness': promotion_readiness,
         'result': result_payload,
     }
     with SessionLocal() as session:
@@ -398,6 +405,7 @@ def _persist_result(
                     'result_path': str(result_path),
                     'dataset_snapshot_receipt': result_payload.get('dataset_snapshot_receipt'),
                     'top_candidate': top_candidates[0] if top_candidates else None,
+                    'promotion_readiness': promotion_readiness,
                 },
             )
         )
@@ -450,6 +458,16 @@ def run_strategy_factory_v2(args: argparse.Namespace) -> dict[str, Any]:
                 result_path=result_path,
             )
         top_candidates = cast(list[dict[str, Any]], frontier_payload.get('top') or [])
+        top_candidate_id = (
+            str(top_candidates[0].get('candidate_id') or '').strip()
+            if top_candidates
+            else ''
+        )
+        promotion_readiness = blocked_research_candidate_promotion_readiness(
+            candidate_id=top_candidate_id,
+            family_template_id=compiled.family_template.family_id,
+            runtime_harness=compiled.family_template.runtime_harness,
+        )
         results.append(
             {
                 'source_run_id': compiled.source_run_id,
@@ -460,16 +478,13 @@ def run_strategy_factory_v2(args: argparse.Namespace) -> dict[str, Any]:
                 'dataset_snapshot_id': str(
                     _mapping(frontier_payload.get('dataset_snapshot_receipt')).get('snapshot_id') or ''
                 ),
-                'top_candidate_id': (
-                    str(top_candidates[0].get('candidate_id') or '').strip()
-                    if top_candidates
-                    else ''
-                ),
+                'top_candidate_id': top_candidate_id,
                 'top_net_per_day': (
                     str(_mapping(top_candidates[0].get('full_window')).get('net_per_day') or '')
                     if top_candidates
                     else ''
                 ),
+                'promotion_readiness': promotion_readiness,
             }
         )
 
