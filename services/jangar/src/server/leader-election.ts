@@ -335,26 +335,21 @@ export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) 
 
     try {
       let lease: V1Lease | null = null
-      try {
-        lease = await kubeGateway.getLease(leaseNamespace, state.config.leaseName)
-      } catch (error) {
-        const kind = classifyKubectlError(error)
-        if (kind === 'notFound') {
-          try {
-            lease = await kubeGateway.createLease(
-              leaseNamespace,
-              buildNewLease(state.config, identity, leaseNamespace, state.config.leaseName),
-            )
-          } catch (createError) {
-            const createKind = classifyKubectlError(createError)
-            if (createKind === 'alreadyExists') {
-              lease = await kubeGateway.getLease(leaseNamespace, state.config.leaseName)
-            } else {
-              throw createError
-            }
+      lease = await kubeGateway.getLease(leaseNamespace, state.config.leaseName)
+
+      if (!lease) {
+        try {
+          lease = await kubeGateway.createLease(
+            leaseNamespace,
+            buildNewLease(state.config, identity, leaseNamespace, state.config.leaseName),
+          )
+        } catch (createError) {
+          const createKind = classifyKubectlError(createError)
+          if (createKind === 'alreadyExists') {
+            lease = await kubeGateway.getLease(leaseNamespace, state.config.leaseName)
+          } else {
+            throw createError
           }
-        } else {
-          throw error
         }
       }
 

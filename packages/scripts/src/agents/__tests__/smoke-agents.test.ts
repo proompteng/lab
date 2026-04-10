@@ -137,6 +137,7 @@ describe('buildPodHealthProbeArgs', () => {
     ])
     expect(args[8]).toContain('\nelif command -v bun >/dev/null 2>&1; then\n')
     expect(args[8]).toContain('\nfi')
+    expect(args[8]).not.toContain('`status=')
   })
 })
 

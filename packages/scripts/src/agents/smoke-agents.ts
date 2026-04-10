@@ -221,7 +221,7 @@ export const buildPodHealthProbeArgs = (namespace: string, pod: string) => {
     'const main = async () => {',
     '  const response = await fetch(url)',
     '  const body = await response.text()',
-    '  console.log(`status=${response.status}`)',
+    '  console.log("status=" + response.status)',
     '  console.log(body)',
     '}',
     'main().catch((error) => {',
