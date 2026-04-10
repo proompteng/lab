@@ -5,6 +5,7 @@ import { resolve } from 'node:path'
 import {
   buildHelmArgs,
   buildPodHealthProbeArgs,
+  createSmokeFailure,
   buildKubectlApplyArgs,
   buildKubectlApplyCrdsArgs,
   buildKubectlWaitForCrdsArgs,
@@ -160,5 +161,19 @@ Error from server (Forbidden): unknown`
 
     expect(isTransientKubectlError(error)).toBe(false)
     expect(isPermissionDeniedKubectlError(error)).toBe(true)
+  })
+})
+
+describe('createSmokeFailure', () => {
+  it('returns a catchable error instead of exiting the process', () => {
+    expect(() => {
+      throw createSmokeFailure('Timed out waiting for 2 job(s).')
+    }).toThrow('Timed out waiting for 2 job(s).')
+  })
+
+  it('includes nested error detail in the message', () => {
+    expect(createSmokeFailure('Smoke test failed', new Error('job list command failed')).message).toBe(
+      'Smoke test failed\njob list command failed',
+    )
   })
 })
