@@ -136,7 +136,10 @@ describe('primitives-kube', () => {
           },
         },
       },
-      { headers: { 'Content-Type': 'application/merge-patch+json' } },
+      expect.objectContaining({
+        middlewareMergeStrategy: 'append',
+        middleware: expect.any(Array),
+      }),
     )
     expect(objectApiMock.patch).not.toHaveBeenCalled()
   })
@@ -171,7 +174,6 @@ describe('primitives-kube', () => {
         plural: 'agentruns',
         name: 'run-1',
         fieldManager: 'jangar-status',
-        force: true,
         body: {
           apiVersion: 'agents.proompteng.ai/v1alpha1',
           kind: 'AgentRun',
@@ -185,7 +187,10 @@ describe('primitives-kube', () => {
           },
         },
       },
-      { headers: { 'Content-Type': 'application/merge-patch+json' } },
+      expect.objectContaining({
+        middlewareMergeStrategy: 'append',
+        middleware: expect.any(Array),
+      }),
     )
   })
 })

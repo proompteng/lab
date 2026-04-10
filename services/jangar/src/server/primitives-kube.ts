@@ -6,6 +6,8 @@ import {
   PatchStrategy,
   loadAllYaml,
 } from '@kubernetes/client-node'
+import { PromiseMiddlewareWrapper } from '@kubernetes/client-node/dist/gen/middleware.js'
+import type { RequestContext, ResponseContext } from '@kubernetes/client-node/dist/gen/http/http.js'
 
 import { asRecord, asString } from '~/server/primitives-http'
 
@@ -120,6 +122,19 @@ const parseJson = (raw: string, context: string) => {
 }
 
 const cloneRecord = (value: Record<string, unknown>) => JSON.parse(JSON.stringify(value)) as Record<string, unknown>
+
+const mergePatchOptions = {
+  middlewareMergeStrategy: 'append' as const,
+  middleware: [
+    new PromiseMiddlewareWrapper({
+      pre: async (context: RequestContext) => {
+        context.setHeaderParam('Content-Type', PatchStrategy.MergePatch)
+        return context
+      },
+      post: async (context: ResponseContext) => context,
+    }),
+  ],
+}
 
 const toManifestObjects = (manifest: string, namespace?: string | null) => {
   const objects = loadAllYaml(manifest)
@@ -405,7 +420,7 @@ const patchCustomObject = async (
         },
       },
     },
-    { headers: { 'Content-Type': PatchStrategy.MergePatch } } as never,
+    mergePatchOptions,
   ) as Promise<Record<string, unknown>>
 }
 
@@ -444,9 +459,8 @@ const applyStatusResource = async (clients: KubeClients, resource: Record<string
       name: target.name,
       body: statusResource,
       fieldManager: 'jangar-status',
-      force: true,
     },
-    { headers: { 'Content-Type': PatchStrategy.MergePatch } } as never,
+    mergePatchOptions,
   ) as Promise<Record<string, unknown>>
 }
 
