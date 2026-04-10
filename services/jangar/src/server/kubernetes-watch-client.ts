@@ -2,7 +2,7 @@ import { STATUS_CODES } from 'node:http'
 
 import { KubeConfig, Watch } from '@kubernetes/client-node'
 
-import { buildBunKubernetesFetchInit, shouldUseBunKubernetesTransport } from '~/server/primitives-kube'
+import { buildBunKubernetesFetchInit, shouldUseBunKubernetesTransport } from '~/server/kubernetes-bun-transport'
 
 type WatchQuery = Record<string, string | number | boolean | undefined>
 

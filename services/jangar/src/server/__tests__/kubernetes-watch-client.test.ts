@@ -15,7 +15,7 @@ vi.mock('@kubernetes/client-node', () => ({
   },
 }))
 
-vi.mock('~/server/primitives-kube', () => ({
+vi.mock('~/server/kubernetes-bun-transport', () => ({
   buildBunKubernetesFetchInit: (kubeConfig: unknown, init?: unknown) => buildBunFetchInitMock(kubeConfig, init),
   shouldUseBunKubernetesTransport: (env?: unknown) => shouldUseBunTransportMock(env),
 }))

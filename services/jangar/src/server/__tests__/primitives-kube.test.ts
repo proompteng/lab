@@ -50,7 +50,8 @@ vi.mock('@kubernetes/client-node', () => ({
   loadAllYaml: loadAllYamlMock,
 }))
 
-import { __private, createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
+import { __private as transportPrivate } from '~/server/kubernetes-bun-transport'
+import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 
 describe('primitives-kube', () => {
   beforeEach(() => {
@@ -197,7 +198,7 @@ describe('primitives-kube', () => {
   })
 
   it('materializes inline kubeconfig tls data for Bun transport', () => {
-    const tls = __private.buildBunFetchTlsAssetPaths({
+    const tls = transportPrivate.buildBunFetchTlsAssetPaths({
       getCurrentCluster: () => ({
         caData: Buffer.from('CA DATA').toString('base64'),
         skipTLSVerify: false,
