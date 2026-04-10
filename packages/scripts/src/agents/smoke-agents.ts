@@ -54,6 +54,32 @@ const log = (message: string) => {
   console.log(`[${stamp}] ${message}`)
 }
 
+const formatErrorMessage = (error: unknown) => {
+  if (error instanceof Error) {
+    return error.message
+  }
+  if (typeof error === 'string') {
+    return error
+  }
+  if (error === undefined || error === null) {
+    return ''
+  }
+  try {
+    return JSON.stringify(error) ?? ''
+  } catch {
+    return String(error)
+  }
+}
+
+export const createSmokeFailure = (message: string, error?: unknown) => {
+  const detail = formatErrorMessage(error).trim()
+  return new Error(detail ? `${message}\n${detail}` : message)
+}
+
+const failSmoke = (message: string, error?: unknown): never => {
+  throw createSmokeFailure(message, error)
+}
+
 const execCapture = async (cmd: string[], env?: Record<string, string | undefined>) => {
   const subprocess = Bun.spawn(cmd, {
     stdin: 'pipe',
@@ -195,7 +221,7 @@ export const buildPodHealthProbeArgs = (namespace: string, pod: string) => {
     'const main = async () => {',
     '  const response = await fetch(url)',
     '  const body = await response.text()',
-    '  console.log(`status=${response.status}`)',
+    '  console.log("status=" + response.status)',
     '  console.log(body)',
     '}',
     'main().catch((error) => {',
@@ -213,7 +239,7 @@ export const buildPodHealthProbeArgs = (namespace: string, pod: string) => {
     '  echo "node-or-bun-unavailable"',
     '  exit 1',
     'fi',
-  ].join(' ')
+  ].join('\n')
 
   return ['kubectl', '-n', namespace, 'exec', pod, '--', 'sh', '-lc', shellScript]
 }
@@ -333,6 +359,13 @@ const dumpNamespaceDiagnostics = async (namespace: string, releaseName: string) 
   await runInherit(['kubectl', '-n', namespace, 'get', 'events', '--sort-by=.metadata.creationTimestamp'])
 }
 
+const runDiagnosticsCommand = async (cmd: string[]) => {
+  const exitCode = await runInherit(cmd)
+  if (exitCode !== 0) {
+    console.error(`[diagnostics] Command failed (${exitCode}): ${cmd.join(' ')}`)
+  }
+}
+
 const applyYaml = async (namespace: string, manifest: string) => {
   const subprocess = Bun.spawn(['kubectl', ...buildKubectlApplyArgs({ namespace })], {
     stdin: 'pipe',
@@ -356,7 +389,7 @@ const waitForAgentRun = async (namespace: string, name: string, timeoutMs: numbe
     if (result.exitCode === 0) return
     await sleep(1000)
   }
-  fatal(`Timed out waiting for AgentRun ${name} to appear.`)
+  failSmoke(`Timed out waiting for AgentRun ${name} to appear.`)
 }
 
 const waitForPhase = async (namespace: string, name: string, expected: string, timeoutMs: number) => {
@@ -380,15 +413,15 @@ const waitForPhase = async (namespace: string, name: string, expected: string, t
     const phase = result.stdout
     if (phase === expected) return
     if (phase === 'Failed') {
-      await run('kubectl', ['-n', namespace, 'get', 'agentrun', name, '-o', 'yaml'])
-      fatal(`AgentRun failed while waiting for phase ${expected}.`)
+      await runDiagnosticsCommand(['kubectl', '-n', namespace, 'get', 'agentrun', name, '-o', 'yaml'])
+      failSmoke(`AgentRun failed while waiting for phase ${expected}.`)
     }
     if (phase === 'Succeeded' && (expected === 'Pending' || expected === 'Running')) return
     await sleep(1000)
   }
 
-  await run('kubectl', ['-n', namespace, 'get', 'agentrun', name, '-o', 'yaml'])
-  fatal(`Timed out waiting for AgentRun ${name} phase=${expected}.`)
+  await runDiagnosticsCommand(['kubectl', '-n', namespace, 'get', 'agentrun', name, '-o', 'yaml'])
+  failSmoke(`Timed out waiting for AgentRun ${name} phase=${expected}.`)
 }
 
 const waitForJobs = async (namespace: string, name: string, expected: number, timeoutMs: number) => {
@@ -420,15 +453,26 @@ const waitForJobs = async (namespace: string, name: string, expected: number, ti
     ])
     const phase = phaseResult.exitCode === 0 ? phaseResult.stdout.trim() : ''
     if (phase === 'Failed') {
-      await run('kubectl', ['-n', namespace, 'get', 'agentrun', name, '-o', 'yaml'])
-      fatal(`AgentRun ${name} failed before creating ${expected} job(s).`)
+      await runDiagnosticsCommand(['kubectl', '-n', namespace, 'get', 'agentrun', name, '-o', 'yaml'])
+      failSmoke(`AgentRun ${name} failed before creating ${expected} job(s).`)
     }
 
     await sleep(1000)
   }
 
-  await run('kubectl', ['-n', namespace, 'get', 'job', '-l', `agents.proompteng.ai/agent-run=${name}`, '-o', 'yaml'])
-  fatal(`Timed out waiting for ${expected} job(s).`)
+  await runDiagnosticsCommand([
+    'kubectl',
+    '-n',
+    namespace,
+    'get',
+    'job',
+    '-l',
+    `agents.proompteng.ai/agent-run=${name}`,
+    '-o',
+    'yaml',
+  ])
+  await runDiagnosticsCommand(['kubectl', '-n', namespace, 'get', 'agentrun', name, '-o', 'yaml'])
+  failSmoke(`Timed out waiting for ${expected} job(s).`)
 }
 
 const getWorkflowSteps = async (namespace: string, name: string): Promise<number> => {
@@ -679,19 +723,24 @@ spec:
     env: agentctlEnv,
   })
 
-  await waitForAgentRun(namespace, agentRunName, 60_000)
+  try {
+    await waitForAgentRun(namespace, agentRunName, 60_000)
 
-  const expectedSteps = workflowStepsExpectedEnv
-    ? Number.parseInt(workflowStepsExpectedEnv, 10)
-    : await getWorkflowSteps(namespace, agentRunName)
+    const expectedSteps = workflowStepsExpectedEnv
+      ? Number.parseInt(workflowStepsExpectedEnv, 10)
+      : await getWorkflowSteps(namespace, agentRunName)
 
-  if (!expectedSteps || Number.isNaN(expectedSteps) || expectedSteps < 1) {
-    await run('kubectl', ['-n', namespace, 'get', 'agentrun', agentRunName, '-o', 'yaml'])
-    fatal(`Workflow steps expected must be >= 1 (got ${expectedSteps}).`)
+    if (!expectedSteps || Number.isNaN(expectedSteps) || expectedSteps < 1) {
+      await run('kubectl', ['-n', namespace, 'get', 'agentrun', agentRunName, '-o', 'yaml'])
+      fatal(`Workflow steps expected must be >= 1 (got ${expectedSteps}).`)
+    }
+
+    await waitForJobs(namespace, agentRunName, expectedSteps, timeoutMs)
+    await waitForPhase(namespace, agentRunName, 'Succeeded', timeoutMs)
+  } catch (error) {
+    await dumpNamespaceDiagnostics(namespace, releaseName)
+    throw error
   }
-
-  await waitForJobs(namespace, agentRunName, expectedSteps, timeoutMs)
-  await waitForPhase(namespace, agentRunName, 'Succeeded', timeoutMs)
 
   log('Smoke test succeeded.')
 }

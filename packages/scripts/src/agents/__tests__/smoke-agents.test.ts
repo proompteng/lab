@@ -5,6 +5,7 @@ import { resolve } from 'node:path'
 import {
   buildHelmArgs,
   buildPodHealthProbeArgs,
+  createSmokeFailure,
   buildKubectlApplyArgs,
   buildKubectlApplyCrdsArgs,
   buildKubectlWaitForCrdsArgs,
@@ -122,7 +123,8 @@ describe('CRD bootstrap kubectl args', () => {
 
 describe('buildPodHealthProbeArgs', () => {
   it('execs into the pod and fetches the readiness endpoint with node or bun', () => {
-    expect(buildPodHealthProbeArgs('agents-ci', 'agents-ci-abc123')).toEqual([
+    const args = buildPodHealthProbeArgs('agents-ci', 'agents-ci-abc123')
+    expect(args).toEqual([
       'kubectl',
       '-n',
       'agents-ci',
@@ -133,6 +135,9 @@ describe('buildPodHealthProbeArgs', () => {
       '-lc',
       expect.stringContaining('http://127.0.0.1:8080/health'),
     ])
+    expect(args[8]).toContain('\nelif command -v bun >/dev/null 2>&1; then\n')
+    expect(args[8]).toContain('\nfi')
+    expect(args[8]).not.toContain('`status=')
   })
 })
 
@@ -160,5 +165,19 @@ Error from server (Forbidden): unknown`
 
     expect(isTransientKubectlError(error)).toBe(false)
     expect(isPermissionDeniedKubectlError(error)).toBe(true)
+  })
+})
+
+describe('createSmokeFailure', () => {
+  it('returns a catchable error instead of exiting the process', () => {
+    expect(() => {
+      throw createSmokeFailure('Timed out waiting for 2 job(s).')
+    }).toThrow('Timed out waiting for 2 job(s).')
+  })
+
+  it('includes nested error detail in the message', () => {
+    expect(createSmokeFailure('Smoke test failed', new Error('job list command failed')).message).toBe(
+      'Smoke test failed\njob list command failed',
+    )
   })
 })

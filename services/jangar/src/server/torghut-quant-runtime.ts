@@ -1,6 +1,8 @@
 import { EventEmitter } from 'node:events'
+import { isRuntimeTestEnv } from './control-plane-config'
 import { resolveBooleanFeatureToggle } from './feature-flags'
 import { recordTorghutQuantComputeDurationMs, recordTorghutQuantComputeError, recordTorghutQuantFrame } from './metrics'
+import { resolveTorghutQuantRuntimeConfig, type TorghutQuantRuntimeConfig } from './torghut-config'
 import type { QuantAlert, QuantSnapshotFrame, QuantWindow } from './torghut-quant-contract'
 import { computeTorghutQuantMetrics, listTorghutStrategyAccounts } from './torghut-quant-metrics'
 import {
@@ -68,30 +70,10 @@ export const isTorghutQuantMaterializationNotFoundError = (
   error: unknown,
 ): error is TorghutQuantMaterializationNotFoundError => error instanceof TorghutQuantMaterializationNotFoundError
 
-type RuntimeConfig = {
-  enabled: boolean
-  computeIntervalMs: number
-  heavyComputeIntervalMs: number
-  seriesSamplingMs: number
-  streamHeartbeatMs: number
-  maxStalenessSeconds: number
+type RuntimeConfig = TorghutQuantRuntimeConfig & {
   windowsLight: QuantWindow[]
   windowsHeavy: QuantWindow[]
-  alertsEnabled: boolean
-  policy: {
-    maxDrawdown1d: number
-    minSharpe5d: number
-    maxSlippageBps15m: number
-    maxRejectRate15m: number
-    maxPipelineLagSeconds: number
-    maxTaFreshnessSeconds: number
-    minRouteCoverage15m: number
-    maxRouteUnknownRatio15m: number
-  }
 }
-
-const DEFAULT_QUANT_CONTROL_PLANE_ENABLED_FLAG_KEY = 'jangar.torghut.quant_control_plane.enabled'
-const DEFAULT_QUANT_ALERTS_ENABLED_FLAG_KEY = 'jangar.torghut.quant_alerts.enabled'
 
 const globalState = globalThis as typeof globalThis & {
   __torghutQuantRuntime?: {
@@ -105,69 +87,12 @@ const globalState = globalThis as typeof globalThis & {
   }
 }
 
-const resolveBoolean = (value: string | undefined, fallback: boolean) => {
-  if (!value) return fallback
-  const normalized = value.trim().toLowerCase()
-  if (['1', 'true', 'yes', 'y', 'on', 'enabled'].includes(normalized)) return true
-  if (['0', 'false', 'no', 'n', 'off', 'disabled'].includes(normalized)) return false
-  return fallback
-}
-
-const parsePositiveInt = (value: string | undefined, fallback: number) => {
-  if (!value) return fallback
-  const parsed = Number.parseInt(value, 10)
-  if (!Number.isFinite(parsed) || parsed <= 0) return fallback
-  return parsed
-}
-
-const parseNumber = (value: string | undefined, fallback: number) => {
-  if (!value) return fallback
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed)) return fallback
-  return parsed
-}
-
-const resolveWindows = (raw: string | undefined, fallback: QuantWindow[]) => {
-  if (!raw) return fallback
-  const normalized = raw
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean) as QuantWindow[]
-  return normalized.length > 0 ? normalized : fallback
-}
-
 const loadConfig = (overrides?: { enabled?: boolean; alertsEnabled?: boolean }): RuntimeConfig => {
-  const enabled = overrides?.enabled ?? resolveBoolean(process.env.JANGAR_TORGHUT_QUANT_CONTROL_PLANE_ENABLED, false)
-  const computeIntervalMs = parsePositiveInt(process.env.JANGAR_TORGHUT_QUANT_COMPUTE_INTERVAL_MS, 1000)
-  const heavyComputeIntervalMs = parsePositiveInt(process.env.JANGAR_TORGHUT_QUANT_HEAVY_COMPUTE_INTERVAL_MS, 30_000)
-  const seriesSamplingMs = parsePositiveInt(process.env.JANGAR_TORGHUT_QUANT_SERIES_SAMPLING_MS, 5000)
-  const streamHeartbeatMs = parsePositiveInt(process.env.JANGAR_TORGHUT_QUANT_STREAM_HEARTBEAT_MS, 15_000)
-  const maxStalenessSeconds = parsePositiveInt(process.env.JANGAR_TORGHUT_QUANT_MAX_STALENESS_SECONDS, 15)
-  const windowsLight = resolveWindows(process.env.JANGAR_TORGHUT_QUANT_WINDOWS_LIGHT, ['1m', '5m', '15m', '1h', '1d'])
-  const windowsHeavy = resolveWindows(process.env.JANGAR_TORGHUT_QUANT_WINDOWS_HEAVY, ['5d', '20d'])
-  const alertsEnabled =
-    overrides?.alertsEnabled ?? resolveBoolean(process.env.JANGAR_TORGHUT_QUANT_ALERTS_ENABLED, true)
-
+  const config = resolveTorghutQuantRuntimeConfig(process.env, overrides)
   return {
-    enabled,
-    computeIntervalMs,
-    heavyComputeIntervalMs,
-    seriesSamplingMs,
-    streamHeartbeatMs,
-    maxStalenessSeconds,
-    windowsLight,
-    windowsHeavy,
-    alertsEnabled,
-    policy: {
-      maxDrawdown1d: parseNumber(process.env.JANGAR_TORGHUT_QUANT_POLICY_MAX_DRAWDOWN_1D, 0.05),
-      minSharpe5d: parseNumber(process.env.JANGAR_TORGHUT_QUANT_POLICY_MIN_SHARPE_5D, 0),
-      maxSlippageBps15m: parseNumber(process.env.JANGAR_TORGHUT_QUANT_POLICY_MAX_SLIPPAGE_BPS_15M, 50),
-      maxRejectRate15m: parseNumber(process.env.JANGAR_TORGHUT_QUANT_POLICY_MAX_REJECT_RATE_15M, 0.02),
-      maxPipelineLagSeconds: parseNumber(process.env.JANGAR_TORGHUT_QUANT_POLICY_MAX_PIPELINE_LAG_SECONDS, 15),
-      maxTaFreshnessSeconds: parseNumber(process.env.JANGAR_TORGHUT_QUANT_POLICY_MAX_TA_FRESHNESS_SECONDS, 120),
-      minRouteCoverage15m: parseNumber(process.env.JANGAR_TORGHUT_QUANT_POLICY_MIN_ROUTE_COVERAGE_15M, 0.99),
-      maxRouteUnknownRatio15m: parseNumber(process.env.JANGAR_TORGHUT_QUANT_POLICY_MAX_ROUTE_UNKNOWN_RATIO_15M, 0.02),
-    },
+    ...config,
+    windowsLight: config.windowsLight as QuantWindow[],
+    windowsHeavy: config.windowsHeavy as QuantWindow[],
   }
 }
 
@@ -175,13 +100,13 @@ const loadFlagDrivenConfig = async () => {
   const fallback = loadConfig()
   const [enabled, alertsEnabled] = await Promise.all([
     resolveBooleanFeatureToggle({
-      key: DEFAULT_QUANT_CONTROL_PLANE_ENABLED_FLAG_KEY,
+      key: fallback.enabledFlagKey,
       keyEnvVar: 'JANGAR_TORGHUT_QUANT_CONTROL_PLANE_ENABLED_FLAG_KEY',
       fallbackEnvVar: 'JANGAR_TORGHUT_QUANT_CONTROL_PLANE_ENABLED',
       defaultValue: fallback.enabled,
     }),
     resolveBooleanFeatureToggle({
-      key: DEFAULT_QUANT_ALERTS_ENABLED_FLAG_KEY,
+      key: fallback.alertsEnabledFlagKey,
       keyEnvVar: 'JANGAR_TORGHUT_QUANT_ALERTS_ENABLED_FLAG_KEY',
       fallbackEnvVar: 'JANGAR_TORGHUT_QUANT_ALERTS_ENABLED',
       defaultValue: fallback.alertsEnabled,
@@ -842,7 +767,7 @@ export const startTorghutQuantRuntime = () => {
   state.started = true
   state.config = loadConfig()
 
-  if (process.env.NODE_ENV === 'test' || process.env.VITEST) return
+  if (isRuntimeTestEnv()) return
   void (async () => {
     state.config = await loadFlagDrivenConfig()
     if (!state.config.enabled) return

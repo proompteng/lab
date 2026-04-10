@@ -17,6 +17,7 @@ import {
   secretHasKey,
   type VcsResolution,
 } from './vcs-context'
+import { resolveAgentRunnerDefaultsConfig } from './runtime-config'
 
 const DEFAULT_RUNNER_JOB_TTL_SECONDS = 600
 const DEFAULT_RUNNER_LOG_RETENTION_SECONDS = 7 * 24 * 60 * 60
@@ -47,11 +48,10 @@ const resolveRunnerJobTtlSeconds = (runtimeConfig: Record<string, unknown>) => {
   if (override !== undefined) {
     return normalizeRunnerJobTtlSeconds(override, 'spec.runtime.config.ttlSecondsAfterFinished')
   }
-  const envDefault = parseOptionalNumber(process.env.JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS)
-  if (envDefault !== undefined) {
-    return normalizeRunnerJobTtlSeconds(envDefault, 'JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS')
-  }
-  return normalizeRunnerJobTtlSeconds(DEFAULT_RUNNER_JOB_TTL_SECONDS, 'default')
+  return normalizeRunnerJobTtlSeconds(
+    resolveAgentRunnerDefaultsConfig(process.env).jobTtlSeconds,
+    'JANGAR_AGENT_RUNNER_JOB_TTL_SECONDS',
+  )
 }
 
 const resolveRunnerLogRetentionSeconds = (runtimeConfig: Record<string, unknown>) => {
@@ -59,11 +59,7 @@ const resolveRunnerLogRetentionSeconds = (runtimeConfig: Record<string, unknown>
   if (override !== undefined) {
     return Math.max(0, Math.floor(override))
   }
-  const envDefault = parseOptionalNumber(process.env.JANGAR_AGENT_RUNNER_LOG_RETENTION_SECONDS)
-  if (envDefault !== undefined) {
-    return Math.max(0, Math.floor(envDefault))
-  }
-  return DEFAULT_RUNNER_LOG_RETENTION_SECONDS
+  return Math.max(0, resolveAgentRunnerDefaultsConfig(process.env).logRetentionSeconds)
 }
 export const makeName = (base: string, suffix: string) => {
   const normalized = base.toLowerCase().replace(/[^a-z0-9-]+/g, '-')
@@ -113,7 +109,7 @@ export const buildRunSpecContext = (
 export const resolveRunnerServiceAccount = (runtimeConfig: Record<string, unknown>) =>
   asString(runtimeConfig.serviceAccount) ??
   asString(runtimeConfig.serviceAccountName) ??
-  asString(process.env.JANGAR_AGENT_RUNNER_SERVICE_ACCOUNT)
+  resolveAgentRunnerDefaultsConfig(process.env).serviceAccount
 
 const buildJobResources = (workload: Record<string, unknown>) => {
   const resources = asRecord(workload.resources) ?? {}
@@ -380,13 +376,14 @@ export const submitJobRun = async (
 
   // Allow the controller to inject NATS user/pass for runner pods without requiring every AgentRun
   // to carry credentials. This is used by codex tooling like `codex-nats-publish`.
-  const runnerNatsAuthSecretName = process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_SECRET_NAME?.trim()
+  const runnerDefaults = resolveAgentRunnerDefaultsConfig(process.env)
+  const runnerNatsAuthSecretName = runnerDefaults.natsAuthSecretName
   if (runnerNatsAuthSecretName) {
     const alreadyHasUser = env.some((item) => item.name === 'NATS_USER')
     const alreadyHasPass = env.some((item) => item.name === 'NATS_PASSWORD')
     if (!alreadyHasUser || !alreadyHasPass) {
-      const usernameKey = process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_USERNAME_KEY?.trim() || 'username'
-      const passwordKey = process.env.JANGAR_AGENT_RUNNER_NATS_AUTH_PASSWORD_KEY?.trim() || 'password'
+      const usernameKey = runnerDefaults.natsAuthUsernameKey
+      const passwordKey = runnerDefaults.natsAuthPasswordKey
 
       const security = asRecord(readNested(agent, ['spec', 'security'])) ?? {}
       const allowedSecrets = parseStringList(security.allowedSecrets)
@@ -455,8 +452,8 @@ export const submitJobRun = async (
     if (explicit !== undefined) {
       return Math.max(0, Math.trunc(explicit))
     }
-    const envValue = parseOptionalNumber(process.env.JANGAR_AGENT_RUNNER_BACKOFF_LIMIT)
-    if (envValue !== undefined) {
+    const envValue = resolveAgentRunnerDefaultsConfig(process.env).backoffLimit
+    if (envValue != null) {
       return Math.max(0, Math.trunc(envValue))
     }
     // Avoid retry loops for side-effecting agent runs (e.g. PR creation). Prefer workflow-level retries.
@@ -466,24 +463,31 @@ export const submitJobRun = async (
     ? buildAgentRunnerSpec(runSpec, parameters, providerName, logRetentionSeconds)
     : null
   const serviceAccount = resolveRunnerServiceAccount(runtimeConfig)
-  const nodeSelector = asRecord(runtimeConfig.nodeSelector) ?? parseEnvRecord('JANGAR_AGENT_RUNNER_NODE_SELECTOR')
+  const runnerDefaultsConfig = resolveAgentRunnerDefaultsConfig(process.env)
+  const nodeSelector =
+    asRecord(runtimeConfig.nodeSelector) ??
+    runnerDefaultsConfig.nodeSelector ??
+    parseEnvRecord('JANGAR_AGENT_RUNNER_NODE_SELECTOR')
   const tolerations =
     (Array.isArray(runtimeConfig.tolerations) ? runtimeConfig.tolerations : null) ??
+    runnerDefaultsConfig.tolerations ??
     parseEnvArray('JANGAR_AGENT_RUNNER_TOLERATIONS')
   const topologySpreadConstraints =
     (Array.isArray(runtimeConfig.topologySpreadConstraints) ? runtimeConfig.topologySpreadConstraints : null) ??
+    runnerDefaultsConfig.topologySpreadConstraints ??
     parseEnvArray('JANGAR_AGENT_RUNNER_TOPOLOGY_SPREAD_CONSTRAINTS')
-  const affinity = asRecord(runtimeConfig.affinity) ?? parseEnvRecord('JANGAR_AGENT_RUNNER_AFFINITY')
+  const affinity =
+    asRecord(runtimeConfig.affinity) ?? runnerDefaultsConfig.affinity ?? parseEnvRecord('JANGAR_AGENT_RUNNER_AFFINITY')
   const podSecurityContext =
-    asRecord(runtimeConfig.podSecurityContext) ?? parseEnvRecord('JANGAR_AGENT_RUNNER_POD_SECURITY_CONTEXT')
-  const priorityClassName =
-    asString(runtimeConfig.priorityClassName) ?? asString(process.env.JANGAR_AGENT_RUNNER_PRIORITY_CLASS)
-  const schedulerName =
-    asString(runtimeConfig.schedulerName) ?? asString(process.env.JANGAR_AGENT_RUNNER_SCHEDULER_NAME)
+    asRecord(runtimeConfig.podSecurityContext) ??
+    runnerDefaultsConfig.podSecurityContext ??
+    parseEnvRecord('JANGAR_AGENT_RUNNER_POD_SECURITY_CONTEXT')
+  const priorityClassName = asString(runtimeConfig.priorityClassName) ?? runnerDefaultsConfig.priorityClassName
+  const schedulerName = asString(runtimeConfig.schedulerName) ?? runnerDefaultsConfig.schedulerName
   const imagePullSecrets = (() => {
     const candidates = Array.isArray(runtimeConfig.imagePullSecrets)
       ? runtimeConfig.imagePullSecrets
-      : parseEnvArray('JANGAR_AGENT_RUNNER_IMAGE_PULL_SECRETS')
+      : (runnerDefaultsConfig.imagePullSecrets ?? parseEnvArray('JANGAR_AGENT_RUNNER_IMAGE_PULL_SECRETS'))
     if (!candidates) return null
     const resolved = candidates
       .map((entry) => {

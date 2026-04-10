@@ -1,12 +1,6 @@
-const parseBooleanEnv = (value: string | undefined, fallback: boolean) => {
-  if (value == null) return fallback
-  const normalized = value.trim().toLowerCase()
-  if (['1', 'true', 'yes', 'y'].includes(normalized)) return true
-  if (['0', 'false', 'no', 'n'].includes(normalized)) return false
-  return fallback
-}
+import { isControllerClusterScoped } from './controller-runtime-config'
 
-const isClusterScoped = () => parseBooleanEnv(process.env.JANGAR_RBAC_CLUSTER_SCOPED, false)
+const isClusterScoped = () => isControllerClusterScoped(process.env)
 
 export const assertClusterScopedForWildcard = (namespaces: string[], label: string) => {
   if (!namespaces.includes('*')) return
@@ -87,8 +81,12 @@ const parseNamespacesCsv = (raw: string) =>
     .map((value) => value.trim())
     .filter((value) => value.length > 0)
 
-export const parseNamespaceScopeEnv = (envName: string, options: { fallback: string[]; label: string }): string[] => {
-  const raw = process.env[envName]
+export const parseNamespaceScopeEnv = (
+  envName: string,
+  options: { fallback: string[]; label: string },
+  env: Record<string, string | undefined> = process.env,
+): string[] => {
+  const raw = env[envName]
   if (raw == null) return options.fallback
   if (raw.trim() === '') {
     throw new NamespaceScopeConfigError(

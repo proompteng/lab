@@ -16,23 +16,18 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { Loader2 } from 'lucide-react'
 import * as React from 'react'
 import { toast } from 'sonner'
+import {
+  createTerminalSession,
+  deleteTerminalSession,
+  fetchTerminalSessions,
+  type TerminalSession,
+} from '@/data/terminals'
 import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/terminals/')({
+  loader: async () => fetchTerminalSessions(),
   component: TerminalsIndexPage,
 })
-
-type TerminalSession = {
-  id: string
-  label: string
-  worktreePath: string | null
-  worktreeName: string | null
-  createdAt: string | null
-  attached: boolean
-  status: 'creating' | 'ready' | 'error' | 'closed'
-  errorMessage?: string | null
-  reconnectToken?: string | null
-}
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
   year: 'numeric',
@@ -52,8 +47,9 @@ const formatDateTime = (value: string | null) => {
 const skeletonKeys = ['skeleton-a', 'skeleton-b', 'skeleton-c', 'skeleton-d', 'skeleton-e', 'skeleton-f']
 
 function TerminalsIndexPage() {
-  const [sessions, setSessions] = React.useState<TerminalSession[]>([])
-  const [error, setError] = React.useState<string | null>(null)
+  const initialData = Route.useLoaderData() as Awaited<ReturnType<typeof fetchTerminalSessions>>
+  const [sessions, setSessions] = React.useState<TerminalSession[]>(() => (initialData.ok ? initialData.sessions : []))
+  const [error, setError] = React.useState<string | null>(() => (initialData.ok ? null : initialData.error))
   const [isLoading, setIsLoading] = React.useState(false)
   const [isCreating, setIsCreating] = React.useState(false)
   const [deletingSessions, setDeletingSessions] = React.useState<Record<string, boolean>>({})
@@ -63,23 +59,27 @@ function TerminalsIndexPage() {
   const tableColumns =
     'grid-cols-[minmax(0,1.4fr)_minmax(0,1.2fr)_minmax(0,0.8fr)_minmax(0,0.6fr)_minmax(0,0.6fr)_minmax(0,0.5fr)]'
 
+  React.useEffect(() => {
+    if (initialData.ok) {
+      setSessions(initialData.sessions)
+      setError(null)
+      return
+    }
+
+    setSessions([])
+    setError(initialData.error)
+  }, [initialData])
+
   const loadSessions = React.useCallback(async () => {
     setIsLoading(true)
     setError(null)
     try {
-      const response = await fetch(showClosed ? '/api/terminals?includeClosed=1' : '/api/terminals')
-      const payload = (await response.json().catch(() => null)) as
-        | { ok: true; sessions: TerminalSession[] }
-        | { ok: false; message?: string }
-        | null
-
-      if (!response.ok || !payload || !('ok' in payload) || !payload.ok) {
-        throw new Error(
-          payload && 'message' in payload ? payload.message || 'Unable to load sessions.' : 'Unable to load sessions.',
-        )
+      const result = await fetchTerminalSessions({ showClosed })
+      if (!result.ok) {
+        throw new Error(result.error)
       }
 
-      setSessions(payload.sessions)
+      setSessions(result.sessions)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load terminal sessions.')
     } finally {
@@ -91,21 +91,12 @@ function TerminalsIndexPage() {
     setIsCreating(true)
     setError(null)
     try {
-      const response = await fetch('/api/terminals?create=1')
-      const payload = (await response.json().catch(() => null)) as
-        | { ok: true; session: TerminalSession }
-        | { ok: false; message?: string }
-        | null
-
-      if (!response.ok || !payload || !('ok' in payload) || !payload.ok) {
-        throw new Error(
-          payload && 'message' in payload
-            ? payload.message || 'Unable to create session.'
-            : 'Unable to create session.',
-        )
+      const result = await createTerminalSession()
+      if (!result.ok) {
+        throw new Error(result.error)
       }
 
-      const session = payload.session
+      const session = result.session
       setSessions((prev) => [session, ...prev])
       window.dispatchEvent(new Event('terminals:refresh'))
     } catch (err) {
@@ -119,12 +110,9 @@ function TerminalsIndexPage() {
     setError(null)
     setDeletingSessions((prev) => ({ ...prev, [sessionId]: true }))
     try {
-      const response = await fetch(`/api/terminals/${encodeURIComponent(sessionId)}/delete`, {
-        method: 'POST',
-      })
-      const payload = (await response.json().catch(() => null)) as { ok?: boolean; message?: string } | null
-      if (!response.ok || !payload?.ok) {
-        throw new Error(payload?.message || 'Unable to delete session.')
+      const result = await deleteTerminalSession(sessionId)
+      if (!result.ok) {
+        throw new Error(result.error)
       }
       setSessions((prev) => prev.filter((session) => session.id !== sessionId))
       setDeletingSessions((prev) => {

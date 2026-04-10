@@ -1,6 +1,7 @@
-import { spawn } from 'node:child_process'
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 
+import { createKubeGateway } from '~/server/kube-gateway'
+import { resolveImplementationSourceWebhookConfig } from '~/server/agents-controller/runtime-config'
 import { assertClusterScopedForWildcard } from '~/server/namespace-scope'
 import { asRecord, asString, errorResponse, okResponse, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
@@ -103,17 +104,11 @@ const parseOptionalNumber = (value: string | undefined) => {
 }
 
 const resolveWebhookQueueSettings = (): WebhookQueueSettings => {
-  const maxSize =
-    parseOptionalNumber(process.env.JANGAR_AGENTS_CONTROLLER_WEBHOOK_QUEUE_SIZE) ?? DEFAULT_WEBHOOK_QUEUE_SIZE
-  const baseDelaySeconds =
-    parseOptionalNumber(process.env.JANGAR_AGENTS_CONTROLLER_WEBHOOK_RETRY_BASE_DELAY_SECONDS) ??
-    DEFAULT_WEBHOOK_RETRY_BASE_DELAY_MS / 1000
-  const maxDelaySeconds =
-    parseOptionalNumber(process.env.JANGAR_AGENTS_CONTROLLER_WEBHOOK_RETRY_MAX_DELAY_SECONDS) ??
-    DEFAULT_WEBHOOK_RETRY_MAX_DELAY_MS / 1000
-  const maxAttempts =
-    parseOptionalNumber(process.env.JANGAR_AGENTS_CONTROLLER_WEBHOOK_RETRY_MAX_ATTEMPTS) ??
-    DEFAULT_WEBHOOK_RETRY_MAX_ATTEMPTS
+  const config = resolveImplementationSourceWebhookConfig(process.env)
+  const maxSize = config.queueSize ?? DEFAULT_WEBHOOK_QUEUE_SIZE
+  const baseDelaySeconds = config.retryBaseDelaySeconds ?? DEFAULT_WEBHOOK_RETRY_BASE_DELAY_MS / 1000
+  const maxDelaySeconds = config.retryMaxDelaySeconds ?? DEFAULT_WEBHOOK_RETRY_MAX_DELAY_MS / 1000
+  const maxAttempts = config.retryMaxAttempts ?? DEFAULT_WEBHOOK_RETRY_MAX_ATTEMPTS
 
   return {
     maxSize: Math.max(1, maxSize),
@@ -234,7 +229,7 @@ export const createWebhookQueue = (
 }
 
 const parseNamespaces = () => {
-  const raw = process.env.JANGAR_AGENTS_CONTROLLER_NAMESPACES
+  const raw = resolveImplementationSourceWebhookConfig(process.env).namespacesRaw
   if (!raw) return DEFAULT_NAMESPACES
   const list = raw
     .split(',')
@@ -245,55 +240,14 @@ const parseNamespaces = () => {
   return namespaces
 }
 
-const runKubectl = (args: string[]) =>
-  new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve) => {
-    const child = spawn('kubectl', args, { stdio: ['ignore', 'pipe', 'pipe'] })
-    let stdout = ''
-    let stderr = ''
-    let settled = false
-    const finish = (payload: { stdout: string; stderr: string; code: number | null }) => {
-      if (settled) return
-      settled = true
-      resolve(payload)
-    }
-    child.stdout.setEncoding('utf8')
-    child.stderr.setEncoding('utf8')
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk
-    })
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk
-    })
-    child.on('error', (error) => {
-      finish({
-        stdout,
-        stderr: stderr || (error instanceof Error ? error.message : String(error)),
-        code: 1,
-      })
-    })
-    child.on('close', (code) => finish({ stdout, stderr, code }))
-  })
-
 const resolveNamespaces = async () => {
   const namespaces = parseNamespaces()
   if (!namespaces.includes('*')) {
     return namespaces
   }
-  const result = await runKubectl(['get', 'namespace', '-o', 'json'])
-  if (result.code !== 0) {
-    throw new Error(result.stderr || result.stdout || 'failed to list namespaces')
-  }
-  const payload = JSON.parse(result.stdout) as Record<string, unknown>
-  const items = Array.isArray(payload.items) ? payload.items : []
-  const resolved = items
-    .map((item) => {
-      const metadata = item && typeof item === 'object' ? (item as Record<string, unknown>).metadata : null
-      const name = metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>).name : null
-      return typeof name === 'string' ? name : null
-    })
-    .filter((value): value is string => Boolean(value))
+  const resolved = await createKubeGateway().listNamespaces()
   if (resolved.length === 0) {
-    throw new Error('no namespaces returned by kubectl')
+    throw new Error('no namespaces returned by kube gateway')
   }
   return resolved
 }

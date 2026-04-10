@@ -8,6 +8,7 @@ import YAML from 'yaml'
 import { fatal, repoRoot } from '../shared/cli'
 import { inspectImageDigest } from '../shared/docker'
 import { execGit } from '../shared/git'
+import { updateKustomizationImage, updateManifestAnnotation } from './manifest-contract'
 
 const defaultRegistry = 'registry.ide-newton.ts.net'
 const defaultRepository = 'lab/jangar'
@@ -42,8 +43,6 @@ type CliOptions = {
   agentsValuesPath?: string
 }
 
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-
 const resolvePath = (path: string) => resolve(repoRoot, path)
 
 const normalizeDigest = (digest: string): string => {
@@ -56,60 +55,6 @@ const normalizeDigest = (digest: string): string => {
 const asRecord = (value: unknown): Record<string, unknown> | null => {
   if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>
   return null
-}
-
-const updateKustomizationManifest = (
-  kustomizationPath: string,
-  imageName: string,
-  tag: string,
-  digest: string,
-): boolean => {
-  const source = readFileSync(kustomizationPath, 'utf8')
-  const imagePattern = new RegExp(`(name:\\s+${escapeRegExp(imageName)}\\s*\\n\\s*newTag:\\s*)(.+)`, 'm')
-  const quotedTag = JSON.stringify(tag)
-  let updated = source.replace(imagePattern, (_, prefix) => `${prefix}${quotedTag}`)
-
-  const digestPattern = new RegExp(
-    `(name:\\s+${escapeRegExp(imageName)}\\s*\\n\\s*newTag:\\s*[^\\n]+\\n\\s*digest:\\s*)(.+)`,
-    'm',
-  )
-  if (digestPattern.test(updated)) {
-    updated = updated.replace(digestPattern, (_, prefix) => `${prefix}${digest}`)
-  } else {
-    updated = updated.replace(
-      new RegExp(`(name:\\s+${escapeRegExp(imageName)}\\s*\\n\\s*newTag:\\s*[^\\n]+)`),
-      `$1\n    digest: ${digest}`,
-    )
-  }
-
-  if (source === updated) {
-    console.warn('Warning: jangar kustomization was not updated; pattern may have changed.')
-    return false
-  }
-
-  writeFileSync(kustomizationPath, updated)
-  console.log(`Updated ${kustomizationPath} with tag ${tag} and digest ${digest}`)
-  return true
-}
-
-const updateRolloutAnnotation = (
-  manifestPath: string,
-  annotationKey: string,
-  rolloutTimestamp: string,
-  warningLabel: string,
-): boolean => {
-  const source = readFileSync(manifestPath, 'utf8')
-  const pattern = new RegExp(`(${escapeRegExp(annotationKey)}:\\s*)(["']?)([^"'\n]*)(["']?)`)
-  const updated = source.replace(pattern, `$1"${rolloutTimestamp}"`)
-
-  if (source === updated) {
-    console.warn(`Warning: jangar ${warningLabel} annotation was not updated; pattern may have changed.`)
-    return false
-  }
-
-  writeFileSync(manifestPath, updated)
-  console.log(`Updated ${manifestPath} annotation ${annotationKey} to ${rolloutTimestamp}`)
-  return true
 }
 
 const updateAgentsValuesManifest = (
@@ -173,19 +118,36 @@ export const updateJangarManifests = (options: UpdateManifestsOptions) => {
   const controlPlaneDigest = options.controlPlaneDigest ? normalizeDigest(options.controlPlaneDigest) : undefined
   const agentsValuesPath = options.agentsValuesPath ? resolvePath(options.agentsValuesPath) : null
 
-  const kustomizationChanged = updateKustomizationManifest(kustomizationPath, options.imageName, options.tag, digest)
-  const serviceChanged = updateRolloutAnnotation(
+  const kustomizationChanged = updateKustomizationImage(kustomizationPath, options.imageName, options.tag, digest)
+  if (!kustomizationChanged) {
+    console.warn('Warning: jangar kustomization was not updated; manifest may already match the requested image.')
+  } else {
+    console.log(`Updated ${kustomizationPath} with tag ${options.tag} and digest ${digest}`)
+  }
+
+  const serviceChanged = updateManifestAnnotation(
     serviceManifestPath,
     'deploy.knative.dev/rollout',
     options.rolloutTimestamp,
-    'service rollout',
   )
-  const workerChanged = updateRolloutAnnotation(
+  if (!serviceChanged) {
+    console.warn('Warning: jangar service rollout annotation was not updated; manifest may already match.')
+  } else {
+    console.log(`Updated ${serviceManifestPath} annotation deploy.knative.dev/rollout to ${options.rolloutTimestamp}`)
+  }
+
+  const workerChanged = updateManifestAnnotation(
     workerManifestPath,
     'kubectl.kubernetes.io/restartedAt',
     options.rolloutTimestamp,
-    'worker rollout',
   )
+  if (!workerChanged) {
+    console.warn('Warning: jangar worker rollout annotation was not updated; manifest may already match.')
+  } else {
+    console.log(
+      `Updated ${workerManifestPath} annotation kubectl.kubernetes.io/restartedAt to ${options.rolloutTimestamp}`,
+    )
+  }
   const agentsValuesChanged = agentsValuesPath
     ? updateAgentsValuesManifest(
         agentsValuesPath,
@@ -326,7 +288,7 @@ if (import.meta.main) {
 export const __private = {
   parseArgs,
   normalizeDigest,
-  updateKustomizationManifest,
-  updateRolloutAnnotation,
+  updateKustomizationImage,
+  updateManifestAnnotation,
   updateAgentsValuesManifest,
 }

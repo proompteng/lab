@@ -1,18 +1,13 @@
 import { readFile, stat, unlink } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import { resolveGitLockRecoveryConfig } from './runtime-tooling-config'
 
 export type GitResult = { exitCode: number; stdout: string; stderr: string }
 
-const parsePositiveInt = (value: string | undefined, fallback: number) => {
-  const parsed = Number.parseInt(value ?? '', 10)
-  if (!Number.isFinite(parsed) || parsed <= 0) return fallback
-  return parsed
-}
-
-export const LOCK_STALE_MS = parsePositiveInt(process.env.JANGAR_GIT_LOCK_STALE_MS, 2 * 60 * 1000)
-export const PR_LOCK_STALE_MS = parsePositiveInt(process.env.JANGAR_GIT_PR_LOCK_STALE_MS, LOCK_STALE_MS)
-export const LOCK_RETRY_ATTEMPTS = parsePositiveInt(process.env.JANGAR_GIT_LOCK_RETRY_ATTEMPTS, 3)
-export const LOCK_RETRY_DELAY_MS = parsePositiveInt(process.env.JANGAR_GIT_LOCK_RETRY_DELAY_MS, 750)
+export const LOCK_STALE_MS = resolveGitLockRecoveryConfig(process.env).staleMs
+export const PR_LOCK_STALE_MS = resolveGitLockRecoveryConfig(process.env).prStaleMs
+export const LOCK_RETRY_ATTEMPTS = resolveGitLockRecoveryConfig(process.env).retryAttempts
+export const LOCK_RETRY_DELAY_MS = resolveGitLockRecoveryConfig(process.env).retryDelayMs
 
 const sleep = (ms: number) => new Promise((resolvePromise) => setTimeout(resolvePromise, ms))
 

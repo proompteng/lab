@@ -1,5 +1,6 @@
 import { type ClickHouseClient, resolveClickHouseClient } from '~/server/clickhouse'
 import { getBooleanFeatureFlag } from '~/server/feature-flags'
+import { resolveMarketContextRuntimeConfig } from './torghut-market-context-config'
 import { normalizeTorghutSymbol } from '~/server/torghut-symbols'
 
 type MarketContextDomainState = 'ok' | 'stale' | 'missing' | 'error'
@@ -126,39 +127,7 @@ const parseOptionalInt = (value: string | undefined): number | null => {
   return parsed
 }
 
-const resolveSettings = () => {
-  const technicalsMaxFreshnessSeconds =
-    parseOptionalInt(process.env.JANGAR_MARKET_CONTEXT_TECHNICALS_MAX_FRESHNESS_SECONDS) ??
-    FALLBACK_TECHNICAL_FRESHNESS_SECONDS
-  const fundamentalsMaxFreshnessSeconds =
-    parseOptionalInt(process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_MAX_FRESHNESS_SECONDS) ??
-    FALLBACK_FUNDAMENTALS_FRESHNESS_SECONDS
-  const newsMaxFreshnessSeconds =
-    parseOptionalInt(process.env.JANGAR_MARKET_CONTEXT_NEWS_MAX_FRESHNESS_SECONDS) ?? FALLBACK_NEWS_FRESHNESS_SECONDS
-  const newsTradingHoursMaxFreshnessSeconds =
-    parseOptionalInt(process.env.JANGAR_MARKET_CONTEXT_NEWS_TRADING_HOURS_MAX_FRESHNESS_SECONDS) ??
-    FALLBACK_NEWS_TRADING_HOURS_FRESHNESS_SECONDS
-  const regimeMaxFreshnessSeconds =
-    parseOptionalInt(process.env.JANGAR_MARKET_CONTEXT_REGIME_MAX_FRESHNESS_SECONDS) ??
-    FALLBACK_REGIME_FRESHNESS_SECONDS
-
-  return {
-    requireTechnicalsSourceHealth: toBoolean(process.env.JANGAR_MARKET_CONTEXT_REQUIRE_TECHNICALS_SOURCE_HEALTH, true),
-    enabledFallback: toBoolean(process.env.JANGAR_MARKET_CONTEXT_ENABLED, true),
-    enabledFlagKey:
-      process.env.JANGAR_MARKET_CONTEXT_ENABLED_FLAG_KEY?.trim() || DEFAULT_MARKET_CONTEXT_ENABLED_FLAG_KEY,
-    cacheSeconds: parsePositiveInt(process.env.JANGAR_MARKET_CONTEXT_CACHE_SECONDS, 60),
-    maxStalenessSeconds: parsePositiveInt(process.env.JANGAR_MARKET_CONTEXT_MAX_STALENESS_SECONDS, 300),
-    providerTimeoutMs: parsePositiveInt(process.env.JANGAR_MARKET_CONTEXT_PROVIDER_TIMEOUT_MS, 10000),
-    fundamentalsSourceUrl: process.env.JANGAR_MARKET_CONTEXT_FUNDAMENTALS_URL?.trim() || '',
-    newsSourceUrl: process.env.JANGAR_MARKET_CONTEXT_NEWS_URL?.trim() || '',
-    technicalsMaxFreshnessSeconds,
-    fundamentalsMaxFreshnessSeconds,
-    newsMaxFreshnessSeconds,
-    newsTradingHoursMaxFreshnessSeconds,
-    regimeMaxFreshnessSeconds,
-  }
-}
+const resolveSettings = () => resolveMarketContextRuntimeConfig(process.env)
 
 const isUsRegularTradingSession = (now: Date) => {
   const parts = exchangeClockFormatter.formatToParts(now)

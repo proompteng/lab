@@ -17,6 +17,7 @@ export type ChatConfig = OpenAIConfig & {
   isTest: boolean
   codexCwdOverride: string | null
   codexMaxInputChars: number
+  chatStateBackend: string
   statefulChatModeEnabled: boolean
   openWebUIRichRenderEnabled: boolean
   openWebUIExternalBaseUrl: string | null
@@ -80,6 +81,7 @@ export const resolveChatConfig = (env: EnvSource = process.env): ChatConfig => {
       env.JANGAR_CODEX_MAX_INPUT_CHARS,
       DEFAULT_CODEX_MAX_INPUT_CHARS,
     ),
+    chatStateBackend: env.JANGAR_CHAT_STATE_BACKEND?.trim().toLowerCase() || 'redis',
     statefulChatModeEnabled: (env.JANGAR_STATEFUL_CHAT_MODE ?? '').trim() !== '0',
     openWebUIRichRenderEnabled: parseBooleanEnv(env.JANGAR_OPENWEBUI_RICH_RENDER_ENABLED),
     openWebUIExternalBaseUrl: normalizeExternalBaseUrl(env.JANGAR_OPENWEBUI_EXTERNAL_BASE_URL),

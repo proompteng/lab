@@ -1,10 +1,11 @@
-import { spawn, spawnSync } from 'node:child_process'
-import { recordKubeWatchError, recordKubeWatchEvent, recordKubeWatchRestart } from '~/server/metrics'
 import {
   recordWatchReliabilityError,
   recordWatchReliabilityEvent,
   recordWatchReliabilityRestart,
 } from '~/server/control-plane-watch-reliability'
+import { startKubernetesWatch } from '~/server/kubernetes-watch-client'
+import { recordKubeWatchError, recordKubeWatchEvent, recordKubeWatchRestart } from '~/server/metrics'
+import { buildKubernetesResourceCollectionPath, getNativeKubeClients } from '~/server/primitives-kube'
 
 type WatchEvent = {
   type?: string
@@ -29,84 +30,13 @@ type WatchHandle = {
 }
 
 const DEFAULT_RESTART_DELAY_MS = 2_000
-let kubectlGetSupportsResourceVersionFlag: boolean | null = null
 
-const detectKubectlGetSupportsResourceVersionFlag = (): boolean => {
-  if (kubectlGetSupportsResourceVersionFlag !== null) {
-    return kubectlGetSupportsResourceVersionFlag
-  }
-
-  try {
-    const result = spawnSync('kubectl', ['get', '--help'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`
-    kubectlGetSupportsResourceVersionFlag = output.includes('--resource-version')
-  } catch {
-    kubectlGetSupportsResourceVersionFlag = false
-  }
-
-  return kubectlGetSupportsResourceVersionFlag
+const buildWatchPath = async (resource: string, namespace: string) => {
+  return buildKubernetesResourceCollectionPath(resource, namespace)
 }
 
 export const resetKubectlWatchCompatibilityCacheForTests = () => {
-  kubectlGetSupportsResourceVersionFlag = null
-}
-
-const parseJsonStream = (onJson: (jsonText: string) => void) => {
-  let buffer = ''
-  let depth = 0
-  let startIndex = -1
-  let inString = false
-  let escaped = false
-
-  return (chunk: string) => {
-    buffer += chunk
-    for (let i = 0; i < buffer.length; i += 1) {
-      const char = buffer[i]
-      if (inString) {
-        if (escaped) {
-          escaped = false
-          continue
-        }
-        if (char === '\\\\') {
-          escaped = true
-          continue
-        }
-        if (char === '"') {
-          inString = false
-        }
-        continue
-      }
-
-      if (char === '"') {
-        inString = true
-        continue
-      }
-
-      if (char === '{' || char === '[') {
-        if (depth === 0) {
-          startIndex = i
-        }
-        depth += 1
-        continue
-      }
-
-      if (char === '}' || char === ']') {
-        if (depth > 0) {
-          depth -= 1
-        }
-        if (depth === 0 && startIndex >= 0) {
-          const jsonText = buffer.slice(startIndex, i + 1)
-          onJson(jsonText)
-          buffer = buffer.slice(i + 1)
-          i = -1
-          startIndex = -1
-        }
-      }
-    }
-  }
+  // no-op: watch compatibility caching was removed when the watch path moved to the native client.
 }
 
 export const startResourceWatch = (options: WatchOptions): WatchHandle => {
@@ -123,9 +53,11 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
     logPrefix = '[jangar][watch]',
   } = options
 
+  const { kubeConfig } = getNativeKubeClients()
+
   let stopped = false
-  let child: ReturnType<typeof spawn> | null = null
   let restartTimer: NodeJS.Timeout | null = null
+  let abortController: AbortController | null = null
   let currentResourceVersion = resourceVersion?.trim() ? resourceVersion.trim() : null
   let watchStartResourceVersion: string | null = null
   let sawEventSinceStart = false
@@ -161,145 +93,79 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
     if (stopped) return
     watchStartResourceVersion = currentResourceVersion
     sawEventSinceStart = false
-    const args = [
-      'get',
-      resource,
-      '-n',
-      namespace,
-      '--watch',
-      '--output-watch-events',
-      '-o',
-      'json',
-      '--request-timeout=0',
-    ]
-    if (currentResourceVersion && detectKubectlGetSupportsResourceVersionFlag()) {
-      args.push(`--resource-version=${currentResourceVersion}`)
-    }
-    if (labelSelector) {
-      args.push('-l', labelSelector)
-    }
-    if (fieldSelector) {
-      args.push('--field-selector', fieldSelector)
-    }
 
-    child = spawn('kubectl', args, { stdio: ['ignore', 'pipe', 'pipe'] })
-    const parse = parseJsonStream((jsonText) => {
-      try {
-        const payload = JSON.parse(jsonText) as WatchEvent
-        if (!payload || typeof payload !== 'object') return
-        const eventType = typeof payload.type === 'string' ? payload.type : 'UNKNOWN'
-        const payloadObject =
-          payload.object && typeof payload.object === 'object' && !Array.isArray(payload.object)
-            ? (payload.object as Record<string, unknown>)
-            : null
-        const payloadMetadata =
-          payloadObject?.metadata &&
-          typeof payloadObject.metadata === 'object' &&
-          !Array.isArray(payloadObject.metadata)
-            ? (payloadObject.metadata as Record<string, unknown>)
-            : null
-        const nextResourceVersion =
-          typeof payloadMetadata?.resourceVersion === 'string' ? payloadMetadata.resourceVersion.trim() : ''
-        if (nextResourceVersion) {
-          currentResourceVersion = nextResourceVersion
-        }
-        sawEventSinceStart = true
-        if (eventType === 'BOOKMARK') return
-        recordKubeWatchEvent({
-          resource: normalizedResource,
-          namespace: normalizedNamespace,
-          type: eventType,
-        })
-        recordWatchReliabilityEvent({
-          resource: normalizedResource,
-          namespace: normalizedNamespace,
-        })
-        void onEvent(payload)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
+    void buildWatchPath(resource, namespace)
+      .then((path) =>
+        startKubernetesWatch(
+          kubeConfig,
+          path,
+          {
+            ...(labelSelector ? { labelSelector } : {}),
+            ...(fieldSelector ? { fieldSelector } : {}),
+            ...(currentResourceVersion ? { resourceVersion: currentResourceVersion } : {}),
+            allowWatchBookmarks: true,
+          },
+          (type, object) => {
+            if (!object || typeof object !== 'object' || Array.isArray(object)) return
+            const payload = object as Record<string, unknown>
+            const metadata =
+              payload.metadata && typeof payload.metadata === 'object' && !Array.isArray(payload.metadata)
+                ? (payload.metadata as Record<string, unknown>)
+                : null
+            const nextResourceVersion =
+              typeof metadata?.resourceVersion === 'string' ? metadata.resourceVersion.trim() : ''
+            if (nextResourceVersion) {
+              currentResourceVersion = nextResourceVersion
+            }
+            sawEventSinceStart = true
+            if (type === 'BOOKMARK') return
+
+            recordKubeWatchEvent({
+              resource: normalizedResource,
+              namespace: normalizedNamespace,
+              type,
+            })
+            recordWatchReliabilityEvent({
+              resource: normalizedResource,
+              namespace: normalizedNamespace,
+            })
+            void onEvent({ type, object: payload })
+          },
+          (error) => {
+            if (stopped) return
+            clearStaleResourceVersionBeforeRestart()
+            if (error) {
+              recordKubeWatchError({
+                resource: normalizedResource,
+                namespace: normalizedNamespace,
+                reason: 'watch_error',
+              })
+              recordWatchReliabilityError({
+                resource: normalizedResource,
+                namespace: normalizedNamespace,
+              })
+              onError?.(new Error(`${logPrefix} ${resource} (${namespace}) watch failed: ${error.message}`))
+            }
+            scheduleRestart(error ? 'watch_error' : 'closed')
+          },
+        ),
+      )
+      .then((controller) => {
+        abortController = controller
+      })
+      .catch((error) => {
         recordKubeWatchError({
           resource: normalizedResource,
           namespace: normalizedNamespace,
-          reason: 'parse_error',
+          reason: 'watch_start_error',
         })
         recordWatchReliabilityError({
           resource: normalizedResource,
           namespace: normalizedNamespace,
         })
-        onError?.(new Error(`${logPrefix} failed to parse watch event: ${message}`))
-      }
-    })
-
-    if (child.stdout) {
-      child.stdout.setEncoding('utf8')
-      child.stdout.on('data', (chunk) => parse(String(chunk)))
-    } else {
-      recordKubeWatchError({
-        resource: normalizedResource,
-        namespace: normalizedNamespace,
-        reason: 'stdout_unavailable',
+        onError?.(error instanceof Error ? error : new Error(String(error)))
+        scheduleRestart('watch_start_error')
       })
-      onError?.(new Error(`${logPrefix} ${resource} (${namespace}) stdout unavailable`))
-    }
-    if (child.stderr) {
-      child.stderr.setEncoding('utf8')
-      child.stderr.on('data', (chunk) => {
-        const message = String(chunk).trim()
-        if (message) {
-          recordKubeWatchError({
-            resource: normalizedResource,
-            namespace: normalizedNamespace,
-            reason: 'stderr_message',
-          })
-          recordWatchReliabilityError({
-            resource: normalizedResource,
-            namespace: normalizedNamespace,
-          })
-          onError?.(new Error(`${logPrefix} ${resource} (${namespace}) stderr: ${message}`))
-        }
-      })
-    } else {
-      recordKubeWatchError({
-        resource: normalizedResource,
-        namespace: normalizedNamespace,
-        reason: 'stderr_unavailable',
-      })
-      recordWatchReliabilityError({
-        resource: normalizedResource,
-        namespace: normalizedNamespace,
-      })
-      onError?.(new Error(`${logPrefix} ${resource} (${namespace}) stderr unavailable`))
-    }
-    child.on('error', (error) => {
-      recordKubeWatchError({
-        resource: normalizedResource,
-        namespace: normalizedNamespace,
-        reason: 'spawn_error',
-      })
-      recordWatchReliabilityError({
-        resource: normalizedResource,
-        namespace: normalizedNamespace,
-      })
-      onError?.(error instanceof Error ? error : new Error(String(error)))
-      scheduleRestart('spawn_error')
-    })
-    child.on('close', (code) => {
-      if (stopped) return
-      if (code !== 0) {
-        clearStaleResourceVersionBeforeRestart()
-        recordKubeWatchError({
-          resource: normalizedResource,
-          namespace: normalizedNamespace,
-          reason: `close_${String(code ?? 'unknown')}`,
-        })
-        recordWatchReliabilityError({
-          resource: normalizedResource,
-          namespace: normalizedNamespace,
-        })
-        onError?.(new Error(`${logPrefix} ${resource} (${namespace}) closed with code ${code ?? 'unknown'}`))
-      }
-      scheduleRestart(code === 0 ? 'closed' : 'nonzero_exit')
-    })
   }
 
   start()
@@ -309,10 +175,8 @@ export const startResourceWatch = (options: WatchOptions): WatchHandle => {
       stopped = true
       if (restartTimer) clearTimeout(restartTimer)
       restartTimer = null
-      if (child) {
-        child.kill()
-        child = null
-      }
+      abortController?.abort()
+      abortController = null
     },
   }
 }

@@ -1,5 +1,6 @@
 import { sql } from 'kysely'
 
+import { resolveControlPlaneHeartbeatConfig } from '~/server/control-plane-config'
 import { resolveStoreDb, type Db } from '~/server/db'
 import { ensureMigrations } from '~/server/kysely-migrations'
 
@@ -63,7 +64,7 @@ type StoreOptions = {
   createDb?: (url: string) => Db
 }
 
-const resolveCluster = () => process.env.JANGAR_CONTROL_PLANE_CACHE_CLUSTER?.trim() || 'default'
+const resolveCluster = () => resolveControlPlaneHeartbeatConfig(process.env).clusterId
 
 const toDbText = (value: Timestamp) => {
   if (value instanceof Date) {
@@ -93,39 +94,21 @@ const normalizeWorkloadRole = (value: string | null): ControlPlaneHeartbeatWorkl
   return 'other'
 }
 
-export const resolveControlPlaneHeartbeatTtlSeconds = () => {
-  const raw = process.env.JANGAR_CONTROL_PLANE_HEARTBEAT_TTL_SECONDS?.trim()
-  if (!raw) return 120
-  const parsed = Number.parseInt(raw, 10)
-  if (!Number.isFinite(parsed) || parsed <= 0) return 120
-  return parsed
-}
+export const resolveControlPlaneHeartbeatTtlSeconds = () => resolveControlPlaneHeartbeatConfig(process.env).ttlSeconds
 
-export const resolveControlPlaneHeartbeatIntervalSeconds = () => {
-  const raw = process.env.JANGAR_CONTROL_PLANE_HEARTBEAT_INTERVAL_SECONDS?.trim()
-  if (!raw) return 15
-  const parsed = Number.parseInt(raw, 10)
-  if (!Number.isFinite(parsed) || parsed <= 0) return 15
-  return parsed
-}
+export const resolveControlPlaneHeartbeatIntervalSeconds = () =>
+  resolveControlPlaneHeartbeatConfig(process.env).intervalSeconds
 
 export const resolveControlPlanePodIdentity = (): { podName: string; deploymentName: string } => {
-  const podName = (process.env.POD_NAME || process.env.HOSTNAME || 'unknown').trim()
-  const deploymentName = (
-    process.env.JANGAR_DEPLOYMENT_NAME?.trim() ||
-    process.env.DEPLOYMENT_NAME?.trim() ||
-    process.env.JANGAR_POD_PREFIX?.trim() ||
-    podName
-  ).trim()
+  const config = resolveControlPlaneHeartbeatConfig(process.env)
 
   return {
-    podName: podName.length > 0 ? podName : 'unknown',
-    deploymentName: deploymentName.length > 0 ? deploymentName : 'unknown',
+    podName: config.podName,
+    deploymentName: config.deploymentName,
   }
 }
 
-export const resolveHeartbeatSourceNamespace = () =>
-  process.env.JANGAR_POD_NAMESPACE?.trim() || process.env.POD_NAMESPACE?.trim() || 'default'
+export const resolveHeartbeatSourceNamespace = () => resolveControlPlaneHeartbeatConfig(process.env).sourceNamespace
 
 const resolveExpiresAt = (at: Timestamp, ttlSeconds: number) => {
   const base = at instanceof Date ? at : new Date(at)

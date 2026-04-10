@@ -74,7 +74,6 @@ type AgentRunReconcilerDependencies = {
   resolveJobImage: (workload: Record<string, unknown>) => string | null
   resolveAgentRunRetentionSeconds: (spec: Record<string, unknown>) => number
   getPrimitivesStore: () => Promise<PrimitivesStore | null>
-  runKubectl: (args: string[]) => Promise<{ stdout: string; stderr: string; code: number | null }>
   getTemporalClient: () => Promise<unknown>
   reconcileWorkflowRun: (
     kube: KubeClient,
@@ -143,7 +142,6 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
     resolveJobImage,
     resolveAgentRunRetentionSeconds,
     getPrimitivesStore,
-    runKubectl,
     getTemporalClient,
     reconcileWorkflowRun,
     submitJobRun,
@@ -206,7 +204,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
               await cancelRuntime({
                 runtimeRef,
                 namespace,
-                runKubectl,
+                kube,
                 getTemporalClient: getTemporalClient as () => Promise<TemporalCancelClient>,
               })
             } catch (error) {
@@ -324,7 +322,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
             await cancelRuntime({
               runtimeRef,
               namespace,
-              runKubectl,
+              kube,
               getTemporalClient: getTemporalClient as () => Promise<TemporalCancelClient>,
             })
           } catch (error) {

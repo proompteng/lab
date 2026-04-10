@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { Duration, Effect, Layer, ManagedRuntime, pipe } from 'effect'
 
 import { Atlas, AtlasLive } from '~/server/atlas'
+import { resolveAtlasRuntimeConfig } from '~/server/atlas-config'
 import { DEFAULT_REF, MAX_SEARCH_LIMIT, parseAtlasSearchInput } from '~/server/atlas-http'
 import type { AtlasSearchMatch } from '~/server/atlas-store'
 
@@ -182,8 +183,7 @@ export const getSearchHandlerEffect = (request: Request) =>
   )
 
 export const getAtlasSearchHandler = async (request: Request) => {
-  const timeoutMs = Number.parseInt(process.env.ATLAS_SEARCH_TIMEOUT_MS ?? '25000', 10)
-  const effectiveTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 25_000
+  const effectiveTimeoutMs = resolveAtlasRuntimeConfig(process.env).searchTimeoutMs
 
   return Promise.race([
     handlerRuntime.runPromise(getSearchHandlerEffect(request)),

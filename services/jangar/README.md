@@ -1,15 +1,17 @@
 Jangar
 
-OpenAI-compatible (streaming) chat completions endpoint backed by the Codex app-server.
+OpenAI-compatible chat completions endpoint, operator UI, and control-plane surface backed by the Codex app-server.
 
 ## Architecture
 
-More detailed write-up: `docs/jangar/current-state.md`.
+Authoritative architecture index: `docs/jangar/application-architecture.md`.
+Operational build/release contract: `docs/jangar/build-contract.md`.
 
 Runtime boot is now explicit: `src/server/app.ts` only builds the HTTP surface, while `src/server/index.ts` and
 `src/server/dev.ts` opt into startup behavior through `src/server/runtime-profile.ts`. The tech-debt program source of
 truth lives in `docs/agents/designs/jangar-application-tech-debt-cleanup-plan-2026-04-08.md`.
 The generated architecture inventory lives in `docs/jangar/architecture-inventory.md`.
+The older `docs/jangar/current-state.md` note is historical context for the original chat-completions audit only.
 
 ```mermaid
 flowchart TD
@@ -195,6 +197,10 @@ bun --cwd services/jangar run start:worker
 bun run packages/scripts/src/jangar/build-image.ts
 bun run packages/scripts/src/jangar/deploy-service.ts
 ```
+
+The CI/CD source of truth is `docs/jangar/build-contract.md`. The runtime contract requires both `.output/public` and
+`.output/server/index.mjs`, and manifest verification now reads image/digest expectations through the shared typed YAML
+manifest contract in `packages/scripts/src/jangar/manifest-contract.ts`.
 
 ## API Notes
 

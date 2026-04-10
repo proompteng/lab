@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { handleChatCompletion } from './chat'
 import { safeJsonStringify } from './chat-text'
 import { resolveBooleanFeatureToggle } from './feature-flags'
+import { resolveTorghutDecisionEngineConfig } from './torghut-config'
 
 type JsonRecord = Record<string, unknown>
 
@@ -122,11 +123,7 @@ const parsePositiveInt = (value: string | undefined, fallback: number) => {
   return parsed
 }
 
-const loadConfig = (): DecisionEngineConfig => ({
-  runTimeoutMs: parsePositiveInt(process.env.JANGAR_TORGHUT_DECISION_RUN_TIMEOUT_MS, 120_000),
-  heartbeatMs: parsePositiveInt(process.env.JANGAR_TORGHUT_DECISION_STREAM_HEARTBEAT_MS, 10_000),
-  retentionMs: parsePositiveInt(process.env.JANGAR_TORGHUT_DECISION_RUN_RETENTION_MS, 15 * 60 * 1000),
-})
+const loadConfig = (): DecisionEngineConfig => resolveTorghutDecisionEngineConfig(process.env)
 
 const ensureGlobal = () => {
   if (globalState.__torghutDecisionEngine) return globalState.__torghutDecisionEngine
@@ -563,7 +560,7 @@ export const isTorghutDecisionEngineEnabled = () =>
     key: DEFAULT_TORGHUT_DECISION_ENGINE_ENABLED_FLAG_KEY,
     keyEnvVar: 'JANGAR_TORGHUT_DECISION_ENGINE_ENABLED_FLAG_KEY',
     fallbackEnvVar: 'JANGAR_TORGHUT_DECISION_ENGINE_ENABLED',
-    defaultValue: resolveBoolean(process.env.JANGAR_TORGHUT_DECISION_ENGINE_ENABLED, true),
+    defaultValue: resolveTorghutDecisionEngineConfig(process.env).enabled,
   })
 
 export const setTorghutDecisionExecutorForTests = (

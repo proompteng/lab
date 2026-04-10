@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { resolveTorghutEndpointsConfig } from '~/server/torghut-config'
 import { getTorghutMarketContextHealth } from '~/server/torghut-market-context'
 import { normalizeTorghutSymbol } from '~/server/torghut-symbols'
 
@@ -21,11 +22,8 @@ const jsonResponse = (payload: unknown, status = 200) => {
   })
 }
 
-const resolveDefaultHealthSymbol = () => {
-  const configured = process.env.JANGAR_MARKET_CONTEXT_HEALTH_DEFAULT_SYMBOL?.trim()
-  if (configured && configured.length > 0) return normalizeTorghutSymbol(configured)
-  return 'AAPL'
-}
+const resolveDefaultHealthSymbol = () =>
+  normalizeTorghutSymbol(resolveTorghutEndpointsConfig(process.env).marketContextHealthDefaultSymbol)
 
 export const getMarketContextHealthHandler = async (request: Request) => {
   const url = new URL(request.url)

@@ -79,14 +79,23 @@ describe('updateJangarManifests', () => {
       workerManifestPath: relative(repoRoot, fixture.workerManifestPath),
     })
 
-    const kustomization = readFileSync(fixture.kustomizationPath, 'utf8')
-    const serviceManifest = readFileSync(fixture.serviceManifestPath, 'utf8')
-    const workerManifest = readFileSync(fixture.workerManifestPath, 'utf8')
+    const kustomization = YAML.parse(readFileSync(fixture.kustomizationPath, 'utf8')) as {
+      images?: Array<{ name?: string; newTag?: string; digest?: string }>
+    }
+    const serviceManifest = YAML.parse(readFileSync(fixture.serviceManifestPath, 'utf8')) as {
+      metadata?: { annotations?: Record<string, string> }
+    }
+    const workerManifest = YAML.parse(readFileSync(fixture.workerManifestPath, 'utf8')) as {
+      metadata?: { annotations?: Record<string, string> }
+    }
 
-    expect(kustomization).toContain('newTag: "new-tag"')
-    expect(kustomization).toContain('digest: sha256:newdigest')
-    expect(serviceManifest).toContain(`deploy.knative.dev/rollout: "${rolloutTimestamp}"`)
-    expect(workerManifest).toContain(`kubectl.kubernetes.io/restartedAt: "${rolloutTimestamp}"`)
+    expect(kustomization.images?.[0]).toEqual({
+      name: imageName,
+      newTag: 'new-tag',
+      digest: 'sha256:newdigest',
+    })
+    expect(serviceManifest.metadata?.annotations?.['deploy.knative.dev/rollout']).toBe(rolloutTimestamp)
+    expect(workerManifest.metadata?.annotations?.['kubectl.kubernetes.io/restartedAt']).toBe(rolloutTimestamp)
     expect(result.changed).toEqual({
       kustomization: true,
       service: true,
@@ -115,9 +124,14 @@ describe('updateJangarManifests', () => {
       workerManifestPath: relative(repoRoot, fixture.workerManifestPath),
     })
 
-    const kustomization = readFileSync(fixture.kustomizationPath, 'utf8')
-    expect(kustomization).toContain('newTag: "digest-add"')
-    expect(kustomization).toContain('digest: sha256:abc123')
+    const kustomization = YAML.parse(readFileSync(fixture.kustomizationPath, 'utf8')) as {
+      images?: Array<{ name?: string; newTag?: string; digest?: string }>
+    }
+    expect(kustomization.images?.[0]).toEqual({
+      name: imageName,
+      newTag: 'digest-add',
+      digest: 'sha256:abc123',
+    })
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })

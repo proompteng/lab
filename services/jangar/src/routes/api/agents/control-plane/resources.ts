@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { createControlPlaneCacheStore } from '~/server/control-plane-cache-store'
+import { resolveControlPlaneCacheReadConfig } from '~/server/control-plane-config'
 import { resolvePrimitiveKind } from '~/server/primitives-control-plane'
 import { asRecord, asString, errorResponse, normalizeNamespace, okResponse } from '~/server/primitives-http'
 import { createKubernetesClient } from '~/server/primitives-kube'
@@ -82,10 +83,7 @@ const matchesAgentRunFilters = (resource: Record<string, unknown>, phase?: strin
   return true
 }
 
-const isCacheEnabled = () => {
-  const flag = (process.env.JANGAR_CONTROL_PLANE_CACHE_ENABLED ?? '').trim().toLowerCase()
-  return flag === '1' || flag === 'true' || flag === 'yes' || flag === 'on'
-}
+const isCacheEnabled = () => resolveControlPlaneCacheReadConfig(process.env).enabled
 
 const CACHE_KINDS = new Set([
   'Agent',
@@ -175,7 +173,7 @@ export const listPrimitiveResources = async (
     let fallbackCacheMetadata: ReturnType<typeof buildCacheResponse> | null = null
 
     if (canUseCache) {
-      const cluster = (process.env.JANGAR_CONTROL_PLANE_CACHE_CLUSTER ?? 'default').trim() || 'default'
+      const cluster = resolveControlPlaneCacheReadConfig(process.env).clusterId
       const cacheCheckedAt = new Date()
       const cacheConfig = resolveCacheFreshnessConfig()
       let store: ReturnType<typeof createControlPlaneCacheStore> | null = null
@@ -243,7 +241,7 @@ export const listPrimitiveResources = async (
           })
         }
       } catch {
-        // Fall back to kubectl list for unsupported selectors / transient DB issues.
+        // Fall back to a live Kubernetes list for unsupported selectors / transient DB issues.
       } finally {
         try {
           await store?.close()

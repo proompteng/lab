@@ -3,13 +3,9 @@ import { Buffer } from 'node:buffer'
 import { Effect } from 'effect'
 import * as Duration from 'effect/Duration'
 import * as Schedule from 'effect/Schedule'
+import { loadGithubReviewConfig } from './github-review-config'
 
-const MIN_REQUEST_SPACING_MS = (() => {
-  const raw = process.env.JANGAR_GITHUB_MIN_REQUEST_SPACING_MS
-  if (!raw) return 250
-  const parsed = Number.parseInt(raw, 10)
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 250
-})()
+const MIN_REQUEST_SPACING_MS = loadGithubReviewConfig(process.env).minRequestSpacingMs
 
 const DEFAULT_RATE_LIMIT_BACKOFF_MS = 60_000
 const RATE_LIMIT_JITTER_MS = 1_000

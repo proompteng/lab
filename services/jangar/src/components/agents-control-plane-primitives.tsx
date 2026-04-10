@@ -31,7 +31,7 @@ import {
 } from '@/data/agents-control-plane'
 import { cn } from '@/lib/utils'
 
-type PrimitiveListField = {
+export type PrimitiveListField = {
   label: string
   value: (resource: PrimitiveResource) => ReactNode
 }

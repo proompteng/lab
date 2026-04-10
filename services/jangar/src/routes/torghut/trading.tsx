@@ -26,122 +26,27 @@ import * as React from 'react'
 import { Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts'
 
 import { TorghutStrategySelectValue } from '@/components/torghut-strategy-select-value'
+import {
+  DEFAULT_TZ,
+  fetchTradingSnapshot,
+  fetchTradingStrategies,
+  loadTorghutTradingPageData,
+  type FilledExecution,
+  type RejectedDecision,
+  type StrategyItem,
+  type TorghutTradingPageData,
+  type TradingSummary,
+} from '@/data/torghut-trading'
 import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/torghut/trading')({
+  loader: async (): Promise<TorghutTradingPageData> => loadTorghutTradingPageData(formatEtDayToday()),
   component: TorghutTrading,
 })
-
-type StrategyItem = {
-  id: string
-  name: string
-  enabled: boolean
-  baseTimeframe: string
-  universeSymbols: unknown
-}
-
-type Interval = {
-  tz: string
-  day: string
-  startUtc: string
-  endUtc: string
-}
-
-type TradingSummary = {
-  interval: Interval
-  strategy: { id: string; name: string } | null
-  realizedPnl: {
-    value: number
-    closedQty: number
-    winRate: number | null
-    winCount: number
-    lossCount: number
-    series: { ts: string; realizedPnl: number }[]
-    warnings: string[]
-  }
-  executions: { filledCount: number }
-  decisions: {
-    generatedCount: number
-    plannedCount: number
-    blockedCount: number
-    stalePlannedCount: number
-    executionSubmitAttempts: number
-    topBlockedReasons: { reason: string; count: number }[]
-    submissionFunnel: {
-      generatedCount: number
-      blockedCount: number
-      submittedCount: number
-      filledCount: number
-      rejectedCount: number
-    }
-  }
-  rejections: {
-    rejectedCount: number
-    topReasons: { reason: string; count: number }[]
-  }
-  equity: {
-    available: boolean
-    byAccount: { alpacaAccountLabel: string; delta: number; series: { ts: string; equity: number }[] }[]
-  }
-  runtime: {
-    profitability: {
-      available: boolean
-      schemaVersion: string | null
-      lookbackHours: number | null
-      decisionCount: number
-      executionCount: number
-      tcaSampleCount: number
-      realizedPnlProxyNotional: number | null
-      avgAbsSlippageBps: number | null
-      caveatCodes: string[]
-      error: string | null
-    }
-    controlPlane: {
-      available: boolean
-      activeRevision: string | null
-      capitalStage: string | null
-      capitalStageTotals: { stage: string; count: number }[]
-      criticalToggleParity: {
-        status: string | null
-        mismatches: string[]
-      }
-      error: string | null
-    }
-  }
-}
-
-type FilledExecution = {
-  executionId: string
-  tradeDecisionId: string | null
-  strategyId: string
-  strategyName: string | null
-  createdAt: string
-  symbol: string
-  side: string
-  filledQty: number
-  avgFillPrice: number | null
-  timeframe: string | null
-  alpacaAccountLabel: string | null
-}
-
-type RejectedDecision = {
-  id: string
-  createdAt: string
-  alpacaAccountLabel: string
-  symbol: string
-  timeframe: string
-  status: string
-  rationale: string | null
-  riskReasons: string[]
-  strategyId: string
-  strategyName: string
-}
-
-const DEFAULT_TZ = 'America/New_York'
 const MIN_TRADING_DAY = '2020-01-01'
 const MAX_TRADING_DAY = '2100-12-31'
 
-const formatEtDayToday = () => {
+function formatEtDayToday() {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: DEFAULT_TZ,
     year: 'numeric',
@@ -209,33 +114,6 @@ const formatTimestamp = (value: string): string => {
   }).format(new Date(parsed))
 }
 
-const getErrorMessage = (payload: unknown): string | null => {
-  if (!payload || typeof payload !== 'object') return null
-  const record = payload as { message?: unknown; error?: unknown }
-  if (typeof record.message === 'string' && record.message) return record.message
-  if (typeof record.error === 'string' && record.error) return record.error
-  return null
-}
-
-const isStrategiesPayload = (value: unknown): value is { ok: true; items: StrategyItem[] } => {
-  if (!value || typeof value !== 'object') return false
-  if (!('ok' in value) || !('items' in value)) return false
-  if ((value as { ok?: unknown }).ok !== true) return false
-  return Array.isArray((value as { items?: unknown }).items)
-}
-
-const isSummaryPayload = (value: unknown): value is { ok: true; summary: TradingSummary } => {
-  if (!value || typeof value !== 'object') return false
-  if (!('ok' in value) || !('summary' in value)) return false
-  return (value as { ok?: unknown }).ok === true
-}
-
-const isItemsPayload = <T,>(value: unknown): value is { ok: true; items: T[] } => {
-  if (!value || typeof value !== 'object') return false
-  if (!('items' in value)) return false
-  return Array.isArray((value as { items?: unknown }).items)
-}
-
 const reasonHistogramConfig = {
   count: {
     label: 'Count',
@@ -244,17 +122,18 @@ const reasonHistogramConfig = {
 } satisfies ChartConfig
 
 function TorghutTrading() {
+  const initialData = Route.useLoaderData() as TorghutTradingPageData
   const [day, setDay] = React.useState(() => formatEtDayToday())
   const [isDayPickerOpen, setIsDayPickerOpen] = React.useState(false)
-  const [strategies, setStrategies] = React.useState<StrategyItem[]>([])
-  const [strategyId, setStrategyId] = React.useState<string>('')
-  const [strategiesError, setStrategiesError] = React.useState<string | null>(null)
-  const [disabledMessage, setDisabledMessage] = React.useState<string | null>(null)
+  const [strategies, setStrategies] = React.useState<StrategyItem[]>(initialData.strategies)
+  const [strategyId, setStrategyId] = React.useState<string>(initialData.selectedStrategyId)
+  const [strategiesError, setStrategiesError] = React.useState<string | null>(initialData.strategiesError)
+  const [disabledMessage, setDisabledMessage] = React.useState<string | null>(initialData.disabledMessage)
 
-  const [summary, setSummary] = React.useState<TradingSummary | null>(null)
-  const [summaryError, setSummaryError] = React.useState<string | null>(null)
-  const [executions, setExecutions] = React.useState<FilledExecution[]>([])
-  const [decisions, setDecisions] = React.useState<RejectedDecision[]>([])
+  const [summary, setSummary] = React.useState<TradingSummary | null>(initialData.summary)
+  const [summaryError, setSummaryError] = React.useState<string | null>(initialData.summaryError)
+  const [executions, setExecutions] = React.useState<FilledExecution[]>(initialData.executions)
+  const [decisions, setDecisions] = React.useState<RejectedDecision[]>(initialData.decisions)
   const [isLoading, setIsLoading] = React.useState(false)
 
   const loadDataRequestIdRef = React.useRef(0)
@@ -266,31 +145,36 @@ function TorghutTrading() {
     }
   }, [])
 
+  React.useEffect(() => {
+    setStrategies(initialData.strategies)
+    setStrategiesError(initialData.strategiesError)
+    setDisabledMessage(initialData.disabledMessage)
+    setSummary(initialData.summary)
+    setSummaryError(initialData.summaryError)
+    setExecutions(initialData.executions)
+    setDecisions(initialData.decisions)
+    setStrategyId((current) => {
+      if (current && initialData.strategies.some((strategy) => strategy.id === current)) {
+        return current
+      }
+      return initialData.selectedStrategyId
+    })
+  }, [initialData])
+
   const loadStrategies = React.useCallback(async () => {
     setDisabledMessage(null)
     setStrategiesError(null)
     try {
-      const response = await fetch('/api/torghut/trading/strategies')
-      const payload = (await response.json().catch(() => null)) as unknown
-      if (!response.ok) {
-        const message = getErrorMessage(payload) ?? `Failed to load strategies (${response.status})`
-        const disabled = Boolean(payload && typeof payload === 'object' && 'disabled' in payload)
-        if (disabled) setDisabledMessage(message)
-        setStrategiesError(message)
+      const result = await fetchTradingStrategies()
+      if (!result.ok) {
+        if (result.disabled) setDisabledMessage(result.error)
+        setStrategiesError(result.error)
         setStrategies([])
         return
       }
 
-      if (!isStrategiesPayload(payload)) {
-        setStrategiesError('Unexpected strategies payload.')
-        setStrategies([])
-        return
-      }
-
-      const parsed = payload.items.filter(
-        (item) => item && typeof item.id === 'string' && typeof item.name === 'string',
-      )
-      setStrategies(parsed as StrategyItem[])
+      const parsed = result.items
+      setStrategies(parsed)
       setStrategyId((current) => {
         if (current && parsed.some((item) => item.id === current)) return current
         return parsed[0]?.id ?? ''
@@ -314,47 +198,26 @@ function TorghutTrading() {
     setSummaryError(null)
     setDisabledMessage(null)
 
-    const query = new URLSearchParams({ day: params.day, tz: DEFAULT_TZ })
-    if (params.strategyId) query.set('strategyId', params.strategyId)
-
     try {
-      const [summaryRes, execRes, decRes] = await Promise.all([
-        fetch(`/api/torghut/trading/summary?${query}`, { signal: controller.signal }),
-        fetch(`/api/torghut/trading/executions?${query}`, { signal: controller.signal }),
-        fetch(`/api/torghut/trading/decisions?${query}`, { signal: controller.signal }),
-      ])
+      const result = await fetchTradingSnapshot({
+        day: params.day,
+        strategyId: params.strategyId,
+        signal: controller.signal,
+      })
 
       if (loadDataRequestIdRef.current !== requestId) return
-
-      const summaryPayload = (await summaryRes.json().catch(() => null)) as unknown
-      if (loadDataRequestIdRef.current !== requestId) return
-      if (!summaryRes.ok) {
-        const message = getErrorMessage(summaryPayload) ?? `Failed to load summary (${summaryRes.status})`
-        const disabled = Boolean(summaryPayload && typeof summaryPayload === 'object' && 'disabled' in summaryPayload)
-        if (disabled) setDisabledMessage(message)
-        setSummaryError(message)
+      if (!result.ok) {
+        if (result.disabledMessage) setDisabledMessage(result.disabledMessage)
+        setSummaryError(result.error)
         setSummary(null)
         setExecutions([])
         setDecisions([])
         return
       }
 
-      if (!isSummaryPayload(summaryPayload)) {
-        setSummaryError('Unexpected summary payload.')
-        setSummary(null)
-        setExecutions([])
-        setDecisions([])
-        return
-      }
-      setSummary(summaryPayload.summary)
-
-      const execPayload = (await execRes.json().catch(() => null)) as unknown
-      if (loadDataRequestIdRef.current !== requestId) return
-      setExecutions(execRes.ok && isItemsPayload<FilledExecution>(execPayload) ? execPayload.items : [])
-
-      const decPayload = (await decRes.json().catch(() => null)) as unknown
-      if (loadDataRequestIdRef.current !== requestId) return
-      setDecisions(decRes.ok && isItemsPayload<RejectedDecision>(decPayload) ? decPayload.items : [])
+      setSummary(result.summary)
+      setExecutions(result.executions)
+      setDecisions(result.decisions)
     } catch (error) {
       if (controller.signal.aborted) return
       const message = error instanceof Error ? error.message : 'Failed to load trading history.'
@@ -368,10 +231,6 @@ function TorghutTrading() {
       }
     }
   }, [])
-
-  React.useEffect(() => {
-    void loadStrategies()
-  }, [loadStrategies])
 
   React.useEffect(() => {
     if (!strategyId || !day) return
@@ -407,7 +266,16 @@ function TorghutTrading() {
           </p>
         </div>
         <div className="flex items-start gap-2">
-          <Button variant="outline" onClick={() => void loadData({ day, strategyId })} disabled={isLoading || !day}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              void loadStrategies()
+              if (day && strategyId) {
+                void loadData({ day, strategyId })
+              }
+            }}
+            disabled={isLoading || !day}
+          >
             Refresh
           </Button>
         </div>

@@ -1,16 +1,16 @@
-import { startAgentCommsSubscriber } from '~/server/agent-comms-subscriber'
-import { startAgentsController, stopAgentsController } from '~/server/agents-controller'
+import { startAgentCommsSubscriber } from './agent-comms-subscriber'
+import { startAgentsController, stopAgentsController } from './agents-controller'
 import {
   startControlPlaneHeartbeatPublisher,
   stopControlPlaneHeartbeatPublisher,
-} from '~/server/control-plane-heartbeat-publisher'
-import { ensureLeaderElectionRuntime, isLeaderElectionRequired } from '~/server/leader-election'
-import { startOrchestrationController, stopOrchestrationController } from '~/server/orchestration-controller'
-import { startPrimitivesReconciler, stopPrimitivesReconciler } from '~/server/primitives-reconciler'
+} from './control-plane-heartbeat-publisher'
+import { ensureLeaderElectionRuntime, isLeaderElectionRequired } from './leader-election'
+import { startOrchestrationController, stopOrchestrationController } from './orchestration-controller'
+import { startPrimitivesReconciler, stopPrimitivesReconciler } from './primitives-reconciler'
 import {
   startSupportingPrimitivesController,
   stopSupportingPrimitivesController,
-} from '~/server/supporting-primitives-controller'
+} from './supporting-primitives-controller'
 
 export const ensureAgentCommsRuntime = () => {
   void startAgentCommsSubscriber().catch((error) => {

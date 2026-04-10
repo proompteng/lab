@@ -1,230 +1,64 @@
 import { loadTemporalConfig } from '@proompteng/temporal-bun-sdk'
-import { sql } from 'kysely'
 
 import { assessAgentRunIngestion, getAgentsControllerHealth } from '~/server/agents-controller'
-import { getDb } from '~/server/db'
-import { getRegisteredMigrationNames } from '~/server/kysely-migrations'
-import { getLeaderElectionStatus } from '~/server/leader-election'
-import { getOrchestrationControllerHealth } from '~/server/orchestration-controller'
-import { getSupportingControllerHealth } from '~/server/supporting-primitives-controller'
-import {
-  getWatchReliabilitySummary,
-  type ControlPlaneWatchReliabilitySummary,
-} from '~/server/control-plane-watch-reliability'
+import { resolveControlPlaneStatusConfig } from '~/server/control-plane-config'
 import {
   createControlPlaneHeartbeatStore,
   isHeartbeatFresh,
   type ControlPlaneHeartbeatRow,
   type ControlPlaneHeartbeatStoreGetInput,
 } from '~/server/control-plane-heartbeat-store'
-import {
-  createKubeGateway,
-  type KubeGateway,
-  type KubeGatewayCondition,
-  type KubeGatewayDeployment,
-} from '~/server/kube-gateway'
-import { asRecord, asString } from '~/server/primitives-http'
-import { parseNamespaceScopeEnv } from '~/server/namespace-scope'
-import { parseEnvStringList, parseOptionalNumber } from '~/server/agents-controller/env-config'
 import { buildRuntimeAdmissionSnapshot, type RuntimeAdmissionSnapshot } from '~/server/control-plane-runtime-admission'
+import { checkDatabase } from '~/server/control-plane-db-status'
+import {
+  buildExecutionTrust,
+  resolveExecutionTrustSummaryLimit,
+  type ExecutionTrustInput,
+  type ExecutionTrustSnapshot,
+} from '~/server/control-plane-execution-trust'
+import { resolveEmpiricalServices } from '~/server/control-plane-empirical-services'
+import {
+  buildRolloutHealth,
+  maybeUseSplitTopologyControllerRollout,
+  maybeUseSplitTopologyRuntimeRollout,
+  unknownRolloutHealth,
+} from '~/server/control-plane-rollout-health'
 import type {
-  AdmissionPassportStatus,
-  DatabaseMigrationConsistency,
-  DependencyQuorumConfidence,
-  DependencyQuorumSegment,
-  DependencyQuorumSegmentName,
-  DependencyQuorumSegmentScope,
-  DependencyQuorumSegmentStatus,
-  DependencyQuorumStatus,
-  ExecutionTrustSwarm,
-  ExecutionTrustStage,
-  ExecutionTrustStatus,
-  RuntimeKitStatus,
-  WorkflowsReliabilityStatus,
-} from '~/data/agents-control-plane'
+  AgentRunIngestionStatus,
+  ControlPlaneStatus,
+  ControllerStatus,
+  DatabaseStatus,
+  GrpcStatus,
+  RuntimeAdapterStatus,
+} from '~/server/control-plane-status-types'
+import {
+  buildDependencyQuorum,
+  resolveWatchReliabilityBlockErrorsThreshold,
+  resolveWatchReliabilityBlockRestartsThreshold,
+  resolveWorkflowNamespaces,
+  resolveWorkflowSwarms,
+  resolveWorkflowWindowMinutes,
+  resolveWorkflowsReliabilityStatus,
+  type WorkflowsReliabilityStatusInput,
+} from '~/server/control-plane-workflows'
+import {
+  getWatchReliabilitySummary,
+  type ControlPlaneWatchReliabilitySummary,
+} from '~/server/control-plane-watch-reliability'
+import { createKubeGateway, type KubeGateway } from '~/server/kube-gateway'
+import { getLeaderElectionStatus } from '~/server/leader-election'
+import { getOrchestrationControllerHealth } from '~/server/orchestration-controller'
+import { getSupportingControllerHealth } from '~/server/supporting-primitives-controller'
+import type { ExecutionTrustStatus, WorkflowsReliabilityStatus } from '~/data/agents-control-plane'
+
+export type { ControlPlaneStatus, DatabaseStatus, GrpcStatus } from './control-plane-status-types'
+export { buildExecutionTrust } from './control-plane-execution-trust'
 
 const DEFAULT_TEMPORAL_HOST = 'temporal-frontend.temporal.svc.cluster.local'
 const DEFAULT_TEMPORAL_PORT = 7233
 const DEFAULT_TEMPORAL_ADDRESS = `${DEFAULT_TEMPORAL_HOST}:${DEFAULT_TEMPORAL_PORT}`
-const DEFAULT_WORKFLOWS_WINDOW_MINUTES = 15
-const DEFAULT_WORKFLOWS_SWARMS = ['jangar-control-plane']
-const DEFAULT_WORKFLOWS_NAMESPACES = ['agents']
-const DEFAULT_WORKFLOWS_WARNING_BACKOFF_THRESHOLD = 2
-const DEFAULT_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD = 3
-const DEFAULT_WATCH_RELIABILITY_BLOCK_ERRORS = 6
-const DEFAULT_WATCH_RELIABILITY_BLOCK_RESTARTS = 3
-const DEFAULT_ROLLOUT_DEPLOYMENTS = ['agents', 'agents-controllers']
-const DEFAULT_EXECUTION_TRUST_SWARMS = ['jangar-control-plane', 'torghut-quant']
-const DEFAULT_EXECUTION_TRUST_SUMMARY_LIMIT = 20
-const MAX_TOP_FAILURE_REASONS = 5
-const MAX_WORKFLOW_COLLECTION_ERROR_SAMPLE = 3
-const MIN_WINDOW_MINUTES = 1
-const MAX_WINDOW_MINUTES = 24 * 60
-
-const WORKFLOW_SCHEDULE_LABEL_SELECTOR = 'schedules.proompteng.ai/schedule'
-const SWARM_LABEL_SELECTOR = 'swarm.proompteng.ai/name'
-const SWARM_STAGE_NAMES = ['discover', 'plan', 'implement', 'verify'] as const
-const SWARM_REQUIREMENTS_PENDING_STALE_THRESHOLD_MS = 45 * 60 * 1000
-
-const STATUS_MS_PER_MINUTE = 60 * 1000
-const MIGRATION_TABLE_CANDIDATES = ['kysely_migration', 'kysely_migrations'] as const
 
 type ControllerHealth = ReturnType<typeof getAgentsControllerHealth>
-
-type WorkflowsReliabilityStatusInput = {
-  now: Date
-  namespace: string
-  namespaces: string[]
-  windowMinutes: number
-  swarms: string[]
-  kube: KubeGateway
-}
-
-type HeartbeatAuthoritySource = {
-  mode: 'heartbeat' | 'local' | 'rollout' | 'unknown'
-  namespace: string
-  source_deployment: string
-  source_pod: string
-  observed_at: string | null
-  fresh: boolean
-  message: string
-}
-
-export type ControllerStatus = {
-  name: string
-  enabled: boolean
-  started: boolean
-  scope_namespaces: string[]
-  crds_ready: boolean
-  missing_crds: string[]
-  last_checked_at: string
-  status: 'healthy' | 'degraded' | 'disabled' | 'unknown'
-  message: string
-  authority: HeartbeatAuthoritySource
-}
-
-export type RuntimeAdapterStatus = {
-  name: string
-  available: boolean
-  status: 'healthy' | 'configured' | 'degraded' | 'disabled' | 'unknown'
-  message: string
-  endpoint: string
-  authority: HeartbeatAuthoritySource
-}
-
-type DeploymentRolloutStatus = {
-  name: string
-  namespace: string
-  status: 'healthy' | 'degraded' | 'unknown' | 'disabled'
-  desired_replicas: number
-  ready_replicas: number
-  available_replicas: number
-  updated_replicas: number
-  unavailable_replicas: number
-  message: string
-}
-
-type ControlPlaneRolloutHealth = {
-  status: 'healthy' | 'degraded' | 'unknown'
-  observed_deployments: number
-  degraded_deployments: number
-  deployments: DeploymentRolloutStatus[]
-  message: string
-}
-
-export type DatabaseStatus = {
-  configured: boolean
-  connected: boolean
-  status: 'healthy' | 'degraded' | 'disabled'
-  message: string
-  latency_ms: number
-  migration_consistency: DatabaseMigrationConsistency
-}
-
-export type GrpcStatus = {
-  enabled: boolean
-  address: string
-  status: 'healthy' | 'degraded' | 'disabled'
-  message: string
-}
-
-export type NamespaceStatus = {
-  namespace: string
-  status: 'healthy' | 'degraded'
-  degraded_components: string[]
-}
-
-export type EmpiricalDependencyStatus = {
-  status: 'healthy' | 'degraded' | 'disabled' | 'unknown'
-  endpoint: string
-  message: string
-  authoritative: boolean
-  calibration_status?: string
-  authoritative_modes?: string[]
-  eligible_models?: string[]
-  eligible_jobs?: string[]
-  stale_jobs?: string[]
-}
-
-export type EmpiricalServicesStatus = {
-  forecast: EmpiricalDependencyStatus
-  lean: EmpiricalDependencyStatus
-  jobs: EmpiricalDependencyStatus
-}
-
-export type ControlPlaneWatchReliability = {
-  status: ControlPlaneWatchReliabilitySummary['status']
-  window_minutes: number
-  observed_streams: number
-  total_events: number
-  total_errors: number
-  total_restarts: number
-  streams: ControlPlaneWatchReliabilitySummary['streams']
-}
-
-export type AgentRunIngestionStatus = {
-  namespace: string
-  status: 'healthy' | 'degraded' | 'unknown'
-  message: string
-  last_watch_event_at: string | null
-  last_resync_at: string | null
-  untouched_run_count: number
-  oldest_untouched_age_seconds: number | null
-}
-
-export type ControlPlaneStatus = {
-  service: string
-  generated_at: string
-  leader_election: {
-    enabled: boolean
-    required: boolean
-    is_leader: boolean
-    lease_name: string
-    lease_namespace: string
-    identity: string
-    last_transition_at: string
-    last_attempt_at: string
-    last_success_at: string
-    last_error: string
-  }
-  controllers: ControllerStatus[]
-  runtime_adapters: RuntimeAdapterStatus[]
-  database: DatabaseStatus
-  grpc: GrpcStatus
-  watch_reliability: ControlPlaneWatchReliability
-  agentrun_ingestion: AgentRunIngestionStatus
-  runtime_kits: RuntimeKitStatus[]
-  admission_passports: AdmissionPassportStatus[]
-  serving_passport_id: string | null
-  workflows: WorkflowsReliabilityStatus
-  dependency_quorum: DependencyQuorumStatus
-  execution_trust: ExecutionTrustStatus
-  swarms: ExecutionTrustSwarm[]
-  stages: ExecutionTrustStage[]
-  rollout_health: ControlPlaneRolloutHealth
-  empirical_services: EmpiricalServicesStatus
-  namespaces: NamespaceStatus[]
-}
 
 export type ControlPlaneStatusOptions = {
   namespace: string
@@ -242,39 +76,10 @@ export type ControlPlaneStatusDeps = {
   checkDatabase?: () => Promise<DatabaseStatus>
   getWatchReliabilitySummary?: () => ControlPlaneWatchReliabilitySummary
   getWorkflowsReliabilityStatus?: (input: WorkflowsReliabilityStatusInput) => Promise<WorkflowsReliabilityStatus>
-  resolveEmpiricalServices?: () => Promise<EmpiricalServicesStatus>
+  resolveEmpiricalServices?: typeof resolveEmpiricalServices
   resolveExecutionTrust?: (input: ExecutionTrustInput) => Promise<ExecutionTrustSnapshot>
   resolveRuntimeAdmission?: (input: { now: Date; executionTrust: ExecutionTrustStatus }) => RuntimeAdmissionSnapshot
   kubeGateway?: KubeGateway
-}
-
-export type ExecutionTrustSnapshot = {
-  executionTrust: ExecutionTrustStatus
-  swarms: ExecutionTrustSwarm[]
-  stages: ExecutionTrustStage[]
-}
-
-type ExecutionTrustInput = {
-  namespace: string
-  now: Date
-  swarms: string[]
-  kube?: KubeGateway
-  summaryLimit?: number
-}
-
-type ExecutionTrustBlock = {
-  type: ExecutionTrustStatus['blocking_windows'][number]['type']
-  scope: string
-  name?: string
-  reason: string
-  class: ExecutionTrustStatus['blocking_windows'][number]['class']
-}
-
-const SWARM_STAGE_LAST_RUN_KEY: Record<(typeof SWARM_STAGE_NAMES)[number], string> = {
-  discover: 'lastDiscoverAt',
-  plan: 'lastPlanAt',
-  implement: 'lastImplementAt',
-  verify: 'lastVerifyAt',
 }
 
 const normalizeMessage = (value: unknown) => (value instanceof Error ? value.message : String(value))
@@ -303,9 +108,9 @@ const buildAuthorityFromHeartbeat = (input: {
   namespace: string
   row: ControlPlaneHeartbeatRow | null
   now: Date
-  fallbackMode: HeartbeatAuthoritySource['mode']
+  fallbackMode: 'heartbeat' | 'local' | 'rollout' | 'unknown'
   fallbackMessage: string
-}): HeartbeatAuthoritySource => {
+}) => {
   if (!input.row) {
     return {
       mode: input.fallbackMode,
@@ -323,7 +128,7 @@ const buildAuthorityFromHeartbeat = (input: {
   const baseMessage = input.row.message?.trim() || ''
 
   return {
-    mode: 'heartbeat',
+    mode: 'heartbeat' as const,
     namespace: input.row.namespace,
     source_deployment: input.row.deployment_name,
     source_pod: input.row.pod_name,
@@ -344,430 +149,8 @@ const defaultGetHeartbeat: HeartbeatResolver = async (input) => {
   }
 }
 
-const asDependencyReason = (name: string, suffix: string) => `${name.replace(/-/g, '_')}_${suffix}`
-
-const toIso = (value: number | null) => (value === null ? null : new Date(value).toISOString())
-
-const parseDateMs = (value: unknown) => {
-  const parsed = asString(value)
-  if (!parsed) return null
-  const millis = Date.parse(parsed)
-  return Number.isFinite(millis) ? millis : null
-}
-
-const parseDurationToMs = (value: string | null) => {
-  const normalized = (value ?? '').trim().toLowerCase()
-  const match = /^(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days)$/.exec(
-    normalized,
-  )
-  if (!match) return null
-  const amount = Number(match[1])
-  if (!Number.isFinite(amount) || amount <= 0) return null
-  const unit = match[2]
-  if (unit.startsWith('s')) return amount * 1000
-  if (unit.startsWith('m')) return amount * 60 * 1000
-  if (unit.startsWith('h')) return amount * 60 * 60 * 1000
-  return amount * 24 * 60 * 60 * 1000
-}
-
-const resolveExecutionTrustSwarms = () => {
-  const configured = parseEnvStringList('JANGAR_CONTROL_PLANE_EXECUTION_TRUST_SWARMS')
-  if (configured.length > 0) return uniqueStrings(configured)
-  return [...DEFAULT_EXECUTION_TRUST_SWARMS]
-}
-
-const resolveExecutionTrustSummaryLimit = () =>
-  toSafeInt(
-    process.env.JANGAR_CONTROL_PLANE_EXECUTION_TRUST_SUMMARY_LIMIT,
-    DEFAULT_EXECUTION_TRUST_SUMMARY_LIMIT,
-    1,
-    100,
-  )
-
-const asExecutionTrustClass = (value: unknown): 'degraded' | 'blocked' | 'unknown' =>
-  value === 'degraded' || value === 'blocked' || value === 'unknown' ? value : 'unknown'
-
-const readRequirementsPending = (raw: unknown): number => {
-  if (typeof raw === 'number' && Number.isFinite(raw)) return Math.max(0, Math.floor(raw))
-  if (typeof raw === 'string' && raw.trim() !== '') {
-    const parsed = Number.parseInt(raw, 10)
-    return Number.isFinite(parsed) ? Math.max(0, parsed) : 0
-  }
-  return 0
-}
-
-const evaluateRequirementsPendingClass = (input: {
-  pending: number
-  latestRequirementTimestampMs: number | null
-  nowMs: number
-  frozen: boolean
-}): ExecutionTrustSwarm['requirements_pending_class'] => {
-  if (input.frozen) return 'blocked'
-  if (input.pending <= 0) return 'healthy'
-  if (input.latestRequirementTimestampMs === null) return 'unknown'
-  const ageMs = input.nowMs - input.latestRequirementTimestampMs
-  if (ageMs > SWARM_REQUIREMENTS_PENDING_STALE_THRESHOLD_MS) return 'degraded'
-  return 'degraded'
-}
-
-const readBooleanValue = (value: unknown): boolean | null => (value === true ? true : value === false ? false : null)
-
-const readConsecutiveFailures = (value: unknown): number => {
-  if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.floor(value))
-  if (typeof value === 'string' && value.trim() !== '') {
-    const parsed = Number.parseInt(value, 10)
-    return Number.isFinite(parsed) ? Math.max(0, parsed) : 0
-  }
-  return 0
-}
-
-const buildExecutionTrustStage = (input: {
-  namespace: string
-  swarmName: string
-  stage: (typeof SWARM_STAGE_NAMES)[number]
-  stageState: Record<string, unknown>
-  nowMs: number
-  freezeState: 'active' | 'expired_unreconciled' | 'inactive'
-}) => {
-  const configuredEveryRaw = asString(input.stageState['cadence'])
-  const configuredEveryMs = parseDurationToMs(configuredEveryRaw)
-  const lastRunAt = asString(input.stageState['lastRunTime'])
-  const lastRunMs = parseDateMs(lastRunAt)
-  const ageMs = lastRunMs === null ? null : input.nowMs - lastRunMs
-  const staleAfterMs = configuredEveryMs === null ? null : configuredEveryMs * 2
-  const explicitFresh = readBooleanValue(input.stageState['fresh'])
-  const inferredFresh =
-    explicitFresh !== null
-      ? explicitFresh
-      : staleAfterMs === null || lastRunMs === null
-        ? null
-        : ageMs !== null && ageMs <= staleAfterMs
-  const stale = staleAfterMs !== null && (explicitFresh === false || (inferredFresh !== null && !inferredFresh))
-  const latestFailureCount = readConsecutiveFailures(input.stageState['consecutiveFailures'])
-  const healthy = readBooleanValue(input.stageState['healthy'])
-  const dataConfidence: ExecutionTrustStage['data_confidence'] =
-    latestFailureCount > 0 || stale || healthy === false
-      ? 'degraded'
-      : input.stageState['healthy'] === undefined && input.stageState['fresh'] === undefined && lastRunMs === null
-        ? 'unknown'
-        : 'high'
-
-  const rawPhase = asString(input.stageState['phase']) ?? 'Unknown'
-  const frozen = rawPhase.toLowerCase() === 'frozen'
-  const phase = input.freezeState === 'expired_unreconciled' && frozen ? 'Recovering' : rawPhase
-  const reason =
-    input.freezeState === 'active'
-      ? `${input.stage} blocked by swarm freeze`
-      : input.freezeState === 'expired_unreconciled'
-        ? `${input.stage} waiting for freeze reconciliation`
-        : frozen
-          ? `${input.stage} stage is frozen`
-          : stale
-            ? `${input.stage} stage is stale`
-            : latestFailureCount > 0
-              ? `${input.stage} consecutive failures`
-              : asString(input.stageState['phase']) === null
-                ? `${input.stage} phase missing`
-                : null
-  const classReason =
-    input.freezeState === 'active'
-      ? 'blocked'
-      : input.freezeState === 'expired_unreconciled'
-        ? 'degraded'
-        : frozen || stale
-          ? 'blocked'
-          : latestFailureCount > 0 || healthy === false
-            ? 'degraded'
-            : healthy === null
-              ? 'unknown'
-              : null
-
-  return {
-    stageData: {
-      swarm: input.swarmName,
-      namespace: input.namespace,
-      stage: input.stage,
-      phase,
-      last_run_at: toIso(lastRunMs),
-      next_expected_at: configuredEveryMs === null || lastRunMs === null ? null : toIso(lastRunMs + configuredEveryMs),
-      configured_every_ms: configuredEveryMs,
-      age_ms: ageMs,
-      stale_after_ms: staleAfterMs,
-      stale,
-      recent_failed_jobs: latestFailureCount,
-      recent_backoff_limit_exceeded_jobs: latestFailureCount >= 3 ? 1 : 0,
-      last_failure_reason: reason,
-      data_confidence: dataConfidence,
-    },
-    blockingClass: classReason,
-    failureReason: reason,
-  }
-}
-
-export const buildExecutionTrust = async ({
-  namespace,
-  now,
-  swarms,
-  kube = createKubeGateway(),
-  summaryLimit = DEFAULT_EXECUTION_TRUST_SUMMARY_LIMIT,
-}: ExecutionTrustInput): Promise<ExecutionTrustSnapshot> => {
-  const nowMs = now.getTime()
-  const resolvedSwarms = uniqueStrings(swarms.length === 0 ? resolveExecutionTrustSwarms() : swarms)
-  const snapshot = {
-    swarms: [] as ExecutionTrustSwarm[],
-    stages: [] as ExecutionTrustStage[],
-    blockingWindows: [] as ExecutionTrustBlock[],
-  }
-
-  let resources: Awaited<ReturnType<KubeGateway['listSwarms']>> = []
-  try {
-    resources = await kube.listSwarms(namespace)
-  } catch (error) {
-    return {
-      executionTrust: {
-        status: 'unknown',
-        reason: `execution trust snapshot unavailable: ${normalizeMessage(error)}`,
-        last_evaluated_at: now.toISOString(),
-        blocking_windows: [],
-        evidence_summary: [],
-      },
-      swarms: [],
-      stages: [],
-    }
-  }
-
-  const byName = new Map<string, (typeof resources)[number]>()
-  for (const resource of resources) {
-    byName.set(resource.metadata.name, resource)
-  }
-
-  for (const swarmName of resolvedSwarms) {
-    const rawResource = byName.get(swarmName)
-    if (!rawResource) {
-      snapshot.blockingWindows.push({
-        type: 'swarms',
-        scope: namespace,
-        name: swarmName,
-        reason: `tracked swarm not found: ${swarmName}`,
-        class: 'blocked',
-      })
-      snapshot.swarms.push({
-        name: swarmName,
-        namespace,
-        phase: 'Unknown',
-        ready: false,
-        updated_at: null,
-        observed_generation: null,
-        freeze: null,
-        requirements_pending: 0,
-        requirements_pending_class: 'blocked',
-        last_discover_at: null,
-        last_plan_at: null,
-        last_implement_at: null,
-        last_verify_at: null,
-      })
-      continue
-    }
-
-    const metadata = rawResource.metadata
-    const status = rawResource.status
-    const stageStates = asRecord(status.stageStates) ?? {}
-
-    const lastDiscoveredAt = asString(status[SWARM_STAGE_LAST_RUN_KEY.discover])
-    const lastPlanAt = asString(status[SWARM_STAGE_LAST_RUN_KEY.plan])
-    const lastImplementAt = asString(status[SWARM_STAGE_LAST_RUN_KEY.implement])
-    const lastVerifyAt = asString(status[SWARM_STAGE_LAST_RUN_KEY.verify])
-    const latestRequirementTimestampMs = Math.max(
-      parseDateMs(lastDiscoveredAt) ?? -1,
-      parseDateMs(lastPlanAt) ?? -1,
-      parseDateMs(lastImplementAt) ?? -1,
-      parseDateMs(lastVerifyAt) ?? -1,
-    )
-    const phase = asString(status.phase) ?? 'Unknown'
-    const freezeRaw = asRecord(status.freeze) ?? {}
-    const freezeUntil = asString(freezeRaw.until)
-    const freezeUntilMs = parseDateMs(freezeUntil)
-    const freezeActive = freezeUntilMs !== null && freezeUntilMs > nowMs
-    const freezeExpiredUnreconciled =
-      phase.toLowerCase() === 'frozen' && freezeUntilMs !== null && freezeUntilMs <= nowMs
-    const freezeReason = asString(freezeRaw.reason) ?? null
-    const projectedPhase = freezeExpiredUnreconciled ? 'Recovering' : phase
-    const ready =
-      projectedPhase.toLowerCase() !== 'frozen' &&
-      projectedPhase.toLowerCase() !== 'recovering' &&
-      !freezeActive &&
-      phase.toLowerCase() !== 'disabled'
-    const observedGeneration = Number.isFinite(Number(status.observedGeneration ?? metadata.generation ?? null))
-      ? Math.max(0, Number(status.observedGeneration ?? metadata.generation ?? 0))
-      : null
-
-    const requirementsRaw = asRecord(status.requirements) ?? {}
-    const requirementsPending = readRequirementsPending(requirementsRaw.pending)
-    const requirementsPendingClass = evaluateRequirementsPendingClass({
-      pending: requirementsPending,
-      latestRequirementTimestampMs: latestRequirementTimestampMs < 0 ? null : latestRequirementTimestampMs,
-      nowMs,
-      frozen: freezeActive,
-    })
-
-    if (requirementsPendingClass === 'blocked') {
-      snapshot.blockingWindows.push({
-        type: 'dependencies',
-        scope: namespace,
-        name: swarmName,
-        reason: `requirements are blocked on ${swarmName}: pending=${requirementsPending}`,
-        class: 'blocked',
-      })
-    } else if (requirementsPendingClass === 'degraded') {
-      snapshot.blockingWindows.push({
-        type: 'dependencies',
-        scope: namespace,
-        name: swarmName,
-        reason: `requirements are degraded on ${swarmName}: pending=${requirementsPending}`,
-        class: 'degraded',
-      })
-    } else if (requirementsPendingClass === 'unknown') {
-      snapshot.blockingWindows.push({
-        type: 'dependencies',
-        scope: namespace,
-        name: swarmName,
-        reason: `requirements aging is unknown for ${swarmName}`,
-        class: 'unknown',
-      })
-    }
-
-    if (freezeActive) {
-      snapshot.blockingWindows.push({
-        type: 'swarms',
-        scope: namespace,
-        name: swarmName,
-        reason: freezeReason ? `swarm freeze active (${freezeReason})` : 'swarm freeze active',
-        class: 'blocked',
-      })
-    } else if (phase.toLowerCase() === 'frozen' && freezeUntilMs !== null && freezeUntilMs <= nowMs) {
-      snapshot.blockingWindows.push({
-        type: 'swarms',
-        scope: namespace,
-        name: swarmName,
-        reason: freezeReason ? `freeze expiry unreconciled (${freezeReason})` : 'freeze expiry unreconciled',
-        class: 'degraded',
-      })
-    }
-
-    for (const stage of SWARM_STAGE_NAMES) {
-      const stageStateRaw = asRecord(stageStates[stage])
-      if (!stageStateRaw || Object.keys(stageStateRaw).length === 0) {
-        snapshot.stages.push({
-          swarm: swarmName,
-          namespace,
-          stage,
-          phase: 'Missing',
-          last_run_at: null,
-          next_expected_at: null,
-          configured_every_ms: null,
-          age_ms: null,
-          stale_after_ms: null,
-          stale: false,
-          recent_failed_jobs: 0,
-          recent_backoff_limit_exceeded_jobs: 0,
-          last_failure_reason: 'missing stage status',
-          data_confidence: 'unknown',
-        })
-        snapshot.blockingWindows.push({
-          type: 'stages',
-          scope: namespace,
-          name: `${swarmName}:${stage}`,
-          reason: `missing ${stage} state for ${swarmName}`,
-          class: 'unknown',
-        })
-        continue
-      }
-
-      const builtStage = buildExecutionTrustStage({
-        namespace,
-        swarmName,
-        stage,
-        stageState: stageStateRaw,
-        nowMs,
-        freezeState: freezeActive ? 'active' : freezeExpiredUnreconciled ? 'expired_unreconciled' : 'inactive',
-      })
-      snapshot.stages.push(builtStage.stageData)
-      if (builtStage.blockingClass) {
-        const stageBlockingClass = asExecutionTrustClass(builtStage.blockingClass)
-        snapshot.blockingWindows.push({
-          type: 'stages',
-          scope: namespace,
-          name: `${swarmName}:${stage}`,
-          reason: builtStage.failureReason ?? `${stage} is unhealthy`,
-          class: stageBlockingClass,
-        })
-      }
-    }
-
-    snapshot.swarms.push({
-      name: swarmName,
-      namespace,
-      phase: projectedPhase,
-      ready,
-      updated_at: toIso(
-        parseDateMs(asString(status.lastTransitionTime) ?? asString(status.updatedAt) ?? asString(status.observedAt)) ??
-          nowMs,
-      ),
-      observed_generation: observedGeneration,
-      freeze: freezeReason || freezeUntil ? { reason: freezeReason, until: freezeUntil } : null,
-      requirements_pending: requirementsPending,
-      requirements_pending_class: requirementsPendingClass,
-      last_discover_at: lastDiscoveredAt,
-      last_plan_at: lastPlanAt,
-      last_implement_at: lastImplementAt,
-      last_verify_at: lastVerifyAt,
-    })
-  }
-
-  const blockingWindows: ExecutionTrustStatus['blocking_windows'] = uniqueStrings(
-    snapshot.blockingWindows
-      .map((item) => `${item.scope}|${item.type}|${item.name ?? ''}|${item.class}|${item.reason}`)
-      .slice(0, summaryLimit),
-  ).map((line) => {
-    const [scope, type, name, blockingClass, ...reasonPieces] = line.split('|')
-    return {
-      type: type as ExecutionTrustStatus['blocking_windows'][number]['type'],
-      scope,
-      ...(name.length > 0 ? { name } : {}),
-      reason: reasonPieces.join('|'),
-      class: asExecutionTrustClass(blockingClass),
-    }
-  })
-
-  const evidenceSummary = blockingWindows
-    .map((window) => `${window.type}:${window.scope}${window.name ? `:${window.name}` : ''}:${window.reason}`)
-    .slice(0, summaryLimit)
-
-  const hasBlocked = blockingWindows.some((window) => window.class === 'blocked')
-  const hasUnknown = blockingWindows.some((window) => window.class === 'unknown')
-  const hasDegraded = blockingWindows.some((window) => window.class === 'degraded')
-  const executionTrustStatus: ExecutionTrustStatus = {
-    status: hasBlocked ? 'blocked' : hasUnknown ? 'unknown' : hasDegraded ? 'degraded' : 'healthy',
-    reason:
-      blockingWindows.length === 0
-        ? 'execution trust is healthy.'
-        : hasBlocked
-          ? `execution trust blocked: ${blockingWindows.map((window) => window.reason).join(', ')}`
-          : `execution trust ${hasDegraded ? 'degraded' : 'unknown'}: ${blockingWindows.map((window) => window.reason).join(', ')}`,
-    last_evaluated_at: now.toISOString(),
-    blocking_windows: blockingWindows,
-    evidence_summary: evidenceSummary,
-  }
-
-  return {
-    executionTrust: executionTrustStatus,
-    swarms: snapshot.swarms,
-    stages: snapshot.stages,
-  }
-}
-
-const localAuthority = (namespace: string): HeartbeatAuthoritySource => ({
-  mode: 'local',
+const localAuthority = (namespace: string) => ({
+  mode: 'local' as const,
   namespace,
   source_deployment: '',
   source_pod: '',
@@ -776,20 +159,7 @@ const localAuthority = (namespace: string): HeartbeatAuthoritySource => ({
   message: 'using local controller state',
 })
 
-const rolloutAuthority = (namespace: string, deploymentName: string, observedAt: string): HeartbeatAuthoritySource => ({
-  mode: 'rollout',
-  namespace,
-  source_deployment: deploymentName,
-  source_pod: '',
-  observed_at: observedAt,
-  fresh: true,
-  message: `derived from healthy rollout for ${deploymentName}`,
-})
-
-const buildAgentRunIngestionStatus = (
-  namespace: string,
-  health: ReturnType<typeof getAgentsControllerHealth>,
-): AgentRunIngestionStatus => {
+const buildAgentRunIngestionStatus = (namespace: string, health: ControllerHealth): AgentRunIngestionStatus => {
   const assessment = assessAgentRunIngestion(namespace, health)
 
   return {
@@ -800,156 +170,6 @@ const buildAgentRunIngestionStatus = (
     last_resync_at: assessment.lastResyncAt,
     untouched_run_count: assessment.untouchedRunCount,
     oldest_untouched_age_seconds: assessment.oldestUntouchedAgeSeconds,
-  }
-}
-
-const buildMigrationConsistencyStatus = (input: {
-  migrationTable: string | null
-  status: DatabaseMigrationConsistency['status']
-  registered: string[]
-  applied: string[]
-  message: string
-}): DatabaseMigrationConsistency => {
-  const registeredNames = uniqueStrings(input.registered)
-  const appliedNames = uniqueStrings(input.applied)
-  const registeredSet = new Set(registeredNames)
-  const appliedSet = new Set(appliedNames)
-  const missingMigrations = registeredNames.filter((name) => !appliedSet.has(name))
-  const unexpectedMigrations = appliedNames.filter((name) => !registeredSet.has(name))
-
-  return {
-    status: input.status,
-    migration_table: input.migrationTable,
-    registered_count: registeredNames.length,
-    applied_count: appliedNames.length,
-    unapplied_count: missingMigrations.length,
-    unexpected_count: unexpectedMigrations.length,
-    latest_registered: registeredNames.at(-1) ?? null,
-    latest_applied: appliedNames.at(-1) ?? null,
-    missing_migrations: missingMigrations,
-    unexpected_migrations: unexpectedMigrations,
-    message: input.message,
-  }
-}
-
-const getMigrationTable = async (db: NonNullable<ReturnType<typeof getDb>>): Promise<string | null> => {
-  if (!db) return null
-  for (const tableName of MIGRATION_TABLE_CANDIDATES) {
-    try {
-      await sql.raw(`SELECT 1 FROM "${tableName}" LIMIT 1`).execute(db)
-      return tableName
-    } catch {
-      // continue
-    }
-  }
-  return null
-}
-
-const getAppliedMigrations = async (
-  db: NonNullable<ReturnType<typeof getDb>>,
-  tableName: string,
-): Promise<string[]> => {
-  const rows = await sql.raw<{ name: string | null }>(`SELECT name FROM "${tableName}" ORDER BY name`).execute(db)
-  return rows.rows.map((row) => asString(row.name)).filter((name): name is string => name !== '')
-}
-
-const getMigrationConsistency = async (
-  db: NonNullable<ReturnType<typeof getDb>>,
-): Promise<DatabaseMigrationConsistency> => {
-  const registeredMigrations = getRegisteredMigrationNames()
-
-  const migrationTable = await getMigrationTable(db)
-  if (!migrationTable) {
-    return buildMigrationConsistencyStatus({
-      migrationTable: null,
-      status: 'degraded',
-      registered: registeredMigrations,
-      applied: [],
-      message: 'migration table not found (expected kysely_migration or kysely_migrations)',
-    })
-  }
-
-  try {
-    const appliedMigrations = await getAppliedMigrations(db, migrationTable)
-    const details = buildMigrationConsistencyStatus({
-      migrationTable,
-      status: 'healthy',
-      registered: registeredMigrations,
-      applied: appliedMigrations,
-      message: '',
-    })
-    if (details.unapplied_count > 0 || details.unexpected_count > 0) {
-      return {
-        ...details,
-        status: 'degraded',
-        message:
-          `migration drift detected: ${details.unapplied_count} unapplied, ${details.unexpected_count} unexpected migration(s). ` +
-          'Run migrations to align DB with code.',
-      }
-    }
-    return details
-  } catch (error) {
-    return {
-      ...buildMigrationConsistencyStatus({
-        migrationTable,
-        status: 'unknown',
-        registered: registeredMigrations,
-        applied: [],
-        message: normalizeMessage(error),
-      }),
-      message: `failed to evaluate migration state: ${normalizeMessage(error)}`,
-    }
-  }
-}
-
-const buildMigrationUnavailableStatus = (): DatabaseMigrationConsistency =>
-  buildMigrationConsistencyStatus({
-    migrationTable: null,
-    status: 'unknown',
-    registered: getRegisteredMigrationNames(),
-    applied: [],
-    message: 'DATABASE_URL not set',
-  })
-
-const checkDatabase = async (): Promise<DatabaseStatus> => {
-  const db = getDb()
-  if (!db) {
-    return {
-      configured: false,
-      connected: false,
-      status: 'disabled',
-      message: 'DATABASE_URL not set',
-      latency_ms: 0,
-      migration_consistency: buildMigrationUnavailableStatus(),
-    }
-  }
-
-  const start = Date.now()
-  try {
-    await sql`select 1`.execute(db)
-    const migrationConsistency = await getMigrationConsistency(db)
-    return {
-      configured: true,
-      connected: true,
-      status: migrationConsistency.status === 'healthy' ? 'healthy' : 'degraded',
-      message: migrationConsistency.status === 'healthy' ? '' : migrationConsistency.message,
-      latency_ms: Math.max(0, Date.now() - start),
-      migration_consistency: migrationConsistency,
-    }
-  } catch (error) {
-    const message = normalizeMessage(error)
-    return {
-      configured: true,
-      connected: false,
-      status: 'degraded',
-      message,
-      latency_ms: Math.max(0, Date.now() - start),
-      migration_consistency: {
-        ...buildMigrationUnavailableStatus(),
-        status: 'unknown',
-        message: `database ping failed: ${message}`,
-      },
-    }
   }
 }
 
@@ -1093,849 +313,6 @@ const resolveTemporalAdapter = async (): Promise<RuntimeAdapterStatus> => {
   }
 }
 
-const requestJson = async (url: string): Promise<Record<string, unknown> | null> => {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 2000)
-  try {
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: { accept: 'application/json' },
-      signal: controller.signal,
-    })
-    const payload = (await response.json().catch(() => null)) as unknown
-    if (!response.ok || !payload || typeof payload !== 'object' || Array.isArray(payload)) {
-      return null
-    }
-    return payload as Record<string, unknown>
-  } catch {
-    return null
-  } finally {
-    clearTimeout(timeout)
-  }
-}
-
-const resolveEmpiricalServices = async (): Promise<EmpiricalServicesStatus> => {
-  const statusUrl = process.env.JANGAR_TORGHUT_STATUS_URL
-  if (!statusUrl) {
-    return {
-      forecast: {
-        status: 'disabled',
-        endpoint: '',
-        message: 'torghut status not configured',
-        authoritative: false,
-      },
-      lean: {
-        status: 'disabled',
-        endpoint: '',
-        message: 'torghut status not configured',
-        authoritative: false,
-      },
-      jobs: {
-        status: 'disabled',
-        endpoint: '',
-        message: 'torghut status not configured',
-        authoritative: false,
-      },
-    }
-  }
-
-  const payload = await requestJson(statusUrl)
-  if (!payload) {
-    const degraded = {
-      status: 'degraded' as const,
-      endpoint: statusUrl,
-      message: 'torghut status unavailable',
-      authoritative: false,
-    }
-    return {
-      forecast: degraded,
-      lean: degraded,
-      jobs: degraded,
-    }
-  }
-
-  const forecastPayload = asRecord(payload.forecast_service)
-  const leanPayload = asRecord(payload.lean_authority)
-  const jobsPayload = asRecord(payload.empirical_jobs)
-  const jobsMap = asRecord(jobsPayload?.jobs)
-  const eligibleJobs = Object.entries(jobsMap ?? {})
-    .filter(([, value]) => {
-      const row = asRecord(value)
-      return row?.promotion_authority_eligible === true
-    })
-    .map(([key]) => key)
-  const staleJobs = Object.entries(jobsMap ?? {})
-    .filter(([, value]) => {
-      const row = asRecord(value)
-      return row?.stale === true
-    })
-    .map(([key]) => key)
-
-  return {
-    forecast: {
-      status:
-        forecastPayload && typeof forecastPayload.status === 'string'
-          ? (forecastPayload.status as EmpiricalDependencyStatus['status'])
-          : 'degraded',
-      endpoint: statusUrl,
-      message:
-        forecastPayload && typeof forecastPayload.message === 'string'
-          ? forecastPayload.message
-          : 'forecast status unavailable',
-      authoritative: forecastPayload?.authority === 'empirical',
-      calibration_status:
-        forecastPayload && typeof forecastPayload.calibration_status === 'string'
-          ? forecastPayload.calibration_status
-          : 'unknown',
-      eligible_models: Array.isArray(forecastPayload?.promotion_authority_eligible_models)
-        ? forecastPayload.promotion_authority_eligible_models.filter(
-            (item): item is string => typeof item === 'string' && item.length > 0,
-          )
-        : [],
-    },
-    lean: {
-      status:
-        leanPayload && typeof leanPayload.status === 'string'
-          ? (leanPayload.status as EmpiricalDependencyStatus['status'])
-          : 'degraded',
-      endpoint: statusUrl,
-      message: leanPayload && typeof leanPayload.message === 'string' ? leanPayload.message : 'lean status unavailable',
-      authoritative: leanPayload?.authority === 'empirical',
-      authoritative_modes: Array.isArray(leanPayload?.authoritative_modes)
-        ? leanPayload.authoritative_modes.filter((item): item is string => typeof item === 'string' && item.length > 0)
-        : [],
-    },
-    jobs: {
-      status:
-        jobsPayload && typeof jobsPayload.status === 'string'
-          ? (jobsPayload.status as EmpiricalDependencyStatus['status'])
-          : 'degraded',
-      endpoint: statusUrl,
-      message:
-        staleJobs.length > 0
-          ? `stale empirical jobs: ${staleJobs.join(', ')}`
-          : typeof jobsPayload?.message === 'string'
-            ? jobsPayload.message
-            : 'empirical jobs status unavailable',
-      authoritative: jobsPayload?.authority === 'empirical',
-      eligible_jobs: eligibleJobs,
-      stale_jobs: staleJobs,
-    },
-  }
-}
-
-const uniqueStrings = <T extends string>(values: readonly T[]) => {
-  const seen = new Set<T>()
-  const unique: T[] = []
-  for (const value of values) {
-    if (!value || seen.has(value)) continue
-    seen.add(value)
-    unique.push(value)
-  }
-  return unique
-}
-
-const DEPENDENCY_QUORUM_SCOPE_PRIORITY: Record<DependencyQuorumSegmentScope, number> = {
-  single_capability: 0,
-  hypothesis_scoped: 1,
-  capital_family: 2,
-  global: 3,
-}
-
-const DEPENDENCY_QUORUM_CONFIDENCE_PRIORITY: Record<DependencyQuorumConfidence, number> = {
-  high: 0,
-  medium: 1,
-  low: 2,
-}
-
-const pickBroaderDependencyScope = (
-  current: DependencyQuorumSegmentScope | undefined,
-  next: DependencyQuorumSegmentScope,
-) => {
-  if (current == null) {
-    return next
-  }
-
-  return DEPENDENCY_QUORUM_SCOPE_PRIORITY[next] > DEPENDENCY_QUORUM_SCOPE_PRIORITY[current] ? next : current
-}
-
-const pickLowerDependencyConfidence = (
-  current: DependencyQuorumConfidence | undefined,
-  next: DependencyQuorumConfidence,
-) => {
-  if (current == null) {
-    return next
-  }
-
-  return DEPENDENCY_QUORUM_CONFIDENCE_PRIORITY[next] > DEPENDENCY_QUORUM_CONFIDENCE_PRIORITY[current] ? next : current
-}
-
-const toSafeInt = (value: unknown, fallback: number, min: number, max: number) => {
-  const parsed = parseOptionalNumber(value)
-  if (parsed === undefined) return fallback
-  const normalized = Math.max(min, Math.min(max, Math.floor(parsed)))
-  return Number.isFinite(normalized) ? normalized : fallback
-}
-
-const resolveWorkflowWindowMinutes = () =>
-  toSafeInt(
-    process.env.JANGAR_WORKFLOWS_WINDOW_MINUTES ?? process.env.JANGAR_WORKFLOW_WINDOW_MINUTES,
-    DEFAULT_WORKFLOWS_WINDOW_MINUTES,
-    MIN_WINDOW_MINUTES,
-    MAX_WINDOW_MINUTES,
-  )
-
-const resolveWorkflowThreshold = (raw: string | undefined, fallback: number, min: number) =>
-  toSafeInt(raw, fallback, min, Number.MAX_SAFE_INTEGER)
-
-const resolveWorkflowSwarms = () => {
-  const configured = parseEnvStringList('JANGAR_WORKFLOWS_SWARMS')
-  if (configured.length > 0) return uniqueStrings(configured)
-  const legacy = parseEnvStringList('JANGAR_WORKFLOW_SWARMS')
-  if (legacy.length > 0) return uniqueStrings(legacy)
-  return [...DEFAULT_WORKFLOWS_SWARMS]
-}
-
-const resolveWatchReliabilityBlockErrorsThreshold = () =>
-  resolveWorkflowThreshold(
-    process.env.JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_ERRORS,
-    DEFAULT_WATCH_RELIABILITY_BLOCK_ERRORS,
-    1,
-  )
-
-const resolveWatchReliabilityBlockRestartsThreshold = () =>
-  resolveWorkflowThreshold(
-    process.env.JANGAR_CONTROL_PLANE_WATCH_RELIABILITY_BLOCK_RESTARTS,
-    DEFAULT_WATCH_RELIABILITY_BLOCK_RESTARTS,
-    1,
-  )
-
-const resolveWorkflowNamespaces = (optionsNamespace: string) => {
-  const fallback = uniqueStrings([optionsNamespace, ...DEFAULT_WORKFLOWS_NAMESPACES])
-  try {
-    const parsed = parseNamespaceScopeEnv('JANGAR_AGENTS_CONTROLLER_NAMESPACES', {
-      fallback,
-      label: 'workflow reliability status',
-    })
-    return uniqueStrings(parsed)
-  } catch (error) {
-    console.warn(`[jangar] failed to parse JANGAR_AGENTS_CONTROLLER_NAMESPACES: ${normalizeMessage(error)}`)
-    return fallback
-  }
-}
-
-const readRolloutDeploymentNames = () => {
-  const configured = parseEnvStringList('JANGAR_CONTROL_PLANE_ROLLOUT_DEPLOYMENTS')
-  if (configured.length > 0) return uniqueStrings(configured)
-  return [...DEFAULT_ROLLOUT_DEPLOYMENTS]
-}
-
-const safeDeploymentNumber = (value: unknown) => {
-  if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.floor(value))
-  if (typeof value === 'string') {
-    const parsed = Number.parseInt(value, 10)
-    return Number.isFinite(parsed) ? Math.max(0, parsed) : 0
-  }
-  return 0
-}
-
-const buildDeploymentRolloutEntry = (deployment: KubeGatewayDeployment, namespace: string): DeploymentRolloutStatus => {
-  const name = deployment.metadata.name
-  const desiredReplicas = safeDeploymentNumber(deployment.spec.replicas)
-  const readyReplicas = safeDeploymentNumber(deployment.status.readyReplicas)
-  const availableReplicas = safeDeploymentNumber(deployment.status.availableReplicas)
-  const updatedReplicas = safeDeploymentNumber(deployment.status.updatedReplicas)
-  const unavailableReplicas = safeDeploymentNumber(deployment.status.unavailableReplicas)
-
-  if (desiredReplicas === 0) {
-    return {
-      name,
-      namespace,
-      status: 'disabled',
-      desired_replicas: desiredReplicas,
-      ready_replicas: readyReplicas,
-      available_replicas: availableReplicas,
-      updated_replicas: updatedReplicas,
-      unavailable_replicas: unavailableReplicas,
-      message: 'scaled to zero replicas',
-    }
-  }
-
-  const availableCondition = deployment.status.conditions.find((condition) => condition.type === 'Available') ?? null
-  const progressingCondition =
-    deployment.status.conditions.find((condition) => condition.type === 'Progressing') ?? null
-  const availableConditionHealthy = (availableCondition?.status ?? '').toLowerCase() === 'true'
-  const progressingConditionHealthy = (progressingCondition?.status ?? '').toLowerCase() === 'true'
-  const isReplicaMismatch =
-    readyReplicas < desiredReplicas ||
-    availableReplicas < desiredReplicas ||
-    updatedReplicas < desiredReplicas ||
-    unavailableReplicas > 0
-
-  const reasons: string[] = []
-  if (!availableConditionHealthy) {
-    reasons.push('available condition is false')
-  }
-  if (!progressingConditionHealthy) {
-    reasons.push('progressing condition is not true')
-  }
-  if (isReplicaMismatch) {
-    reasons.push(
-      `replicas are behind: ready=${readyReplicas}, available=${availableReplicas}, updated=${updatedReplicas}, desired=${desiredReplicas}`,
-    )
-  }
-
-  const isHealthy = reasons.length === 0
-  if (isHealthy) {
-    return {
-      name,
-      namespace,
-      status: 'healthy',
-      desired_replicas: desiredReplicas,
-      ready_replicas: readyReplicas,
-      available_replicas: availableReplicas,
-      updated_replicas: updatedReplicas,
-      unavailable_replicas: unavailableReplicas,
-      message: 'deployment rollout healthy',
-    }
-  }
-
-  return {
-    name,
-    namespace,
-    status: 'degraded',
-    desired_replicas: desiredReplicas,
-    ready_replicas: readyReplicas,
-    available_replicas: availableReplicas,
-    updated_replicas: updatedReplicas,
-    unavailable_replicas: unavailableReplicas,
-    message: reasons.join('; '),
-  }
-}
-
-const unknownRolloutHealth = (): ControlPlaneRolloutHealth => ({
-  status: 'unknown',
-  observed_deployments: 0,
-  degraded_deployments: 0,
-  deployments: [],
-  message: 'rollout health unavailable (kubernetes query failed)',
-})
-
-const findRolloutDeployment = (rolloutHealth: ControlPlaneRolloutHealth, namespace: string, name: string) =>
-  rolloutHealth.deployments.find((deployment) => deployment.namespace === namespace && deployment.name === name) ?? null
-
-const isAvailableSplitTopologyRollout = (
-  deployment: DeploymentRolloutStatus | null,
-): deployment is DeploymentRolloutStatus =>
-  deployment != null &&
-  (deployment.status === 'healthy' ||
-    (deployment.status === 'degraded' && deployment.ready_replicas > 0 && deployment.available_replicas > 0))
-
-const hasMaterialRolloutDegradation = (rolloutHealth: ControlPlaneRolloutHealth) =>
-  rolloutHealth.deployments.some((deployment) => {
-    if (deployment.status !== 'degraded') return false
-
-    const desiredReplicas = Math.max(deployment.desired_replicas, 1)
-    return deployment.ready_replicas < desiredReplicas || deployment.available_replicas < desiredReplicas
-  })
-
-const maybeUseSplitTopologyControllerRollout = ({
-  namespace,
-  now,
-  controller,
-  health,
-  rolloutHealth,
-}: {
-  namespace: string
-  now: Date
-  controller: ControllerStatus
-  health: ControllerHealth
-  rolloutHealth: ControlPlaneRolloutHealth
-}): ControllerStatus => {
-  if (health.enabled) return controller
-  if (controller.status !== 'disabled' && controller.status !== 'unknown') return controller
-
-  const controllersRollout = findRolloutDeployment(rolloutHealth, namespace, 'agents-controllers')
-  if (!isAvailableSplitTopologyRollout(controllersRollout)) return controller
-
-  return {
-    ...controller,
-    enabled: true,
-    started: true,
-    scope_namespaces: controller.scope_namespaces.length > 0 ? controller.scope_namespaces : [namespace],
-    crds_ready: true,
-    missing_crds: [],
-    last_checked_at: now.toISOString(),
-    status: 'healthy',
-    message: `derived from available ${controllersRollout.name} rollout`,
-    authority: rolloutAuthority(namespace, controllersRollout.name, now.toISOString()),
-  }
-}
-
-const maybeUseSplitTopologyRuntimeRollout = ({
-  namespace,
-  now,
-  adapter,
-  health,
-  rolloutHealth,
-}: {
-  namespace: string
-  now: Date
-  adapter: RuntimeAdapterStatus
-  health: ControllerHealth
-  rolloutHealth: ControlPlaneRolloutHealth
-}): RuntimeAdapterStatus => {
-  if (health.enabled) return adapter
-  if (adapter.name !== 'workflow' && adapter.name !== 'job') return adapter
-  if (adapter.status !== 'disabled' && adapter.status !== 'unknown') return adapter
-
-  const controllersRollout = findRolloutDeployment(rolloutHealth, namespace, 'agents-controllers')
-  if (!isAvailableSplitTopologyRollout(controllersRollout)) return adapter
-
-  return {
-    ...adapter,
-    available: true,
-    status: 'configured',
-    message:
-      adapter.name === 'workflow'
-        ? `workflow runtime derived from available ${controllersRollout.name} rollout`
-        : `job runtime derived from available ${controllersRollout.name} rollout`,
-    authority: rolloutAuthority(namespace, controllersRollout.name, now.toISOString()),
-  }
-}
-
-const buildRolloutHealth = async ({
-  namespace,
-  kube,
-}: {
-  namespace: string
-  kube: KubeGateway
-}): Promise<ControlPlaneRolloutHealth> => {
-  const names = readRolloutDeploymentNames()
-  const items = await kube.listDeployments(namespace)
-  const byName = new Map<string, KubeGatewayDeployment>()
-  for (const item of items) {
-    byName.set(item.metadata.name, item)
-  }
-
-  const deployments: DeploymentRolloutStatus[] = names.map((name) => {
-    const deployment = byName.get(name)
-    if (!deployment) {
-      return {
-        name,
-        namespace,
-        status: 'degraded',
-        desired_replicas: 0,
-        ready_replicas: 0,
-        available_replicas: 0,
-        updated_replicas: 0,
-        unavailable_replicas: 0,
-        message: `deployment ${name} not found in namespace ${namespace}`,
-      }
-    }
-    return buildDeploymentRolloutEntry(deployment, namespace)
-  })
-  const degradedDeployments = deployments.filter((deployment) => deployment.status === 'degraded').length
-  const isDegraded = degradedDeployments > 0
-
-  return {
-    status: isDegraded ? 'degraded' : 'healthy',
-    observed_deployments: deployments.length,
-    degraded_deployments: degradedDeployments,
-    deployments,
-    message: isDegraded
-      ? `${degradedDeployments} configured deployment(s) degraded in rollout`
-      : `${deployments.length} configured deployment(s) healthy`,
-  }
-}
-
-const safeNumber = (value: unknown) =>
-  typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined
-
-const parseIsoMs = (value: unknown): number | null => {
-  const text = asString(value)
-  if (!text) return null
-  const parsed = Date.parse(text)
-  return Number.isFinite(parsed) ? parsed : null
-}
-
-const isBackoffLimitExceededCondition = (condition: KubeGatewayCondition) => condition.reason === 'BackoffLimitExceeded'
-
-const resolveWorkflowsReliabilityStatus = async ({
-  now,
-  namespace,
-  namespaces,
-  windowMinutes,
-  swarms,
-  kube,
-}: WorkflowsReliabilityStatusInput) => {
-  const nowMs = now.getTime()
-  const windowStartMs = nowMs - windowMinutes * STATUS_MS_PER_MINUTE
-
-  let activeJobRuns = 0
-  let recentFailedJobs = 0
-  let backoffLimitExceededJobs = 0
-  const reasonsMap = new Map<string, number>()
-  let collectionErrors = 0
-  let collectedNamespaces = 0
-  const collectionErrorMessages: string[] = []
-
-  const uniqueNamespaces = uniqueStrings(namespaces)
-  const uniqueSwarms = uniqueStrings(swarms)
-  const scopeSwarms = new Set(uniqueSwarms)
-
-  const namespaceScope = uniqueNamespaces.length > 0 ? uniqueNamespaces : [namespace]
-  const selectorSwarms =
-    scopeSwarms.size > 0 ? `${SWARM_LABEL_SELECTOR} in (${Array.from(scopeSwarms).join(',')})` : null
-  const labelSelector = selectorSwarms
-    ? `${WORKFLOW_SCHEDULE_LABEL_SELECTOR},${selectorSwarms}`
-    : WORKFLOW_SCHEDULE_LABEL_SELECTOR
-
-  for (const currentNamespace of namespaceScope) {
-    try {
-      const jobs = await kube.listJobs(currentNamespace, labelSelector)
-      collectedNamespaces += 1
-
-      for (const job of jobs) {
-        const swarm = job.metadata.labels[SWARM_LABEL_SELECTOR] ?? null
-        if (!swarm || !scopeSwarms.has(swarm)) {
-          continue
-        }
-
-        const active = safeNumber(job.status.active)
-        if (active !== undefined && active > 0) {
-          activeJobRuns += 1
-        }
-
-        const failed = safeNumber(job.status.failed)
-        const completionTimeMs = parseIsoMs(job.status.completionTime)
-        const creationTimeMs = parseIsoMs(job.metadata.creationTimestamp)
-        const referenceMs = completionTimeMs ?? parseIsoMs(job.status.startTime) ?? creationTimeMs
-
-        if (
-          failed !== undefined &&
-          failed > 0 &&
-          referenceMs !== null &&
-          referenceMs >= windowStartMs &&
-          referenceMs <= nowMs
-        ) {
-          recentFailedJobs += 1
-        }
-
-        const conditionReasons = new Set<string>()
-        let hasBackoffLimitExceeded = false
-
-        for (const condition of job.status.conditions) {
-          const reason = condition.reason
-          const transitionMs = parseIsoMs(condition.lastTransitionTime)
-          const eventMs = transitionMs ?? referenceMs
-          if (!reason || eventMs === null || eventMs < windowStartMs || eventMs > nowMs) continue
-
-          conditionReasons.add(reason)
-          if (isBackoffLimitExceededCondition(condition)) {
-            hasBackoffLimitExceeded = true
-          }
-        }
-
-        if (
-          conditionReasons.size > 0 &&
-          failed !== undefined &&
-          failed > 0 &&
-          referenceMs !== null &&
-          referenceMs >= windowStartMs &&
-          referenceMs <= nowMs
-        ) {
-          for (const reason of conditionReasons) {
-            const normalized = reason.trim()
-            if (!normalized) continue
-            reasonsMap.set(normalized, (reasonsMap.get(normalized) ?? 0) + 1)
-          }
-        }
-
-        if (
-          hasBackoffLimitExceeded &&
-          failed !== undefined &&
-          failed > 0 &&
-          referenceMs !== null &&
-          referenceMs >= windowStartMs &&
-          referenceMs <= nowMs
-        ) {
-          backoffLimitExceededJobs += 1
-        }
-      }
-    } catch (error) {
-      collectionErrors += 1
-      const errorMessage = normalizeMessage(error)
-      collectionErrorMessages.push(`${currentNamespace}: ${errorMessage}`)
-      console.warn(
-        `[jangar] failed to collect workflow reliability metrics for namespace ${currentNamespace}: ${errorMessage}`,
-      )
-    }
-  }
-
-  const topFailureReasons = Array.from(reasonsMap.entries())
-    .sort((left, right) => {
-      if (right[1] !== left[1]) return right[1] - left[1]
-      return left[0].localeCompare(right[0])
-    })
-    .slice(0, MAX_TOP_FAILURE_REASONS)
-    .map(([reason, count]) => ({ reason, count }))
-
-  const targetNamespaces = namespaceScope.length
-  const dataConfidence: WorkflowsReliabilityStatus['data_confidence'] =
-    collectionErrors === 0 ? 'high' : collectedNamespaces === 0 ? 'unknown' : 'degraded'
-  const collectionMessage =
-    dataConfidence === 'high'
-      ? ''
-      : [
-          dataConfidence === 'unknown'
-            ? `workflow reliability unavailable (${collectionErrors}/${targetNamespaces} namespace queries failed)`
-            : `workflow reliability partially unavailable (${collectionErrors}/${targetNamespaces} namespace queries failed)`,
-          collectionErrorMessages.length > 0
-            ? `sample errors: ${collectionErrorMessages.slice(0, MAX_WORKFLOW_COLLECTION_ERROR_SAMPLE).join(' | ')}`
-            : '',
-        ]
-          .filter((value) => value.length > 0)
-          .join('; ')
-
-  // Keep payload bounded and deterministic.
-  return {
-    active_job_runs: activeJobRuns,
-    recent_failed_jobs: recentFailedJobs,
-    backoff_limit_exceeded_jobs: backoffLimitExceededJobs,
-    window_minutes: windowMinutes,
-    top_failure_reasons: topFailureReasons,
-    data_confidence: dataConfidence,
-    collection_errors: collectionErrors,
-    collected_namespaces: collectedNamespaces,
-    target_namespaces: targetNamespaces,
-    message: collectionMessage,
-  }
-}
-
-const buildDependencyQuorum = (input: {
-  controllers: ControllerStatus[]
-  runtimeAdapters: RuntimeAdapterStatus[]
-  database: DatabaseStatus
-  watchReliability: ControlPlaneWatchReliabilitySummary
-  workflows: WorkflowsReliabilityStatus
-  rolloutHealth: ControlPlaneRolloutHealth
-  empiricalServices: EmpiricalServicesStatus
-  now: Date
-  warningBackoffThreshold: number
-  degradedBackoffThreshold: number
-  watchReliabilityBlockErrorsThreshold: number
-  watchReliabilityBlockRestartsThreshold: number
-  executionTrust?: ExecutionTrustStatus
-}): DependencyQuorumStatus => {
-  const blockReasons: string[] = []
-  const delayReasons: string[] = []
-  const asOf = input.now.toISOString()
-  const workflowTopReasons = input.workflows.top_failure_reasons
-    .map((item) => item.reason)
-    .filter((reason) => reason.length > 0)
-  const segmentReasons = new Map<DependencyQuorumSegmentName, string[]>()
-  const segmentScopes = new Map<DependencyQuorumSegmentName, DependencyQuorumSegmentScope>()
-  const segmentConfidences = new Map<DependencyQuorumSegmentName, DependencyQuorumConfidence>()
-
-  const setSegmentScope = (segment: DependencyQuorumSegmentName, scope: DependencyQuorumSegmentScope) => {
-    segmentScopes.set(segment, pickBroaderDependencyScope(segmentScopes.get(segment), scope))
-  }
-
-  const appendSegmentReason = (
-    segment: DependencyQuorumSegmentName,
-    reason: string,
-    scope: DependencyQuorumSegmentScope,
-    confidence: DependencyQuorumConfidence,
-  ) => {
-    const list = segmentReasons.get(segment) ?? []
-    list.push(reason)
-    segmentReasons.set(segment, list)
-    setSegmentScope(segment, scope)
-    segmentConfidences.set(segment, pickLowerDependencyConfidence(segmentConfidences.get(segment), confidence))
-  }
-
-  const addControlRuntimeReason = (reason: string, status: 'blocked' | 'degraded') => {
-    appendSegmentReason('control_runtime', reason, 'global', status === 'blocked' ? 'low' : 'medium')
-  }
-
-  const addWorkflowReason = (reason: string, status: 'blocked' | 'degraded') => {
-    appendSegmentReason(
-      'dependency_quorum',
-      reason,
-      status === 'blocked' ? 'global' : 'single_capability',
-      status === 'blocked' ? 'low' : 'medium',
-    )
-  }
-
-  const addWatchReason = (reason: string) => {
-    appendSegmentReason('watch_stream', reason, 'single_capability', 'medium')
-  }
-
-  const addRolloutReason = (reason: string) => {
-    appendSegmentReason('control_runtime', reason, 'single_capability', 'medium')
-  }
-
-  const addExecutionTrustReason = (reason: string, status: 'blocked' | 'degraded') => {
-    appendSegmentReason('freshness_authority', reason, 'global', status === 'blocked' ? 'low' : 'medium')
-  }
-
-  const summarizeSegment = (
-    segment: DependencyQuorumSegmentName,
-    status: DependencyQuorumSegmentStatus,
-  ): DependencyQuorumSegment => ({
-    segment,
-    status,
-    scope: segmentScopes.get(segment) ?? 'global',
-    confidence: segmentConfidences.get(segment) ?? 'high',
-    reasons: uniqueStrings(segmentReasons.get(segment) ?? []),
-    as_of: asOf,
-  })
-
-  for (const controller of input.controllers) {
-    if (controller.status === 'healthy') continue
-
-    if (controller.status === 'unknown') {
-      blockReasons.push(asDependencyReason(controller.name, 'status_unknown'))
-      addControlRuntimeReason(asDependencyReason(controller.name, 'status_unknown'), 'blocked')
-      continue
-    }
-
-    if (controller.name === 'agents-controller') {
-      blockReasons.push('agents_controller_unavailable')
-      addControlRuntimeReason('agents_controller_unavailable', 'blocked')
-      continue
-    }
-    delayReasons.push(`${controller.name.replace(/-/g, '_')}_degraded`)
-    addControlRuntimeReason(`${controller.name.replace(/-/g, '_')}_degraded`, 'degraded')
-  }
-
-  const workflowAdapter = input.runtimeAdapters.find((adapter) => adapter.name === 'workflow')
-  if (!workflowAdapter) {
-    blockReasons.push('workflow_runtime_unavailable')
-    addControlRuntimeReason('workflow_runtime_unavailable', 'blocked')
-  } else if (workflowAdapter.status === 'unknown') {
-    blockReasons.push('workflow_runtime_status_unknown')
-    addControlRuntimeReason('workflow_runtime_status_unknown', 'blocked')
-  } else if (workflowAdapter.available === false || workflowAdapter.status === 'degraded') {
-    blockReasons.push('workflow_runtime_unavailable')
-    addControlRuntimeReason('workflow_runtime_unavailable', 'blocked')
-  }
-
-  if (input.database.status !== 'healthy') {
-    blockReasons.push('control_plane_database_unhealthy')
-    addControlRuntimeReason('control_plane_database_unhealthy', 'blocked')
-  }
-
-  if (input.workflows.data_confidence === 'unknown') {
-    blockReasons.push('workflows_data_unknown')
-    addWorkflowReason('workflows_data_unknown', 'blocked')
-  } else if (input.workflows.data_confidence === 'degraded') {
-    delayReasons.push('workflows_data_degraded')
-    addWorkflowReason('workflows_data_degraded', 'degraded')
-  }
-
-  if (input.executionTrust?.status === 'blocked') {
-    blockReasons.push('execution_trust_blocked')
-    addExecutionTrustReason('execution_trust_blocked', 'blocked')
-  } else if (input.executionTrust?.status === 'unknown') {
-    blockReasons.push('execution_trust_unknown')
-    addExecutionTrustReason('execution_trust_unknown', 'blocked')
-  } else if (input.executionTrust?.status === 'degraded') {
-    delayReasons.push('execution_trust_degraded')
-    addExecutionTrustReason('execution_trust_degraded', 'degraded')
-  }
-
-  if (input.workflows.backoff_limit_exceeded_jobs >= input.degradedBackoffThreshold) {
-    blockReasons.push('workflow_backoff_limit_exceeded')
-    addWorkflowReason('workflow_backoff_limit_exceeded', 'blocked')
-  } else if (input.workflows.backoff_limit_exceeded_jobs >= input.warningBackoffThreshold) {
-    delayReasons.push('workflow_backoff_warning')
-    addWorkflowReason('workflow_backoff_warning', 'degraded')
-  }
-
-  const maxWatchReliabilityRestarts = (input.watchReliability.streams ?? []).reduce(
-    (max, stream) => Math.max(max, stream.restarts),
-    0,
-  )
-  const isWatchReliabilityBlocked =
-    input.watchReliability.status === 'degraded' &&
-    (input.watchReliability.total_errors >= input.watchReliabilityBlockErrorsThreshold ||
-      maxWatchReliabilityRestarts >= input.watchReliabilityBlockRestartsThreshold)
-
-  if (isWatchReliabilityBlocked) {
-    blockReasons.push('watch_reliability_blocked')
-  } else if (input.watchReliability.status === 'degraded') {
-    delayReasons.push('watch_reliability_degraded')
-    addWatchReason('watch_reliability_degraded')
-  }
-
-  if (hasMaterialRolloutDegradation(input.rolloutHealth)) {
-    delayReasons.push('rollout_health_degraded')
-    addRolloutReason('rollout_health_degraded')
-  }
-
-  if (input.empiricalServices.jobs.status === 'degraded') {
-    blockReasons.push('empirical_jobs_degraded')
-  } else if (input.empiricalServices.jobs.status === 'unknown') {
-    delayReasons.push('empirical_jobs_unknown')
-  }
-
-  const reasons = uniqueStrings(blockReasons.length > 0 ? blockReasons : delayReasons)
-  const decision: DependencyQuorumStatus['decision'] =
-    blockReasons.length > 0 ? 'block' : delayReasons.length > 0 ? 'delay' : 'allow'
-  const segmentOrder: DependencyQuorumSegmentName[] = [
-    'control_runtime',
-    'dependency_quorum',
-    'freshness_authority',
-    'evidence_authority',
-    'market_data_context',
-    'watch_stream',
-  ]
-  const segments: DependencyQuorumSegment[] = segmentOrder.flatMap((segment) => {
-    const segmentReasonSet = segmentReasons.get(segment)
-    if (segmentReasonSet == null || segmentReasonSet.length === 0) {
-      return [summarizeSegment(segment, 'healthy')]
-    }
-    const hasBlock = segmentReasonSet.some((reason) => blockReasons.includes(reason))
-    const status: DependencyQuorumSegmentStatus = hasBlock ? 'blocked' : 'degraded'
-    return [summarizeSegment(segment, status)]
-  })
-  const delayedSegments = segments.filter((segment) => segment.status === 'degraded')
-  const blockedSegments = segments.filter((segment) => segment.status === 'blocked')
-  const resolveSegmentScope = (items: DependencyQuorumSegment[]) =>
-    items.reduce<DependencyQuorumSegmentScope | undefined>(
-      (scope, segment) => pickBroaderDependencyScope(scope, segment.scope),
-      undefined,
-    )
-  const degradationScope =
-    decision === 'block'
-      ? (resolveSegmentScope(blockedSegments) ?? 'global')
-      : decision === 'delay'
-        ? (resolveSegmentScope(delayedSegments) ?? 'single_capability')
-        : undefined
-  const message =
-    decision === 'allow'
-      ? 'Control-plane admission dependencies are healthy.'
-      : [
-          decision === 'block'
-            ? 'Control-plane dependency quorum is blocked.'
-            : 'Control-plane dependency quorum is degraded; delay capital promotion.',
-          workflowTopReasons.length > 0 ? `recent workflow reasons: ${workflowTopReasons.join(', ')}` : '',
-          input.workflows.message.length > 0 ? input.workflows.message : '',
-        ]
-          .filter((value) => value.length > 0)
-          .join(' ')
-
-  return {
-    decision,
-    reasons,
-    message,
-    segments,
-    degradation_scope: degradationScope,
-  }
-}
-
 export const buildControlPlaneStatus = async (
   options: ControlPlaneStatusOptions,
   deps: ControlPlaneStatusDeps = {},
@@ -2016,32 +393,33 @@ export const buildControlPlaneStatus = async (
   const database = await (deps.checkDatabase ?? checkDatabase)()
   const grpcStatus = options.grpc
   const watchReliability = (deps.getWatchReliabilitySummary ?? getWatchReliabilitySummary)()
-  let rolloutHealth: ControlPlaneRolloutHealth
+  let rolloutHealth
   try {
     rolloutHealth = await buildRolloutHealth({ namespace: options.namespace, kube: kubeGateway })
   } catch {
     rolloutHealth = unknownRolloutHealth()
   }
+
   const effectiveControllers = [
     maybeUseSplitTopologyControllerRollout({
       namespace: options.namespace,
       now,
       controller: agentsController,
-      health: agentsHealth,
+      healthEnabled: agentsHealth.enabled,
       rolloutHealth,
     }),
     maybeUseSplitTopologyControllerRollout({
       namespace: options.namespace,
       now,
       controller: supportingController,
-      health: supportingHealth,
+      healthEnabled: supportingHealth.enabled,
       rolloutHealth,
     }),
     maybeUseSplitTopologyControllerRollout({
       namespace: options.namespace,
       now,
       controller: orchestrationController,
-      health: orchestrationHealth,
+      healthEnabled: orchestrationHealth.enabled,
       rolloutHealth,
     }),
   ]
@@ -2050,26 +428,20 @@ export const buildControlPlaneStatus = async (
       namespace: options.namespace,
       now,
       adapter,
-      health: agentsHealth,
+      healthEnabled: agentsHealth.enabled,
       rolloutHealth,
     }),
   )
-  const warningBackoffThreshold = resolveWorkflowThreshold(
-    process.env.JANGAR_WORKFLOWS_WARNING_BACKOFF_THRESHOLD,
-    DEFAULT_WORKFLOWS_WARNING_BACKOFF_THRESHOLD,
-    1,
-  )
-  const degradedBackoffThreshold = resolveWorkflowThreshold(
-    process.env.JANGAR_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD,
-    DEFAULT_WORKFLOWS_DEGRADED_BACKOFF_THRESHOLD,
-    warningBackoffThreshold,
-  )
+
+  const statusConfig = resolveControlPlaneStatusConfig(process.env)
+  const warningBackoffThreshold = statusConfig.workflowsWarningBackoffThreshold
+  const degradedBackoffThreshold = statusConfig.workflowsDegradedBackoffThreshold
   const watchReliabilityBlockErrorsThreshold = resolveWatchReliabilityBlockErrorsThreshold()
   const watchReliabilityBlockRestartsThreshold = resolveWatchReliabilityBlockRestartsThreshold()
   const executionTrust = await (deps.resolveExecutionTrust ?? buildExecutionTrust)({
     namespace: options.namespace,
     now,
-    swarms: resolveExecutionTrustSwarms(),
+    swarms: resolveWorkflowSwarms(),
     kube: kubeGateway,
     summaryLimit: resolveExecutionTrustSummaryLimit(),
   }).catch(
@@ -2119,7 +491,7 @@ export const buildControlPlaneStatus = async (
     degradedBackoffThreshold,
     watchReliabilityBlockErrorsThreshold,
     watchReliabilityBlockRestartsThreshold,
-    executionTrust: executionTrust?.executionTrust,
+    executionTrust: executionTrust.executionTrust,
   })
 
   const leaderElection = getLeaderElectionStatus()

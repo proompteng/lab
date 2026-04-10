@@ -1,6 +1,7 @@
 import { Effect, pipe } from 'effect'
 
 import { createBunRedisClient, type BunRedisClient } from './bun-redis-client'
+import { resolveRedisConfig } from './storage-config'
 
 export const WORKTREE_TTL_SECONDS = 60 * 60 * 24 * 7
 const DEFAULT_PREFIX = 'openwebui:worktree'
@@ -21,12 +22,13 @@ const redisError = (message: string, error: unknown) =>
   new Error(`${message}: ${error instanceof Error ? error.message : String(error)}`)
 
 export const createRedisWorktreeStore = (options: WorktreeStoreOptions = {}): WorktreeStore => {
-  const url = options.url ?? process.env.JANGAR_REDIS_URL
+  const redisConfig = resolveRedisConfig(process.env)
+  const url = options.url ?? redisConfig.url
   if (!url) {
     throw new Error('JANGAR_REDIS_URL is required for worktree storage')
   }
 
-  const prefix = (options.prefix ?? process.env.JANGAR_WORKTREE_KEY_PREFIX ?? DEFAULT_PREFIX).replace(/:+$/, '')
+  const prefix = (options.prefix ?? redisConfig.worktreeKeyPrefix ?? DEFAULT_PREFIX).replace(/:+$/, '')
   let redisPromise: Promise<BunRedisClient> | null = null
 
   const getRedis = async () => {

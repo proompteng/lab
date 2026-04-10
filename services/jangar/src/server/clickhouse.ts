@@ -1,3 +1,5 @@
+import { resolveClickHouseConfig as resolveConfiguredClickHouseConfig } from './storage-config'
+
 export type ClickHouseConfig = {
   host: string
   port: number
@@ -10,55 +12,28 @@ export type ClickHouseConfig = {
 
 type ValidationResult<T> = { ok: true; value: T } | { ok: false; message: string }
 
-const DEFAULT_PORT = 8123
-const DEFAULT_DATABASE = 'default'
-const DEFAULT_TIMEOUT_MS = 15000
-
-const normalizeEnv = (value: string | undefined) => (value ?? '').trim()
-
-const parseBoolean = (value: string | undefined) => {
-  const normalized = normalizeEnv(value).toLowerCase()
-  if (!normalized) return false
-  if (['true', '1', 'yes', 'on'].includes(normalized)) return true
-  if (['false', '0', 'no', 'off'].includes(normalized)) return false
-  throw new Error('CH_SECURE must be true or false')
-}
-
-const parsePositiveInt = (value: string | undefined, field: string, fallback: number) => {
-  if (value === undefined) return fallback
-  const parsed = Number.parseInt(value, 10)
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(`${field} must be a positive integer`)
-  }
-  return parsed
-}
-
 export const resolveClickHouseConfig = (): ValidationResult<ClickHouseConfig> => {
   try {
-    const host = normalizeEnv(process.env.CH_HOST)
+    const configured = resolveConfiguredClickHouseConfig()
+    const host = configured.host?.trim() ?? ''
     if (!host) return { ok: false, message: 'CH_HOST is not configured' }
 
-    const user = normalizeEnv(process.env.CH_USER)
+    const user = configured.user?.trim() ?? ''
     if (!user) return { ok: false, message: 'CH_USER is not configured' }
 
-    const password = process.env.CH_PASSWORD ?? ''
+    const password = configured.password ?? ''
     if (!password) return { ok: false, message: 'CH_PASSWORD is not configured' }
-
-    const port = parsePositiveInt(process.env.CH_PORT, 'CH_PORT', DEFAULT_PORT)
-    const database = normalizeEnv(process.env.CH_DATABASE) || DEFAULT_DATABASE
-    const secure = parseBoolean(process.env.CH_SECURE)
-    const timeoutMs = parsePositiveInt(process.env.CH_TIMEOUT_MS, 'CH_TIMEOUT_MS', DEFAULT_TIMEOUT_MS)
 
     return {
       ok: true,
       value: {
         host,
-        port,
+        port: configured.port,
         user,
         password,
-        database,
-        secure,
-        timeoutMs,
+        database: configured.database,
+        secure: configured.secure,
+        timeoutMs: configured.timeoutMs,
       },
     }
   } catch (error) {

@@ -1,8 +1,8 @@
-import { spawn } from 'node:child_process'
-
 import { createKubeGateway, type KubeGateway } from '~/server/kube-gateway'
 import { parseBooleanEnv, parseEnvRecord, parseNumberEnv, parseOptionalNumber } from './env-config'
 import { normalizeRepositoryKey, type RepoConcurrencyConfig } from './queue-state'
+
+type EnvSource = Record<string, string | undefined>
 
 const DEFAULT_CONCURRENCY = {
   perNamespace: 10,
@@ -36,12 +36,12 @@ export const parseRepoConcurrencyOverrides = () => {
   return overrides
 }
 
-export const parseRepoConcurrency = (): RepoConcurrencyConfig => {
+export const parseRepoConcurrency = (env: EnvSource = process.env): RepoConcurrencyConfig => {
   const enabled = parseBooleanEnv(
-    process.env.JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_ENABLED,
+    env.JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_ENABLED,
     DEFAULT_REPO_CONCURRENCY.enabled,
   )
-  const parsedDefault = parseOptionalNumber(process.env.JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_DEFAULT)
+  const parsedDefault = parseOptionalNumber(env.JANGAR_AGENTS_CONTROLLER_REPO_CONCURRENCY_DEFAULT)
   const defaultLimit =
     parsedDefault === undefined || parsedDefault < 0 ? DEFAULT_REPO_CONCURRENCY.defaultLimit : Math.floor(parsedDefault)
   return {
@@ -51,47 +51,86 @@ export const parseRepoConcurrency = (): RepoConcurrencyConfig => {
   }
 }
 
-export const parseConcurrency = () => ({
-  perNamespace: parseNumberEnv(
-    process.env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_NAMESPACE,
-    DEFAULT_CONCURRENCY.perNamespace,
-    1,
+export const parseConcurrency = (env: EnvSource = process.env) => ({
+  perNamespace: parseNumberEnv(env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_NAMESPACE, DEFAULT_CONCURRENCY.perNamespace, 1),
+  perAgent: parseNumberEnv(env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_AGENT, DEFAULT_CONCURRENCY.perAgent, 1),
+  cluster: parseNumberEnv(env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_CLUSTER, DEFAULT_CONCURRENCY.cluster, 1),
+  repoConcurrency: parseRepoConcurrency(env),
+})
+
+export const parseQueueLimits = (env: EnvSource = process.env) => ({
+  perNamespace: parseNumberEnv(env.JANGAR_AGENTS_CONTROLLER_QUEUE_NAMESPACE, DEFAULT_QUEUE_LIMITS.perNamespace),
+  perRepo: parseNumberEnv(env.JANGAR_AGENTS_CONTROLLER_QUEUE_REPO, DEFAULT_QUEUE_LIMITS.perRepo),
+  cluster: parseNumberEnv(env.JANGAR_AGENTS_CONTROLLER_QUEUE_CLUSTER, DEFAULT_QUEUE_LIMITS.cluster),
+})
+
+export const parseRateLimits = (env: EnvSource = process.env) => ({
+  windowSeconds: parseNumberEnv(env.JANGAR_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS, DEFAULT_RATE_LIMITS.windowSeconds, 1),
+  perNamespace: parseNumberEnv(env.JANGAR_AGENTS_CONTROLLER_RATE_NAMESPACE, DEFAULT_RATE_LIMITS.perNamespace),
+  perRepo: parseNumberEnv(env.JANGAR_AGENTS_CONTROLLER_RATE_REPO, DEFAULT_RATE_LIMITS.perRepo),
+  cluster: parseNumberEnv(env.JANGAR_AGENTS_CONTROLLER_RATE_CLUSTER, DEFAULT_RATE_LIMITS.cluster),
+})
+
+const DEFAULT_AGENTRUN_IDEMPOTENCY_RESERVATION_TTL_SECONDS = 10 * 60
+
+const parseAdmissionNamespaces = (namespace: string, env: EnvSource) => {
+  const raw = env.JANGAR_AGENTS_CONTROLLER_NAMESPACES
+  if (!raw) return { namespaces: [namespace], includeCluster: true }
+  const list = raw
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0)
+  if (list.length === 0) return { namespaces: [namespace], includeCluster: true }
+  if (list.includes('*')) {
+    return { namespaces: [namespace], includeCluster: false }
+  }
+  return { namespaces: list, includeCluster: true }
+}
+
+export type AgentRunAdmissionConfig = {
+  vcsProvidersEnabled: boolean
+  idempotencyEnabled: boolean
+  idempotencyReservationTtlSeconds: number
+  admissionNamespaces: {
+    namespaces: string[]
+    includeCluster: boolean
+  }
+  concurrency: {
+    perNamespace: number
+    cluster: number
+  }
+  queue: {
+    perNamespace: number
+    perRepo: number
+    cluster: number
+  }
+  rate: {
+    windowSeconds: number
+    perNamespace: number
+    perRepo: number
+    cluster: number
+  }
+}
+
+export const resolveAgentRunAdmissionConfig = (
+  namespace: string,
+  env: EnvSource = process.env,
+): AgentRunAdmissionConfig => ({
+  vcsProvidersEnabled: parseBooleanEnv(env.JANGAR_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED, true),
+  idempotencyEnabled: parseBooleanEnv(env.JANGAR_AGENTRUN_IDEMPOTENCY_ENABLED, true),
+  idempotencyReservationTtlSeconds: parseNumberEnv(
+    env.JANGAR_AGENTRUN_IDEMPOTENCY_RESERVATION_TTL_SECONDS,
+    DEFAULT_AGENTRUN_IDEMPOTENCY_RESERVATION_TTL_SECONDS,
+    0,
   ),
-  perAgent: parseNumberEnv(process.env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_AGENT, DEFAULT_CONCURRENCY.perAgent, 1),
-  cluster: parseNumberEnv(process.env.JANGAR_AGENTS_CONTROLLER_CONCURRENCY_CLUSTER, DEFAULT_CONCURRENCY.cluster, 1),
-  repoConcurrency: parseRepoConcurrency(),
+  admissionNamespaces: parseAdmissionNamespaces(namespace, env),
+  concurrency: (() => {
+    const config = parseConcurrency(env)
+    return { perNamespace: config.perNamespace, cluster: config.cluster }
+  })(),
+  queue: parseQueueLimits(env),
+  rate: parseRateLimits(env),
 })
-
-export const parseQueueLimits = () => ({
-  perNamespace: parseNumberEnv(process.env.JANGAR_AGENTS_CONTROLLER_QUEUE_NAMESPACE, DEFAULT_QUEUE_LIMITS.perNamespace),
-  perRepo: parseNumberEnv(process.env.JANGAR_AGENTS_CONTROLLER_QUEUE_REPO, DEFAULT_QUEUE_LIMITS.perRepo),
-  cluster: parseNumberEnv(process.env.JANGAR_AGENTS_CONTROLLER_QUEUE_CLUSTER, DEFAULT_QUEUE_LIMITS.cluster),
-})
-
-export const parseRateLimits = () => ({
-  windowSeconds: parseNumberEnv(
-    process.env.JANGAR_AGENTS_CONTROLLER_RATE_WINDOW_SECONDS,
-    DEFAULT_RATE_LIMITS.windowSeconds,
-    1,
-  ),
-  perNamespace: parseNumberEnv(process.env.JANGAR_AGENTS_CONTROLLER_RATE_NAMESPACE, DEFAULT_RATE_LIMITS.perNamespace),
-  perRepo: parseNumberEnv(process.env.JANGAR_AGENTS_CONTROLLER_RATE_REPO, DEFAULT_RATE_LIMITS.perRepo),
-  cluster: parseNumberEnv(process.env.JANGAR_AGENTS_CONTROLLER_RATE_CLUSTER, DEFAULT_RATE_LIMITS.cluster),
-})
-
-export const runKubectl = (args: string[]) =>
-  new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve) => {
-    const command = spawn('kubectl', args, { stdio: ['ignore', 'pipe', 'pipe'] })
-    let stdout = ''
-    let stderr = ''
-    command.stdout.on('data', (chunk) => {
-      stdout += chunk.toString()
-    })
-    command.stderr.on('data', (chunk) => {
-      stderr += chunk.toString()
-    })
-    command.on('close', (code) => resolve({ stdout, stderr, code }))
-  })
 
 type NatsDependency = {
   enabled: boolean
@@ -150,51 +189,26 @@ export const checkCrds = async (options: {
   nowIso: () => string
   resolveNatsDependency?: () => NatsDependency
   kubeGateway?: Pick<KubeGateway, 'listCustomResourceDefinitions' | 'serviceExists'>
-  runKubectlCommand?: typeof runKubectl
 }) => {
-  const kubectl = options.runKubectlCommand ?? runKubectl
-  const kubeGateway = options.runKubectlCommand ? null : (options.kubeGateway ?? createKubeGateway())
+  const kubeGateway = options.kubeGateway ?? createKubeGateway()
   const requiredCrds = options.resolveRequiredCrds()
   const missing: string[] = []
   const forbidden: string[] = []
   let availableCrds = new Set<string>()
-  if (kubeGateway) {
-    try {
-      availableCrds = new Set(await kubeGateway.listCustomResourceDefinitions())
-    } catch (error) {
-      const details = (error instanceof Error ? error.message : String(error)).toLowerCase()
-      if (details.includes('forbidden') || details.includes('unauthorized')) {
-        forbidden.push(...requiredCrds)
-      } else {
-        missing.push(...requiredCrds)
-      }
-      return {
-        ok: false,
-        missing: [...missing, ...forbidden],
-        checkedAt: options.nowIso(),
-      }
+  try {
+    availableCrds = new Set(await kubeGateway.listCustomResourceDefinitions())
+  } catch (error) {
+    const details = (error instanceof Error ? error.message : String(error)).toLowerCase()
+    if (details.includes('forbidden') || details.includes('unauthorized')) {
+      forbidden.push(...requiredCrds)
+    } else {
+      missing.push(...requiredCrds)
     }
-  } else {
-    const crdResult = await kubectl(['get', 'crd', '-o', 'jsonpath={range .items[*]}{.metadata.name}{"\\n"}{end}'])
-    if (crdResult.code !== 0) {
-      const details = (crdResult.stderr || crdResult.stdout || '').toLowerCase()
-      if (details.includes('forbidden') || details.includes('unauthorized')) {
-        forbidden.push(...requiredCrds)
-      } else {
-        missing.push(...requiredCrds)
-      }
-      return {
-        ok: false,
-        missing: [...missing, ...forbidden],
-        checkedAt: options.nowIso(),
-      }
+    return {
+      ok: false,
+      missing: [...missing, ...forbidden],
+      checkedAt: options.nowIso(),
     }
-    availableCrds = new Set(
-      crdResult.stdout
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean),
-    )
   }
   for (const name of requiredCrds) {
     if (!availableCrds.has(name)) {
@@ -207,10 +221,9 @@ export const checkCrds = async (options: {
   if (natsDependency?.enabled) {
     const serviceReference = resolveKubernetesServiceReferenceFromUrl(natsDependency.url, namespace)
     if (serviceReference) {
-      const serviceExists = kubeGateway
-        ? await kubeGateway.serviceExists(serviceReference.namespace, serviceReference.name).catch(() => false)
-        : (await kubectl(['get', 'svc', '-n', serviceReference.namespace, serviceReference.name, '-o', 'name']))
-            .code === 0
+      const serviceExists = await kubeGateway
+        .serviceExists(serviceReference.namespace, serviceReference.name)
+        .catch(() => false)
       if (!serviceExists) {
         return {
           ok: false,

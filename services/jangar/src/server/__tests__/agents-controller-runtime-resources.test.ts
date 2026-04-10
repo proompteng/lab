@@ -21,35 +21,36 @@ describe('agents controller runtime-resources module', () => {
     })
   })
 
-  it('deletes runtime resources and throws on kubectl failure', async () => {
-    const runKubectl = vi.fn().mockResolvedValue({ code: 0, stdout: '', stderr: '' })
-    await deleteRuntimeResource(runKubectl, 'job', 'run-1', 'agents')
-    expect(runKubectl).toHaveBeenCalledWith(['delete', 'job', 'run-1', '-n', 'agents'])
-
-    const failed = vi.fn().mockResolvedValue({ code: 1, stdout: '', stderr: 'boom' })
-    await expect(deleteRuntimeResource(failed, 'job', 'run-1', 'agents')).rejects.toThrow('boom')
+  it('deletes runtime resources through the kube client', async () => {
+    const kube = {
+      delete: vi.fn().mockResolvedValue({}),
+    }
+    await deleteRuntimeResource(kube, 'job', 'run-1', 'agents')
+    expect(kube.delete).toHaveBeenCalledWith('job', 'run-1', 'agents', { wait: false })
   })
 
   it('cancels job runtime by deleting job', async () => {
-    const runKubectl = vi.fn().mockResolvedValue({ code: 0, stdout: '', stderr: '' })
-    await cancelRuntime({ runtimeRef: { type: 'job', name: 'run-1' }, namespace: 'agents', runKubectl })
+    const kube = {
+      delete: vi.fn().mockResolvedValue({}),
+      list: vi.fn(),
+    }
+    await cancelRuntime({ runtimeRef: { type: 'job', name: 'run-1' }, namespace: 'agents', kube })
 
-    expect(runKubectl).toHaveBeenCalledWith(['delete', 'job', 'run-1', '-n', 'agents'])
+    expect(kube.delete).toHaveBeenCalledWith('job', 'run-1', 'agents', { wait: false })
   })
 
-  it('cancels workflow runtime by deleting labeled jobs', async () => {
-    const runKubectl = vi.fn().mockResolvedValue({ code: 0, stdout: '', stderr: '' })
-    await cancelRuntime({ runtimeRef: { type: 'workflow', name: 'run-1' }, namespace: 'agents', runKubectl })
+  it('cancels workflow runtime by deleting listed workflow jobs', async () => {
+    const kube = {
+      delete: vi.fn().mockResolvedValue({}),
+      list: vi.fn().mockResolvedValue({
+        items: [{ metadata: { name: 'run-1-a' } }, { metadata: { name: 'run-1-b' } }],
+      }),
+    }
+    await cancelRuntime({ runtimeRef: { type: 'workflow', name: 'run-1' }, namespace: 'agents', kube })
 
-    expect(runKubectl).toHaveBeenCalledWith([
-      'delete',
-      'job',
-      '-n',
-      'agents',
-      '-l',
-      'agents.proompteng.ai/agent-run=run-1',
-      '--ignore-not-found',
-    ])
+    expect(kube.list).toHaveBeenCalledWith('jobs.batch', 'agents', 'agents.proompteng.ai/agent-run=run-1')
+    expect(kube.delete).toHaveBeenNthCalledWith(1, 'job', 'run-1-a', 'agents', { wait: false })
+    expect(kube.delete).toHaveBeenNthCalledWith(2, 'job', 'run-1-b', 'agents', { wait: false })
   })
 
   it('cancels temporal runtime using temporal client', async () => {
@@ -65,7 +66,7 @@ describe('agents controller runtime-resources module', () => {
         namespace: 'temporal-ns',
       },
       namespace: 'agents',
-      runKubectl: vi.fn(),
+      kube: { delete: vi.fn(), list: vi.fn() },
       getTemporalClient,
     })
 
@@ -78,8 +79,9 @@ describe('agents controller runtime-resources module', () => {
   })
 
   it('returns early when runtime reference has no name', async () => {
-    const runKubectl = vi.fn()
-    await cancelRuntime({ runtimeRef: { type: 'job' }, namespace: 'agents', runKubectl })
-    expect(runKubectl).not.toHaveBeenCalled()
+    const kube = { delete: vi.fn(), list: vi.fn() }
+    await cancelRuntime({ runtimeRef: { type: 'job' }, namespace: 'agents', kube })
+    expect(kube.delete).not.toHaveBeenCalled()
+    expect(kube.list).not.toHaveBeenCalled()
   })
 })

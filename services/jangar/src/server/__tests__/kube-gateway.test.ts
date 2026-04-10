@@ -1,14 +1,7 @@
-import { EventEmitter } from 'node:events'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { KubeGatewayError, createKubeGateway } from '~/server/kube-gateway'
 import type { KubernetesClient } from '~/server/primitives-kube'
-
-const childProcessMocks = vi.hoisted(() => ({
-  spawn: vi.fn(),
-}))
-
-vi.mock('node:child_process', () => childProcessMocks)
 
 const createClient = (overrides: Partial<KubernetesClient>): KubernetesClient =>
   ({
@@ -24,32 +17,6 @@ const createClient = (overrides: Partial<KubernetesClient>): KubernetesClient =>
     logs: vi.fn(),
     ...overrides,
   }) as unknown as KubernetesClient
-
-const createMockKubectlProcess = (code: number, options: { stderr?: string; stdout?: string } = {}) => {
-  const stdout = new EventEmitter() as EventEmitter & { setEncoding: () => void }
-  const stderr = new EventEmitter() as EventEmitter & { setEncoding: () => void }
-  stdout.setEncoding = () => {}
-  stderr.setEncoding = () => {}
-
-  const child = new EventEmitter() as EventEmitter & {
-    stdout: typeof stdout
-    stderr: typeof stderr
-  }
-  child.stdout = stdout
-  child.stderr = stderr
-
-  queueMicrotask(() => {
-    if (options.stdout) {
-      stdout.emit('data', options.stdout)
-    }
-    if (options.stderr) {
-      stderr.emit('data', options.stderr)
-    }
-    child.emit('close', code)
-  })
-
-  return child
-}
 
 describe('kube gateway', () => {
   beforeEach(() => {
@@ -188,21 +155,73 @@ describe('kube gateway', () => {
     } satisfies Partial<KubeGatewayError>)
   })
 
-  it('lists namespaces through the shared kubectl boundary', async () => {
-    childProcessMocks.spawn.mockReturnValue(
-      createMockKubectlProcess(0, {
-        stdout: JSON.stringify({
-          items: [{ metadata: { name: 'agents' } }, { metadata: { name: 'torghut' } }],
-        }),
-      }),
-    )
-
-    const gateway = createKubeGateway(createClient({}))
+  it('lists namespaces through the shared kubernetes client boundary', async () => {
+    const client = createClient({
+      list: vi.fn(async () => ({
+        items: [{ metadata: { name: 'agents' } }, { metadata: { name: 'torghut' } }],
+      })),
+    })
+    const gateway = createKubeGateway(client)
 
     await expect(gateway.listNamespaces()).resolves.toEqual(['agents', 'torghut'])
-    expect(childProcessMocks.spawn).toHaveBeenCalledWith('kubectl', ['get', 'namespaces', '-o', 'json'], {
-      stdio: ['ignore', 'pipe', 'pipe'],
+    expect(client.list).toHaveBeenCalledWith('namespaces', '')
+  })
+
+  it('gets, creates, and replaces leases through the shared kubernetes client boundary', async () => {
+    const applyMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        apiVersion: 'coordination.k8s.io/v1',
+        kind: 'Lease',
+        metadata: { name: 'jangar-controller-leader', namespace: 'agents', resourceVersion: '8' },
+        spec: { holderIdentity: 'pod-1', leaseDurationSeconds: 30 },
+      })
+      .mockResolvedValueOnce({
+        apiVersion: 'coordination.k8s.io/v1',
+        kind: 'Lease',
+        metadata: { name: 'jangar-controller-leader', namespace: 'agents', resourceVersion: '9' },
+        spec: { holderIdentity: 'pod-2', leaseDurationSeconds: 30 },
+      })
+    const client = createClient({
+      get: vi.fn(async () => ({
+        apiVersion: 'coordination.k8s.io/v1',
+        kind: 'Lease',
+        metadata: { name: 'jangar-controller-leader', namespace: 'agents', resourceVersion: '7' },
+        spec: { holderIdentity: 'pod-1', leaseDurationSeconds: 30 },
+      })),
+      apply: applyMock,
     })
+    const gateway = createKubeGateway(client)
+
+    await expect(gateway.getLease('agents', 'jangar-controller-leader')).resolves.toMatchObject({
+      metadata: { name: 'jangar-controller-leader', resourceVersion: '7' },
+    })
+    await expect(
+      gateway.createLease('agents', {
+        apiVersion: 'coordination.k8s.io/v1',
+        kind: 'Lease',
+        metadata: { name: 'jangar-controller-leader', namespace: 'agents' },
+        spec: { holderIdentity: 'pod-1', leaseDurationSeconds: 30 },
+      }),
+    ).resolves.toMatchObject({ metadata: { resourceVersion: '8' } })
+    await expect(
+      gateway.replaceLease('agents', {
+        apiVersion: 'coordination.k8s.io/v1',
+        kind: 'Lease',
+        metadata: { name: 'jangar-controller-leader', namespace: 'agents', resourceVersion: '8' },
+        spec: { holderIdentity: 'pod-2', leaseDurationSeconds: 30 },
+      }),
+    ).resolves.toMatchObject({ metadata: { resourceVersion: '9' } })
+    expect(client.get).toHaveBeenCalledWith('lease', 'jangar-controller-leader', 'agents')
+    expect(client.apply).toHaveBeenCalledTimes(2)
+    expect(client.apply).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        apiVersion: 'coordination.k8s.io/v1',
+        kind: 'Lease',
+        metadata: expect.objectContaining({ name: 'jangar-controller-leader', namespace: 'agents' }),
+      }),
+    )
   })
 
   it('classifies namespaced resource access results', async () => {
@@ -211,9 +230,9 @@ describe('kube gateway', () => {
         list: vi
           .fn()
           .mockResolvedValueOnce({ items: [] })
-          .mockRejectedValueOnce(new Error('kubectl list failed: Error from server (Forbidden): forbidden'))
+          .mockRejectedValueOnce(new Error('kubernetes list failed: Error from server (Forbidden): forbidden'))
           .mockRejectedValueOnce(
-            new Error('kubectl list failed: the server does not have a resource type "swarms.swarm.proompteng.ai"'),
+            new Error('kubernetes list failed: the server does not have a resource type "swarms.swarm.proompteng.ai"'),
           ),
       }),
     )

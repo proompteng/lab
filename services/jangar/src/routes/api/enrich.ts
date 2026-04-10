@@ -3,6 +3,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { Effect, Layer, ManagedRuntime, pipe } from 'effect'
 
 import { Atlas, AtlasLive } from '~/server/atlas'
+import { resolveAtlasRuntimeConfig } from '~/server/atlas-config'
 import { type AtlasIndexInput, DEFAULT_REF, parseAtlasIndexInput } from '~/server/atlas-http'
 import { BumbaWorkflows, BumbaWorkflowsLive, type StartEnrichFileResult } from '~/server/bumba'
 import {
@@ -40,7 +41,10 @@ export const Route = createFileRoute('/api/enrich')({
 
 const handlerRuntime = ManagedRuntime.make(Layer.mergeAll(AtlasLive, BumbaWorkflowsLive))
 
-const shouldUseLocalEnrich = () => process.env.ATLAS_LOCAL_MODE === 'true' || !process.env.DATABASE_URL
+const shouldUseLocalEnrich = () => {
+  const atlasConfig = resolveAtlasRuntimeConfig(process.env)
+  return atlasConfig.localMode || !atlasConfig.databaseConfigured
+}
 
 const jsonResponse = (payload: unknown, status = 200) => {
   const body = JSON.stringify(payload)

@@ -5,6 +5,8 @@ import { randomUUID } from 'node:crypto'
 
 import { createBunRedisClient, type BunRedisClient } from './bun-redis-client'
 import { shouldUseInMemoryChatStateStore } from './chat-state-store-mode'
+import { resolveChatConfig } from './chat-config'
+import { resolveRedisConfig } from './storage-config'
 
 export const OPENWEBUI_RENDER_BLOB_TTL_SECONDS = 60 * 60 * 24 * 7
 const DEFAULT_PREFIX = 'openwebui:render'
@@ -48,7 +50,7 @@ const redisError = (message: string, error: unknown) =>
   new Error(`${message}: ${error instanceof Error ? error.message : String(error)}`)
 
 const serializeBlob = (blob: OpenWebUiRenderBlob) => JSON.stringify(blob)
-const shouldDebugOpenWebUIRenderStore = () => process.env.JANGAR_DEBUG_OPENWEBUI_RENDER_STORE === '1'
+const shouldDebugOpenWebUIRenderStore = () => resolveRedisConfig(process.env).renderStoreDebug
 
 const debugOpenWebUIRenderStore = (event: string, details: Record<string, unknown>) => {
   if (!shouldDebugOpenWebUIRenderStore()) return
@@ -98,12 +100,13 @@ export const createOpenWebUiRenderBlob = (args: {
 export const createOpenWebUIRenderBlob = createOpenWebUiRenderBlob
 
 export const createRedisOpenWebUiRenderStore = (options: OpenWebUiRenderStoreOptions = {}): OpenWebUiRenderStore => {
-  const url = options.url ?? process.env.JANGAR_REDIS_URL
+  const redisConfig = resolveRedisConfig(process.env)
+  const url = options.url ?? redisConfig.url
   if (!url) {
     throw new Error('JANGAR_REDIS_URL is required for OpenWebUI rich render storage')
   }
 
-  const prefix = (options.prefix ?? process.env.JANGAR_OPENWEBUI_RENDER_KEY_PREFIX ?? DEFAULT_PREFIX).replace(/:+$/, '')
+  const prefix = (options.prefix ?? redisConfig.renderKeyPrefix ?? DEFAULT_PREFIX).replace(/:+$/, '')
   let redisPromise: Promise<BunRedisClient> | null = null
 
   const getRedis = async () => {
@@ -171,10 +174,9 @@ export const createRedisOpenWebUiRenderStore = (options: OpenWebUiRenderStoreOpt
 const sanitizePrefix = (value: string) => value.replace(/[^a-zA-Z0-9._-]+/g, '-')
 
 export const createFileOpenWebUiRenderStore = (options: OpenWebUiRenderStoreOptions = {}): OpenWebUiRenderStore => {
-  const prefix = sanitizePrefix(
-    (options.prefix ?? process.env.JANGAR_OPENWEBUI_RENDER_KEY_PREFIX ?? DEFAULT_PREFIX).replace(/:+$/, ''),
-  )
-  const directory = options.directory ?? process.env.JANGAR_OPENWEBUI_RENDER_DIRECTORY ?? join(tmpdir(), prefix)
+  const redisConfig = resolveRedisConfig(process.env)
+  const prefix = sanitizePrefix((options.prefix ?? redisConfig.renderKeyPrefix ?? DEFAULT_PREFIX).replace(/:+$/, ''))
+  const directory = options.directory ?? redisConfig.renderDirectory ?? join(tmpdir(), prefix)
   let ensuredDirectoryPromise: Promise<void> | null = null
 
   const ensureDirectory = () => {
@@ -283,14 +285,16 @@ export const getOpenWebUiRenderStore = () => {
     return existing
   }
 
-  const storeMode = process.env.JANGAR_OPENWEBUI_RENDER_STORE_MODE?.trim().toLowerCase()
+  const redisConfig = resolveRedisConfig(process.env)
+  const chatConfig = resolveChatConfig(process.env)
+  const storeMode = redisConfig.renderStoreMode?.trim().toLowerCase()
   const store =
     storeMode === 'memory'
       ? createInMemoryOpenWebUiRenderStore()
       : storeMode === 'file'
         ? createFileOpenWebUiRenderStore()
         : shouldUseInMemoryChatStateStore()
-          ? process.env.NODE_ENV === 'test'
+          ? chatConfig.isTest
             ? createInMemoryOpenWebUiRenderStore()
             : createFileOpenWebUiRenderStore()
           : createRedisOpenWebUiRenderStore()
@@ -302,11 +306,11 @@ export const getOpenWebUiRenderStore = () => {
         : storeMode === 'file'
           ? 'file'
           : shouldUseInMemoryChatStateStore()
-            ? process.env.NODE_ENV === 'test'
+            ? chatConfig.isTest
               ? 'memory'
               : 'file'
             : 'redis',
-    nodeEnv: process.env.NODE_ENV ?? null,
+    nodeEnv: chatConfig.isTest ? 'test' : chatConfig.isProduction ? 'production' : 'development',
   })
   setDefaultRenderStore(store)
   return store

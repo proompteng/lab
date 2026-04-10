@@ -1,6 +1,7 @@
 import { Effect, pipe } from 'effect'
 
 import { createBunRedisClient, type BunRedisClient } from './bun-redis-client'
+import { resolveRedisConfig } from './storage-config'
 
 export const THREAD_TTL_SECONDS = 60 * 60 * 24 * 7
 const DEFAULT_PREFIX = 'openwebui:chat'
@@ -23,12 +24,13 @@ const redisError = (message: string, error: unknown) =>
   new Error(`${message}: ${error instanceof Error ? error.message : String(error)}`)
 
 export const createRedisChatThreadStore = (options: ChatThreadStoreOptions = {}): ChatThreadStore => {
-  const url = options.url ?? process.env.JANGAR_REDIS_URL
+  const redisConfig = resolveRedisConfig(process.env)
+  const url = options.url ?? redisConfig.url
   if (!url) {
     throw new Error('JANGAR_REDIS_URL is required for OpenWebUI chat thread storage')
   }
 
-  const prefix = (options.prefix ?? process.env.JANGAR_CHAT_KEY_PREFIX ?? DEFAULT_PREFIX).replace(/:+$/, '')
+  const prefix = (options.prefix ?? redisConfig.chatKeyPrefix ?? DEFAULT_PREFIX).replace(/:+$/, '')
   let redisPromise: Promise<BunRedisClient> | null = null
 
   const getRedis = async () => {

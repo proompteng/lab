@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { type V1Lease } from '@kubernetes/client-node'
 
 import { asRecord, asString } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP, type KubernetesClient } from '~/server/primitives-kube'
@@ -70,6 +70,9 @@ export type KubeGateway = {
   listJobs: (namespace: string, labelSelector?: string) => Promise<KubeGatewayJob[]>
   listNamespaces: () => Promise<string[]>
   listCustomResourceDefinitions: () => Promise<string[]>
+  getLease: (namespace: string, name: string) => Promise<V1Lease | null>
+  createLease: (namespace: string, lease: V1Lease) => Promise<V1Lease>
+  replaceLease: (namespace: string, lease: V1Lease) => Promise<V1Lease>
   probeNamespacedResource: (resource: string, namespace: string) => Promise<KubeGatewayResourceAccess>
   serviceExists: (namespace: string, name: string) => Promise<boolean>
   listSwarms: (namespace: string) => Promise<KubeGatewaySwarm[]>
@@ -149,50 +152,18 @@ const wrapTransport = async <T>(context: string, run: () => Promise<T>): Promise
   }
 }
 
-const runKubectl = (args: string[]) =>
-  new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve) => {
-    const command = spawn('kubectl', args, { stdio: ['ignore', 'pipe', 'pipe'] })
-    let stdout = ''
-    let stderr = ''
-    command.stdout.setEncoding('utf8')
-    command.stderr.setEncoding('utf8')
-    command.stdout.on('data', (chunk) => {
-      stdout += chunk
-    })
-    command.stderr.on('data', (chunk) => {
-      stderr += chunk
-    })
-    command.on('close', (code) => resolve({ stdout, stderr, code }))
-    command.on('error', (error) =>
-      resolve({
-        stdout,
-        stderr: stderr || normalizeMessage(error),
-        code: 1,
-      }),
-    )
-  })
-
-const readClusterListItems = async (resource: string, context: string) => {
-  const result = await runKubectl(['get', resource, '-o', 'json'])
-  if (result.code !== 0) {
-    const details = result.stderr.trim() || result.stdout.trim() || `exit ${result.code}`
-    throw new KubeGatewayError('transport', `${context}: ${details}`)
-  }
-
-  let payload: unknown
-  try {
-    payload = JSON.parse(result.stdout)
-  } catch (error) {
-    throw new KubeGatewayError('invalid_payload', `${context} returned invalid JSON`, { cause: error })
-  }
-
-  return parseListItems(payload, context)
-}
-
 const parseItemNames = (items: Record<string, unknown>[]) =>
   items
     .map((item) => parseMetadata(item.metadata)?.name ?? asString(asRecord(item.metadata)?.name))
     .filter((entry): entry is string => Boolean(entry))
+
+const withLeaseNamespace = (namespace: string, lease: V1Lease) => ({
+  ...lease,
+  metadata: {
+    ...(asRecord(lease.metadata) ?? {}),
+    namespace,
+  },
+})
 
 export const createKubeGateway = (client: KubernetesClient = createKubernetesClient()): KubeGateway => ({
   listDeployments: async (namespace) =>
@@ -249,13 +220,31 @@ export const createKubeGateway = (client: KubernetesClient = createKubernetesCli
     }),
   listNamespaces: async () =>
     wrapTransport('kube namespaces list failed', async () => {
-      const items = await readClusterListItems('namespaces', 'kube namespaces list')
+      const items = parseListItems(await client.list('namespaces', ''), 'kube namespaces list')
       return parseItemNames(items)
     }),
   listCustomResourceDefinitions: async () =>
     wrapTransport('kube crds list failed', async () => {
-      const items = await readClusterListItems('crd', 'kube crds list')
+      const items = parseListItems(await client.list('crd', ''), 'kube crds list')
       return parseItemNames(items)
+    }),
+  getLease: async (namespace, name) =>
+    wrapTransport('kube lease get failed', async () => {
+      return (await client.get('lease', name, namespace)) as V1Lease | null
+    }).catch((error) => {
+      const message = normalizeMessage(error).toLowerCase()
+      if (message.includes('notfound') || message.includes('not found')) {
+        return null
+      }
+      throw error
+    }),
+  createLease: async (namespace, lease) =>
+    wrapTransport('kube lease create failed', async () => {
+      return (await client.apply(withLeaseNamespace(namespace, lease) as unknown as Record<string, unknown>)) as V1Lease
+    }),
+  replaceLease: async (namespace, lease) =>
+    wrapTransport('kube lease replace failed', async () => {
+      return (await client.apply(withLeaseNamespace(namespace, lease) as unknown as Record<string, unknown>)) as V1Lease
     }),
   probeNamespacedResource: async (resource, namespace) => {
     try {

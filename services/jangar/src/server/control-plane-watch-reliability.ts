@@ -1,3 +1,5 @@
+import { resolveControlPlaneWatchReliabilityConfig } from './control-plane-config'
+
 type ControlPlaneWatchReliabilityStream = {
   resource: string
   namespace: string
@@ -28,9 +30,6 @@ type WatchStreamState = {
   namespace: string
 }
 
-const DEFAULT_WINDOW_MINUTES = 15
-const DEFAULT_STREAM_LIMIT = 20
-const DEFAULT_RESTART_DEGRADE_THRESHOLD = 2
 const MAX_RECORDED_STREAMS = 200
 const TOP_STREAM_LIMIT = 10
 const MINUTE_MS = 60_000
@@ -40,26 +39,13 @@ const normalize = (value: string) => {
   return trimmed.length > 0 ? trimmed : 'unknown'
 }
 
-const resolveWindowMinutes = () => {
-  const raw = process.env.JANGAR_CONTROL_PLANE_WATCH_HEALTH_WINDOW_MINUTES?.trim()
-  const parsed = Number(raw)
-  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_WINDOW_MINUTES
-  return Math.min(Math.max(Math.floor(parsed), 1), 24 * 60)
-}
+const resolveWindowMinutes = () => resolveControlPlaneWatchReliabilityConfig(process.env).windowMinutes
 
-const resolveStreamLimit = () => {
-  const raw = process.env.JANGAR_CONTROL_PLANE_WATCH_HEALTH_STREAM_LIMIT?.trim()
-  const parsed = Number(raw)
-  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_STREAM_LIMIT
-  return Math.min(Math.max(Math.floor(parsed), 1), MAX_RECORDED_STREAMS)
-}
+const resolveStreamLimit = () =>
+  Math.min(resolveControlPlaneWatchReliabilityConfig(process.env).streamLimit, MAX_RECORDED_STREAMS)
 
-const resolveRestartDegradeThreshold = () => {
-  const raw = process.env.JANGAR_CONTROL_PLANE_WATCH_HEALTH_RESTART_DEGRADE_THRESHOLD?.trim()
-  const parsed = Number(raw)
-  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_RESTART_DEGRADE_THRESHOLD
-  return Math.max(1, Math.floor(parsed))
-}
+const resolveRestartDegradeThreshold = () =>
+  resolveControlPlaneWatchReliabilityConfig(process.env).restartDegradeThreshold
 
 const windowStartMs = (now: number, windowMinutes: number) => now - windowMinutes * MINUTE_MS
 

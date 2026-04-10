@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 
 import { Pool } from 'pg'
+import { resolveTorghutTradingDatabaseConfig } from './torghut-config'
 
 type EnabledTorghutDb = { ok: true; pool: Pool }
 type DisabledTorghutDb = { ok: false; disabled: true; message: string }
@@ -25,7 +26,7 @@ const resolveEffectiveSslMode = (rawUrl: string) => {
   const urlMode = resolveSslModeFromUrl(rawUrl)
   if (urlMode) return urlMode
 
-  const envMode = process.env.TORGHUT_PGSSLMODE?.trim() || process.env.TORGHUT_DB_SSLMODE?.trim()
+  const envMode = resolveTorghutTradingDatabaseConfig(process.env).sslMode
   if (envMode) return envMode.toLowerCase()
 
   return DEFAULT_SSLMODE
@@ -55,7 +56,8 @@ const resolveSslConfig = (sslmode: string | null, caCertPath?: string) => {
 }
 
 export const resolveTorghutDb = (): TorghutDbResult => {
-  const dsn = process.env.TORGHUT_DB_DSN?.trim()
+  const tradingDbConfig = resolveTorghutTradingDatabaseConfig(process.env)
+  const dsn = tradingDbConfig.dsn?.trim()
   if (!dsn) {
     return {
       ok: false,
@@ -68,7 +70,7 @@ export const resolveTorghutDb = (): TorghutDbResult => {
 
   // Do not log the DSN; it may contain secrets.
   const sslmode = resolveEffectiveSslMode(dsn)
-  const caCertPath = process.env.TORGHUT_PGSSLROOTCERT?.trim() || process.env.TORGHUT_DB_CA_CERT?.trim()
+  const caCertPath = tradingDbConfig.caCertPath ?? undefined
   const ssl = resolveSslConfig(sslmode, caCertPath)
   cachedPool = new Pool({
     connectionString: dsn,

@@ -13,6 +13,7 @@ import {
   StringCodec,
 } from 'nats'
 
+import { resolveAgentCommsSubscriberConfig, type AgentCommsSubscriberConfig } from '~/server/integrations-config'
 import { publishAgentMessages } from '~/server/agent-messages-bus'
 import { type AgentMessageInput, createAgentMessagesStore } from '~/server/agent-messages-store'
 import { recordAgentCommsBatch, recordAgentCommsError } from '~/server/metrics'
@@ -26,55 +27,11 @@ export class AgentCommsSubscriber extends Context.Tag('AgentCommsSubscriber')<
   AgentCommsSubscriberService
 >() {}
 
-type SubscriberConfig = {
-  natsUrl: string
-  natsUser?: string
-  natsPassword?: string
-  streamName: string
-  consumerName: string
-  pullBatchSize: number
-  pullExpiresMs: number
-  reconnectDelayMs: number
-  maxAckPending: number
-  ackWaitMs: number
-  consumerDescription: string
-  filterSubjects: string[]
-}
+type SubscriberConfig = AgentCommsSubscriberConfig
 
-const DEFAULT_CONFIG: SubscriberConfig = {
-  natsUrl: 'nats://nats.nats.svc.cluster.local:4222',
-  streamName: 'agent-comms',
-  consumerName: 'jangar-agent-comms',
-  pullBatchSize: 250,
-  pullExpiresMs: 1500,
-  reconnectDelayMs: 2000,
-  maxAckPending: 20000,
-  ackWaitMs: 30000,
-  consumerDescription: 'Jangar agent communications ingestion',
-  filterSubjects: ['workflow.>', 'agents.workflow.>', 'workflow_comms.agent_messages.>'],
-}
+const isSubscriberDisabled = () => resolveAgentCommsSubscriberConfig(process.env).disabled
 
-const isSubscriberDisabled = () =>
-  process.env.NODE_ENV === 'test' || process.env.VITEST || process.env.JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED === 'true'
-
-const parseFilterSubjects = (value?: string | null): string[] => {
-  if (!value) return []
-  return value
-    .split(',')
-    .map((subject) => subject.trim())
-    .filter((subject) => subject.length > 0)
-}
-
-const resolveConfig = (): SubscriberConfig => {
-  const envSubjects = parseFilterSubjects(process.env.JANGAR_AGENT_COMMS_SUBJECTS)
-  return {
-    ...DEFAULT_CONFIG,
-    natsUrl: process.env.NATS_URL?.trim() || DEFAULT_CONFIG.natsUrl,
-    natsUser: process.env.NATS_USER?.trim() || undefined,
-    natsPassword: process.env.NATS_PASSWORD?.trim() || undefined,
-    filterSubjects: envSubjects.length > 0 ? envSubjects : DEFAULT_CONFIG.filterSubjects,
-  }
-}
+const resolveConfig = (): SubscriberConfig => resolveAgentCommsSubscriberConfig(process.env)
 
 type DeferredPromise = {
   promise: Promise<void>

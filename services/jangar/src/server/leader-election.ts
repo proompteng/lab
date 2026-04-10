@@ -1,8 +1,9 @@
-import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 
 import { type V1Lease, V1MicroTime } from '@kubernetes/client-node'
 import { type Counter, metrics as otelMetrics } from '@proompteng/otel/api'
+import { isRuntimeTestEnv, resolveLeaderElectionSettings } from '~/server/control-plane-config'
+import { createKubeGateway } from '~/server/kube-gateway'
 
 export type LeaderElectionConfig = {
   enabled: boolean
@@ -59,98 +60,30 @@ const globalState = globalThis as typeof globalThis & {
 
 const nowIso = () => new Date().toISOString()
 const toMicroTime = (date: Date) => new V1MicroTime(date.getTime())
-const isTestEnv = () =>
-  process.env.NODE_ENV === 'test' ||
-  Boolean(process.env.VITEST) ||
-  Boolean(process.env.VITEST_POOL_ID) ||
-  Boolean(process.env.VITEST_WORKER_ID)
-
-const parseBooleanEnv = (value: string | undefined, fallback: boolean) => {
-  if (!value) return fallback
-  const normalized = value.trim().toLowerCase()
-  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'y') return true
-  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'n') return false
-  return fallback
-}
-
-const parseNumberEnv = (value: string | undefined, fallback: number, min: number) => {
-  if (!value) return fallback
-  const parsed = Number.parseInt(value, 10)
-  if (!Number.isFinite(parsed)) return fallback
-  const rounded = Math.floor(parsed)
-  return rounded >= min ? rounded : fallback
-}
-
-const isControllerWorkloadFlagEnabled = (value: string | undefined, defaultValue: boolean) => {
-  const normalized = (value ?? (defaultValue ? '1' : '0')).trim().toLowerCase()
-  return normalized !== '0' && normalized !== 'false'
-}
 
 export const isLeaderElectionRequired = () => {
-  if (isTestEnv()) return false
-  // Only gate when this process is actually running leader-gated controller loops.
-  const agents = isControllerWorkloadFlagEnabled(process.env.JANGAR_AGENTS_CONTROLLER_ENABLED, true)
-  const orchestration = isControllerWorkloadFlagEnabled(process.env.JANGAR_ORCHESTRATION_CONTROLLER_ENABLED, true)
-  const supporting = isControllerWorkloadFlagEnabled(process.env.JANGAR_SUPPORTING_CONTROLLER_ENABLED, true)
-  const primitives = isControllerWorkloadFlagEnabled(process.env.JANGAR_PRIMITIVES_RECONCILER, true)
-  return agents || orchestration || supporting || primitives
+  return resolveLeaderElectionSettings(process.env).required
 }
 
 const resolveIdentity = () => {
-  const podName = (process.env.HOSTNAME ?? '').trim()
-  const uid = (process.env.JANGAR_POD_UID ?? '').trim()
+  const normalized = resolveLeaderElectionSettings(process.env)
+  const podName = normalized.podName
+  const uid = normalized.podUid ?? ''
   if (podName && uid) return `${podName}_${uid}`
   if (podName) return `${podName}_${randomUUID()}`
   return `unknown_${randomUUID()}`
 }
 
 export const resolveLeaderElectionConfig = (): LeaderElectionConfig => {
-  const enabled = parseBooleanEnv(process.env.JANGAR_LEADER_ELECTION_ENABLED, DEFAULT_CONFIG.enabled)
-  const leaseName = (process.env.JANGAR_LEADER_ELECTION_LEASE_NAME ?? DEFAULT_CONFIG.leaseName).trim()
-  const leaseNamespace = (process.env.JANGAR_LEADER_ELECTION_LEASE_NAMESPACE ?? DEFAULT_CONFIG.leaseNamespace).trim()
-  const leaseDurationSeconds = parseNumberEnv(
-    process.env.JANGAR_LEADER_ELECTION_LEASE_DURATION_SECONDS,
-    DEFAULT_CONFIG.leaseDurationSeconds,
-    1,
-  )
-  const renewDeadlineSeconds = parseNumberEnv(
-    process.env.JANGAR_LEADER_ELECTION_RENEW_DEADLINE_SECONDS,
-    DEFAULT_CONFIG.renewDeadlineSeconds,
-    1,
-  )
-  const retryPeriodSeconds = parseNumberEnv(
-    process.env.JANGAR_LEADER_ELECTION_RETRY_PERIOD_SECONDS,
-    DEFAULT_CONFIG.retryPeriodSeconds,
-    1,
-  )
-
-  // Enforce timing invariants to avoid pathological flapping.
-  const normalized = {
-    enabled,
-    leaseName: leaseName || DEFAULT_CONFIG.leaseName,
-    leaseNamespace,
-    leaseDurationSeconds,
-    renewDeadlineSeconds,
-    retryPeriodSeconds,
+  const normalized = resolveLeaderElectionSettings(process.env)
+  return {
+    enabled: normalized.enabled,
+    leaseName: normalized.leaseName || DEFAULT_CONFIG.leaseName,
+    leaseNamespace: normalized.leaseNamespace,
+    leaseDurationSeconds: normalized.leaseDurationSeconds,
+    renewDeadlineSeconds: normalized.renewDeadlineSeconds,
+    retryPeriodSeconds: normalized.retryPeriodSeconds,
   }
-
-  if (!(normalized.retryPeriodSeconds < normalized.renewDeadlineSeconds)) {
-    console.warn(
-      `[jangar] leader election timing invalid: retryPeriodSeconds (${normalized.retryPeriodSeconds}) must be < renewDeadlineSeconds (${normalized.renewDeadlineSeconds}); using defaults`,
-    )
-    normalized.renewDeadlineSeconds = DEFAULT_CONFIG.renewDeadlineSeconds
-    normalized.retryPeriodSeconds = DEFAULT_CONFIG.retryPeriodSeconds
-  }
-  if (!(normalized.renewDeadlineSeconds < normalized.leaseDurationSeconds)) {
-    console.warn(
-      `[jangar] leader election timing invalid: renewDeadlineSeconds (${normalized.renewDeadlineSeconds}) must be < leaseDurationSeconds (${normalized.leaseDurationSeconds}); using defaults`,
-    )
-    normalized.leaseDurationSeconds = DEFAULT_CONFIG.leaseDurationSeconds
-    normalized.renewDeadlineSeconds = DEFAULT_CONFIG.renewDeadlineSeconds
-    normalized.retryPeriodSeconds = DEFAULT_CONFIG.retryPeriodSeconds
-  }
-
-  return normalized
 }
 
 const ensureMetrics = () => {
@@ -166,49 +99,6 @@ const ensureMetrics = () => {
   state.metrics = { changesCounter }
 }
 
-type CommandResult = {
-  stdout: string
-  stderr: string
-  exitCode: number | null
-}
-
-const runCommand = (command: string, args: string[], input?: string): Promise<CommandResult> =>
-  new Promise((resolve) => {
-    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] })
-    let stdout = ''
-    let stderr = ''
-    child.stdout.setEncoding('utf8')
-    child.stderr.setEncoding('utf8')
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk
-    })
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk
-    })
-    child.on('close', (code) => resolve({ stdout, stderr, exitCode: code }))
-    if (input) {
-      child.stdin.write(input)
-    }
-    child.stdin.end()
-  })
-
-const kubectl = async (args: string[], input?: string, context?: string) => {
-  const result = await runCommand('kubectl', args, input)
-  if (result.exitCode === 0) {
-    return result.stdout.trim()
-  }
-  const details = result.stderr.trim() || result.stdout.trim()
-  throw new Error(`${context ?? 'kubectl'} failed: ${details || `exit ${result.exitCode}`}`)
-}
-
-const parseJson = <T>(raw: string, context: string): T => {
-  try {
-    return JSON.parse(raw) as T
-  } catch (error) {
-    throw new Error(`${context} returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`)
-  }
-}
-
 type KubectlErrorKind = 'notFound' | 'alreadyExists' | 'conflict' | 'unknown'
 
 const classifyKubectlError = (error: unknown): KubectlErrorKind => {
@@ -218,29 +108,6 @@ const classifyKubectlError = (error: unknown): KubectlErrorKind => {
   if (message.includes('(Conflict)') || message.toLowerCase().includes('conflict')) return 'conflict'
   if (message.toLowerCase().includes('the object has been modified')) return 'conflict'
   return 'unknown'
-}
-
-const getLease = async (namespace: string, name: string): Promise<V1Lease> => {
-  const output = await kubectl(['get', 'lease', name, '-n', namespace, '-o', 'json'], undefined, 'kubectl get lease')
-  return parseJson<V1Lease>(output, 'kubectl get lease')
-}
-
-const createLease = async (namespace: string, lease: V1Lease): Promise<V1Lease> => {
-  const output = await kubectl(
-    ['create', '-f', '-', '-n', namespace, '-o', 'json'],
-    JSON.stringify(lease),
-    'kubectl create lease',
-  )
-  return parseJson<V1Lease>(output, 'kubectl create lease')
-}
-
-const replaceLease = async (namespace: string, lease: V1Lease): Promise<V1Lease> => {
-  const output = await kubectl(
-    ['replace', '-f', '-', '-n', namespace, '-o', 'json'],
-    JSON.stringify(lease),
-    'kubectl replace lease',
-  )
-  return parseJson<V1Lease>(output, 'kubectl replace lease')
 }
 
 const parseLeaseTime = (value: unknown): number | null => {
@@ -345,7 +212,7 @@ export const getLeaderElectionStatus = (): LeaderElectionStatus => {
   const identity = resolveIdentity()
   const config = resolveLeaderElectionConfig()
   const required = isLeaderElectionRequired()
-  const leaseNamespace = config.leaseNamespace || process.env.JANGAR_POD_NAMESPACE?.trim() || 'default'
+  const leaseNamespace = config.leaseNamespace || resolveLeaderElectionSettings(process.env).podNamespace
 
   return {
     enabled: config.enabled,
@@ -387,15 +254,16 @@ export const requireLeaderForMutationHttp = (): Response | null => {
 }
 
 export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) => {
-  if (isTestEnv()) return
+  if (isRuntimeTestEnv(process.env)) return
   const required = isLeaderElectionRequired()
   const config = resolveLeaderElectionConfig()
+  const kubeGateway = createKubeGateway()
 
   if (!config.enabled || !required) {
     // Keep a stable status object available for endpoint gating and status pages.
     if (!globalState.__jangarLeaderElection) {
       const identity = resolveIdentity()
-      const leaseNamespace = config.leaseNamespace || process.env.JANGAR_POD_NAMESPACE?.trim() || 'default'
+      const leaseNamespace = config.leaseNamespace || resolveLeaderElectionSettings(process.env).podNamespace
       globalState.__jangarLeaderElection = {
         started: false,
         config: { ...config, leaseNamespace },
@@ -423,7 +291,7 @@ export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) 
   }
 
   const identity = resolveIdentity()
-  const leaseNamespace = config.leaseNamespace || process.env.JANGAR_POD_NAMESPACE?.trim() || 'default'
+  const leaseNamespace = config.leaseNamespace || resolveLeaderElectionSettings(process.env).podNamespace
   const state = {
     started: true,
     callbacks,
@@ -467,26 +335,21 @@ export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) 
 
     try {
       let lease: V1Lease | null = null
-      try {
-        lease = await getLease(leaseNamespace, state.config.leaseName)
-      } catch (error) {
-        const kind = classifyKubectlError(error)
-        if (kind === 'notFound') {
-          try {
-            lease = await createLease(
-              leaseNamespace,
-              buildNewLease(state.config, identity, leaseNamespace, state.config.leaseName),
-            )
-          } catch (createError) {
-            const createKind = classifyKubectlError(createError)
-            if (createKind === 'alreadyExists') {
-              lease = await getLease(leaseNamespace, state.config.leaseName)
-            } else {
-              throw createError
-            }
+      lease = await kubeGateway.getLease(leaseNamespace, state.config.leaseName)
+
+      if (!lease) {
+        try {
+          lease = await kubeGateway.createLease(
+            leaseNamespace,
+            buildNewLease(state.config, identity, leaseNamespace, state.config.leaseName),
+          )
+        } catch (createError) {
+          const createKind = classifyKubectlError(createError)
+          if (createKind === 'alreadyExists') {
+            lease = await kubeGateway.getLease(leaseNamespace, state.config.leaseName)
+          } else {
+            throw createError
           }
-        } else {
-          throw error
         }
       }
 
@@ -505,7 +368,7 @@ export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) 
         } else {
           const updated = updateLeaseForAcquireOrRenew(lease, state.config, identity, now)
           // Ensure optimistic concurrency: replace will fail on resourceVersion mismatch.
-          const replaced = await replaceLease(leaseNamespace, updated)
+          const replaced = await kubeGateway.replaceLease(leaseNamespace, updated)
           state.lastLease = replaced
           lastSuccessMs = nowMs
           state.status.lastSuccessAt = now.toISOString()
@@ -548,7 +411,9 @@ export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) 
     // This must run even during shutdown after `stop()` / `setLeaderStatus(false, ...)`.
     let lease: V1Lease
     try {
-      lease = await getLease(leaseNamespace, snapshot.config.leaseName)
+      const currentLease = await kubeGateway.getLease(leaseNamespace, snapshot.config.leaseName)
+      if (!currentLease) return
+      lease = currentLease
     } catch {
       return
     }
@@ -558,7 +423,7 @@ export const ensureLeaderElectionRuntime = (callbacks: LeaderElectionCallbacks) 
 
     const released = clearLeaseHolder(lease, snapshot.config, new Date())
     try {
-      await replaceLease(leaseNamespace, released)
+      await kubeGateway.replaceLease(leaseNamespace, released)
     } catch {
       // Best-effort only.
     }

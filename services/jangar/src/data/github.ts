@@ -176,6 +176,23 @@ export type GithubWriteAuditResponse =
     }
   | { ok: false; error: string }
 
+export type GithubPullDetailPageData =
+  | {
+      ok: true
+      pull: GithubPullState
+      review: GithubReviewSummary | null
+      checks: GithubCheckSummary | null
+      issueComments: GithubIssueComment[]
+      capabilities: GithubCapabilities
+      threads: GithubReviewThread[]
+      files: GithubPrFile[]
+      checksByCommit: GithubCheckState[]
+      judgeRuns: CodexRunRecord[]
+      writeActions: GithubWriteAudit[]
+      deploymentEvidence: GithubDeploymentEvidenceSummary
+    }
+  | { ok: false; error: string }
+
 export const fetchGithubPulls = async (params: {
   repository?: string | null
   state?: string
@@ -322,6 +339,42 @@ export const fetchGithubPullJudgeRuns = async (owner: string, repo: string, numb
     return { ok: false, error: payload?.error ?? 'Failed to load judge runs' } as const
   }
   return { ok: true, runs: payload.runs ?? [] } as const
+}
+
+export const loadGithubPullDetailPageData = async (owner: string, repo: string, number: number) => {
+  const pullRes = await fetchGithubPull(owner, repo, number)
+  if (!pullRes.ok) {
+    return { ok: false as const, error: pullRes.error }
+  }
+
+  const [filesRes, threadsRes, checksRes, judgeRes, deploymentEvidenceRes, auditsRes] = await Promise.all([
+    fetchGithubPullFiles(owner, repo, number),
+    fetchGithubPullThreads(owner, repo, number),
+    fetchGithubPullChecks(owner, repo, number),
+    fetchGithubPullJudgeRuns(owner, repo, number),
+    fetchGithubPullDeploymentEvidenceSummary(owner, repo, number),
+    fetchGithubPullWriteActions(owner, repo, number),
+  ])
+
+  return {
+    ok: true as const,
+    pull: pullRes.pull,
+    review: pullRes.review,
+    checks: pullRes.checks,
+    issueComments: pullRes.issueComments,
+    capabilities: pullRes.capabilities,
+    threads: threadsRes.ok ? threadsRes.threads : [],
+    files: filesRes.ok ? filesRes.files : [],
+    checksByCommit: checksRes.ok ? checksRes.commits : [],
+    judgeRuns: judgeRes.ok ? judgeRes.runs : [],
+    writeActions: auditsRes.ok ? auditsRes.audits : [],
+    deploymentEvidence: deploymentEvidenceRes.ok
+      ? deploymentEvidenceRes.deployment
+      : {
+          rollout: null,
+          rollback: null,
+        },
+  } satisfies GithubPullDetailPageData
 }
 
 export const submitGithubReview = async (

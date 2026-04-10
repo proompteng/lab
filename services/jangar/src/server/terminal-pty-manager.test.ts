@@ -2,7 +2,7 @@ import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const spawnMock = vi.hoisted(() =>
   vi.fn(() => {
@@ -48,9 +48,25 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 4000) => {
 }
 
 describe('TerminalPtyManager', () => {
+  let hadBun = false
+  let originalBunSpawn: typeof Bun.spawn | undefined
+
+  beforeEach(() => {
+    hadBun = 'Bun' in globalThis
+    originalBunSpawn = hadBun ? Bun.spawn : undefined
+  })
+
+  afterEach(() => {
+    if (hadBun && originalBunSpawn) {
+      ;(Bun as unknown as { spawn: typeof Bun.spawn }).spawn = originalBunSpawn
+      return
+    }
+
+    delete (globalThis as Record<string, unknown>).Bun
+  })
+
   it('starts an interactive shell when using script fallback', async () => {
     resetTerminalPtyManager()
-    const originalBun = (globalThis as { Bun?: unknown }).Bun
     const originalPtyMode = process.env.JANGAR_PTY_MODE
     const originalScriptBin = process.env.SCRIPT_BIN
 
@@ -63,32 +79,41 @@ describe('TerminalPtyManager', () => {
       kill: vi.fn(),
     }))
 
-    ;(globalThis as { Bun?: unknown }).Bun = { spawn: bunSpawn }
-    process.env.JANGAR_PTY_MODE = 'script'
-    process.env.SCRIPT_BIN = '/usr/bin/script'
-
-    const manager = getTerminalPtyManager({ idleTimeoutMs: 0 })
-    const worktreePath = await mkdtemp(join(tmpdir(), 'jangar-terminal-test-'))
-    const sessionId = `jangar-terminal-test-${Date.now()}`
-    manager.startSession({ sessionId, worktreePath, worktreeName: 'test' })
-
-    expect(bunSpawn).toHaveBeenCalled()
-    const calls = bunSpawn.mock.calls as unknown as Array<[string[]]>
-    const args = calls[0]?.[0] ?? []
-    expect(Array.isArray(args)).toBe(true)
-    expect(args.join(' ')).toContain('-l -i')
-
-    resetTerminalPtyManager()
-    ;(globalThis as { Bun?: unknown }).Bun = originalBun
-    if (originalPtyMode === undefined) {
-      delete process.env.JANGAR_PTY_MODE
+    if (hadBun) {
+      ;(Bun as unknown as { spawn: typeof Bun.spawn }).spawn = bunSpawn as unknown as typeof Bun.spawn
     } else {
-      process.env.JANGAR_PTY_MODE = originalPtyMode
+      Object.defineProperty(globalThis, 'Bun', {
+        configurable: true,
+        writable: true,
+        value: { spawn: bunSpawn as unknown as typeof Bun.spawn } satisfies Partial<typeof Bun>,
+      })
     }
-    if (originalScriptBin === undefined) {
-      delete process.env.SCRIPT_BIN
-    } else {
-      process.env.SCRIPT_BIN = originalScriptBin
+    try {
+      process.env.JANGAR_PTY_MODE = 'script'
+      process.env.SCRIPT_BIN = '/usr/bin/script'
+
+      const manager = getTerminalPtyManager({ idleTimeoutMs: 0 })
+      const worktreePath = await mkdtemp(join(tmpdir(), 'jangar-terminal-test-'))
+      const sessionId = `jangar-terminal-test-${Date.now()}`
+      manager.startSession({ sessionId, worktreePath, worktreeName: 'test' })
+
+      expect(bunSpawn).toHaveBeenCalled()
+      const calls = bunSpawn.mock.calls as unknown as Array<[string[]]>
+      const args = calls[0]?.[0] ?? []
+      expect(Array.isArray(args)).toBe(true)
+      expect(args.join(' ')).toContain('-l -i')
+    } finally {
+      resetTerminalPtyManager()
+      if (originalPtyMode === undefined) {
+        delete process.env.JANGAR_PTY_MODE
+      } else {
+        process.env.JANGAR_PTY_MODE = originalPtyMode
+      }
+      if (originalScriptBin === undefined) {
+        delete process.env.SCRIPT_BIN
+      } else {
+        process.env.SCRIPT_BIN = originalScriptBin
+      }
     }
   })
 
@@ -120,42 +145,53 @@ describe('TerminalPtyManager', () => {
 
   it('replays buffered output on reconnect', async () => {
     resetTerminalPtyManager()
-    const manager = getTerminalPtyManager({ bufferBytes: 256 * 1024, idleTimeoutMs: 0 })
-    const worktreePath = await mkdtemp(join(tmpdir(), 'jangar-terminal-test-'))
-    const sessionId = `jangar-terminal-test-${Date.now()}`
-    manager.startSession({ sessionId, worktreePath, worktreeName: 'test' })
+    const originalPtyMode = process.env.JANGAR_PTY_MODE
+    process.env.JANGAR_PTY_MODE = 'native'
+    try {
+      const manager = getTerminalPtyManager({ bufferBytes: 256 * 1024, idleTimeoutMs: 0 })
+      const worktreePath = await mkdtemp(join(tmpdir(), 'jangar-terminal-test-'))
+      const sessionId = `jangar-terminal-test-${Date.now()}`
+      manager.startSession({ sessionId, worktreePath, worktreeName: 'test' })
 
-    const output: string[] = []
-    const peer = {
-      send: (payload: string | Uint8Array) => {
-        if (typeof payload === 'string') return
-        const decoded = decodeFrame(payload)
-        if (decoded) output.push(decoded)
-      },
-      close: () => {},
+      const output: string[] = []
+      const peer = {
+        send: (payload: string | Uint8Array) => {
+          if (typeof payload === 'string') return
+          const decoded = decodeFrame(payload)
+          if (decoded) output.push(decoded)
+        },
+        close: () => {},
+      }
+
+      manager.attach(sessionId, peer, { token: 'token-a', since: 0 })
+      manager.handleInput(sessionId, new TextEncoder().encode('printf "hello-from-terminal"\n'))
+
+      await waitFor(() => output.join('').includes('hello-from-terminal'))
+
+      manager.detach(sessionId, 'token-a')
+
+      const replay: string[] = []
+      const peer2 = {
+        send: (payload: string | Uint8Array) => {
+          if (typeof payload === 'string') return
+          const decoded = decodeFrame(payload)
+          if (decoded) replay.push(decoded)
+        },
+        close: () => {},
+      }
+
+      manager.attach(sessionId, peer2, { token: 'token-b', since: 0 })
+
+      await waitFor(() => replay.join('').includes('hello-from-terminal'))
+
+      manager.terminate(sessionId)
+    } finally {
+      resetTerminalPtyManager()
+      if (originalPtyMode === undefined) {
+        delete process.env.JANGAR_PTY_MODE
+      } else {
+        process.env.JANGAR_PTY_MODE = originalPtyMode
+      }
     }
-
-    manager.attach(sessionId, peer, { token: 'token-a', since: 0 })
-    manager.handleInput(sessionId, new TextEncoder().encode('printf "hello-from-terminal"\n'))
-
-    await waitFor(() => output.join('').includes('hello-from-terminal'))
-
-    manager.detach(sessionId, 'token-a')
-
-    const replay: string[] = []
-    const peer2 = {
-      send: (payload: string | Uint8Array) => {
-        if (typeof payload === 'string') return
-        const decoded = decodeFrame(payload)
-        if (decoded) replay.push(decoded)
-      },
-      close: () => {},
-    }
-
-    manager.attach(sessionId, peer2, { token: 'token-b', since: 0 })
-
-    await waitFor(() => replay.join('').includes('hello-from-terminal'))
-
-    manager.terminate(sessionId)
   })
 })

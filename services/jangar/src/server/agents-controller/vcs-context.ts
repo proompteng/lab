@@ -2,6 +2,7 @@ import { createPrivateKey, createSign } from 'node:crypto'
 
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { RESOURCE_MAP } from '~/server/primitives-kube'
+import { resolveAgentsControllerAuthSecretConfig, resolveAgentsControllerBehaviorConfig } from './runtime-config'
 import { parseBooleanEnv, parseEnvStringList, parseJsonEnv, parseStringList } from './env-config'
 import { createImplementationContractTools } from './implementation-contract'
 import { matchesAnyPattern } from './policy'
@@ -9,15 +10,13 @@ import { appendBranchSuffix, hasBranchConflict, resolveParam, setMetadataIfMissi
 import { renderTemplate } from './template-hash'
 import { normalizeVcsMode, resolveVcsAuthMethod, type VcsMode, validateVcsAuthConfig } from './vcs-auth'
 
-const DEFAULT_AUTH_SECRET_KEY = 'auth.json'
-const DEFAULT_AUTH_SECRET_MOUNT_PATH = '/root/.codex'
 const DEFAULT_GITHUB_APP_TOKEN_TTL_SECONDS = 3600
 const DEFAULT_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS = 300
 const MIN_GITHUB_APP_TOKEN_REFRESH_WINDOW_SECONDS = 30
 
 const githubAppTokenCache = new Map<string, { token: string; expiresAt: number; refreshAfter: number }>()
 
-const isVcsProvidersEnabled = () => parseBooleanEnv(process.env.JANGAR_AGENTS_CONTROLLER_VCS_PROVIDERS_ENABLED, true)
+const isVcsProvidersEnabled = () => resolveAgentsControllerBehaviorConfig(process.env).vcsProvidersEnabled
 
 const makeName = (base: string, suffix: string) => {
   const raw = `${base}-${suffix}`
@@ -64,12 +63,7 @@ type KubeClient = {
   get: (kind: string, name: string, namespace: string) => Promise<Record<string, unknown> | null>
 }
 export const resolveAuthSecretConfig = (): AuthSecretConfig | null => {
-  const name = asString(process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_NAME)?.trim()
-  if (!name) return null
-  const key = asString(process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_KEY)?.trim() || DEFAULT_AUTH_SECRET_KEY
-  const mountPath =
-    asString(process.env.JANGAR_AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH)?.trim() || DEFAULT_AUTH_SECRET_MOUNT_PATH
-  return { name, key, mountPath }
+  return resolveAgentsControllerAuthSecretConfig(process.env)
 }
 
 export const buildAuthSecretPath = (config: AuthSecretConfig) => {

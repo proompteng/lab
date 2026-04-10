@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { resolveRepoWorkspaceConfig } from './runtime-tooling-config'
 
 export const DEFAULT_ATLAS_REPOSITORY = 'proompteng/lab'
 export const DEFAULT_ATLAS_REF = 'main'
@@ -18,11 +19,7 @@ export const resolveLimit = (raw: string, fallback: number, max: number) => {
   return parsed
 }
 
-const resolveRepoCwd = () => {
-  const envCwd = process.env.CODEX_CWD?.trim()
-  if (envCwd) return envCwd
-  return process.cwd()
-}
+const resolveRepoCwd = () => resolveRepoWorkspaceConfig(process.env).repoRoot
 
 const readProcessText = async (stream: ReadableStream | null) => {
   if (!stream) return ''

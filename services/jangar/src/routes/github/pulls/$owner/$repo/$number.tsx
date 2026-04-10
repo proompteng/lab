@@ -4,24 +4,23 @@ import * as React from 'react'
 import { type FileTreeNode, FileTreeView } from '@/components/file-tree'
 import type { CodexRunRecord } from '@/data/codex'
 import {
-  fetchGithubPull,
   fetchGithubPullChecks,
+  fetchGithubPullDeploymentEvidenceSummary,
   fetchGithubPullFiles,
   fetchGithubPullJudgeRuns,
-  fetchGithubPullDeploymentEvidenceSummary,
   fetchGithubPullWriteActions,
-  fetchGithubPullThreads,
+  loadGithubPullDetailPageData,
   postGithubPullDeploymentEvidence,
   type GithubCheckState,
   type GithubCheckSummary,
-  type GithubIssueComment,
   type GithubDeploymentEvidenceSummary,
+  type GithubIssueComment,
+  type GithubPullDetailPageData,
   type GithubPrFile,
-  type GithubDeploymentEvidence,
   type GithubPullState,
-  type GithubWriteAudit,
   type GithubReviewSummary,
   type GithubReviewThread,
+  type GithubWriteAudit,
   mergeGithubPull,
   refreshGithubPullFiles,
   resolveGithubThread,
@@ -100,30 +99,61 @@ const buildFileTree = (files: GithubPrFile[]) => {
 const formatShortSha = (value: string | null | undefined) => (value ? value.slice(0, 7) : '—')
 
 export const Route = createFileRoute('/github/pulls/$owner/$repo/$number')({
+  loader: async ({
+    params,
+  }: {
+    params: { owner: string; repo: string; number: string }
+  }): Promise<GithubPullDetailPageData> => {
+    const prNumber = Number.parseInt(params.number, 10)
+    if (!Number.isFinite(prNumber)) {
+      return { ok: false, error: 'Invalid pull request number' }
+    }
+
+    return loadGithubPullDetailPageData(params.owner, params.repo, prNumber)
+  },
   component: GithubPullDetailPage,
 })
 
 function GithubPullDetailPage() {
+  const initialData = Route.useLoaderData() as GithubPullDetailPageData
   const { owner, repo, number } = Route.useParams()
   const prNumber = Number.parseInt(number, 10)
 
-  const [pull, setPull] = React.useState<GithubPullState | null>(null)
-  const [review, setReview] = React.useState<GithubReviewSummary | null>(null)
-  const [checks, setChecks] = React.useState<GithubCheckSummary | null>(null)
-  const [checksByCommit, setChecksByCommit] = React.useState<GithubCheckState[]>([])
-  const [issueComments, setIssueComments] = React.useState<GithubIssueComment[]>([])
-  const [threads, setThreads] = React.useState<GithubReviewThread[]>([])
-  const [files, setFiles] = React.useState<GithubPrFile[]>([])
-  const [judgeRuns, setJudgeRuns] = React.useState<CodexRunRecord[]>([])
-  const [writeActions, setWriteActions] = React.useState<GithubWriteAudit[]>([])
-  const [deploymentEvidence, setDeploymentEvidence] = React.useState<GithubDeploymentEvidenceSummary>({
-    rollout: null,
-    rollback: null,
-  })
-  const [capabilities, setCapabilities] = React.useState({ reviewsWriteEnabled: false, mergeWriteEnabled: false })
+  const [pull, setPull] = React.useState<GithubPullState | null>(() => (initialData.ok ? initialData.pull : null))
+  const [review, setReview] = React.useState<GithubReviewSummary | null>(() =>
+    initialData.ok ? initialData.review : null,
+  )
+  const [checks, setChecks] = React.useState<GithubCheckSummary | null>(() =>
+    initialData.ok ? initialData.checks : null,
+  )
+  const [checksByCommit, setChecksByCommit] = React.useState<GithubCheckState[]>(() =>
+    initialData.ok ? initialData.checksByCommit : [],
+  )
+  const [issueComments, setIssueComments] = React.useState<GithubIssueComment[]>(() =>
+    initialData.ok ? initialData.issueComments : [],
+  )
+  const [threads, setThreads] = React.useState<GithubReviewThread[]>(() => (initialData.ok ? initialData.threads : []))
+  const [files, setFiles] = React.useState<GithubPrFile[]>(() => (initialData.ok ? initialData.files : []))
+  const [judgeRuns, setJudgeRuns] = React.useState<CodexRunRecord[]>(() =>
+    initialData.ok ? initialData.judgeRuns : [],
+  )
+  const [writeActions, setWriteActions] = React.useState<GithubWriteAudit[]>(() =>
+    initialData.ok ? initialData.writeActions : [],
+  )
+  const [deploymentEvidence, setDeploymentEvidence] = React.useState<GithubDeploymentEvidenceSummary>(() =>
+    initialData.ok
+      ? initialData.deploymentEvidence
+      : {
+          rollout: null,
+          rollback: null,
+        },
+  )
+  const [capabilities, setCapabilities] = React.useState(() =>
+    initialData.ok ? initialData.capabilities : { reviewsWriteEnabled: false, mergeWriteEnabled: false },
+  )
 
   const [status, setStatus] = React.useState<string | null>(null)
-  const [error, setError] = React.useState<string | null>(null)
+  const [error, setError] = React.useState<string | null>(() => (initialData.ok ? null : initialData.error))
   const [loading, setLoading] = React.useState(false)
   const [refreshingFiles, setRefreshingFiles] = React.useState(false)
   const [deploymentAction, setDeploymentAction] = React.useState<'rollout' | 'rollback'>('rollout')
@@ -146,6 +176,37 @@ function GithubPullDetailPage() {
   const autoRefreshRef = React.useRef(false)
   const autoRefreshKey = `${owner}/${repo}#${prNumber}`
   const lastAutoRefreshKeyRef = React.useRef(autoRefreshKey)
+
+  React.useEffect(() => {
+    if (!initialData.ok) {
+      setPull(null)
+      setReview(null)
+      setChecks(null)
+      setChecksByCommit([])
+      setIssueComments([])
+      setThreads([])
+      setFiles([])
+      setJudgeRuns([])
+      setWriteActions([])
+      setDeploymentEvidence({ rollout: null, rollback: null })
+      setCapabilities({ reviewsWriteEnabled: false, mergeWriteEnabled: false })
+      setError(initialData.error)
+      return
+    }
+
+    setPull(initialData.pull)
+    setReview(initialData.review)
+    setChecks(initialData.checks)
+    setChecksByCommit(initialData.checksByCommit)
+    setIssueComments(initialData.issueComments)
+    setThreads(initialData.threads)
+    setFiles(initialData.files)
+    setJudgeRuns(initialData.judgeRuns)
+    setWriteActions(initialData.writeActions)
+    setDeploymentEvidence(initialData.deploymentEvidence)
+    setCapabilities(initialData.capabilities)
+    setError(null)
+  }, [initialData])
 
   const pollForFiles = React.useCallback(
     async (options: { attempts?: number; delayMs?: number } = {}) => {
@@ -185,39 +246,26 @@ function GithubPullDetailPage() {
     setError(null)
     setStatus(null)
     try {
-      const pullRes = await fetchGithubPull(owner, repo, prNumber)
-      if (!pullRes.ok) {
-        setError(pullRes.error)
+      const data = await loadGithubPullDetailPageData(owner, repo, prNumber)
+      if (!data.ok) {
+        setError(data.error)
         return
       }
-      setPull(pullRes.pull)
-      setReview(pullRes.review)
-      setChecks(pullRes.checks)
-      setIssueComments(pullRes.issueComments)
-      setCapabilities(pullRes.capabilities)
 
-      const [filesRes, threadsRes, checksRes, judgeRes, deploymentEvidenceRes] = await Promise.all([
-        fetchGithubPullFiles(owner, repo, prNumber),
-        fetchGithubPullThreads(owner, repo, prNumber),
-        fetchGithubPullChecks(owner, repo, prNumber),
-        fetchGithubPullJudgeRuns(owner, repo, prNumber),
-        fetchGithubPullDeploymentEvidenceSummary(owner, repo, prNumber),
-      ])
-      if (filesRes.ok) {
-        setFiles(filesRes.files)
-        if (filesRes.files.length === 0 && filesRes.refreshing) {
-          void pollForFiles({ attempts: 12 })
-        }
+      setPull(data.pull)
+      setReview(data.review)
+      setChecks(data.checks)
+      setIssueComments(data.issueComments)
+      setCapabilities(data.capabilities)
+      setThreads(data.threads)
+      setChecksByCommit(data.checksByCommit)
+      setJudgeRuns(data.judgeRuns)
+      setWriteActions(data.writeActions)
+      setDeploymentEvidence(data.deploymentEvidence)
+      setFiles(data.files)
+      if (data.files.length === 0) {
+        void pollForFiles({ attempts: 12 })
       }
-      if (threadsRes.ok) setThreads(threadsRes.threads)
-      if (checksRes.ok) setChecksByCommit(checksRes.commits)
-      if (judgeRes.ok) setJudgeRuns(judgeRes.runs)
-      if (deploymentEvidenceRes.ok) {
-        setDeploymentEvidence(deploymentEvidenceRes.deployment)
-      } else {
-        setDeploymentEvidence({ rollout: null, rollback: null })
-      }
-      await loadWriteActions()
 
       setStatus('Loaded pull request details.')
     } catch (err) {
@@ -226,7 +274,7 @@ function GithubPullDetailPage() {
     } finally {
       setLoading(false)
     }
-  }, [owner, pollForFiles, prNumber, repo, loadWriteActions])
+  }, [owner, pollForFiles, prNumber, repo])
 
   const submitDeploymentEvidence = async () => {
     if (!pull) return
@@ -265,10 +313,6 @@ function GithubPullDetailPage() {
       setDeploymentEvidence(deploymentEvidenceRes.deployment)
     }
   }
-
-  React.useEffect(() => {
-    void loadAll()
-  }, [loadAll])
 
   React.useEffect(() => {
     if (lastAutoRefreshKeyRef.current === autoRefreshKey) return

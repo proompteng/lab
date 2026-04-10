@@ -1,4 +1,5 @@
 import type { AuditEventRecord } from '~/server/primitives-store'
+import { resolveAuditSinkConfig as resolveRuntimeAuditSinkConfig } from './runtime-tooling-config'
 
 type AuditSinkType = 'none' | 'stdout' | 'http'
 
@@ -47,8 +48,8 @@ let cachedConfig: AuditSinkConfig | null = null
 const resolveConfig = (): AuditSinkConfig => {
   if (cachedConfig) return cachedConfig
 
-  const rawType = normalizeString(process.env.JANGAR_AUDIT_SINK_TYPE)?.toLowerCase() ?? 'none'
-  const type: AuditSinkType = rawType === 'stdout' || rawType === 'http' ? rawType : 'none'
+  const resolved = resolveRuntimeAuditSinkConfig(process.env)
+  const type: AuditSinkType = resolved.type
 
   if (type === 'stdout') {
     cachedConfig = { type: 'stdout' }
@@ -56,19 +57,17 @@ const resolveConfig = (): AuditSinkConfig => {
   }
 
   if (type === 'http') {
-    const url = normalizeString(process.env.JANGAR_AUDIT_SINK_HTTP_URL)
+    const url = resolved.url
     if (!url) {
       cachedConfig = { type: 'none' }
       return cachedConfig
     }
-    const timeoutMs = parseOptionalInt(process.env.JANGAR_AUDIT_SINK_HTTP_TIMEOUT_MS) ?? DEFAULT_HTTP_TIMEOUT_MS
-    const extraHeaders = parseOptionalJsonRecord(process.env.JANGAR_AUDIT_SINK_HTTP_HEADERS_JSON)
     cachedConfig = {
       type: 'http',
       http: {
         url,
-        headers: { ...extraHeaders },
-        timeoutMs,
+        headers: { ...resolved.headers },
+        timeoutMs: resolved.timeoutMs,
       },
     }
     return cachedConfig

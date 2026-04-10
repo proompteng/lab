@@ -2346,6 +2346,7 @@ const evaluateRoleCompletionEvidence = async ({
     lane === 'architect' ? await collectMeaningfulRepositoryChanges({ worktree, baseBranch, logger }) : []
   const strictRoleEvidence = parseBoolean(process.env.CODEX_STRICT_ROLE_EVIDENCE, true)
   const allowHeuristicEvidence = parseBoolean(process.env.CODEX_ALLOW_HEURISTIC_EVIDENCE, false)
+  const requiresMergeEvidence = lane === 'architect' || lane === 'release'
 
   const explicitMergeEvidence =
     readEvidenceBool(event, ['merged', 'mergeCompleted', 'mergedCommit']) ||
@@ -2364,7 +2365,7 @@ const evaluateRoleCompletionEvidence = async ({
     mergeEvidence = mergeEvidence || hasMergeEvidenceText(lastAssistantMessage)
   }
   const verifyMergeWithGh = parseBoolean(process.env.CODEX_VERIFY_MERGE_WITH_GH, true)
-  if (verifyMergeWithGh && prUrl) {
+  if (requiresMergeEvidence && verifyMergeWithGh && prUrl) {
     const ghMerge = await verifyPullRequestMergedWithGh({ repository, prUrl, worktree, logger })
     if (ghMerge.verified) {
       mergeEvidence = ghMerge.merged

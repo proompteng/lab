@@ -1,12 +1,14 @@
-import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { PassThrough } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import * as grpc from '@grpc/grpc-js'
 import { status as GrpcStatus, ServerCredentials, type ServerUnaryCall, type ServerWritableStream } from '@grpc/grpc-js'
 import { loadSync } from '@grpc/proto-loader'
+import { KubeConfig, Log } from '@kubernetes/client-node'
 import { postAgentRunsHandler } from '~/routes/v1/agent-runs'
+import { resolveAgentctlGrpcConfig } from '~/server/agentctl-grpc-config'
 import { buildControlPlaneStatus, type GrpcStatus as ControlPlaneGrpcStatus } from '~/server/control-plane-status'
 import { startResourceWatch } from '~/server/kube-watch'
 import { getLeaderElectionStatus } from '~/server/leader-election'
@@ -14,9 +16,7 @@ import { asRecord, asString } from '~/server/primitives-http'
 import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
 
 const DEFAULT_NAMESPACE = 'agents'
-const DEFAULT_GRPC_PORT = 50051
 const DEFAULT_WORKFLOW_STEP = 'implement'
-const CONTROLLER_GRPC_ENABLED_VALUES = ['1', 'true', 'yes', 'on'] as const
 const SERVICE_NAME = 'jangar'
 
 type AgentctlServer = {
@@ -34,6 +34,15 @@ type UnaryCallback = grpc.sendUnaryData<unknown>
 type UnaryCall<Request> = ServerUnaryCall<Request, unknown>
 type ReadableCall<Request> = grpc.ServerReadableStream<Request, unknown>
 type WritableCall<Request> = grpc.ServerWritableStream<Request, unknown>
+
+type AgentRunPodSelection = {
+  podName: string
+  containerName: string | null
+}
+
+const logState = globalThis as typeof globalThis & {
+  __jangarGrpcLogHelper?: Log
+}
 
 const buildServiceError = (code: grpc.status, message: string): grpc.ServiceError => {
   const error = new Error(message) as grpc.ServiceError
@@ -71,8 +80,8 @@ type StatusStreamRequest = { namespace?: string; name?: string }
 type ControlPlaneStatusRequest = { namespace?: string }
 
 const resolveProtoPath = () => {
-  const envPath = process.env.JANGAR_GRPC_PROTO_PATH?.trim()
-  if (envPath && existsSync(envPath)) return envPath
+  const config = resolveAgentctlGrpcConfig()
+  if (config.protoPathOverride && existsSync(config.protoPathOverride)) return config.protoPathOverride
 
   const cwd = process.cwd()
   const moduleDir = resolve(fileURLToPath(import.meta.url), '..')
@@ -150,7 +159,7 @@ const resolveAuthToken = (metadata: grpc.Metadata) => {
 }
 
 const requireAuth = (call: UnaryCall<unknown> | ReadableCall<unknown> | WritableCall<unknown>) => {
-  const expected = process.env.JANGAR_GRPC_TOKEN?.trim()
+  const expected = resolveAgentctlGrpcConfig().authToken
   if (!expected) return null
   const provided = resolveAuthToken(call.metadata)
   if (!provided || provided !== expected) {
@@ -242,11 +251,6 @@ const createDeleteHandler =
     }
   }
 
-const spawnKubectl = (args: string[]) =>
-  spawn('kubectl', args, {
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-
 const resolveAgentRunRuntime = (resource: Record<string, unknown>) => {
   const status = asRecord(resource.status)
   const runtimeRef = asRecord(status?.runtimeRef)
@@ -303,55 +307,123 @@ const readNested = (value: unknown, path: string[]) => {
 
 const isJobRuntime = (runtimeType: string | null) => runtimeType === 'job' || runtimeType === 'workflow'
 
-const buildLogArgs = (runName: string, namespace: string, runtimeType: string | null, runtimeName: string | null) => {
-  if (isJobRuntime(runtimeType) && runtimeName) {
-    return ['logs', `job/${runtimeName}`, '-n', namespace]
-  }
-  return ['logs', '-l', `agents.proompteng.ai/agent-run=${runName}`, '-n', namespace]
+const getGrpcLogHelper = () => {
+  if (logState.__jangarGrpcLogHelper) return logState.__jangarGrpcLogHelper
+  const kubeConfig = new KubeConfig()
+  kubeConfig.loadFromDefault()
+  logState.__jangarGrpcLogHelper = new Log(kubeConfig)
+  return logState.__jangarGrpcLogHelper
 }
 
-const buildCancelArgs = (
+const listAgentRunPods = async (
+  kube: KubernetesClient,
+  runName: string,
+  namespace: string,
+  runtimeType: string | null,
+  runtimeName: string | null,
+) => {
+  const labelSelector =
+    isJobRuntime(runtimeType) && runtimeName ? `job-name=${runtimeName}` : `agents.proompteng.ai/agent-run=${runName}`
+  const list = await kube.list('pods', namespace, labelSelector)
+  const items = Array.isArray(list.items) ? list.items : []
+  return items.map((item) => asRecord(item) ?? {}).filter((item) => Object.keys(item).length > 0)
+}
+
+const resolvePodContainer = (pod: Record<string, unknown>): AgentRunPodSelection | null => {
+  const metadata = asRecord(pod.metadata) ?? {}
+  const spec = asRecord(pod.spec) ?? {}
+  const status = asRecord(pod.status) ?? {}
+  const podName = asString(metadata.name)
+  if (!podName) return null
+
+  const runningContainerStatuses = (Array.isArray(status.containerStatuses) ? status.containerStatuses : [])
+    .map((entry) => asRecord(entry))
+    .filter((entry): entry is Record<string, unknown> => entry !== null)
+    .filter((entry) => Boolean(asRecord(entry.state)?.running))
+    .map((entry) => asString(entry.name))
+    .filter((entry): entry is string => Boolean(entry))
+
+  const mainContainers = (Array.isArray(spec.containers) ? spec.containers : [])
+    .map((entry) => asRecord(entry))
+    .filter((entry): entry is Record<string, unknown> => entry !== null)
+    .map((entry) => asString(entry.name))
+    .filter((entry): entry is string => Boolean(entry))
+
+  return {
+    podName,
+    containerName: runningContainerStatuses[0] ?? mainContainers[0] ?? null,
+  }
+}
+
+const comparePods = (left: Record<string, unknown>, right: Record<string, unknown>) => {
+  const leftStatus = asRecord(left.status) ?? {}
+  const rightStatus = asRecord(right.status) ?? {}
+  const leftRunning = asString(leftStatus.phase) === 'Running'
+  const rightRunning = asString(rightStatus.phase) === 'Running'
+  if (leftRunning !== rightRunning) return leftRunning ? -1 : 1
+  const leftTime = asString(asRecord(left.metadata)?.creationTimestamp) ?? ''
+  const rightTime = asString(asRecord(right.metadata)?.creationTimestamp) ?? ''
+  return rightTime.localeCompare(leftTime)
+}
+
+const selectAgentRunPod = async (
+  kube: KubernetesClient,
+  runName: string,
+  namespace: string,
+  runtimeType: string | null,
+  runtimeName: string | null,
+) => {
+  const pods = await listAgentRunPods(kube, runName, namespace, runtimeType, runtimeName)
+  if (pods.length === 0) return null
+  const selected =
+    [...pods]
+      .sort(comparePods)
+      .map((pod) => resolvePodContainer(pod))
+      .find((pod) => pod !== null) ?? null
+  return selected
+}
+
+const resolveCancellableJobNames = async (
+  kube: KubernetesClient,
   runtimeType: string | null,
   runtimeName: string | null,
   runName: string,
   namespace: string,
 ) => {
   if (runtimeType === 'workflow') {
-    return ['delete', 'job', '-l', `agents.proompteng.ai/agent-run=${runName}`, '-n', namespace, '--ignore-not-found']
+    const list = await kube.list('jobs.batch', namespace, `agents.proompteng.ai/agent-run=${runName}`)
+    const items = Array.isArray(list.items) ? list.items : []
+    return items
+      .map((entry) => asString(asRecord(asRecord(entry)?.metadata)?.name))
+      .filter((entry): entry is string => Boolean(entry))
   }
   if (isJobRuntime(runtimeType) && runtimeName) {
-    return ['delete', 'job', runtimeName, '-n', namespace]
+    return [runtimeName]
   }
-  return null
+  return []
 }
 
 const buildServerInfo = () => ({
-  version: process.env.JANGAR_VERSION ?? 'dev',
-  build_sha: process.env.JANGAR_BUILD_SHA ?? '',
-  build_time: process.env.JANGAR_BUILD_TIME ?? '',
+  version: resolveAgentctlGrpcConfig().version,
+  build_sha: resolveAgentctlGrpcConfig().buildSha,
+  build_time: resolveAgentctlGrpcConfig().buildTime,
   service: SERVICE_NAME,
 })
 
 const resolveComponent = () => {
-  if (process.env.JANGAR_AGENTS_CONTROLLER_ENABLED === '1') {
+  if (resolveAgentctlGrpcConfig().agentsControllerEnabled) {
     return 'controllers'
   }
   return 'control plane'
 }
 
-const isGrpcEnabled = (value: string) => (CONTROLLER_GRPC_ENABLED_VALUES as readonly string[]).includes(value)
-
 export const startAgentctlGrpcServer = (): AgentctlServer | null => {
   const component = resolveComponent()
-  const enabled = isGrpcEnabled((process.env.JANGAR_GRPC_ENABLED ?? '').trim().toLowerCase())
-  if (!enabled) {
+  const config = resolveAgentctlGrpcConfig()
+  if (!config.enabled) {
     console.info(`[jangar] agentctl grpc not enabled for ${component}; set JANGAR_GRPC_ENABLED=true to start listener`)
     return null
   }
-
-  const host = (process.env.JANGAR_GRPC_HOST ?? '').trim() || '127.0.0.1'
-  const port = Number.parseInt(process.env.JANGAR_GRPC_PORT ?? '', 10) || DEFAULT_GRPC_PORT
-  const address = process.env.JANGAR_GRPC_ADDRESS?.trim() || `${host}:${port}`
 
   const pkg = loadAgentctlPackage()
   const server = new grpc.Server()
@@ -905,21 +977,17 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
           return callback({ code: GrpcStatus.NOT_FOUND, message: 'AgentRun not found' }, null)
         }
         const { runtimeType, runtimeName } = resolveAgentRunRuntime(resource)
-        const args = buildCancelArgs(runtimeType, runtimeName, name, namespace)
-        if (!args) {
+        const jobNames = await resolveCancellableJobNames(kube, runtimeType, runtimeName, name, namespace)
+        if (jobNames.length === 0) {
           return callback(
             { code: GrpcStatus.FAILED_PRECONDITION, message: 'No cancellable runtime found for this AgentRun' },
             null,
           )
         }
-        const child = spawnKubectl(args)
-        child.on('close', (code) => {
-          if (code === 0) {
-            callback(null, { ok: true, message: 'cancelled' })
-          } else {
-            callback({ code: GrpcStatus.INTERNAL, message: 'Failed to cancel AgentRun runtime' }, null)
-          }
-        })
+        for (const jobName of jobNames) {
+          await kube.delete('job', jobName, namespace, { wait: false })
+        }
+        callback(null, { ok: true, message: 'cancelled' })
       } catch (error) {
         handleUnaryError(callback, error)
       }
@@ -939,31 +1007,56 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
         return
       }
       const { runtimeType, runtimeName } = resolveAgentRunRuntime(resource)
-      const args = buildLogArgs(name, namespace, runtimeType, runtimeName)
-      if (call.request?.follow) {
-        args.push('-f')
-      }
-
-      const child = spawnKubectl(args)
-      const onData = (chunk: Buffer, stream: 'stdout' | 'stderr') => {
-        call.write({ stream, message: chunk.toString('utf8') })
-      }
-      child.stdout?.on('data', (chunk) => onData(chunk as Buffer, 'stdout'))
-      child.stderr?.on('data', (chunk) => onData(chunk as Buffer, 'stderr'))
-      const onClose = () => {
+      const pod = await selectAgentRunPod(kube, name, namespace, runtimeType, runtimeName)
+      if (!pod) {
         call.end()
+        return
+      }
+      if (!call.request?.follow) {
+        const logs = await kube.logs({
+          pod: pod.podName,
+          namespace,
+          container: pod.containerName,
+        })
+        if (logs.length > 0) {
+          call.write({ stream: 'stdout', message: logs })
+        }
+        call.end()
+        return
       }
 
-      child.on('close', onClose)
-      child.on('error', (error) => {
+      const stream = new PassThrough()
+      stream.on('data', (chunk) => {
+        call.write({
+          stream: 'stdout',
+          message: Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk),
+        })
+      })
+      stream.on('end', () => {
+        call.end()
+      })
+      stream.on('error', (error) => {
         call.destroy(Object.assign(new Error(error.message), { code: GrpcStatus.INTERNAL }))
       })
+      void getGrpcLogHelper()
+        .log(namespace, pod.podName, pod.containerName ?? '', stream, {
+          follow: true,
+          pretty: false,
+          timestamps: false,
+        })
+        .catch((error) => {
+          call.destroy(
+            Object.assign(new Error(error instanceof Error ? error.message : String(error)), {
+              code: GrpcStatus.INTERNAL,
+            }),
+          )
+        })
 
       call.on('cancelled', () => {
-        child.kill('SIGTERM')
+        stream.destroy()
       })
       call.on('close', () => {
-        child.kill('SIGTERM')
+        stream.destroy()
       })
     },
 
@@ -1046,9 +1139,10 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
       if (authError) return callback(authError, null)
       try {
         const namespace = normalizeNamespace(call.request?.namespace)
+        const grpcConfig = resolveAgentctlGrpcConfig()
         const grpcStatus: ControlPlaneGrpcStatus = {
           enabled: true,
-          address,
+          address: grpcConfig.address,
           status: 'healthy',
           message: '',
         }
@@ -1064,13 +1158,13 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
     },
   })
 
-  server.bindAsync(address, ServerCredentials.createInsecure(), (error) => {
+  server.bindAsync(config.address, ServerCredentials.createInsecure(), (error) => {
     if (error) {
       console.error('[jangar] agentctl grpc failed to bind', error)
       return
     }
-    console.info(`[jangar] agentctl grpc listening on ${address} for ${component}`)
+    console.info(`[jangar] agentctl grpc listening on ${config.address} for ${component}`)
   })
 
-  return { server, address }
+  return { server, address: config.address }
 }

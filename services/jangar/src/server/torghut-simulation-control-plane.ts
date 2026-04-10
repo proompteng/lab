@@ -5,6 +5,7 @@ import { stableJsonStringifyForHash } from '~/server/agents-controller/template-
 import { getDb } from '~/server/db'
 import { ensureMigrations } from '~/server/kysely-migrations'
 import { createKubernetesClient } from '~/server/primitives-kube'
+import { resolveTorghutSimulationStorageConfig } from './torghut-config'
 
 type JsonRecord = Record<string, unknown>
 
@@ -116,8 +117,9 @@ const DEFAULT_CONFIRM_PHRASE = 'START_HISTORICAL_SIMULATION'
 const DEFAULT_WORKFLOW_TEMPLATE_NAME = 'torghut-historical-simulation'
 const DEFAULT_DUMP_FORMAT = 'jsonl.zst'
 const DEFAULT_CAMPAIGN_OUTPUT_ROOT = `${DEFAULT_OUTPUT_ROOT}/campaigns`
-const DEFAULT_SIMULATION_CACHE_BUCKET = (process.env.TORGHUT_SIM_CACHE_BUCKET ?? 'argo-workflows').trim()
-const DEFAULT_SIMULATION_CACHE_PREFIX = (process.env.TORGHUT_SIM_CACHE_PREFIX ?? 'torghut-simulation-cache').trim()
+const simulationStorageConfig = resolveTorghutSimulationStorageConfig(process.env)
+const DEFAULT_SIMULATION_CACHE_BUCKET = simulationStorageConfig.cacheBucket
+const DEFAULT_SIMULATION_CACHE_PREFIX = simulationStorageConfig.cachePrefix
 const DEFAULT_SIMULATION_KAFKA_BOOTSTRAP = 'kafka-kafka-bootstrap.kafka.svc.cluster.local:9092'
 const DEFAULT_SIMULATION_KAFKA_USERNAME = 'kafka-codex-credentials'
 const DEFAULT_SIMULATION_KAFKA_PASSWORD_ENV = 'TORGHUT_SIM_KAFKA_PASSWORD'

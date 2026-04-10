@@ -3,6 +3,7 @@ import { type AgentPrimitiveKind, resolvePrimitiveKind } from '~/server/primitiv
 import { asRecord, asString, normalizeNamespace, okResponse } from '~/server/primitives-http'
 import { createKubernetesClient, type KubernetesClient } from '~/server/primitives-kube'
 import { createControlPlaneCacheStore, type ControlPlaneCacheStore } from '~/server/control-plane-cache-store'
+import { resolveControlPlaneCacheReadConfig } from '~/server/control-plane-config'
 import {
   buildCacheFreshnessState,
   cacheStateToResponse,
@@ -65,10 +66,7 @@ const SUMMARY_CACHE_KINDS = new Set<AgentPrimitiveKind>([
   'ImplementationSource',
 ])
 
-const isCacheEnabled = () => {
-  const flag = (process.env.JANGAR_CONTROL_PLANE_CACHE_ENABLED ?? '').trim().toLowerCase()
-  return flag === '1' || flag === 'true' || flag === 'yes' || flag === 'on'
-}
+const isCacheEnabled = () => resolveControlPlaneCacheReadConfig(process.env).enabled
 
 const buildCacheMetadata = (
   freshnessStates: ReturnType<typeof buildCacheFreshnessState>[],
@@ -161,7 +159,7 @@ export const getControlPlaneSummary = async (
       try {
         const store = await getCacheStore()
         const result = await store.listResources({
-          cluster: (process.env.JANGAR_CONTROL_PLANE_CACHE_CLUSTER ?? 'default').trim() || 'default',
+          cluster: resolveControlPlaneCacheReadConfig(process.env).clusterId,
           kind: resolved.kind,
           namespace,
         })

@@ -6,6 +6,7 @@ import * as S from '@effect/schema/Schema'
 import * as Either from 'effect/Either'
 import { publishAgentMessages } from '~/server/agent-messages-bus'
 import { createAgentMessagesStore } from '~/server/agent-messages-store'
+import { resolveChatConfig } from '~/server/chat-config'
 import {
   buildBackfillDedupeKey,
   parseAgentMessagesFromEvents,
@@ -20,6 +21,7 @@ import {
   createCodexJudgeStore,
   type UpdateDecisionInput,
 } from '~/server/codex-judge-store'
+import { resolveWhitepaperStorageConfig } from '~/server/whitepaper-config'
 import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
 import { createGitHubClient, GitHubRateLimitError, type PullRequest } from '~/server/github-client'
 import { ingestGithubReviewEvent } from '~/server/github-review-ingest'
@@ -59,7 +61,7 @@ const config = new Proxy({} as ReturnType<typeof loadCodexJudgeConfig>, {
   get: (_target, prop) => resolveConfig()[prop as keyof ReturnType<typeof loadCodexJudgeConfig>],
 })
 const getConfig = () => resolveConfig()
-const isTestEnv = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST)
+const isTestEnv = resolveChatConfig(process.env).isTest
 let cachedGithub: ReturnType<typeof createGitHubClient> | null = null
 const resolveGithub = () => {
   if (globalOverrides.__codexJudgeGithubMock) return globalOverrides.__codexJudgeGithubMock
@@ -84,7 +86,7 @@ const _RECONCILE_INTERVAL_MS = 60_000
 const _RECONCILE_BASE_DELAY_MS = 1_000
 const _RECONCILE_JITTER_MS = 15_000
 const _PENDING_EVALUATION_STATUSES = ['run_complete', 'waiting_for_ci', 'judging'] as const
-const _RECONCILE_DISABLED = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST)
+const _RECONCILE_DISABLED = resolveChatConfig(process.env).isTest
 const RERUN_SUBMISSION_BACKOFF_MS = [2_000, 7_000, 15_000]
 const RERUN_WORKER_POLL_MS = 10_000
 const RERUN_WORKER_BATCH_SIZE = 10
@@ -1487,18 +1489,18 @@ const normalizeMinioEndpoint = (endpoint: string, secure: boolean) => {
 }
 
 const resolveMinioConfig = (): MinioConfig | null => {
-  const endpointRaw = (process.env.MINIO_ENDPOINT ?? '').trim()
-  const accessKey = (process.env.MINIO_ACCESS_KEY ?? '').trim()
-  const secretKey = (process.env.MINIO_SECRET_KEY ?? '').trim()
+  const storageConfig = resolveWhitepaperStorageConfig(process.env)
+  const endpointRaw = storageConfig.endpoint.trim()
+  const accessKey = storageConfig.accessKey.trim()
+  const secretKey = storageConfig.secretKey.trim()
   if (!endpointRaw || !accessKey || !secretKey) return null
-  const secureRaw = (process.env.MINIO_SECURE ?? '').trim().toLowerCase()
-  const secure = secureRaw === 'true' || secureRaw === '1'
+  const secure = endpointRaw.startsWith('https://')
   const endpoint = normalizeMinioEndpoint(endpointRaw, secure)
   return {
     endpoint,
     accessKey,
     secretKey,
-    region: 'us-east-1',
+    region: storageConfig.region,
   }
 }
 

@@ -1,6 +1,7 @@
-import { spawn } from 'node:child_process'
-
+import { isRuntimeTestEnv } from '~/server/control-plane-config'
+import { resolvePrimitivesReconcilerConfig } from '~/server/controller-runtime-config'
 import { resolveBooleanFeatureToggle } from '~/server/feature-flags'
+import { createKubeGateway } from '~/server/kube-gateway'
 import { startResourceWatch } from '~/server/kube-watch'
 import { parseNamespaceScopeEnv } from '~/server/namespace-scope'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
@@ -35,76 +36,29 @@ const namespaceQueues = new Map<string, Promise<void>>()
 let storeRef: ReturnType<typeof createPrimitivesStore> | null = null
 
 const shouldStartFallback = () => {
-  if (process.env.NODE_ENV === 'test') return false
-  const flag = (process.env.JANGAR_PRIMITIVES_RECONCILER ?? '1').trim().toLowerCase()
-  return flag !== '0' && flag !== 'false'
+  if (isRuntimeTestEnv()) return false
+  return resolvePrimitivesReconcilerConfig().enabled
 }
 
 const shouldStart = async () => {
-  if (process.env.NODE_ENV === 'test') return false
+  if (isRuntimeTestEnv()) return false
   return resolveBooleanFeatureToggle({
-    key: DEFAULT_PRIMITIVES_RECONCILER_ENABLED_FLAG_KEY,
+    key: resolvePrimitivesReconcilerConfig().enabledFlagKey || DEFAULT_PRIMITIVES_RECONCILER_ENABLED_FLAG_KEY,
     keyEnvVar: 'JANGAR_PRIMITIVES_RECONCILER_FLAG_KEY',
     fallbackEnvVar: 'JANGAR_PRIMITIVES_RECONCILER',
     defaultValue: shouldStartFallback(),
   })
 }
 
-const parseNamespaces = () => {
-  return parseNamespaceScopeEnv('JANGAR_PRIMITIVES_NAMESPACES', {
-    fallback: DEFAULT_NAMESPACES,
-    label: 'primitives reconciler',
-  })
-}
-
-const runKubectl = (args: string[]) =>
-  new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve) => {
-    const child = spawn('kubectl', args, { stdio: ['ignore', 'pipe', 'pipe'] })
-    let stdout = ''
-    let stderr = ''
-    let settled = false
-    const finish = (payload: { stdout: string; stderr: string; code: number | null }) => {
-      if (settled) return
-      settled = true
-      resolve(payload)
-    }
-    child.stdout.setEncoding('utf8')
-    child.stderr.setEncoding('utf8')
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk
-    })
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk
-    })
-    child.on('error', (error) => {
-      finish({
-        stdout,
-        stderr: stderr || (error instanceof Error ? error.message : String(error)),
-        code: 1,
-      })
-    })
-    child.on('close', (code) => finish({ stdout, stderr, code }))
-  })
+const parseNamespaces = () => resolvePrimitivesReconcilerConfig().namespaces
 
 const resolveNamespaces = async () => {
   const namespaces = parseNamespaces()
   if (!namespaces.includes('*')) return namespaces
 
-  const result = await runKubectl(['get', 'namespace', '-o', 'json'])
-  if (result.code !== 0) {
-    throw new Error(result.stderr || result.stdout || 'failed to list namespaces')
-  }
-  const payload = JSON.parse(result.stdout) as Record<string, unknown>
-  const items = Array.isArray(payload.items) ? payload.items : []
-  const resolved = items
-    .map((item) => {
-      const metadata = item && typeof item === 'object' ? (item as Record<string, unknown>).metadata : null
-      const name = metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>).name : null
-      return typeof name === 'string' ? name : null
-    })
-    .filter((value): value is string => Boolean(value))
+  const resolved = await createKubeGateway().listNamespaces()
   if (resolved.length === 0) {
-    throw new Error('no namespaces returned by kubectl')
+    throw new Error('no namespaces returned by kube gateway')
   }
   return resolved
 }

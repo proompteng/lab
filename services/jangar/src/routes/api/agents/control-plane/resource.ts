@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { resolveAuditContextFromRequest } from '~/server/audit-logging'
 import { createControlPlaneCacheStore } from '~/server/control-plane-cache-store'
+import { resolveControlPlaneCacheReadConfig } from '~/server/control-plane-config'
 import { resolvePrimitiveKind } from '~/server/primitives-control-plane'
 import {
   asRecord,
@@ -49,10 +50,7 @@ export const getPrimitiveResource = async (
   const kube = deps.kubeClient ?? createKubernetesClient()
   const stream = url.searchParams.get('stream') === 'true' || url.searchParams.get('stream') === '1'
 
-  const resolveCacheEnabled = () => {
-    const cacheFlag = (process.env.JANGAR_CONTROL_PLANE_CACHE_ENABLED ?? '').trim().toLowerCase()
-    return cacheFlag === '1' || cacheFlag === 'true' || cacheFlag === 'yes' || cacheFlag === 'on'
-  }
+  const resolveCacheEnabled = () => resolveControlPlaneCacheReadConfig(process.env).enabled
 
   const buildCacheResponse = (
     state: ReturnType<typeof buildCacheFreshnessState>,
@@ -112,7 +110,7 @@ export const getPrimitiveResource = async (
     let fallbackCacheMetadata: ReturnType<typeof buildCacheResponse> | null = null
 
     if (cacheEnabled && cacheKinds.has(resolved.kind)) {
-      const cluster = (process.env.JANGAR_CONTROL_PLANE_CACHE_CLUSTER ?? 'default').trim() || 'default'
+      const cluster = resolveControlPlaneCacheReadConfig(process.env).clusterId
       let store: ReturnType<typeof createControlPlaneCacheStore> | null = null
       const cacheConfig = resolveCacheFreshnessConfig()
       const cacheCheckedAt = new Date()
@@ -145,7 +143,7 @@ export const getPrimitiveResource = async (
           })
         }
       } catch {
-        // Fall back to kubectl get for transient DB issues.
+        // Fall back to a live Kubernetes read for transient DB issues.
       } finally {
         try {
           await store?.close()

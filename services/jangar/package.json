@@ -25,6 +25,7 @@
     "test:ui:update": "bunx playwright test --update-snapshots",
     "docs:inventory:write": "bun run scripts/generate-architecture-inventory.ts --write",
     "docs:inventory:check": "bun run scripts/generate-architecture-inventory.ts --check",
+    "check:module-sizes": "bun run scripts/check-module-sizes.ts",
     "tsc": "bunx tsc --noEmit -p tsconfig.app.json",
     "lint": "bunx oxfmt --check src",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",

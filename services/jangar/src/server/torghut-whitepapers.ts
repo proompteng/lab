@@ -2,6 +2,10 @@ import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { readFile } from 'node:fs/promises'
 import type { Pool } from 'pg'
+import {
+  resolveWhitepaperControlConfig,
+  resolveWhitepaperStorageConfig as resolveConfiguredWhitepaperStorageConfig,
+} from './whitepaper-config'
 
 type NullableString = string | null
 
@@ -398,71 +402,29 @@ const clampSearchLimit = (value: number | undefined) => {
 }
 
 const resolveWhitepaperControlBaseUrl = () => {
-  const explicit =
-    asString(process.env.JANGAR_WHITEPAPER_CONTROL_BASE_URL) ??
-    asString(process.env.JANGAR_WHITEPAPER_FINALIZE_BASE_URL) ??
-    asString(process.env.TORGHUT_BASE_URL)
-  return (explicit ?? DEFAULT_WHITEPAPER_CONTROL_BASE_URL).replace(/\/+$/, '')
+  return resolveWhitepaperControlConfig(process.env).baseUrl.replace(/\/+$/, '')
 }
 
 const resolveWhitepaperControlToken = async () => {
-  const explicit =
-    asString(process.env.JANGAR_WHITEPAPER_CONTROL_TOKEN) ??
-    asString(process.env.JANGAR_WHITEPAPER_FINALIZE_TOKEN) ??
-    asString(process.env.WHITEPAPER_WORKFLOW_API_TOKEN) ??
-    asString(process.env.JANGAR_API_KEY)
+  const control = resolveWhitepaperControlConfig(process.env)
+  const explicit = control.token
   if (explicit) return explicit
 
-  const useServiceAccountToken = asBoolean(process.env.JANGAR_WHITEPAPER_FINALIZE_USE_SERVICE_ACCOUNT_TOKEN ?? 'true')
-  if (!useServiceAccountToken) return null
-  const tokenPath =
-    asString(process.env.JANGAR_WHITEPAPER_SERVICE_ACCOUNT_TOKEN_PATH) ??
-    '/var/run/secrets/kubernetes.io/serviceaccount/token'
+  if (!control.useServiceAccountToken) return null
   try {
-    const token = (await readFile(tokenPath, 'utf8')).trim()
+    const token = (await readFile(control.serviceAccountTokenPath, 'utf8')).trim()
     return token || null
   } catch {
     return null
   }
 }
 
-const normalizeEndpoint = (endpoint: string, secure: boolean) => {
-  if (/^https?:\/\//i.test(endpoint)) return endpoint
-  return `http${secure ? 's' : ''}://${endpoint}`
-}
-
-const resolveStorageEndpoint = () => {
-  const explicit = asString(process.env.WHITEPAPER_CEPH_ENDPOINT) ?? asString(process.env.MINIO_ENDPOINT)
-  if (explicit) {
-    const secureRaw = (process.env.WHITEPAPER_CEPH_USE_TLS ?? process.env.MINIO_SECURE ?? '').trim().toLowerCase()
-    const secure = secureRaw === 'true' || secureRaw === '1' || secureRaw === 'yes'
-    return normalizeEndpoint(explicit, secure)
-  }
-
-  const bucketHost = asString(process.env.WHITEPAPER_CEPH_BUCKET_HOST) ?? asString(process.env.BUCKET_HOST)
-  if (!bucketHost) return null
-  const bucketPort = asString(process.env.WHITEPAPER_CEPH_BUCKET_PORT) ?? asString(process.env.BUCKET_PORT)
-  const secureRaw = (process.env.WHITEPAPER_CEPH_USE_TLS ?? '').trim().toLowerCase()
-  const secure = secureRaw === 'true' || secureRaw === '1' || secureRaw === 'yes'
-  const base = `http${secure ? 's' : ''}://${bucketHost}`
-  return bucketPort ? `${base}:${bucketPort}` : base
-}
-
 const resolveWhitepaperStorageConfig = (): WhitepaperStorageConfig | null => {
-  const endpoint = resolveStorageEndpoint()
-  const accessKey =
-    asString(process.env.WHITEPAPER_CEPH_ACCESS_KEY) ??
-    asString(process.env.AWS_ACCESS_KEY_ID) ??
-    asString(process.env.MINIO_ACCESS_KEY)
-  const secretKey =
-    asString(process.env.WHITEPAPER_CEPH_SECRET_KEY) ??
-    asString(process.env.AWS_SECRET_ACCESS_KEY) ??
-    asString(process.env.MINIO_SECRET_KEY)
-  const region =
-    asString(process.env.WHITEPAPER_CEPH_REGION) ??
-    asString(process.env.AWS_REGION) ??
-    asString(process.env.AWS_DEFAULT_REGION) ??
-    'us-east-1'
+  const configured = resolveConfiguredWhitepaperStorageConfig(process.env)
+  const endpoint = configured.endpoint
+  const accessKey = configured.accessKey
+  const secretKey = configured.secretKey
+  const region = configured.region
 
   if (!endpoint || !accessKey || !secretKey) return null
   return { endpoint, accessKey, secretKey, region }

@@ -12,13 +12,13 @@ import { createFileRoute } from '@tanstack/react-router'
 import * as React from 'react'
 import { getMetadataValue, getResourceUpdatedAt } from '@/components/agents-control-plane'
 import { parseNamespaceSearch } from '@/components/agents-control-plane-search'
-import { fetchPrimitiveDetail, fetchPrimitiveList, type PrimitiveResource } from '@/data/agents-control-plane'
+import {
+  fetchAgentOptions,
+  fetchPrimitiveDetail,
+  type AgentOption,
+  type PrimitiveResource,
+} from '@/data/agents-control-plane'
 import { randomUuid } from '@/lib/uuid'
-
-export const Route = createFileRoute('/control-plane/implementation-specs/$name')({
-  validateSearch: parseNamespaceSearch,
-  component: ImplementationSpecRunPage,
-})
 
 type SpecDraft = {
   summary: string
@@ -33,11 +33,6 @@ type SpecOption = SpecDraft & {
   name: string
   namespace: string
   updatedAt: string | null
-}
-
-type AgentOption = {
-  name: string
-  provider: string | null
 }
 
 const DEFAULT_RUN_IMAGE = 'registry.ide-newton.ts.net/lab/codex-universal:20260219-234214-2a44dd59-dl'
@@ -141,18 +136,52 @@ const buildIssueBody = (spec: SpecOption) => {
   return sections.filter(Boolean).join('\n\n')
 }
 
+const loadImplementationSpecRunPageData = (params: { name: string; namespace: string }) =>
+  Promise.all([
+    fetchPrimitiveDetail({
+      kind: 'ImplementationSpec',
+      name: params.name,
+      namespace: params.namespace,
+    }),
+    fetchAgentOptions(params.namespace),
+  ]).then(([spec, agents]) => ({ spec, agents }))
+
+export const Route = createFileRoute('/control-plane/implementation-specs/$name')({
+  validateSearch: parseNamespaceSearch,
+  loaderDeps: ({ search }: { search: ReturnType<typeof parseNamespaceSearch> }) => ({
+    namespace: search.namespace,
+  }),
+  loader: async ({ params, deps }: { params: { name: string }; deps: { namespace: string } }) =>
+    loadImplementationSpecRunPageData({
+      name: params.name,
+      namespace: deps.namespace,
+    }),
+  component: ImplementationSpecRunPage,
+})
+
 function ImplementationSpecRunPage() {
+  const initialData = Route.useLoaderData() as Awaited<ReturnType<typeof loadImplementationSpecRunPageData>>
   const params = Route.useParams()
   const searchState = Route.useSearch()
 
-  const [specResource, setSpecResource] = React.useState<PrimitiveResource | null>(null)
-  const [specError, setSpecError] = React.useState<string | null>(null)
+  const [specResource, setSpecResource] = React.useState<PrimitiveResource | null>(() =>
+    initialData.spec.ok ? initialData.spec.resource : null,
+  )
+  const [specError, setSpecError] = React.useState<string | null>(() =>
+    initialData.spec.ok ? null : initialData.spec.message,
+  )
   const [specLoading, setSpecLoading] = React.useState(false)
 
-  const [agents, setAgents] = React.useState<AgentOption[]>([])
+  const [agents, setAgents] = React.useState<AgentOption[]>(() =>
+    initialData.agents.ok ? initialData.agents.items : [],
+  )
   const [agentLoading, setAgentLoading] = React.useState(false)
-  const [agentError, setAgentError] = React.useState<string | null>(null)
-  const [selectedAgent, setSelectedAgent] = React.useState('')
+  const [agentError, setAgentError] = React.useState<string | null>(() =>
+    initialData.agents.ok ? null : initialData.agents.message,
+  )
+  const [selectedAgent, setSelectedAgent] = React.useState(() =>
+    initialData.agents.ok ? (initialData.agents.items[0]?.name ?? '') : '',
+  )
 
   const [workloadImage, setWorkloadImage] = React.useState(DEFAULT_RUN_IMAGE)
   const [workflowStep, setWorkflowStep] = React.useState(DEFAULT_STEP_NAME)
@@ -198,6 +227,32 @@ function ImplementationSpecRunPage() {
   )
 
   React.useEffect(() => {
+    if (initialData.spec.ok) {
+      setSpecResource(initialData.spec.resource)
+      setSpecError(null)
+    } else {
+      setSpecResource(null)
+      setSpecError(initialData.spec.message)
+    }
+
+    if (initialData.agents.ok) {
+      const agentItems = initialData.agents.items
+      setAgents(initialData.agents.items)
+      setAgentError(null)
+      setSelectedAgent((current) => {
+        if (current && agentItems.some((agent: AgentOption) => agent.name === current)) {
+          return current
+        }
+        return agentItems[0]?.name ?? ''
+      })
+    } else {
+      setAgents([])
+      setAgentError(initialData.agents.message)
+      setSelectedAgent('')
+    }
+  }, [initialData])
+
+  React.useEffect(() => {
     if (repository.trim()) return
     let attempts = 0
     const timer = window.setInterval(() => {
@@ -216,82 +271,6 @@ function ImplementationSpecRunPage() {
       window.clearInterval(timer)
     }
   }, [readRepositoryValue, repository])
-
-  React.useEffect(() => {
-    let isMounted = true
-    const loadSpec = async () => {
-      setSpecLoading(true)
-      setSpecError(null)
-      try {
-        const result = await fetchPrimitiveDetail({
-          kind: 'ImplementationSpec',
-          name: params.name,
-          namespace: searchState.namespace,
-        })
-        if (!result.ok) {
-          if (isMounted) {
-            setSpecResource(null)
-            setSpecError(result.message)
-          }
-          return
-        }
-        if (isMounted) {
-          setSpecResource(result.resource)
-        }
-      } catch (error) {
-        if (isMounted) {
-          setSpecResource(null)
-          setSpecError(error instanceof Error ? error.message : 'Unable to load spec')
-        }
-      } finally {
-        if (isMounted) setSpecLoading(false)
-      }
-    }
-    void loadSpec()
-    return () => {
-      isMounted = false
-    }
-  }, [params.name, searchState.namespace])
-
-  const loadAgents = React.useCallback(
-    async (nextNamespace: string) => {
-      setAgentLoading(true)
-      setAgentError(null)
-      try {
-        const result = await fetchPrimitiveList({ kind: 'Agent', namespace: nextNamespace, limit: 200 })
-        if (!result.ok) {
-          setAgents([])
-          setAgentError(result.message)
-          return
-        }
-        const options = result.items
-          .map((item) => {
-            const metadata = asRecord(item.metadata) ?? {}
-            const spec = asRecord(item.spec) ?? {}
-            const providerRef = asRecord(spec.providerRef) ?? {}
-            const name = asString(metadata.name)
-            if (!name) return null
-            return { name, provider: asString(providerRef.name) } satisfies AgentOption
-          })
-          .filter((item): item is AgentOption => Boolean(item))
-          .sort((a, b) => a.name.localeCompare(b.name))
-        setAgents(options)
-        if (!selectedAgent || !options.some((option) => option.name === selectedAgent)) {
-          setSelectedAgent(options[0]?.name ?? '')
-        }
-      } catch (error) {
-        setAgents([])
-        setAgentError(error instanceof Error ? error.message : 'Unable to load agents')
-      } finally {
-        setAgentLoading(false)
-      }
-    },
-    [selectedAgent],
-  )
-
-  React.useEffect(() => {
-    void loadAgents(searchState.namespace)
-  }, [loadAgents, searchState.namespace])
 
   const selectedSpec = React.useMemo(() => {
     if (!specResource) return null

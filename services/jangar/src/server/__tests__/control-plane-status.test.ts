@@ -28,6 +28,13 @@ const createTestKubeGateway = (overrides: Partial<KubeGateway> = {}): KubeGatewa
   listJobs: vi.fn(async () => []),
   listNamespaces: vi.fn(async () => []),
   listCustomResourceDefinitions: vi.fn(async () => []),
+  getLease: vi.fn(async () => null),
+  createLease: vi.fn(async () => {
+    throw new Error('not implemented in test gateway')
+  }),
+  replaceLease: vi.fn(async () => {
+    throw new Error('not implemented in test gateway')
+  }),
   probeNamespacedResource: vi.fn(async () => 'ok' as const),
   serviceExists: vi.fn(async () => true),
   listSwarms: vi.fn(async () => []),

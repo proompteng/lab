@@ -6,6 +6,7 @@ import process from 'node:process'
 
 import { parseArgoApplicationStatus, type ArgoApplicationStatus as ArgoStatus } from '../shared/argo'
 import { ensureCli, fatal, repoRoot } from '../shared/cli'
+import { extractImageDigestFromKustomizationSource } from './manifest-contract'
 
 type CliOptions = {
   namespace?: string
@@ -64,33 +65,8 @@ type ExpectedRevisionMode = (typeof supportedRevisionModes)[number]
 
 const resolvePath = (path: string) => resolve(repoRoot, path)
 
-const stripYamlValueQuotes = (value: string): string => value.replace(/^['"]|['"]$/g, '')
-
 export const extractExpectedDigest = (kustomizationSource: string, imageName: string): string => {
-  const lines = kustomizationSource.split(/\r?\n/)
-  let inImageBlock = false
-
-  for (const line of lines) {
-    const trimmed = line.trim()
-    const nameMatch = trimmed.match(/^-?\s*name:\s*(.+)$/)
-    if (nameMatch) {
-      const candidate = stripYamlValueQuotes(nameMatch[1].trim())
-      inImageBlock = candidate === imageName
-      continue
-    }
-
-    if (!inImageBlock) {
-      continue
-    }
-
-    const digestMatch = trimmed.match(/^digest:\s*(.+)$/)
-    if (digestMatch) {
-      const digest = stripYamlValueQuotes(digestMatch[1].trim())
-      return digest.includes('@') ? digest.slice(digest.lastIndexOf('@') + 1) : digest
-    }
-  }
-
-  throw new Error(`Unable to find digest for image '${imageName}' in kustomization`)
+  return extractImageDigestFromKustomizationSource(kustomizationSource, imageName)
 }
 
 const runCommand = async (command: string, args: string[], allowFailure = false): Promise<CommandResult> => {

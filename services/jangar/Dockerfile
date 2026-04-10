@@ -25,6 +25,7 @@ ARG TEMURIN25_JDK_TAG=jdk-25.0.1+8
 ARG TEMURIN25_JDK_VERSION=25.0.1_8
 ARG GRADLE_VERSION=9.2.1
 ARG CODEX_VERSION=latest
+ARG JANGAR_BUILD_CI=false
 
 FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS tools
 ARG NODE24_VERSION=24.11.1
@@ -42,6 +43,7 @@ ARG TEMURIN25_JDK_TAG
 ARG TEMURIN25_JDK_VERSION
 ARG GRADLE_VERSION
 ARG CODEX_VERSION
+ARG JANGAR_BUILD_CI
 WORKDIR /app
 
 ENV CODEX_CWD=/workspace/lab \
@@ -202,7 +204,9 @@ RUN set -eux; \
     printf '\n# zoxide\nif [ -f /etc/profile.d/zoxide.sh ]; then\n  . /etc/profile.d/zoxide.sh\nfi\n' >> /etc/bash.bashrc; \
   fi
 
-# Install Neovim (official releases) + AstroNvim configuration (template)
+# Install Neovim (official releases) + AstroNvim configuration (template).
+# CI builds skip the AstroNvim bootstrap because it triggers network-dependent
+# plugin installation during the Docker build.
 RUN set -eux; \
   ARCH="${TARGETARCH:-$(uname -m)}"; \
   case "$ARCH" in \
@@ -224,9 +228,14 @@ RUN set -eux; \
   if [ -d /root/.local/state/nvim ]; then mv /root/.local/state/nvim /root/.local/state/nvim.bak; fi; \
   if [ -d /root/.cache/nvim ]; then mv /root/.cache/nvim /root/.cache/nvim.bak; fi; \
   mkdir -p /root/.config; \
-  git clone --depth 1 https://github.com/AstroNvim/template /root/.config/nvim; \
-  rm -rf /root/.config/nvim/.git; \
-  nvim --headless +q
+  if [ "${JANGAR_BUILD_CI}" = "true" ]; then \
+    mkdir -p /root/.config/nvim; \
+    printf '%s\n' '-- CI build: skip AstroNvim bootstrap.' > /root/.config/nvim/init.lua; \
+  else \
+    git clone --depth 1 https://github.com/AstroNvim/template /root/.config/nvim; \
+    rm -rf /root/.config/nvim/.git; \
+    nvim --headless +q; \
+  fi
 
 # Install Node.js once for both Bun and tools that expect node
 RUN set -eux; \

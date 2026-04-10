@@ -21,4 +21,13 @@ describe('runtime validation', () => {
       }),
     ).not.toThrow()
   })
+
+  it('does not require embedding credentials just to boot a production profile', () => {
+    expect(() =>
+      validateRuntimeProfileConfiguration(JANGAR_RUNTIME_PROFILES.httpServer, {
+        NODE_ENV: 'production',
+        DATABASE_URL: 'postgresql://jangar:test@localhost:5432/jangar',
+      }),
+    ).not.toThrow()
+  })
 })

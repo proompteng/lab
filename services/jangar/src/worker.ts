@@ -4,6 +4,7 @@ import workflows from '@proompteng/bumba/src/workflows/index'
 import { createTemporalClient, type TemporalConfig, temporalCallOptions } from '@proompteng/temporal-bun-sdk'
 import { createWorker } from '@proompteng/temporal-bun-sdk/worker'
 import type { WorkflowDefinitions } from '@proompteng/temporal-bun-sdk/workflow'
+import { resolveWorkerRuntimeConfig } from '~/server/runtime-entry-config'
 
 type ActivityHandler = (...args: unknown[]) => unknown | Promise<unknown>
 
@@ -24,38 +25,9 @@ type HealthServer = {
   stop: () => Promise<void>
 }
 
-const DEFAULT_QUEUE = 'jangar'
-
-const parseIntEnv = (value: string | undefined, fallback: number): number => {
-  const parsed = Number.parseInt(value ?? '', 10)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
-}
-
-const resolveQueue = () => {
-  const preferred = process.env.JANGAR_WORKER_TEMPORAL_TASK_QUEUE?.trim()
-  if (preferred) return preferred
-  const fallback = process.env.TEMPORAL_TASK_QUEUE?.trim()
-  return fallback && fallback.length > 0 ? fallback : DEFAULT_QUEUE
-}
-
-const resolveHealthConfig = () => {
-  const port = parseIntEnv(process.env.JANGAR_WORKER_HEALTH_PORT, 3002)
-  const checkIntervalMs = parseIntEnv(process.env.JANGAR_WORKER_HEALTH_CHECK_INTERVAL_MS, 10_000)
-  const checkTimeoutMs = parseIntEnv(process.env.JANGAR_WORKER_HEALTH_CHECK_TIMEOUT_MS, 2_000)
-  const readyTtlMs = parseIntEnv(process.env.JANGAR_WORKER_HEALTH_READY_TTL_MS, 30_000)
-  const liveTtlMs = parseIntEnv(process.env.JANGAR_WORKER_HEALTH_LIVE_TTL_MS, 30_000)
-
-  return {
-    port,
-    checkIntervalMs,
-    checkTimeoutMs: Math.min(checkTimeoutMs, Math.max(checkIntervalMs - 100, 1_000)),
-    readyTtlMs,
-    liveTtlMs,
-  }
-}
-
 const startHealthServer = async (config: TemporalConfig): Promise<HealthServer> => {
-  const { port, checkIntervalMs, checkTimeoutMs, readyTtlMs, liveTtlMs } = resolveHealthConfig()
+  const { health } = resolveWorkerRuntimeConfig()
+  const { port, checkIntervalMs, checkTimeoutMs, readyTtlMs, liveTtlMs } = health
   const state: HealthState = {
     startedAt: Date.now(),
     running: false,
@@ -173,7 +145,7 @@ const startHealthServer = async (config: TemporalConfig): Promise<HealthServer> 
 }
 
 const main = async () => {
-  const taskQueue = resolveQueue()
+  const taskQueue = resolveWorkerRuntimeConfig().temporalTaskQueue
   const { worker, config } = await createWorker({
     taskQueue,
     workflows: workflows as WorkflowDefinitions,

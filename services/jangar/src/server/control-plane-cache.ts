@@ -1,4 +1,6 @@
 import { startResourceWatch } from '~/server/kube-watch'
+import { isRuntimeTestEnv } from '~/server/control-plane-config'
+import { resolveControlPlaneCacheConfig } from '~/server/controller-runtime-config'
 import { parseNamespaceScopeEnv } from '~/server/namespace-scope'
 import { asRecord, asString, readNested } from '~/server/primitives-http'
 import { createKubernetesClient, RESOURCE_MAP } from '~/server/primitives-kube'
@@ -32,28 +34,15 @@ let started = false
 let watchHandles: Array<{ stop: () => void }> = []
 
 const shouldStart = () => {
-  if (process.env.NODE_ENV === 'test') return false
-  const flag = (process.env.JANGAR_CONTROL_PLANE_CACHE_ENABLED ?? '').trim().toLowerCase()
-  return flag === '1' || flag === 'true' || flag === 'yes' || flag === 'on'
+  if (isRuntimeTestEnv()) return false
+  return resolveControlPlaneCacheConfig().enabled
 }
 
 const parseNamespaces = () => {
-  const explicit = process.env.JANGAR_CONTROL_PLANE_CACHE_NAMESPACES?.trim()
-  if (explicit) {
-    const namespaces = explicit
-      .split(',')
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0)
-    return namespaces.length > 0 ? namespaces : [DEFAULT_NAMESPACE]
-  }
-
-  return parseNamespaceScopeEnv('JANGAR_PRIMITIVES_NAMESPACES', {
-    fallback: [DEFAULT_NAMESPACE],
-    label: 'control plane cache',
-  })
+  return resolveControlPlaneCacheConfig().namespaces
 }
 
-const resolveClusterId = () => process.env.JANGAR_CONTROL_PLANE_CACHE_CLUSTER?.trim() || DEFAULT_CLUSTER_ID
+const resolveClusterId = () => resolveControlPlaneCacheConfig().clusterId || DEFAULT_CLUSTER_ID
 
 const toSummary = (resource: Record<string, unknown>) => ({
   apiVersion: asString(resource.apiVersion) ?? null,
