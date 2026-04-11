@@ -1,16 +1,5 @@
-import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, rm } from 'node:fs/promises'
-import { dirname, join, relative, resolve, sep } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import {
-  LOCK_RETRY_ATTEMPTS,
-  LOCK_RETRY_DELAY_MS,
-  LOCK_STALE_MS,
-  runGitWithLockRecovery,
-} from '~/server/git-lock-recovery'
-import { withWorktreeLock } from '~/server/git-worktree-lock'
 import {
   fetchTerminalBackend,
   fetchTerminalBackendJson,
@@ -26,238 +15,28 @@ import {
   upsertTerminalSessionRecord,
 } from '~/server/terminal-sessions-store'
 import { resolveTerminalsConfig } from '~/server/terminals-config'
+import {
+  buildTerminalSessionId,
+  buildTerminalWorktreeName,
+  buildTerminalWorktreePath,
+  createFreshTerminalWorktree,
+  createTerminalWorktreeAtPath,
+  isCleanReusableTerminalWorktree,
+  isSafeTerminalWorktreePath,
+  queueTerminalWorktreeCheckout,
+  refreshTerminalWorktree,
+  removeTerminalWorktree,
+  resolveCodexBaseCwd,
+  resolveTerminalBaseRef,
+  terminalWorktreeMaxAttempts,
+} from '~/server/terminal-worktrees'
 
-const SESSION_PREFIX = 'jangar-terminal-'
-const WORKTREE_DIR_NAME = '.worktrees'
 const terminalsConfig = resolveTerminalsConfig()
-const DEFAULT_BASE_REF = terminalsConfig.baseRef
-const FALLBACK_BASE_REF = 'main'
-const MAX_WORKTREE_ATTEMPTS = 6
 const SESSION_ID_PATTERN = /^jangar-terminal-[a-z0-9-]+$/
-const parseNumber = (value: string | undefined, fallback: number) => {
-  const parsed = Number.parseInt(value ?? '', 10)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
-}
-
-const MAIN_FETCH_ENABLED = terminalsConfig.mainFetchEnabled
-const FETCH_TIMEOUT_MS = 30_000
-const WORKTREE_TIMEOUT_MS = terminalsConfig.worktreeTimeoutMs
-const REUSE_REFRESH_TIMEOUT_MS = 15_000
-const DEFER_WORKTREE_CHECKOUT = terminalsConfig.deferWorktreeCheckout
 
 const bufferBytes = terminalsConfig.bufferBytes
 const idleTimeoutMs = terminalsConfig.idleTimeoutMs
 const publicTerminalUrl = terminalsConfig.publicTerminalUrl
-
-const resolveRepoRoot = () => resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
-
-const resolveCodexBaseCwd = () => {
-  const envCwd = terminalsConfig.codexCwdOverride
-  if (envCwd) return envCwd
-  return terminalsConfig.isProduction ? '/workspace/lab' : resolveRepoRoot()
-}
-
-const resolveWorktreeRoot = () => join(resolveCodexBaseCwd(), WORKTREE_DIR_NAME)
-
-const runGitWithRecovery = async (
-  args: string[],
-  cwd: string,
-  options: CommandOptions & { worktreeName?: string; worktreePath?: string },
-) =>
-  runGitWithLockRecovery((gitArgs, gitCwd) => runGit(gitArgs, gitCwd, options), args, cwd, {
-    repoRoot: resolveCodexBaseCwd(),
-    worktreeName: options.worktreeName ?? null,
-    worktreePath: options.worktreePath ?? null,
-    label: options.label,
-    staleMs: LOCK_STALE_MS,
-    attempts: LOCK_RETRY_ATTEMPTS,
-    delayMs: LOCK_RETRY_DELAY_MS,
-  })
-
-const readProcessText = async (stream: ReadableStream<Uint8Array> | null, signal?: AbortSignal) => {
-  if (!stream) return ''
-  const reader = stream.getReader()
-  const decoder = new TextDecoder()
-  let result = ''
-  const onAbort = () => {
-    void reader.cancel()
-  }
-  if (signal) {
-    if (signal.aborted) {
-      onAbort()
-    } else {
-      signal.addEventListener('abort', onAbort, { once: true })
-    }
-  }
-  try {
-    while (true) {
-      const { value, done } = await reader.read()
-      if (done) break
-      if (!value || value.length === 0) continue
-      result += decoder.decode(value, { stream: true })
-    }
-  } catch {
-    // ignore
-  } finally {
-    if (signal) signal.removeEventListener('abort', onAbort)
-    result += decoder.decode()
-  }
-  return result
-}
-
-type CommandResult = {
-  exitCode: number
-  stdout: string
-  stderr: string
-}
-
-type CommandOptions = {
-  cwd?: string
-  env?: NodeJS.ProcessEnv
-  timeoutMs?: number
-  label?: string
-}
-
-const runCommand = async (args: string[], options: CommandOptions = {}): Promise<CommandResult> => {
-  const bunRuntime = (globalThis as { Bun?: typeof Bun }).Bun
-  if (bunRuntime) {
-    const process = bunRuntime.spawn(args, {
-      cwd: options.cwd,
-      env: options.env,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    })
-    let timedOut = false
-    let timeout: ReturnType<typeof setTimeout> | null = null
-    const abortController = new AbortController()
-    const stdoutPromise = readProcessText(process.stdout, abortController.signal)
-    const stderrPromise = readProcessText(process.stderr, abortController.signal)
-    const exitPromise = process.exited.then((exitCode) => {
-      abortController.abort()
-      return exitCode ?? 1
-    })
-
-    let exitCode: number | null
-    if (options.timeoutMs && Number.isFinite(options.timeoutMs)) {
-      exitCode = await Promise.race([
-        exitPromise,
-        new Promise<number | null>((resolve) => {
-          timeout = setTimeout(() => {
-            timedOut = true
-            try {
-              process.kill('SIGKILL')
-            } catch {
-              // ignore
-            }
-            abortController.abort()
-            resolve(null)
-          }, options.timeoutMs)
-        }),
-      ])
-    } else {
-      exitCode = await exitPromise
-    }
-
-    if (timeout) clearTimeout(timeout)
-    const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise])
-    if (timedOut) {
-      const label = options.label ?? args[0]
-      const message = `${label} timed out after ${options.timeoutMs}ms`
-      return { exitCode: 124, stdout, stderr: stderr ? `${stderr}\n${message}` : message }
-    }
-    return { exitCode: exitCode ?? 1, stdout, stderr }
-  }
-
-  return new Promise((resolvePromise) => {
-    const child = spawn(args[0], args.slice(1), { cwd: options.cwd, env: options.env })
-    let stdout = ''
-    let stderr = ''
-    let timedOut = false
-    let timeout: ReturnType<typeof setTimeout> | null = null
-    if (options.timeoutMs && Number.isFinite(options.timeoutMs)) {
-      timeout = setTimeout(() => {
-        timedOut = true
-        try {
-          child.kill('SIGKILL')
-        } catch {
-          // ignore
-        }
-      }, options.timeoutMs)
-    }
-    child.stdout?.on('data', (chunk) => {
-      stdout += chunk.toString()
-    })
-    child.stderr?.on('data', (chunk) => {
-      stderr += chunk.toString()
-    })
-    child.on('error', (error) => {
-      if (timeout) clearTimeout(timeout)
-      resolvePromise({ exitCode: 1, stdout: '', stderr: error.message })
-    })
-    child.on('close', (exitCode) => {
-      if (timeout) clearTimeout(timeout)
-      if (timedOut) {
-        const label = options.label ?? args[0]
-        const message = `${label} timed out after ${options.timeoutMs}ms`
-        resolvePromise({ exitCode: 124, stdout, stderr: stderr ? `${stderr}\n${message}` : message })
-        return
-      }
-      resolvePromise({ exitCode: exitCode ?? 1, stdout, stderr })
-    })
-  })
-}
-
-const gitEnv = () => ({ ...process.env, GIT_TERMINAL_PROMPT: '0' })
-
-const runGit = async (args: string[], cwd?: string, options?: CommandOptions) =>
-  runCommand(['git', ...args], { cwd, env: gitEnv(), ...options })
-
-const generateSuffix = () => randomUUID().slice(0, 8)
-
-const buildWorktreeName = (suffix: string) => `codex-${suffix}`
-
-const buildSessionId = (worktreeName: string) => `${SESSION_PREFIX}${worktreeName}`
-
-const buildWorktreePath = (worktreeName: string) => join(resolveWorktreeRoot(), worktreeName)
-
-const queueWorktreeCheckout = (
-  worktreePath: string,
-  baseRef: string,
-  sessionId?: string,
-  worktreeName?: string | null,
-) => {
-  if (!DEFER_WORKTREE_CHECKOUT) return
-  queueMicrotask(() => {
-    void withWorktreeLock(async () => {
-      const result = await runGitWithRecovery(['checkout', '--detach', '--force', baseRef], worktreePath, {
-        timeoutMs: WORKTREE_TIMEOUT_MS,
-        label: 'git checkout',
-        worktreeName: worktreeName ?? undefined,
-        worktreePath,
-      })
-      if (result.exitCode === 0) return
-      console.warn('[terminals] deferred checkout failed', {
-        sessionId,
-        stderr: result.stderr.trim(),
-      })
-    })
-  })
-}
-
-const isCleanReusableWorktree = async (worktreePath: string) => {
-  const inside = await runGit(['rev-parse', '--is-inside-work-tree'], worktreePath, {
-    timeoutMs: FETCH_TIMEOUT_MS,
-    label: 'git worktree probe',
-  })
-  if (inside.exitCode !== 0) return false
-
-  const statusResult = await runGit(['status', '--porcelain'], worktreePath, {
-    timeoutMs: FETCH_TIMEOUT_MS,
-    label: 'git worktree status',
-  })
-  if (statusResult.exitCode !== 0) return false
-  return statusResult.stdout.trim().length === 0
-}
 
 const findReusableSession = async (): Promise<PlannedSession | null> => {
   const records = await listTerminalSessionRecords()
@@ -265,7 +44,7 @@ const findReusableSession = async (): Promise<PlannedSession | null> => {
   const candidates = records.filter((record) => {
     if (record.status !== 'closed' && record.status !== 'error') return false
     if (!record.worktreeName || !record.worktreePath) return false
-    if (!isSafeWorktreePath(record.worktreePath, record.worktreeName)) return false
+    if (!isSafeTerminalWorktreePath(record.worktreePath, record.worktreeName)) return false
     if (!existsSync(record.worktreePath)) return false
     if (manager?.getSession(record.id)) return false
     return true
@@ -276,7 +55,7 @@ const findReusableSession = async (): Promise<PlannedSession | null> => {
     if (!record.worktreePath || !record.worktreeName) continue
     const worktreePath = record.worktreePath
     const worktreeName = record.worktreeName
-    const reusable = await isCleanReusableWorktree(worktreePath)
+    const reusable = await isCleanReusableTerminalWorktree(worktreePath)
     if (!reusable) continue
     return {
       sessionId: record.id,
@@ -287,100 +66,6 @@ const findReusableSession = async (): Promise<PlannedSession | null> => {
   }
 
   return null
-}
-
-const ensureBaseRef = async (repoRoot: string) => {
-  const [primary, fallback] = await Promise.all([
-    runGit(['rev-parse', '--verify', DEFAULT_BASE_REF], repoRoot, { timeoutMs: FETCH_TIMEOUT_MS }),
-    runGit(['rev-parse', '--verify', FALLBACK_BASE_REF], repoRoot, { timeoutMs: FETCH_TIMEOUT_MS }),
-  ])
-  if (primary.exitCode === 0) return DEFAULT_BASE_REF
-  if (fallback.exitCode === 0) return FALLBACK_BASE_REF
-
-  if (!MAIN_FETCH_ENABLED) {
-    throw new Error(`Unable to resolve base ref: ${DEFAULT_BASE_REF}`)
-  }
-
-  const fetchResult = await runGit(['fetch', '--all', '--prune'], repoRoot, {
-    timeoutMs: FETCH_TIMEOUT_MS,
-    label: 'git fetch',
-  })
-  if (fetchResult.exitCode !== 0) {
-    throw new Error(fetchResult.stderr.trim() || 'Unable to fetch base ref')
-  }
-
-  const afterFetch = await runGit(['rev-parse', '--verify', DEFAULT_BASE_REF], repoRoot, {
-    timeoutMs: FETCH_TIMEOUT_MS,
-  })
-  if (afterFetch.exitCode === 0) return DEFAULT_BASE_REF
-
-  const fallbackAfter = await runGit(['rev-parse', '--verify', FALLBACK_BASE_REF], repoRoot, {
-    timeoutMs: FETCH_TIMEOUT_MS,
-  })
-  if (fallbackAfter.exitCode === 0) return FALLBACK_BASE_REF
-
-  throw new Error(`Unable to resolve base ref: ${DEFAULT_BASE_REF}`)
-}
-
-const createWorktreeAtPath = async (worktreeName: string, worktreePath: string, baseRef: string, repoRoot: string) =>
-  withWorktreeLock(async () => {
-    const args = ['worktree', 'add', '--detach', '--force']
-    if (DEFER_WORKTREE_CHECKOUT) {
-      args.push('--no-checkout')
-    }
-    args.push(worktreePath, baseRef)
-    const result = await runGitWithRecovery(args, repoRoot, {
-      timeoutMs: WORKTREE_TIMEOUT_MS,
-      label: 'git worktree add',
-      worktreeName,
-      worktreePath,
-    })
-    if (result.exitCode !== 0) {
-      const detail = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join('\n')
-      await runGitWithRecovery(['worktree', 'remove', '--force', worktreePath], repoRoot, {
-        timeoutMs: WORKTREE_TIMEOUT_MS,
-        label: 'git worktree remove',
-        worktreeName,
-        worktreePath,
-      }).catch(() => {})
-      await rm(worktreePath, { recursive: true, force: true }).catch(() => {})
-      throw new Error(detail || 'Unable to create worktree')
-    }
-
-    await runGit(['config', 'user.name', 'Jangar Terminal'], worktreePath)
-    await runGit(['config', 'user.email', 'terminal@jangar.local'], worktreePath)
-
-    return { worktreeName, worktreePath }
-  })
-
-const createFreshWorktree = async () => {
-  const repoRoot = resolveCodexBaseCwd()
-  const baseRef = await ensureBaseRef(repoRoot)
-  await mkdir(resolveWorktreeRoot(), { recursive: true })
-
-  for (let attempt = 0; attempt < MAX_WORKTREE_ATTEMPTS; attempt += 1) {
-    const suffix = generateSuffix()
-    const worktreeName = buildWorktreeName(suffix)
-    const worktreePath = buildWorktreePath(worktreeName)
-    if (existsSync(worktreePath)) continue
-    try {
-      await createWorktreeAtPath(worktreeName, worktreePath, baseRef, repoRoot)
-      return { worktreeName, worktreePath, baseRef }
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error)
-      console.warn('[terminals] worktree create failed', { worktreeName, detail })
-    }
-  }
-
-  throw new Error('Unable to allocate a new terminal worktree.')
-}
-
-const isSafeWorktreePath = (worktreePath: string, worktreeName: string | null) => {
-  if (!worktreeName) return false
-  const root = resolveWorktreeRoot()
-  const rel = relative(root, worktreePath)
-  if (!rel || rel.startsWith('..') || rel.includes('..') || rel.includes(`..${sep}`)) return false
-  return rel === worktreeName
 }
 
 const buildManager = () => {
@@ -568,28 +253,14 @@ const provisionTerminalSession = async ({
 }: PlannedSession) => {
   try {
     const repoRoot = resolveCodexBaseCwd()
-    const baseRef = plannedBaseRef ?? (await ensureBaseRef(repoRoot))
-    await mkdir(resolveWorktreeRoot(), { recursive: true })
+    const baseRef = plannedBaseRef ?? (await resolveTerminalBaseRef(repoRoot))
     if (!reuseExisting || !existsSync(worktreePath)) {
-      await createWorktreeAtPath(worktreeName, worktreePath, baseRef, repoRoot)
-    } else if (!DEFER_WORKTREE_CHECKOUT) {
-      const refreshResult = await withWorktreeLock(() =>
-        runGitWithRecovery(['checkout', '--detach', '--force', baseRef], worktreePath, {
-          timeoutMs: REUSE_REFRESH_TIMEOUT_MS,
-          label: 'git checkout',
-          worktreeName,
-          worktreePath,
-        }),
-      )
-      if (refreshResult.exitCode !== 0) {
-        console.warn('[terminals] worktree refresh failed', {
-          sessionId,
-          stderr: refreshResult.stderr.trim(),
-        })
-      }
+      await createTerminalWorktreeAtPath(worktreeName, worktreePath, baseRef, repoRoot)
+    } else {
+      await refreshTerminalWorktree(worktreePath, baseRef, worktreeName, sessionId)
     }
     getManager()?.startSession({ sessionId, worktreePath, worktreeName })
-    queueWorktreeCheckout(worktreePath, baseRef, sessionId, worktreeName)
+    queueTerminalWorktreeCheckout(worktreePath, baseRef, sessionId, worktreeName)
     await recordSessionStatus(sessionId, 'ready', {
       worktreeName,
       worktreePath,
@@ -610,10 +281,10 @@ const provisionTerminalSession = async ({
 }
 
 const createTerminalSessionImmediate = async (): Promise<TerminalSession> => {
-  const { worktreeName, worktreePath, baseRef } = await createFreshWorktree()
-  const sessionId = buildSessionId(worktreeName)
+  const { worktreeName, worktreePath, baseRef } = await createFreshTerminalWorktree()
+  const sessionId = buildTerminalSessionId(worktreeName)
   getManager()?.startSession({ sessionId, worktreePath, worktreeName })
-  queueWorktreeCheckout(worktreePath, baseRef, sessionId, worktreeName)
+  queueTerminalWorktreeCheckout(worktreePath, baseRef, sessionId, worktreeName)
   const record = await recordSessionStatus(sessionId, 'ready', {
     worktreeName,
     worktreePath,
@@ -637,11 +308,11 @@ const createTerminalSessionImmediate = async (): Promise<TerminalSession> => {
 }
 
 const allocateTerminalSession = async (): Promise<PlannedSession> => {
-  for (let attempt = 0; attempt < MAX_WORKTREE_ATTEMPTS; attempt += 1) {
-    const suffix = generateSuffix()
-    const worktreeName = buildWorktreeName(suffix)
-    const sessionId = buildSessionId(worktreeName)
-    const worktreePath = buildWorktreePath(worktreeName)
+  for (let attempt = 0; attempt < terminalWorktreeMaxAttempts; attempt += 1) {
+    const suffix = randomUUID().slice(0, 8)
+    const worktreeName = buildTerminalWorktreeName(suffix)
+    const sessionId = buildTerminalSessionId(worktreeName)
+    const worktreePath = buildTerminalWorktreePath(worktreeName)
     if (existsSync(worktreePath)) continue
     const existing = await getTerminalSessionRecord(sessionId)
     if (existing) continue
@@ -962,19 +633,8 @@ export const deleteTerminalSession = async (sessionId: string) => {
     throw new Error('Session is still running. Terminate it before deleting.')
   }
 
-  if (record?.worktreePath && isSafeWorktreePath(record.worktreePath, record.worktreeName)) {
-    const repoRoot = resolveCodexBaseCwd()
-    const removeResult = await runGit(['worktree', 'remove', '--force', record.worktreePath], repoRoot, {
-      timeoutMs: WORKTREE_TIMEOUT_MS,
-      label: 'git worktree remove',
-    })
-    if (removeResult.exitCode !== 0) {
-      console.warn('[terminals] git worktree remove failed', {
-        sessionId,
-        stderr: removeResult.stderr.trim(),
-      })
-      await rm(record.worktreePath, { recursive: true, force: true })
-    }
+  if (record?.worktreePath && isSafeTerminalWorktreePath(record.worktreePath, record.worktreeName)) {
+    await removeTerminalWorktree(record.worktreePath, record.worktreeName, sessionId)
   }
 
   await deleteTerminalSessionRecord(sessionId)

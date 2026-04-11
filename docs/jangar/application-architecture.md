@@ -45,6 +45,10 @@ The cleanup program moved the highest-risk application boundaries behind explici
 - Memory embeddings
   - `services/jangar/src/server/memory-provider.ts`
   - `services/jangar/src/server/memory-provider-health.ts`
+- Terminal infrastructure
+  - `services/jangar/src/server/terminals.ts`
+  - `services/jangar/src/server/terminal-worktrees.ts`
+  - `services/jangar/src/server/terminal-command-runner.ts`
 - Kubernetes
   - `services/jangar/src/server/kube-gateway.ts`
   - `services/jangar/src/server/primitives-kube.ts`
