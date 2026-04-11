@@ -103,6 +103,7 @@ class TestStrategyAutoresearch(TestCase):
             args.strategy_configmap,
             runner._REPO_ROOT / 'argocd/applications/torghut/strategy-configmap.yaml',
         )
+        self.assertIsNone(args.shadow_validation_artifact)
 
     def test_program_defaults_include_mlx_contract(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -844,6 +845,7 @@ class TestStrategyAutoresearch(TestCase):
                 chunk_minutes=10,
                 symbols='',
                 progress_log_seconds=30,
+                shadow_validation_artifact=None,
                 train_days=6,
                 holdout_days=3,
                 full_window_start_date='',
@@ -901,6 +903,9 @@ class TestStrategyAutoresearch(TestCase):
             self.assertEqual(summary['runtime_closure']['status'], 'pending_runtime_parity')
             self.assertFalse(summary['runtime_closure']['promotion_prerequisites']['allowed'])
             self.assertFalse(summary['runtime_closure']['rollback_readiness']['ready'])
+            mlx_notebook = (run_root / 'mlx-autoresearch-diagnostics.ipynb').read_text(encoding='utf-8')
+            self.assertIn('Runtime closure evidence', mlx_notebook)
+            self.assertIn('RUNTIME_SHADOW_VALIDATION', mlx_notebook)
             self.assertTrue((run_root / 'runtime-closure' / 'summary.json').exists())
             self.assertTrue((run_root / 'runtime-closure' / 'promotion' / 'promotion-prerequisites.json').exists())
             manifest = json.loads((run_root / 'mlx-snapshot-manifest.json').read_text(encoding='utf-8'))
@@ -1063,6 +1068,7 @@ class TestStrategyAutoresearch(TestCase):
                 chunk_minutes=10,
                 symbols='',
                 progress_log_seconds=30,
+                shadow_validation_artifact=None,
                 train_days=6,
                 holdout_days=3,
                 full_window_start_date='',
@@ -1198,6 +1204,7 @@ class TestStrategyAutoresearch(TestCase):
                 chunk_minutes=10,
                 symbols='',
                 progress_log_seconds=30,
+                shadow_validation_artifact=None,
                 train_days=6,
                 holdout_days=3,
                 full_window_start_date='',
@@ -1264,6 +1271,7 @@ class TestStrategyAutoresearch(TestCase):
                 chunk_minutes=10,
                 symbols='',
                 progress_log_seconds=30,
+                shadow_validation_artifact=None,
                 train_days=6,
                 holdout_days=3,
                 full_window_start_date='',
@@ -1373,6 +1381,7 @@ class TestStrategyAutoresearch(TestCase):
                 chunk_minutes=10,
                 symbols='',
                 progress_log_seconds=30,
+                shadow_validation_artifact=None,
                 train_days=6,
                 holdout_days=3,
                 full_window_start_date='',
@@ -1431,6 +1440,7 @@ class TestStrategyAutoresearch(TestCase):
                 chunk_minutes=10,
                 symbols='',
                 progress_log_seconds=30,
+                shadow_validation_artifact=None,
                 train_days=6,
                 holdout_days=3,
                 full_window_start_date='2026-03-20',
@@ -1480,6 +1490,7 @@ class TestStrategyAutoresearch(TestCase):
                 chunk_minutes=10,
                 symbols='',
                 progress_log_seconds=30,
+                shadow_validation_artifact=None,
                 train_days=6,
                 holdout_days=3,
                 full_window_start_date='',

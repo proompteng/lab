@@ -95,6 +95,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument('--chunk-minutes', type=int, default=10)
     parser.add_argument('--symbols', default='')
     parser.add_argument('--progress-log-seconds', type=int, default=30)
+    parser.add_argument(
+        '--shadow-validation-artifact',
+        type=Path,
+        default=None,
+        help='Optional path to an existing shadow-live-deviation-report-v1 artifact.',
+    )
     parser.add_argument('--train-days', type=int, default=6)
     parser.add_argument('--holdout-days', type=int, default=3)
     parser.add_argument('--full-window-start-date', default='')
@@ -613,6 +619,11 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
         chunk_minutes=max(1, int(args.chunk_minutes)),
         symbols=snapshot_symbols,
         progress_log_interval_seconds=max(1, int(args.progress_log_seconds)),
+        shadow_validation_artifact_path=(
+            args.shadow_validation_artifact.resolve()
+            if args.shadow_validation_artifact is not None
+            else None
+        ),
     )
 
     def _refresh_manifest() -> MlxSnapshotManifest:

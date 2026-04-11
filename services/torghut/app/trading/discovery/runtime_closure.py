@@ -144,6 +144,7 @@ class RuntimeClosureExecutionContext:
     chunk_minutes: int
     symbols: tuple[str, ...] = ()
     progress_log_interval_seconds: int = 30
+    shadow_validation_artifact_path: Path | None = None
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -154,6 +155,11 @@ class RuntimeClosureExecutionContext:
             'chunk_minutes': self.chunk_minutes,
             'symbols': list(self.symbols),
             'progress_log_interval_seconds': self.progress_log_interval_seconds,
+            'shadow_validation_artifact_path': (
+                str(self.shadow_validation_artifact_path)
+                if self.shadow_validation_artifact_path is not None
+                else None
+            ),
         }
 
 
@@ -418,21 +424,81 @@ def _replay_analysis(
     }
 
 
-def _shadow_validation_plan(
+def _shadow_validation_artifact(
     *,
     best_candidate: Mapping[str, Any],
     program: StrategyAutoresearchProgram,
+    execution_context: RuntimeClosureExecutionContext | None,
 ) -> dict[str, Any]:
     mode = program.runtime_closure_policy.shadow_validation_mode
-    pending = mode == 'require_live_evidence'
-    reasons = ['live_shadow_evidence_not_available_from_local_autoresearch'] if pending else []
+    if mode != 'require_live_evidence':
+        return {
+            'schema_version': 'torghut.runtime-closure-shadow-validation-plan.v1',
+            'candidate_id': _string(best_candidate.get('candidate_id')),
+            'mode': mode,
+            'status': 'skipped',
+            'required': False,
+            'reasons': [],
+            'evidence_loaded': False,
+            'source_artifact_path': None,
+            'source_schema_version': None,
+        }
+
+    artifact_path = execution_context.shadow_validation_artifact_path if execution_context is not None else None
+    if artifact_path is None:
+        return {
+            'schema_version': 'torghut.runtime-closure-shadow-validation-plan.v1',
+            'candidate_id': _string(best_candidate.get('candidate_id')),
+            'mode': mode,
+            'status': 'pending_live_evidence',
+            'required': True,
+            'reasons': ['live_shadow_evidence_not_available_from_local_autoresearch'],
+            'evidence_loaded': False,
+            'source_artifact_path': None,
+            'source_schema_version': None,
+        }
+
+    try:
+        payload = json.loads(artifact_path.read_text(encoding='utf-8'))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {
+            'schema_version': 'torghut.runtime-closure-shadow-validation-plan.v1',
+            'candidate_id': _string(best_candidate.get('candidate_id')),
+            'mode': mode,
+            'status': 'invalid_artifact',
+            'required': True,
+            'reasons': ['shadow_validation_artifact_invalid_json'],
+            'evidence_loaded': False,
+            'source_artifact_path': str(artifact_path),
+            'source_schema_version': None,
+        }
+
+    source_payload = _mapping(payload)
+    source_schema_version = _string(source_payload.get('schema_version'))
+    status = _string(source_payload.get('status')) or 'invalid_artifact'
+    reasons: list[str] = []
+    if source_schema_version != 'shadow-live-deviation-report-v1':
+        reasons.append('shadow_validation_schema_version_invalid')
+        status = 'invalid_artifact'
+    elif status == 'within_budget':
+        pass
+    elif status in {'pending_live_evidence', 'pending'}:
+        reasons.append('shadow_validation_pending')
+    else:
+        reasons.append('shadow_validation_status_not_within_budget')
+
     return {
         'schema_version': 'torghut.runtime-closure-shadow-validation-plan.v1',
         'candidate_id': _string(best_candidate.get('candidate_id')),
         'mode': mode,
-        'status': 'pending_live_evidence' if pending else 'skipped',
-        'required': pending,
+        'status': status,
+        'required': True,
         'reasons': reasons,
+        'evidence_loaded': source_schema_version == 'shadow-live-deviation-report-v1',
+        'source_artifact_path': str(artifact_path),
+        'source_schema_version': source_schema_version,
+        'order_count': _int(source_payload.get('order_count')),
+        'coverage_error': source_payload.get('coverage_error'),
     }
 
 
@@ -445,7 +511,8 @@ def _summary_status_and_next_steps(
     parity_pass = bool(_mapping(parity_report).get('objective_met')) if parity_report is not None else False
     approval_pass = bool(_mapping(approval_report).get('objective_met')) if approval_report is not None else False
     shadow_required = bool(shadow_plan.get('required'))
-    shadow_ready = _string(shadow_plan.get('status')) == 'within_budget'
+    shadow_status = _string(shadow_plan.get('status'))
+    shadow_ready = shadow_status == 'within_budget'
 
     if parity_report is None:
         return (
@@ -468,8 +535,10 @@ def _summary_status_and_next_steps(
         )
     if not approval_pass:
         return ('approval_replay_failed', ('scheduler_v3_approval_replay',))
-    if shadow_required and not shadow_ready:
+    if shadow_required and shadow_status in {'pending_live_evidence', 'pending', ''}:
         return ('pending_shadow_validation', ('live_shadow_validation', 'promotion_review'))
+    if shadow_required and not shadow_ready:
+        return ('shadow_validation_failed', ('live_shadow_validation',))
     return ('ready_for_promotion_review', ('promotion_review',))
 
 def _candidate_spec(
@@ -573,7 +642,8 @@ def _gate_report(
     parity_pass = bool(_mapping(parity_report).get('objective_met')) if parity_report is not None else False
     approval_pass = bool(_mapping(approval_report).get('objective_met')) if approval_report is not None else False
     shadow_required = bool(shadow_plan.get('required'))
-    shadow_ready = _string(shadow_plan.get('status')) == 'within_budget'
+    shadow_status = _string(shadow_plan.get('status'))
+    shadow_ready = shadow_status == 'within_budget'
     promotion_reasons: list[str] = []
     if parity_report is None:
         promotion_reasons.append('research_candidate_pending_scheduler_v3_parity')
@@ -583,8 +653,10 @@ def _gate_report(
         promotion_reasons.append('research_candidate_pending_scheduler_v3_approval')
     elif not approval_pass:
         promotion_reasons.append('scheduler_v3_approval_failed')
-    if shadow_required and not shadow_ready:
+    if shadow_required and shadow_status in {'pending_live_evidence', 'pending', ''}:
         promotion_reasons.append('research_candidate_pending_shadow_validation')
+    elif shadow_required and not shadow_ready:
+        promotion_reasons.append('shadow_validation_failed')
     throughput_source = approval_report if approval_report is not None else parity_report
     throughput_summary = _mapping(_mapping(throughput_source).get('summary')) if throughput_source is not None else {}
     return {
@@ -626,7 +698,15 @@ def _gate_report(
             },
             {
                 'gate_id': 'gate3_shadow_validation',
-                'status': 'pass' if shadow_ready else ('pending' if shadow_required else 'skip'),
+                'status': (
+                    'pass'
+                    if shadow_ready
+                    else (
+                        'pending'
+                        if shadow_required and shadow_status in {'pending_live_evidence', 'pending', ''}
+                        else ('fail' if shadow_required else 'skip')
+                    )
+                ),
             },
         ],
         'promotion_evidence': {
@@ -634,11 +714,16 @@ def _gate_report(
                 'requested_target': promotion_target,
                 'gate_recommended_mode': promotion_target,
                 'gate_reasons': list(promotion_reasons),
+                'shadow_validation_status': shadow_status,
                 'rationale_text': 'Runtime closure replays executed, but promotion stays blocked until parity, approval, and shadow requirements are satisfied.',
             }
         },
         'uncertainty_gate_action': 'abstain',
-        'coverage_error': '0.0' if parity_pass and approval_pass else '1.0',
+        'coverage_error': (
+            '0.0'
+            if parity_pass and approval_pass and (not shadow_required or shadow_ready)
+            else '1.0'
+        ),
         'recalibration_run_id': None,
     }
 
@@ -666,8 +751,12 @@ def _candidate_state(
         reasons.append('approval_replay_not_completed')
     elif not bool(_mapping(approval_report).get('objective_met')):
         reasons.append('approval_replay_failed')
-    if bool(shadow_plan.get('required')) and _string(shadow_plan.get('status')) != 'within_budget':
-        reasons.append('shadow_validation_pending')
+    if bool(shadow_plan.get('required')):
+        shadow_status = _string(shadow_plan.get('status'))
+        if shadow_status in {'pending_live_evidence', 'pending', ''}:
+            reasons.append('shadow_validation_pending')
+        elif shadow_status != 'within_budget':
+            reasons.append('shadow_validation_failed')
     return {
         'candidateId': _string(best_candidate.get('candidate_id')),
         'runId': runner_run_id,
@@ -752,7 +841,7 @@ def _profitability_stage_manifest(
     shadow_validation_path: Path | None,
     parity_pass: bool,
     approval_pass: bool,
-    shadow_pending: bool,
+    shadow_status: str,
 ) -> dict[str, Any]:
     def _artifact(path: Path, *, stage: str, check: str) -> dict[str, Any]:
         return {
@@ -849,11 +938,18 @@ def _profitability_stage_manifest(
                 'completed_at_utc': _now_iso(),
             },
             'execution': {
-                'status': 'pass' if parity_pass and approval_pass and not shadow_pending else 'fail',
+                'status': (
+                    'pass'
+                    if parity_pass and approval_pass and shadow_status in {'within_budget', 'skipped'}
+                    else 'fail'
+                ),
                 'checks': [
                     {'check': 'gate_evaluation_present', 'status': 'pass'},
                     {'check': 'gate_matrix_approval', 'status': 'pass' if parity_pass and approval_pass else 'fail'},
-                    {'check': 'drift_gate_approval', 'status': 'pass' if not shadow_pending else 'fail'},
+                    {
+                        'check': 'drift_gate_approval',
+                        'status': 'pass' if shadow_status in {'within_budget', 'skipped'} else 'fail',
+                    },
                 ],
                 'artifacts': {
                     'gate_evaluation': _artifact(
@@ -922,7 +1018,11 @@ def _profitability_stage_manifest(
             dict.fromkeys(
                 [
                     *([] if approval_pass else ['validation_stage_incomplete']),
-                    *([] if parity_pass and approval_pass and not shadow_pending else ['execution_stage_incomplete']),
+                    *(
+                        []
+                        if parity_pass and approval_pass and shadow_status in {'within_budget', 'skipped'}
+                        else ['execution_stage_incomplete']
+                    ),
                     'governance_stage_incomplete',
                 ]
             )
@@ -1137,7 +1237,11 @@ def write_runtime_closure_bundle(
             )
             _write_json(approval_report_path, approval_report)
 
-    shadow_plan = _shadow_validation_plan(best_candidate=best_candidate, program=program)
+    shadow_plan = _shadow_validation_artifact(
+        best_candidate=best_candidate,
+        program=program,
+        execution_context=execution_context,
+    )
     _write_json(shadow_validation_path, shadow_plan)
     gate_report = _gate_report(
         runner_run_id=runner_run_id,
@@ -1190,7 +1294,7 @@ def write_runtime_closure_bundle(
         shadow_validation_path=shadow_validation_path if shadow_validation_path.exists() else None,
         parity_pass=bool(_mapping(parity_report).get('objective_met')) if parity_report is not None else False,
         approval_pass=bool(_mapping(approval_report).get('objective_met')) if approval_report is not None else False,
-        shadow_pending=bool(shadow_plan.get('required')),
+        shadow_status=_string(shadow_plan.get('status')),
     )
     _write_json(profitability_stage_manifest_path, profitability_stage_manifest)
 

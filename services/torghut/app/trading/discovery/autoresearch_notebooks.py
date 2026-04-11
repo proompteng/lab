@@ -493,6 +493,27 @@ HISTORY = [
     for line in (RUN_ROOT / 'history.jsonl').read_text(encoding='utf-8').splitlines()
     if line.strip()
 ]
+RUNTIME_CLOSURE = SUMMARY.get('runtime_closure') or {{}}
+
+def _load_optional_json(path_value: object) -> dict[str, object]:
+    raw = str(path_value or '').strip()
+    if not raw:
+        return {{}}
+    path = Path(raw)
+    if not path.is_absolute():
+        path = RUN_ROOT / path
+    if not path.exists():
+        return {{}}
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        return {{}}
+    return payload if isinstance(payload, dict) else {{}}
+
+RUNTIME_PARITY_REPORT = _load_optional_json(RUNTIME_CLOSURE.get('parity_report_path'))
+RUNTIME_APPROVAL_REPORT = _load_optional_json(RUNTIME_CLOSURE.get('approval_report_path'))
+RUNTIME_SHADOW_VALIDATION = _load_optional_json(RUNTIME_CLOSURE.get('shadow_validation_path'))
+RUNTIME_PROMOTION_PREREQUISITES = _load_optional_json(RUNTIME_CLOSURE.get('promotion_prerequisites_path'))
 
 def _ordered_keys(rows: list[dict[str, object]]) -> list[str]:
     keys: list[str] = []
@@ -699,6 +720,32 @@ if false_negatives:
     )
     display(Markdown('### Selection diversity'))
     _display_rows([DIAGNOSTICS.get('diversity_summary') or {}], columns=['selected_unique_family_count', 'selected_unique_side_count', 'selected_mean_pairwise_distance'])
+    if RUNTIME_CLOSURE:
+        display(Markdown('### Runtime closure evidence'))
+        _display_rows(
+            [
+                {
+                    'runtime_closure_status': RUNTIME_CLOSURE.get('status'),
+                    'next_required_steps': ', '.join(RUNTIME_CLOSURE.get('next_required_steps') or []),
+                    'parity_objective_met': RUNTIME_PARITY_REPORT.get('objective_met'),
+                    'approval_objective_met': RUNTIME_APPROVAL_REPORT.get('objective_met'),
+                    'shadow_validation_status': RUNTIME_SHADOW_VALIDATION.get('status'),
+                    'shadow_evidence_loaded': RUNTIME_SHADOW_VALIDATION.get('evidence_loaded'),
+                    'shadow_artifact_path': RUNTIME_SHADOW_VALIDATION.get('source_artifact_path'),
+                }
+            ]
+        )
+        if RUNTIME_PROMOTION_PREREQUISITES:
+            display(Markdown('### Promotion prerequisites'))
+            _display_rows(
+                [
+                    {
+                        'allowed': RUNTIME_PROMOTION_PREREQUISITES.get('allowed'),
+                        'reasons': ', '.join(RUNTIME_PROMOTION_PREREQUISITES.get('reasons') or []),
+                        'missing_artifacts': ', '.join(RUNTIME_PROMOTION_PREREQUISITES.get('missing_artifacts') or []),
+                    }
+                ]
+            )
 """
         ),
         _code_cell(
@@ -718,6 +765,16 @@ if HISTORY:
             if (not row.get('runtime_family')) or row.get('promotion_status') or row.get('hard_vetoes')
         ]
     )
+if RUNTIME_CLOSURE:
+    runtime_failures = [
+        {
+            'runtime_closure_status': RUNTIME_CLOSURE.get('status'),
+            'shadow_validation_status': RUNTIME_SHADOW_VALIDATION.get('status'),
+            'shadow_reasons': RUNTIME_SHADOW_VALIDATION.get('reasons'),
+            'promotion_prerequisite_reasons': RUNTIME_PROMOTION_PREREQUISITES.get('reasons'),
+        }
+    ]
+    _display_rows(runtime_failures)
 """
         ),
     ]
