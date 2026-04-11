@@ -59,7 +59,11 @@ def _program() -> StrategyAutoresearchProgram:
             exploration_slots=1,
             minimum_history_rows=1,
         ),
-        replay_budget=ReplayBudget(max_candidates_per_round=8, exploration_slots=1),
+        replay_budget=ReplayBudget(
+            max_candidates_per_round=8,
+            exploration_slots=1,
+            max_candidates_per_frontier_run=16,
+        ),
         runtime_closure_policy=RuntimeClosurePolicy(
             enabled=False,
             execute_parity_replay=True,
@@ -282,6 +286,134 @@ data:
                     execution_context=valid_context,
                     output_path=root / 'missing-params.yaml',
                 )
+
+    def test_materialize_candidate_configmap_supports_microbar_portfolio_candidates(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            configmap_path = root / 'valid.yaml'
+            configmap_path.write_text(
+                """
+apiVersion: v1
+kind: ConfigMap
+data:
+  strategies.yaml: |
+    strategies:
+      - name: breakout-continuation-long-v1
+        enabled: true
+        strategy_type: breakout_continuation_long_v1
+        params:
+          max_entries_per_session: '1'
+""".strip()
+                + '\n',
+                encoding='utf-8',
+            )
+            context = RuntimeClosureExecutionContext(
+                strategy_configmap_path=configmap_path,
+                clickhouse_http_url='http://example.invalid:8123',
+                clickhouse_username='torghut',
+                clickhouse_password='secret',
+                start_equity=Decimal('31590.02'),
+                chunk_minutes=10,
+            )
+            best_candidate = {
+                'candidate_id': 'cand-pairs',
+                'family': 'microbar_cross_sectional_pairs',
+                'family_template_id': 'microbar_cross_sectional_pairs_v1',
+                'strategy_name': 'microbar-cross-sectional-pairs-v1',
+                'replay_config': {
+                    'backend': 'microbar_daily_portfolio',
+                    'portfolio': {
+                        'base_per_leg_notional': '25000',
+                        'symbols': ['AAPL', 'NVDA', 'MSFT'],
+                        'sleeves': [
+                            {
+                                'entry_minute_after_open': 60,
+                                'exit_minute_after_open': 120,
+                                'signal': 'open_window_continuation',
+                                'top_n': 2,
+                                'weight': '2',
+                            },
+                            {
+                                'entry_minute_after_open': 75,
+                                'exit_minute_after_open': 'close',
+                                'signal': 'vwap_close_continuation',
+                                'top_n': 1,
+                                'weight': '1',
+                            },
+                        ],
+                    },
+                },
+            }
+
+            rendered_path = runtime_closure._materialize_candidate_configmap(
+                best_candidate=best_candidate,
+                execution_context=context,
+                output_path=root / 'portfolio.yaml',
+            )
+            rendered = runtime_closure.yaml.safe_load(rendered_path.read_text(encoding='utf-8'))
+            catalog = runtime_closure.yaml.safe_load(rendered['data']['strategies.yaml'])
+            strategies = catalog['strategies']
+            self.assertFalse(strategies[0]['enabled'])
+            self.assertEqual(
+                runtime_closure._candidate_symbols(
+                    best_candidate=best_candidate,
+                    execution_context=context,
+                ),
+                ('AAPL', 'NVDA', 'MSFT'),
+            )
+            microbar_names = [item['name'] for item in strategies[1:]]
+            self.assertEqual(
+                microbar_names,
+                [
+                    'microbar-cross-sectional-pairs-v1-sleeve-1-long',
+                    'microbar-cross-sectional-pairs-v1-sleeve-1-short',
+                    'microbar-cross-sectional-pairs-v1-sleeve-2-long',
+                    'microbar-cross-sectional-pairs-v1-sleeve-2-short',
+                ],
+            )
+            sleeve_one_long = strategies[1]
+            self.assertEqual(sleeve_one_long['strategy_type'], 'microbar_cross_sectional_long_v1')
+            self.assertEqual(sleeve_one_long['params']['rank_feature'], 'cross_section_session_open_rank')
+            self.assertEqual(sleeve_one_long['params']['selection_mode'], 'continuation')
+            self.assertEqual(sleeve_one_long['params']['max_concurrent_positions'], '2')
+            self.assertEqual(Decimal(str(sleeve_one_long['max_notional_per_trade'])), Decimal('50000'))
+
+            manifest = build_mlx_snapshot_manifest(
+                runner_run_id='run-1',
+                program=_program(),
+                symbols='AAPL,MSFT,NVDA',
+                train_days=6,
+                holdout_days=2,
+                full_window_start_date='2026-03-25',
+                full_window_end_date='2026-04-02',
+            )
+            candidate_spec = runtime_closure._candidate_spec(
+                runner_run_id='run-1',
+                program=_program(),
+                best_candidate=best_candidate,
+                manifest=manifest,
+            )
+            self.assertEqual(
+                candidate_spec['runtime_strategy_names'],
+                [
+                    'microbar-cross-sectional-pairs-v1-sleeve-1-long',
+                    'microbar-cross-sectional-pairs-v1-sleeve-1-short',
+                    'microbar-cross-sectional-pairs-v1-sleeve-2-long',
+                    'microbar-cross-sectional-pairs-v1-sleeve-2-short',
+                ],
+            )
+            self.assertEqual(candidate_spec['portfolio_promotion_v2']['strategy_count'], 4)
+            self.assertEqual(candidate_spec['full_window_start_date'], '2026-03-25')
+            self.assertEqual(candidate_spec['full_window_end_date'], '2026-04-02')
+            gate_report = runtime_closure._gate_report(
+                runner_run_id='run-1',
+                best_candidate=best_candidate,
+                promotion_target='shadow',
+                parity_report=None,
+                approval_report=None,
+                shadow_plan={'required': False, 'status': 'skipped'},
+            )
+            self.assertEqual(gate_report['vnext']['portfolio_promotion']['strategy_count'], 4)
 
     def test_replay_analysis_records_decomposition_errors(self) -> None:
         replay_payload = {

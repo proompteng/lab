@@ -1,0 +1,49 @@
+schema_version: torghut.family-template.v1
+family_id: microbar_cross_sectional_pairs_v1
+economic_mechanism: Market-neutral intraday cross-sectional continuation and reversal pairs on authoritative minute bars.
+supported_markets:
+  - us_equities_intraday
+required_features:
+  - session_open_price
+  - vwap_session
+  - cross_section_rank
+allowed_normalizations:
+  - market_neutral_gross_scaled
+entry_motifs:
+  - open_window_continuation
+  - open_window_reversal
+  - vwap_close_continuation
+  - vwap_close_reversal
+exit_motifs:
+  - time_exit
+risk_controls:
+  - market_neutral_pairing
+  - gross_notional_cap
+  - transaction_cost_stress
+activity_model:
+  min_active_day_ratio: '1.0'
+  min_daily_notional: '300000'
+liquidity_assumptions:
+  max_bar_staleness_minutes: '5'
+  max_cost_bps_per_side: '5'
+regime_activation_rules:
+  - metric: market_neutral_pair_book
+    comparator: gte
+    threshold: '1'
+day_veto_rules:
+  - rule: missing_microbars
+    action: block_day
+default_hard_vetoes:
+  required_min_active_day_ratio: '1.0'
+  required_min_daily_notional: '300000'
+  required_max_best_day_share: '0.35'
+  required_max_worst_day_loss: '250'
+  required_max_drawdown: '700'
+  required_min_regime_slice_pass_rate: '0'
+default_selection_objectives:
+  target_net_pnl_per_day: '500'
+  require_positive_day_ratio: '0.75'
+runtime_harness:
+  family: microbar_cross_sectional_pairs
+  strategy_name: microbar-cross-sectional-pairs-v1
+  disable_other_strategies: true

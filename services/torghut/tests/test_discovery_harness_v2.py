@@ -218,6 +218,16 @@ class TestDiscoveryHarnessV2(TestCase):
             short_template.runtime_harness['strategy_name'],
             'mean-reversion-exhaustion-short-v1',
         )
+        portfolio_template = load_family_template('microbar_cross_sectional_pairs_v1', directory=root)
+        self.assertEqual(portfolio_template.family_id, 'microbar_cross_sectional_pairs_v1')
+        self.assertEqual(
+            portfolio_template.runtime_harness['strategy_name'],
+            'microbar-cross-sectional-pairs-v1',
+        )
+        self.assertEqual(
+            portfolio_template.allowed_normalizations,
+            ('market_neutral_gross_scaled',),
+        )
         self.assertEqual(
             derive_family_template_id(explicit_id=' custom ', family='ignored'),
             'custom',
