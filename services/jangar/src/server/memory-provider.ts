@@ -20,12 +20,6 @@ type MemoryQueryResult = {
 
 type EnvSource = Record<string, string | undefined>
 
-const DEFAULT_EMBEDDING_DIMENSION = 1536
-const DEFAULT_OPENAI_API_BASE_URL = 'https://api.openai.com/v1'
-const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small'
-const DEFAULT_SELF_HOSTED_EMBEDDING_MODEL = 'qwen3-embedding-saigak:0.6b'
-const DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION = 1024
-
 const globalState = globalThis as typeof globalThis & {
   __jangarMemoryProviderPools?: Map<string, Pool>
 }
@@ -82,33 +76,6 @@ const generateFallbackEmbedding = (text: string, dimension: number) => {
   return vector
 }
 
-const isHostedOpenAiBaseUrl = (rawBaseUrl: string) => {
-  try {
-    return new URL(rawBaseUrl).hostname === 'api.openai.com'
-  } catch {
-    return rawBaseUrl.includes('api.openai.com')
-  }
-}
-
-const resolveEmbeddingDefaults = (apiBaseUrl: string) => {
-  const hosted = isHostedOpenAiBaseUrl(apiBaseUrl)
-  return {
-    model: hosted ? DEFAULT_OPENAI_EMBEDDING_MODEL : DEFAULT_SELF_HOSTED_EMBEDDING_MODEL,
-    dimension: hosted ? DEFAULT_EMBEDDING_DIMENSION : DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION,
-  }
-}
-
-const loadEmbeddingDimension = (env: EnvSource, fallback: number) => {
-  const dimension = Number.parseInt(env.OPENAI_EMBEDDING_DIMENSION ?? String(fallback), 10)
-  if (!Number.isFinite(dimension) || dimension <= 0) {
-    throw new Error('OPENAI_EMBEDDING_DIMENSION must be a positive integer')
-  }
-  return dimension
-}
-
-const resolveEmbeddingApiBaseUrl = (env: EnvSource) =>
-  env.OPENAI_EMBEDDING_API_BASE_URL ?? env.OPENAI_API_BASE_URL ?? env.OPENAI_API_BASE ?? DEFAULT_OPENAI_API_BASE_URL
-
 export const loadEmbeddingConfig = (env: EnvSource = process.env) => resolveEmbeddingConfig(env)
 
 const getPoolCache = () => {
@@ -141,11 +108,14 @@ const embedText = async (text: string, dimension: number) => {
     return generateFallbackEmbedding(text, dimension)
   }
 
-  const { apiBaseUrl, apiKey, model, dimension: configuredDimension } = embeddingConfig
+  const { apiBaseUrl, apiKey, model, dimension: configuredDimension, timeoutMs, maxInputChars } = embeddingConfig
   if (embeddingConfig.hosted && !apiKey) {
     throw new Error(
       'missing OPENAI_API_KEY; set it or point OPENAI_EMBEDDING_API_BASE_URL/OPENAI_API_BASE_URL at an OpenAI-compatible endpoint',
     )
+  }
+  if (text.length > maxInputChars) {
+    throw new Error(`embedding input too large (${text.length} chars; max ${maxInputChars})`)
   }
   if (configuredDimension !== dimension) {
     const error = new Error(
@@ -158,6 +128,8 @@ const embedText = async (text: string, dimension: number) => {
     throw error
   }
 
+  const controller = new AbortController()
+  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs)
   const headers: Record<string, string> = {
     'content-type': 'application/json',
   }
@@ -165,31 +137,41 @@ const embedText = async (text: string, dimension: number) => {
     headers.authorization = `Bearer ${apiKey}`
   }
 
-  const response = await fetch(`${apiBaseUrl.replace(/\/+$/, '')}/embeddings`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ model, input: text }),
-  })
+  try {
+    const response = await fetch(`${apiBaseUrl.replace(/\/+$/, '')}/embeddings`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ model, input: text }),
+      signal: controller.signal,
+    })
 
-  if (!response.ok) {
-    const body = await response.text()
-    throw new Error(`embedding request failed (${response.status}): ${body}`)
-  }
+    if (!response.ok) {
+      const body = await response.text()
+      throw new Error(`embedding request failed (${response.status}): ${body}`)
+    }
 
-  const json = (await response.json()) as { data?: { embedding?: number[] }[] }
-  const embedding = json.data?.[0]?.embedding
-  if (!embedding || !Array.isArray(embedding)) {
-    throw new Error('embedding response missing data[0].embedding')
-  }
-  if (embedding.length !== dimension) {
-    const error = new Error(`embedding dimension mismatch: expected ${dimension} but got ${embedding.length}`)
-    if (embeddingConfig.allowDevFallback) {
-      console.warn('[jangar] memory provider using fallback embeddings', error.message)
-      return generateFallbackEmbedding(text, dimension)
+    const json = (await response.json()) as { data?: { embedding?: number[] }[] }
+    const embedding = json.data?.[0]?.embedding
+    if (!embedding || !Array.isArray(embedding)) {
+      throw new Error('embedding response missing data[0].embedding')
+    }
+    if (embedding.length !== dimension) {
+      const error = new Error(`embedding dimension mismatch: expected ${dimension} but got ${embedding.length}`)
+      if (embeddingConfig.allowDevFallback) {
+        console.warn('[jangar] memory provider using fallback embeddings', error.message)
+        return generateFallbackEmbedding(text, dimension)
+      }
+      throw error
+    }
+    return embedding
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`embedding request timed out after ${timeoutMs}ms`)
     }
     throw error
+  } finally {
+    clearTimeout(timeoutHandle)
   }
-  return embedding
 }
 
 const vectorToPg = (vector: number[]) => `[${vector.join(',')}]`
@@ -233,10 +215,7 @@ export const resolveMemoryConnection = async (
   }
 
   const connectionString = buildConnectionString(decodedSecret, secretKey)
-  const embeddingDimension = loadEmbeddingDimension(
-    process.env,
-    resolveEmbeddingDefaults(resolveEmbeddingApiBaseUrl(process.env)).dimension,
-  )
+  const embeddingDimension = resolveEmbeddingConfig(process.env).dimension
 
   return { dataset, schema, embeddingDimension, connectionString }
 }

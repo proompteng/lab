@@ -26,10 +26,15 @@ const runtimeAdmissionMocks = vi.hoisted(() => ({
   findAdmissionPassport: vi.fn(),
 }))
 
+const memoryProviderHealthMocks = vi.hoisted(() => ({
+  getMemoryProviderHealth: vi.fn(),
+}))
+
 vi.mock('~/server/agents-controller', () => agentsControllerMocks)
 vi.mock('~/server/leader-election', () => leaderElectionMocks)
 vi.mock('~/server/orchestration-controller', () => orchestrationControllerMocks)
 vi.mock('~/server/supporting-primitives-controller', () => supportingControllerMocks)
+vi.mock('~/server/memory-provider-health', () => memoryProviderHealthMocks)
 vi.mock('~/server/control-plane-status', async () => {
   const actual = await vi.importActual<typeof import('~/server/control-plane-status')>('~/server/control-plane-status')
   return {
@@ -120,6 +125,20 @@ describe('getReadyHandler', () => {
     runtimeAdmissionMocks.findAdmissionPassport.mockImplementation(({ admissionPassports, consumerClass }) =>
       admissionPassports.find((passport: { consumer_class?: string }) => passport.consumer_class === consumerClass),
     )
+    memoryProviderHealthMocks.getMemoryProviderHealth.mockReturnValue({
+      status: 'healthy',
+      reason: 'memory embeddings configured for an explicit OpenAI-compatible endpoint',
+      mode: 'self-hosted',
+      fallbackActive: false,
+      config: {
+        apiBaseUrl: 'http://saigak.jangar.svc.cluster.local:11434/v1',
+        model: 'qwen3-embedding-saigak:0.6b',
+        dimension: 1024,
+        timeoutMs: 15000,
+        maxInputChars: 60000,
+        hosted: false,
+      },
+    })
 
     agentsControllerMocks.getAgentsControllerHealth.mockReturnValue({
       enabled: true,
@@ -178,6 +197,9 @@ describe('getReadyHandler', () => {
     expect(response.status).toBe(200)
     const body = await response.json()
     expect(body.status).toBe('ok')
+    expect(body.memory_provider).toMatchObject({
+      status: 'healthy',
+    })
   })
 
   it('returns 200 and exposes a serving passport when only collaboration runtime debt is blocked', async () => {
@@ -532,5 +554,34 @@ describe('getReadyHandler', () => {
     })
     expect(body.execution_trust.reason).toContain('execution trust check failed for namespace agents')
     expect(controlPlaneStatusMocks.buildExecutionTrust).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns 503 when memory provider health is blocked', async () => {
+    memoryProviderHealthMocks.getMemoryProviderHealth.mockReturnValue({
+      status: 'blocked',
+      reason:
+        'missing OPENAI_API_KEY; set it or point OPENAI_EMBEDDING_API_BASE_URL/OPENAI_API_BASE_URL at an OpenAI-compatible endpoint',
+      mode: 'hosted',
+      fallbackActive: false,
+      config: {
+        apiBaseUrl: 'https://api.openai.com/v1',
+        model: 'text-embedding-3-small',
+        dimension: 1536,
+        timeoutMs: 15000,
+        maxInputChars: 60000,
+        hosted: true,
+      },
+    })
+
+    const { getReadyHandler } = await import('./ready')
+
+    const response = await getReadyHandler()
+
+    expect(response.status).toBe(503)
+    const body = await response.json()
+    expect(body.status).toBe('degraded')
+    expect(body.memory_provider).toMatchObject({
+      status: 'blocked',
+    })
   })
 })
