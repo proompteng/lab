@@ -435,6 +435,43 @@ def _shadow_validation_plan(
         'reasons': reasons,
     }
 
+
+def _summary_status_and_next_steps(
+    *,
+    parity_report: Mapping[str, Any] | None,
+    approval_report: Mapping[str, Any] | None,
+    shadow_plan: Mapping[str, Any],
+) -> tuple[str, tuple[str, ...]]:
+    parity_pass = bool(_mapping(parity_report).get('objective_met')) if parity_report is not None else False
+    approval_pass = bool(_mapping(approval_report).get('objective_met')) if approval_report is not None else False
+    shadow_required = bool(shadow_plan.get('required'))
+    shadow_ready = _string(shadow_plan.get('status')) == 'within_budget'
+
+    if parity_report is None:
+        return (
+            'pending_runtime_parity',
+            (
+                'scheduler_v3_parity_replay',
+                'scheduler_v3_approval_replay',
+                *(() if not shadow_required else ('live_shadow_validation',)),
+            ),
+        )
+    if not parity_pass:
+        return ('runtime_parity_failed', ('scheduler_v3_parity_replay',))
+    if approval_report is None:
+        return (
+            'pending_approval_replay',
+            (
+                'scheduler_v3_approval_replay',
+                *(() if not shadow_required else ('live_shadow_validation',)),
+            ),
+        )
+    if not approval_pass:
+        return ('approval_replay_failed', ('scheduler_v3_approval_replay',))
+    if shadow_required and not shadow_ready:
+        return ('pending_shadow_validation', ('live_shadow_validation', 'promotion_review'))
+    return ('ready_for_promotion_review', ('promotion_review',))
+
 def _candidate_spec(
     *,
     runner_run_id: str,
@@ -1058,7 +1095,6 @@ def write_runtime_closure_bundle(
 
     parity_report: dict[str, Any] | None = None
     approval_report: dict[str, Any] | None = None
-    summary_status = 'pending_runtime_parity'
     if program.runtime_closure_policy.enabled and execution_context is not None:
         replay_runner = replay_executor or _default_replay_executor
         rendered_configmap_path = _materialize_candidate_configmap(
@@ -1100,7 +1136,6 @@ def write_runtime_closure_bundle(
                 program=program,
             )
             _write_json(approval_report_path, approval_report)
-        summary_status = 'pending_shadow_validation'
 
     shadow_plan = _shadow_validation_plan(best_candidate=best_candidate, program=program)
     _write_json(shadow_validation_path, shadow_plan)
@@ -1168,12 +1203,11 @@ def write_runtime_closure_bundle(
     )
     _write_json(promotion_prerequisites_path, promotion_prerequisites_result.to_payload())
 
-    if parity_report is not None and not bool(_mapping(parity_report).get('objective_met')):
-        summary_status = 'runtime_parity_failed'
-    elif approval_report is not None and not bool(_mapping(approval_report).get('objective_met')):
-        summary_status = 'approval_replay_failed'
-    elif not program.runtime_closure_policy.enabled:
-        summary_status = 'pending_runtime_parity'
+    summary_status, next_required_steps = _summary_status_and_next_steps(
+        parity_report=parity_report,
+        approval_report=approval_report,
+        shadow_plan=shadow_plan,
+    )
 
     summary = RuntimeClosureBundleSummary(
         status=summary_status,
@@ -1195,17 +1229,7 @@ def write_runtime_closure_bundle(
         profitability_stage_manifest_path=str(profitability_stage_manifest_path),
         promotion_prerequisites_path=str(promotion_prerequisites_path),
         replay_plan_path=str(replay_plan_path),
-        next_required_steps=(
-            'live_shadow_validation',
-            'promotion_review',
-        )
-        if summary_status == 'pending_shadow_validation'
-        else (
-            'checked_in_runtime_family',
-            'scheduler_v3_parity_replay',
-            'scheduler_v3_approval_replay',
-            'live_shadow_validation',
-        ),
+        next_required_steps=next_required_steps,
         promotion_prerequisites=promotion_prerequisites_result.to_payload(),
         rollback_readiness=rollback_readiness_result.to_payload(),
     )
