@@ -52,6 +52,7 @@ from app.trading.discovery.promotion_contract import (
     summary_promotion_readiness,
 )
 from app.trading.discovery.runtime_closure import write_runtime_closure_bundle
+from app.trading.discovery.runtime_closure import RuntimeClosureExecutionContext
 import scripts.local_intraday_tsmom_replay as replay_mod
 from scripts.search_consistent_profitability_frontier import run_consistent_profitability_frontier
 
@@ -300,10 +301,12 @@ def _history_record(
     proposal_score: ProposalScore | None = None,
     proposal_selected: bool = False,
     proposal_selection_reason: str = '',
+    disable_other_strategies: bool = True,
 ) -> dict[str, Any]:
     full_window = _mapping(candidate_payload.get('full_window'))
     scorecard = _mapping(candidate_payload.get('objective_scorecard'))
     ranking = _mapping(candidate_payload.get('ranking'))
+    replay_config = _mapping(candidate_payload.get('replay_config'))
     promotion_readiness = _promotion_readiness_payload(family_plan=family_plan)
     return {
         'runner_run_id': runner_run_id,
@@ -319,6 +322,16 @@ def _history_record(
         'dataset_snapshot_id': dataset_snapshot_id,
         'sweep_config_path': str(sweep_config_path),
         'result_path': str(result_path),
+        'candidate_params': _mapping(replay_config.get('params')),
+        'candidate_strategy_overrides': _mapping(replay_config.get('strategy_overrides')),
+        'disable_other_strategies': disable_other_strategies,
+        'train_start_date': _string(replay_config.get('train_start_date')),
+        'train_end_date': _string(replay_config.get('train_end_date')),
+        'holdout_start_date': _string(replay_config.get('holdout_start_date')),
+        'holdout_end_date': _string(replay_config.get('holdout_end_date')),
+        'full_window_start_date': _string(replay_config.get('full_window_start_date')),
+        'full_window_end_date': _string(replay_config.get('full_window_end_date')),
+        'normalization_regime': _string(candidate_payload.get('normalization_regime')),
         'net_pnl_per_day': _string(scorecard.get('net_pnl_per_day') or full_window.get('net_per_day')),
         'active_day_ratio': _string(scorecard.get('active_day_ratio')),
         'positive_day_ratio': _string(scorecard.get('positive_day_ratio')),
@@ -481,6 +494,7 @@ def _persist_run_outputs(
     descriptors: list[MlxCandidateDescriptor],
     proposal_scores: list[ProposalScore],
     status: str,
+    closure_execution_context: RuntimeClosureExecutionContext | None = None,
     error: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     history_path = run_root / 'history.jsonl'
@@ -534,6 +548,7 @@ def _persist_run_outputs(
         program=program,
         best_candidate=best_candidate,
         manifest=manifest,
+        execution_context=closure_execution_context,
     )
     summary['runtime_closure'] = runtime_closure.to_payload()
     if error is not None:
@@ -589,6 +604,16 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
     resolved_full_window_start_date = _string(args.full_window_start_date)
     resolved_full_window_end_date = _string(args.full_window_end_date)
     signal_bundle_stats: MlxSignalBundleStats | None = None
+    closure_execution_context = RuntimeClosureExecutionContext(
+        strategy_configmap_path=args.strategy_configmap.resolve(),
+        clickhouse_http_url=str(args.clickhouse_http_url),
+        clickhouse_username=(_string(args.clickhouse_username) or None),
+        clickhouse_password=(_string(args.clickhouse_password) or None),
+        start_equity=Decimal(str(args.start_equity)),
+        chunk_minutes=max(1, int(args.chunk_minutes)),
+        symbols=snapshot_symbols,
+        progress_log_interval_seconds=max(1, int(args.progress_log_seconds)),
+    )
 
     def _refresh_manifest() -> MlxSnapshotManifest:
         latest_receipt = tape_freshness_receipts[-1] if tape_freshness_receipts else {}
@@ -628,6 +653,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
         descriptors=descriptors,
         proposal_scores=proposal_scores,
         status='running',
+        closure_execution_context=closure_execution_context,
     )
     signal_bundle_stats = _maybe_write_signal_bundle(
         args=args,
@@ -822,6 +848,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                         proposal_score=frontier_score_by_candidate.get(candidate_id),
                         proposal_selected=candidate_id in keep_ids,
                         proposal_selection_reason=keep_reason_by_candidate.get(candidate_id, ''),
+                        disable_other_strategies=bool(current.sweep_config.get('disable_other_strategies', True)),
                     )
                 )
                 if candidate_objective_met:
@@ -864,6 +891,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                 descriptors=descriptors,
                 proposal_scores=proposal_scores,
                 status='running',
+                closure_execution_context=closure_execution_context,
             )
             if objective_met and program.objective.stop_when_objective_met:
                 break
@@ -881,6 +909,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
             descriptors=descriptors,
             proposal_scores=proposal_scores,
             status='error',
+            closure_execution_context=closure_execution_context,
             error={
                 'type': exc.__class__.__name__,
                 'message': str(exc),
@@ -900,6 +929,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
         descriptors=descriptors,
         proposal_scores=proposal_scores,
         status='ok',
+        closure_execution_context=closure_execution_context,
     )
 
 

@@ -188,6 +188,28 @@ class ReplayBudget:
 
 
 @dataclass(frozen=True)
+class RuntimeClosurePolicy:
+    enabled: bool
+    execute_parity_replay: bool
+    execute_approval_replay: bool
+    parity_window: str
+    approval_window: str
+    shadow_validation_mode: str
+    promotion_target: str
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            'enabled': self.enabled,
+            'execute_parity_replay': self.execute_parity_replay,
+            'execute_approval_replay': self.execute_approval_replay,
+            'parity_window': self.parity_window,
+            'approval_window': self.approval_window,
+            'shadow_validation_mode': self.shadow_validation_mode,
+            'promotion_target': self.promotion_target,
+        }
+
+
+@dataclass(frozen=True)
 class ResearchClaim:
     claim_id: str
     summary: str
@@ -287,6 +309,7 @@ class StrategyAutoresearchProgram:
     forbidden_mutations: tuple[str, ...]
     proposal_model_policy: ProposalModelPolicy
     replay_budget: ReplayBudget
+    runtime_closure_policy: RuntimeClosurePolicy
     parity_requirements: tuple[str, ...]
     promotion_policy: str
     ledger_policy: Mapping[str, Any]
@@ -304,6 +327,7 @@ class StrategyAutoresearchProgram:
             'forbidden_mutations': list(self.forbidden_mutations),
             'proposal_model_policy': self.proposal_model_policy.to_payload(),
             'replay_budget': self.replay_budget.to_payload(),
+            'runtime_closure_policy': self.runtime_closure_policy.to_payload(),
             'parity_requirements': list(self.parity_requirements),
             'promotion_policy': self.promotion_policy,
             'ledger_policy': dict(self.ledger_policy),
@@ -347,6 +371,34 @@ def _resolve_seed_sweep_path(*, program_path: Path, raw_path: str) -> Path:
     if candidate.is_absolute():
         return candidate
     return (program_path.parent / candidate).resolve()
+
+
+def _load_runtime_closure_policy(payload: Mapping[str, Any]) -> RuntimeClosurePolicy:
+    parity_window = _string(payload.get('parity_window')) or 'full_window'
+    approval_window = _string(payload.get('approval_window')) or 'holdout'
+    if parity_window not in {'train', 'holdout', 'full_window'}:
+        raise ValueError(f'autoresearch_runtime_closure_parity_window_invalid:{parity_window}')
+    if approval_window not in {'train', 'holdout', 'full_window'}:
+        raise ValueError(f'autoresearch_runtime_closure_approval_window_invalid:{approval_window}')
+    shadow_validation_mode = (
+        _string(payload.get('shadow_validation_mode')) or 'require_live_evidence'
+    )
+    if shadow_validation_mode not in {'require_live_evidence', 'skip'}:
+        raise ValueError(
+            f'autoresearch_runtime_closure_shadow_validation_mode_invalid:{shadow_validation_mode}'
+        )
+    promotion_target = _string(payload.get('promotion_target')) or 'shadow'
+    if promotion_target not in {'shadow', 'paper', 'live'}:
+        raise ValueError(f'autoresearch_runtime_closure_promotion_target_invalid:{promotion_target}')
+    return RuntimeClosurePolicy(
+        enabled=bool(payload.get('enabled', False)),
+        execute_parity_replay=bool(payload.get('execute_parity_replay', True)),
+        execute_approval_replay=bool(payload.get('execute_approval_replay', True)),
+        parity_window=parity_window,
+        approval_window=approval_window,
+        shadow_validation_mode=shadow_validation_mode,
+        promotion_target=promotion_target,
+    )
 
 
 def load_strategy_autoresearch_program(
@@ -424,6 +476,7 @@ def load_strategy_autoresearch_program(
         max_candidates_per_round=max(1, int(replay_budget_payload.get('max_candidates_per_round', 8))),
         exploration_slots=max(0, int(replay_budget_payload.get('exploration_slots', 1))),
     )
+    runtime_closure_policy = _load_runtime_closure_policy(_mapping(payload.get('runtime_closure_policy')))
     forbidden_mutations = _string_list(
         payload.get('forbidden_mutations')
         or ['runtime_code_path', 'evaluator_logic', 'live_strategy_config']
@@ -531,6 +584,7 @@ def load_strategy_autoresearch_program(
         forbidden_mutations=forbidden_mutations,
         proposal_model_policy=proposal_model_policy,
         replay_budget=replay_budget,
+        runtime_closure_policy=runtime_closure_policy,
         parity_requirements=parity_requirements,
         promotion_policy=promotion_policy,
         ledger_policy=ledger_policy,
