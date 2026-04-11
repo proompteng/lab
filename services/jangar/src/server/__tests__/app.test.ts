@@ -4,6 +4,29 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const crosswsMock = vi.hoisted(() => {
+  let lastOptions: unknown
+  const handleUpgrade = vi.fn(async () => null)
+  const factory = vi.fn((options: unknown) => {
+    lastOptions = options
+    return {
+      handleUpgrade,
+      websocket: {},
+    }
+  })
+
+  return {
+    handleUpgrade,
+    factory,
+    getLastOptions: () => lastOptions,
+    reset: () => {
+      lastOptions = undefined
+      handleUpgrade.mockClear()
+      factory.mockClear()
+    },
+  }
+})
+
 vi.mock('../metrics', () => ({
   getPrometheusMetricsPath: () => '/metrics',
   isPrometheusMetricsEnabled: () => false,
@@ -11,10 +34,7 @@ vi.mock('../metrics', () => ({
 }))
 
 vi.mock('crossws/adapters/bun', () => ({
-  default: vi.fn(() => ({
-    handleUpgrade: vi.fn(async () => null),
-    websocket: {},
-  })),
+  default: crosswsMock.factory,
 }))
 
 vi.mock('~/server/terminal-pty-manager', () => ({
@@ -72,6 +92,7 @@ describe('createJangarRuntime client serving', () => {
     })) as typeof Bun.file
 
   beforeEach(() => {
+    crosswsMock.reset()
     hadBun = 'Bun' in globalThis
     originalBunFile = hadBun ? Bun.file : undefined
 
@@ -154,5 +175,51 @@ describe('createJangarRuntime client serving', () => {
     } finally {
       await restoreIndex()
     }
+  })
+
+  it('does not blindly upgrade websocket requests for non-websocket routes', async () => {
+    const restoreIndex = await withTempFile(indexPath, clientIndexHtml)
+
+    try {
+      const runtime = await createJangarRuntime({ serveClient: true })
+      const result = await runtime.handleUpgrade(
+        new Request('http://localhost/dashboard', {
+          headers: { upgrade: 'websocket' },
+        }),
+        {} as Bun.Server<unknown>,
+      )
+
+      expect(result.kind).toBe('response')
+      if (result.kind !== 'response') throw new Error('Expected websocket upgrade to return a normal response')
+      expect(result.response.status).toBe(200)
+      expect(await result.response.text()).toBe(clientIndexHtml)
+      expect(crosswsMock.handleUpgrade).not.toHaveBeenCalled()
+    } finally {
+      await restoreIndex()
+    }
+  })
+
+  it('resolves route websocket hooks before upgrading terminal sessions', async () => {
+    const runtime = await createJangarRuntime()
+    const request = new Request('http://localhost/api/terminals/jangar-terminal-codex-test/ws?reconnect=test-token', {
+      headers: { upgrade: 'websocket' },
+    })
+
+    const result = await runtime.handleUpgrade(request, {} as Bun.Server<unknown>)
+
+    expect(result.kind).toBe('handled')
+    expect(crosswsMock.handleUpgrade).toHaveBeenCalledOnce()
+
+    const adapterOptions = crosswsMock.getLastOptions() as { resolve?: (request: Request) => unknown }
+    expect(adapterOptions.resolve).toBeTypeOf('function')
+    const hooks = adapterOptions.resolve ? await adapterOptions.resolve(request) : undefined
+
+    expect(hooks).toMatchObject({
+      close: expect.any(Function),
+      error: expect.any(Function),
+      message: expect.any(Function),
+      open: expect.any(Function),
+      upgrade: expect.any(Function),
+    })
   })
 })
