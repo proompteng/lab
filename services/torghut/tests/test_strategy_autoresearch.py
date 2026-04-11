@@ -856,6 +856,188 @@ class TestStrategyAutoresearch(TestCase):
             self.assertEqual(promotion_readiness['candidate_id'], 'mutated-1')
             self.assertFalse(promotion_readiness['promotable'])
 
+    def test_run_strategy_autoresearch_loop_applies_replay_budget_and_candidate_specific_scores(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            program_path, family_dir = self._write_program_fixture(root)
+            program_payload = yaml.safe_load(program_path.read_text(encoding='utf-8'))
+            program_payload['families'][0]['keep_top_candidates'] = 2
+            program_payload['replay_budget'] = {
+                'max_candidates_per_round': 1,
+                'exploration_slots': 1,
+            }
+            program_payload['proposal_model_policy'] = {
+                'enabled': True,
+                'mode': 'ranking_only',
+                'backend_preference': 'numpy-fallback',
+                'top_k': 4,
+                'exploration_slots': 1,
+                'minimum_history_rows': 1,
+            }
+            program_path.write_text(yaml.safe_dump(program_payload, sort_keys=False), encoding='utf-8')
+            configmap_path = root / 'strategy-configmap.yaml'
+            configmap_path.write_text(
+                yaml.safe_dump({'apiVersion': 'v1', 'kind': 'ConfigMap', 'data': {'strategies.yaml': 'strategies: []\n'}}, sort_keys=False),
+                encoding='utf-8',
+            )
+            output_dir = root / 'out'
+            signal_rows = [
+                SignalEnvelope(
+                    event_ts=datetime(2026, 3, 20, 13, 30, tzinfo=UTC),
+                    symbol='AMAT',
+                    seq=1,
+                    source='ta',
+                    timeframe='1Sec',
+                    payload={'price': '180.10'},
+                )
+            ]
+            responses = [
+                {
+                    'dataset_snapshot_receipt': {'snapshot_id': 'snap-1'},
+                    'window': {
+                        'full_window_start_date': '2026-03-20',
+                        'full_window_end_date': '2026-04-09',
+                    },
+                    'top': [
+                        {
+                            'candidate_id': 'seed-1',
+                            'hard_vetoes': [],
+                            'ranking': {'pareto_tier': 1, 'tie_breaker_score': '10', 'vetoed': False},
+                            'objective_scorecard': {
+                                'net_pnl_per_day': '450',
+                                'active_day_ratio': '0.70',
+                                'positive_day_ratio': '0.55',
+                                'avg_filled_notional_per_day': '290000',
+                                'avg_filled_notional_per_active_day': '360000',
+                                'best_day_share': '0.40',
+                                'worst_day_loss': '350',
+                                'max_drawdown': '900',
+                                'regime_slice_pass_rate': '0.45',
+                            },
+                            'full_window': {
+                                'net_per_day': '450',
+                                'trading_day_count': 9,
+                                'active_days': 6,
+                                'daily_net': {'2026-04-01': '450'},
+                                'daily_filled_notional': {'2026-04-01': '290000'},
+                            },
+                            'replay_config': {
+                                'params': {'max_entries_per_session': '2', 'entry_cooldown_seconds': '600'},
+                                'strategy_overrides': {'universe_symbols': ['AMAT', 'NVDA']},
+                            },
+                        }
+                    ],
+                },
+                {
+                    'dataset_snapshot_receipt': {'snapshot_id': 'snap-2'},
+                    'window': {
+                        'full_window_start_date': '2026-03-20',
+                        'full_window_end_date': '2026-04-09',
+                    },
+                    'top': [
+                        {
+                            'candidate_id': 'mutated-1',
+                            'hard_vetoes': [],
+                            'ranking': {'pareto_tier': 1, 'tie_breaker_score': '11', 'vetoed': False},
+                            'objective_scorecard': {
+                                'net_pnl_per_day': '620',
+                                'active_day_ratio': '0.85',
+                                'positive_day_ratio': '0.60',
+                                'avg_filled_notional_per_day': '340000',
+                                'avg_filled_notional_per_active_day': '400000',
+                                'best_day_share': '0.30',
+                                'worst_day_loss': '300',
+                                'max_drawdown': '850',
+                                'regime_slice_pass_rate': '0.50',
+                            },
+                            'full_window': {
+                                'net_per_day': '620',
+                                'trading_day_count': 9,
+                                'active_days': 8,
+                                'daily_net': {'2026-04-02': '620'},
+                                'daily_filled_notional': {'2026-04-02': '340000'},
+                            },
+                            'replay_config': {
+                                'params': {'max_entries_per_session': '1', 'entry_cooldown_seconds': '600'},
+                                'strategy_overrides': {'universe_symbols': ['AMAT', 'NVDA']},
+                            },
+                        },
+                        {
+                            'candidate_id': 'mutated-2',
+                            'hard_vetoes': [],
+                            'ranking': {'pareto_tier': 1, 'tie_breaker_score': '10.5', 'vetoed': False},
+                            'objective_scorecard': {
+                                'net_pnl_per_day': '600',
+                                'active_day_ratio': '0.82',
+                                'positive_day_ratio': '0.58',
+                                'avg_filled_notional_per_day': '330000',
+                                'avg_filled_notional_per_active_day': '395000',
+                                'best_day_share': '0.31',
+                                'worst_day_loss': '305',
+                                'max_drawdown': '845',
+                                'regime_slice_pass_rate': '0.49',
+                            },
+                            'full_window': {
+                                'net_per_day': '600',
+                                'trading_day_count': 9,
+                                'active_days': 8,
+                                'daily_net': {'2026-04-02': '600'},
+                                'daily_filled_notional': {'2026-04-02': '330000'},
+                            },
+                            'replay_config': {
+                                'params': {'max_entries_per_session': '3', 'entry_cooldown_seconds': '600'},
+                                'strategy_overrides': {'universe_symbols': ['AMAT', 'NVDA']},
+                            },
+                        },
+                    ],
+                },
+            ]
+
+            args = Namespace(
+                program=program_path,
+                output_dir=output_dir,
+                strategy_configmap=configmap_path,
+                family_template_dir=family_dir,
+                clickhouse_http_url='http://example.invalid:8123',
+                clickhouse_username='torghut',
+                clickhouse_password='secret',
+                start_equity='31590.02',
+                chunk_minutes=10,
+                symbols='',
+                progress_log_seconds=30,
+                train_days=6,
+                holdout_days=3,
+                full_window_start_date='',
+                full_window_end_date='',
+                expected_last_trading_day='',
+                allow_stale_tape=False,
+                prefetch_full_window_rows=False,
+                max_frontier_runs=0,
+                json_output=None,
+            )
+
+            with patch(
+                'scripts.run_strategy_autoresearch_loop.run_consistent_profitability_frontier',
+                side_effect=responses,
+            ), patch(
+                'scripts.run_strategy_autoresearch_loop.replay_mod._iter_signal_rows',
+                return_value=iter(signal_rows),
+            ):
+                payload = runner.run_strategy_autoresearch_loop(args)
+
+            history_rows = [
+                json.loads(line)
+                for line in (Path(payload['run_root']) / 'history.jsonl').read_text(encoding='utf-8').splitlines()
+                if line.strip()
+            ]
+            round_two_rows = [row for row in history_rows if row['experiment_index'] == 2]
+            self.assertEqual(len(round_two_rows), 2)
+            keep_rows = [row for row in round_two_rows if row['status'] == 'keep']
+            self.assertEqual(len(keep_rows), 1)
+            self.assertEqual(keep_rows[0]['candidate_id'], 'mutated-1')
+            score_by_candidate = {row['candidate_id']: row['proposal_score'] for row in round_two_rows}
+            self.assertNotEqual(score_by_candidate['mutated-1'], score_by_candidate['mutated-2'])
+
     def test_run_strategy_autoresearch_loop_flushes_visible_progress_between_experiments(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

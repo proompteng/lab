@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
+from unittest.mock import patch
 
 from app.trading.discovery.autoresearch import (
     ProposalModelPolicy,
@@ -223,3 +224,34 @@ class TestMlxAutoresearch(TestCase):
         self.assertEqual(ranked[0].candidate_id, 'strong')
         self.assertEqual(ranked[0].rank, 1)
         self.assertIn(ranked[0].backend, {'mlx', 'numpy-fallback'})
+
+    def test_rank_candidate_descriptors_respects_numpy_backend_preference(self) -> None:
+        family_plan = Namespace(family_template=_template())
+        descriptor = descriptor_from_sweep_config(
+            candidate_id='strong',
+            family_plan=family_plan,  # type: ignore[arg-type]
+            sweep_config={'parameters': {'leader_reclaim_start_minutes_since_open': ['45']}, 'strategy_overrides': {}},
+        )
+        import numpy as np
+
+        with patch(
+            'app.trading.discovery.mlx_proposal_models._import_mlx_backend',
+            side_effect=AssertionError('mlx backend should not be used'),
+        ), patch(
+            'app.trading.discovery.mlx_proposal_models._import_numpy_backend',
+            return_value=('numpy-fallback', np),
+        ):
+            ranked = rank_candidate_descriptors(
+                descriptors=[descriptor],
+                history_rows=[],
+                policy=ProposalModelPolicy(
+                    enabled=True,
+                    mode='ranking_only',
+                    backend_preference='numpy-fallback',
+                    top_k=4,
+                    exploration_slots=1,
+                    minimum_history_rows=1,
+                ),
+            )
+
+        self.assertEqual(ranked[0].backend, 'numpy-fallback')

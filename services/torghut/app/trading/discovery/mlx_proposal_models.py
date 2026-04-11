@@ -24,15 +24,31 @@ def _candidate_target(row: Mapping[str, Any]) -> float:
     return net + (activity * 100.0) - (concentration_penalty * 100.0) - (veto_penalty * 250.0)
 
 
-def _import_array_backend() -> tuple[str, Any]:
+def _import_mlx_backend() -> tuple[str, Any]:
+    import mlx.core as mx  # type: ignore[import-not-found]
+
+    return 'mlx', mx
+
+
+def _import_numpy_backend() -> tuple[str, Any]:
+    import numpy as np
+
+    return 'numpy-fallback', np
+
+
+def _import_array_backend(preference: str) -> tuple[str, Any]:
+    normalized = preference.strip().lower()
+    if normalized in {'numpy', 'numpy-fallback'}:
+        return _import_numpy_backend()
+    if normalized == 'mlx':
+        try:
+            return _import_mlx_backend()
+        except ModuleNotFoundError:
+            return _import_numpy_backend()
     try:
-        import mlx.core as mx  # type: ignore[import-not-found]
-
-        return 'mlx', mx
+        return _import_mlx_backend()
     except ModuleNotFoundError:
-        import numpy as np
-
-        return 'numpy-fallback', np
+        return _import_numpy_backend()
 
 
 def _array(xp: Any, values: Sequence[Sequence[float]] | Sequence[float]) -> Any:
@@ -70,7 +86,7 @@ def rank_candidate_descriptors(
 ) -> list[ProposalScore]:
     if not descriptors:
         return []
-    backend_name, xp = _import_array_backend()
+    backend_name, xp = _import_array_backend(policy.backend_preference)
     if not policy.enabled or policy.mode != 'ranking_only':
         return [
             ProposalScore(

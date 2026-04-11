@@ -166,6 +166,12 @@ def _mlx_bundle_paths(run_root: Path) -> dict[str, str]:
     }
 
 
+def _keep_candidate_limit(*, family_plan: FamilyAutoresearchPlan, replay_budget_max_candidates_per_round: int) -> int:
+    if replay_budget_max_candidates_per_round <= 0:
+        return max(1, family_plan.keep_top_candidates)
+    return max(1, min(family_plan.keep_top_candidates, replay_budget_max_candidates_per_round))
+
+
 def _work_item_candidate_id(work_item: WorkItem) -> str:
     return _slug(
         f'{work_item.family_plan.family_template.family_id}-iter-{work_item.iteration}-{work_item.mutation_label}'
@@ -655,22 +661,39 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                 candidate
                 for candidate in top_candidates
                 if not bool(_mapping(candidate.get('ranking')).get('vetoed'))
-            ][: current.family_plan.keep_top_candidates]
+            ][
+                : _keep_candidate_limit(
+                    family_plan=current.family_plan,
+                    replay_budget_max_candidates_per_round=int(program.replay_budget.max_candidates_per_round),
+                )
+            ]
             if not keep_candidates and current.family_plan.force_keep_top_candidate_if_all_vetoed and top_candidates:
                 keep_candidates = [top_candidates[0]]
             keep_ids = {
                 _string(candidate.get('candidate_id'))
                 for candidate in keep_candidates
             }
+            frontier_descriptors = [
+                descriptor_from_candidate_payload(
+                    candidate_payload=candidate,
+                    family_plan=current.family_plan,
+                )
+                for candidate in top_candidates
+            ]
+            descriptors.extend(frontier_descriptors)
+            frontier_candidate_scores = rank_candidate_descriptors(
+                descriptors=frontier_descriptors,
+                history_rows=history,
+                policy=cast(ProposalModelPolicy, program.proposal_model_policy),
+            )
+            proposal_scores.extend(frontier_candidate_scores)
+            frontier_descriptor_by_candidate = {item.candidate_id: item for item in frontier_descriptors}
+            frontier_score_by_candidate = {item.candidate_id: item for item in frontier_candidate_scores}
             for rank, candidate in enumerate(top_candidates, start=1):
                 candidate_id = _string(candidate.get('candidate_id'))
                 candidate_status = 'keep' if candidate_id in keep_ids else 'discard'
                 candidate_objective_met = candidate_meets_objective(candidate, objective=program.objective)
-                candidate_descriptor = descriptor_from_candidate_payload(
-                    candidate_payload=candidate,
-                    family_plan=current.family_plan,
-                )
-                descriptors.append(candidate_descriptor)
+                candidate_descriptor = frontier_descriptor_by_candidate[candidate_id]
                 history.append(
                     _history_record(
                         runner_run_id=runner_run_id,
@@ -687,7 +710,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                         objective_met=candidate_objective_met,
                         dataset_snapshot_id=dataset_snapshot_id,
                         descriptor=candidate_descriptor,
-                        proposal_score=score_by_candidate.get(current_descriptor.candidate_id),
+                        proposal_score=frontier_score_by_candidate.get(candidate_id),
                     )
                 )
                 if candidate_objective_met:
