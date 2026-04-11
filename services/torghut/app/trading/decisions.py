@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 _SHORT_ENTRY_BELOW_MIN_QTY_REASON = "short_entry_below_min_qty"
 _SAME_DIRECTION_REENTRY_REASON = "same_direction_reentry"
 _EXIT_ONLY_SELL_FLAT_REASON = "exit_only_sell_without_long_position"
+_EXIT_ONLY_BUY_FLAT_REASON = "exit_only_buy_without_short_position"
 _RUNTIME_TRADE_POLICY_SHARED_OWNER = "__shared__"
 
 
@@ -305,6 +306,7 @@ class DecisionEngine:
                 strategy_id=primary_strategy_id,
             )
             if not _passes_runtime_trade_policy(
+                strategies=source_strategies,
                 last_emitted_action_at=self._last_emitted_action_at,
                 runtime_trade_policy_state=self._runtime_trade_policy_state,
                 signal_ts=signal.event_ts,
@@ -410,6 +412,7 @@ class DecisionEngine:
                 )
             ] = signal.event_ts
             _record_runtime_trade_policy_decision(
+                strategies=source_strategies,
                 runtime_trade_policy_state=self._runtime_trade_policy_state,
                 signal_ts=signal.event_ts,
                 symbol=symbol,
@@ -524,6 +527,7 @@ class DecisionEngine:
                     position_isolation_mode="per_strategy",
                 )
                 if not _passes_runtime_trade_policy(
+                    strategies=[strategy],
                     last_emitted_action_at=self._last_emitted_action_at,
                     runtime_trade_policy_state=self._runtime_trade_policy_state,
                     signal_ts=signal.event_ts,
@@ -538,6 +542,7 @@ class DecisionEngine:
                     continue
                 decisions.append(overlay_decision)
                 _record_runtime_trade_policy_decision(
+                    strategies=[strategy],
                     runtime_trade_policy_state=self._runtime_trade_policy_state,
                     signal_ts=signal.event_ts,
                     symbol=signal.symbol,
@@ -598,6 +603,11 @@ class DecisionEngine:
                 ]
             )
             if not _passes_runtime_trade_policy(
+                strategies=[
+                    strategy
+                    for strategy in strategies
+                    if str(strategy.id) in non_isolated_strategy_ids
+                ],
                 last_emitted_action_at=self._last_emitted_action_at,
                 runtime_trade_policy_state=self._runtime_trade_policy_state,
                 signal_ts=signal.event_ts,
@@ -611,6 +621,11 @@ class DecisionEngine:
                 return decisions
             decisions.append(overlay_decision)
             _record_runtime_trade_policy_decision(
+                strategies=[
+                    strategy
+                    for strategy in strategies
+                    if str(strategy.id) in non_isolated_strategy_ids
+                ],
                 runtime_trade_policy_state=self._runtime_trade_policy_state,
                 signal_ts=signal.event_ts,
                 symbol=signal.symbol,
@@ -1165,10 +1180,19 @@ def _resolve_qty(
     position_qty = _position_qty_for_symbol(positions, symbol)
     normalized_action = action.strip().lower()
     exit_only_sell = _treats_sell_as_exit_only(strategy) and normalized_action == "sell"
+    exit_only_buy = _treats_buy_as_exit_only(strategy) and normalized_action == "buy"
     if exit_only_sell and position_qty is not None and position_qty <= 0:
         return Decimal("0"), {
             "method": method,
             "reason": _EXIT_ONLY_SELL_FLAT_REASON,
+            "notional_budget": str(notional_budget),
+            "price": str(price),
+            "position_qty": str(position_qty),
+        }
+    if exit_only_buy and position_qty is not None and position_qty >= 0:
+        return Decimal("0"), {
+            "method": method,
+            "reason": _EXIT_ONLY_BUY_FLAT_REASON,
             "notional_budget": str(notional_budget),
             "price": str(price),
             "position_qty": str(position_qty),
@@ -1190,6 +1214,8 @@ def _resolve_qty(
     requested_qty = notional_budget / price
     if exit_only_sell and position_qty is not None and position_qty > 0:
         requested_qty = position_qty
+    if exit_only_buy and position_qty is not None and position_qty < 0:
+        requested_qty = abs(position_qty)
     capped_requested_qty = _cap_requested_qty_by_symbol_cap(
         action=normalized_action,
         requested_qty=requested_qty,
@@ -1376,10 +1402,21 @@ def _resolve_qty_for_aggregated(
     exit_only_sell = (
         _treats_sell_as_exit_only_any(strategies) and normalized_action == "sell"
     )
+    exit_only_buy = (
+        _treats_buy_as_exit_only_any(strategies) and normalized_action == "buy"
+    )
     if exit_only_sell and position_qty is not None and position_qty <= 0:
         return Decimal("0"), {
             "method": budget_method,
             "reason": _EXIT_ONLY_SELL_FLAT_REASON,
+            "notional_budget": str(total_budget),
+            "price": str(price),
+            "position_qty": str(position_qty),
+        }
+    if exit_only_buy and position_qty is not None and position_qty >= 0:
+        return Decimal("0"), {
+            "method": budget_method,
+            "reason": _EXIT_ONLY_BUY_FLAT_REASON,
             "notional_budget": str(total_budget),
             "price": str(price),
             "position_qty": str(position_qty),
@@ -1401,6 +1438,8 @@ def _resolve_qty_for_aggregated(
     requested_qty = total_budget / price
     if exit_only_sell and position_qty is not None and position_qty > 0:
         requested_qty = position_qty
+    if exit_only_buy and position_qty is not None and position_qty < 0:
+        requested_qty = abs(position_qty)
     capped_requested_qty = _cap_requested_qty_by_symbol_cap(
         action=normalized_action,
         requested_qty=requested_qty,
@@ -1544,6 +1583,7 @@ def _skip_non_executable_decision_qty(
     reason = str(sizing_meta.get("reason") or "").strip()
     return qty <= 0 and reason in {
         _EXIT_ONLY_SELL_FLAT_REASON,
+        _EXIT_ONLY_BUY_FLAT_REASON,
         _SHORT_ENTRY_BELOW_MIN_QTY_REASON,
         _SAME_DIRECTION_REENTRY_REASON,
         "symbol_capacity_exhausted",
@@ -1859,6 +1899,7 @@ def _blocks_same_direction_reentry(strategy: Strategy) -> bool:
         "intraday_tsmom",
         "tsmom_intraday",
         "momentum_pullback_long_v1",
+        "microbar_cross_sectional_long_v1",
         "breakout_continuation_long_v1",
         "washout_rebound_long_v1",
         "mean_reversion_rebound_long_v1",
@@ -1949,11 +1990,20 @@ def _treats_sell_as_exit_only(strategy: Strategy) -> bool:
         "intraday_tsmom",
         "tsmom_intraday",
         "momentum_pullback_long_v1",
+        "microbar_cross_sectional_long_v1",
         "breakout_continuation_long_v1",
         "washout_rebound_long_v1",
         "mean_reversion_rebound_long_v1",
         "late_day_continuation_long_v1",
         "end_of_day_reversal_long_v1",
+    }
+
+
+def _treats_buy_as_exit_only(strategy: Strategy) -> bool:
+    normalized = str(strategy.universe_type or "").strip().lower()
+    return normalized in {
+        "mean_reversion_exhaustion_short_v1",
+        "microbar_cross_sectional_short_v1",
     }
 
 
@@ -1963,6 +2013,39 @@ def _blocks_same_direction_reentry_any(strategies: list[Strategy]) -> bool:
 
 def _treats_sell_as_exit_only_any(strategies: list[Strategy]) -> bool:
     return any(_treats_sell_as_exit_only(strategy) for strategy in strategies)
+
+
+def _treats_buy_as_exit_only_any(strategies: list[Strategy]) -> bool:
+    return any(_treats_buy_as_exit_only(strategy) for strategy in strategies)
+
+
+def _is_entry_action_for_strategies(*, strategies: list[Strategy], action: str) -> bool:
+    normalized_action = action.strip().lower()
+    if normalized_action == "buy":
+        return not _treats_buy_as_exit_only_any(strategies)
+    if normalized_action == "sell":
+        return not _treats_sell_as_exit_only_any(strategies)
+    return False
+
+
+def _is_exit_action_for_strategies(*, strategies: list[Strategy], action: str) -> bool:
+    normalized_action = action.strip().lower()
+    if normalized_action == "buy":
+        return _treats_buy_as_exit_only_any(strategies)
+    if normalized_action == "sell":
+        return _treats_sell_as_exit_only_any(strategies)
+    return False
+
+
+def _exit_position_side_for_strategies(
+    *, strategies: list[Strategy], action: str
+) -> Literal["long", "short"] | None:
+    normalized_action = action.strip().lower()
+    if normalized_action == "sell" and _treats_sell_as_exit_only_any(strategies):
+        return "long"
+    if normalized_action == "buy" and _treats_buy_as_exit_only_any(strategies):
+        return "short"
+    return None
 
 
 def _same_direction_reentry_exists(
@@ -2275,7 +2358,10 @@ def _realized_exit_bps(
     *,
     avg_entry_price: Decimal,
     exit_price: Decimal,
+    position_side: Literal["long", "short"] = "long",
 ) -> Decimal:
+    if position_side == "short":
+        return ((avg_entry_price - exit_price) / avg_entry_price) * Decimal("10000")
     return ((exit_price - avg_entry_price) / avg_entry_price) * Decimal("10000")
 
 
@@ -2513,6 +2599,7 @@ def _resolve_runtime_trade_policy(strategies: list[Strategy]) -> dict[str, int |
 
 def _passes_runtime_trade_policy(
     *,
+    strategies: list[Strategy],
     last_emitted_action_at: dict[tuple[str, str, str | None], datetime],
     runtime_trade_policy_state: dict[tuple[str, str], _RuntimeTradePolicySessionState],
     signal_ts: datetime,
@@ -2531,11 +2618,28 @@ def _passes_runtime_trade_policy(
         symbol=symbol,
         position_owner=position_owner,
     )
-    if normalized_action == "buy":
+    entry_action = _is_entry_action_for_strategies(
+        strategies=strategies,
+        action=normalized_action,
+    )
+    exit_action = _is_exit_action_for_strategies(
+        strategies=strategies,
+        action=normalized_action,
+    )
+    if entry_action:
         max_concurrent_positions = max(0, int(policy.get("max_concurrent_positions", 0)))
         if (
             max_concurrent_positions > 0
-            and _count_open_long_positions(positions) >= max_concurrent_positions
+            and (
+                (
+                    normalized_action == "buy"
+                    and _count_open_long_positions(positions) >= max_concurrent_positions
+                )
+                or (
+                    normalized_action == "sell"
+                    and _count_open_short_positions(positions) >= max_concurrent_positions
+                )
+            )
         ):
             return False
         max_entries_per_session = max(0, int(policy.get("max_entries_per_session", 0)))
@@ -2588,9 +2692,7 @@ def _passes_runtime_trade_policy(
             return False
 
     cooldown_key = (
-        "entry_cooldown_seconds"
-        if normalized_action == "buy"
-        else "exit_cooldown_seconds"
+        "entry_cooldown_seconds" if entry_action else "exit_cooldown_seconds"
     )
     cooldown_seconds = max(0, int(policy.get(cooldown_key, 0)))
     last_emitted = last_emitted_action_at.get(
@@ -2608,7 +2710,7 @@ def _passes_runtime_trade_policy(
     ):
         return False
 
-    if normalized_action != "sell":
+    if not exit_action:
         return True
 
     if _position_exit_bypasses_min_hold(position_exit_type):
@@ -2650,7 +2752,11 @@ def _resolve_strategy_time_in_force(
     action: str,
 ) -> str:
     normalized_action = str(action or "").strip().lower()
-    param_key = "entry_time_in_force" if normalized_action == "buy" else "exit_time_in_force"
+    param_key = (
+        "entry_time_in_force"
+        if _is_entry_action_for_strategies(strategies=strategies, action=normalized_action)
+        else "exit_time_in_force"
+    )
     supported_values = {"day", "gtc", "ioc", "fok"}
     for strategy in strategies:
         params = StrategyRuntime.definition_from_strategy(strategy).params
@@ -2699,6 +2805,7 @@ def _resolve_runtime_trade_policy_session_state(
 
 def _record_runtime_trade_policy_decision(
     *,
+    strategies: list[Strategy],
     runtime_trade_policy_state: dict[tuple[str, str], _RuntimeTradePolicySessionState],
     signal_ts: datetime,
     symbol: str,
@@ -2717,10 +2824,18 @@ def _record_runtime_trade_policy_decision(
         symbol=symbol,
         position_owner=position_owner,
     )
-    if normalized_action == "buy":
+    entry_action = _is_entry_action_for_strategies(
+        strategies=strategies,
+        action=normalized_action,
+    )
+    exit_side = _exit_position_side_for_strategies(
+        strategies=strategies,
+        action=normalized_action,
+    )
+    if entry_action:
         state.entry_count += 1
         return
-    if normalized_action != "sell" or price is None or price <= 0:
+    if exit_side is None or price is None or price <= 0:
         return
 
     position_exit = decision.params.get("position_exit")
@@ -2738,7 +2853,12 @@ def _record_runtime_trade_policy_decision(
         return
     realized_bps = _realized_exit_bps(
         avg_entry_price=avg_entry_price,
-        exit_price=_reference_exit_price(price=price, signal=signal, action="sell"),
+        exit_price=_reference_exit_price(
+            price=price,
+            signal=signal,
+            action=normalized_action,
+        ),
+        position_side=exit_side,
     )
     if realized_bps >= 0:
         return
@@ -2762,16 +2882,18 @@ def _passes_signal_exit_policy(
     positions: Optional[list[dict[str, Any]]],
 ) -> bool:
     normalized_action = action.strip().lower()
-    if (
-        normalized_action != "sell"
-        or price is None
-        or price <= 0
-        or not _treats_sell_as_exit_only_any(strategies)
-    ):
+    exit_side = _exit_position_side_for_strategies(
+        strategies=strategies,
+        action=normalized_action,
+    )
+    if exit_side is None or price is None or price <= 0:
         return True
 
     position_qty = _position_qty_for_symbol(positions, symbol)
-    if position_qty is None or position_qty <= 0:
+    if (
+        (exit_side == "long" and (position_qty is None or position_qty <= 0))
+        or (exit_side == "short" and (position_qty is None or position_qty >= 0))
+    ):
         return True
 
     avg_entry_price = _position_avg_entry_price_for_symbol(positions, symbol)
@@ -2786,6 +2908,7 @@ def _passes_signal_exit_policy(
     realized_bps = _realized_exit_bps(
         avg_entry_price=avg_entry_price,
         exit_price=reference_exit_price,
+        position_side=exit_side,
     )
     return _passes_exit_profit_policy(
         strategies=strategies,
@@ -2981,6 +3104,36 @@ def _count_open_long_positions(positions: Optional[list[dict[str, Any]]]) -> int
         except (ArithmeticError, ValueError):
             continue
         if market_value > 0:
+            open_symbols.add(symbol)
+    return len(open_symbols)
+
+
+def _count_open_short_positions(positions: Optional[list[dict[str, Any]]]) -> int:
+    if not positions:
+        return 0
+    open_symbols: set[str] = set()
+    for position in positions:
+        symbol = str(position.get("symbol") or "").strip().upper()
+        if not symbol:
+            continue
+        qty = _position_qty_from_payload(position)
+        if qty is not None:
+            if qty < 0:
+                open_symbols.add(symbol)
+            continue
+        raw_value = (
+            position.get("market_value")
+            or position.get("current_value")
+            or position.get("notional")
+        )
+        if raw_value is None:
+            continue
+        try:
+            market_value = Decimal(str(raw_value))
+        except (ArithmeticError, ValueError):
+            continue
+        side = str(position.get("side") or "").strip().lower()
+        if side == "short" and market_value != 0:
             open_symbols.add(symbol)
     return len(open_symbols)
 

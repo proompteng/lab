@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -28,6 +28,7 @@ from scripts.local_intraday_tsmom_replay import (
     _apply_filled_decision,
     _apply_order_preferences,
     _build_near_miss,
+    _flatten_positions,
     _init_funnel_stats,
     _insert_near_miss,
     _parse_signal_row,
@@ -181,6 +182,94 @@ class TestLocalIntradayTsmomReplay(TestCase):
         self.assertEqual(day_bucket["filled_notional"], Decimal("5232.80"))
         self.assertLess(cash, Decimal("10000"))
 
+    def test_apply_filled_decision_opens_short_position_on_sell_entry(self) -> None:
+        signal = self._signal(bid="523.22", ask="523.28", price="523.25")
+        decision = self._decision(
+            action="sell", order_type="limit", limit_price="523.22"
+        )
+        positions: dict[tuple[str, str], PositionState] = {}
+        day_bucket = {
+            "decision_count": 1,
+            "filled_count": 0,
+            "filled_notional": Decimal("0"),
+            "gross_pnl": Decimal("0"),
+            "net_pnl": Decimal("0"),
+            "cost_total": Decimal("0"),
+            "wins": 0,
+            "losses": 0,
+            "closed_trades": [],
+        }
+
+        cash = _apply_filled_decision(
+            decision=decision,
+            signal=signal,
+            fill_price=Decimal("523.22"),
+            filled_at=signal.event_ts,
+            created_at=signal.event_ts,
+            positions=positions,
+            day_bucket=day_bucket,
+            cost_model=TransactionCostModel(),
+            cash=Decimal("10000"),
+            all_closed_trades=[],
+        )
+
+        self.assertIn(("META", _SHARED_POSITION_OWNER), positions)
+        position = positions[("META", _SHARED_POSITION_OWNER)]
+        self.assertEqual(position.avg_entry_price, Decimal("523.22"))
+        self.assertEqual(position.qty, Decimal("-10"))
+        self.assertEqual(day_bucket["filled_count"], 1)
+        self.assertEqual(day_bucket["filled_notional"], Decimal("5232.20"))
+        self.assertGreater(cash, Decimal("10000"))
+
+    def test_apply_filled_decision_buy_covers_existing_short(self) -> None:
+        signal = self._signal(bid="522.90", ask="523.00", price="522.95")
+        decision = self._decision(
+            action="buy", order_type="limit", limit_price="523.00"
+        )
+        positions = {
+            ("META", _SHARED_POSITION_OWNER): PositionState(
+                strategy_id=_SHARED_POSITION_OWNER,
+                qty=Decimal("-10"),
+                avg_entry_price=Decimal("523.22"),
+                opened_at=datetime(2026, 3, 27, 17, 0, 0, tzinfo=timezone.utc),
+                entry_cost_total=Decimal("1.00"),
+                decision_at=datetime(2026, 3, 27, 17, 0, 0, tzinfo=timezone.utc),
+            )
+        }
+        day_bucket = {
+            "decision_count": 1,
+            "filled_count": 0,
+            "filled_notional": Decimal("0"),
+            "gross_pnl": Decimal("0"),
+            "net_pnl": Decimal("0"),
+            "cost_total": Decimal("0"),
+            "wins": 0,
+            "losses": 0,
+            "closed_trades": [],
+        }
+        all_closed_trades: list[object] = []
+
+        cash = _apply_filled_decision(
+            decision=decision,
+            signal=signal,
+            fill_price=Decimal("523.00"),
+            filled_at=signal.event_ts,
+            created_at=signal.event_ts,
+            positions=positions,
+            day_bucket=day_bucket,
+            cost_model=TransactionCostModel(),
+            cash=Decimal("15231.20"),
+            all_closed_trades=all_closed_trades,
+        )
+
+        self.assertNotIn(("META", _SHARED_POSITION_OWNER), positions)
+        self.assertEqual(day_bucket["filled_count"], 1)
+        self.assertGreater(day_bucket["gross_pnl"], Decimal("0"))
+        self.assertGreater(day_bucket["net_pnl"], Decimal("0"))
+        self.assertEqual(day_bucket["wins"], 1)
+        self.assertEqual(len(all_closed_trades), 1)
+        self.assertLess(cash, Decimal("15231.20"))
+
     def test_quote_quality_rejects_wide_spread_outlier(self) -> None:
         signal = self._signal(bid="239.11", ask="253.69", price="246.40")
         config = ReplayConfig(
@@ -266,6 +355,35 @@ class TestLocalIntradayTsmomReplay(TestCase):
                 "strategy_runtime": {
                     "source_strategy_runtime": [
                         {"strategy_type": "breakout_continuation_long_v1"}
+                    ]
+                },
+            },
+        )
+        signal = self._signal(bid="524.90", ask="525.10", price="525.00")
+
+        updated = _apply_order_preferences(decision, signal)
+
+        self.assertEqual(updated.order_type, "market")
+        self.assertIsNone(updated.limit_price)
+
+    def test_microbar_cross_sectional_short_entry_keeps_market_order(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="short-cross-row-id",
+            symbol="META",
+            event_ts=datetime(2026, 3, 27, 13, 30, 1, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="sell",
+            qty=Decimal("10"),
+            order_type="market",
+            time_in_force="day",
+            rationale="microbar_cross_sectional_entry,rank=1",
+            params={
+                "execution_features": {
+                    "spread_bps": Decimal("4"),
+                },
+                "strategy_runtime": {
+                    "source_strategy_runtime": [
+                        {"strategy_type": "microbar_cross_sectional_short_v1"}
                     ]
                 },
             },
@@ -433,6 +551,39 @@ class TestLocalIntradayTsmomReplay(TestCase):
 
         self.assertEqual(payload, [])
 
+    def test_positions_payload_projects_pending_short_entry(self) -> None:
+        signal = self._signal(bid="523.22", ask="523.28", price="523.25")
+        pending_sell = PendingOrder(
+            decision=self._decision(
+                action="sell", order_type="limit", limit_price="523.22"
+            ),
+            created_at=datetime(2026, 3, 27, 17, 30, 3, tzinfo=timezone.utc),
+            signal=signal,
+        )
+
+        payload = _positions_payload(
+            {},
+            {"META": Decimal("523.25")},
+            {("META", _SHARED_POSITION_OWNER): pending_sell},
+        )
+
+        self.assertEqual(
+            payload,
+            [
+                {
+                    "symbol": "META",
+                    "strategy_id": _SHARED_POSITION_OWNER,
+                    "qty": "10",
+                    "side": "short",
+                    "market_value": "-5232.50",
+                    "avg_entry_price": "523.22",
+                    "opened_at": signal.event_ts.isoformat(),
+                    "decision_at": pending_sell.created_at.isoformat(),
+                    "pending_entry": True,
+                }
+            ],
+        )
+
     def test_positions_payload_keeps_other_strategy_position_when_isolated_sell_pending(
         self,
     ) -> None:
@@ -497,6 +648,50 @@ class TestLocalIntradayTsmomReplay(TestCase):
                 }
             ],
         )
+
+    def test_flatten_positions_closes_short_and_books_pnl(self) -> None:
+        day = date(2026, 4, 2)
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 4, 2, 19, 59, 59, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=1,
+            payload={"price": Decimal("520.50")},
+        )
+        positions = {
+            ("META", _SHARED_POSITION_OWNER): PositionState(
+                strategy_id=_SHARED_POSITION_OWNER,
+                qty=Decimal("-10"),
+                avg_entry_price=Decimal("523.22"),
+                opened_at=datetime(2026, 4, 2, 14, 30, 0, tzinfo=timezone.utc),
+                entry_cost_total=Decimal("1.00"),
+                decision_at=datetime(2026, 4, 2, 14, 30, 0, tzinfo=timezone.utc),
+            )
+        }
+        stats = _init_funnel_stats()
+        stats["closed_trades"] = []
+        funnel_stats: dict[tuple[str, str], dict[str, object]] = {}
+        cash_ref = [Decimal("15231.20")]
+        all_closed_trades: list[object] = []
+
+        _flatten_positions(
+            day=day,
+            stats=stats,
+            funnel_stats=funnel_stats,
+            positions=positions,
+            last_signals={"META": signal},
+            last_prices={"META": Decimal("520.50")},
+            cost_model=TransactionCostModel(),
+            cash_ref=cash_ref,
+            all_closed_trades=all_closed_trades,
+        )
+
+        self.assertEqual(positions, {})
+        self.assertEqual(stats["filled_count"], 1)
+        self.assertGreater(stats["gross_pnl"], Decimal("0"))
+        self.assertGreater(stats["net_pnl"], Decimal("0"))
+        self.assertEqual(stats["wins"], 1)
+        self.assertEqual(len(all_closed_trades), 1)
 
     def test_parse_signal_row_preserves_vwap_and_imbalance_sizes(self) -> None:
         parsed = _parse_signal_row(
@@ -1105,6 +1300,171 @@ class TestLocalIntradayTsmomReplay(TestCase):
         )
         self.assertEqual(payload["funnel"]["buckets"][0]["trading_day"], "2026-03-26")
         self.assertGreaterEqual(payload["filled_count"], 2)
+
+    def test_run_replay_enriches_day_two_open_with_prev_day_open45_ranks(self) -> None:
+        strategy = Strategy(
+            name="observer",
+            description=None,
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="static",
+            universe_symbols=["AAPL", "META"],
+            max_position_pct_equity=None,
+            max_notional_per_trade=None,
+        )
+        observed_signals: list[SignalEnvelope] = []
+
+        day_one_aapl_open = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 13, 30, 1, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": Decimal("100"),
+                "imbalance_bid_px": Decimal("99.95"),
+                "imbalance_ask_px": Decimal("100.05"),
+                "imbalance_bid_sz": Decimal("100"),
+                "imbalance_ask_sz": Decimal("100"),
+                "spread": Decimal("0.10"),
+            },
+        )
+        day_one_meta_open = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 13, 30, 1, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=2,
+            payload={
+                "price": Decimal("100"),
+                "imbalance_bid_px": Decimal("99.95"),
+                "imbalance_ask_px": Decimal("100.05"),
+                "imbalance_bid_sz": Decimal("100"),
+                "imbalance_ask_sz": Decimal("100"),
+                "spread": Decimal("0.10"),
+            },
+        )
+        day_one_aapl_45 = day_one_aapl_open.model_copy(
+            update={
+                "event_ts": datetime(2026, 3, 27, 14, 15, 0, tzinfo=timezone.utc),
+                "seq": 3,
+                "payload": {
+                    **day_one_aapl_open.payload,
+                    "price": Decimal("105"),
+                    "imbalance_bid_px": Decimal("104.95"),
+                    "imbalance_ask_px": Decimal("105.05"),
+                },
+            }
+        )
+        day_one_meta_45 = day_one_meta_open.model_copy(
+            update={
+                "event_ts": datetime(2026, 3, 27, 14, 15, 0, tzinfo=timezone.utc),
+                "seq": 4,
+                "payload": {
+                    **day_one_meta_open.payload,
+                    "price": Decimal("95"),
+                    "imbalance_bid_px": Decimal("94.95"),
+                    "imbalance_ask_px": Decimal("95.05"),
+                },
+            }
+        )
+        day_two_aapl_open = day_one_aapl_open.model_copy(
+            update={
+                "event_ts": datetime(2026, 3, 30, 13, 30, 1, tzinfo=timezone.utc),
+                "seq": 5,
+            }
+        )
+        day_two_meta_open = day_one_meta_open.model_copy(
+            update={
+                "event_ts": datetime(2026, 3, 30, 13, 30, 1, tzinfo=timezone.utc),
+                "seq": 6,
+            }
+        )
+
+        class _Engine:
+            def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+                _ = args
+                _ = kwargs
+
+            def observe_signal(self, signal: SignalEnvelope) -> None:
+                _ = signal
+
+            def evaluate(
+                self, signal: SignalEnvelope, strategies, *, equity, positions
+            ):  # type: ignore[no-untyped-def]
+                _ = strategies
+                _ = equity
+                _ = positions
+                observed_signals.append(signal)
+                return []
+
+            def consume_runtime_telemetry(self):  # type: ignore[no-untyped-def]
+                return type("Telemetry", (), {"traces": []})()
+
+        class _Allocator:
+            def allocate(self, raw_decisions, **kwargs):  # type: ignore[no-untyped-def]
+                _ = raw_decisions
+                _ = kwargs
+                return []
+
+        config = ReplayConfig(
+            strategy_configmap_path=Path("/tmp/strategies.yaml"),
+            clickhouse_http_url="http://example.invalid:8123",
+            clickhouse_username=None,
+            clickhouse_password=None,
+            start_date=datetime(2026, 3, 27, tzinfo=timezone.utc).date(),
+            end_date=datetime(2026, 3, 30, tzinfo=timezone.utc).date(),
+            chunk_minutes=10,
+            flatten_eod=True,
+            start_equity=Decimal("10000"),
+            capture_traces=False,
+        )
+
+        with (
+            patch(
+                "scripts.local_intraday_tsmom_replay._load_strategies",
+                return_value=[strategy],
+            ),
+            patch(
+                "scripts.local_intraday_tsmom_replay._iter_signal_rows",
+                return_value=iter(
+                    [
+                        day_one_aapl_open,
+                        day_one_meta_open,
+                        day_one_aapl_45,
+                        day_one_meta_45,
+                        day_two_aapl_open,
+                        day_two_meta_open,
+                    ]
+                ),
+            ),
+            patch("scripts.local_intraday_tsmom_replay.DecisionEngine", _Engine),
+            patch(
+                "scripts.local_intraday_tsmom_replay.allocator_from_settings",
+                return_value=_Allocator(),
+            ),
+        ):
+            run_replay(config)
+
+        aapl_day_two = next(
+            signal
+            for signal in observed_signals
+            if signal.symbol == "AAPL"
+            and signal.event_ts == datetime(2026, 3, 30, 13, 30, 1, tzinfo=timezone.utc)
+        )
+        meta_day_two = next(
+            signal
+            for signal in observed_signals
+            if signal.symbol == "META"
+            and signal.event_ts == datetime(2026, 3, 30, 13, 30, 1, tzinfo=timezone.utc)
+        )
+
+        self.assertEqual(
+            aapl_day_two.payload["cross_section_prev_day_open45_return_rank"],
+            Decimal("1"),
+        )
+        self.assertEqual(
+            meta_day_two.payload["cross_section_prev_day_open45_return_rank"],
+            Decimal("0"),
+        )
 
     def test_run_replay_marks_passed_trace_with_sizer_reject_reason(self) -> None:
         strategy = Strategy(

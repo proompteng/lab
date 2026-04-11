@@ -270,6 +270,20 @@ def _exit_trigger_gate(
     )
 
 
+def _rank_thresholds(
+    *,
+    universe_size: int,
+    top_n: int,
+) -> tuple[Decimal, Decimal]:
+    if universe_size <= 1:
+        return (Decimal('0'), Decimal('1'))
+    resolved_top_n = min(max(1, top_n), universe_size)
+    denominator = Decimal(universe_size - 1)
+    low_threshold = Decimal(resolved_top_n - 1) / denominator
+    high_threshold = Decimal(universe_size - resolved_top_n) / denominator
+    return (low_threshold, high_threshold)
+
+
 def evaluate_momentum_pullback_long(
     *,
     params: Mapping[str, Any],
@@ -2230,6 +2244,11 @@ def evaluate_mean_reversion_exhaustion_short(
     cross_section_opening_window_return_from_prev_close_rank: Decimal | None,
     cross_section_continuation_rank: Decimal | None,
     cross_section_reversal_rank: Decimal | None,
+    cross_section_session_open_rank: Decimal | None,
+    cross_section_prev_session_close_rank: Decimal | None,
+    cross_section_range_position_rank: Decimal | None,
+    cross_section_vwap_w5m_rank: Decimal | None,
+    cross_section_recent_imbalance_rank: Decimal | None,
 ) -> SleeveSignalResult:
     trace_context = {'family': 'mean_reversion_exhaustion_short'}
     required_fields = {
@@ -2538,6 +2557,84 @@ def evaluate_mean_reversion_exhaustion_short(
     )
 
     if all(gate.passed for gate in sell_gates):
+        rank_gates: tuple[GateTrace, ...] = ()
+        rank_feature = str(params.get('rank_feature') or '').strip()
+        rank_lookup = {
+            'cross_section_session_open_rank': cross_section_session_open_rank,
+            'cross_section_opening_window_return_rank': cross_section_opening_window_return_rank,
+            'cross_section_prev_session_close_rank': cross_section_prev_session_close_rank,
+            'cross_section_opening_window_return_from_prev_close_rank': cross_section_opening_window_return_from_prev_close_rank,
+            'cross_section_range_position_rank': cross_section_range_position_rank,
+            'cross_section_vwap_w5m_rank': cross_section_vwap_w5m_rank,
+            'cross_section_recent_imbalance_rank': cross_section_recent_imbalance_rank,
+            'cross_section_continuation_rank': cross_section_continuation_rank,
+            'cross_section_reversal_rank': cross_section_reversal_rank,
+        }
+        rank_value = rank_lookup.get(rank_feature)
+        if rank_feature:
+            universe_size = max(2, int(_optional_decimal_param(params, 'universe_size', Decimal('2')) or Decimal('2')))
+            top_n = max(1, int(_optional_decimal_param(params, 'top_n', Decimal('1')) or Decimal('1')))
+            selection_mode = str(params.get('selection_mode') or 'reversal').strip().lower()
+            low_threshold, high_threshold = _rank_thresholds(
+                universe_size=universe_size,
+                top_n=top_n,
+            )
+            should_trade = False
+            comparator = 'gte'
+            threshold_value = high_threshold
+            if selection_mode == 'continuation':
+                comparator = 'lte'
+                threshold_value = low_threshold
+                should_trade = rank_value is not None and rank_value <= low_threshold
+            else:
+                comparator = 'gte'
+                threshold_value = high_threshold
+                should_trade = rank_value is not None and rank_value >= high_threshold
+            rank_gate = _gate(
+                name='rank_selection',
+                category='structure',
+                thresholds=(
+                    ThresholdTrace(
+                        metric=rank_feature,
+                        comparator='min_gte' if comparator == 'gte' else 'max_lte',
+                        value=rank_value,
+                        threshold=threshold_value,
+                        passed=should_trade,
+                        missing_policy='fail_closed',
+                        distance_to_pass=(
+                            Decimal('0')
+                            if should_trade
+                            else (
+                                threshold_value
+                                if rank_value is None
+                                else (
+                                    max(Decimal('0'), threshold_value - rank_value)
+                                    if comparator == 'gte'
+                                    else max(Decimal('0'), rank_value - threshold_value)
+                                )
+                            )
+                        ),
+                    ),
+                ),
+                context={
+                    'selection_mode': selection_mode,
+                    'top_n': top_n,
+                    'universe_size': universe_size,
+                },
+            )
+            rank_gates = (rank_gate,)
+            if not should_trade:
+                return _sleeve_result(
+                    strategy_id=strategy_id,
+                    strategy_type=strategy_type,
+                    symbol=symbol,
+                    event_ts=event_ts,
+                    timeframe=timeframe,
+                    signal=None,
+                    gates=sell_gates + rank_gates,
+                    trace_enabled=trace_enabled,
+                    context=trace_context,
+                )
         confidence = Decimal('0.64')
         if price_vs_vwap_bps is not None and price_vs_vwap_bps >= Decimal('16'):
             confidence += Decimal('0.03')
@@ -2576,6 +2673,10 @@ def evaluate_mean_reversion_exhaustion_short(
                     'above_vwap',
                     'session_overextension',
                     'offer_pressure_confirmed',
+                    *((
+                        f"selection_mode:{str(params.get('selection_mode') or 'reversal').strip().lower()}",
+                        f"rank_feature:{rank_feature}",
+                    ) if rank_feature else ()),
                 ),
                 notional_multiplier=_resolve_entry_notional_multiplier(
                     params=params,
@@ -2585,7 +2686,7 @@ def evaluate_mean_reversion_exhaustion_short(
                     spread_cap_bps=spread_cap_bps,
                 ),
             ),
-            gates=sell_gates,
+            gates=sell_gates + rank_gates,
             trace_enabled=trace_enabled,
             context=trace_context,
         )

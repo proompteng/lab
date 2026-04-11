@@ -10,9 +10,16 @@ from unittest.mock import patch
 from app.config import settings
 from app.models import Strategy
 from app.strategies.catalog import StrategyConfig, _compose_strategy_description
-from app.trading.decisions import DecisionEngine, _build_runtime_position_exit_overlay
+from app.trading.decisions import (
+    DecisionEngine,
+    _build_runtime_position_exit_overlay,
+    _passes_runtime_trade_policy,
+    _record_runtime_trade_policy_decision,
+    _resolve_qty_for_aggregated,
+    _resolve_strategy_time_in_force,
+)
 from app.trading.features import extract_signal_features
-from app.trading.models import SignalEnvelope
+from app.trading.models import SignalEnvelope, StrategyDecision
 from app.trading.prices import MarketSnapshot, PriceFetcher
 from app.trading.strategy_runtime import (
     StrategyContext,
@@ -1552,6 +1559,215 @@ class TestDecisionEngine(TestCase):
 
         self.assertEqual(decisions, [])
 
+    def test_scheduler_runtime_mean_reversion_exhaustion_short_skips_exit_only_buy_without_short_inventory(
+        self,
+    ) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="mean-reversion-exhaustion-short",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="mean_reversion_exhaustion_short_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("12000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 17, 26, 12, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=22,
+            payload={
+                "price": 595.80,
+                "ema12": 596.20,
+                "macd": 0.004,
+                "macd_signal": 0.000,
+                "rsi14": 41,
+                "vol_realized_w60s": 0.00022,
+                "vwap_session": 596.40,
+                "spread": 0.05,
+                "imbalance_bid_sz": 4700,
+                "imbalance_ask_sz": 4300,
+                "price_vs_session_open_bps": 8,
+                "price_position_in_session_range": 0.38,
+                "price_vs_opening_range_high_bps": -22,
+                "session_range_bps": 88,
+                "recent_spread_bps_avg": 0.82,
+                "recent_spread_bps_max": 1.44,
+                "recent_imbalance_pressure_avg": 0.04,
+            },
+        )
+
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+        ):
+            decisions = engine.evaluate(signal, [strategy], positions=[])
+
+        self.assertEqual(decisions, [])
+
+    def test_scheduler_runtime_mean_reversion_exhaustion_short_caps_exit_only_buy_to_short_inventory(
+        self,
+    ) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="mean-reversion-exhaustion-short",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="mean_reversion_exhaustion_short_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("12000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 17, 26, 12, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=22,
+            payload={
+                "price": 595.80,
+                "ema12": 596.20,
+                "macd": 0.004,
+                "macd_signal": 0.000,
+                "rsi14": 41,
+                "vol_realized_w60s": 0.00022,
+                "vwap_session": 596.40,
+                "spread": 0.05,
+                "imbalance_bid_sz": 4700,
+                "imbalance_ask_sz": 4300,
+                "price_vs_session_open_bps": 8,
+                "price_position_in_session_range": 0.38,
+                "price_vs_opening_range_high_bps": -22,
+                "session_range_bps": 88,
+                "recent_spread_bps_avg": 0.82,
+                "recent_spread_bps_max": 1.44,
+                "recent_imbalance_pressure_avg": 0.04,
+            },
+        )
+
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+        ):
+            decisions = engine.evaluate(
+                signal,
+                [strategy],
+                positions=[
+                    {
+                        "symbol": "META",
+                        "qty": "3",
+                        "side": "short",
+                        "market_value": "1787.40",
+                        "avg_entry_price": "598.40",
+                    }
+                ],
+            )
+
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0].action, "buy")
+        self.assertEqual(decisions[0].qty, Decimal("3"))
+
+    def test_scheduler_runtime_mean_reversion_exhaustion_short_sell_respects_entry_policy(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="mean-reversion-exhaustion-short",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="mean-reversion-exhaustion-short",
+                    strategy_id="mean_reversion_exhaustion_short_v1@policy",
+                    strategy_type="sell_plugin",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="mean_reversion_exhaustion_short_v1",
+                    universe_symbols=["META"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("12000"),
+                    params={
+                        "max_entries_per_session": "1",
+                        "entry_time_in_force": "ioc",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="mean_reversion_exhaustion_short_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("12000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 24, 17, 18, 12, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=21,
+            payload={"price": 598.40},
+        )
+        decision = StrategyDecision(
+            strategy_id=str(strategy.id),
+            symbol="META",
+            event_ts=signal.event_ts,
+            timeframe="1Sec",
+            action="sell",
+            qty=Decimal("20"),
+            order_type="market",
+            time_in_force="day",
+            rationale="sell_signal",
+            params={},
+        )
+        state = {}
+
+        self.assertTrue(
+            _passes_runtime_trade_policy(
+                strategies=[strategy],
+                last_emitted_action_at={},
+                runtime_trade_policy_state=state,
+                signal_ts=signal.event_ts,
+                symbol="META",
+                action="sell",
+                position_owner="shared",
+                positions=[],
+                policy={"max_entries_per_session": 1},
+            )
+        )
+        self.assertEqual(
+            _resolve_strategy_time_in_force(strategies=[strategy], action="sell"),
+            "ioc",
+        )
+
+        _record_runtime_trade_policy_decision(
+            strategies=[strategy],
+            runtime_trade_policy_state=state,
+            signal_ts=signal.event_ts,
+            symbol="META",
+            position_owner="shared",
+            action="sell",
+            policy={"max_entries_per_session": 1},
+            positions=[],
+            signal=signal,
+            price=Decimal("598.40"),
+            decision=decision,
+        )
+
+        self.assertFalse(
+            _passes_runtime_trade_policy(
+                strategies=[strategy],
+                last_emitted_action_at={},
+                runtime_trade_policy_state=state,
+                signal_ts=datetime(2026, 3, 24, 17, 19, 12, tzinfo=timezone.utc),
+                symbol="META",
+                action="sell",
+                position_owner="shared",
+                positions=[],
+                policy={"max_entries_per_session": 1},
+            )
+        )
+
     def test_scheduler_runtime_breakout_continuation_skips_exit_only_sell_for_pending_entry_only(
         self,
     ) -> None:
@@ -1867,6 +2083,96 @@ class TestDecisionEngine(TestCase):
 
         self.assertEqual(len(first), 1)
         self.assertEqual(second, [])
+
+    def test_scheduler_runtime_microbar_long_sell_does_not_open_short_when_flat(self) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        engine.strategy_runtime = StrategyRuntime(
+            registry=StrategyRegistry(
+                plugins={
+                    "sell_plugin": _SellPlugin(),
+                }
+            )
+        )
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="microbar-long-flat-exit",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="microbar-long-flat-exit",
+                    strategy_id="microbar_cross_sectional_long_v1@research",
+                    strategy_type="sell_plugin",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="microbar_cross_sectional_long_v1",
+                    universe_symbols=["META"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("15000"),
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="microbar_cross_sectional_long_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("15000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 30, 14, 20, 0, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 525.00,
+                "spread": 0.20,
+            },
+        )
+
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+            patch.object(settings, "trading_fractional_equities_enabled", True),
+        ):
+            decisions = engine.evaluate(signal, [strategy], positions=[])
+
+        self.assertEqual(decisions, [])
+
+    def test_resolve_qty_for_aggregated_blocks_flat_microbar_long_time_exit(self) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="microbar-long-flat-exit",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="microbar-long-flat-exit",
+                    strategy_id="microbar_cross_sectional_long_v1@research",
+                    strategy_type="microbar_cross_sectional_long_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="microbar_cross_sectional_long_v1",
+                    universe_symbols=["NVDA"],
+                    max_notional_per_trade=Decimal("15000"),
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="microbar_cross_sectional_long_v1",
+            universe_symbols=["NVDA"],
+            max_position_pct_equity=None,
+            max_notional_per_trade=Decimal("15000"),
+        )
+
+        qty, sizing_meta = _resolve_qty_for_aggregated(
+            [strategy],
+            symbol="NVDA",
+            action="sell",
+            price=Decimal("167.90"),
+            equity=None,
+            positions=[],
+            capacity_positions=[],
+            runtime_target_notional=Decimal("15000"),
+        )
+
+        self.assertEqual(qty, Decimal("0"))
+        self.assertEqual(sizing_meta.get("reason"), "exit_only_sell_without_long_position")
 
     def test_scheduler_runtime_isolated_buy_cooldown_is_scoped_per_strategy(self) -> None:
         first_strategy_id = uuid.uuid4()

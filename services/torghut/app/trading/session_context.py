@@ -174,6 +174,8 @@ class _SymbolSessionState:
     latest_recent_quote_jump_bps_max: Decimal | None = None
     latest_recent_microprice_bias_bps_avg: Decimal | None = None
     last_valid_quote_price: Decimal | None = None
+    opening_45_return_bps: Decimal | None = None
+    opening_60_return_bps: Decimal | None = None
 
 
 class SessionContextTracker:
@@ -191,6 +193,8 @@ class SessionContextTracker:
         self.quote_quality_policy = quote_quality_policy or QuoteQualityPolicy()
         self._state_by_symbol: dict[str, _SymbolSessionState] = {}
         self._last_session_close_by_symbol: dict[str, Decimal] = {}
+        self._last_opening_45_return_by_symbol: dict[str, Decimal] = {}
+        self._last_opening_60_return_by_symbol: dict[str, Decimal] = {}
 
     def enrich_signal_payload(self, signal: SignalEnvelope) -> dict[str, Any]:
         payload = dict(signal.payload)
@@ -207,16 +211,8 @@ class SessionContextTracker:
             tzinfo=timezone.utc,
         )
         regular_session_started = signal_ts_utc >= session_open_ts
+        self._roll_forward_completed_sessions(next_session_day=session_day)
         state = self._state_by_symbol.get(symbol)
-        if state is not None and state.session_day != session_day:
-            previous_close = (
-                state.last_valid_quote_price
-                or state.opening_window_close_price
-                or state.session_open_price
-            )
-            if previous_close > 0:
-                self._last_session_close_by_symbol[symbol] = previous_close
-            state = None
         quote_quality = assess_signal_quote_quality(
             signal=signal,
             previous_price=(state.last_valid_quote_price if state is not None else None),
@@ -356,6 +352,10 @@ class SessionContextTracker:
         state.latest_recent_quote_jump_bps_avg = recent_quote_jump_bps_avg
         state.latest_recent_quote_jump_bps_max = recent_quote_jump_bps_max
         state.latest_recent_microprice_bias_bps_avg = recent_microprice_bias_bps_avg
+        if minutes_elapsed >= 45 and state.opening_45_return_bps is None:
+            state.opening_45_return_bps = price_vs_session_open_bps
+        if minutes_elapsed >= 60 and state.opening_60_return_bps is None:
+            state.opening_60_return_bps = price_vs_session_open_bps
 
         session_open_rank = self._rank_latest_metric(
             current_day=session_day,
@@ -392,6 +392,14 @@ class SessionContextTracker:
             symbol=symbol,
             accessor='latest_opening_window_return_from_prev_close_bps',
         )
+        prev_day_open45_return_rank = _percentile_rank(
+            self._last_opening_45_return_by_symbol,
+            symbol=symbol,
+        )
+        prev_day_open60_return_rank = _percentile_rank(
+            self._last_opening_60_return_by_symbol,
+            symbol=symbol,
+        )
         positive_session_open_ratio = self._positive_ratio_latest_metric(
             current_day=session_day,
             accessor='latest_price_vs_session_open_bps',
@@ -417,6 +425,12 @@ class SessionContextTracker:
         positive_recent_imbalance_ratio = self._positive_ratio_latest_metric(
             current_day=session_day,
             accessor='latest_recent_imbalance_pressure_avg',
+        )
+        positive_prev_day_open45_return_ratio = _ratio_decimal(
+            [value > 0 for value in self._last_opening_45_return_by_symbol.values()]
+        )
+        positive_prev_day_open60_return_ratio = _ratio_decimal(
+            [value > 0 for value in self._last_opening_60_return_by_symbol.values()]
         )
         effective_session_drive_rank = (
             prev_session_close_rank
@@ -518,6 +532,8 @@ class SessionContextTracker:
                 'cross_section_opening_window_return_from_prev_close_rank': (
                     opening_window_prev_close_return_rank
                 ),
+                'cross_section_prev_day_open45_return_rank': prev_day_open45_return_rank,
+                'cross_section_prev_day_open60_return_rank': prev_day_open60_return_rank,
                 'cross_section_range_position_rank': range_position_rank,
                 'cross_section_vwap_w5m_rank': vwap_w5m_rank,
                 'cross_section_recent_imbalance_rank': recent_imbalance_rank,
@@ -526,6 +542,12 @@ class SessionContextTracker:
                 'cross_section_positive_opening_window_return_ratio': positive_opening_window_return_ratio,
                 'cross_section_positive_opening_window_return_from_prev_close_ratio': (
                     positive_opening_window_return_from_prev_close_ratio
+                ),
+                'cross_section_positive_prev_day_open45_return_ratio': (
+                    positive_prev_day_open45_return_ratio
+                ),
+                'cross_section_positive_prev_day_open60_return_ratio': (
+                    positive_prev_day_open60_return_ratio
                 ),
                 'cross_section_above_vwap_w5m_ratio': above_vwap_w5m_ratio,
                 'cross_section_positive_recent_imbalance_ratio': positive_recent_imbalance_ratio,
@@ -536,6 +558,23 @@ class SessionContextTracker:
             }
         )
         return payload
+
+    def _roll_forward_completed_sessions(self, *, next_session_day: date) -> None:
+        for candidate_symbol, state in list(self._state_by_symbol.items()):
+            if state.session_day >= next_session_day:
+                continue
+            previous_close = (
+                state.last_valid_quote_price
+                or state.opening_window_close_price
+                or state.session_open_price
+            )
+            if previous_close > 0:
+                self._last_session_close_by_symbol[candidate_symbol] = previous_close
+            if state.opening_45_return_bps is not None:
+                self._last_opening_45_return_by_symbol[candidate_symbol] = state.opening_45_return_bps
+            if state.opening_60_return_bps is not None:
+                self._last_opening_60_return_by_symbol[candidate_symbol] = state.opening_60_return_bps
+            del self._state_by_symbol[candidate_symbol]
 
     def _rank_latest_metric(
         self,

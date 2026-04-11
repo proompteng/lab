@@ -607,3 +607,74 @@ class TestSessionContextTracker(TestCase):
             cast(Decimal, aapl_payload['cross_section_continuation_rank']),
             cast(Decimal, meta_payload['cross_section_continuation_rank']),
         )
+
+    def test_tracker_carries_prev_day_open45_cross_section_ranks_into_next_open(self) -> None:
+        tracker = SessionContextTracker()
+        tracker.enrich_signal_payload(
+            _signal(
+                event_ts=datetime(2026, 3, 24, 13, 30, 0, tzinfo=timezone.utc),
+                symbol='AAPL',
+                price='100.00',
+                spread='0.03',
+                bid_sz='5000',
+                ask_sz='4000',
+            )
+        )
+        tracker.enrich_signal_payload(
+            _signal(
+                event_ts=datetime(2026, 3, 24, 13, 30, 1, tzinfo=timezone.utc),
+                symbol='META',
+                price='100.00',
+                spread='0.03',
+                bid_sz='5000',
+                ask_sz='4000',
+            )
+        )
+        tracker.enrich_signal_payload(
+            _signal(
+                event_ts=datetime(2026, 3, 24, 14, 15, 0, tzinfo=timezone.utc),
+                symbol='AAPL',
+                price='102.00',
+                spread='0.03',
+                bid_sz='5200',
+                ask_sz='3900',
+            )
+        )
+        tracker.enrich_signal_payload(
+            _signal(
+                event_ts=datetime(2026, 3, 24, 14, 15, 1, tzinfo=timezone.utc),
+                symbol='META',
+                price='98.00',
+                spread='0.03',
+                bid_sz='4800',
+                ask_sz='4300',
+            )
+        )
+
+        aapl_open_payload = tracker.enrich_signal_payload(
+            _signal(
+                event_ts=datetime(2026, 3, 25, 13, 30, 0, tzinfo=timezone.utc),
+                symbol='AAPL',
+                price='101.00',
+                spread='0.03',
+                bid_sz='5100',
+                ask_sz='4100',
+            )
+        )
+        meta_open_payload = tracker.enrich_signal_payload(
+            _signal(
+                event_ts=datetime(2026, 3, 25, 13, 30, 1, tzinfo=timezone.utc),
+                symbol='META',
+                price='99.00',
+                spread='0.03',
+                bid_sz='4900',
+                ask_sz='4200',
+            )
+        )
+
+        self.assertEqual(aapl_open_payload['cross_section_prev_day_open45_return_rank'], Decimal('1'))
+        self.assertEqual(meta_open_payload['cross_section_prev_day_open45_return_rank'], Decimal('0'))
+        self.assertEqual(
+            aapl_open_payload['cross_section_positive_prev_day_open45_return_ratio'],
+            Decimal('0.5'),
+        )
