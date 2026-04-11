@@ -60,6 +60,36 @@ const toControlPlaneRoutePath = (absolutePath: string) => {
   return `/control-plane${segments.length > 0 ? `/${segments.join('/')}` : ''}`
 }
 
+const renderMarkdownTable = (
+  rows: string[][],
+  options: {
+    align?: ('left' | 'right')[]
+  } = {},
+) => {
+  if (rows.length === 0) return ''
+  const align = options.align ?? rows[0]!.map(() => 'left')
+  const widths = rows[0]!.map((_, columnIndex) =>
+    rows.reduce((max, row) => Math.max(max, row[columnIndex]?.length ?? 0), 0),
+  )
+
+  const formatCell = (value: string, columnIndex: number) => {
+    const width = widths[columnIndex] ?? value.length
+    return align[columnIndex] === 'right' ? value.padStart(width) : value.padEnd(width)
+  }
+
+  const divider = widths.map((width, columnIndex) => {
+    const dashCount = Math.max(3, width)
+    if (align[columnIndex] === 'right') {
+      return `${'-'.repeat(Math.max(3, dashCount - 1))}:`
+    }
+    return '-'.repeat(dashCount)
+  })
+
+  return [rows[0], divider, ...rows.slice(1)]
+    .map((row) => `| ${row.map((cell, columnIndex) => formatCell(cell, columnIndex)).join(' | ')} |`)
+    .join('\n')
+}
+
 const readTopModules = async (): Promise<ModuleStat[]> => {
   const files = await readSourceFiles(srcRoot)
   const modules = await Promise.all(
@@ -94,27 +124,25 @@ const readControlPlaneRoutes = async (): Promise<ControlPlaneRouteStat[]> => {
 
 const renderRuntimeProfiles = () => {
   const profiles = Object.values(JANGAR_RUNTIME_PROFILES)
-  const lines = [
-    '| Profile | `serveClient` | Startup responsibilities |',
-    '| --- | --- | --- |',
+  const rows = [
+    ['Profile', '`serveClient`', 'Startup responsibilities'],
     ...profiles.map((profile) => {
       const enabledStartup = Object.entries(profile.startup)
         .filter(([, enabled]) => enabled)
         .map(([key]) => `\`${key}\``)
         .join(', ')
-      return `| \`${profile.name}\` | \`${profile.serveClient}\` | ${enabledStartup || 'none'} |`
+      return [`\`${profile.name}\``, `\`${profile.serveClient}\``, enabledStartup || 'none']
     }),
   ]
-  return lines.join('\n')
+  return renderMarkdownTable(rows)
 }
 
 const renderTopModules = (modules: ModuleStat[]) => {
-  const lines = [
-    '| Rank | Module | LOC |',
-    '| --- | --- | ---: |',
-    ...modules.map((module, index) => `| ${index + 1} | \`${module.path}\` | ${module.loc} |`),
+  const rows = [
+    ['Rank', 'Module', 'LOC'],
+    ...modules.map((module, index) => [`${index + 1}`, `\`${module.path}\``, `${module.loc}`]),
   ]
-  return lines.join('\n')
+  return renderMarkdownTable(rows, { align: ['left', 'left', 'right'] })
 }
 
 const renderControlPlaneRoutes = (routes: ControlPlaneRouteStat[]) => {
@@ -124,21 +152,21 @@ const renderControlPlaneRoutes = (routes: ControlPlaneRouteStat[]) => {
   const renderRouteTable = (items: ControlPlaneRouteStat[]) => {
     if (items.length === 0) return '_None_'
 
-    const lines = [
-      '| Route | File |',
-      '| --- | --- |',
-      ...items.map((route) => `| \`${route.routePath}\` | \`${route.filePath}\` |`),
-    ]
-    return lines.join('\n')
+    return renderMarkdownTable([
+      ['Route', 'File'],
+      ...items.map((route) => [`\`${route.routePath}\``, `\`${route.filePath}\``]),
+    ])
   }
 
   return [
     `Summary: ${routes.length} route files, ${supportedRoutes.length} supported pages, ${redirectRoutes.length} redirect-only stubs.`,
     '',
     '#### Supported Pages',
+    '',
     renderRouteTable(supportedRoutes),
     '',
     '#### Redirect-Only Stubs',
+    '',
     renderRouteTable(redirectRoutes),
   ].join('\n')
 }
