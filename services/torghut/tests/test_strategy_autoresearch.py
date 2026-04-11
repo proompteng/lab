@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from argparse import Namespace
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -28,6 +29,7 @@ from app.trading.discovery.autoresearch_notebooks import (
     write_strategy_factory_notebooks,
 )
 from app.trading.discovery.family_templates import FamilyTemplate
+from app.trading.models import SignalEnvelope
 import scripts.run_strategy_autoresearch_loop as runner
 
 
@@ -101,6 +103,20 @@ class TestStrategyAutoresearch(TestCase):
             args.strategy_configmap,
             runner._REPO_ROOT / 'argocd/applications/torghut/strategy-configmap.yaml',
         )
+
+    def test_program_defaults_include_mlx_contract(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            program_path, family_dir = self._write_program_fixture(root)
+
+            program = load_strategy_autoresearch_program(program_path, family_dir=family_dir)
+
+        self.assertEqual(program.snapshot_policy.feature_set_id, 'torghut.mlx-autoresearch.v1')
+        self.assertTrue(program.proposal_model_policy.enabled)
+        self.assertEqual(program.proposal_model_policy.mode, 'ranking_only')
+        self.assertEqual(program.promotion_policy, 'research_only')
+        self.assertIn('scheduler_v3_parity_replay', program.parity_requirements)
+        self.assertTrue(program.ledger_policy['append_only'])
 
     def _write_program_fixture(self, root: Path) -> tuple[Path, Path]:
         family_dir = root / 'families'
@@ -586,9 +602,10 @@ class TestStrategyAutoresearch(TestCase):
             )
             (root / 'results.tsv').write_text('header\n', encoding='utf-8')
 
-            history_nb, dossier_nb = write_autoresearch_notebooks(root)
+            history_nb, dossier_nb, mlx_nb = write_autoresearch_notebooks(root)
             self.assertTrue(history_nb.exists())
             self.assertTrue(dossier_nb.exists())
+            self.assertTrue(mlx_nb.exists())
             payload = json.loads(history_nb.read_text(encoding='utf-8'))
             self.assertEqual(payload['nbformat'], 4)
             joined_source = ''.join(payload['cells'][1]['source'])
@@ -598,6 +615,10 @@ class TestStrategyAutoresearch(TestCase):
             self.assertIn('Live Experiment Snapshots', all_sources)
             self.assertIn('Promotion Guardrail', all_sources)
             self.assertIn('research candidates only', all_sources)
+            mlx_payload = json.loads(mlx_nb.read_text(encoding='utf-8'))
+            mlx_sources = '\n'.join(''.join(cell.get('source', [])) for cell in mlx_payload['cells'])
+            self.assertIn('MLX Autoresearch Diagnostics', mlx_sources)
+            self.assertIn('Scheduler-v3 replay remains the authority', mlx_sources)
 
     def test_generated_history_notebook_avoids_hard_pandas_dependency(self) -> None:
         payload = build_strategy_discovery_history_notebook(Path('/tmp/example-run'))
@@ -685,6 +706,10 @@ class TestStrategyAutoresearch(TestCase):
             responses = [
                 {
                     'dataset_snapshot_receipt': {'snapshot_id': 'snap-1'},
+                    'window': {
+                        'full_window_start_date': '2026-03-20',
+                        'full_window_end_date': '2026-04-09',
+                    },
                     'top': [
                         {
                             'candidate_id': 'seed-1',
@@ -717,6 +742,10 @@ class TestStrategyAutoresearch(TestCase):
                 },
                 {
                     'dataset_snapshot_receipt': {'snapshot_id': 'snap-2'},
+                    'window': {
+                        'full_window_start_date': '2026-03-20',
+                        'full_window_end_date': '2026-04-09',
+                    },
                     'top': [
                         {
                             'candidate_id': 'mutated-1',
@@ -748,6 +777,16 @@ class TestStrategyAutoresearch(TestCase):
                     ],
                 },
             ]
+            signal_rows = [
+                SignalEnvelope(
+                    event_ts=datetime(2026, 3, 20, 13, 30, tzinfo=UTC),
+                    symbol='AMAT',
+                    seq=1,
+                    source='ta',
+                    timeframe='1Sec',
+                    payload={'price': '180.10'},
+                )
+            ]
 
             args = Namespace(
                 program=program_path,
@@ -775,6 +814,9 @@ class TestStrategyAutoresearch(TestCase):
             with patch(
                 'scripts.run_strategy_autoresearch_loop.run_consistent_profitability_frontier',
                 side_effect=responses,
+            ), patch(
+                'scripts.run_strategy_autoresearch_loop.replay_mod._iter_signal_rows',
+                return_value=iter(signal_rows),
             ):
                 payload = runner.run_strategy_autoresearch_loop(args)
 
@@ -785,7 +827,12 @@ class TestStrategyAutoresearch(TestCase):
             self.assertTrue((run_root / 'history.jsonl').exists())
             self.assertTrue((run_root / 'results.tsv').exists())
             self.assertTrue((run_root / 'strategy-discovery-history.ipynb').exists())
+            self.assertTrue((run_root / 'mlx-autoresearch-diagnostics.ipynb').exists())
             self.assertTrue((run_root / 'promotion_readiness.json').exists())
+            self.assertTrue((run_root / 'mlx-snapshot-manifest.json').exists())
+            self.assertTrue((run_root / 'mlx-snapshot-signals.jsonl').exists())
+            self.assertTrue((run_root / 'mlx-candidate-descriptors.jsonl').exists())
+            self.assertTrue((run_root / 'mlx-proposal-scores.jsonl').exists())
             summary = json.loads((run_root / 'summary.json').read_text(encoding='utf-8'))
             self.assertEqual(summary['best_candidate']['candidate_id'], 'mutated-1')
             self.assertEqual(summary['objective_scope'], 'research_only')
@@ -794,6 +841,17 @@ class TestStrategyAutoresearch(TestCase):
             self.assertIn('scheduler_v3_parity_missing', summary['promotion_readiness']['blockers'])
             self.assertEqual(summary['best_candidate']['promotion_status'], 'blocked_pending_runtime_parity')
             self.assertEqual(summary['best_candidate']['runtime_strategy_name'], 'breakout-continuation-long-v1')
+            self.assertIn('mlx_exports', summary)
+            self.assertIn('snapshot_manifest_path', summary)
+            self.assertIn('descriptor_id', summary['best_candidate'])
+            self.assertIn('proposal_score', summary['best_candidate'])
+            manifest = json.loads((run_root / 'mlx-snapshot-manifest.json').read_text(encoding='utf-8'))
+            self.assertEqual(manifest['symbols'], ['AMAT', 'NVDA'])
+            self.assertEqual(manifest['row_counts']['signal_row_count'], 1)
+            self.assertEqual(
+                manifest['tensor_bundle_paths']['signal_rows_jsonl'],
+                str(run_root / 'mlx-snapshot-signals.jsonl'),
+            )
             promotion_readiness = json.loads((run_root / 'promotion_readiness.json').read_text(encoding='utf-8'))
             self.assertEqual(promotion_readiness['candidate_id'], 'mutated-1')
             self.assertFalse(promotion_readiness['promotable'])

@@ -437,9 +437,218 @@ _display_rows(claim_rows)
     return _notebook(cells)
 
 
-def write_autoresearch_notebooks(run_root: Path) -> tuple[Path, Path]:
+def build_mlx_autoresearch_diagnostics_notebook(run_root: Path) -> dict[str, Any]:
+    resolved = run_root.resolve().as_posix()
+    cells = [
+        _markdown_cell(
+            '# MLX Autoresearch Diagnostics\n\n'
+            'This notebook visualizes MLX proposal metadata, snapshot health, runtime replay outcomes, '
+            'and promotion blocking for one autoresearch run.\n\n'
+            '> MLX proposal scores are diagnostic only. Scheduler-v3 replay remains the authority.'
+        ),
+        _code_cell(
+            f"""from __future__ import annotations
+
+from html import escape
+from pathlib import Path
+import json
+
+try:
+    import pandas as pd
+except ModuleNotFoundError:
+    pd = None
+
+try:
+    from IPython.display import HTML, Markdown, SVG, display
+except ModuleNotFoundError:
+    class HTML(str):
+        pass
+
+    class Markdown(str):
+        pass
+
+    class SVG(str):
+        pass
+
+    def display(*items: object) -> None:
+        for item in items:
+            print(item)
+
+RUN_ROOT = Path('{resolved}')
+SUMMARY = json.loads((RUN_ROOT / 'summary.json').read_text(encoding='utf-8'))
+MANIFEST = json.loads((RUN_ROOT / 'mlx-snapshot-manifest.json').read_text(encoding='utf-8'))
+DESCRIPTORS = [
+    json.loads(line)
+    for line in (RUN_ROOT / 'mlx-candidate-descriptors.jsonl').read_text(encoding='utf-8').splitlines()
+    if line.strip()
+]
+PROPOSALS = [
+    json.loads(line)
+    for line in (RUN_ROOT / 'mlx-proposal-scores.jsonl').read_text(encoding='utf-8').splitlines()
+    if line.strip()
+]
+HISTORY = [
+    json.loads(line)
+    for line in (RUN_ROOT / 'history.jsonl').read_text(encoding='utf-8').splitlines()
+    if line.strip()
+]
+
+def _ordered_keys(rows: list[dict[str, object]]) -> list[str]:
+    keys: list[str] = []
+    for row in rows:
+        for key in row.keys():
+            if key not in keys:
+                keys.append(key)
+    return keys
+
+def _display_rows(rows: list[dict[str, object]], *, columns: list[str] | None = None) -> None:
+    rows = list(rows)
+    if columns is None:
+        columns = _ordered_keys(rows)
+    if pd is not None:
+        frame = pd.DataFrame(rows)
+        if columns:
+            frame = frame.reindex(columns=columns)
+        display(frame)
+        return
+    header = ''.join(f'<th>{{escape(str(column))}}</th>' for column in (columns or []))
+    body_rows = []
+    for row in rows:
+        cells = ''.join(f'<td>{{escape(str(row.get(column, "")))}}</td>' for column in (columns or []))
+        body_rows.append(f'<tr>{{cells}}</tr>')
+    display(HTML('<table><thead><tr>' + header + '</tr></thead><tbody>' + ''.join(body_rows) + '</tbody></table>'))
+
+def _svg_line(values: list[float], *, stroke: str = '#111827') -> str:
+    width = 720
+    height = 220
+    if not values:
+        return '<svg xmlns="http://www.w3.org/2000/svg" width="720" height="220"></svg>'
+    minimum = min(values)
+    maximum = max(values)
+    spread = maximum - minimum or 1.0
+    x_step = width / max(len(values) - 1, 1)
+    def _y(value: float) -> float:
+        return height - (((value - minimum) / spread) * (height - 20)) - 10
+    coords = ' '.join(f'{{idx * x_step:.1f}},{{_y(value):.1f}}' for idx, value in enumerate(values))
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{{width}}" height="{{height}}" viewBox="0 0 {{width}} {{height}}">'
+        f'<polyline fill="none" stroke="{{stroke}}" stroke-width="3" points="{{coords}}" />'
+        '</svg>'
+    )
+"""
+        ),
+        _code_cell(
+            """display(Markdown('## Run summary'))
+_display_rows(
+    [
+        {
+            'runner_run_id': SUMMARY.get('runner_run_id'),
+            'snapshot_id': MANIFEST.get('snapshot_id'),
+            'program_id': SUMMARY.get('program_id'),
+            'train_days': MANIFEST.get('train_days'),
+            'holdout_days': MANIFEST.get('holdout_days'),
+            'full_window_days': MANIFEST.get('full_window_days'),
+        }
+    ]
+)
+
+display(Markdown('## Snapshot health'))
+_display_rows(
+    [
+        {
+            'bar_interval': MANIFEST.get('bar_interval'),
+            'feature_set_id': MANIFEST.get('feature_set_id'),
+            'quote_quality_policy_id': MANIFEST.get('quote_quality_policy_id'),
+            'symbols': len(MANIFEST.get('symbols') or []),
+            'receipt_count': (MANIFEST.get('row_counts') or {}).get('receipt_count'),
+            'latest_row_count': (MANIFEST.get('row_counts') or {}).get('latest_row_count'),
+        }
+    ]
+)
+"""
+        ),
+        _code_cell(
+            """if DESCRIPTORS:
+    display(Markdown('## Descriptor coverage'))
+    descriptor_columns = [
+        'candidate_id',
+        'family_template_id',
+        'side_policy',
+        'entry_window_start_minute',
+        'entry_window_end_minute',
+        'rank_count',
+        'normalization_regime',
+    ]
+    _display_rows([{column: row.get(column) for column in descriptor_columns} for row in DESCRIPTORS], columns=descriptor_columns)
+"""
+        ),
+        _code_cell(
+            """if PROPOSALS:
+    display(Markdown('## Proposal model diagnostics'))
+    proposal_columns = ['candidate_id', 'descriptor_id', 'score', 'rank', 'backend', 'mode']
+    _display_rows([{column: row.get(column) for column in proposal_columns} for row in PROPOSALS], columns=proposal_columns)
+    display(Markdown('### Proposal score distribution'))
+    display(SVG(_svg_line([float(row.get('score') or 0.0) for row in PROPOSALS], stroke='#2563eb')))
+"""
+        ),
+        _code_cell(
+            """if HISTORY:
+    display(Markdown('## Replay outcome comparison'))
+    columns = [
+        'candidate_id',
+        'proposal_rank',
+        'proposal_score',
+        'net_pnl_per_day',
+        'active_day_ratio',
+        'best_day_share',
+        'promotion_status',
+    ]
+    _display_rows([{column: row.get(column) for column in columns} for row in HISTORY], columns=columns)
+    display(Markdown('### Proposal score vs realized net/day'))
+    display(SVG(_svg_line([float(row.get('net_pnl_per_day') or 0.0) for row in HISTORY], stroke='#059669')))
+"""
+        ),
+        _code_cell(
+            """if HISTORY:
+    display(Markdown('## Parity and authority checks'))
+    _display_rows(
+        [
+            {
+                'research_candidates': len(HISTORY),
+                'blocked_promotions': sum(1 for row in HISTORY if row.get('promotion_status')),
+                'runtime_family_mapped': sum(1 for row in HISTORY if row.get('runtime_family')),
+                'proposal_backend': ', '.join(sorted({str(row.get('proposal_backend') or '') for row in HISTORY if row.get('proposal_backend')})),
+            }
+        ]
+    )
+"""
+        ),
+        _code_cell(
+            """if HISTORY:
+    false_positives = sorted(HISTORY, key=lambda row: float(row.get('proposal_score') or 0.0), reverse=True)[:5]
+    display(Markdown('## Open failures'))
+    _display_rows(
+        [
+            {
+                'candidate_id': row.get('candidate_id'),
+                'proposal_score': row.get('proposal_score'),
+                'promotion_status': row.get('promotion_status'),
+                'runtime_strategy_name': row.get('runtime_strategy_name'),
+                'hard_vetoes': row.get('hard_vetoes'),
+            }
+            for row in false_positives
+        ]
+    )
+"""
+        ),
+    ]
+    return _notebook(cells)
+
+
+def write_autoresearch_notebooks(run_root: Path) -> tuple[Path, ...]:
     history_path = run_root / 'strategy-discovery-history.ipynb'
     dossier_path = run_root / 'strategy-research-dossier.ipynb'
+    mlx_path = run_root / 'mlx-autoresearch-diagnostics.ipynb'
     history_path.write_text(
         json.dumps(build_strategy_discovery_history_notebook(run_root), indent=2),
         encoding='utf-8',
@@ -448,7 +657,11 @@ def write_autoresearch_notebooks(run_root: Path) -> tuple[Path, Path]:
         json.dumps(build_strategy_research_dossier_notebook(run_root), indent=2),
         encoding='utf-8',
     )
-    return history_path, dossier_path
+    mlx_path.write_text(
+        json.dumps(build_mlx_autoresearch_diagnostics_notebook(run_root), indent=2),
+        encoding='utf-8',
+    )
+    return history_path, dossier_path, mlx_path
 
 
 def build_strategy_factory_history_notebook(run_root: Path) -> dict[str, Any]:

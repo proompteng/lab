@@ -3,6 +3,35 @@ program_id: strict_daily_profit_autoresearch_v1
 description: >
   Strict outer loop for daily-active strategy discovery: no flat days, low concentration, and
   enough notional to matter. Families that cannot trade most sessions should fail fast.
+snapshot_policy:
+  bar_interval: PT1S
+  feature_set_id: torghut.mlx-autoresearch.v1
+  quote_quality_policy_id: scheduler_v3_default
+  symbol_policy: args_or_sweep
+  allow_prior_day_features: true
+  allow_cross_sectional_features: true
+forbidden_mutations:
+  - runtime_code_path
+  - evaluator_logic
+  - live_strategy_config
+proposal_model_policy:
+  enabled: true
+  mode: ranking_only
+  backend_preference: mlx
+  top_k: 4
+  exploration_slots: 1
+  minimum_history_rows: 2
+replay_budget:
+  max_candidates_per_round: 8
+  exploration_slots: 1
+parity_requirements:
+  - checked_in_runtime_family
+  - scheduler_v3_parity_replay
+  - scheduler_v3_approval_replay
+  - live_shadow_validation
+promotion_policy: research_only
+ledger_policy:
+  append_only: true
 objective:
   target_net_pnl_per_day: '500'
   min_active_day_ratio: '1.0'

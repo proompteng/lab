@@ -136,6 +136,58 @@ class StrategyObjective:
 
 
 @dataclass(frozen=True)
+class SnapshotPolicy:
+    bar_interval: str
+    feature_set_id: str
+    quote_quality_policy_id: str
+    symbol_policy: str
+    allow_prior_day_features: bool
+    allow_cross_sectional_features: bool
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            'bar_interval': self.bar_interval,
+            'feature_set_id': self.feature_set_id,
+            'quote_quality_policy_id': self.quote_quality_policy_id,
+            'symbol_policy': self.symbol_policy,
+            'allow_prior_day_features': self.allow_prior_day_features,
+            'allow_cross_sectional_features': self.allow_cross_sectional_features,
+        }
+
+
+@dataclass(frozen=True)
+class ProposalModelPolicy:
+    enabled: bool
+    mode: str
+    backend_preference: str
+    top_k: int
+    exploration_slots: int
+    minimum_history_rows: int
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            'enabled': self.enabled,
+            'mode': self.mode,
+            'backend_preference': self.backend_preference,
+            'top_k': self.top_k,
+            'exploration_slots': self.exploration_slots,
+            'minimum_history_rows': self.minimum_history_rows,
+        }
+
+
+@dataclass(frozen=True)
+class ReplayBudget:
+    max_candidates_per_round: int
+    exploration_slots: int
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            'max_candidates_per_round': self.max_candidates_per_round,
+            'exploration_slots': self.exploration_slots,
+        }
+
+
+@dataclass(frozen=True)
 class ResearchClaim:
     claim_id: str
     summary: str
@@ -231,6 +283,13 @@ class StrategyAutoresearchProgram:
     program_id: str
     description: str
     objective: StrategyObjective
+    snapshot_policy: SnapshotPolicy
+    forbidden_mutations: tuple[str, ...]
+    proposal_model_policy: ProposalModelPolicy
+    replay_budget: ReplayBudget
+    parity_requirements: tuple[str, ...]
+    promotion_policy: str
+    ledger_policy: Mapping[str, Any]
     research_sources: tuple[ResearchSource, ...]
     families: tuple[FamilyAutoresearchPlan, ...]
     schema_version: str = _SCHEMA_VERSION
@@ -241,6 +300,13 @@ class StrategyAutoresearchProgram:
             'program_id': self.program_id,
             'description': self.description,
             'objective': self.objective.to_payload(),
+            'snapshot_policy': self.snapshot_policy.to_payload(),
+            'forbidden_mutations': list(self.forbidden_mutations),
+            'proposal_model_policy': self.proposal_model_policy.to_payload(),
+            'replay_budget': self.replay_budget.to_payload(),
+            'parity_requirements': list(self.parity_requirements),
+            'promotion_policy': self.promotion_policy,
+            'ledger_policy': dict(self.ledger_policy),
             'research_sources': [item.to_payload() for item in self.research_sources],
             'families': [item.to_payload() for item in self.families],
         }
@@ -334,6 +400,45 @@ def load_strategy_autoresearch_program(
         ),
         stop_when_objective_met=bool(objective_payload.get('stop_when_objective_met', False)),
     )
+    snapshot_policy_payload = _mapping(payload.get('snapshot_policy'))
+    snapshot_policy = SnapshotPolicy(
+        bar_interval=_string(snapshot_policy_payload.get('bar_interval')) or 'PT1S',
+        feature_set_id=_string(snapshot_policy_payload.get('feature_set_id')) or 'torghut.mlx-autoresearch.v1',
+        quote_quality_policy_id=_string(snapshot_policy_payload.get('quote_quality_policy_id'))
+        or 'scheduler_v3_default',
+        symbol_policy=_string(snapshot_policy_payload.get('symbol_policy')) or 'args_or_sweep',
+        allow_prior_day_features=bool(snapshot_policy_payload.get('allow_prior_day_features', True)),
+        allow_cross_sectional_features=bool(snapshot_policy_payload.get('allow_cross_sectional_features', True)),
+    )
+    proposal_model_payload = _mapping(payload.get('proposal_model_policy'))
+    proposal_model_policy = ProposalModelPolicy(
+        enabled=bool(proposal_model_payload.get('enabled', True)),
+        mode=_string(proposal_model_payload.get('mode')) or 'ranking_only',
+        backend_preference=_string(proposal_model_payload.get('backend_preference')) or 'mlx',
+        top_k=max(1, int(proposal_model_payload.get('top_k', 4))),
+        exploration_slots=max(0, int(proposal_model_payload.get('exploration_slots', 1))),
+        minimum_history_rows=max(0, int(proposal_model_payload.get('minimum_history_rows', 3))),
+    )
+    replay_budget_payload = _mapping(payload.get('replay_budget'))
+    replay_budget = ReplayBudget(
+        max_candidates_per_round=max(1, int(replay_budget_payload.get('max_candidates_per_round', 8))),
+        exploration_slots=max(0, int(replay_budget_payload.get('exploration_slots', 1))),
+    )
+    forbidden_mutations = _string_list(
+        payload.get('forbidden_mutations')
+        or ['runtime_code_path', 'evaluator_logic', 'live_strategy_config']
+    )
+    parity_requirements = _string_list(
+        payload.get('parity_requirements')
+        or [
+            'checked_in_runtime_family',
+            'scheduler_v3_parity_replay',
+            'scheduler_v3_approval_replay',
+            'live_shadow_validation',
+        ]
+    )
+    promotion_policy = _string(payload.get('promotion_policy')) or 'research_only'
+    ledger_policy = _mapping(payload.get('ledger_policy')) or {'append_only': True}
 
     research_sources: list[ResearchSource] = []
     raw_sources = payload.get('research_sources')
@@ -422,6 +527,13 @@ def load_strategy_autoresearch_program(
         program_id=_string(payload.get('program_id')) or program_path.stem,
         description=_string(payload.get('description')),
         objective=objective,
+        snapshot_policy=snapshot_policy,
+        forbidden_mutations=forbidden_mutations,
+        proposal_model_policy=proposal_model_policy,
+        replay_budget=replay_budget,
+        parity_requirements=parity_requirements,
+        promotion_policy=promotion_policy,
+        ledger_policy=ledger_policy,
         research_sources=tuple(research_sources),
         families=tuple(family_plans),
     )
