@@ -16,10 +16,16 @@ from app.trading.discovery.autoresearch import (
 )
 from app.trading.discovery.family_templates import FamilyTemplate
 from app.trading.discovery.mlx_features import (
+    MlxCandidateDescriptor,
     descriptor_from_sweep_config,
     descriptor_numeric_vector,
 )
-from app.trading.discovery.mlx_proposal_models import rank_candidate_descriptors
+from app.trading.discovery.mlx_proposal_models import (
+    ProposalScore,
+    build_proposal_diagnostics,
+    rank_candidate_descriptors,
+    select_proposal_batch,
+)
 from app.trading.discovery.mlx_snapshot import (
     build_mlx_snapshot_manifest,
     write_mlx_signal_bundle,
@@ -255,3 +261,188 @@ class TestMlxAutoresearch(TestCase):
             )
 
         self.assertEqual(ranked[0].backend, 'numpy-fallback')
+
+    def test_select_proposal_batch_reserves_exploration_slot_for_diversity(self) -> None:
+        long_descriptor = MlxCandidateDescriptor(
+            descriptor_id='desc-long',
+            candidate_id='long-1',
+            family_template_id='breakout_reclaim_v2',
+            runtime_family='breakout_continuation_consistent',
+            strategy_name='breakout-continuation-long-v1',
+            side_policy='long',
+            entry_window_start_minute=45,
+            entry_window_end_minute=75,
+            max_hold_minutes=30,
+            entry_type='breakout_reclaim',
+            exit_type='time_exit',
+            rank_policy='rank',
+            rank_count=1,
+            gross_budget_usd='30000',
+            per_leg_budget_usd='15000',
+            normalization_regime='runtime_default',
+            regime_gate_id='regime-bull',
+            requires_prev_day_features=True,
+            requires_cross_sectional_features=True,
+            requires_quote_quality_gate=True,
+            expected_fill_mode='market',
+            approval_path='scheduler_v3',
+        )
+        similar_long_descriptor = MlxCandidateDescriptor(
+            descriptor_id='desc-long-2',
+            candidate_id='long-2',
+            family_template_id='breakout_reclaim_v2',
+            runtime_family='breakout_continuation_consistent',
+            strategy_name='breakout-continuation-long-v1',
+            side_policy='long',
+            entry_window_start_minute=46,
+            entry_window_end_minute=76,
+            max_hold_minutes=30,
+            entry_type='breakout_reclaim',
+            exit_type='time_exit',
+            rank_policy='rank',
+            rank_count=1,
+            gross_budget_usd='30000',
+            per_leg_budget_usd='15000',
+            normalization_regime='runtime_default',
+            regime_gate_id='regime-bull',
+            requires_prev_day_features=True,
+            requires_cross_sectional_features=True,
+            requires_quote_quality_gate=True,
+            expected_fill_mode='market',
+            approval_path='scheduler_v3',
+        )
+        short_descriptor = MlxCandidateDescriptor(
+            descriptor_id='desc-short',
+            candidate_id='short-1',
+            family_template_id='exhaustion_short_v1',
+            runtime_family='mean_reversion_exhaustion_short',
+            strategy_name='mean-reversion-exhaustion-short-v1',
+            side_policy='short',
+            entry_window_start_minute=45,
+            entry_window_end_minute=75,
+            max_hold_minutes=30,
+            entry_type='fade_exhaustion',
+            exit_type='time_exit',
+            rank_policy='rank',
+            rank_count=1,
+            gross_budget_usd='30000',
+            per_leg_budget_usd='15000',
+            normalization_regime='runtime_default',
+            regime_gate_id='regime-bear',
+            requires_prev_day_features=True,
+            requires_cross_sectional_features=False,
+            requires_quote_quality_gate=True,
+            expected_fill_mode='market',
+            approval_path='scheduler_v3',
+        )
+        proposal_scores = [
+            ProposalScore('long-1', 'desc-long', 10.0, 1, 'numpy-fallback', 'ranking_only'),
+            ProposalScore('long-2', 'desc-long-2', 9.0, 2, 'numpy-fallback', 'ranking_only'),
+            ProposalScore('short-1', 'desc-short', 1.0, 3, 'numpy-fallback', 'ranking_only'),
+        ]
+
+        selected = select_proposal_batch(
+            descriptors=[long_descriptor, similar_long_descriptor, short_descriptor],
+            proposal_scores=proposal_scores,
+            limit=2,
+            top_k=1,
+            exploration_slots=1,
+        )
+
+        self.assertEqual([item.candidate_id for item in selected], ['long-1', 'short-1'])
+        self.assertEqual(selected[0].selection_reason, 'exploitation')
+        self.assertEqual(selected[1].selection_reason, 'exploration')
+
+    def test_build_proposal_diagnostics_reports_lift_and_failure_tables(self) -> None:
+        descriptors = [
+            MlxCandidateDescriptor(
+                descriptor_id='desc-a',
+                candidate_id='cand-a',
+                family_template_id='breakout_reclaim_v2',
+                runtime_family='breakout_continuation_consistent',
+                strategy_name='breakout-continuation-long-v1',
+                side_policy='long',
+                entry_window_start_minute=45,
+                entry_window_end_minute=75,
+                max_hold_minutes=30,
+                entry_type='breakout_reclaim',
+                exit_type='time_exit',
+                rank_policy='rank',
+                rank_count=1,
+                gross_budget_usd='30000',
+                per_leg_budget_usd='15000',
+                normalization_regime='runtime_default',
+                regime_gate_id='regime-bull',
+                requires_prev_day_features=True,
+                requires_cross_sectional_features=True,
+                requires_quote_quality_gate=True,
+                expected_fill_mode='market',
+                approval_path='scheduler_v3',
+            ),
+            MlxCandidateDescriptor(
+                descriptor_id='desc-b',
+                candidate_id='cand-b',
+                family_template_id='exhaustion_short_v1',
+                runtime_family='mean_reversion_exhaustion_short',
+                strategy_name='mean-reversion-exhaustion-short-v1',
+                side_policy='short',
+                entry_window_start_minute=45,
+                entry_window_end_minute=75,
+                max_hold_minutes=30,
+                entry_type='fade_exhaustion',
+                exit_type='time_exit',
+                rank_policy='rank',
+                rank_count=1,
+                gross_budget_usd='30000',
+                per_leg_budget_usd='15000',
+                normalization_regime='runtime_default',
+                regime_gate_id='regime-bear',
+                requires_prev_day_features=True,
+                requires_cross_sectional_features=False,
+                requires_quote_quality_gate=True,
+                expected_fill_mode='market',
+                approval_path='scheduler_v3',
+            ),
+        ]
+        scores = [
+            ProposalScore('cand-a', 'desc-a', 8.0, 1, 'numpy-fallback', 'ranking_only'),
+            ProposalScore('cand-b', 'desc-b', 2.0, 2, 'numpy-fallback', 'ranking_only'),
+        ]
+        selected = select_proposal_batch(
+            descriptors=descriptors,
+            proposal_scores=scores,
+            limit=2,
+            top_k=1,
+            exploration_slots=1,
+        )
+
+        diagnostics = build_proposal_diagnostics(
+            descriptors=descriptors,
+            proposal_scores=scores,
+            history_rows=[
+                {
+                    'candidate_id': 'cand-a',
+                    'net_pnl_per_day': '-25',
+                    'active_day_ratio': '0.60',
+                    'objective_met': False,
+                    'promotion_status': 'blocked_pending_runtime_parity',
+                    'status': 'discard',
+                },
+                {
+                    'candidate_id': 'cand-b',
+                    'net_pnl_per_day': '410',
+                    'active_day_ratio': '0.95',
+                    'objective_met': True,
+                    'promotion_status': 'blocked_pending_runtime_parity',
+                    'status': 'keep',
+                },
+            ],
+            selected_candidates=selected,
+        )
+
+        self.assertEqual(diagnostics.parity_matrix['replayed_count'], 2)
+        self.assertEqual(diagnostics.selected_candidates[0].candidate_id, 'cand-a')
+        self.assertEqual(diagnostics.selected_candidates[1].selection_reason, 'exploration')
+        self.assertTrue(diagnostics.rank_bucket_lift)
+        self.assertEqual(diagnostics.worst_false_positives[0]['candidate_id'], 'cand-a')
+        self.assertEqual(diagnostics.best_false_negatives[0]['candidate_id'], 'cand-b')
