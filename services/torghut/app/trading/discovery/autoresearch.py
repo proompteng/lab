@@ -179,11 +179,13 @@ class ProposalModelPolicy:
 class ReplayBudget:
     max_candidates_per_round: int
     exploration_slots: int
+    max_candidates_per_frontier_run: int
 
     def to_payload(self) -> dict[str, Any]:
         return {
             'max_candidates_per_round': self.max_candidates_per_round,
             'exploration_slots': self.exploration_slots,
+            'max_candidates_per_frontier_run': self.max_candidates_per_frontier_run,
         }
 
 
@@ -475,6 +477,10 @@ def load_strategy_autoresearch_program(
     replay_budget = ReplayBudget(
         max_candidates_per_round=max(1, int(replay_budget_payload.get('max_candidates_per_round', 8))),
         exploration_slots=max(0, int(replay_budget_payload.get('exploration_slots', 1))),
+        max_candidates_per_frontier_run=max(
+            0,
+            int(replay_budget_payload.get('max_candidates_per_frontier_run', 96)),
+        ),
     )
     runtime_closure_policy = _load_runtime_closure_policy(_mapping(payload.get('runtime_closure_policy')))
     forbidden_mutations = _string_list(

@@ -24,6 +24,7 @@ proposal_model_policy:
 replay_budget:
   max_candidates_per_round: 8
   exploration_slots: 1
+  max_candidates_per_frontier_run: 96
 runtime_closure_policy:
   enabled: true
   execute_parity_replay: true

@@ -120,6 +120,7 @@ class TestStrategyAutoresearch(TestCase):
         self.assertFalse(program.runtime_closure_policy.enabled)
         self.assertEqual(program.runtime_closure_policy.parity_window, 'full_window')
         self.assertEqual(program.runtime_closure_policy.approval_window, 'holdout')
+        self.assertEqual(program.replay_budget.max_candidates_per_frontier_run, 96)
         self.assertTrue(program.ledger_policy['append_only'])
 
     def _write_program_fixture(self, root: Path) -> tuple[Path, Path]:
@@ -890,6 +891,13 @@ class TestStrategyAutoresearch(TestCase):
             self.assertIn('mlx_exports', summary)
             self.assertIn('snapshot_manifest_path', summary)
             self.assertIn('runtime_closure', summary)
+            self.assertIn('live_progress', summary)
+            self.assertEqual(summary['live_progress']['frontier_runs_started'], 2)
+            self.assertGreaterEqual(summary['live_progress']['proposal_score_count'], 2)
+            self.assertEqual(
+                summary['live_progress']['best_experiment_candidate']['top_candidate_id'],
+                'mutated-1',
+            )
             self.assertIn('descriptor_id', summary['best_candidate'])
             self.assertIn('proposal_score', summary['best_candidate'])
             self.assertEqual(
@@ -1225,7 +1233,17 @@ class TestStrategyAutoresearch(TestCase):
                     run_root = run_roots[0]
                     summary = json.loads((run_root / 'summary.json').read_text(encoding='utf-8'))
                     self.assertEqual(summary['status'], 'running')
-                    self.assertEqual(summary['frontier_run_count'], 1)
+                    self.assertEqual(summary['frontier_run_count'], 2)
+                    self.assertEqual(summary['live_progress']['frontier_runs_started'], 2)
+                    self.assertTrue(summary['live_progress']['selected_for_replay']['candidate_id'])
+                    self.assertEqual(
+                        summary['live_progress']['selected_for_replay']['family_template_id'],
+                        'breakout_reclaim_v2',
+                    )
+                    self.assertEqual(
+                        summary['live_progress']['latest_experiment']['top_candidate_id'],
+                        'seed-1',
+                    )
                     history_lines = (run_root / 'history.jsonl').read_text(encoding='utf-8').splitlines()
                     self.assertEqual(len(history_lines), 1)
                     self.assertTrue((run_root / 'strategy-discovery-history.ipynb').exists())

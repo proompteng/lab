@@ -188,6 +188,21 @@ def _keep_candidate_limit(*, family_plan: FamilyAutoresearchPlan, replay_budget_
     return max(1, min(family_plan.keep_top_candidates, replay_budget_max_candidates_per_round))
 
 
+def _frontier_candidate_budget(
+    *,
+    family_plan: FamilyAutoresearchPlan,
+    replay_budget_max_candidates_per_frontier_run: int,
+) -> int:
+    if replay_budget_max_candidates_per_frontier_run <= 0:
+        return 0
+    minimum_budget = max(
+        family_plan.frontier_top_n,
+        family_plan.keep_top_candidates,
+        family_plan.symbol_prune_candidates + 1,
+    )
+    return max(minimum_budget, replay_budget_max_candidates_per_frontier_run)
+
+
 def _work_item_candidate_id(work_item: WorkItem) -> str:
     return _slug(
         f'{work_item.family_plan.family_template.family_id}-iter-{work_item.iteration}-{work_item.mutation_label}'
@@ -205,11 +220,16 @@ def _promotion_readiness_payload(*, family_plan: FamilyAutoresearchPlan) -> dict
 def _frontier_args(
     *,
     args: argparse.Namespace,
+    program: StrategyAutoresearchProgram,
     family_plan: FamilyAutoresearchPlan,
     sweep_config_path: Path,
     json_output_path: Path,
 ) -> argparse.Namespace:
     top_n = max(family_plan.frontier_top_n, family_plan.keep_top_candidates)
+    max_candidates_to_evaluate = _frontier_candidate_budget(
+        family_plan=family_plan,
+        replay_budget_max_candidates_per_frontier_run=int(program.replay_budget.max_candidates_per_frontier_run),
+    )
     return argparse.Namespace(
         strategy_configmap=args.strategy_configmap.resolve(),
         sweep_config=sweep_config_path,
@@ -229,6 +249,7 @@ def _frontier_args(
         family_template_dir=args.family_template_dir.resolve(),
         prefetch_full_window_rows=bool(args.prefetch_full_window_rows),
         top_n=top_n,
+        max_candidates_to_evaluate=max_candidates_to_evaluate,
         json_output=json_output_path,
         symbol_prune_iterations=family_plan.symbol_prune_iterations,
         symbol_prune_candidates=family_plan.symbol_prune_candidates,
@@ -486,6 +507,107 @@ def _proposal_diagnostics(
     )
 
 
+def _experiment_snapshot_from_payload(
+    *,
+    payload: Mapping[str, Any],
+    experiment: str,
+    result_path: Path,
+) -> dict[str, Any] | None:
+    top_candidates = cast(list[dict[str, Any]], payload.get('top') or [])
+    if not top_candidates:
+        return None
+    top_row = _mapping(top_candidates[0])
+    scorecard = _mapping(top_row.get('objective_scorecard'))
+    progress = _mapping(payload.get('progress'))
+    return {
+        'experiment': experiment,
+        'path': str(result_path),
+        'status': _string(payload.get('status')),
+        'candidate_count': int(payload.get('candidate_count') or 0),
+        'evaluated_candidates': int(progress.get('evaluated_candidates') or 0),
+        'pending_candidates': int(progress.get('pending_candidates') or 0),
+        'top_candidate_id': _string(top_row.get('candidate_id')),
+        'top_net_pnl_per_day': _string(scorecard.get('net_pnl_per_day')),
+        'top_active_day_ratio': _string(scorecard.get('active_day_ratio')),
+        'top_best_day_share': _string(scorecard.get('best_day_share')),
+        'top_hard_vetoes': list(cast(list[str], top_row.get('hard_vetoes') or [])),
+    }
+
+
+def _load_experiment_snapshots(run_root: Path) -> list[dict[str, Any]]:
+    snapshots: list[dict[str, Any]] = []
+    for result_path in sorted((run_root / 'experiments').glob('*/result.json')):
+        try:
+            payload = json.loads(result_path.read_text(encoding='utf-8'))
+        except (FileNotFoundError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, Mapping):
+            continue
+        snapshot = _experiment_snapshot_from_payload(
+            payload=cast(Mapping[str, Any], payload),
+            experiment=result_path.parent.name,
+            result_path=result_path,
+        )
+        if snapshot is not None:
+            snapshots.append(snapshot)
+    return snapshots
+
+
+def _best_experiment_snapshot(snapshots: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not snapshots:
+        return None
+    return max(
+        snapshots,
+        key=lambda item: (
+            Decimal(_string(item.get('top_net_pnl_per_day')) or '0'),
+            Decimal(_string(item.get('top_active_day_ratio')) or '0'),
+            -Decimal(_string(item.get('top_best_day_share')) or '0'),
+            -int(item.get('pending_candidates') or 0),
+        ),
+    )
+
+
+def _live_progress_payload(
+    *,
+    run_root: Path,
+    frontier_runs: int,
+    worklist: list[WorkItem],
+    history: list[dict[str, Any]],
+    descriptors: list[MlxCandidateDescriptor],
+    proposal_scores: list[ProposalScore],
+    selected_for_replay: ProposalSelectionEntry | None = None,
+    selected_descriptor: MlxCandidateDescriptor | None = None,
+) -> dict[str, Any]:
+    snapshots = _load_experiment_snapshots(run_root)
+    payload: dict[str, Any] = {
+        'frontier_runs_started': frontier_runs,
+        'pending_work_items': len(worklist),
+        'history_row_count': len(history),
+        'descriptor_count': len(descriptors),
+        'proposal_score_count': len(proposal_scores),
+        'experiment_result_count': len(snapshots),
+        'latest_experiment': snapshots[-1] if snapshots else None,
+        'best_experiment_candidate': _best_experiment_snapshot(snapshots),
+    }
+    if selected_for_replay is not None:
+        payload['selected_for_replay'] = {
+            'candidate_id': selected_for_replay.candidate_id,
+            'descriptor_id': selected_for_replay.descriptor_id,
+            'selection_reason': selected_for_replay.selection_reason,
+            'score': selected_for_replay.score,
+            'rank': selected_for_replay.rank,
+            'family_template_id': selected_for_replay.family_template_id,
+            'side_policy': selected_for_replay.side_policy,
+            'entry_window_start_minute': (
+                selected_descriptor.entry_window_start_minute if selected_descriptor is not None else 0
+            ),
+            'entry_window_end_minute': (
+                selected_descriptor.entry_window_end_minute if selected_descriptor is not None else 0
+            ),
+        }
+    return payload
+
+
 def _persist_run_outputs(
     *,
     run_root: Path,
@@ -499,7 +621,10 @@ def _persist_run_outputs(
     manifest: MlxSnapshotManifest,
     descriptors: list[MlxCandidateDescriptor],
     proposal_scores: list[ProposalScore],
+    worklist: list[WorkItem],
     status: str,
+    selected_for_replay: ProposalSelectionEntry | None = None,
+    selected_descriptor: MlxCandidateDescriptor | None = None,
     closure_execution_context: RuntimeClosureExecutionContext | None = None,
     error: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
@@ -545,6 +670,16 @@ def _persist_run_outputs(
         'mlx_exports': dict(mlx_exports),
         'notebooks': [str(path) for path in notebook_paths],
         'best_candidate': _best_history_record(history),
+        'live_progress': _live_progress_payload(
+            run_root=run_root,
+            frontier_runs=frontier_runs,
+            worklist=worklist,
+            history=history,
+            descriptors=descriptors,
+            proposal_scores=proposal_scores,
+            selected_for_replay=selected_for_replay,
+            selected_descriptor=selected_descriptor,
+        ),
     }
     best_candidate = cast(dict[str, Any] | None, summary['best_candidate'])
     summary['promotion_readiness'] = summary_promotion_readiness(best_candidate)
@@ -663,6 +798,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
         manifest=manifest,
         descriptors=descriptors,
         proposal_scores=proposal_scores,
+        worklist=worklist,
         status='running',
         closure_execution_context=closure_execution_context,
     )
@@ -687,7 +823,9 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
         manifest=manifest,
         descriptors=descriptors,
         proposal_scores=proposal_scores,
+        worklist=worklist,
         status='running',
+        closure_execution_context=closure_execution_context,
     )
     try:
         while worklist:
@@ -735,9 +873,42 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                 encoding='utf-8',
             )
             result_path = experiment_root / 'result.json'
+            selected_score = score_by_candidate.get(current_descriptor.candidate_id)
+            selected_for_replay = (
+                ProposalSelectionEntry(
+                    candidate_id=current_descriptor.candidate_id,
+                    descriptor_id=current_descriptor.descriptor_id,
+                    selection_reason='frontier_seed',
+                    score=selected_score.score,
+                    rank=selected_score.rank,
+                    family_template_id=current_descriptor.family_template_id,
+                    side_policy=current_descriptor.side_policy,
+                )
+                if selected_score is not None
+                else None
+            )
+            _persist_run_outputs(
+                run_root=run_root,
+                program=program,
+                program_payload=program.to_payload(),
+                runner_run_id=runner_run_id,
+                program_id=program.program_id,
+                frontier_runs=frontier_runs,
+                objective_met=objective_met,
+                history=history,
+                manifest=manifest,
+                descriptors=descriptors,
+                proposal_scores=proposal_scores,
+                worklist=worklist,
+                status='running',
+                selected_for_replay=selected_for_replay,
+                selected_descriptor=current_descriptor,
+                closure_execution_context=closure_execution_context,
+            )
             frontier_payload = run_consistent_profitability_frontier(
                 _frontier_args(
                     args=args,
+                    program=program,
                     family_plan=current.family_plan,
                     sweep_config_path=sweep_config_path,
                     json_output_path=result_path,
@@ -901,6 +1072,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                 manifest=manifest,
                 descriptors=descriptors,
                 proposal_scores=proposal_scores,
+                worklist=worklist,
                 status='running',
                 closure_execution_context=closure_execution_context,
             )
@@ -919,6 +1091,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
             manifest=manifest,
             descriptors=descriptors,
             proposal_scores=proposal_scores,
+            worklist=worklist,
             status='error',
             closure_execution_context=closure_execution_context,
             error={
@@ -939,6 +1112,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
         manifest=manifest,
         descriptors=descriptors,
         proposal_scores=proposal_scores,
+        worklist=worklist,
         status='ok',
         closure_execution_context=closure_execution_context,
     )
