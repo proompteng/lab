@@ -516,6 +516,21 @@ def _positions_payload(
                     pending_entry=True,
                 )
                 continue
+            if existing.qty < 0:
+                remaining_abs_qty = abs(existing.qty) - min(decision.qty, abs(existing.qty))
+                if remaining_abs_qty <= 0:
+                    projected_positions.pop(position_key, None)
+                    continue
+                projected_positions[position_key] = PositionState(
+                    strategy_id=existing.strategy_id,
+                    qty=-remaining_abs_qty,
+                    avg_entry_price=existing.avg_entry_price,
+                    opened_at=existing.opened_at,
+                    entry_cost_total=existing.entry_cost_total,
+                    decision_at=existing.decision_at,
+                    pending_entry=existing.pending_entry,
+                )
+                continue
             new_qty = existing.qty + decision.qty
             avg_entry = (
                 (existing.avg_entry_price * existing.qty)

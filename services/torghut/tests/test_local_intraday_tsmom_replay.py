@@ -584,6 +584,92 @@ class TestLocalIntradayTsmomReplay(TestCase):
             ],
         )
 
+    def test_positions_payload_projects_pending_buy_cover_against_existing_short(
+        self,
+    ) -> None:
+        positions = {
+            ("META", _SHARED_POSITION_OWNER): PositionState(
+                strategy_id=_SHARED_POSITION_OWNER,
+                qty=Decimal("-10"),
+                avg_entry_price=Decimal("520"),
+                opened_at=datetime(2026, 3, 27, 17, 0, 0, tzinfo=timezone.utc),
+                entry_cost_total=Decimal("0"),
+                decision_at=datetime(2026, 3, 27, 17, 0, 0, tzinfo=timezone.utc),
+            )
+        }
+        signal = self._signal(bid="523.22", ask="523.28", price="523.25")
+        pending_buy = PendingOrder(
+            decision=self._decision(
+                action="buy", order_type="limit", limit_price="523.28"
+            ),
+            created_at=datetime(2026, 3, 27, 17, 30, 3, tzinfo=timezone.utc),
+            signal=signal,
+        )
+
+        payload = _positions_payload(
+            positions,
+            {"META": Decimal("523.25")},
+            {("META", _SHARED_POSITION_OWNER): pending_buy},
+        )
+
+        self.assertEqual(payload, [])
+
+    def test_positions_payload_projects_partial_pending_buy_cover_against_existing_short(
+        self,
+    ) -> None:
+        positions = {
+            ("META", _SHARED_POSITION_OWNER): PositionState(
+                strategy_id=_SHARED_POSITION_OWNER,
+                qty=Decimal("-10"),
+                avg_entry_price=Decimal("520"),
+                opened_at=datetime(2026, 3, 27, 17, 0, 0, tzinfo=timezone.utc),
+                entry_cost_total=Decimal("0"),
+                decision_at=datetime(2026, 3, 27, 17, 0, 0, tzinfo=timezone.utc),
+            )
+        }
+        signal = self._signal(bid="523.22", ask="523.28", price="523.25")
+        partial_cover = StrategyDecision(
+            strategy_id="intraday_tsmom_v1@prod",
+            symbol="META",
+            event_ts=datetime(2026, 3, 27, 17, 30, 3, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="buy",
+            qty=Decimal("4"),
+            order_type="limit",
+            time_in_force="day",
+            limit_price=Decimal("523.28"),
+            rationale="test",
+            params={},
+        )
+        pending_buy = PendingOrder(
+            decision=partial_cover,
+            created_at=datetime(2026, 3, 27, 17, 30, 3, tzinfo=timezone.utc),
+            signal=signal,
+        )
+
+        payload = _positions_payload(
+            positions,
+            {"META": Decimal("523.25")},
+            {("META", _SHARED_POSITION_OWNER): pending_buy},
+        )
+
+        self.assertEqual(
+            payload,
+            [
+                {
+                    "symbol": "META",
+                    "strategy_id": _SHARED_POSITION_OWNER,
+                    "qty": "6",
+                    "side": "short",
+                    "market_value": "-3139.50",
+                    "avg_entry_price": "520",
+                    "opened_at": "2026-03-27T17:00:00+00:00",
+                    "decision_at": "2026-03-27T17:00:00+00:00",
+                    "pending_entry": False,
+                }
+            ],
+        )
+
     def test_positions_payload_keeps_other_strategy_position_when_isolated_sell_pending(
         self,
     ) -> None:
