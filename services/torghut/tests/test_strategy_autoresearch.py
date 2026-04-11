@@ -116,6 +116,9 @@ class TestStrategyAutoresearch(TestCase):
         self.assertEqual(program.proposal_model_policy.mode, 'ranking_only')
         self.assertEqual(program.promotion_policy, 'research_only')
         self.assertIn('scheduler_v3_parity_replay', program.parity_requirements)
+        self.assertFalse(program.runtime_closure_policy.enabled)
+        self.assertEqual(program.runtime_closure_policy.parity_window, 'full_window')
+        self.assertEqual(program.runtime_closure_policy.approval_window, 'holdout')
         self.assertTrue(program.ledger_policy['append_only'])
 
     def _write_program_fixture(self, root: Path) -> tuple[Path, Path]:
@@ -189,6 +192,15 @@ class TestStrategyAutoresearch(TestCase):
                         'max_worst_day_loss': '450',
                         'max_drawdown': '1000',
                         'min_regime_slice_pass_rate': '0.40',
+                    },
+                    'runtime_closure_policy': {
+                        'enabled': False,
+                        'execute_parity_replay': True,
+                        'execute_approval_replay': True,
+                        'parity_window': 'full_window',
+                        'approval_window': 'holdout',
+                        'shadow_validation_mode': 'require_live_evidence',
+                        'promotion_target': 'shadow',
                     },
                     'research_sources': [
                         {
@@ -289,6 +301,38 @@ class TestStrategyAutoresearch(TestCase):
             )
             with self.assertRaisesRegex(ValueError, 'autoresearch_program_missing_families'):
                 load_strategy_autoresearch_program(program_path, family_dir=root)
+
+    def test_load_program_rejects_invalid_runtime_closure_policy_values(self) -> None:
+        invalid_cases = [
+            ({'parity_window': 'bad'}, 'autoresearch_runtime_closure_parity_window_invalid'),
+            ({'approval_window': 'bad'}, 'autoresearch_runtime_closure_approval_window_invalid'),
+            (
+                {'shadow_validation_mode': 'bad'},
+                'autoresearch_runtime_closure_shadow_validation_mode_invalid',
+            ),
+            ({'promotion_target': 'bad'}, 'autoresearch_runtime_closure_promotion_target_invalid'),
+        ]
+
+        for overrides, expected_error in invalid_cases:
+            with self.subTest(overrides=overrides):
+                with TemporaryDirectory() as tmpdir:
+                    root = Path(tmpdir)
+                    program_path, family_dir = self._write_program_fixture(root)
+                    payload = yaml.safe_load(program_path.read_text(encoding='utf-8'))
+                    payload['runtime_closure_policy'] = {
+                        'enabled': False,
+                        'execute_parity_replay': True,
+                        'execute_approval_replay': True,
+                        'parity_window': 'full_window',
+                        'approval_window': 'holdout',
+                        'shadow_validation_mode': 'require_live_evidence',
+                        'promotion_target': 'shadow',
+                    }
+                    payload['runtime_closure_policy'].update(overrides)
+                    program_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding='utf-8')
+
+                    with self.assertRaisesRegex(ValueError, expected_error):
+                        load_strategy_autoresearch_program(program_path, family_dir=family_dir)
 
     def test_load_program_skips_invalid_source_and_claim_entries(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -846,6 +890,14 @@ class TestStrategyAutoresearch(TestCase):
             self.assertIn('runtime_closure', summary)
             self.assertIn('descriptor_id', summary['best_candidate'])
             self.assertIn('proposal_score', summary['best_candidate'])
+            self.assertEqual(
+                summary['best_candidate']['candidate_params'],
+                {'max_entries_per_session': '1', 'entry_cooldown_seconds': '600'},
+            )
+            self.assertEqual(
+                summary['best_candidate']['candidate_strategy_overrides'],
+                {'universe_symbols': ['AMAT', 'NVDA']},
+            )
             self.assertEqual(summary['runtime_closure']['status'], 'pending_runtime_parity')
             self.assertFalse(summary['runtime_closure']['promotion_prerequisites']['allowed'])
             self.assertFalse(summary['runtime_closure']['rollback_readiness']['ready'])

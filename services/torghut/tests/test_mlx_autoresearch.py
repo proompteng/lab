@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from argparse import Namespace
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
@@ -10,6 +11,7 @@ from unittest.mock import patch
 from app.trading.discovery.autoresearch import (
     ProposalModelPolicy,
     ReplayBudget,
+    RuntimeClosurePolicy,
     SnapshotPolicy,
     StrategyAutoresearchProgram,
     StrategyObjective,
@@ -63,15 +65,15 @@ def _program() -> StrategyAutoresearchProgram:
         program_id='program-1',
         description='desc',
         objective=StrategyObjective(
-            target_net_pnl_per_day='500',  # type: ignore[arg-type]
-            min_active_day_ratio='1.0',  # type: ignore[arg-type]
-            min_positive_day_ratio='0.6',  # type: ignore[arg-type]
-            min_daily_notional='300000',  # type: ignore[arg-type]
-            max_best_day_share='0.3',  # type: ignore[arg-type]
-            max_worst_day_loss='350',  # type: ignore[arg-type]
-            max_drawdown='900',  # type: ignore[arg-type]
+            target_net_pnl_per_day=Decimal('500'),
+            min_active_day_ratio=Decimal('1.0'),
+            min_positive_day_ratio=Decimal('0.6'),
+            min_daily_notional=Decimal('300000'),
+            max_best_day_share=Decimal('0.3'),
+            max_worst_day_loss=Decimal('350'),
+            max_drawdown=Decimal('900'),
             require_every_day_active=True,
-            min_regime_slice_pass_rate='0.45',  # type: ignore[arg-type]
+            min_regime_slice_pass_rate=Decimal('0.45'),
             stop_when_objective_met=True,
         ),
         snapshot_policy=SnapshotPolicy(
@@ -92,6 +94,15 @@ def _program() -> StrategyAutoresearchProgram:
             minimum_history_rows=1,
         ),
         replay_budget=ReplayBudget(max_candidates_per_round=8, exploration_slots=1),
+        runtime_closure_policy=RuntimeClosurePolicy(
+            enabled=False,
+            execute_parity_replay=True,
+            execute_approval_replay=True,
+            parity_window='full_window',
+            approval_window='holdout',
+            shadow_validation_mode='require_live_evidence',
+            promotion_target='shadow',
+        ),
         parity_requirements=('scheduler_v3_parity_replay',),
         promotion_policy='research_only',
         ledger_policy={'append_only': True},
