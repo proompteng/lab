@@ -33,6 +33,13 @@ type JangarRuntime = {
   websocket: Bun.WebSocketHandler<unknown>
 }
 
+type WebSocketAdapterOptions = NonNullable<Parameters<typeof wsAdapter>[0]>
+type ResolvedWebSocketHooks = NonNullable<WebSocketAdapterOptions['hooks']>
+type WebSocketRouteProbeResponse = Response & { crossws?: ResolvedWebSocketHooks }
+type WebSocketRequest = Request & {
+  context?: Record<string, unknown> & { __jangarResolvedWebSocketHooks?: ResolvedWebSocketHooks }
+}
+
 const serverRouteModules = import.meta.glob([
   '../routes/api/**/*.{ts,tsx}',
   '../routes/v1/**/*.{ts,tsx}',
@@ -138,6 +145,17 @@ const getServerRouteRoots = (definitions: ServerRouteDefinition[]) =>
 const shouldServeClientPath = (pathname: string, serverRouteRoots: ReadonlySet<string>) => {
   const firstSegment = getFirstPathSegment(pathname)
   return firstSegment === null || !serverRouteRoots.has(firstSegment)
+}
+
+const getResolvedWebSocketHooks = (request: Request) =>
+  (request as WebSocketRequest).context?.__jangarResolvedWebSocketHooks
+
+const storeResolvedWebSocketHooks = (request: Request, hooks: ResolvedWebSocketHooks) => {
+  const websocketRequest = request as WebSocketRequest
+  websocketRequest.context = {
+    ...(websocketRequest.context ?? {}),
+    __jangarResolvedWebSocketHooks: hooks,
+  }
 }
 
 const resolveClientIndexPath = async () => {
@@ -300,8 +318,9 @@ export const createJangarRuntime = async (options: { serveClient?: boolean } = {
   }
 
   const handleRequest = toWebHandler(app)
-  const appWithWebsocket = app as typeof app & { websocket: Parameters<typeof wsAdapter>[0] }
-  const adapter = wsAdapter(appWithWebsocket.websocket)
+  const adapter = wsAdapter({
+    resolve: (request) => getResolvedWebSocketHooks(request) ?? {},
+  })
 
   return {
     handleRequest,
@@ -309,6 +328,14 @@ export const createJangarRuntime = async (options: { serveClient?: boolean } = {
       if (!isWebSocketUpgradeRequest(request)) {
         return { kind: 'skip' }
       }
+
+      const upgradeProbeResponse = (await handleRequest(request)) as WebSocketRouteProbeResponse
+      const routeHooks = upgradeProbeResponse.crossws
+      if (!routeHooks) {
+        return { kind: 'response', response: upgradeProbeResponse }
+      }
+
+      storeResolvedWebSocketHooks(request, routeHooks)
 
       const response = await adapter.handleUpgrade(request, server)
       if (response) {
