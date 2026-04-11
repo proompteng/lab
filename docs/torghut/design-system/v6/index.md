@@ -143,6 +143,10 @@ Current source-state priority is narrower:
   scalar replay penalties with a constrained multi-objective frontier, move from sleeve-first sweeps to family
   templates plus veto controllers, and turn whitepaper indexing into relation-aware claim extraction and
   experiment-spec generation.
+- `70-torghut-mlx-autoresearch-and-apple-silicon-research-lane-2026-04-10.md` now defines the next local research
+  lane: adapt the discipline of `karpathy/autoresearch` to Torghut, keep the mutation surface narrow and
+  ledger-backed, use Apple MLX for GPU-accelerated candidate generation on Apple Silicon, and keep scheduler-v3
+  parity, approval replay, and shadow validation as the only promotion authority.
 - `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md` now makes the next step
   explicit: non-observe capital depends on one certificate that consumes Jangar witness quorum, Jangar market-context
   and quant evidence, toggle parity, and typed options auth/bootstrap escrow rather than local gate optimism.

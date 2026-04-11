@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import json
 from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping, cast
 
@@ -13,6 +15,7 @@ import yaml
 
 from app.trading.discovery.autoresearch import (
     FamilyAutoresearchPlan,
+    ProposalModelPolicy,
     apply_program_objective,
     build_mutated_sweep_config,
     candidate_meets_objective,
@@ -22,10 +25,25 @@ from app.trading.discovery.autoresearch import (
 )
 from app.trading.discovery.autoresearch_notebooks import write_autoresearch_notebooks
 from app.trading.discovery.family_templates import family_template_dir
+from app.trading.discovery.mlx_features import (
+    MlxCandidateDescriptor,
+    descriptor_from_candidate_payload,
+    descriptor_from_sweep_config,
+)
+from app.trading.discovery.mlx_notebook_exports import write_mlx_notebook_exports
+from app.trading.discovery.mlx_proposal_models import ProposalScore, rank_candidate_descriptors
+from app.trading.discovery.mlx_snapshot import (
+    MlxSignalBundleStats,
+    MlxSnapshotManifest,
+    build_mlx_snapshot_manifest,
+    write_mlx_signal_bundle,
+    write_mlx_snapshot_manifest,
+)
 from app.trading.discovery.promotion_contract import (
     blocked_research_candidate_promotion_readiness,
     summary_promotion_readiness,
 )
+import scripts.local_intraday_tsmom_replay as replay_mod
 from scripts.search_consistent_profitability_frontier import run_consistent_profitability_frontier
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -106,6 +124,60 @@ def _slug(value: str) -> str:
     return '-'.join(part for part in normalized.split('-') if part)
 
 
+def _iter_symbols(value: Any) -> list[str]:
+    if isinstance(value, str):
+        normalized = value.strip().upper()
+        return [normalized] if normalized else []
+    if isinstance(value, (list, tuple)):
+        resolved: list[str] = []
+        for item in value:
+            resolved.extend(_iter_symbols(item))
+        return resolved
+    return []
+
+
+def _snapshot_symbols(*, args: argparse.Namespace, worklist: list[WorkItem]) -> tuple[str, ...]:
+    cli_symbols = tuple(
+        symbol.strip().upper()
+        for symbol in str(args.symbols or '').split(',')
+        if symbol.strip()
+    )
+    if cli_symbols:
+        return cli_symbols
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for item in worklist:
+        strategy_overrides = _mapping(item.sweep_config.get('strategy_overrides'))
+        for symbol in _iter_symbols(strategy_overrides.get('universe_symbols')):
+            if symbol in seen:
+                continue
+            seen.add(symbol)
+            ordered.append(symbol)
+    return tuple(ordered)
+
+
+def _mlx_bundle_paths(run_root: Path) -> dict[str, str]:
+    return {
+        'signal_rows_jsonl': str(run_root / 'mlx-snapshot-signals.jsonl'),
+        'descriptors_jsonl': str(run_root / 'mlx-candidate-descriptors.jsonl'),
+        'proposal_scores_jsonl': str(run_root / 'mlx-proposal-scores.jsonl'),
+        'history_jsonl': str(run_root / 'history.jsonl'),
+        'results_tsv': str(run_root / 'results.tsv'),
+    }
+
+
+def _keep_candidate_limit(*, family_plan: FamilyAutoresearchPlan, replay_budget_max_candidates_per_round: int) -> int:
+    if replay_budget_max_candidates_per_round <= 0:
+        return max(1, family_plan.keep_top_candidates)
+    return max(1, min(family_plan.keep_top_candidates, replay_budget_max_candidates_per_round))
+
+
+def _work_item_candidate_id(work_item: WorkItem) -> str:
+    return _slug(
+        f'{work_item.family_plan.family_template.family_id}-iter-{work_item.iteration}-{work_item.mutation_label}'
+    )
+
+
 def _promotion_readiness_payload(*, family_plan: FamilyAutoresearchPlan) -> dict[str, Any]:
     return blocked_research_candidate_promotion_readiness(
         candidate_id='',
@@ -164,6 +236,42 @@ def _default_full_window_day_count(args: argparse.Namespace) -> int | None:
     return max(1, int(args.train_days)) + max(1, int(args.holdout_days))
 
 
+def _iso_date(value: str) -> date:
+    return date.fromisoformat(value)
+
+
+def _maybe_write_signal_bundle(
+    *,
+    args: argparse.Namespace,
+    snapshot_symbols: tuple[str, ...],
+    bundle_paths: Mapping[str, str],
+    full_window_start_date: str,
+    full_window_end_date: str,
+    existing: MlxSignalBundleStats | None,
+) -> MlxSignalBundleStats | None:
+    if existing is not None:
+        return existing
+    if not full_window_start_date or not full_window_end_date or not snapshot_symbols:
+        return existing
+    signal_bundle_config = replay_mod.ReplayConfig(
+        strategy_configmap_path=args.strategy_configmap.resolve(),
+        clickhouse_http_url=str(args.clickhouse_http_url),
+        clickhouse_username=(str(args.clickhouse_username).strip() or None),
+        clickhouse_password=(str(args.clickhouse_password).strip() or None),
+        start_date=_iso_date(full_window_start_date),
+        end_date=_iso_date(full_window_end_date),
+        chunk_minutes=max(1, int(args.chunk_minutes)),
+        flatten_eod=True,
+        start_equity=Decimal(str(args.start_equity)),
+        symbols=snapshot_symbols,
+        progress_log_interval_seconds=max(1, int(args.progress_log_seconds)),
+    )
+    return write_mlx_signal_bundle(
+        Path(bundle_paths['signal_rows_jsonl']),
+        replay_mod._iter_signal_rows(signal_bundle_config),
+    )
+
+
 def _history_record(
     *,
     runner_run_id: str,
@@ -179,6 +287,8 @@ def _history_record(
     status: str,
     objective_met: bool,
     dataset_snapshot_id: str,
+    descriptor: MlxCandidateDescriptor | None = None,
+    proposal_score: ProposalScore | None = None,
 ) -> dict[str, Any]:
     full_window = _mapping(candidate_payload.get('full_window'))
     scorecard = _mapping(candidate_payload.get('objective_scorecard'))
@@ -222,6 +332,20 @@ def _history_record(
         'promotion_required_evidence': list(cast(list[str], promotion_readiness['required_evidence'])),
         'runtime_family': _string(_mapping(promotion_readiness['runtime_harness']).get('family')),
         'runtime_strategy_name': _string(_mapping(promotion_readiness['runtime_harness']).get('strategy_name')),
+        'descriptor_id': _string(descriptor.descriptor_id) if descriptor is not None else '',
+        'entry_window_start_minute': descriptor.entry_window_start_minute if descriptor is not None else 0,
+        'entry_window_end_minute': descriptor.entry_window_end_minute if descriptor is not None else 0,
+        'max_hold_minutes': descriptor.max_hold_minutes if descriptor is not None else 0,
+        'rank_count': descriptor.rank_count if descriptor is not None else 0,
+        'requires_prev_day_features': descriptor.requires_prev_day_features if descriptor is not None else False,
+        'requires_cross_sectional_features': (
+            descriptor.requires_cross_sectional_features if descriptor is not None else False
+        ),
+        'requires_quote_quality_gate': descriptor.requires_quote_quality_gate if descriptor is not None else False,
+        'proposal_score': proposal_score.score if proposal_score is not None else 0.0,
+        'proposal_rank': proposal_score.rank if proposal_score is not None else 0,
+        'proposal_backend': _string(proposal_score.backend) if proposal_score is not None else '',
+        'proposal_mode': _string(proposal_score.mode) if proposal_score is not None else '',
     }
 
 
@@ -293,6 +417,9 @@ def _persist_run_outputs(
     frontier_runs: int,
     objective_met: bool,
     history: list[dict[str, Any]],
+    manifest: MlxSnapshotManifest,
+    descriptors: list[MlxCandidateDescriptor],
+    proposal_scores: list[ProposalScore],
     status: str,
     error: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
@@ -301,11 +428,19 @@ def _persist_run_outputs(
     research_dossier_path = run_root / 'research_dossier.json'
     summary_path = run_root / 'summary.json'
     promotion_readiness_path = run_root / 'promotion_readiness.json'
+    snapshot_manifest_path = run_root / 'mlx-snapshot-manifest.json'
     _write_history_jsonl(history_path, history)
     _write_results_tsv(results_tsv_path, history)
     research_dossier_path.write_text(
         json.dumps(program_payload, indent=2, sort_keys=True),
         encoding='utf-8',
+    )
+    write_mlx_snapshot_manifest(snapshot_manifest_path, manifest)
+    mlx_exports = write_mlx_notebook_exports(
+        run_root=run_root,
+        manifest=manifest,
+        descriptors=descriptors,
+        proposal_scores=proposal_scores,
     )
     notebook_paths = write_autoresearch_notebooks(run_root)
     summary: dict[str, Any] = {
@@ -320,6 +455,8 @@ def _persist_run_outputs(
         'results_tsv_path': str(results_tsv_path),
         'research_dossier_path': str(research_dossier_path),
         'promotion_readiness_path': str(promotion_readiness_path),
+        'snapshot_manifest_path': str(snapshot_manifest_path),
+        'mlx_exports': dict(mlx_exports),
         'notebooks': [str(path) for path in notebook_paths],
         'best_candidate': _best_history_record(history),
     }
@@ -370,6 +507,38 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
         )
 
     history: list[dict[str, Any]] = []
+    descriptors: list[MlxCandidateDescriptor] = []
+    proposal_scores: list[ProposalScore] = []
+    tape_freshness_receipts: list[dict[str, Any]] = []
+    snapshot_symbols = _snapshot_symbols(args=args, worklist=worklist)
+    bundle_paths = _mlx_bundle_paths(run_root)
+    resolved_full_window_start_date = _string(args.full_window_start_date)
+    resolved_full_window_end_date = _string(args.full_window_end_date)
+    signal_bundle_stats: MlxSignalBundleStats | None = None
+
+    def _refresh_manifest() -> MlxSnapshotManifest:
+        latest_receipt = tape_freshness_receipts[-1] if tape_freshness_receipts else {}
+        return build_mlx_snapshot_manifest(
+            runner_run_id=runner_run_id,
+            program=program,
+            symbols=','.join(snapshot_symbols),
+            train_days=int(args.train_days),
+            holdout_days=int(args.holdout_days),
+            full_window_start_date=resolved_full_window_start_date,
+            full_window_end_date=resolved_full_window_end_date,
+            tape_freshness_receipts=tuple(tape_freshness_receipts),
+            row_counts={
+                'receipt_count': len(tape_freshness_receipts),
+                'latest_receipt_row_count': int(latest_receipt.get('row_count') or 0),
+                'signal_row_count': signal_bundle_stats.row_count if signal_bundle_stats is not None else 0,
+                'signal_symbol_count': (
+                    signal_bundle_stats.symbol_count if signal_bundle_stats is not None else len(snapshot_symbols)
+                ),
+            },
+            tensor_bundle_paths=bundle_paths,
+        )
+
+    manifest = _refresh_manifest()
     frontier_runs = 0
     objective_met = False
     _persist_run_outputs(
@@ -380,13 +549,62 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
         frontier_runs=frontier_runs,
         objective_met=objective_met,
         history=history,
+        manifest=manifest,
+        descriptors=descriptors,
+        proposal_scores=proposal_scores,
+        status='running',
+    )
+    signal_bundle_stats = _maybe_write_signal_bundle(
+        args=args,
+        snapshot_symbols=snapshot_symbols,
+        bundle_paths=bundle_paths,
+        full_window_start_date=resolved_full_window_start_date,
+        full_window_end_date=resolved_full_window_end_date,
+        existing=signal_bundle_stats,
+    )
+    manifest = _refresh_manifest()
+    _persist_run_outputs(
+        run_root=run_root,
+        program_payload=program.to_payload(),
+        runner_run_id=runner_run_id,
+        program_id=program.program_id,
+        frontier_runs=frontier_runs,
+        objective_met=objective_met,
+        history=history,
+        manifest=manifest,
+        descriptors=descriptors,
+        proposal_scores=proposal_scores,
         status='running',
     )
     try:
         while worklist:
             if int(args.max_frontier_runs) > 0 and frontier_runs >= int(args.max_frontier_runs):
                 break
-            current = worklist.pop(0)
+            pending_descriptors = [
+                descriptor_from_sweep_config(
+                    candidate_id=_work_item_candidate_id(item),
+                    family_plan=item.family_plan,
+                    sweep_config=item.sweep_config,
+                )
+                for item in worklist
+            ]
+            pending_scores = rank_candidate_descriptors(
+                descriptors=pending_descriptors,
+                history_rows=history,
+                policy=cast(ProposalModelPolicy, program.proposal_model_policy),
+            )
+            proposal_scores.extend(pending_scores)
+            score_by_candidate = {item.candidate_id: item for item in pending_scores}
+            ordered_pending = sorted(
+                zip(worklist, pending_descriptors, strict=False),
+                key=lambda item: (
+                    score_by_candidate[item[1].candidate_id].rank,
+                    item[0].family_plan.family_template.family_id,
+                ),
+            )
+            current, current_descriptor = ordered_pending[0]
+            descriptors.append(current_descriptor)
+            worklist = [item for item, _ in ordered_pending[1:]]
             sweep_hash = stable_payload_hash(current.sweep_config)
             if sweep_hash in seen_sweeps:
                 continue
@@ -419,22 +637,63 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
             dataset_snapshot_id = _string(
                 _mapping(frontier_payload.get('dataset_snapshot_receipt')).get('snapshot_id')
             )
+            receipt_payload = _mapping(frontier_payload.get('dataset_snapshot_receipt'))
+            if receipt_payload:
+                tape_freshness_receipts.append(receipt_payload)
+            frontier_window = _mapping(frontier_payload.get('window'))
+            resolved_full_window_start_date = (
+                _string(frontier_window.get('full_window_start_date')) or resolved_full_window_start_date
+            )
+            resolved_full_window_end_date = (
+                _string(frontier_window.get('full_window_end_date')) or resolved_full_window_end_date
+            )
+            signal_bundle_stats = _maybe_write_signal_bundle(
+                args=args,
+                snapshot_symbols=snapshot_symbols,
+                bundle_paths=bundle_paths,
+                full_window_start_date=resolved_full_window_start_date,
+                full_window_end_date=resolved_full_window_end_date,
+                existing=signal_bundle_stats,
+            )
+            manifest = _refresh_manifest()
             top_candidates = cast(list[dict[str, Any]], frontier_payload.get('top') or [])
             keep_candidates = [
                 candidate
                 for candidate in top_candidates
                 if not bool(_mapping(candidate.get('ranking')).get('vetoed'))
-            ][: current.family_plan.keep_top_candidates]
+            ][
+                : _keep_candidate_limit(
+                    family_plan=current.family_plan,
+                    replay_budget_max_candidates_per_round=int(program.replay_budget.max_candidates_per_round),
+                )
+            ]
             if not keep_candidates and current.family_plan.force_keep_top_candidate_if_all_vetoed and top_candidates:
                 keep_candidates = [top_candidates[0]]
             keep_ids = {
                 _string(candidate.get('candidate_id'))
                 for candidate in keep_candidates
             }
+            frontier_descriptors = [
+                descriptor_from_candidate_payload(
+                    candidate_payload=candidate,
+                    family_plan=current.family_plan,
+                )
+                for candidate in top_candidates
+            ]
+            descriptors.extend(frontier_descriptors)
+            frontier_candidate_scores = rank_candidate_descriptors(
+                descriptors=frontier_descriptors,
+                history_rows=history,
+                policy=cast(ProposalModelPolicy, program.proposal_model_policy),
+            )
+            proposal_scores.extend(frontier_candidate_scores)
+            frontier_descriptor_by_candidate = {item.candidate_id: item for item in frontier_descriptors}
+            frontier_score_by_candidate = {item.candidate_id: item for item in frontier_candidate_scores}
             for rank, candidate in enumerate(top_candidates, start=1):
                 candidate_id = _string(candidate.get('candidate_id'))
                 candidate_status = 'keep' if candidate_id in keep_ids else 'discard'
                 candidate_objective_met = candidate_meets_objective(candidate, objective=program.objective)
+                candidate_descriptor = frontier_descriptor_by_candidate[candidate_id]
                 history.append(
                     _history_record(
                         runner_run_id=runner_run_id,
@@ -450,6 +709,8 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                         status=candidate_status,
                         objective_met=candidate_objective_met,
                         dataset_snapshot_id=dataset_snapshot_id,
+                        descriptor=candidate_descriptor,
+                        proposal_score=frontier_score_by_candidate.get(candidate_id),
                     )
                 )
                 if candidate_objective_met:
@@ -487,6 +748,9 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                 frontier_runs=frontier_runs,
                 objective_met=objective_met,
                 history=history,
+                manifest=manifest,
+                descriptors=descriptors,
+                proposal_scores=proposal_scores,
                 status='running',
             )
             if objective_met and program.objective.stop_when_objective_met:
@@ -500,6 +764,9 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
             frontier_runs=frontier_runs,
             objective_met=objective_met,
             history=history,
+            manifest=manifest,
+            descriptors=descriptors,
+            proposal_scores=proposal_scores,
             status='error',
             error={
                 'type': exc.__class__.__name__,
@@ -515,6 +782,9 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
         frontier_runs=frontier_runs,
         objective_met=objective_met,
         history=history,
+        manifest=manifest,
+        descriptors=descriptors,
+        proposal_scores=proposal_scores,
         status='ok',
     )
 

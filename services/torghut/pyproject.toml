@@ -26,6 +26,7 @@ dependencies = [
   "pyyaml>=6.0.2,<7.0",
   "inngest>=0.5.15,<1.0",
   "pypdf>=5.4.0,<6.0",
+  "mlx>=0.29.2,<1.0; platform_system == 'Darwin' and platform_machine == 'arm64'",
 ]
 
 [project.optional-dependencies]
