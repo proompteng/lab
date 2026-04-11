@@ -31,7 +31,14 @@ from app.trading.discovery.mlx_features import (
     descriptor_from_sweep_config,
 )
 from app.trading.discovery.mlx_notebook_exports import write_mlx_notebook_exports
-from app.trading.discovery.mlx_proposal_models import ProposalScore, rank_candidate_descriptors
+from app.trading.discovery.mlx_proposal_models import (
+    ProposalDiagnostics,
+    ProposalScore,
+    ProposalSelectionEntry,
+    build_proposal_diagnostics,
+    rank_candidate_descriptors,
+    select_proposal_batch,
+)
 from app.trading.discovery.mlx_snapshot import (
     MlxSignalBundleStats,
     MlxSnapshotManifest,
@@ -289,6 +296,8 @@ def _history_record(
     dataset_snapshot_id: str,
     descriptor: MlxCandidateDescriptor | None = None,
     proposal_score: ProposalScore | None = None,
+    proposal_selected: bool = False,
+    proposal_selection_reason: str = '',
 ) -> dict[str, Any]:
     full_window = _mapping(candidate_payload.get('full_window'))
     scorecard = _mapping(candidate_payload.get('objective_scorecard'))
@@ -346,6 +355,8 @@ def _history_record(
         'proposal_rank': proposal_score.rank if proposal_score is not None else 0,
         'proposal_backend': _string(proposal_score.backend) if proposal_score is not None else '',
         'proposal_mode': _string(proposal_score.mode) if proposal_score is not None else '',
+        'proposal_selected': proposal_selected,
+        'proposal_selection_reason': proposal_selection_reason,
     }
 
 
@@ -408,6 +419,52 @@ def _best_history_record(history: list[dict[str, Any]]) -> dict[str, Any] | None
     return sorted_history[0]
 
 
+def _proposal_diagnostics(
+    *,
+    descriptors: list[MlxCandidateDescriptor],
+    proposal_scores: list[ProposalScore],
+    history: list[dict[str, Any]],
+) -> ProposalDiagnostics:
+    selected_entries = [
+        {
+            'candidate_id': _string(item.get('candidate_id')),
+            'descriptor_id': _string(item.get('descriptor_id')),
+            'selection_reason': _string(item.get('proposal_selection_reason')) or 'exploitation',
+            'score': float(item.get('proposal_score') or 0.0),
+            'rank': int(item.get('proposal_rank') or 0),
+            'family_template_id': _string(item.get('family_template_id')),
+            'side_policy': 'unknown',
+        }
+        for item in history
+        if bool(item.get('proposal_selected'))
+    ]
+    selected_by_candidate: dict[str, dict[str, Any]] = {}
+    descriptor_by_candidate = {item.candidate_id: item for item in descriptors}
+    for item in selected_entries:
+        candidate_id = item['candidate_id']
+        descriptor = descriptor_by_candidate.get(candidate_id)
+        if descriptor is not None:
+            item['side_policy'] = descriptor.side_policy
+        selected_by_candidate[candidate_id] = item
+    return build_proposal_diagnostics(
+        descriptors=descriptors,
+        proposal_scores=proposal_scores,
+        history_rows=history,
+        selected_candidates=[
+            ProposalSelectionEntry(
+                candidate_id=item['candidate_id'],
+                descriptor_id=item['descriptor_id'],
+                selection_reason=item['selection_reason'],
+                score=float(item['score']),
+                rank=int(item['rank']),
+                family_template_id=item['family_template_id'],
+                side_policy=item['side_policy'],
+            )
+            for item in selected_by_candidate.values()
+        ],
+    )
+
+
 def _persist_run_outputs(
     *,
     run_root: Path,
@@ -436,11 +493,17 @@ def _persist_run_outputs(
         encoding='utf-8',
     )
     write_mlx_snapshot_manifest(snapshot_manifest_path, manifest)
+    proposal_diagnostics = _proposal_diagnostics(
+        descriptors=descriptors,
+        proposal_scores=proposal_scores,
+        history=history,
+    )
     mlx_exports = write_mlx_notebook_exports(
         run_root=run_root,
         manifest=manifest,
         descriptors=descriptors,
         proposal_scores=proposal_scores,
+        proposal_diagnostics=proposal_diagnostics,
     )
     notebook_paths = write_autoresearch_notebooks(run_root)
     summary: dict[str, Any] = {
@@ -661,18 +724,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                 candidate
                 for candidate in top_candidates
                 if not bool(_mapping(candidate.get('ranking')).get('vetoed'))
-            ][
-                : _keep_candidate_limit(
-                    family_plan=current.family_plan,
-                    replay_budget_max_candidates_per_round=int(program.replay_budget.max_candidates_per_round),
-                )
             ]
-            if not keep_candidates and current.family_plan.force_keep_top_candidate_if_all_vetoed and top_candidates:
-                keep_candidates = [top_candidates[0]]
-            keep_ids = {
-                _string(candidate.get('candidate_id'))
-                for candidate in keep_candidates
-            }
             frontier_descriptors = [
                 descriptor_from_candidate_payload(
                     candidate_payload=candidate,
@@ -689,6 +741,50 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
             proposal_scores.extend(frontier_candidate_scores)
             frontier_descriptor_by_candidate = {item.candidate_id: item for item in frontier_descriptors}
             frontier_score_by_candidate = {item.candidate_id: item for item in frontier_candidate_scores}
+            keep_limit = _keep_candidate_limit(
+                family_plan=current.family_plan,
+                replay_budget_max_candidates_per_round=int(program.replay_budget.max_candidates_per_round),
+            )
+            non_vetoed_descriptors = [
+                frontier_descriptor_by_candidate[_string(candidate.get('candidate_id'))]
+                for candidate in keep_candidates
+                if _string(candidate.get('candidate_id')) in frontier_descriptor_by_candidate
+            ]
+            non_vetoed_scores = [
+                frontier_score_by_candidate[_string(candidate.get('candidate_id'))]
+                for candidate in keep_candidates
+                if _string(candidate.get('candidate_id')) in frontier_score_by_candidate
+            ]
+            exploration_slots = min(
+                max(0, int(program.proposal_model_policy.exploration_slots)),
+                max(0, int(program.replay_budget.exploration_slots)),
+            )
+            selected_keep_entries = select_proposal_batch(
+                descriptors=non_vetoed_descriptors,
+                proposal_scores=non_vetoed_scores,
+                limit=keep_limit,
+                top_k=max(1, int(program.proposal_model_policy.top_k)),
+                exploration_slots=exploration_slots,
+            )
+            if not selected_keep_entries and current.family_plan.force_keep_top_candidate_if_all_vetoed and top_candidates:
+                first_candidate = top_candidates[0]
+                first_candidate_id = _string(first_candidate.get('candidate_id'))
+                descriptor = frontier_descriptor_by_candidate.get(first_candidate_id)
+                score = frontier_score_by_candidate.get(first_candidate_id)
+                if descriptor is not None and score is not None:
+                    selected_keep_entries = [
+                        ProposalSelectionEntry(
+                            candidate_id=first_candidate_id,
+                            descriptor_id=descriptor.descriptor_id,
+                            selection_reason='fallback_force_keep',
+                            score=score.score,
+                            rank=score.rank,
+                            family_template_id=descriptor.family_template_id,
+                            side_policy=descriptor.side_policy,
+                        )
+                    ]
+            keep_ids = {item.candidate_id for item in selected_keep_entries}
+            keep_reason_by_candidate = {item.candidate_id: item.selection_reason for item in selected_keep_entries}
             for rank, candidate in enumerate(top_candidates, start=1):
                 candidate_id = _string(candidate.get('candidate_id'))
                 candidate_status = 'keep' if candidate_id in keep_ids else 'discard'
@@ -711,6 +807,8 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                         dataset_snapshot_id=dataset_snapshot_id,
                         descriptor=candidate_descriptor,
                         proposal_score=frontier_score_by_candidate.get(candidate_id),
+                        proposal_selected=candidate_id in keep_ids,
+                        proposal_selection_reason=keep_reason_by_candidate.get(candidate_id, ''),
                     )
                 )
                 if candidate_objective_met:

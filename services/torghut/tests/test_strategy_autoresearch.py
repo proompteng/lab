@@ -1030,13 +1030,22 @@ class TestStrategyAutoresearch(TestCase):
                 for line in (Path(payload['run_root']) / 'history.jsonl').read_text(encoding='utf-8').splitlines()
                 if line.strip()
             ]
+            diagnostics = json.loads(
+                (Path(payload['run_root']) / 'mlx-proposal-diagnostics.json').read_text(encoding='utf-8')
+            )
             round_two_rows = [row for row in history_rows if row['experiment_index'] == 2]
             self.assertEqual(len(round_two_rows), 2)
             keep_rows = [row for row in round_two_rows if row['status'] == 'keep']
             self.assertEqual(len(keep_rows), 1)
-            self.assertEqual(keep_rows[0]['candidate_id'], 'mutated-1')
+            self.assertTrue(keep_rows[0]['proposal_selected'])
+            self.assertEqual(keep_rows[0]['proposal_selection_reason'], 'exploitation')
             score_by_candidate = {row['candidate_id']: row['proposal_score'] for row in round_two_rows}
             self.assertNotEqual(score_by_candidate['mutated-1'], score_by_candidate['mutated-2'])
+            self.assertEqual(diagnostics['parity_matrix']['replayed_count'], 3)
+            self.assertIn(
+                keep_rows[0]['candidate_id'],
+                [row['candidate_id'] for row in diagnostics['selected_candidates']],
+            )
 
     def test_run_strategy_autoresearch_loop_flushes_visible_progress_between_experiments(self) -> None:
         with TemporaryDirectory() as tmpdir:

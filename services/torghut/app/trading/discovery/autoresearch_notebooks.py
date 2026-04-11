@@ -487,6 +487,7 @@ PROPOSALS = [
     for line in (RUN_ROOT / 'mlx-proposal-scores.jsonl').read_text(encoding='utf-8').splitlines()
     if line.strip()
 ]
+DIAGNOSTICS = json.loads((RUN_ROOT / 'mlx-proposal-diagnostics.json').read_text(encoding='utf-8'))
 HISTORY = [
     json.loads(line)
     for line in (RUN_ROOT / 'history.jsonl').read_text(encoding='utf-8').splitlines()
@@ -535,6 +536,47 @@ def _svg_line(values: list[float], *, stroke: str = '#111827') -> str:
         f'<polyline fill="none" stroke="{{stroke}}" stroke-width="3" points="{{coords}}" />'
         '</svg>'
     )
+
+def _svg_bar(labels: list[str], values: list[float], *, fill: str = '#2563eb') -> str:
+    width = 720
+    height = 260
+    if not labels or not values:
+        return '<svg xmlns="http://www.w3.org/2000/svg" width="720" height="260"></svg>'
+    maximum = max(values) or 1.0
+    slot_width = width / max(len(values), 1)
+    bar_width = max(12.0, slot_width - 10.0)
+    parts = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{{width}}" height="{{height}}" viewBox="0 0 {{width}} {{height}}">']
+    for idx, (label, value) in enumerate(zip(labels, values)):
+        scaled = (value / maximum) * (height - 70)
+        x = (idx * slot_width) + ((slot_width - bar_width) / 2.0)
+        y = height - scaled - 40
+        parts.append(f'<rect x="{{x:.1f}}" y="{{y:.1f}}" width="{{bar_width:.1f}}" height="{{scaled:.1f}}" fill="{{fill}}" rx="4" />')
+        parts.append(f'<text x="{{x + (bar_width / 2.0):.1f}}" y="{{height - 18}}" text-anchor="middle" font-size="12">{{escape(label)}}</text>')
+        parts.append(f'<text x="{{x + (bar_width / 2.0):.1f}}" y="{{max(14.0, y - 6):.1f}}" text-anchor="middle" font-size="12">{{value:.2f}}</text>')
+    parts.append('</svg>')
+    return ''.join(parts)
+
+def _svg_scatter(points: list[tuple[float, float]], *, fill: str = '#059669') -> str:
+    width = 720
+    height = 260
+    if not points:
+        return '<svg xmlns="http://www.w3.org/2000/svg" width="720" height="260"></svg>'
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    x_min, x_max = min(xs), max(xs)
+    y_min, y_max = min(ys), max(ys)
+    x_span = x_max - x_min or 1.0
+    y_span = y_max - y_min or 1.0
+    circles = []
+    for x_value, y_value in points:
+        x = 30 + (((x_value - x_min) / x_span) * (width - 60))
+        y = height - 30 - (((y_value - y_min) / y_span) * (height - 60))
+        circles.append(f'<circle cx="{{x:.1f}}" cy="{{y:.1f}}" r="5" fill="{{fill}}" opacity="0.8" />')
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{{width}}" height="{{height}}" viewBox="0 0 {{width}} {{height}}">'
+        + ''.join(circles)
+        + '</svg>'
+    )
 """
         ),
         _code_cell(
@@ -561,7 +603,7 @@ _display_rows(
             'quote_quality_policy_id': MANIFEST.get('quote_quality_policy_id'),
             'symbols': len(MANIFEST.get('symbols') or []),
             'receipt_count': (MANIFEST.get('row_counts') or {}).get('receipt_count'),
-            'latest_row_count': (MANIFEST.get('row_counts') or {}).get('latest_row_count'),
+            'latest_row_count': (MANIFEST.get('row_counts') or {}).get('latest_receipt_row_count'),
         }
     ]
 )
@@ -588,7 +630,16 @@ _display_rows(
     proposal_columns = ['candidate_id', 'descriptor_id', 'score', 'rank', 'backend', 'mode']
     _display_rows([{column: row.get(column) for column in proposal_columns} for row in PROPOSALS], columns=proposal_columns)
     display(Markdown('### Proposal score distribution'))
-    display(SVG(_svg_line([float(row.get('score') or 0.0) for row in PROPOSALS], stroke='#2563eb')))
+    histogram = DIAGNOSTICS.get('score_histogram') or []
+    display(SVG(_svg_bar([str(item.get('bucket_label') or '') for item in histogram], [float(item.get('count') or 0.0) for item in histogram], fill='#2563eb')))
+    display(Markdown('### Family proposal volume'))
+    family_volume = DIAGNOSTICS.get('family_volume') or []
+    display(SVG(_svg_bar([str(item.get('family_template_id') or '') for item in family_volume], [float(item.get('candidate_count') or 0.0) for item in family_volume], fill='#7c3aed')))
+    selected_columns = ['candidate_id', 'selection_reason', 'score', 'rank', 'family_template_id', 'side_policy']
+    selected = DIAGNOSTICS.get('selected_candidates') or []
+    if selected:
+        display(Markdown('### Selected proposal batch'))
+        _display_rows([{column: row.get(column) for column in selected_columns} for row in selected], columns=selected_columns)
 """
         ),
         _code_cell(
@@ -605,38 +656,66 @@ _display_rows(
     ]
     _display_rows([{column: row.get(column) for column in columns} for row in HISTORY], columns=columns)
     display(Markdown('### Proposal score vs realized net/day'))
-    display(SVG(_svg_line([float(row.get('net_pnl_per_day') or 0.0) for row in HISTORY], stroke='#059669')))
+    scatter_points = [
+        (float(row.get('proposal_score') or 0.0), float(row.get('net_pnl_per_day') or 0.0))
+        for row in HISTORY
+    ]
+    display(SVG(_svg_scatter(scatter_points, fill='#059669')))
+"""
+        ),
+        _code_cell(
+            """display(Markdown('## Calibration and error analysis'))
+rank_buckets = DIAGNOSTICS.get('rank_bucket_lift') or []
+if rank_buckets:
+    _display_rows(rank_buckets, columns=['bucket_label', 'candidate_count', 'mean_proposal_score', 'mean_net_pnl_per_day', 'positive_rate'])
+    display(Markdown('### Rank-bucket lift'))
+    display(SVG(_svg_bar([str(item.get('bucket_label') or '') for item in rank_buckets], [float(item.get('mean_net_pnl_per_day') or 0.0) for item in rank_buckets], fill='#0f766e')))
+false_positives = DIAGNOSTICS.get('worst_false_positives') or []
+if false_positives:
+    display(Markdown('### Worst false positives'))
+    _display_rows(false_positives, columns=['candidate_id', 'proposal_rank', 'proposal_score', 'net_pnl_per_day'])
+false_negatives = DIAGNOSTICS.get('best_false_negatives') or []
+if false_negatives:
+    display(Markdown('### Best false negatives'))
+    _display_rows(false_negatives, columns=['candidate_id', 'proposal_rank', 'proposal_score', 'net_pnl_per_day'])
 """
         ),
         _code_cell(
             """if HISTORY:
     display(Markdown('## Parity and authority checks'))
+    parity = DIAGNOSTICS.get('parity_matrix') or {}
     _display_rows(
         [
             {
-                'research_candidates': len(HISTORY),
-                'blocked_promotions': sum(1 for row in HISTORY if row.get('promotion_status')),
+                'research_candidates': parity.get('proposed_count'),
+                'replayed_candidates': parity.get('replayed_count'),
+                'kept_candidates': parity.get('keep_count'),
+                'objective_met_count': parity.get('objective_met_count'),
+                'blocked_promotions': parity.get('blocked_promotion_count'),
                 'runtime_family_mapped': sum(1 for row in HISTORY if row.get('runtime_family')),
                 'proposal_backend': ', '.join(sorted({str(row.get('proposal_backend') or '') for row in HISTORY if row.get('proposal_backend')})),
             }
         ]
     )
+    display(Markdown('### Selection diversity'))
+    _display_rows([DIAGNOSTICS.get('diversity_summary') or {}], columns=['selected_unique_family_count', 'selected_unique_side_count', 'selected_mean_pairwise_distance'])
 """
         ),
         _code_cell(
-            """if HISTORY:
-    false_positives = sorted(HISTORY, key=lambda row: float(row.get('proposal_score') or 0.0), reverse=True)[:5]
-    display(Markdown('## Open failures'))
+            """display(Markdown('## Open failures'))
+if HISTORY:
     _display_rows(
         [
             {
                 'candidate_id': row.get('candidate_id'),
-                'proposal_score': row.get('proposal_score'),
+                'proposal_selected': row.get('proposal_selected'),
+                'proposal_selection_reason': row.get('proposal_selection_reason'),
                 'promotion_status': row.get('promotion_status'),
                 'runtime_strategy_name': row.get('runtime_strategy_name'),
                 'hard_vetoes': row.get('hard_vetoes'),
             }
-            for row in false_positives
+            for row in HISTORY
+            if (not row.get('runtime_family')) or row.get('promotion_status') or row.get('hard_vetoes')
         ]
     )
 """
