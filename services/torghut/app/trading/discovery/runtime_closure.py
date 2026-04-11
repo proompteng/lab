@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,6 +16,8 @@ from app.trading.autonomy.policy_checks import (
 )
 from app.trading.discovery.autoresearch import StrategyAutoresearchProgram
 from app.trading.discovery.mlx_snapshot import MlxSnapshotManifest
+
+_REPO_ROOT = Path(__file__).resolve().parents[5]
 
 
 def _string(value: Any) -> str:
@@ -57,6 +60,32 @@ def _sha256_json(payload: Mapping[str, Any]) -> str:
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _git_output(*args: str) -> str:
+    try:
+        completed = subprocess.run(
+            ['git', *args],
+            cwd=_REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return ''
+    return completed.stdout.strip()
+
+
+def _runtime_run_context(*, root: Path, runner_run_id: str) -> dict[str, str]:
+    head = _git_output('rev-parse', '--abbrev-ref', 'HEAD') or 'unknown'
+    return {
+        'repository': 'proompteng/lab',
+        'base': 'main',
+        'head': head,
+        'artifact_path': str(root),
+        'run_id': runner_run_id,
+        'design_doc': 'docs/torghut/design-system/v6/70-torghut-mlx-autoresearch-and-apple-silicon-research-lane-2026-04-10.md',
+    }
 
 
 def _runtime_closure_policy() -> dict[str, Any]:
@@ -298,6 +327,7 @@ def _backtest_summary(
 def _profitability_stage_manifest(
     *,
     root: Path,
+    runner_run_id: str,
     candidate_id: str,
     candidate_spec_path: Path,
     candidate_generation_manifest_path: Path,
@@ -328,14 +358,7 @@ def _profitability_stage_manifest(
         'strategy_family': 'autoresearch_runtime_closure',
         'llm_artifact_ref': None,
         'router_artifact_ref': 'runtime_harness',
-        'run_context': {
-            'repository': 'proompteng/lab',
-            'base': 'main',
-            'head': 'codex/torghut-mlx-autoresearch-phase2',
-            'artifact_path': str(root),
-            'run_id': candidate_id,
-            'design_doc': 'docs/torghut/design-system/v6/70-torghut-mlx-autoresearch-and-apple-silicon-research-lane-2026-04-10.md',
-        },
+        'run_context': _runtime_run_context(root=root, runner_run_id=runner_run_id),
         'stages': {
             'research': {
                 'status': 'pass',
@@ -576,6 +599,7 @@ def write_runtime_closure_bundle(
     _write_json(evaluation_report_path, evaluation_report)
     profitability_stage_manifest = _profitability_stage_manifest(
         root=closure_root,
+        runner_run_id=runner_run_id,
         candidate_id=candidate_id,
         candidate_spec_path=candidate_spec_path,
         candidate_generation_manifest_path=candidate_generation_manifest_path,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
@@ -14,6 +15,8 @@ from app.trading.discovery.autoresearch import (
 )
 from app.trading.discovery.mlx_snapshot import build_mlx_snapshot_manifest
 from app.trading.discovery.runtime_closure import write_runtime_closure_bundle
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _program() -> StrategyAutoresearchProgram:
@@ -133,6 +136,17 @@ class TestRuntimeClosure(TestCase):
             self.assertEqual(manifest_payload['candidate_id'], 'cand-1')
             self.assertEqual(manifest_payload['overall_status'], 'fail')
             self.assertIn('validation_stage_incomplete', manifest_payload['failure_reasons'])
+            self.assertEqual(manifest_payload['run_context']['run_id'], 'run-1')
+            self.assertEqual(
+                manifest_payload['run_context']['head'],
+                subprocess.run(
+                    ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                    cwd=_REPO_ROOT,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip(),
+            )
 
     def test_write_runtime_closure_bundle_handles_missing_best_candidate(self) -> None:
         with TemporaryDirectory() as tmpdir:
