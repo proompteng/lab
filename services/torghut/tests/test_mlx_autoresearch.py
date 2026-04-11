@@ -93,7 +93,11 @@ def _program() -> StrategyAutoresearchProgram:
             exploration_slots=1,
             minimum_history_rows=1,
         ),
-        replay_budget=ReplayBudget(max_candidates_per_round=8, exploration_slots=1),
+        replay_budget=ReplayBudget(
+            max_candidates_per_round=8,
+            exploration_slots=1,
+            max_candidates_per_frontier_run=16,
+        ),
         runtime_closure_policy=RuntimeClosurePolicy(
             enabled=False,
             execute_parity_replay=True,

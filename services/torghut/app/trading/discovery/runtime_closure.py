@@ -47,6 +47,28 @@ def _mapping(value: Any) -> dict[str, Any]:
     return {str(key): item for key, item in mapping_value.items()}
 
 
+def _list_of_mappings(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    resolved: list[dict[str, Any]] = []
+    for item in cast(list[Any], value):
+        mapping = _mapping(item)
+        if mapping:
+            resolved.append(mapping)
+    return resolved
+
+
+def _list_of_strings(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    resolved: list[str] = []
+    for item in cast(list[Any], value):
+        normalized = _string(item).upper()
+        if normalized:
+            resolved.append(normalized)
+    return tuple(resolved)
+
+
 def _int(value: Any) -> int:
     try:
         return int(float(str(value or 0)))
@@ -59,6 +81,44 @@ def _float(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _decimal(value: Any, *, default: str = '0') -> Decimal:
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return Decimal(default)
+
+
+def _decimal_string(value: Decimal) -> str:
+    rendered = format(value, 'f')
+    if '.' in rendered:
+        rendered = rendered.rstrip('0').rstrip('.')
+    return rendered or '0'
+
+
+_MICROBAR_PORTFOLIO_SIGNAL_SETTINGS: dict[str, dict[str, str]] = {
+    'open_window_continuation': {
+        'rank_feature': 'cross_section_session_open_rank',
+        'selection_mode': 'continuation',
+    },
+    'open_window_reversal': {
+        'rank_feature': 'cross_section_session_open_rank',
+        'selection_mode': 'reversal',
+    },
+    'vwap_close_continuation': {
+        'rank_feature': 'cross_section_vwap_w5m_rank',
+        'selection_mode': 'continuation',
+    },
+    'vwap_close_reversal': {
+        'rank_feature': 'cross_section_vwap_w5m_rank',
+        'selection_mode': 'reversal',
+    },
+    'prev_day_open45_periodicity': {
+        'rank_feature': 'cross_section_prev_day_open45_return_rank',
+        'selection_mode': 'continuation',
+    },
+}
 
 
 def _json_dumps(payload: Mapping[str, Any]) -> str:
@@ -223,22 +283,201 @@ def _objective_veto_policy(program: StrategyAutoresearchProgram) -> ObjectiveVet
     )
 
 
+def _runtime_family(best_candidate: Mapping[str, Any]) -> str:
+    return (
+        _string(best_candidate.get('runtime_family'))
+        or _string(best_candidate.get('family'))
+        or _string(best_candidate.get('family_template_id'))
+    )
+
+
+def _runtime_strategy_name(best_candidate: Mapping[str, Any]) -> str:
+    return _string(best_candidate.get('runtime_strategy_name')) or _string(best_candidate.get('strategy_name'))
+
+
+def _candidate_params(best_candidate: Mapping[str, Any]) -> dict[str, Any]:
+    direct = _mapping(best_candidate.get('candidate_params'))
+    if direct:
+        return direct
+    replay_config = _mapping(best_candidate.get('replay_config'))
+    return _mapping(replay_config.get('params'))
+
+
+def _candidate_strategy_overrides(best_candidate: Mapping[str, Any]) -> dict[str, Any]:
+    direct = _mapping(best_candidate.get('candidate_strategy_overrides'))
+    if direct:
+        return direct
+    replay_config = _mapping(best_candidate.get('replay_config'))
+    return _mapping(replay_config.get('strategy_overrides'))
+
+
+def _disable_other_strategies(best_candidate: Mapping[str, Any]) -> bool:
+    if 'disable_other_strategies' in best_candidate:
+        return bool(best_candidate.get('disable_other_strategies'))
+    replay_config = _mapping(best_candidate.get('replay_config'))
+    if 'disable_other_strategies' in replay_config:
+        return bool(replay_config.get('disable_other_strategies'))
+    return True
+
+
+def _portfolio_payload(best_candidate: Mapping[str, Any]) -> dict[str, Any]:
+    replay_config = _mapping(best_candidate.get('replay_config'))
+    return _mapping(replay_config.get('portfolio'))
+
+
+def _portfolio_symbols(best_candidate: Mapping[str, Any]) -> tuple[str, ...]:
+    override_symbols = _list_of_strings(_candidate_strategy_overrides(best_candidate).get('universe_symbols'))
+    if override_symbols:
+        return override_symbols
+    return _list_of_strings(_portfolio_payload(best_candidate).get('symbols'))
+
+
+def _is_microbar_portfolio_candidate(best_candidate: Mapping[str, Any]) -> bool:
+    replay_backend = _string(_mapping(best_candidate.get('replay_config')).get('backend'))
+    return (
+        _string(best_candidate.get('family_template_id')) == 'microbar_cross_sectional_pairs_v1'
+        or _runtime_family(best_candidate) == 'microbar_cross_sectional_pairs'
+        or replay_backend == 'microbar_daily_portfolio'
+    )
+
+
+def _microbar_portfolio_strategy_name(
+    *,
+    base_name: str,
+    sleeve_index: int,
+    side: str,
+) -> str:
+    return f'{base_name}-sleeve-{sleeve_index}-{side}'
+
+
+def _portfolio_runtime_strategy_names(best_candidate: Mapping[str, Any]) -> tuple[str, ...]:
+    if not _is_microbar_portfolio_candidate(best_candidate):
+        strategy_name = _runtime_strategy_name(best_candidate)
+        return (strategy_name,) if strategy_name else ()
+    base_name = _runtime_strategy_name(best_candidate) or 'microbar-cross-sectional-pairs-v1'
+    names: list[str] = []
+    sleeves = _list_of_mappings(_portfolio_payload(best_candidate).get('sleeves'))
+    for sleeve_index, _sleeve in enumerate(sleeves, start=1):
+        names.append(_microbar_portfolio_strategy_name(base_name=base_name, sleeve_index=sleeve_index, side='long'))
+        names.append(_microbar_portfolio_strategy_name(base_name=base_name, sleeve_index=sleeve_index, side='short'))
+    return tuple(names)
+
+
+def _portfolio_promotion_v2(best_candidate: Mapping[str, Any]) -> dict[str, Any]:
+    strategy_names = _portfolio_runtime_strategy_names(best_candidate)
+    if len(strategy_names) <= 1:
+        return {}
+    symbols = _portfolio_symbols(best_candidate)
+    missing_policy_refs: list[str] = []
+    for strategy_name in strategy_names:
+        missing_policy_refs.extend(
+            [
+                f'{strategy_name}:promotion_policy_ref',
+                f'{strategy_name}:risk_profile_ref',
+                f'{strategy_name}:sizing_policy_ref',
+                f'{strategy_name}:execution_policy_ref',
+            ]
+        )
+    return {
+        'mode': 'portfolio_aware',
+        'strategy_count': len(strategy_names),
+        'spec_compiled_count': 0,
+        'unique_symbol_count': len(set(symbols)),
+        'overlapping_symbols': list(symbols),
+        'promotion_policy_refs': [],
+        'risk_profile_refs': [],
+        'sizing_policy_refs': [],
+        'execution_policy_refs': [],
+        'missing_policy_refs': missing_policy_refs,
+    }
+
+
+def _materialized_microbar_portfolio_runtime_strategies(
+    *,
+    best_candidate: Mapping[str, Any],
+    execution_context: RuntimeClosureExecutionContext,
+) -> list[dict[str, Any]]:
+    if not _is_microbar_portfolio_candidate(best_candidate):
+        return []
+    portfolio = _portfolio_payload(best_candidate)
+    sleeves = _list_of_mappings(portfolio.get('sleeves'))
+    if not sleeves:
+        return []
+    base_per_leg_notional = _decimal(portfolio.get('base_per_leg_notional'))
+    if base_per_leg_notional <= 0:
+        raise ValueError('runtime_closure_microbar_portfolio_base_per_leg_notional_missing')
+    symbols = _portfolio_symbols(best_candidate) or execution_context.symbols
+    if not symbols:
+        raise ValueError('runtime_closure_microbar_portfolio_symbols_missing')
+    base_name = _runtime_strategy_name(best_candidate) or 'microbar-cross-sectional-pairs-v1'
+    candidate_id = _string(best_candidate.get('candidate_id')) or 'runtime-closure'
+    strategies: list[dict[str, Any]] = []
+    for sleeve_index, sleeve in enumerate(sleeves, start=1):
+        signal = _string(sleeve.get('signal'))
+        signal_settings = _MICROBAR_PORTFOLIO_SIGNAL_SETTINGS.get(signal)
+        if signal_settings is None:
+            raise ValueError(f'runtime_closure_microbar_portfolio_signal_unsupported:{signal}')
+        entry_minute = max(0, _int(sleeve.get('entry_minute_after_open')))
+        exit_text = _string(sleeve.get('exit_minute_after_open')) or 'close'
+        top_n = max(1, _int(sleeve.get('top_n')))
+        weight = _decimal(sleeve.get('weight'), default='1')
+        if weight <= 0:
+            weight = Decimal('1')
+        max_notional_per_trade = base_per_leg_notional * weight
+        if execution_context.start_equity > 0:
+            max_position_pct_equity = max_notional_per_trade / execution_context.start_equity
+        else:
+            max_position_pct_equity = Decimal('10')
+        max_position_pct_equity = max(max_position_pct_equity, Decimal('0.1'))
+        for side, strategy_type in (
+            ('long', 'microbar_cross_sectional_long_v1'),
+            ('short', 'microbar_cross_sectional_short_v1'),
+        ):
+            strategies.append(
+                {
+                    'name': _microbar_portfolio_strategy_name(
+                        base_name=base_name,
+                        sleeve_index=sleeve_index,
+                        side=side,
+                    ),
+                    'strategy_id': f'{strategy_type}@runtime-closure:{candidate_id}:s{sleeve_index}:{side}',
+                    'strategy_type': strategy_type,
+                    'version': '1.0.0',
+                    'description': (
+                        f'Runtime-closure materialized sleeve {sleeve_index} '
+                        f'for {_runtime_family(best_candidate) or "microbar portfolio"}'
+                    ),
+                    'enabled': True,
+                    'base_timeframe': '1Sec',
+                    'universe_type': strategy_type,
+                    'universe_symbols': list(symbols),
+                    'max_notional_per_trade': _decimal_string(max_notional_per_trade),
+                    'max_position_pct_equity': _decimal_string(max_position_pct_equity),
+                    'params': {
+                        'entry_minute_after_open': str(entry_minute),
+                        'exit_minute_after_open': exit_text,
+                        'signal_motif': signal,
+                        'rank_feature': signal_settings['rank_feature'],
+                        'selection_mode': signal_settings['selection_mode'],
+                        'top_n': str(top_n),
+                        'universe_size': str(len(symbols)),
+                        'max_concurrent_positions': str(top_n),
+                        'max_entries_per_session': str(top_n),
+                        'position_isolation_mode': 'per_strategy',
+                    },
+                }
+            )
+    return strategies
+
+
 def _candidate_symbols(
     *,
     best_candidate: Mapping[str, Any],
     execution_context: RuntimeClosureExecutionContext,
 ) -> tuple[str, ...]:
-    strategy_overrides = _mapping(best_candidate.get('candidate_strategy_overrides'))
-    override_symbols = strategy_overrides.get('universe_symbols')
-    if isinstance(override_symbols, list):
-        resolved: list[str] = []
-        for item in cast(list[Any], override_symbols):
-            if isinstance(item, str):
-                normalized = item.strip().upper()
-                if normalized:
-                    resolved.append(normalized)
-        if resolved:
-            return tuple(resolved)
+    override_symbols = _portfolio_symbols(best_candidate)
+    if override_symbols:
+        return override_symbols
     return execution_context.symbols
 
 
@@ -265,19 +504,65 @@ def _materialize_candidate_configmap(
     configmap_payload = yaml.safe_load(execution_context.strategy_configmap_path.read_text(encoding='utf-8'))
     if not isinstance(configmap_payload, Mapping):
         raise ValueError('strategy_configmap_not_mapping')
-    strategy_name = _string(best_candidate.get('runtime_strategy_name'))
-    if not strategy_name:
-        raise ValueError('runtime_closure_missing_runtime_strategy_name')
-    candidate_params = _mapping(best_candidate.get('candidate_params'))
-    if not candidate_params:
-        raise ValueError('runtime_closure_missing_candidate_params')
-    rendered = apply_candidate_to_configmap_with_overrides(
-        configmap_payload=cast(Mapping[str, Any], configmap_payload),
-        strategy_name=strategy_name,
-        candidate_params=candidate_params,
-        strategy_overrides=_mapping(best_candidate.get('candidate_strategy_overrides')),
-        disable_other_strategies=bool(best_candidate.get('disable_other_strategies', True)),
+    portfolio_runtime_strategies = _materialized_microbar_portfolio_runtime_strategies(
+        best_candidate=best_candidate,
+        execution_context=execution_context,
     )
+    if portfolio_runtime_strategies:
+        rendered_payload = yaml.safe_load(
+            yaml.safe_dump(cast(Mapping[str, Any], configmap_payload), sort_keys=False)
+        )
+        if not isinstance(rendered_payload, dict):
+            raise ValueError('strategy_configmap_not_mapping')
+        rendered = cast(dict[str, Any], rendered_payload)
+        data_payload = rendered.get('data')
+        if not isinstance(data_payload, dict):
+            raise ValueError('strategy_configmap_missing_data')
+        data = cast(dict[str, Any], data_payload)
+        strategies_yaml = data.get('strategies.yaml')
+        if not isinstance(strategies_yaml, str):
+            raise ValueError('strategy_configmap_missing_strategies_yaml')
+        catalog_payload = yaml.safe_load(strategies_yaml)
+        if not isinstance(catalog_payload, dict):
+            raise ValueError('strategy_catalog_not_mapping')
+        catalog = cast(dict[str, Any], catalog_payload)
+        strategies_payload = catalog.get('strategies')
+        if not isinstance(strategies_payload, list):
+            raise ValueError('strategy_catalog_missing_strategies')
+        strategies = cast(list[Any], strategies_payload)
+        if _disable_other_strategies(best_candidate):
+            for item in strategies:
+                if isinstance(item, dict):
+                    item['enabled'] = False
+        by_name: dict[str, int] = {}
+        for index, item in enumerate(strategies):
+            if not isinstance(item, Mapping):
+                continue
+            item_mapping = cast(Mapping[str, Any], item)
+            item_name = _string(item_mapping.get('name'))
+            if item_name:
+                by_name[item_name] = index
+        for item in portfolio_runtime_strategies:
+            item_name = _string(item.get('name'))
+            if item_name in by_name:
+                strategies[by_name[item_name]] = item
+            else:
+                strategies.append(item)
+        data['strategies.yaml'] = yaml.safe_dump(catalog, sort_keys=False)
+    else:
+        strategy_name = _runtime_strategy_name(best_candidate)
+        if not strategy_name:
+            raise ValueError('runtime_closure_missing_runtime_strategy_name')
+        candidate_params = _candidate_params(best_candidate)
+        if not candidate_params:
+            raise ValueError('runtime_closure_missing_candidate_params')
+        rendered = apply_candidate_to_configmap_with_overrides(
+            configmap_payload=cast(Mapping[str, Any], configmap_payload),
+            strategy_name=strategy_name,
+            candidate_params=candidate_params,
+            strategy_overrides=_candidate_strategy_overrides(best_candidate),
+            disable_other_strategies=_disable_other_strategies(best_candidate),
+        )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(yaml.safe_dump(rendered, sort_keys=False), encoding='utf-8')
     return output_path
@@ -394,8 +679,9 @@ def _replay_analysis(
         'schema_version': 'torghut.runtime-closure-replay-report.v1',
         'window_name': window_name,
         'candidate_id': _string(best_candidate.get('candidate_id')),
-        'runtime_family': _string(best_candidate.get('runtime_family')),
-        'runtime_strategy_name': _string(best_candidate.get('runtime_strategy_name')),
+        'runtime_family': _runtime_family(best_candidate),
+        'runtime_strategy_name': _runtime_strategy_name(best_candidate),
+        'runtime_strategy_names': list(_portfolio_runtime_strategy_names(best_candidate)),
         'objective_met': objective_met,
         'hard_vetoes': hard_vetoes,
         'scorecard': scorecard.to_payload(),
@@ -548,14 +834,17 @@ def _candidate_spec(
     best_candidate: Mapping[str, Any],
     manifest: MlxSnapshotManifest,
 ) -> dict[str, Any]:
+    replay_config = _mapping(best_candidate.get('replay_config'))
+    portfolio_promotion_v2 = _portfolio_promotion_v2(best_candidate)
     return {
         'schema_version': 'torghut.runtime-closure-candidate-spec.v1',
         'candidate_id': _string(best_candidate.get('candidate_id')),
         'runner_run_id': runner_run_id,
         'program_id': program.program_id,
         'family_template_id': _string(best_candidate.get('family_template_id')),
-        'runtime_family': _string(best_candidate.get('runtime_family')),
-        'runtime_strategy_name': _string(best_candidate.get('runtime_strategy_name')),
+        'runtime_family': _runtime_family(best_candidate),
+        'runtime_strategy_name': _runtime_strategy_name(best_candidate),
+        'runtime_strategy_names': list(_portfolio_runtime_strategy_names(best_candidate)),
         'dataset_snapshot_ref': manifest.snapshot_id,
         'source_window_start': manifest.source_window_start,
         'source_window_end': manifest.source_window_end,
@@ -564,15 +853,15 @@ def _candidate_spec(
         'status': _string(best_candidate.get('status')),
         'mutation_label': _string(best_candidate.get('mutation_label')),
         'parent_candidate_id': _string(best_candidate.get('parent_candidate_id')),
-        'candidate_params': _mapping(best_candidate.get('candidate_params')),
-        'candidate_strategy_overrides': _mapping(best_candidate.get('candidate_strategy_overrides')),
-        'disable_other_strategies': bool(best_candidate.get('disable_other_strategies', True)),
-        'train_start_date': _string(best_candidate.get('train_start_date')),
-        'train_end_date': _string(best_candidate.get('train_end_date')),
-        'holdout_start_date': _string(best_candidate.get('holdout_start_date')),
-        'holdout_end_date': _string(best_candidate.get('holdout_end_date')),
-        'full_window_start_date': _string(best_candidate.get('full_window_start_date')) or manifest.source_window_start,
-        'full_window_end_date': _string(best_candidate.get('full_window_end_date')) or manifest.source_window_end,
+        'candidate_params': _candidate_params(best_candidate),
+        'candidate_strategy_overrides': _candidate_strategy_overrides(best_candidate),
+        'disable_other_strategies': _disable_other_strategies(best_candidate),
+        'train_start_date': _string(best_candidate.get('train_start_date')) or _string(replay_config.get('train_start_date')),
+        'train_end_date': _string(best_candidate.get('train_end_date')) or _string(replay_config.get('train_end_date')),
+        'holdout_start_date': _string(best_candidate.get('holdout_start_date')) or _string(replay_config.get('holdout_start_date')),
+        'holdout_end_date': _string(best_candidate.get('holdout_end_date')) or _string(replay_config.get('holdout_end_date')),
+        'full_window_start_date': _string(best_candidate.get('full_window_start_date')) or _string(replay_config.get('full_window_start_date')) or manifest.source_window_start,
+        'full_window_end_date': _string(best_candidate.get('full_window_end_date')) or _string(replay_config.get('full_window_end_date')) or manifest.source_window_end,
         'normalization_regime': _string(best_candidate.get('normalization_regime')),
         'descriptor': {
             'descriptor_id': _string(best_candidate.get('descriptor_id')),
@@ -603,6 +892,7 @@ def _candidate_spec(
                 cast(list[str], best_candidate.get('promotion_required_evidence') or [])
             ),
         },
+        **({'portfolio_promotion_v2': portfolio_promotion_v2} if portfolio_promotion_v2 else {}),
     }
 
 
@@ -625,6 +915,7 @@ def _candidate_generation_manifest(
         'proposal_selection_reason': _string(best_candidate.get('proposal_selection_reason')),
         'mutation_label': _string(best_candidate.get('mutation_label')),
         'status': _string(best_candidate.get('status')),
+        'runtime_strategy_names': list(_portfolio_runtime_strategy_names(best_candidate)),
         'runtime_closure_policy': program.runtime_closure_policy.to_payload(),
     }
 
@@ -638,12 +929,13 @@ def _gate_report(
     approval_report: Mapping[str, Any] | None,
     shadow_plan: Mapping[str, Any],
 ) -> dict[str, Any]:
-    runtime_family = _string(best_candidate.get('runtime_family')) or 'unknown'
+    runtime_family = _runtime_family(best_candidate) or 'unknown'
     parity_pass = bool(_mapping(parity_report).get('objective_met')) if parity_report is not None else False
     approval_pass = bool(_mapping(approval_report).get('objective_met')) if approval_report is not None else False
     shadow_required = bool(shadow_plan.get('required'))
     shadow_status = _string(shadow_plan.get('status'))
     shadow_ready = shadow_status == 'within_budget'
+    portfolio_promotion_v2 = _portfolio_promotion_v2(best_candidate)
     promotion_reasons: list[str] = []
     if parity_report is None:
         promotion_reasons.append('research_candidate_pending_scheduler_v3_parity')
@@ -725,6 +1017,11 @@ def _gate_report(
             else '1.0'
         ),
         'recalibration_run_id': None,
+        **(
+            {'vnext': {'portfolio_promotion': portfolio_promotion_v2}}
+            if portfolio_promotion_v2
+            else {}
+        ),
     }
 
 
@@ -770,7 +1067,7 @@ def _candidate_state(
             'registry_loaded': True,
             'registry_path': 'runtime_harness',
             'registry_errors': [],
-            'strategy_families': [_string(best_candidate.get('runtime_family'))],
+            'strategy_families': [_runtime_family(best_candidate)],
             'matched_hypothesis_ids': [_string(best_candidate.get('family_template_id'))],
             'missing_strategy_families': [],
             'promotion_eligible': False,
@@ -803,8 +1100,9 @@ def _backtest_summary(
         'candidate_id': _string(best_candidate.get('candidate_id')),
         'dataset_snapshot_ref': manifest.snapshot_id,
         'status': 'research_only',
-        'runtime_family': _string(best_candidate.get('runtime_family')),
-        'runtime_strategy_name': _string(best_candidate.get('runtime_strategy_name')),
+        'runtime_family': _runtime_family(best_candidate),
+        'runtime_strategy_name': _runtime_strategy_name(best_candidate),
+        'runtime_strategy_names': list(_portfolio_runtime_strategy_names(best_candidate)),
         'parity_replay': dict(parity_report or {}),
         'approval_replay': dict(approval_report or {}),
     }
@@ -1174,8 +1472,9 @@ def write_runtime_closure_bundle(
         'dataset_snapshot_ref': manifest.snapshot_id,
         'source_window_start': manifest.source_window_start,
         'source_window_end': manifest.source_window_end,
-        'runtime_family': _string(best_candidate.get('runtime_family')),
-        'runtime_strategy_name': _string(best_candidate.get('runtime_strategy_name')),
+        'runtime_family': _runtime_family(best_candidate),
+        'runtime_strategy_name': _runtime_strategy_name(best_candidate),
+        'runtime_strategy_names': list(_portfolio_runtime_strategy_names(best_candidate)),
         'approval_path': 'scheduler_v3',
         'required_steps': [
             'checked_in_runtime_family',
