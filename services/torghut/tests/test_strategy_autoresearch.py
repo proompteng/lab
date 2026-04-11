@@ -302,6 +302,38 @@ class TestStrategyAutoresearch(TestCase):
             with self.assertRaisesRegex(ValueError, 'autoresearch_program_missing_families'):
                 load_strategy_autoresearch_program(program_path, family_dir=root)
 
+    def test_load_program_rejects_invalid_runtime_closure_policy_values(self) -> None:
+        invalid_cases = [
+            ({'parity_window': 'bad'}, 'autoresearch_runtime_closure_parity_window_invalid'),
+            ({'approval_window': 'bad'}, 'autoresearch_runtime_closure_approval_window_invalid'),
+            (
+                {'shadow_validation_mode': 'bad'},
+                'autoresearch_runtime_closure_shadow_validation_mode_invalid',
+            ),
+            ({'promotion_target': 'bad'}, 'autoresearch_runtime_closure_promotion_target_invalid'),
+        ]
+
+        for overrides, expected_error in invalid_cases:
+            with self.subTest(overrides=overrides):
+                with TemporaryDirectory() as tmpdir:
+                    root = Path(tmpdir)
+                    program_path, family_dir = self._write_program_fixture(root)
+                    payload = yaml.safe_load(program_path.read_text(encoding='utf-8'))
+                    payload['runtime_closure_policy'] = {
+                        'enabled': False,
+                        'execute_parity_replay': True,
+                        'execute_approval_replay': True,
+                        'parity_window': 'full_window',
+                        'approval_window': 'holdout',
+                        'shadow_validation_mode': 'require_live_evidence',
+                        'promotion_target': 'shadow',
+                    }
+                    payload['runtime_closure_policy'].update(overrides)
+                    program_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding='utf-8')
+
+                    with self.assertRaisesRegex(ValueError, expected_error):
+                        load_strategy_autoresearch_program(program_path, family_dir=family_dir)
+
     def test_load_program_skips_invalid_source_and_claim_entries(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
