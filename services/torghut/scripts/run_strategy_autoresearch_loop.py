@@ -16,6 +16,7 @@ import yaml
 from app.trading.discovery.autoresearch import (
     FamilyAutoresearchPlan,
     ProposalModelPolicy,
+    StrategyAutoresearchProgram,
     apply_program_objective,
     build_mutated_sweep_config,
     candidate_meets_objective,
@@ -50,6 +51,7 @@ from app.trading.discovery.promotion_contract import (
     blocked_research_candidate_promotion_readiness,
     summary_promotion_readiness,
 )
+from app.trading.discovery.runtime_closure import write_runtime_closure_bundle
 import scripts.local_intraday_tsmom_replay as replay_mod
 from scripts.search_consistent_profitability_frontier import run_consistent_profitability_frontier
 
@@ -468,6 +470,7 @@ def _proposal_diagnostics(
 def _persist_run_outputs(
     *,
     run_root: Path,
+    program: StrategyAutoresearchProgram,
     program_payload: Mapping[str, Any],
     runner_run_id: str,
     program_id: str,
@@ -525,6 +528,14 @@ def _persist_run_outputs(
     }
     best_candidate = cast(dict[str, Any] | None, summary['best_candidate'])
     summary['promotion_readiness'] = summary_promotion_readiness(best_candidate)
+    runtime_closure = write_runtime_closure_bundle(
+        run_root=run_root,
+        runner_run_id=runner_run_id,
+        program=program,
+        best_candidate=best_candidate,
+        manifest=manifest,
+    )
+    summary['runtime_closure'] = runtime_closure.to_payload()
     if error is not None:
         summary['error'] = dict(error)
     promotion_readiness_path.write_text(
@@ -606,6 +617,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
     objective_met = False
     _persist_run_outputs(
         run_root=run_root,
+        program=program,
         program_payload=program.to_payload(),
         runner_run_id=runner_run_id,
         program_id=program.program_id,
@@ -628,6 +640,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
     manifest = _refresh_manifest()
     _persist_run_outputs(
         run_root=run_root,
+        program=program,
         program_payload=program.to_payload(),
         runner_run_id=runner_run_id,
         program_id=program.program_id,
@@ -840,6 +853,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                 )
             _persist_run_outputs(
                 run_root=run_root,
+                program=program,
                 program_payload=program.to_payload(),
                 runner_run_id=runner_run_id,
                 program_id=program.program_id,
@@ -856,6 +870,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
     except Exception as exc:
         return _persist_run_outputs(
             run_root=run_root,
+            program=program,
             program_payload=program.to_payload(),
             runner_run_id=runner_run_id,
             program_id=program.program_id,
@@ -874,6 +889,7 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
 
     return _persist_run_outputs(
         run_root=run_root,
+        program=program,
         program_payload=program.to_payload(),
         runner_run_id=runner_run_id,
         program_id=program.program_id,
