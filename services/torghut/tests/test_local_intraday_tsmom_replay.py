@@ -670,6 +670,59 @@ class TestLocalIntradayTsmomReplay(TestCase):
             ],
         )
 
+    def test_positions_payload_projects_pending_sell_against_existing_short(self) -> None:
+        positions = {
+            ("META", _SHARED_POSITION_OWNER): PositionState(
+                strategy_id=_SHARED_POSITION_OWNER,
+                qty=Decimal("-5"),
+                avg_entry_price=Decimal("520"),
+                opened_at=datetime(2026, 3, 27, 17, 0, 0, tzinfo=timezone.utc),
+                entry_cost_total=Decimal("0"),
+                decision_at=datetime(2026, 3, 27, 17, 0, 0, tzinfo=timezone.utc),
+            )
+        }
+        signal = self._signal(bid="523.22", ask="523.28", price="523.25")
+        pending_sell = PendingOrder(
+            decision=StrategyDecision(
+                strategy_id="intraday_tsmom_v1@prod",
+                symbol="META",
+                event_ts=datetime(2026, 3, 27, 17, 30, 3, tzinfo=timezone.utc),
+                timeframe="1Sec",
+                action="sell",
+                qty=Decimal("4"),
+                order_type="limit",
+                time_in_force="day",
+                limit_price=Decimal("523.22"),
+                rationale="test",
+                params={},
+            ),
+            created_at=datetime(2026, 3, 27, 17, 30, 3, tzinfo=timezone.utc),
+            signal=signal,
+        )
+
+        payload = _positions_payload(
+            positions,
+            {"META": Decimal("523.25")},
+            {("META", _SHARED_POSITION_OWNER): pending_sell},
+        )
+
+        self.assertEqual(
+            payload,
+            [
+                {
+                    "symbol": "META",
+                    "strategy_id": _SHARED_POSITION_OWNER,
+                    "qty": "9",
+                    "side": "short",
+                    "market_value": "-4709.25",
+                    "avg_entry_price": "521.4311111111111111111111111",
+                    "opened_at": "2026-03-27T17:00:00+00:00",
+                    "decision_at": "2026-03-27T17:00:00+00:00",
+                    "pending_entry": False,
+                }
+            ],
+        )
+
     def test_positions_payload_keeps_other_strategy_position_when_isolated_sell_pending(
         self,
     ) -> None:
@@ -1026,6 +1079,129 @@ class TestLocalIntradayTsmomReplay(TestCase):
         self.assertEqual(symbol_bucket["closed_trade_count"], 1)
         self.assertEqual(symbol_bucket["filled_notional"], Decimal("10465.00"))
         self.assertGreater(cash, Decimal("0"))
+
+    def test_apply_filled_decision_partial_buy_cover_updates_symbol_bucket_and_losses(
+        self,
+    ) -> None:
+        signal = self._signal(bid="523.90", ask="524.00", price="523.95")
+        positions = {
+            ("META", _SHARED_POSITION_OWNER): PositionState(
+                strategy_id=_SHARED_POSITION_OWNER,
+                qty=Decimal("-10"),
+                avg_entry_price=Decimal("523.22"),
+                opened_at=datetime(2026, 3, 27, 17, 0, 0, tzinfo=timezone.utc),
+                entry_cost_total=Decimal("1.00"),
+                decision_at=datetime(2026, 3, 27, 17, 0, 0, tzinfo=timezone.utc),
+            )
+        }
+        day_bucket = {
+            "decision_count": 1,
+            "filled_count": 0,
+            "filled_notional": Decimal("0"),
+            "gross_pnl": Decimal("0"),
+            "net_pnl": Decimal("0"),
+            "cost_total": Decimal("0"),
+            "wins": 0,
+            "losses": 0,
+            "closed_trades": [],
+        }
+        symbol_bucket = _init_funnel_stats()
+        partial_cover = StrategyDecision(
+            strategy_id="intraday_tsmom_v1@prod",
+            symbol="META",
+            event_ts=signal.event_ts,
+            timeframe="1Sec",
+            action="buy",
+            qty=Decimal("4"),
+            order_type="limit",
+            time_in_force="day",
+            limit_price=Decimal("524.00"),
+            rationale="test",
+            params={},
+        )
+        all_closed_trades: list[object] = []
+
+        cash = _apply_filled_decision(
+            decision=partial_cover,
+            signal=signal,
+            fill_price=Decimal("524.00"),
+            filled_at=signal.event_ts,
+            created_at=signal.event_ts,
+            positions=positions,
+            day_bucket=day_bucket,
+            symbol_bucket=symbol_bucket,
+            cost_model=TransactionCostModel(),
+            cash=Decimal("15231.20"),
+            all_closed_trades=all_closed_trades,
+        )
+
+        self.assertIn(("META", _SHARED_POSITION_OWNER), positions)
+        self.assertEqual(positions[("META", _SHARED_POSITION_OWNER)].qty, Decimal("-6"))
+        self.assertLess(day_bucket["net_pnl"], Decimal("0"))
+        self.assertEqual(day_bucket["losses"], 1)
+        self.assertEqual(symbol_bucket["closed_trade_count"], 1)
+        self.assertLess(symbol_bucket["net_pnl"], Decimal("0"))
+        self.assertEqual(len(all_closed_trades), 1)
+        self.assertLess(cash, Decimal("15231.20"))
+
+    def test_apply_filled_decision_sell_adds_to_existing_short(self) -> None:
+        signal = self._signal(bid="523.90", ask="524.00", price="523.95")
+        decision = StrategyDecision(
+            strategy_id="intraday_tsmom_v1@prod",
+            symbol="META",
+            event_ts=signal.event_ts,
+            timeframe="1Sec",
+            action="sell",
+            qty=Decimal("5"),
+            order_type="limit",
+            time_in_force="day",
+            limit_price=Decimal("523.90"),
+            rationale="test",
+            params={},
+        )
+        positions = {
+            ("META", _SHARED_POSITION_OWNER): PositionState(
+                strategy_id=_SHARED_POSITION_OWNER,
+                qty=Decimal("-10"),
+                avg_entry_price=Decimal("523.22"),
+                opened_at=datetime(2026, 3, 27, 17, 0, 0, tzinfo=timezone.utc),
+                entry_cost_total=Decimal("1.00"),
+                decision_at=datetime(2026, 3, 27, 17, 0, 0, tzinfo=timezone.utc),
+            )
+        }
+        day_bucket = {
+            "decision_count": 1,
+            "filled_count": 0,
+            "filled_notional": Decimal("0"),
+            "gross_pnl": Decimal("0"),
+            "net_pnl": Decimal("0"),
+            "cost_total": Decimal("0"),
+            "wins": 0,
+            "losses": 0,
+            "closed_trades": [],
+        }
+
+        cash = _apply_filled_decision(
+            decision=decision,
+            signal=signal,
+            fill_price=Decimal("523.90"),
+            filled_at=signal.event_ts,
+            created_at=signal.event_ts,
+            positions=positions,
+            day_bucket=day_bucket,
+            cost_model=TransactionCostModel(),
+            cash=Decimal("15231.20"),
+            all_closed_trades=[],
+        )
+
+        self.assertEqual(positions[("META", _SHARED_POSITION_OWNER)].qty, Decimal("-15"))
+        self.assertEqual(
+            positions[("META", _SHARED_POSITION_OWNER)].avg_entry_price,
+            Decimal("523.4466666666666666666666667"),
+        )
+        self.assertEqual(day_bucket["filled_count"], 1)
+        self.assertEqual(day_bucket["filled_notional"], Decimal("2619.50"))
+        self.assertGreater(cash, Decimal("15231.20"))
 
     def test_replay_main_writes_trace_funnel_and_near_miss_outputs(self) -> None:
         with TemporaryDirectory() as tmpdir:

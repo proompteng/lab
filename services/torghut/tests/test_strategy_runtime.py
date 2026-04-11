@@ -13,7 +13,10 @@ from app.strategies.catalog import (
 )
 from app.trading.features import FeatureNormalizationError, FeatureVectorV3, normalize_feature_vector_v3
 from app.trading.models import SignalEnvelope
-from app.trading.research_sleeves import evaluate_mean_reversion_exhaustion_short
+from app.trading.research_sleeves import (
+    _rank_thresholds,
+    evaluate_mean_reversion_exhaustion_short,
+)
 from app.trading.strategy_runtime import (
     LegacyMacdRsiPlugin,
     MicrobarCrossSectionalLongPlugin,
@@ -5784,6 +5787,8 @@ class TestMeanReversionExhaustionShortSleeveCoverage(TestCase):
         self.assertEqual(no_signal_result.trace.first_failed_gate, "structure")
 
     def test_mean_reversion_exhaustion_short_evaluator_supports_rank_selection(self) -> None:
+        self.assertEqual(_rank_thresholds(universe_size=1, top_n=4), (Decimal("0"), Decimal("1")))
+
         ranked_sell = evaluate_mean_reversion_exhaustion_short(
             **(
                 self._base_kwargs()
@@ -5819,3 +5824,21 @@ class TestMeanReversionExhaustionShortSleeveCoverage(TestCase):
         self.assertIsNone(filtered_sell.signal)
         assert filtered_sell.trace is not None
         self.assertEqual(filtered_sell.trace.first_failed_gate, "rank_selection")
+
+        continuation_sell = evaluate_mean_reversion_exhaustion_short(
+            **(
+                self._base_kwargs()
+                | {
+                    "params": {
+                        "rank_feature": "cross_section_reversal_rank",
+                        "selection_mode": "continuation",
+                        "top_n": "2",
+                        "universe_size": "6",
+                    },
+                    "cross_section_reversal_rank": Decimal("0.20"),
+                }
+            )
+        )
+        self.assertIsNotNone(continuation_sell.signal)
+        assert continuation_sell.signal is not None
+        self.assertIn("selection_mode:continuation", continuation_sell.signal.rationale)

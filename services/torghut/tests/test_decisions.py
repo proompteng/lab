@@ -13,8 +13,13 @@ from app.strategies.catalog import StrategyConfig, _compose_strategy_description
 from app.trading.decisions import (
     DecisionEngine,
     _build_runtime_position_exit_overlay,
+    _count_open_short_positions,
+    _exit_position_side_for_strategies,
+    _is_entry_action_for_strategies,
+    _is_exit_action_for_strategies,
     _passes_runtime_trade_policy,
     _record_runtime_trade_policy_decision,
+    _resolve_qty,
     _resolve_qty_for_aggregated,
     _resolve_strategy_time_in_force,
 )
@@ -1766,6 +1771,68 @@ class TestDecisionEngine(TestCase):
                 positions=[],
                 policy={"max_entries_per_session": 1},
             )
+        )
+
+    def test_short_side_runtime_helpers_cover_exit_only_and_short_position_fallbacks(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="mean-reversion-exhaustion-short",
+            description="version=1.0.0",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="mean_reversion_exhaustion_short_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("12000"),
+        )
+
+        blocked_qty, blocked_meta = _resolve_qty(
+            strategy,
+            symbol="META",
+            action="buy",
+            price=Decimal("100"),
+            equity=Decimal("10000"),
+            positions=[{"symbol": "META", "qty": "2", "side": "long"}],
+        )
+        self.assertEqual(blocked_qty, Decimal("0"))
+        self.assertEqual(blocked_meta["reason"], "exit_only_buy_without_short_position")
+
+        cover_qty, cover_meta = _resolve_qty(
+            strategy,
+            symbol="META",
+            action="buy",
+            price=Decimal("100"),
+            equity=Decimal("10000"),
+            positions=[{"symbol": "META", "qty": "3", "side": "short"}],
+        )
+        self.assertEqual(cover_qty, Decimal("3"))
+        self.assertEqual(cover_meta["method"], "min(max_notional,pct_equity)")
+
+        self.assertFalse(
+            _is_entry_action_for_strategies(strategies=[strategy], action="hold")
+        )
+        self.assertFalse(
+            _is_exit_action_for_strategies(strategies=[strategy], action="hold")
+        )
+        self.assertIsNone(
+            _exit_position_side_for_strategies(strategies=[strategy], action="hold")
+        )
+
+        self.assertEqual(_count_open_short_positions(None), 0)
+        self.assertEqual(
+            _count_open_short_positions(
+                [
+                    {"symbol": "META", "qty": "3", "side": "short"},
+                    {"symbol": "", "qty": "2", "side": "short"},
+                    {"symbol": "AAPL", "qty": "bad", "side": "short", "market_value": "-50"},
+                    {"symbol": "NVDA", "qty": "bad", "side": "short", "market_value": "bad"},
+                    {"symbol": "MSFT", "side": "short", "market_value": "0"},
+                    {"symbol": "TSLA", "qty": "1", "side": "long"},
+                ]
+            ),
+            2,
         )
 
     def test_scheduler_runtime_breakout_continuation_skips_exit_only_sell_for_pending_entry_only(
