@@ -42,6 +42,8 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                     '--allow-stale-tape',
                     '--family-template-dir',
                     str(family_dir),
+                    '--max-candidates-to-evaluate',
+                    '12',
                 ],
             ):
                 args = frontier._parse_args()
@@ -49,6 +51,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(args.expected_last_trading_day, '2026-04-07')
         self.assertTrue(args.allow_stale_tape)
         self.assertEqual(args.family_template_dir, family_dir)
+        self.assertEqual(args.max_candidates_to_evaluate, 12)
 
     def test_rolling_lower_bound_handles_empty_and_short_windows(self) -> None:
         self.assertEqual(frontier._rolling_lower_bound({}, window=3), Decimal('0'))
@@ -233,6 +236,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             family_template_dir=Path(__file__).resolve().parents[1] / 'config' / 'trading' / 'families',
             prefetch_full_window_rows=False,
             top_n=10,
+            max_candidates_to_evaluate=0,
             json_output=json_output,
             symbol_prune_iterations=0,
             symbol_prune_candidates=1,
@@ -796,6 +800,63 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             persisted = json.loads(json_output.read_text(encoding='utf-8'))
             self.assertEqual(persisted['status'], 'completed')
             self.assertEqual(persisted['candidate_count'], 2)
+
+    def test_run_frontier_respects_candidate_budget(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            strategy_configmap = self._write_strategy_configmap(root)
+            sweep_config = self._write_sweep_config(root)
+            json_output = root / 'frontier.json'
+            args = self._make_args(
+                strategy_configmap=strategy_configmap,
+                sweep_config=sweep_config,
+                json_output=json_output,
+            )
+            args.max_candidates_to_evaluate = 1
+            recent_days = tuple(date(2026, 3, 18) + timedelta(days=index) for index in range(6))
+            snapshot_receipt = SimpleNamespace(
+                snapshot_id='snap-budget',
+                is_fresh=True,
+                stale_override_used=False,
+                to_payload=lambda: {
+                    'snapshot_id': 'snap-budget',
+                    'source': 'ta',
+                    'window_size': 'PT1S',
+                    'start_day': '2026-03-18',
+                    'end_day': '2026-03-23',
+                    'expected_last_trading_day': '2026-03-23',
+                    'is_fresh': True,
+                    'missing_days': [],
+                    'row_count': 123,
+                    'stale_override_used': False,
+                    'witnesses': [],
+                },
+            )
+
+            def fake_run_replay(config: object) -> dict[str, object]:
+                return self._payload(
+                    start_date=str(getattr(config, 'start_date')),
+                    end_date=str(getattr(config, 'end_date')),
+                    daily_net={'2026-03-18': '100', '2026-03-19': '110', '2026-03-20': '120'},
+                    decision_count=3,
+                    filled_count=3,
+                    wins=3,
+                    losses=0,
+                )
+
+            with (
+                patch('scripts.search_consistent_profitability_frontier._resolve_recent_trading_days', return_value=recent_days),
+                patch('scripts.search_consistent_profitability_frontier.build_dataset_snapshot_receipt', return_value=snapshot_receipt),
+                patch('scripts.search_consistent_profitability_frontier.ensure_fresh_snapshot'),
+                patch('scripts.search_consistent_profitability_frontier.run_replay', side_effect=fake_run_replay),
+            ):
+                payload = frontier.run_consistent_profitability_frontier(args)
+
+            self.assertEqual(payload['status'], 'candidate_budget_exhausted')
+            self.assertEqual(payload['candidate_count'], 1)
+            self.assertGreater(payload['progress']['pending_candidates'], 0)
+            persisted = json.loads(json_output.read_text(encoding='utf-8'))
+            self.assertEqual(persisted['status'], 'candidate_budget_exhausted')
 
     def test_main_symbol_pruning_promotes_pruned_universe(self) -> None:
         with TemporaryDirectory() as tmpdir:

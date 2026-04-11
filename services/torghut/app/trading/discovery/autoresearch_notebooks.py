@@ -78,6 +78,7 @@ except ModuleNotFoundError:
 RUN_ROOT = Path('{resolved}')
 SUMMARY = json.loads((RUN_ROOT / 'summary.json').read_text(encoding='utf-8'))
 RESEARCH = json.loads((RUN_ROOT / 'research_dossier.json').read_text(encoding='utf-8'))
+LIVE_PROGRESS = SUMMARY.get('live_progress') or {{}}
 HISTORY = [
     json.loads(line)
     for line in (RUN_ROOT / 'history.jsonl').read_text(encoding='utf-8').splitlines()
@@ -210,6 +211,27 @@ _display_rows(objective_rows, columns=['metric', 'target'])
 best = SUMMARY.get('best_candidate') or {}
 display(Markdown('## Best Candidate Summary'))
 _display_rows([best])
+
+if LIVE_PROGRESS:
+    display(Markdown('## Live Progress'))
+    _display_rows(
+        [
+            {
+                'frontier_runs_started': LIVE_PROGRESS.get('frontier_runs_started'),
+                'pending_work_items': LIVE_PROGRESS.get('pending_work_items'),
+                'history_row_count': LIVE_PROGRESS.get('history_row_count'),
+                'descriptor_count': LIVE_PROGRESS.get('descriptor_count'),
+                'proposal_score_count': LIVE_PROGRESS.get('proposal_score_count'),
+                'experiment_result_count': LIVE_PROGRESS.get('experiment_result_count'),
+            }
+        ]
+    )
+    if LIVE_PROGRESS.get('selected_for_replay'):
+        display(Markdown('### Selected for replay'))
+        _display_rows([LIVE_PROGRESS.get('selected_for_replay') or {}])
+    if LIVE_PROGRESS.get('best_experiment_candidate'):
+        display(Markdown('### Best provisional experiment snapshot'))
+        _display_rows([LIVE_PROGRESS.get('best_experiment_candidate') or {}])
 
 promotion = SUMMARY.get('promotion_readiness') or {}
 if promotion:
@@ -477,6 +499,7 @@ except ModuleNotFoundError:
 RUN_ROOT = Path('{resolved}')
 SUMMARY = json.loads((RUN_ROOT / 'summary.json').read_text(encoding='utf-8'))
 MANIFEST = json.loads((RUN_ROOT / 'mlx-snapshot-manifest.json').read_text(encoding='utf-8'))
+LIVE_PROGRESS = SUMMARY.get('live_progress') or {{}}
 DESCRIPTORS = [
     json.loads(line)
     for line in (RUN_ROOT / 'mlx-candidate-descriptors.jsonl').read_text(encoding='utf-8').splitlines()
@@ -611,6 +634,9 @@ _display_rows(
             'train_days': MANIFEST.get('train_days'),
             'holdout_days': MANIFEST.get('holdout_days'),
             'full_window_days': MANIFEST.get('full_window_days'),
+            'pending_work_items': LIVE_PROGRESS.get('pending_work_items'),
+            'proposal_score_count': LIVE_PROGRESS.get('proposal_score_count'),
+            'experiment_result_count': LIVE_PROGRESS.get('experiment_result_count'),
         }
     ]
 )
@@ -661,6 +687,9 @@ _display_rows(
     if selected:
         display(Markdown('### Selected proposal batch'))
         _display_rows([{column: row.get(column) for column in selected_columns} for row in selected], columns=selected_columns)
+    if LIVE_PROGRESS.get('selected_for_replay'):
+        display(Markdown('### Current replay selection'))
+        _display_rows([LIVE_PROGRESS.get('selected_for_replay') or {}])
 """
         ),
         _code_cell(

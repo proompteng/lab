@@ -166,6 +166,12 @@ def _parse_args() -> argparse.Namespace:
         help='Fetch full-window replay rows once and reuse them for every candidate replay.',
     )
     parser.add_argument('--top-n', type=int, default=10)
+    parser.add_argument(
+        '--max-candidates-to-evaluate',
+        type=int,
+        default=0,
+        help='Optional cap on evaluated candidates inside one frontier run. 0 means unbounded.',
+    )
     parser.add_argument('--json-output', type=Path)
     parser.add_argument(
         '--symbol-prune-iterations',
@@ -1022,7 +1028,11 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         cache_context: contextlib.AbstractContextManager[None]
         cache_context = _cached_signal_rows_patch(cached_rows) if cached_rows is not None else contextlib.nullcontext()
         with cache_context:
+            budget_exhausted = False
             while worklist:
+                if int(args.max_candidates_to_evaluate) > 0 and len(scored) >= int(args.max_candidates_to_evaluate):
+                    budget_exhausted = True
+                    break
                 params_candidate, override_candidate, prune_iteration, pruned_symbol, parent_candidate_id = worklist.pop(0)
                 candidate_key = _candidate_search_key(
                     params_candidate=params_candidate,
@@ -1247,8 +1257,8 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         consistency_policy=consistency_policy,
         objective_veto_policy=objective_veto_policy,
         top_n=max(1, int(args.top_n)),
-        status='completed',
-        pending_candidates=0,
+        status='candidate_budget_exhausted' if budget_exhausted and worklist else 'completed',
+        pending_candidates=len(worklist),
     )
     if args.json_output is not None:
         args.json_output.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding='utf-8')
