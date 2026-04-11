@@ -13,7 +13,10 @@ from app.strategies.catalog import (
 )
 from app.trading.features import FeatureNormalizationError, FeatureVectorV3, normalize_feature_vector_v3
 from app.trading.models import SignalEnvelope
-from app.trading.research_sleeves import evaluate_mean_reversion_exhaustion_short
+from app.trading.research_sleeves import (
+    _rank_thresholds,
+    evaluate_mean_reversion_exhaustion_short,
+)
 from app.trading.strategy_runtime import (
     LegacyMacdRsiPlugin,
     MicrobarCrossSectionalLongPlugin,
@@ -5570,6 +5573,30 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
         assert continuation_buy.intent is not None
         self.assertEqual(continuation_buy.intent.action, "buy")
 
+        periodicity_buy = long_plugin.evaluate(
+            self._context(
+                params={
+                    "entry_minute_after_open": "0",
+                    "exit_minute_after_open": "45",
+                    "signal_motif": "prev_day_open45_periodicity",
+                    "rank_feature": "cross_section_prev_day_open45_return_rank",
+                    "selection_mode": "continuation",
+                    "top_n": "1",
+                    "universe_size": "12",
+                },
+                event_ts="2026-03-25T13:30:00+00:00",
+            ),
+            _test_feature_vector(
+                {
+                    "session_minutes_elapsed": 0,
+                    "cross_section_prev_day_open45_return_rank": Decimal("1"),
+                }
+            ),
+        )
+        self.assertIsNotNone(periodicity_buy.intent)
+        assert periodicity_buy.intent is not None
+        self.assertEqual(periodicity_buy.intent.action, "buy")
+
         continuation_skip = _evaluate_microbar_cross_sectional(
             context=self._context(
                 params={
@@ -5702,6 +5729,11 @@ class TestMeanReversionExhaustionShortSleeveCoverage(TestCase):
             "cross_section_opening_window_return_from_prev_close_rank": None,
             "cross_section_continuation_rank": Decimal("0.38"),
             "cross_section_reversal_rank": Decimal("0.80"),
+            "cross_section_session_open_rank": Decimal("0.84"),
+            "cross_section_prev_session_close_rank": Decimal("0.81"),
+            "cross_section_range_position_rank": Decimal("0.78"),
+            "cross_section_vwap_w5m_rank": Decimal("0.76"),
+            "cross_section_recent_imbalance_rank": Decimal("0.73"),
         }
 
     def test_mean_reversion_exhaustion_short_evaluator_covers_required_and_window_guards(self) -> None:
@@ -5753,3 +5785,60 @@ class TestMeanReversionExhaustionShortSleeveCoverage(TestCase):
         self.assertIsNone(no_signal_result.signal)
         assert no_signal_result.trace is not None
         self.assertEqual(no_signal_result.trace.first_failed_gate, "structure")
+
+    def test_mean_reversion_exhaustion_short_evaluator_supports_rank_selection(self) -> None:
+        self.assertEqual(_rank_thresholds(universe_size=1, top_n=4), (Decimal("0"), Decimal("1")))
+
+        ranked_sell = evaluate_mean_reversion_exhaustion_short(
+            **(
+                self._base_kwargs()
+                | {
+                    "params": {
+                        "rank_feature": "cross_section_reversal_rank",
+                        "selection_mode": "reversal",
+                        "top_n": "2",
+                        "universe_size": "6",
+                    },
+                    "cross_section_reversal_rank": Decimal("0.85"),
+                }
+            )
+        )
+        self.assertIsNotNone(ranked_sell.signal)
+        assert ranked_sell.signal is not None
+        self.assertIn("rank_feature:cross_section_reversal_rank", ranked_sell.signal.rationale)
+
+        filtered_sell = evaluate_mean_reversion_exhaustion_short(
+            **(
+                self._base_kwargs()
+                | {
+                    "params": {
+                        "rank_feature": "cross_section_reversal_rank",
+                        "selection_mode": "reversal",
+                        "top_n": "2",
+                        "universe_size": "6",
+                    },
+                    "cross_section_reversal_rank": Decimal("0.60"),
+                }
+            )
+        )
+        self.assertIsNone(filtered_sell.signal)
+        assert filtered_sell.trace is not None
+        self.assertEqual(filtered_sell.trace.first_failed_gate, "rank_selection")
+
+        continuation_sell = evaluate_mean_reversion_exhaustion_short(
+            **(
+                self._base_kwargs()
+                | {
+                    "params": {
+                        "rank_feature": "cross_section_reversal_rank",
+                        "selection_mode": "continuation",
+                        "top_n": "2",
+                        "universe_size": "6",
+                    },
+                    "cross_section_reversal_rank": Decimal("0.20"),
+                }
+            )
+        )
+        self.assertIsNotNone(continuation_sell.signal)
+        assert continuation_sell.signal is not None
+        self.assertIn("selection_mode:continuation", continuation_sell.signal.rationale)

@@ -1343,6 +1343,11 @@ class MeanReversionExhaustionShortPlugin:
         "cross_section_opening_window_return_from_prev_close_rank",
         "cross_section_continuation_rank",
         "cross_section_reversal_rank",
+        "cross_section_session_open_rank",
+        "cross_section_prev_session_close_rank",
+        "cross_section_range_position_rank",
+        "cross_section_vwap_w5m_rank",
+        "cross_section_recent_imbalance_rank",
     )
 
     def evaluate(
@@ -1398,6 +1403,21 @@ class MeanReversionExhaustionShortPlugin:
             ),
             cross_section_reversal_rank=_decimal(
                 features.values.get("cross_section_reversal_rank")
+            ),
+            cross_section_session_open_rank=_decimal(
+                features.values.get("cross_section_session_open_rank")
+            ),
+            cross_section_prev_session_close_rank=_decimal(
+                features.values.get("cross_section_prev_session_close_rank")
+            ),
+            cross_section_range_position_rank=_decimal(
+                features.values.get("cross_section_range_position_rank")
+            ),
+            cross_section_vwap_w5m_rank=_decimal(
+                features.values.get("cross_section_vwap_w5m_rank")
+            ),
+            cross_section_recent_imbalance_rank=_decimal(
+                features.values.get("cross_section_recent_imbalance_rank")
             ),
         )
         return _plugin_result_from_sleeve_result(

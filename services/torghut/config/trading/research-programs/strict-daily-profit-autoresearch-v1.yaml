@@ -228,6 +228,44 @@ families:
       max_position_pct_equity:
         mode: explicit_values
         values: ['2.0', '4.0']
+  - family_template_id: mean_reversion_exhaustion_short_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-exhaustion-short.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: true
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    parameter_mutations:
+      min_price_vs_session_open_bps:
+        mode: numeric_step
+        deltas: ['-5', '0', '5']
+        minimum: '15'
+        maximum: '50'
+      min_session_range_position:
+        mode: numeric_step
+        deltas: ['-0.05', '0', '0.05']
+        minimum: '0.60'
+        maximum: '0.90'
+      min_cross_section_reversal_rank:
+        mode: numeric_step
+        deltas: ['-0.05', '0', '0.05']
+        minimum: '0.55'
+        maximum: '0.90'
+      entry_start_minute_utc:
+        mode: numeric_step
+        deltas: ['-15', '0', '15']
+        minimum: '825'
+        maximum: '900'
+      max_recent_quote_invalid_ratio:
+        mode: numeric_step
+        deltas: ['-0.06', '0', '0.06']
+        minimum: '0.06'
+        maximum: '0.36'
+    strategy_override_mutations:
+      normalization_regime:
+        mode: allowed_normalizations
   - family_template_id: end_of_day_reversal_v1
     seed_sweep_config: ../profitability-frontier-strict-daily-end-of-day-reversal.yaml
     max_iterations: 2

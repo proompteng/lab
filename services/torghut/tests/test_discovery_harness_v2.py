@@ -211,6 +211,13 @@ class TestDiscoveryHarnessV2(TestCase):
             template.runtime_harness['strategy_name'],
             'breakout-continuation-long-v1',
         )
+        short_template = load_family_template('mean_reversion_exhaustion_short_v1', directory=root)
+        self.assertEqual(short_template.family_id, 'mean_reversion_exhaustion_short_v1')
+        self.assertIn('max_hold_seconds', short_template.risk_controls)
+        self.assertEqual(
+            short_template.runtime_harness['strategy_name'],
+            'mean-reversion-exhaustion-short-v1',
+        )
         self.assertEqual(
             derive_family_template_id(explicit_id=' custom ', family='ignored'),
             'custom',

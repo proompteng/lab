@@ -851,7 +851,7 @@ def _should_keep_market_order_for_high_conviction_entry(
     price: Decimal | None,
     spread: Decimal | None,
 ) -> bool:
-    if decision.action != "buy" or decision.order_type != "market":
+    if decision.order_type != "market":
         return False
     if decision.params.get("position_exit") is not None:
         return False
@@ -924,6 +924,17 @@ def _should_keep_market_order_for_high_conviction_entry(
         ):
             return False
         return True
+
+    if {
+        "microbar_cross_sectional_long_v1",
+        "microbar_cross_sectional_short_v1",
+    } & strategy_types:
+        rationale_tokens = {
+            token.strip().lower()
+            for token in str(decision.rationale or "").split(",")
+            if token.strip()
+        }
+        return "microbar_cross_sectional_entry" in rationale_tokens
 
     return False
 
