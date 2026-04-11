@@ -36,11 +36,15 @@ The cleanup program moved the highest-risk application boundaries behind explici
   - `services/jangar/src/server/controller-runtime-config.ts`
   - `services/jangar/src/server/control-plane-config.ts`
   - `services/jangar/src/server/integrations-config.ts`
+  - `services/jangar/src/server/memory-config.ts`
   - `services/jangar/src/server/torghut-config.ts`
   - `services/jangar/src/server/agentctl-grpc-config.ts`
   - `services/jangar/src/server/terminals-config.ts`
   - `services/jangar/src/server/github-review-config.ts`
   - `services/jangar/src/server/metrics-config.ts`
+- Memory embeddings
+  - `services/jangar/src/server/memory-provider.ts`
+  - `services/jangar/src/server/memory-provider-health.ts`
 - Kubernetes
   - `services/jangar/src/server/kube-gateway.ts`
   - `services/jangar/src/server/primitives-kube.ts`

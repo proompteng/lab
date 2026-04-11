@@ -72,6 +72,41 @@ describe('memory-provider', () => {
     await expect(writeMemoryEmbedding(connection, 'key-1', 'hello world')).rejects.toThrow(/missing OPENAI_API_KEY/i)
   })
 
+  it('fails when the embedding input exceeds the configured maximum length', async () => {
+    process.env.NODE_ENV = 'production'
+    process.env.OPENAI_API_KEY = 'test-key'
+    process.env.OPENAI_EMBEDDING_DIMENSION = '3'
+    process.env.OPENAI_EMBEDDING_MAX_INPUT_CHARS = '5'
+
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(writeMemoryEmbedding(connection, 'key-1', 'hello world')).rejects.toThrow(/input too large/i)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('fails when the embedding request exceeds the configured timeout', async () => {
+    process.env.NODE_ENV = 'production'
+    process.env.OPENAI_API_KEY = 'test-key'
+    process.env.OPENAI_EMBEDDING_DIMENSION = '3'
+    process.env.OPENAI_EMBEDDING_TIMEOUT_MS = '5'
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        return new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            const error = new Error('aborted')
+            error.name = 'AbortError'
+            reject(error)
+          })
+        })
+      }),
+    )
+
+    await expect(writeMemoryEmbedding(connection, 'key-1', 'hello world')).rejects.toThrow(/timed out/i)
+  })
+
   it('reuses pooled postgres clients across repeated writes', async () => {
     process.env.NODE_ENV = 'development'
 

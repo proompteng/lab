@@ -4,6 +4,7 @@ import type { ExecutionTrustStatus } from '~/data/agents-control-plane'
 import { assessAgentRunIngestion, getAgentsControllerHealth } from '~/server/agents-controller'
 import { buildRuntimeAdmissionSnapshot, findAdmissionPassport } from '~/server/control-plane-runtime-admission'
 import { getLeaderElectionStatus } from '~/server/leader-election'
+import { getMemoryProviderHealth } from '~/server/memory-provider-health'
 import { getOrchestrationControllerHealth } from '~/server/orchestration-controller'
 import { getSupportingControllerHealth } from '~/server/supporting-primitives-controller'
 import { buildExecutionTrust } from '~/server/control-plane-status'
@@ -122,6 +123,7 @@ export const getReadyHandler = async () => {
   const supportingController = getSupportingControllerHealth()
   const namespaces = agentsController.namespaces?.length ? agentsController.namespaces : ['agents']
   const trust = await executionTrustStatus(namespaces)
+  const memoryProvider = getMemoryProviderHealth()
   const runtimeAdmission = buildRuntimeAdmissionSnapshot({
     now: new Date(),
     executionTrust: trust,
@@ -143,7 +145,8 @@ export const getReadyHandler = async () => {
     : leaderElectionReady
   const servingPassportReady =
     servingPassport !== undefined && servingPassport.decision !== 'block' && servingPassport.decision !== 'hold'
-  const ready = controllersOk && agentsControllerReady && servingPassportReady
+  const memoryProviderReady = memoryProvider.status !== 'blocked'
+  const ready = controllersOk && agentsControllerReady && servingPassportReady && memoryProviderReady
 
   const body = JSON.stringify({
     status: ready ? 'ok' : 'degraded',
@@ -153,6 +156,7 @@ export const getReadyHandler = async () => {
     orchestrationController,
     supportingController,
     execution_trust: trust,
+    memory_provider: memoryProvider,
     runtime_kits: runtimeAdmission.runtimeKits,
     admission_passports: runtimeAdmission.admissionPassports,
     serving_passport_id: runtimeAdmission.servingPassportId,
