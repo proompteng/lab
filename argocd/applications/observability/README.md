@@ -1,14 +1,19 @@
 # Observability object storage (Ceph RGW)
 
 Observability uses Ceph RGW object storage, not MinIO.
-Loki, Mimir, and Tempo read S3 credentials and endpoint from secret `rook-ceph-rgw-loki` in the `observability` namespace.
+Loki, Mimir, and Tempo read S3 credentials and endpoint from secret `rook-ceph-rgw-loki` in the `observability`
+namespace.
+That secret should be a reflected copy of the Rook-managed source secret
+`rook-ceph-object-user-objectstore-loki` in namespace `rook-ceph`, not a hand-sealed credential copy.
 
 ## Sources of truth
 
-1. `argocd/applications/observability/rook-ceph-rgw-loki.yaml`
-2. `argocd/applications/observability/loki-values.yaml`
-3. `argocd/applications/observability/mimir-values.yaml`
-4. `argocd/applications/observability/tempo-values.yaml`
+1. `argocd/applications/observability/rook-ceph-objectstore-loki-user.yaml`
+2. `argocd/applications/observability/rook-ceph-object-user-objectstore-loki-reflector-source.yaml`
+3. `argocd/applications/observability/rook-ceph-rgw-loki-reflected-secret.yaml`
+4. `argocd/applications/observability/loki-values.yaml`
+5. `argocd/applications/observability/mimir-values.yaml`
+6. `argocd/applications/observability/tempo-values.yaml`
 
 ## Required buckets
 
@@ -31,8 +36,8 @@ kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin bucket list --
 Create a missing bucket using `mc` + a temporary `port-forward`:
 
 ```bash
-ACCESS_KEY="$(kubectl -n rook-ceph get secret rook-ceph-object-user-objectstore-loki -o jsonpath='{.data.AccessKey}' | base64 -d)"
-SECRET_KEY="$(kubectl -n rook-ceph get secret rook-ceph-object-user-objectstore-loki -o jsonpath='{.data.SecretKey}' | base64 -d)"
+ACCESS_KEY="$(kubectl -n observability get secret rook-ceph-rgw-loki -o jsonpath='{.data.AccessKey}' | base64 -d)"
+SECRET_KEY="$(kubectl -n observability get secret rook-ceph-rgw-loki -o jsonpath='{.data.SecretKey}' | base64 -d)"
 
 kubectl -n rook-ceph port-forward svc/rook-ceph-rgw-objectstore 19000:80
 
@@ -49,11 +54,14 @@ Observability is exposed over Tailscale using `Ingress` resources (not `Service`
 - Mimir nginx: `mimir.ide-newton.ts.net`
 - Tempo gateway: `tempo.ide-newton.ts.net`
 
-## Rotate RGW credentials
+## Reflect RGW credentials
 
-1. Re-seal `argocd/applications/observability/rook-ceph-rgw-loki.yaml` with the active sealed-secrets key.
-2. Commit and sync `observability`.
-3. Restart components if needed:
+1. Keep `rook-ceph-object-user-objectstore-loki` in `rook-ceph` annotated for reflector access to namespace
+   `observability`.
+2. Keep `rook-ceph-rgw-loki` in `observability` as a reflector target, not a hand-managed secret.
+3. Keep the original RGW buckets (`loki-data`, `tempo-traces`, `mimir-blocks`, `mimir-alertmanager`,
+   `mimir-ruler`) as the active storage path.
+4. Restart components if needed:
 
 ```bash
 kubectl -n observability rollout restart deploy observability-loki-loki-distributed-distributor

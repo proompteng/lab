@@ -4,22 +4,19 @@ global:
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: accessKey
+          key: AccessKey
     - name: OBS_S3_SECRET_KEY
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: secretKey
+          key: SecretKey
     - name: OBS_S3_ENDPOINT
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: endpoint
+          key: Endpoint
     - name: OBS_S3_REGION
-      valueFrom:
-        secretKeyRef:
-          name: rook-ceph-rgw-loki
-          key: region
+      value: us-east-1
 
 mimir:
   structuredConfig:
