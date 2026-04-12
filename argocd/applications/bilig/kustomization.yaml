@@ -4,6 +4,7 @@ resources:
   - bilig-cert-tls.yaml
   - zero-admin-sealedsecret.yaml
   - zero-strip-prefix-middleware.yaml
+  - zero-data-migration-job.yaml
   - app-deployment.yaml
   - app-pdb.yaml
   - app-service.yaml
