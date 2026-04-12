@@ -1,10 +1,12 @@
 # Observability object storage (Ceph RGW)
 
 Observability uses Ceph RGW object storage, not MinIO.
-Loki, Mimir, and Tempo read S3 credentials and endpoint from secret `rook-ceph-rgw-loki` in the `observability`
+Loki, Mimir, and Tempo read S3 access credentials from secret `rook-ceph-rgw-loki` in the `observability`
 namespace.
 That secret should be a reflected copy of the Rook-managed source secret
 `rook-ceph-object-user-objectstore-loki` in namespace `rook-ceph`, not a hand-sealed credential copy.
+The RGW endpoint is not sourced from the reflected secret. Keep it explicit in the Helm values as
+`rook-ceph-rgw-objectstore.rook-ceph.svc:80` (or `http://...` only where the chart expects a URL string).
 
 ## Sources of truth
 

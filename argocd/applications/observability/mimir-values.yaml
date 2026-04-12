@@ -10,11 +10,6 @@ global:
         secretKeyRef:
           name: rook-ceph-rgw-loki
           key: SecretKey
-    - name: OBS_S3_ENDPOINT
-      valueFrom:
-        secretKeyRef:
-          name: rook-ceph-rgw-loki
-          key: Endpoint
     - name: OBS_S3_REGION
       value: us-east-1
 
@@ -28,7 +23,7 @@ mimir:
       bucket_store:
         sync_dir: /data/tsdb-sync
       s3:
-        endpoint: ${OBS_S3_ENDPOINT}
+        endpoint: rook-ceph-rgw-objectstore.rook-ceph.svc:80
         bucket_name: mimir-blocks
         access_key_id: ${OBS_S3_ACCESS_KEY}
         secret_access_key: ${OBS_S3_SECRET_KEY}
@@ -38,7 +33,7 @@ mimir:
     alertmanager_storage:
       backend: s3
       s3:
-        endpoint: ${OBS_S3_ENDPOINT}
+        endpoint: rook-ceph-rgw-objectstore.rook-ceph.svc:80
         bucket_name: mimir-alertmanager
         access_key_id: ${OBS_S3_ACCESS_KEY}
         secret_access_key: ${OBS_S3_SECRET_KEY}
@@ -48,7 +43,7 @@ mimir:
     ruler_storage:
       backend: s3
       s3:
-        endpoint: ${OBS_S3_ENDPOINT}
+        endpoint: rook-ceph-rgw-objectstore.rook-ceph.svc:80
         bucket_name: mimir-ruler
         access_key_id: ${OBS_S3_ACCESS_KEY}
         secret_access_key: ${OBS_S3_SECRET_KEY}
