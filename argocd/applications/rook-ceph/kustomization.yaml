@@ -6,6 +6,8 @@ resources:
   - storageclasses.yaml
   - tailscale-service-dashboard.yaml
   - ingressroute-ceph-k8s-private.yaml
+  - rook-ceph-objectstore-loki-user.yaml
+  - rook-ceph-object-user-objectstore-loki-reflector-source.yaml
 
 helmCharts:
   - name: rook-ceph

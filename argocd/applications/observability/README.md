@@ -10,8 +10,8 @@ The RGW endpoint is not sourced from the reflected secret. Keep it explicit in t
 
 ## Sources of truth
 
-1. `argocd/applications/observability/rook-ceph-objectstore-loki-user.yaml`
-2. `argocd/applications/observability/rook-ceph-object-user-objectstore-loki-reflector-source.yaml`
+1. `argocd/applications/rook-ceph/rook-ceph-objectstore-loki-user.yaml`
+2. `argocd/applications/rook-ceph/rook-ceph-object-user-objectstore-loki-reflector-source.yaml`
 3. `argocd/applications/observability/rook-ceph-rgw-loki-reflected-secret.yaml`
 4. `argocd/applications/observability/loki-values.yaml`
 5. `argocd/applications/observability/mimir-values.yaml`
@@ -58,8 +58,7 @@ Observability is exposed over Tailscale using `Ingress` resources (not `Service`
 
 ## Reflect RGW credentials
 
-1. Keep `rook-ceph-object-user-objectstore-loki` in `rook-ceph` annotated for reflector access to namespace
-   `observability`.
+1. Keep `CephObjectStoreUser/loki` and the source secret annotation manifests owned by the `rook-ceph` app.
 2. Keep `rook-ceph-rgw-loki` in `observability` as a reflector target, not a hand-managed secret.
 3. Keep the original RGW buckets (`loki-data`, `tempo-traces`, `mimir-blocks`, `mimir-alertmanager`,
    `mimir-ruler`) as the active storage path.

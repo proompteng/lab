@@ -2,8 +2,6 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  - rook-ceph-objectstore-loki-user.yaml
-  - rook-ceph-object-user-objectstore-loki-reflector-source.yaml
   - rook-ceph-rgw-loki-reflected-secret.yaml
   - tailscale-ingresses.yaml
   - ingressroute-grafana-k8s-private.yaml
