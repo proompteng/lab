@@ -10,7 +10,7 @@ loki:
           period: 24h
   storageConfig:
     aws:
-      s3: http://${OBS_S3_ENDPOINT}
+      s3: ${OBS_S3_ENDPOINT}
       s3forcepathstyle: true
       bucketnames: loki-data
       access_key_id: ${OBS_S3_ACCESS_KEY}
@@ -55,17 +55,17 @@ distributor:
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: accessKey
+          key: AccessKey
     - name: OBS_S3_SECRET_KEY
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: secretKey
+          key: SecretKey
     - name: OBS_S3_ENDPOINT
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: endpoint
+          key: Endpoint
 
 ingester:
   extraArgs:
@@ -75,17 +75,17 @@ ingester:
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: accessKey
+          key: AccessKey
     - name: OBS_S3_SECRET_KEY
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: secretKey
+          key: SecretKey
     - name: OBS_S3_ENDPOINT
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: endpoint
+          key: Endpoint
 
 querier:
   extraArgs:
@@ -95,17 +95,17 @@ querier:
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: accessKey
+          key: AccessKey
     - name: OBS_S3_SECRET_KEY
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: secretKey
+          key: SecretKey
     - name: OBS_S3_ENDPOINT
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: endpoint
+          key: Endpoint
 
 queryFrontend:
   extraArgs:
@@ -115,17 +115,17 @@ queryFrontend:
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: accessKey
+          key: AccessKey
     - name: OBS_S3_SECRET_KEY
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: secretKey
+          key: SecretKey
     - name: OBS_S3_ENDPOINT
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: endpoint
+          key: Endpoint
 
 gateway:
   extraArgs:
@@ -135,17 +135,17 @@ gateway:
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: accessKey
+          key: AccessKey
     - name: OBS_S3_SECRET_KEY
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: secretKey
+          key: SecretKey
     - name: OBS_S3_ENDPOINT
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: endpoint
+          key: Endpoint
 
 compactor:
   extraArgs:
@@ -155,17 +155,17 @@ compactor:
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: accessKey
+          key: AccessKey
     - name: OBS_S3_SECRET_KEY
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: secretKey
+          key: SecretKey
     - name: OBS_S3_ENDPOINT
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: endpoint
+          key: Endpoint
 
 ruler:
   extraArgs:
@@ -175,14 +175,14 @@ ruler:
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: accessKey
+          key: AccessKey
     - name: OBS_S3_SECRET_KEY
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: secretKey
+          key: SecretKey
     - name: OBS_S3_ENDPOINT
       valueFrom:
         secretKeyRef:
           name: rook-ceph-rgw-loki
-          key: endpoint
+          key: Endpoint
