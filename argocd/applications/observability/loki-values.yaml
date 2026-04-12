@@ -10,7 +10,7 @@ loki:
           period: 24h
   storageConfig:
     aws:
-      s3: ${OBS_S3_ENDPOINT}
+      s3: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
       s3forcepathstyle: true
       bucketnames: loki-data
       access_key_id: ${OBS_S3_ACCESS_KEY}
@@ -61,11 +61,6 @@ distributor:
         secretKeyRef:
           name: rook-ceph-rgw-loki
           key: SecretKey
-    - name: OBS_S3_ENDPOINT
-      valueFrom:
-        secretKeyRef:
-          name: rook-ceph-rgw-loki
-          key: Endpoint
 
 ingester:
   extraArgs:
@@ -81,11 +76,6 @@ ingester:
         secretKeyRef:
           name: rook-ceph-rgw-loki
           key: SecretKey
-    - name: OBS_S3_ENDPOINT
-      valueFrom:
-        secretKeyRef:
-          name: rook-ceph-rgw-loki
-          key: Endpoint
 
 querier:
   extraArgs:
@@ -101,11 +91,6 @@ querier:
         secretKeyRef:
           name: rook-ceph-rgw-loki
           key: SecretKey
-    - name: OBS_S3_ENDPOINT
-      valueFrom:
-        secretKeyRef:
-          name: rook-ceph-rgw-loki
-          key: Endpoint
 
 queryFrontend:
   extraArgs:
@@ -121,11 +106,6 @@ queryFrontend:
         secretKeyRef:
           name: rook-ceph-rgw-loki
           key: SecretKey
-    - name: OBS_S3_ENDPOINT
-      valueFrom:
-        secretKeyRef:
-          name: rook-ceph-rgw-loki
-          key: Endpoint
 
 gateway:
   extraArgs:
@@ -141,11 +121,6 @@ gateway:
         secretKeyRef:
           name: rook-ceph-rgw-loki
           key: SecretKey
-    - name: OBS_S3_ENDPOINT
-      valueFrom:
-        secretKeyRef:
-          name: rook-ceph-rgw-loki
-          key: Endpoint
 
 compactor:
   extraArgs:
@@ -161,11 +136,6 @@ compactor:
         secretKeyRef:
           name: rook-ceph-rgw-loki
           key: SecretKey
-    - name: OBS_S3_ENDPOINT
-      valueFrom:
-        secretKeyRef:
-          name: rook-ceph-rgw-loki
-          key: Endpoint
 
 ruler:
   extraArgs:
@@ -181,8 +151,3 @@ ruler:
         secretKeyRef:
           name: rook-ceph-rgw-loki
           key: SecretKey
-    - name: OBS_S3_ENDPOINT
-      valueFrom:
-        secretKeyRef:
-          name: rook-ceph-rgw-loki
-          key: Endpoint
