@@ -23,8 +23,6 @@ global:
 
 mimir:
   structuredConfig:
-    distributor:
-      otel_native_delta_ingestion: true
     limits:
       ingestion_rate: 20000
       ingestion_burst_size: 400000
