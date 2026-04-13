@@ -13,3 +13,13 @@ helmCharts:
     releaseName: feature-flags
     namespace: feature-flags
     valuesFile: flipt-values.yaml
+
+patches:
+  - target:
+      kind: ConfigMap
+      name: feature-flags
+    patch: |-
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-weight
