@@ -32,7 +32,7 @@ describe('memory-provider-health', () => {
     const health = getMemoryProviderHealth({
       NODE_ENV: 'production',
       OPENAI_API_BASE_URL: 'http://saigak.jangar.svc.cluster.local:11434/v1',
-      OPENAI_EMBEDDING_MODEL: 'qwen3-embedding-saigak:0.6b',
+      OPENAI_EMBEDDING_MODEL: 'qwen3-embedding-saigak:8b',
       OPENAI_EMBEDDING_DIMENSION: '1024',
     })
 

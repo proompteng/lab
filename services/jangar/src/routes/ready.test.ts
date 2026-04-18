@@ -132,7 +132,7 @@ describe('getReadyHandler', () => {
       fallbackActive: false,
       config: {
         apiBaseUrl: 'http://saigak.jangar.svc.cluster.local:11434/v1',
-        model: 'qwen3-embedding-saigak:0.6b',
+        model: 'qwen3-embedding-saigak:8b',
         dimension: 1024,
         timeoutMs: 15000,
         maxInputChars: 60000,
