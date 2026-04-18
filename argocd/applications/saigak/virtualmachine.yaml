@@ -69,6 +69,7 @@ spec:
               ports:
                 - port: 22
                 - port: 11434
+                - port: 11435
       networks:
         - name: default
           pod: {}

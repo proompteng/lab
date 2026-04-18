@@ -165,7 +165,7 @@ spec:
             - name: OPENAI_EMBEDDING_DIMENSION
               value: "1024"
             - name: OPENAI_EMBEDDING_API_BASE_URL
-              value: http://saigak.saigak.svc.cluster.local:11434/api
+              value: http://saigak.saigak.svc.cluster.local:11435/api
             - name: OPENAI_EMBEDDING_BATCH_SIZE
               value: "32"
             - name: OPENAI_EMBEDDING_KEEP_ALIVE

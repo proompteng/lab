@@ -13,4 +13,7 @@ spec:
       port: 11434
       protocol: TCP
       targetPort: 11434
-
+    - name: embed
+      port: 11435
+      protocol: TCP
+      targetPort: 11435
