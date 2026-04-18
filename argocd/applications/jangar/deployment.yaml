@@ -353,7 +353,7 @@ spec:
             - name: OPENAI_API_BASE_URL
               value: http://saigak.saigak.svc.cluster.local:11434/v1
             - name: OPENAI_EMBEDDING_API_BASE_URL
-              value: http://saigak.saigak.svc.cluster.local:11434/api
+              value: http://saigak.saigak.svc.cluster.local:11435/api
             - name: OPENAI_EMBEDDING_MODEL
               value: qwen3-embedding-saigak:8b
             - name: OPENAI_EMBEDDING_DIMENSION
