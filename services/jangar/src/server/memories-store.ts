@@ -1,6 +1,7 @@
 import { sql } from 'kysely'
 
 import { resolveStoreDb, type Db } from '~/server/db'
+import { requestEmbedding } from '~/server/embedding-client'
 import { ensureMigrations } from '~/server/kysely-migrations'
 import { resolveEmbeddingConfig, resolveMemoriesIvfflatProbes } from './memory-config'
 
@@ -61,11 +62,6 @@ type PostgresMemoriesStoreOptions = {
 
 const DEFAULT_NAMESPACE = 'default'
 const DEFAULT_LIMIT = 10
-const DEFAULT_OPENAI_API_BASE_URL = 'https://api.openai.com/v1'
-const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small'
-const DEFAULT_OPENAI_EMBEDDING_DIMENSION = 1536
-const DEFAULT_SELF_HOSTED_EMBEDDING_MODEL = 'qwen3-embedding-saigak:0.6b'
-const DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION = 1024
 
 const DEFAULT_STATS_DAYS = 30
 const MAX_STATS_DAYS = 365
@@ -76,21 +72,12 @@ const SCHEMA = 'memories'
 const TABLE = 'entries'
 
 const DEFAULT_IVFFLAT_PROBES = 10
-const MAX_IVFFLAT_PROBES = 100
 const RETRIEVE_CANDIDATE_MULTIPLIER = 4
 const MAX_RETRIEVE_CANDIDATES = 200
 const MAX_RELEVANT_DISTANCE = 0.62
 const RELATIVE_RELEVANT_DISTANCE_WINDOW = 0.18
 const MAX_LEXICAL_MATCH_DISTANCE = 0.72
 const MIN_QUERY_TERM_LENGTH = 3
-
-const isHostedOpenAiBaseUrl = (rawBaseUrl: string) => {
-  try {
-    return new URL(rawBaseUrl).hostname === 'api.openai.com'
-  } catch {
-    return rawBaseUrl.includes('api.openai.com')
-  }
-}
 
 const vectorToPgArray = (values: number[]) => `[${values.join(',')}]`
 
@@ -118,85 +105,26 @@ const normalizeMetadata = (value?: Record<string, unknown>) => {
   return value
 }
 
-const loadEmbeddingDimension = (_fallback: number) => resolveEmbeddingConfig(process.env).dimension
-
-const loadEmbeddingTimeoutMs = () => resolveEmbeddingConfig(process.env).timeoutMs
-
-const loadEmbeddingMaxInputChars = () => resolveEmbeddingConfig(process.env).maxInputChars
-
 const loadIvfflatProbes = (fallback = DEFAULT_IVFFLAT_PROBES) => resolveMemoriesIvfflatProbes(process.env, fallback)
-
-const resolveEmbeddingDefaults = (apiBaseUrl: string) => {
-  const hosted = isHostedOpenAiBaseUrl(apiBaseUrl)
-  return {
-    model: hosted ? DEFAULT_OPENAI_EMBEDDING_MODEL : DEFAULT_SELF_HOSTED_EMBEDDING_MODEL,
-    dimension: hosted ? DEFAULT_OPENAI_EMBEDDING_DIMENSION : DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION,
-  }
-}
 
 const loadEmbeddingConfig = () => {
   const config = resolveEmbeddingConfig(process.env)
-  const apiBaseUrl = config.apiBaseUrl
-  const apiKey = config.apiKey
-  if (!apiKey && isHostedOpenAiBaseUrl(apiBaseUrl)) {
+  if (config.hosted && !config.apiKey) {
     throw new Error(
       'missing OPENAI_API_KEY; set it or point OPENAI_API_BASE_URL at an OpenAI-compatible endpoint (e.g. Ollama)',
     )
   }
-  const model = config.model
-  const dimension = config.dimension
-  const timeoutMs = config.timeoutMs
-  const maxInputChars = config.maxInputChars
-
-  return { apiKey, apiBaseUrl, model, dimension, timeoutMs, maxInputChars }
+  return config
 }
 
 const embedText = async (text: string): Promise<number[]> => {
-  const { apiKey, apiBaseUrl, model, dimension, timeoutMs, maxInputChars } = loadEmbeddingConfig()
-  if (text.length > maxInputChars) {
-    throw new Error(`embedding input too large (${text.length} chars; max ${maxInputChars})`)
-  }
-
-  const controller = new AbortController()
-  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs)
-
   try {
-    const headers: Record<string, string> = {
-      'content-type': 'application/json',
-    }
-    if (apiKey) {
-      headers.authorization = `Bearer ${apiKey}`
-    }
-
-    const response = await fetch(`${apiBaseUrl}/embeddings`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ model, input: text }),
-      signal: controller.signal,
-    })
-
-    if (!response.ok) {
-      const body = await response.text()
-      throw new Error(`embedding request failed (${response.status}): ${body}`)
-    }
-
-    const json = (await response.json()) as { data?: { embedding?: number[] }[] }
-    const embedding = json.data?.[0]?.embedding
-    if (!embedding || !Array.isArray(embedding)) {
-      throw new Error('embedding response missing data[0].embedding')
-    }
-    if (embedding.length !== dimension) {
-      throw new Error(`embedding dimension mismatch: expected ${dimension} but got ${embedding.length}`)
-    }
-
-    return embedding
+    return await requestEmbedding(text, loadEmbeddingConfig())
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`embedding request timed out after ${timeoutMs}ms`)
+      throw new Error(`embedding request timed out after ${loadEmbeddingConfig().timeoutMs}ms`)
     }
     throw error
-  } finally {
-    clearTimeout(timeoutHandle)
   }
 }
 

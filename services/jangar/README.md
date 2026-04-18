@@ -88,7 +88,7 @@ tilt up -- --db_local_port 15433
 tilt up -- --enable_redis=false --enable_nats=false --enable_clickhouse=false
 
 # self-hosted embeddings (recommended if your DB schema uses vector(1024))
-tilt up -- --openai_api_base_url http://127.0.0.1:11434/v1 --openai_embedding_model qwen3-embedding-saigak:0.6b --openai_embedding_dimension 1024
+tilt up -- --openai_api_base_url http://127.0.0.1:11434/v1 --openai_embedding_api_base_url http://127.0.0.1:11434/api --openai_embedding_model qwen3-embedding-saigak:8b --openai_embedding_dimension 1024
 ```
 
 Troubleshooting:
@@ -369,7 +369,8 @@ When cache reads are enabled for `/api/agents/control-plane/resource` and `/api/
 - `as_of`: original cache row timestamp when present
 - `OPENAI_API_KEY` (API key used for embedding calls; required for hosted OpenAI, optional for self-hosted OpenAI-compatible endpoints like Ollama)
 - `OPENAI_API_BASE_URL` / `OPENAI_API_BASE` (optional; defaults to `https://api.openai.com/v1`)
-- `OPENAI_EMBEDDING_MODEL` (optional; defaults to `text-embedding-3-small` on OpenAI, or `qwen3-embedding-saigak:0.6b` for self-hosted bases)
+- `OPENAI_EMBEDDING_API_BASE_URL` (optional; override specifically for embeddings. Use Ollama `/api` when you need self-hosted dimension control with `qwen3-embedding-saigak:8b`.)
+- `OPENAI_EMBEDDING_MODEL` (optional; defaults to `text-embedding-3-small` on OpenAI, or `qwen3-embedding-saigak:8b` for self-hosted bases)
 - `OPENAI_EMBEDDING_DIMENSION` (optional; defaults to `1536` on OpenAI, or `1024` for the self-hosted model)
 - `OPENAI_EMBEDDING_TIMEOUT_MS` (optional; defaults to `15000`)
 - `OPENAI_EMBEDDING_MAX_INPUT_CHARS` (optional; defaults to `60000`)
@@ -383,7 +384,8 @@ To use the self-hosted embeddings model on `saigak`:
 
 ```bash
 export OPENAI_API_BASE_URL='http://saigak.saigak.svc.cluster.local:11434/v1'
-export OPENAI_EMBEDDING_MODEL='qwen3-embedding-saigak:0.6b'
+export OPENAI_EMBEDDING_API_BASE_URL='http://saigak.saigak.svc.cluster.local:11434/api'
+export OPENAI_EMBEDDING_MODEL='qwen3-embedding-saigak:8b'
 export OPENAI_EMBEDDING_DIMENSION='1024'
 # OPENAI_API_KEY is optional for Ollama
 ```

@@ -163,7 +163,13 @@ spec:
             - name: OPENAI_API_BASE_URL
               value: http://saigak.saigak.svc.cluster.local:11434/v1
             - name: OPENAI_COMPLETION_MODEL
-              value: qwen3-coder-saigak:30b
+              value: qwen3-main-saigak:30b-a3b
+            - name: OPENAI_COMPLETION_REASONING_EFFORT
+              value: none
+            - name: OPENAI_COMPLETION_TEMPERATURE
+              value: "0.7"
+            - name: OPENAI_COMPLETION_TOP_P
+              value: "0.8"
             - name: OPENAI_COMPLETION_MAX_ATTEMPTS
               value: "1"
             - name: OPENAI_COMPLETION_TIMEOUT_MS
@@ -179,7 +185,7 @@ spec:
             - name: BUMBA_ATLAS_CHUNK_INDEXING
               value: "true"
             - name: OPENAI_EMBEDDING_MODEL
-              value: qwen3-embedding-saigak:0.6b
+              value: qwen3-embedding-saigak:8b
             - name: OPENAI_EMBEDDING_DIMENSION
               value: "1024"
             - name: OPENAI_EMBEDDING_API_BASE_URL
