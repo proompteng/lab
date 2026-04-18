@@ -424,7 +424,7 @@ describe('bumba embeddings', () => {
 
     process.env.OPENAI_API_BASE_URL = 'http://127.0.0.1:11434/v1'
     process.env.OPENAI_EMBEDDING_API_BASE_URL = 'http://127.0.0.1:11434/api'
-    process.env.OPENAI_EMBEDDING_MODEL = 'qwen3-embedding-saigak:0.6b'
+    process.env.OPENAI_EMBEDDING_MODEL = 'qwen3-embedding-saigak:8b'
     process.env.OPENAI_EMBEDDING_DIMENSION = '3'
     process.env.OPENAI_EMBEDDING_BATCH_SIZE = '2'
     process.env.OPENAI_EMBEDDING_TIMEOUT_MS = '5000'
@@ -468,8 +468,9 @@ describe('bumba embeddings', () => {
       expect(resultB.embedding).toEqual([3, 4, 5])
       expect(requests).toHaveLength(1)
       expect(requests[0]?.url).toBe('http://127.0.0.1:11434/api/embed')
-      expect(requests[0]?.body.model).toBe('qwen3-embedding-saigak:0.6b')
+      expect(requests[0]?.body.model).toBe('qwen3-embedding-saigak:8b')
       expect(requests[0]?.body.input).toEqual(['alpha', 'beta'])
+      expect(requests[0]?.body.dimensions).toBe(3)
       expect(requests[0]?.body.truncate).toBe(false)
       expect(requests[0]?.body.keep_alive).toBe('30m')
     } finally {
@@ -526,6 +527,88 @@ describe('bumba embeddings', () => {
       const body = requestBody as { input?: unknown; dimensions?: unknown }
       expect(body.input).toEqual(['hello'])
       expect(body.dimensions).toBe(4)
+    } finally {
+      globalThis.fetch = previousFetch
+      for (const [key, value] of Object.entries(previousEnv)) {
+        restoreEnv(key, value)
+      }
+    }
+  })
+})
+
+describe('bumba completions', () => {
+  const restoreEnv = (key: string, value: string | undefined) => {
+    if (value === undefined) {
+      delete process.env[key]
+    } else {
+      process.env[key] = value
+    }
+  }
+
+  it('uses tuned qwen settings for self-hosted completion requests', async () => {
+    const previousFetch = globalThis.fetch
+    const previousEnv = {
+      OPENAI_API_BASE_URL: process.env.OPENAI_API_BASE_URL,
+      OPENAI_COMPLETION_MODEL: process.env.OPENAI_COMPLETION_MODEL,
+      OPENAI_COMPLETION_TEMPERATURE: process.env.OPENAI_COMPLETION_TEMPERATURE,
+      OPENAI_COMPLETION_TOP_P: process.env.OPENAI_COMPLETION_TOP_P,
+      OPENAI_COMPLETION_REASONING_EFFORT: process.env.OPENAI_COMPLETION_REASONING_EFFORT,
+      OPENAI_COMPLETION_TIMEOUT_MS: process.env.OPENAI_COMPLETION_TIMEOUT_MS,
+      OPENAI_COMPLETION_MAX_OUTPUT_TOKENS: process.env.OPENAI_COMPLETION_MAX_OUTPUT_TOKENS,
+    }
+
+    process.env.OPENAI_API_BASE_URL = 'http://127.0.0.1:11434/v1'
+    process.env.OPENAI_COMPLETION_MODEL = 'qwen3-main-saigak:30b-a3b'
+    delete process.env.OPENAI_COMPLETION_TEMPERATURE
+    delete process.env.OPENAI_COMPLETION_TOP_P
+    delete process.env.OPENAI_COMPLETION_REASONING_EFFORT
+    process.env.OPENAI_COMPLETION_TIMEOUT_MS = '5000'
+    process.env.OPENAI_COMPLETION_MAX_OUTPUT_TOKENS = '256'
+
+    let requestUrl = ''
+    let requestBody: Record<string, unknown> | null = null
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      requestUrl =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input instanceof Request
+              ? input.url
+              : ''
+      requestBody = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null
+
+      return new Response(
+        'data: {"choices":[{"delta":{"content":"{\\"summary\\":\\"ok\\",\\"enriched\\":\\"- tuned\\"}"}}]}\n\ndata: [DONE]\n\n',
+        {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        },
+      )
+    }) as typeof fetch
+
+    try {
+      const result = await activities.enrichWithModel({
+        filename: 'sample.ts',
+        content: 'export const sample = true\n',
+        astSummary: '- export const sample',
+        context: '',
+      })
+
+      expect(result.summary).toBe('ok')
+      expect(result.enriched).toBe('- tuned')
+      expect(requestUrl).toBe('http://127.0.0.1:11434/v1/chat/completions')
+      if (!requestBody) {
+        throw new Error('expected completion request body')
+      }
+
+      const body = requestBody as Record<string, unknown>
+      expect(body.model).toBe('qwen3-main-saigak:30b-a3b')
+      expect(body.temperature).toBe(0.7)
+      expect(body.top_p).toBe(0.8)
+      expect(body.reasoning_effort).toBe('none')
+      expect(body.response_format).toEqual({ type: 'json_object' })
     } finally {
       globalThis.fetch = previousFetch
       for (const [key, value] of Object.entries(previousEnv)) {
