@@ -182,10 +182,13 @@ export type BumbaActivities = typeof activities
 const DEFAULT_OPENAI_API_BASE_URL = 'https://api.openai.com/v1'
 const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small'
 const DEFAULT_OPENAI_EMBEDDING_DIMENSION = 1536
-const DEFAULT_SELF_HOSTED_EMBEDDING_MODEL = 'qwen3-embedding-saigak:0.6b'
+const DEFAULT_SELF_HOSTED_EMBEDDING_MODEL = 'qwen3-embedding-saigak:8b'
 const DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION = 1024
 const DEFAULT_OPENAI_COMPLETION_MODEL = 'gpt-5.4'
-const DEFAULT_SELF_HOSTED_COMPLETION_MODEL = 'qwen3-coder-saigak:30b-a3b-q4_K_M'
+const DEFAULT_SELF_HOSTED_COMPLETION_MODEL = 'qwen3-main-saigak:30b-a3b'
+const DEFAULT_SELF_HOSTED_COMPLETION_TEMPERATURE = 0.7
+const DEFAULT_SELF_HOSTED_COMPLETION_TOP_P = 0.8
+const DEFAULT_SELF_HOSTED_COMPLETION_REASONING_EFFORT = 'none'
 const DEFAULT_GITHUB_API_BASE_URL = 'https://api.github.com'
 const DEFAULT_GITHUB_API_VERSION = '2022-11-28'
 
@@ -363,6 +366,14 @@ const normalizeOptionalNumber = (value: unknown) => {
     if (Number.isFinite(parsed)) return parsed
   }
   return null
+}
+
+const normalizeOptionalFloat = (value: unknown) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  const trimmed = normalizeOptionalText(value)
+  if (!trimmed) return null
+  const parsed = Number.parseFloat(trimmed)
+  return Number.isFinite(parsed) ? parsed : null
 }
 
 const normalizeOptionalBoolean = (value: unknown) => {
@@ -559,7 +570,42 @@ const resolveCompletionDefaults = (apiBaseUrl: string) => {
   const hosted = isHostedOpenAiBaseUrl(apiBaseUrl)
   return {
     model: hosted ? DEFAULT_OPENAI_COMPLETION_MODEL : DEFAULT_SELF_HOSTED_COMPLETION_MODEL,
+    temperature: hosted ? 0 : DEFAULT_SELF_HOSTED_COMPLETION_TEMPERATURE,
+    topP: hosted ? null : DEFAULT_SELF_HOSTED_COMPLETION_TOP_P,
+    reasoningEffort: hosted ? null : DEFAULT_SELF_HOSTED_COMPLETION_REASONING_EFFORT,
   }
+}
+
+const loadCompletionTemperature = (fallback: number) => {
+  const temperature = normalizeOptionalFloat(process.env.OPENAI_COMPLETION_TEMPERATURE) ?? fallback
+  if (!Number.isFinite(temperature) || temperature < 0) {
+    throw createNonRetryableError(
+      'OPENAI_COMPLETION_TEMPERATURE must be a non-negative number',
+      'CompletionConfigError',
+    )
+  }
+  return temperature
+}
+
+const loadCompletionTopP = (fallback: number | null) => {
+  const topP = normalizeOptionalFloat(process.env.OPENAI_COMPLETION_TOP_P) ?? fallback
+  if (topP === null) return null
+  if (!Number.isFinite(topP) || topP <= 0 || topP > 1) {
+    throw createNonRetryableError('OPENAI_COMPLETION_TOP_P must be a number between 0 and 1', 'CompletionConfigError')
+  }
+  return topP
+}
+
+const loadCompletionReasoningEffort = (fallback: string | null) => {
+  const reasoningEffort = normalizeOptionalText(process.env.OPENAI_COMPLETION_REASONING_EFFORT) ?? fallback
+  if (!reasoningEffort) return null
+  if (!['high', 'medium', 'low', 'none'].includes(reasoningEffort)) {
+    throw createNonRetryableError(
+      'OPENAI_COMPLETION_REASONING_EFFORT must be one of high, medium, low, none',
+      'CompletionConfigError',
+    )
+  }
+  return reasoningEffort
 }
 
 const loadEmbeddingConfig = () => {
@@ -2002,6 +2048,9 @@ const loadCompletionConfig = () => {
 
   const defaults = resolveCompletionDefaults(apiBaseUrl)
   const model = process.env.OPENAI_COMPLETION_MODEL ?? process.env.OPENAI_MODEL ?? defaults.model
+  const temperature = loadCompletionTemperature(defaults.temperature)
+  const topP = loadCompletionTopP(defaults.topP)
+  const reasoningEffort = loadCompletionReasoningEffort(defaults.reasoningEffort)
   const timeoutMs = Number.parseInt(process.env.OPENAI_COMPLETION_TIMEOUT_MS ?? '60000', 10)
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw createNonRetryableError('OPENAI_COMPLETION_TIMEOUT_MS must be a positive integer', 'CompletionConfigError')
@@ -2016,7 +2065,7 @@ const loadCompletionConfig = () => {
     DEFAULT_COMPLETION_MAX_OUTPUT_TOKENS,
   )
 
-  return { apiBaseUrl, apiKey, model, timeoutMs, maxInputChars, maxOutputTokens }
+  return { apiBaseUrl, apiKey, model, temperature, topP, reasoningEffort, timeoutMs, maxInputChars, maxOutputTokens }
 }
 
 const loadCompletionRetryConfig = () => {
@@ -2221,6 +2270,7 @@ const requestEmbeddingBatchOnce = async (texts: string[]): Promise<number[][]> =
     ? {
         model,
         input: texts,
+        dimensions: dimension,
         ...(truncate === null ? {} : { truncate }),
         ...(keepAlive ? { keep_alive: keepAlive } : {}),
       }
@@ -2812,11 +2862,15 @@ export const activities = {
 
   async enrichWithModel(input: EnrichInput): Promise<EnrichOutput> {
     const startedAt = Date.now()
-    const { apiBaseUrl, apiKey, model, timeoutMs, maxInputChars, maxOutputTokens } = loadCompletionConfig()
+    const { apiBaseUrl, apiKey, model, temperature, topP, reasoningEffort, timeoutMs, maxInputChars, maxOutputTokens } =
+      loadCompletionConfig()
 
     logActivity('info', 'started', 'enrichWithModel', {
       filename: input.filename,
       model,
+      temperature,
+      topP,
+      reasoningEffort,
       timeoutMs,
       contentChars: input.content.length,
       astSummaryChars: input.astSummary.length,
@@ -2907,7 +2961,9 @@ export const activities = {
       model,
       stream: true,
       max_tokens: maxOutputTokens,
-      temperature: 0,
+      temperature,
+      ...(topP === null ? {} : { top_p: topP }),
+      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
       messages,
       ...(includeFormat ? { response_format: { type: 'json_object' } } : {}),
     })

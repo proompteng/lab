@@ -1,0 +1,7 @@
+FROM qwen3:30b-a3b
+PARAMETER num_ctx 32768
+PARAMETER temperature 0.7
+PARAMETER top_k 20
+PARAMETER top_p 0.8
+PARAMETER min_p 0
+PARAMETER repeat_penalty 1.05

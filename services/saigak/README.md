@@ -25,11 +25,12 @@ SAIGAK_GRAFANA_PASSWORD=changeme \
 
 Optional: enable Nginx by setting `SAIGAK_ENABLE_NGINX=1`.
 Optional: pre-pull models by setting `SAIGAK_MODELS` (comma-separated).
-Default base models (used to build tuned aliases): `qwen3-coder:30b-a3b-q4_K_M`, `qwen3-embedding:0.6b`
+Default base models (used to build service aliases): `qwen3:30b-a3b`, `qwen3-embedding:8b`
 (set `SAIGAK_SKIP_MODELS=1` to skip).
-Tuned aliases are created by default (`SAIGAK_CREATE_TUNED_MODELS=1`):
-`qwen3-coder-saigak:30b-a3b-q4_K_M`, `qwen3-embedding-saigak:0.6b`.
-Base tags are pruned after alias creation unless `SAIGAK_PRUNE_BASE_MODELS=0`.
+Service aliases are created by default (`SAIGAK_CREATE_TUNED_MODELS=1`):
+`qwen3-main-saigak:30b-a3b`, `qwen3-embedding-saigak:8b`.
+Base tags are pruned after alias creation unless `SAIGAK_PRUNE_BASE_MODELS=0`, and legacy
+`qwen3-coder-saigak:*` / `qwen3-embedding-saigak:0.6b` tags are removed during migration.
 
 ## Requirements
 
@@ -41,9 +42,9 @@ Base tags are pruned after alias creation unless `SAIGAK_PRUNE_BASE_MODELS=0`.
 ## Configuration
 
 - `services/saigak/config/ollama.env`
-  - OLLAMA runtime settings (parallelism, queue, keep alive)
+  - OLLAMA runtime settings (32K context target, queueing, residency)
 - `services/saigak/config/models/*.modelfile`
-  - Tuned model parameters and stop sequences for qwen3 completion and embedding
+  - Service-owned aliases for `Qwen3-30B-A3B` and `Qwen3-Embedding-8B`
 - `services/saigak/config/alloy/config.alloy`
   - OTLP receiver and exporters to LGTM (`http://mimir/otlp`, `http://tempo`)
 - `services/saigak/config/nginx/nginx.conf`
@@ -64,7 +65,7 @@ Run a quick throughput check against the proxy:
 
 ```bash
 ./services/saigak/scripts/load-test.py \
-  --model qwen3-coder-saigak:30b-a3b-q4_K_M \
+  --model qwen3-main-saigak:30b-a3b \
   --duration 60 \
   --concurrency 8
 ```

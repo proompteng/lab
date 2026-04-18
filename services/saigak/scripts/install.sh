@@ -55,7 +55,7 @@ if [[ $ollama_ready -ne 1 ]]; then
 fi
 
 if [[ "${SAIGAK_SKIP_MODELS:-}" != "1" ]]; then
-  models="${SAIGAK_MODELS:-qwen3-coder:30b-a3b-q4_K_M,qwen3-embedding:0.6b}"
+  models="${SAIGAK_MODELS:-qwen3:30b-a3b,qwen3-embedding:8b}"
   log "pulling models: ${models}"
   IFS=',' read -r -a model_list <<< "${models}"
   for model in "${model_list[@]}"; do
@@ -66,15 +66,30 @@ fi
 if [[ "${SAIGAK_CREATE_TUNED_MODELS:-1}" == "1" ]]; then
   log "creating tuned model aliases"
   sudo -u ollama OLLAMA_HOST=127.0.0.1:11435 /usr/local/bin/ollama create \
-    qwen3-coder-saigak:30b-a3b-q4_K_M \
-    -f "${SERVICE_DIR}/config/models/qwen3-coder-30b-a3b-q4-k-m.modelfile"
+    qwen3-main-saigak:30b-a3b \
+    -f "${SERVICE_DIR}/config/models/qwen3-main-30b-a3b.modelfile"
   sudo -u ollama OLLAMA_HOST=127.0.0.1:11435 /usr/local/bin/ollama create \
-    qwen3-embedding-saigak:0.6b \
-    -f "${SERVICE_DIR}/config/models/qwen3-embedding-0-6b.modelfile"
+    qwen3-embedding-saigak:8b \
+    -f "${SERVICE_DIR}/config/models/qwen3-embedding-8b.modelfile"
+
+  log "removing legacy model tags"
+  legacy_models=(
+    qwen3-coder-saigak:30b-a3b-q4_K_M
+    qwen3-coder-saigak:30b
+    qwen3-embedding-saigak:0.6b
+    qwen3-coder:30b
+    qwen3-coder:30b-a3b-q4_K_M
+    qwen3-embedding:0.6b
+  )
+  for model in "${legacy_models[@]}"; do
+    if OLLAMA_HOST=127.0.0.1:11435 /usr/local/bin/ollama list | awk '{print $1}' | grep -Fxq "${model}"; then
+      sudo -u ollama OLLAMA_HOST=127.0.0.1:11435 /usr/local/bin/ollama rm "${model}"
+    fi
+  done
 
   if [[ "${SAIGAK_PRUNE_BASE_MODELS:-1}" == "1" ]]; then
     log "pruning base model tags"
-    for model in qwen3-coder:30b-a3b-q4_K_M qwen3-embedding:0.6b; do
+    for model in qwen3:30b-a3b qwen3-embedding:8b; do
       if OLLAMA_HOST=127.0.0.1:11435 /usr/local/bin/ollama list | awk '{print $1}' | grep -Fxq "${model}"; then
         sudo -u ollama OLLAMA_HOST=127.0.0.1:11435 /usr/local/bin/ollama rm "${model}"
       fi
