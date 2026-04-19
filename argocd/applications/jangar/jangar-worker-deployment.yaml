@@ -26,7 +26,7 @@ spec:
     spec:
       initContainers:
         - name: bootstrap-workspace
-          image: registry.ide-newton.ts.net/lab/jangar
+          image: registry.ide-newton.ts.net/lab/jangar:640cb586@sha256:78913053b4bd222d01d2351eb19136edfda3fa4cb8253541b4ac0736f092ac26
           imagePullPolicy: IfNotPresent
           command:
             - sh
@@ -58,7 +58,7 @@ spec:
               mountPath: /workspace
       containers:
         - name: jangar-worker
-          image: registry.ide-newton.ts.net/lab/jangar:latest
+          image: registry.ide-newton.ts.net/lab/jangar:640cb586@sha256:78913053b4bd222d01d2351eb19136edfda3fa4cb8253541b4ac0736f092ac26
           imagePullPolicy: Always
           command:
             - bun
