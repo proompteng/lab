@@ -22,7 +22,7 @@ spec:
         app.kubernetes.io/name: bumba
         app.kubernetes.io/part-of: lab
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-04-19T02:59:12.139Z"
+        kubectl.kubernetes.io/restartedAt: "2026-04-19T03:05:32.057Z"
     spec:
       initContainers:
         - name: bootstrap-workspace
