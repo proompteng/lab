@@ -8,6 +8,10 @@ const TARGET_DIMENSION = 4096
 const BATCH_SIZE = 32
 const MIN_TIMEOUT_MS = 120_000
 
+type MigrationEmbeddingConfig = ReturnType<typeof resolveEmbeddingConfig> & {
+  timeoutMs: number
+}
+
 type MemoryRow = {
   id: string
   created_at: Date | string
@@ -36,12 +40,10 @@ const logMigration = (event: string, fields: Record<string, unknown> = {}) => {
   console.log('[jangar:migration:20260418_embedding_dimension_4096]', { event, ...fields })
 }
 
-const resolveMigrationEmbeddingConfig = () => {
+const resolveMigrationEmbeddingConfig = (): MigrationEmbeddingConfig | null => {
   const config = resolveEmbeddingConfig(process.env)
   if (config.dimension !== TARGET_DIMENSION) {
-    throw new Error(
-      `20260418_embedding_dimension_4096 requires OPENAI_EMBEDDING_DIMENSION=${TARGET_DIMENSION}; got ${config.dimension}`,
-    )
+    return null
   }
 
   return {
@@ -131,14 +133,12 @@ const insertMemoriesBatch = async (
   `.execute(db)
 }
 
-const rebuildMemoriesEntries = async (db: Kysely<Database>) => {
+const rebuildMemoriesEntries = async (db: Kysely<Database>, embeddingConfig: MigrationEmbeddingConfig) => {
   const currentDimension = await readVectorDimension(db, 'memories', 'entries')
   if (currentDimension === TARGET_DIMENSION) {
     logMigration('skip_memories_entries', { reason: 'already_4096' })
     return
   }
-
-  const embeddingConfig = resolveMigrationEmbeddingConfig()
   const { rows } = await sql<MemoryRow>`
     SELECT
       id,
@@ -343,7 +343,13 @@ const resetAtlasChunkEmbeddings = async (db: Kysely<Database>) => {
 }
 
 export const up = async (db: Kysely<Database>) => {
-  await rebuildMemoriesEntries(db)
+  const embeddingConfig = resolveMigrationEmbeddingConfig()
+  if (!embeddingConfig) {
+    logMigration('skip_all', { reason: 'configured_dimension_not_4096' })
+    return
+  }
+
+  await rebuildMemoriesEntries(db, embeddingConfig)
   await resetAtlasEmbeddings(db)
   await resetAtlasChunkEmbeddings(db)
 }
