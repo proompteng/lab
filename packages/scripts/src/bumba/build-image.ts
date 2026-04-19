@@ -38,6 +38,12 @@ const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void
   }
 }
 
+const resolveBuildArgs = (version: string, commit: string) => ({
+  BUMBA_VERSION: version,
+  BUMBA_COMMIT: commit,
+  LAB_GIT_SHA: commit,
+})
+
 export const buildImage = async (options: BuildImageOptions = {}) => {
   const registry = options.registry ?? process.env.BUMBA_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = options.repository ?? process.env.BUMBA_IMAGE_REPOSITORY ?? 'lab/bumba'
@@ -70,10 +76,7 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
       tag,
       context,
       dockerfile,
-      buildArgs: {
-        BUMBA_VERSION: version,
-        BUMBA_COMMIT: commit,
-      },
+      buildArgs: resolveBuildArgs(version, commit),
       cacheRef,
     })
 
@@ -92,4 +95,5 @@ if (import.meta.main) {
 
 export const __private = {
   execGit,
+  resolveBuildArgs,
 }
