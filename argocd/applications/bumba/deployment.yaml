@@ -163,7 +163,7 @@ spec:
             - name: OPENAI_EMBEDDING_MODEL
               value: qwen3-embedding-saigak:8b
             - name: OPENAI_EMBEDDING_DIMENSION
-              value: "1024"
+              value: "4096"
             - name: OPENAI_EMBEDDING_API_BASE_URL
               value: http://saigak.saigak.svc.cluster.local:11435/api
             - name: OPENAI_EMBEDDING_BATCH_SIZE

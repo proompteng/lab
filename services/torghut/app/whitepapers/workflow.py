@@ -2547,7 +2547,7 @@ class WhitepaperWorkflowService:
             or _str_env("OPENAI_EMBEDDING_MODEL")
             or "text-embedding-3-large"
         )
-        configured_dimension = _int_env("WHITEPAPER_EMBEDDING_DIMENSION", 1024)
+        configured_dimension = _int_env("WHITEPAPER_EMBEDDING_DIMENSION", 4096)
         timeout_seconds = max(1, _int_env("WHITEPAPER_EMBEDDING_TIMEOUT_MS", 20_000) // 1000)
         batch_size = max(1, _int_env("WHITEPAPER_EMBEDDING_BATCH_SIZE", 32))
         is_ollama_embed = base_url.endswith("/api")

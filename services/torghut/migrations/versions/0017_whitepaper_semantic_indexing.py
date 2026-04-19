@@ -15,7 +15,7 @@ depends_on = None
 
 
 def _embedding_dimension() -> int:
-    raw_value = os.getenv("WHITEPAPER_EMBEDDING_DIMENSION", "1024").strip()
+    raw_value = os.getenv("WHITEPAPER_EMBEDDING_DIMENSION", "4096").strip()
     try:
         dimension = int(raw_value)
     except ValueError as exc:  # pragma: no cover - migration env guard

@@ -33,7 +33,7 @@ describe('memory-provider-health', () => {
       NODE_ENV: 'production',
       OPENAI_API_BASE_URL: 'http://saigak.jangar.svc.cluster.local:11434/v1',
       OPENAI_EMBEDDING_MODEL: 'qwen3-embedding-saigak:8b',
-      OPENAI_EMBEDDING_DIMENSION: '1024',
+      OPENAI_EMBEDDING_DIMENSION: '4096',
     })
 
     expect(health).toMatchObject({
@@ -42,7 +42,7 @@ describe('memory-provider-health', () => {
       fallbackActive: false,
       config: {
         hosted: false,
-        dimension: 1024,
+        dimension: 4096,
       },
     })
   })

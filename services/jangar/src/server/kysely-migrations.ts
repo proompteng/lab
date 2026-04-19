@@ -26,6 +26,7 @@ import * as jangarGithubWorktreeRefreshStateMigration from '~/server/migrations/
 import * as agentsControlPlaneComponentHeartbeatsMigration from '~/server/migrations/20260308_agents_control_plane_component_heartbeats'
 import * as torghutSimulationControlPlaneMigration from '~/server/migrations/20260312_torghut_simulation_control_plane'
 import * as torghutSimulationControlPlaneV2Migration from '~/server/migrations/20260312_torghut_simulation_control_plane_v2'
+import * as embeddingDimension4096Migration from '~/server/migrations/20260418_embedding_dimension_4096'
 
 type MigrationMap = Record<string, Migration>
 
@@ -64,6 +65,7 @@ const migrations: MigrationMap = {
   '20260308_agents_control_plane_component_heartbeats': agentsControlPlaneComponentHeartbeatsMigration,
   '20260312_torghut_simulation_control_plane': torghutSimulationControlPlaneMigration,
   '20260312_torghut_simulation_control_plane_v2': torghutSimulationControlPlaneV2Migration,
+  '20260418_embedding_dimension_4096': embeddingDimension4096Migration,
 }
 
 export const getRegisteredMigrationNames = () => Object.keys(migrations).sort()
