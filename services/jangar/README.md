@@ -374,6 +374,7 @@ When cache reads are enabled for `/api/agents/control-plane/resource` and `/api/
 - `OPENAI_EMBEDDING_DIMENSION` (optional; defaults to `1536` on OpenAI, or `4096` for the self-hosted model)
 - `OPENAI_EMBEDDING_TIMEOUT_MS` (optional; defaults to `15000`)
 - `OPENAI_EMBEDDING_MAX_INPUT_CHARS` (optional; defaults to `60000`)
+- With pgvector `0.8.0`, ANN indexes (`ivfflat` / `hnsw`) cannot be created above `2000` dimensions. The 4096d self-hosted path uses plain `vector(4096)` columns without ANN indexes.
 - `JANGAR_BUMBA_TASK_QUEUE` (optional; API queue for enqueued Bumba workflows)
 - `JANGAR_WORKER_TEMPORAL_TASK_QUEUE` (optional; worker queue override)
 - `JANGAR_WORKER_HEALTH_PORT` (optional; defaults to `3002`)

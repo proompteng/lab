@@ -2,6 +2,7 @@ import { type Kysely, sql } from 'kysely'
 
 import type { Database } from '../db'
 import { resolveEmbeddingConfig } from '../memory-config'
+import { createPgvectorAnnIndexIfSupported } from '../pgvector-indexing'
 
 const resolveEmbeddingDimension = () => resolveEmbeddingConfig(process.env).dimension
 
@@ -38,12 +39,12 @@ export const up = async (db: Kysely<Database>) => {
     ON ${sql.ref('atlas.chunk_embeddings')} (model, dimension);
   `.execute(db)
 
-  await sql`
-    CREATE INDEX IF NOT EXISTS atlas_chunk_embeddings_embedding_idx
-    ON ${sql.ref('atlas.chunk_embeddings')}
-    USING ivfflat (embedding vector_cosine_ops)
-    WITH (lists = 100);
-  `.execute(db)
+  await createPgvectorAnnIndexIfSupported(
+    db,
+    embeddingDimension,
+    'CREATE INDEX IF NOT EXISTS atlas_chunk_embeddings_embedding_idx ON atlas.chunk_embeddings USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);',
+    'atlas.chunk_embeddings',
+  )
 }
 
 export const down = async (_db: Kysely<Database>) => {}

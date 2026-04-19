@@ -2,6 +2,7 @@ import { type Kysely, sql } from 'kysely'
 
 import type { Database } from '../db'
 import { resolveEmbeddingConfig } from '../memory-config'
+import { createPgvectorAnnIndexIfSupported } from '../pgvector-indexing'
 
 const resolveEmbeddingDimension = () => resolveEmbeddingConfig(process.env).dimension
 
@@ -373,12 +374,12 @@ export const up = async (db: Kysely<Database>) => {
     ON ${sql.ref('atlas.enrichments')} USING GIN (metadata JSONB_PATH_OPS);
   `.execute(db)
 
-  await sql`
-    CREATE INDEX IF NOT EXISTS atlas_embeddings_embedding_idx
-    ON ${sql.ref('atlas.embeddings')}
-    USING ivfflat (embedding vector_cosine_ops)
-    WITH (lists = 100);
-  `.execute(db)
+  await createPgvectorAnnIndexIfSupported(
+    db,
+    embeddingDimension,
+    'CREATE INDEX IF NOT EXISTS atlas_embeddings_embedding_idx ON atlas.embeddings USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);',
+    'atlas.embeddings',
+  )
 
   await sql`
     CREATE INDEX IF NOT EXISTS atlas_symbols_lookup_idx
@@ -425,12 +426,12 @@ export const up = async (db: Kysely<Database>) => {
     ON ${sql.ref('memories.entries')} (encoder_model, encoder_version);
   `.execute(db)
 
-  await sql`
-    CREATE INDEX IF NOT EXISTS memories_entries_embedding_idx
-    ON ${sql.ref('memories.entries')}
-    USING ivfflat (embedding vector_cosine_ops)
-    WITH (lists = 100);
-  `.execute(db)
+  await createPgvectorAnnIndexIfSupported(
+    db,
+    embeddingDimension,
+    'CREATE INDEX IF NOT EXISTS memories_entries_embedding_idx ON memories.entries USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);',
+    'memories.entries',
+  )
 
   await sql`
     CREATE INDEX IF NOT EXISTS torghut_symbols_enabled_idx

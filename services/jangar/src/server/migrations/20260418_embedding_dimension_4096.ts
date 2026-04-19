@@ -3,6 +3,7 @@ import { type Kysely, sql } from 'kysely'
 import type { Database } from '../db'
 import { requestEmbeddings } from '../embedding-client'
 import { resolveEmbeddingConfig } from '../memory-config'
+import { createPgvectorAnnIndexIfSupported } from '../pgvector-indexing'
 
 const TARGET_DIMENSION = 4096
 const BATCH_SIZE = 32
@@ -211,11 +212,12 @@ const rebuildMemoriesEntries = async (db: Kysely<Database>, embeddingConfig: Mig
       'CREATE INDEX memories_entries_4096_next_encoder_idx ON memories.entries_4096_next (encoder_model, encoder_version)',
     )
     .execute(db)
-  await sql
-    .raw(
-      'CREATE INDEX memories_entries_4096_next_embedding_idx ON memories.entries_4096_next USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)',
-    )
-    .execute(db)
+  await createPgvectorAnnIndexIfSupported(
+    db,
+    TARGET_DIMENSION,
+    'CREATE INDEX memories_entries_4096_next_embedding_idx ON memories.entries_4096_next USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)',
+    'memories.entries_4096_next',
+  )
 
   for (let start = 0; start < rows.length; start += BATCH_SIZE) {
     const batch = rows.slice(start, start + BATCH_SIZE)
@@ -271,11 +273,12 @@ const resetAtlasEmbeddings = async (db: Kysely<Database>) => {
     )
   `)
     .execute(db)
-  await sql
-    .raw(
-      'CREATE INDEX atlas_embeddings_4096_next_embedding_idx ON atlas.embeddings_4096_next USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)',
-    )
-    .execute(db)
+  await createPgvectorAnnIndexIfSupported(
+    db,
+    TARGET_DIMENSION,
+    'CREATE INDEX atlas_embeddings_4096_next_embedding_idx ON atlas.embeddings_4096_next USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)',
+    'atlas.embeddings_4096_next',
+  )
 
   await db.transaction().execute(async (trx) => {
     await sql.raw('LOCK TABLE atlas.embeddings IN ACCESS EXCLUSIVE MODE').execute(trx)
@@ -323,11 +326,12 @@ const resetAtlasChunkEmbeddings = async (db: Kysely<Database>) => {
       'CREATE INDEX atlas_chunk_embeddings_4096_next_model_dimension_idx ON atlas.chunk_embeddings_4096_next (model, dimension)',
     )
     .execute(db)
-  await sql
-    .raw(
-      'CREATE INDEX atlas_chunk_embeddings_4096_next_embedding_idx ON atlas.chunk_embeddings_4096_next USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)',
-    )
-    .execute(db)
+  await createPgvectorAnnIndexIfSupported(
+    db,
+    TARGET_DIMENSION,
+    'CREATE INDEX atlas_chunk_embeddings_4096_next_embedding_idx ON atlas.chunk_embeddings_4096_next USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)',
+    'atlas.chunk_embeddings_4096_next',
+  )
 
   await db.transaction().execute(async (trx) => {
     await sql.raw('LOCK TABLE atlas.chunk_embeddings IN ACCESS EXCLUSIVE MODE').execute(trx)
