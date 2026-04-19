@@ -534,6 +534,51 @@ describe('bumba embeddings', () => {
       }
     }
   })
+
+  it('defaults self-hosted embeddings to 4096 dimensions', async () => {
+    const previousFetch = globalThis.fetch
+    const previousEnv = {
+      OPENAI_API_BASE_URL: process.env.OPENAI_API_BASE_URL,
+      OPENAI_EMBEDDING_API_BASE_URL: process.env.OPENAI_EMBEDDING_API_BASE_URL,
+      OPENAI_EMBEDDING_MODEL: process.env.OPENAI_EMBEDDING_MODEL,
+      OPENAI_EMBEDDING_DIMENSION: process.env.OPENAI_EMBEDDING_DIMENSION,
+      OPENAI_EMBEDDING_BATCH_SIZE: process.env.OPENAI_EMBEDDING_BATCH_SIZE,
+      OPENAI_EMBEDDING_TIMEOUT_MS: process.env.OPENAI_EMBEDDING_TIMEOUT_MS,
+    }
+
+    process.env.OPENAI_API_BASE_URL = 'http://127.0.0.1:11434/v1'
+    process.env.OPENAI_EMBEDDING_API_BASE_URL = 'http://127.0.0.1:11435/api'
+    delete process.env.OPENAI_EMBEDDING_MODEL
+    delete process.env.OPENAI_EMBEDDING_DIMENSION
+    process.env.OPENAI_EMBEDDING_BATCH_SIZE = '1'
+    process.env.OPENAI_EMBEDDING_TIMEOUT_MS = '5000'
+
+    let requestBody: { model?: unknown; dimensions?: unknown } | null = null
+
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? (JSON.parse(String(init.body)) as { model?: unknown; dimensions?: unknown }) : null
+      return new Response(JSON.stringify({ embeddings: [Array.from({ length: 4096 }, () => 1)] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }) as typeof fetch
+
+    try {
+      const result = await activities.createEmbedding({ text: 'hello' })
+      expect(result.embedding).toHaveLength(4096)
+      if (!requestBody) {
+        throw new Error('expected embedding request body')
+      }
+      const body = requestBody as { model?: unknown; dimensions?: unknown }
+      expect(body.model).toBe('qwen3-embedding-saigak:8b')
+      expect(body.dimensions).toBe(4096)
+    } finally {
+      globalThis.fetch = previousFetch
+      for (const [key, value] of Object.entries(previousEnv)) {
+        restoreEnv(key, value)
+      }
+    }
+  })
 })
 
 describe('bumba completions', () => {

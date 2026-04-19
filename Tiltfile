@@ -28,15 +28,19 @@ config.define_string(
 # Embeddings (memories/atlas)
 config.define_string(
     'openai_api_base_url',
-    usage='OpenAI-compatible API base URL for embeddings (default: from in-cluster jangar Deployment, else http://127.0.0.1:11434/v1)',
+    usage='OpenAI-compatible API base URL for completions (default: from in-cluster jangar Deployment, else http://127.0.0.1:11434/v1)',
+)
+config.define_string(
+    'openai_embedding_api_base_url',
+    usage='OpenAI-compatible API base URL for embeddings (default: from in-cluster jangar Deployment, else http://127.0.0.1:11435/api)',
 )
 config.define_string(
     'openai_embedding_model',
-    usage='Embedding model name (default: from in-cluster jangar Deployment, else qwen3-embedding-saigak:0.6b)',
+    usage='Embedding model name (default: from in-cluster jangar Deployment, else qwen3-embedding-saigak:8b)',
 )
 config.define_string(
     'openai_embedding_dimension',
-    usage='Embedding dimension as integer string (default: from in-cluster jangar Deployment, else 1024; must match DB vector dimension)',
+    usage='Embedding dimension as integer string (default: from in-cluster jangar Deployment, else 4096; must match DB vector dimension)',
 )
 config.define_string(
     'openai_api_key',
@@ -89,6 +93,7 @@ print('')
 
 
 cluster_openai_api_base_url = _deployment_env('jangar', 'jangar', 'OPENAI_API_BASE_URL')
+cluster_openai_embedding_api_base_url = _deployment_env('jangar', 'jangar', 'OPENAI_EMBEDDING_API_BASE_URL')
 cluster_openai_embedding_model = _deployment_env('jangar', 'jangar', 'OPENAI_EMBEDDING_MODEL')
 cluster_openai_embedding_dimension = _deployment_env('jangar', 'jangar', 'OPENAI_EMBEDDING_DIMENSION')
 cluster_github_repos_allowed = _deployment_env('jangar', 'jangar', 'JANGAR_GITHUB_REPOS_ALLOWED')
@@ -100,16 +105,22 @@ openai_api_base_url = str(
                 cluster_openai_api_base_url if cluster_openai_api_base_url else 'http://127.0.0.1:11434/v1',
         )
 ).strip()
+openai_embedding_api_base_url = str(
+        cfg.get(
+                'openai_embedding_api_base_url',
+                cluster_openai_embedding_api_base_url if cluster_openai_embedding_api_base_url else 'http://127.0.0.1:11435/api',
+        )
+).strip()
 openai_embedding_model = str(
         cfg.get(
                 'openai_embedding_model',
-                cluster_openai_embedding_model if cluster_openai_embedding_model else 'qwen3-embedding-saigak:0.6b',
+                cluster_openai_embedding_model if cluster_openai_embedding_model else 'qwen3-embedding-saigak:8b',
         )
 ).strip()
 openai_embedding_dimension = str(
         cfg.get(
                 'openai_embedding_dimension',
-                cluster_openai_embedding_dimension if cluster_openai_embedding_dimension else '1024',
+                cluster_openai_embedding_dimension if cluster_openai_embedding_dimension else '4096',
         )
 ).strip()
 openai_api_key = str(cfg.get('openai_api_key', '')).strip()
@@ -329,8 +340,9 @@ jangar_env = {
     'JANGAR_SKIP_MIGRATIONS': '1',
     # Jangar defaults to require; keep it explicit.
     'PGSSLMODE': 'require',
-    # Default to self-hosted embeddings matching existing DB schema: vector(1024).
+    # Default to self-hosted embeddings matching the hard-migrated schema: vector(4096).
     'OPENAI_API_BASE_URL': openai_api_base_url,
+    'OPENAI_EMBEDDING_API_BASE_URL': openai_embedding_api_base_url,
     'OPENAI_EMBEDDING_MODEL': openai_embedding_model,
     'OPENAI_EMBEDDING_DIMENSION': openai_embedding_dimension,
 }

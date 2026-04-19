@@ -372,11 +372,11 @@ spec:
             - name: WHITEPAPER_SEMANTIC_REQUIRED
               value: "false"
             - name: WHITEPAPER_EMBEDDING_API_BASE_URL
-              value: http://saigak.saigak.svc.cluster.local:11434/api
+              value: http://saigak.saigak.svc.cluster.local:11435/api
             - name: WHITEPAPER_EMBEDDING_MODEL
-              value: qwen3-embedding-saigak:0.6b
+              value: qwen3-embedding-saigak:8b
             - name: WHITEPAPER_EMBEDDING_DIMENSION
-              value: "1024"
+              value: "4096"
             - name: WHITEPAPER_EMBEDDING_TIMEOUT_MS
               value: "120000"
             - name: WHITEPAPER_CHUNK_SIZE_CHARS
