@@ -481,9 +481,73 @@ def _pre_replay_candidate_score(spec: CandidateSpec) -> Decimal:
     return family_score + Decimal(feature_count) - failure_penalty
 
 
+def _pre_replay_prior_bundle(spec: CandidateSpec) -> CandidateEvidenceBundle:
+    prior_score = _pre_replay_candidate_score(spec)
+    return evidence_bundle_from_frontier_candidate(
+        candidate_spec_id=spec.candidate_spec_id,
+        candidate={
+            "candidate_id": f"pre-replay-prior-{spec.candidate_spec_id}",
+            "family_template_id": spec.family_template_id,
+            "runtime_family": spec.runtime_family,
+            "runtime_strategy_name": spec.runtime_strategy_name,
+            "objective_scorecard": {
+                "net_pnl_per_day": str(prior_score),
+                "active_day_ratio": "0.50",
+                "positive_day_ratio": "0.50",
+                "regime_slice_pass_rate": "0.45",
+                "posterior_edge_lower": "0.001",
+                "shadow_parity_status": "pending",
+            },
+            "promotion_readiness": {
+                "stage": "research_candidate",
+                "status": "pre_replay_prior",
+                "promotable": False,
+                "blockers": ["runtime_replay_required"],
+            },
+        },
+        dataset_snapshot_id="pre-replay-proposal-priors",
+        result_path=f"pre-replay-proposal-priors://{spec.candidate_spec_id}",
+    )
+
+
+def _pre_replay_proposal_model_and_rows(
+    *,
+    specs: Sequence[CandidateSpec],
+) -> tuple[Mapping[str, Any], list[dict[str, Any]]]:
+    prior_bundles = [_pre_replay_prior_bundle(spec) for spec in specs]
+    training_rows = build_mlx_training_rows(
+        candidate_specs=specs, evidence_bundles=prior_bundles
+    )
+    model = train_mlx_ranker(training_rows, backend_preference="mlx")
+    ranked_rows = rank_training_rows(model=model, rows=training_rows)
+    feature_by_spec = {
+        row.candidate_spec_id: row.to_payload()["features"] for row in training_rows
+    }
+    rows = [
+        {
+            "candidate_spec_id": item.candidate_spec_id,
+            "proposal_score": item.score,
+            "rank": item.rank,
+            "backend": item.backend,
+            "model_id": item.model_id,
+            "selection_reason": "pre_replay_mlx_rank",
+            "feature_hash": item.feature_hash,
+            "features": feature_by_spec.get(item.candidate_spec_id, {}),
+        }
+        for item in ranked_rows
+    ]
+    return {
+        **model.to_payload(),
+        "proposal_stage": "pre_replay",
+        "model_status": "active",
+        "rank_bucket_lift": {"status": "pending_replay_evidence"},
+    }, rows
+
+
 def _select_candidate_specs_for_replay(
     *,
     specs: Sequence[CandidateSpec],
+    proposal_rows: Sequence[Mapping[str, Any]],
     top_k: int,
     exploration_slots: int,
     max_candidates: int,
@@ -495,16 +559,33 @@ def _select_candidate_specs_for_replay(
             "selected_candidate_spec_ids": [],
             "rows": [],
         }
+    spec_by_id = {spec.candidate_spec_id: spec for spec in specs}
     max_budget = max(1, int(max_candidates))
     requested_budget = max(0, int(top_k)) + max(0, int(exploration_slots))
     replay_budget = min(max_budget, max(1, int(portfolio_size_min), requested_budget))
-    ordered = sorted(
-        specs,
-        key=lambda item: (_pre_replay_candidate_score(item), item.candidate_spec_id),
-        reverse=True,
+    ranked_ids = [
+        str(row.get("candidate_spec_id"))
+        for row in sorted(
+            _list_of_mappings(list(proposal_rows)),
+            key=lambda row: (
+                int(row.get("rank") or 10**9),
+                -float(row.get("proposal_score") or 0.0),
+                str(row.get("candidate_spec_id") or ""),
+            ),
+        )
+        if str(row.get("candidate_spec_id")) in spec_by_id
+    ]
+    ranked_ids.extend(
+        spec.candidate_spec_id
+        for spec in sorted(specs, key=lambda item: item.candidate_spec_id)
+        if spec.candidate_spec_id not in set(ranked_ids)
     )
-    exploitation_count = min(max(0, int(top_k)), replay_budget, len(ordered))
-    exploitation = ordered[:exploitation_count]
+    ordered = [spec_by_id[candidate_spec_id] for candidate_spec_id in ranked_ids]
+    exploitation_count = min(max(0, int(top_k)), replay_budget, len(ranked_ids))
+    exploitation = [
+        spec_by_id[candidate_spec_id]
+        for candidate_spec_id in ranked_ids[:exploitation_count]
+    ]
     remaining = [
         item
         for item in sorted(specs, key=lambda value: value.candidate_spec_id)
@@ -879,13 +960,34 @@ def run_whitepaper_autoresearch_profit_target(
             reason="candidate_compiler_produced_no_executable_specs",
             started_at=started_at,
         )
+    pre_replay_model, pre_replay_proposal_rows = _pre_replay_proposal_model_and_rows(
+        specs=candidate_specs
+    )
+    _write_json(output_dir / "pre-replay-mlx-ranker-model.json", pre_replay_model)
+    _write_jsonl(
+        output_dir / "pre-replay-mlx-proposal-scores.jsonl",
+        pre_replay_proposal_rows,
+    )
     replay_candidate_specs, candidate_selection = _select_candidate_specs_for_replay(
         specs=candidate_specs,
+        proposal_rows=pre_replay_proposal_rows,
         top_k=int(args.top_k),
         exploration_slots=int(args.exploration_slots),
         max_candidates=int(args.max_candidates),
         portfolio_size_min=int(args.portfolio_size_min),
     )
+    candidate_selection = {
+        **candidate_selection,
+        "proposal_model": {
+            "schema_version": pre_replay_model.get("schema_version"),
+            "model_id": pre_replay_model.get("model_id"),
+            "backend": pre_replay_model.get("backend"),
+            "proposal_stage": "pre_replay",
+        },
+        "proposal_scores_artifact": str(
+            output_dir / "pre-replay-mlx-proposal-scores.jsonl"
+        ),
+    }
     _write_json(output_dir / "candidate-selection-manifest.json", candidate_selection)
     selection_by_spec = {
         str(row.get("candidate_spec_id")): row
@@ -975,6 +1077,7 @@ def run_whitepaper_autoresearch_profit_target(
         "candidate_compiler_blocker_count": len(compilation.blockers),
         "evidence_bundle_count": len(replay_result.evidence_bundles),
         "replay_candidate_spec_count": len(replay_candidate_specs),
+        "pre_replay_proposal_score_count": len(pre_replay_proposal_rows),
         "proposal_score_count": len(proposal_rows),
         "portfolio_candidate_count": len(portfolio_rows),
         "claim_count": sum(len(source.claims) for source in sources),
@@ -1002,6 +1105,12 @@ def run_whitepaper_autoresearch_profit_target(
             "candidate_specs": str(output_dir / "candidate-specs.jsonl"),
             "candidate_selection_manifest": str(
                 output_dir / "candidate-selection-manifest.json"
+            ),
+            "pre_replay_proposal_scores": str(
+                output_dir / "pre-replay-mlx-proposal-scores.jsonl"
+            ),
+            "pre_replay_proposal_model": str(
+                output_dir / "pre-replay-mlx-ranker-model.json"
             ),
             "candidate_compiler_report": str(
                 output_dir / "candidate-compiler-report.json"

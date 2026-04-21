@@ -88,6 +88,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             self.assertTrue((output_dir / "candidate-specs.jsonl").exists())
             self.assertTrue((output_dir / "candidate-compiler-report.json").exists())
             self.assertTrue((output_dir / "candidate-selection-manifest.json").exists())
+            self.assertTrue((output_dir / "pre-replay-mlx-ranker-model.json").exists())
+            self.assertTrue(
+                (output_dir / "pre-replay-mlx-proposal-scores.jsonl").exists()
+            )
             self.assertTrue((output_dir / "mlx-ranker-model.json").exists())
             self.assertTrue((output_dir / "mlx-proposal-scores.jsonl").exists())
             self.assertTrue((output_dir / "candidate-evidence-bundles.jsonl").exists())
@@ -129,6 +133,15 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             model_payload = json.loads(
                 (output_dir / "mlx-ranker-model.json").read_text(encoding="utf-8")
             )
+            pre_replay_model_payload = json.loads(
+                (output_dir / "pre-replay-mlx-ranker-model.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(pre_replay_model_payload["proposal_stage"], "pre_replay")
+            self.assertEqual(
+                pre_replay_model_payload["row_count"], payload["candidate_spec_count"]
+            )
             self.assertEqual(model_payload["schema_version"], "torghut.mlx-ranker.v1")
             self.assertEqual(
                 model_payload["row_count"], payload["candidate_spec_count"]
@@ -145,6 +158,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             )
             self.assertEqual(
                 payload["evidence_bundle_count"], payload["replay_candidate_spec_count"]
+            )
+            self.assertEqual(
+                selection["proposal_model"]["proposal_stage"], "pre_replay"
             )
 
             portfolio = payload["best_portfolio_candidate"]
@@ -178,6 +194,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 .splitlines()
                 if line
             ]
+            pre_replay_rows = [
+                json.loads(line)
+                for line in (output_dir / "pre-replay-mlx-proposal-scores.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line
+            ]
 
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(selection["budget"]["selected_count"], 2)
@@ -194,6 +217,11 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             {row["replay_selection_reason"] for row in proposal_selected},
             {"exploitation", "exploration"},
+        )
+        self.assertEqual(len(pre_replay_rows), payload["candidate_spec_count"])
+        self.assertEqual(
+            {row["selection_reason"] for row in pre_replay_rows},
+            {"pre_replay_mlx_rank"},
         )
 
     def test_main_returns_nonzero_when_no_oracle_candidate_found(self) -> None:
