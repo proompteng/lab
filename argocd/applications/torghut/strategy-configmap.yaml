@@ -301,6 +301,28 @@ data:
           long_trailing_stop_spread_bps_multiplier: "0.10"
           long_trailing_stop_volatility_bps_multiplier: "3"
           require_positive_price_for_signal_exit: "true"
+      - name: microbar-cross-sectional-pairs-v1
+        strategy_id: microbar_cross_sectional_pairs_v1@research
+        strategy_type: microbar_cross_sectional_long_v1
+        version: 1.0.0
+        description: Research-only microbar cross-sectional continuation/reversal candidate used by the whitepaper autoresearch harness.
+        enabled: false
+        base_timeframe: "1Sec"
+        universe_type: microbar_cross_sectional_pairs_v1
+        universe_symbols: ["AAPL", "AMAT", "GOOG", "MSFT", "MU", "NVDA", "SHOP"]
+        max_notional_per_trade: 50000
+        max_position_pct_equity: 6.0
+        params:
+          entry_minute_after_open: "60"
+          exit_minute_after_open: "120"
+          signal_motif: "vwap_close_continuation"
+          rank_feature: "cross_section_vwap_w5m_rank"
+          selection_mode: "continuation"
+          top_n: "2"
+          max_gross_exposure_pct_equity: "6.0"
+          max_pair_legs: "2"
+          max_entries_per_session: "1"
+          entry_cooldown_seconds: "600"
       - name: late-day-continuation-long-v1
         strategy_id: late_day_continuation_long_v1@research
         strategy_type: late_day_continuation_long_v1

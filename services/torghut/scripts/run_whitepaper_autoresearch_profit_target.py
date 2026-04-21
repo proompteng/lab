@@ -29,6 +29,7 @@ from app.trading.discovery.autoresearch import (
     run_id,
 )
 from app.trading.discovery.candidate_specs import CandidateSpec
+from app.trading.discovery.candidate_specs import candidate_spec_id_for_payload
 from app.trading.discovery.evidence_bundles import (
     CandidateEvidenceBundle,
     evidence_bundle_from_frontier_candidate,
@@ -43,6 +44,7 @@ from app.trading.discovery.portfolio_optimizer import (
     PortfolioCandidateSpec,
     optimize_portfolio_candidate,
 )
+from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy
 from app.trading.discovery.runtime_closure import (
     RuntimeClosureExecutionContext,
     write_runtime_closure_bundle,
@@ -109,6 +111,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--chunk-minutes", type=int, default=10)
     parser.add_argument("--symbols", default="AAPL,NVDA,MSFT,AMAT")
     parser.add_argument("--progress-log-seconds", type=int, default=30)
+    parser.add_argument("--max-frontier-candidates-per-spec", type=int, default=64)
     parser.add_argument("--train-days", type=int, default=6)
     parser.add_argument("--holdout-days", type=int, default=3)
     parser.add_argument("--full-window-start-date", default="")
@@ -116,6 +119,20 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--expected-last-trading-day", default="")
     parser.add_argument("--allow-stale-tape", action="store_true")
     parser.add_argument("--prefetch-full-window-rows", action="store_true")
+    parser.add_argument("--min-active-day-ratio", default="0.90")
+    parser.add_argument("--min-positive-day-ratio", default="0.60")
+    parser.add_argument("--max-worst-day-loss", default="350")
+    parser.add_argument("--max-drawdown", default="900")
+    parser.add_argument("--max-best-day-share", default="0.25")
+    parser.add_argument("--max-cluster-contribution-share", default="0.40")
+    parser.add_argument("--max-single-symbol-contribution-share", default="0.35")
+    parser.add_argument("--min-avg-filled-notional-per-day", default="300000")
+    parser.add_argument("--min-regime-slice-pass-rate", default="0.45")
+    parser.add_argument(
+        "--require-no-flat-days",
+        action="store_true",
+        help="Require every evaluated trading day to be active and positive at portfolio oracle time.",
+    )
     parser.add_argument(
         "--persist-results", dest="persist_results", action="store_true"
     )
@@ -224,6 +241,94 @@ def _proposal_sort_value(value: Any) -> float:
         return float(str(value))
     except Exception:
         return 0.0
+
+
+def _oracle_policy_from_args(args: argparse.Namespace) -> ProfitTargetOraclePolicy:
+    min_active_day_ratio = _decimal(
+        getattr(args, "min_active_day_ratio", "0.90"), default="0.90"
+    )
+    min_positive_day_ratio = _decimal(
+        getattr(args, "min_positive_day_ratio", "0.60"), default="0.60"
+    )
+    max_worst_day_loss = _decimal(
+        getattr(args, "max_worst_day_loss", "350"), default="350"
+    )
+    max_drawdown = _decimal(getattr(args, "max_drawdown", "900"), default="900")
+    if bool(getattr(args, "require_no_flat_days", False)):
+        min_active_day_ratio = max(min_active_day_ratio, Decimal("1"))
+        min_positive_day_ratio = max(min_positive_day_ratio, Decimal("1"))
+        max_worst_day_loss = min(max_worst_day_loss, Decimal("0"))
+        max_drawdown = min(max_drawdown, Decimal("0"))
+    return ProfitTargetOraclePolicy(
+        min_active_day_ratio=min_active_day_ratio,
+        min_positive_day_ratio=min_positive_day_ratio,
+        max_worst_day_loss=max_worst_day_loss,
+        max_drawdown=max_drawdown,
+        max_best_day_share=_decimal(
+            getattr(args, "max_best_day_share", "0.25"), default="0.25"
+        ),
+        max_cluster_contribution_share=_decimal(
+            getattr(args, "max_cluster_contribution_share", "0.40"), default="0.40"
+        ),
+        max_single_symbol_contribution_share=_decimal(
+            getattr(args, "max_single_symbol_contribution_share", "0.35"),
+            default="0.35",
+        ),
+        min_avg_filled_notional_per_day=_decimal(
+            getattr(args, "min_avg_filled_notional_per_day", "300000"),
+            default="300000",
+        ),
+        min_regime_slice_pass_rate=_decimal(
+            getattr(args, "min_regime_slice_pass_rate", "0.45"), default="0.45"
+        ),
+    )
+
+
+def _candidate_spec_with_oracle_policy(
+    spec: CandidateSpec, *, oracle_policy: ProfitTargetOraclePolicy
+) -> CandidateSpec:
+    objective = {
+        **dict(spec.objective),
+        "require_positive_day_ratio": str(oracle_policy.min_positive_day_ratio),
+    }
+    hard_vetoes = {
+        **dict(spec.hard_vetoes),
+        "required_min_active_day_ratio": str(oracle_policy.min_active_day_ratio),
+        "required_min_daily_notional": str(
+            oracle_policy.min_avg_filled_notional_per_day
+        ),
+        "required_max_best_day_share": str(oracle_policy.max_best_day_share),
+        "required_max_worst_day_loss": str(oracle_policy.max_worst_day_loss),
+        "required_max_drawdown": str(oracle_policy.max_drawdown),
+        "required_min_regime_slice_pass_rate": str(
+            oracle_policy.min_regime_slice_pass_rate
+        ),
+    }
+    base_payload = {
+        "hypothesis_id": spec.hypothesis_id,
+        "family_template_id": spec.family_template_id,
+        "feature_contract": dict(spec.feature_contract),
+        "objective": objective,
+    }
+    return replace(
+        spec,
+        candidate_spec_id=candidate_spec_id_for_payload(base_payload),
+        objective=objective,
+        hard_vetoes=hard_vetoes,
+        promotion_contract={
+            **dict(spec.promotion_contract),
+            "profit_target_oracle_policy": oracle_policy.to_payload(),
+        },
+    )
+
+
+def _candidate_specs_with_oracle_policy(
+    specs: Sequence[CandidateSpec], *, oracle_policy: ProfitTargetOraclePolicy
+) -> list[CandidateSpec]:
+    return [
+        _candidate_spec_with_oracle_policy(spec, oracle_policy=oracle_policy)
+        for spec in specs
+    ]
 
 
 def _load_sources_from_db(
@@ -482,25 +587,48 @@ def _proposal_model_and_rows(
     return model_payload, proposal_rows
 
 
-def _candidate_quality_gate_failures(scorecard: Mapping[str, Any]) -> list[str]:
+def _candidate_quality_gate_failures(
+    scorecard: Mapping[str, Any], *, oracle_policy: ProfitTargetOraclePolicy
+) -> list[str]:
     failures: list[str] = []
     if _decimal(scorecard.get("net_pnl_per_day")) <= 0:
         failures.append("non_positive_net_pnl_per_day")
-    if _decimal(scorecard.get("active_day_ratio")) < Decimal("0.90"):
+    if _decimal(scorecard.get("active_day_ratio")) < oracle_policy.min_active_day_ratio:
         failures.append("active_day_ratio_below_oracle")
-    if _decimal(scorecard.get("positive_day_ratio")) < Decimal("0.60"):
+    if (
+        _decimal(scorecard.get("positive_day_ratio"))
+        < oracle_policy.min_positive_day_ratio
+    ):
         failures.append("positive_day_ratio_below_oracle")
-    if _decimal(scorecard.get("best_day_share"), default="1") > Decimal("0.25"):
+    if (
+        _decimal(scorecard.get("best_day_share"), default="1")
+        > oracle_policy.max_best_day_share
+    ):
         failures.append("best_day_share_above_oracle")
-    if _decimal(scorecard.get("worst_day_loss"), default="999999") > Decimal("350"):
+    if (
+        _decimal(scorecard.get("worst_day_loss"), default="999999")
+        > oracle_policy.max_worst_day_loss
+    ):
         failures.append("worst_day_loss_above_oracle")
-    if _decimal(scorecard.get("max_drawdown"), default="999999") > Decimal("900"):
+    if (
+        _decimal(scorecard.get("max_drawdown"), default="999999")
+        > oracle_policy.max_drawdown
+    ):
         failures.append("max_drawdown_above_oracle")
-    if _decimal(scorecard.get("avg_filled_notional_per_day")) < Decimal("300000"):
+    if (
+        _decimal(scorecard.get("avg_filled_notional_per_day"))
+        < oracle_policy.min_avg_filled_notional_per_day
+    ):
         failures.append("avg_filled_notional_per_day_below_oracle")
-    if _decimal(scorecard.get("regime_slice_pass_rate")) < Decimal("0.45"):
+    if (
+        _decimal(scorecard.get("regime_slice_pass_rate"))
+        < oracle_policy.min_regime_slice_pass_rate
+    ):
         failures.append("regime_slice_pass_rate_below_oracle")
-    if _decimal(scorecard.get("posterior_edge_lower")) <= 0:
+    if (
+        _decimal(scorecard.get("posterior_edge_lower"))
+        <= oracle_policy.min_posterior_edge_lower
+    ):
         failures.append("posterior_edge_lower_non_positive")
     if _string(scorecard.get("shadow_parity_status")) != "within_budget":
         failures.append("shadow_parity_status_not_within_budget")
@@ -511,6 +639,7 @@ def _false_positive_table(
     *,
     proposal_rows: Sequence[Mapping[str, Any]],
     evidence_bundles: Sequence[CandidateEvidenceBundle],
+    oracle_policy: ProfitTargetOraclePolicy,
     limit: int = 16,
 ) -> list[dict[str, Any]]:
     evidence_by_spec = {bundle.candidate_spec_id: bundle for bundle in evidence_bundles}
@@ -537,7 +666,9 @@ def _false_positive_table(
             )
             continue
         scorecard = evidence.objective_scorecard
-        failure_reasons = _candidate_quality_gate_failures(scorecard)
+        failure_reasons = _candidate_quality_gate_failures(
+            scorecard, oracle_policy=oracle_policy
+        )
         if not failure_reasons:
             continue
         rows.append(
@@ -988,34 +1119,57 @@ def _run_synthetic_replay(
 
 
 def _run_real_replay(
-    args: argparse.Namespace, *, output_dir: Path
+    args: argparse.Namespace,
+    *,
+    output_dir: Path,
+    specs: Sequence[CandidateSpec] = (),
 ) -> EpochReplayResult:
-    factory_payload = strategy_factory_runner.run_strategy_factory_v2(
-        argparse.Namespace(
-            output_dir=output_dir / "strategy-factory",
-            experiment_id=[],
-            paper_run_id=args.paper_run_id,
-            limit=max(1, int(args.max_candidates)),
-            strategy_configmap=args.strategy_configmap,
-            family_template_dir=args.family_template_dir,
-            seed_sweep_dir=args.seed_sweep_dir,
-            clickhouse_http_url=args.clickhouse_http_url,
-            clickhouse_username=args.clickhouse_username,
-            clickhouse_password=args.clickhouse_password,
-            start_equity=args.start_equity,
-            chunk_minutes=args.chunk_minutes,
-            symbols=args.symbols,
-            progress_log_seconds=args.progress_log_seconds,
-            train_days=args.train_days,
-            holdout_days=args.holdout_days,
-            full_window_start_date=args.full_window_start_date,
-            full_window_end_date=args.full_window_end_date,
-            expected_last_trading_day=args.expected_last_trading_day,
-            allow_stale_tape=args.allow_stale_tape,
-            prefetch_full_window_rows=args.prefetch_full_window_rows,
-            top_n=args.top_k,
-            persist_results=args.persist_results,
+    source_specs = [
+        strategy_factory_runner.InMemoryExperimentSpec(
+            run_id=_string(spec.feature_contract.get("source_run_id"))
+            or "whitepaper-autoresearch",
+            experiment_id=f"{spec.candidate_spec_id}-exp",
+            payload_json=spec.to_vnext_experiment_payload(
+                experiment_id=f"{spec.candidate_spec_id}-exp"
+            ),
         )
+        for spec in specs
+    ]
+    factory_args = argparse.Namespace(
+        output_dir=output_dir / "strategy-factory",
+        experiment_id=[],
+        paper_run_id=args.paper_run_id,
+        limit=max(1, int(args.max_candidates)),
+        strategy_configmap=_resolve_existing_path(args.strategy_configmap),
+        family_template_dir=_resolve_existing_path(args.family_template_dir),
+        seed_sweep_dir=_resolve_existing_path(args.seed_sweep_dir),
+        clickhouse_http_url=args.clickhouse_http_url,
+        clickhouse_username=args.clickhouse_username,
+        clickhouse_password=args.clickhouse_password,
+        start_equity=args.start_equity,
+        chunk_minutes=args.chunk_minutes,
+        symbols=args.symbols,
+        progress_log_seconds=args.progress_log_seconds,
+        train_days=args.train_days,
+        holdout_days=args.holdout_days,
+        full_window_start_date=args.full_window_start_date,
+        full_window_end_date=args.full_window_end_date,
+        expected_last_trading_day=args.expected_last_trading_day,
+        allow_stale_tape=args.allow_stale_tape,
+        prefetch_full_window_rows=args.prefetch_full_window_rows,
+        top_n=args.top_k,
+        max_candidates_to_evaluate=getattr(
+            args, "max_frontier_candidates_per_spec", 64
+        ),
+        persist_results=args.persist_results,
+    )
+    factory_payload = (
+        strategy_factory_runner.run_strategy_factory_v2_from_specs(
+            factory_args,
+            source_specs=source_specs,
+        )
+        if source_specs
+        else strategy_factory_runner.run_strategy_factory_v2(factory_args)
     )
     evidence_bundles: list[CandidateEvidenceBundle] = []
     for item in _list_of_mappings(factory_payload.get("experiments")):
@@ -1027,12 +1181,16 @@ def _run_real_replay(
         if not top:
             continue
         candidate = dict(top[0])
+        candidate_spec_id = _string(item.get("candidate_spec_id")) or _string(
+            candidate.get("candidate_spec_id")
+        )
+        if candidate_spec_id:
+            candidate["candidate_spec_id"] = candidate_spec_id
         candidate["promotion_readiness"] = item.get("promotion_readiness")
         evidence_bundles.append(
             evidence_bundle_from_frontier_candidate(
-                candidate_spec_id=str(
-                    item.get("experiment_id") or item.get("top_candidate_id") or ""
-                ),
+                candidate_spec_id=candidate_spec_id
+                or str(item.get("experiment_id") or item.get("top_candidate_id") or ""),
                 candidate=candidate,
                 dataset_snapshot_id=str(item.get("dataset_snapshot_id") or ""),
                 result_path=result_path,
@@ -1177,6 +1335,7 @@ def run_whitepaper_autoresearch_profit_target(
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     target = _decimal(args.target_net_pnl_per_day, default="500")
+    oracle_policy = _oracle_policy_from_args(args)
     sources = []
     if args.seed_recent_whitepapers:
         sources.extend(RECENT_WHITEPAPER_SEEDS)
@@ -1200,6 +1359,9 @@ def run_whitepaper_autoresearch_profit_target(
         seed_sweep_dir=args.seed_sweep_dir.resolve(),
     )
     candidate_specs = list(compilation.executable_specs)
+    candidate_specs = _candidate_specs_with_oracle_policy(
+        candidate_specs, oracle_policy=oracle_policy
+    )
     candidate_specs = candidate_specs[: max(1, int(args.max_candidates))]
     blocker_by_spec: dict[str, list[CandidateCompilationBlocker]] = {}
     for blocker in compilation.blockers:
@@ -1292,6 +1454,7 @@ def run_whitepaper_autoresearch_profit_target(
                     }
                 ),
                 output_dir=output_dir,
+                specs=replay_candidate_specs,
             )
         )
     except Exception as exc:
@@ -1317,6 +1480,7 @@ def run_whitepaper_autoresearch_profit_target(
     portfolio = optimize_portfolio_candidate(
         evidence_bundles=replay_result.evidence_bundles,
         target_net_pnl_per_day=target,
+        oracle_policy=oracle_policy,
         portfolio_size_min=int(args.portfolio_size_min),
         portfolio_size_max=int(args.portfolio_size_max),
     )
@@ -1373,6 +1537,7 @@ def run_whitepaper_autoresearch_profit_target(
     false_positive_table = _false_positive_table(
         proposal_rows=proposal_rows,
         evidence_bundles=replay_result.evidence_bundles,
+        oracle_policy=oracle_policy,
     )
     best_false_negative_table = _best_false_negative_table(
         candidate_selection=candidate_selection,
@@ -1385,6 +1550,7 @@ def run_whitepaper_autoresearch_profit_target(
         "epoch_id": epoch_id,
         "run_root": str(output_dir),
         "target_net_pnl_per_day": str(target),
+        "profit_target_oracle_policy": oracle_policy.to_payload(),
         "source_count": len(sources),
         "hypothesis_count": len(hypothesis_cards),
         "candidate_spec_count": len(candidate_specs),

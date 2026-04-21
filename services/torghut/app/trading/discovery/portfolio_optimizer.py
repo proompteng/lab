@@ -16,6 +16,7 @@ from app.trading.discovery.portfolio_candidates import (
     portfolio_candidate_id_for_payload,
 )
 from app.trading.discovery.profit_target_oracle import evaluate_profit_target_oracle
+from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy
 
 MAX_CLUSTER_CONTRIBUTION_SHARE = Decimal("0.40")
 MAX_SINGLE_SYMBOL_CONTRIBUTION_SHARE = Decimal("0.35")
@@ -235,6 +236,7 @@ def _portfolio_scorecard(
     *,
     selected: Sequence[CandidateEvidenceBundle],
     target_net_pnl_per_day: Decimal,
+    oracle_policy: ProfitTargetOraclePolicy,
 ) -> dict[str, Any]:
     daily_net = _portfolio_daily_net(selected)
     values = [daily_net[day] for day in sorted(daily_net)]
@@ -302,7 +304,9 @@ def _portfolio_scorecard(
         },
     }
     scorecard["profit_target_oracle"] = evaluate_profit_target_oracle(
-        scorecard, target_net_pnl_per_day=target_net_pnl_per_day
+        scorecard,
+        target_net_pnl_per_day=target_net_pnl_per_day,
+        policy=oracle_policy,
     )
     scorecard["oracle_passed"] = bool(scorecard["profit_target_oracle"]["passed"])
     return scorecard
@@ -331,9 +335,11 @@ def optimize_portfolio_candidate(
     *,
     evidence_bundles: Sequence[CandidateEvidenceBundle],
     target_net_pnl_per_day: Decimal = Decimal("500"),
+    oracle_policy: ProfitTargetOraclePolicy | None = None,
     portfolio_size_min: int = 2,
     portfolio_size_max: int = 8,
 ) -> PortfolioCandidateSpec | None:
+    oracle_policy = oracle_policy or ProfitTargetOraclePolicy()
     invalid_evidence_rejections = [
         {
             "candidate_id": bundle.candidate_id,
@@ -387,6 +393,7 @@ def optimize_portfolio_candidate(
             candidate_scorecard = _portfolio_scorecard(
                 selected=selected,
                 target_net_pnl_per_day=target_net_pnl_per_day,
+                oracle_policy=oracle_policy,
             )
             if bool(candidate_scorecard.get("oracle_passed")):
                 break
@@ -397,6 +404,7 @@ def optimize_portfolio_candidate(
     objective_scorecard = _portfolio_scorecard(
         selected=selected,
         target_net_pnl_per_day=target_net_pnl_per_day,
+        oracle_policy=oracle_policy,
     )
     max_drawdown = _decimal(objective_scorecard.get("max_drawdown"))
     sleeves: list[Mapping[str, Any]] = []
