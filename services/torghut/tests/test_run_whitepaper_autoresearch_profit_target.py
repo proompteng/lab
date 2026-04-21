@@ -391,6 +391,48 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(len(portfolios), 1)
         self.assertEqual(portfolios[0].status, "target_met")
 
+    def test_persistence_failure_preserves_artifacts_and_returns_infra_failure(
+        self,
+    ) -> None:
+        with (
+            TemporaryDirectory() as tmpdir,
+            patch(
+                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                side_effect=RuntimeError("db offline"),
+            ),
+        ):
+            output_dir = Path(tmpdir) / "epoch"
+            args = self._args(output_dir)
+            args.persist_results = True
+            payload = runner.run_whitepaper_autoresearch_profit_target(args)
+            summary = json.loads(
+                (output_dir / "summary.json").read_text(encoding="utf-8")
+            )
+            persistence_error = json.loads(
+                (output_dir / "persistence-error-summary.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            evidence_artifact_exists = (
+                output_dir / "candidate-evidence-bundles.jsonl"
+            ).exists()
+            portfolio_artifact_exists = (
+                output_dir / "portfolio-candidates.jsonl"
+            ).exists()
+            notebook_exists = (
+                output_dir / "whitepaper-autoresearch-diagnostics.ipynb"
+            ).exists()
+
+        self.assertEqual(payload["status"], "persistence_failed")
+        self.assertEqual(payload["pre_persistence_status"], "ok")
+        self.assertEqual(payload["persistence_status"], "failed")
+        self.assertIn("db offline", payload["persistence_error"])
+        self.assertEqual(summary["status"], "persistence_failed")
+        self.assertEqual(persistence_error["epoch_id"], payload["epoch_id"])
+        self.assertTrue(evidence_artifact_exists)
+        self.assertTrue(portfolio_artifact_exists)
+        self.assertTrue(notebook_exists)
+
     def test_train_ranker_script_helper_reads_runner_artifacts(self) -> None:
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"

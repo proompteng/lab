@@ -1768,38 +1768,54 @@ def run_whitepaper_autoresearch_profit_target(
             ),
         },
     }
-    if args.persist_results:
-        _persist_epoch_ledgers(
-            epoch_id=epoch_id,
-            status=status,
-            target_net_pnl_per_day=target,
-            paper_run_ids=[str(item) for item in args.paper_run_id],
-            sources=sources,
-            candidate_specs=candidate_specs,
-            candidate_blockers=blocker_by_spec,
-            proposal_rows=proposal_rows,
-            portfolio=portfolio,
-            summary=summary,
-            runner_config={
-                "replay_mode": args.replay_mode,
-                "max_candidates": int(args.max_candidates),
-                "top_k": int(args.top_k),
-                "exploration_slots": int(args.exploration_slots),
-                "replay_candidate_spec_count": len(replay_candidate_specs),
-                "portfolio_size_min": int(args.portfolio_size_min),
-                "portfolio_size_max": int(args.portfolio_size_max),
-                "source_jsonl": [
-                    str(path) for path in getattr(args, "source_jsonl", [])
-                ],
-            },
-            started_at=started_at,
-            completed_at=datetime.now(UTC),
-        )
     _write_json(output_dir / "summary.json", summary)
     write_whitepaper_autoresearch_diagnostics_notebook(
         output_dir / "whitepaper-autoresearch-diagnostics.ipynb",
         summary=summary,
     )
+    if args.persist_results:
+        runner_config = {
+            "replay_mode": args.replay_mode,
+            "max_candidates": int(args.max_candidates),
+            "top_k": int(args.top_k),
+            "exploration_slots": int(args.exploration_slots),
+            "replay_candidate_spec_count": len(replay_candidate_specs),
+            "portfolio_size_min": int(args.portfolio_size_min),
+            "portfolio_size_max": int(args.portfolio_size_max),
+            "source_jsonl": [str(path) for path in getattr(args, "source_jsonl", [])],
+        }
+        try:
+            _persist_epoch_ledgers(
+                epoch_id=epoch_id,
+                status=status,
+                target_net_pnl_per_day=target,
+                paper_run_ids=[str(item) for item in args.paper_run_id],
+                sources=sources,
+                candidate_specs=candidate_specs,
+                candidate_blockers=blocker_by_spec,
+                proposal_rows=proposal_rows,
+                portfolio=portfolio,
+                summary=summary,
+                runner_config=runner_config,
+                started_at=started_at,
+                completed_at=datetime.now(UTC),
+            )
+            summary["persistence_status"] = "persisted"
+            _write_json(output_dir / "summary.json", summary)
+        except Exception as exc:
+            summary["pre_persistence_status"] = status
+            summary["status"] = "persistence_failed"
+            summary["status_reason"] = "epoch_ledger_persistence_failed"
+            summary["persistence_status"] = "failed"
+            summary["persistence_error"] = str(exc)
+            summary["persistence_runner_config"] = runner_config
+            _write_json(output_dir / "persistence-error-summary.json", summary)
+            _write_json(output_dir / "error-summary.json", summary)
+            _write_json(output_dir / "summary.json", summary)
+            write_whitepaper_autoresearch_diagnostics_notebook(
+                output_dir / "whitepaper-autoresearch-diagnostics.ipynb",
+                summary=summary,
+            )
     return summary
 
 
@@ -1810,6 +1826,8 @@ def main() -> int:
     status = str(payload.get("status") or "")
     if status == "ok":
         return 0
+    if status == "persistence_failed":
+        return 1
     if status == "replay_failed":
         return 3
     return 2
