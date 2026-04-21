@@ -1424,32 +1424,11 @@ def _runtime_closure_payload(
         ),
         progress_log_interval_seconds=int(args.progress_log_seconds),
     )
-    best_candidate = None
-    if portfolio is not None:
-        best_candidate = {
-            "candidate_id": portfolio.portfolio_candidate_id,
-            "family_template_id": "portfolio_whitepaper_autoresearch_v1",
-            "objective_scorecard": dict(portfolio.objective_scorecard),
-            "portfolio": {
-                "base_per_leg_notional": "50000",
-                "sleeves": [dict(item) for item in portfolio.sleeves],
-            },
-            "promotion_status": "blocked_pending_runtime_parity",
-            "promotion_stage": "research_candidate",
-            "promotion_blockers": [
-                "scheduler_v3_parity_missing",
-                "shadow_validation_missing",
-            ],
-            "promotion_required_evidence": [
-                "scheduler_v3_parity_replay",
-                "shadow_validation",
-            ],
-        }
     return write_runtime_closure_bundle(
         run_root=output_dir,
         runner_run_id=epoch_id,
         program=program,
-        best_candidate=best_candidate,
+        best_candidate=portfolio,
         manifest=manifest,
         execution_context=execution_context if portfolio is not None else None,
     ).to_payload()
