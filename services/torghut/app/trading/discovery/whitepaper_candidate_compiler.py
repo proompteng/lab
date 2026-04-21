@@ -117,6 +117,28 @@ def _family_feature_catalog(family_template_dir: Path | None) -> set[str]:
     return features
 
 
+def _seed_sweep_config_path(
+    family_template_id: str,
+    *,
+    seed_sweep_dir: Path | None,
+) -> Path | None:
+    if seed_sweep_dir is None or not seed_sweep_dir.exists():
+        return None
+    for path in sorted(seed_sweep_dir.glob("profitability-frontier-*.yaml")):
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, Mapping):
+            continue
+        sweep_payload = {
+            str(key): item for key, item in cast(Mapping[Any, Any], payload).items()
+        }
+        if (
+            str(sweep_payload.get("family_template_id") or "").strip()
+            == family_template_id
+        ):
+            return path
+    return None
+
+
 def _sequence_strings(value: Any) -> tuple[str, ...]:
     if not isinstance(value, Sequence) or isinstance(value, str):
         return ()
@@ -128,6 +150,7 @@ def _blockers_for_spec(
     spec: CandidateSpec,
     *,
     family_template_dir: Path | None,
+    seed_sweep_dir: Path | None,
 ) -> tuple[CandidateCompilationBlocker, ...]:
     blockers: list[CandidateCompilationBlocker] = []
     if spec.family_template_id not in EXECUTABLE_FAMILY_IDS:
@@ -168,6 +191,23 @@ def _blockers_for_spec(
                 candidate_spec_id=spec.candidate_spec_id,
                 reason="family_runtime_harness_missing",
                 detail={"family_template_id": spec.family_template_id},
+            )
+        )
+    if (
+        seed_sweep_dir is not None
+        and _seed_sweep_config_path(
+            spec.family_template_id, seed_sweep_dir=seed_sweep_dir
+        )
+        is None
+    ):
+        blockers.append(
+            CandidateCompilationBlocker(
+                candidate_spec_id=spec.candidate_spec_id,
+                reason="seed_sweep_missing",
+                detail={
+                    "family_template_id": spec.family_template_id,
+                    "seed_sweep_dir": str(seed_sweep_dir),
+                },
             )
         )
 
@@ -216,6 +256,7 @@ def compile_whitepaper_candidate_specs(
     hypothesis_cards: Sequence[HypothesisCard],
     target_net_pnl_per_day: Decimal = Decimal("500"),
     family_template_dir: Path | None = None,
+    seed_sweep_dir: Path | None = None,
 ) -> WhitepaperCandidateCompilation:
     candidate_specs = tuple(
         compile_candidate_specs(
@@ -228,7 +269,9 @@ def compile_whitepaper_candidate_specs(
     blocked_specs: list[CandidateSpec] = []
     for spec in candidate_specs:
         spec_blockers = _blockers_for_spec(
-            spec, family_template_dir=family_template_dir
+            spec,
+            family_template_dir=family_template_dir,
+            seed_sweep_dir=seed_sweep_dir,
         )
         blockers.extend(spec_blockers)
         if spec_blockers:
@@ -257,6 +300,7 @@ def compile_claim_payloads_to_whitepaper_experiments(
     relations: Sequence[Mapping[str, Any]] = (),
     target_net_pnl_per_day: Decimal = Decimal("500"),
     family_template_dir: Path | None = None,
+    seed_sweep_dir: Path | None = None,
 ) -> WhitepaperCandidateCompilation:
     cards = build_hypothesis_cards(
         source_run_id=run_id,
@@ -267,4 +311,5 @@ def compile_claim_payloads_to_whitepaper_experiments(
         hypothesis_cards=cards,
         target_net_pnl_per_day=target_net_pnl_per_day,
         family_template_dir=family_template_dir,
+        seed_sweep_dir=seed_sweep_dir,
     )

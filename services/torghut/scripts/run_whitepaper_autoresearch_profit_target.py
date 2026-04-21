@@ -1197,8 +1197,9 @@ def run_whitepaper_autoresearch_profit_target(
         hypothesis_cards=hypothesis_cards,
         target_net_pnl_per_day=target,
         family_template_dir=args.family_template_dir.resolve(),
+        seed_sweep_dir=args.seed_sweep_dir.resolve(),
     )
-    candidate_specs = list(compilation.executable_specs or compilation.candidate_specs)
+    candidate_specs = list(compilation.executable_specs)
     candidate_specs = candidate_specs[: max(1, int(args.max_candidates))]
     blocker_by_spec: dict[str, list[CandidateCompilationBlocker]] = {}
     for blocker in compilation.blockers:

@@ -3635,12 +3635,19 @@ class WhitepaperWorkflowService:
                     "config/trading/families",
                 )
             )
+            seed_sweep_dir = Path(
+                os.getenv(
+                    "TORGHUT_WHITEPAPER_SEED_SWEEP_DIR",
+                    "config/trading",
+                )
+            )
             compilation = compile_claim_payloads_to_whitepaper_experiments(
                 run_id=run_id,
                 claims=claims,
                 relations=relations,
                 target_net_pnl_per_day=Decimal("500"),
                 family_template_dir=family_template_dir,
+                seed_sweep_dir=seed_sweep_dir,
             )
             return [
                 dict(item) for item in compilation.whitepaper_experiment_payloads
