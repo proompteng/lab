@@ -380,9 +380,34 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 "_run_real_replay",
                 side_effect=RuntimeError("forced replay failure"),
             ),
+            patch.object(
+                runner,
+                "_collect_partial_real_replay",
+                return_value=runner.EpochReplayResult(
+                    evidence_bundles=(
+                        runner.evidence_bundle_from_frontier_candidate(
+                            candidate_spec_id="spec-partial",
+                            candidate={
+                                "candidate_id": "cand-partial",
+                                "objective_scorecard": {
+                                    "net_pnl_per_day": "-1",
+                                    "active_day_ratio": "0.4",
+                                    "positive_day_ratio": "0.2",
+                                },
+                            },
+                            dataset_snapshot_id="snap-partial",
+                            result_path="/tmp/partial-result.json",
+                        ),
+                    ),
+                    replay_results=({"status": "partial_replay_artifacts_collected"},),
+                ),
+            ),
             patch("builtins.print"),
         ):
             exit_code = runner.main()
+            partial_artifact_exists = (
+                Path(tmpdir) / "epoch" / "candidate-evidence-bundles.partial.jsonl"
+            ).exists()
             summary = json.loads(
                 (Path(tmpdir) / "epoch" / "error-summary.json").read_text(
                     encoding="utf-8"
@@ -391,6 +416,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
 
         self.assertEqual(exit_code, 3)
         self.assertEqual(summary["status"], "replay_failed")
+        self.assertEqual(summary["partial_evidence_bundle_count"], 1)
+        self.assertTrue(partial_artifact_exists)
 
     def test_train_ranker_script_main_writes_model_and_scores(self) -> None:
         with TemporaryDirectory() as tmpdir:

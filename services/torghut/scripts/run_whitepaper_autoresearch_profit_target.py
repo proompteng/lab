@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import signal
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -112,6 +113,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--symbols", default="AAPL,NVDA,MSFT,AMAT")
     parser.add_argument("--progress-log-seconds", type=int, default=30)
     parser.add_argument("--max-frontier-candidates-per-spec", type=int, default=64)
+    parser.add_argument("--real-replay-timeout-seconds", type=int, default=0)
     parser.add_argument("--train-days", type=int, default=6)
     parser.add_argument("--holdout-days", type=int, default=3)
     parser.add_argument("--full-window-start-date", default="")
@@ -183,6 +185,7 @@ def _write_failure_summary(
     status: str,
     reason: str,
     started_at: datetime,
+    extra: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     summary = {
         "status": status,
@@ -192,6 +195,8 @@ def _write_failure_summary(
         "started_at": started_at.isoformat(),
         "completed_at": datetime.now(UTC).isoformat(),
     }
+    if extra:
+        summary.update(dict(extra))
     _write_json(output_dir / "error-summary.json", summary)
     _write_json(output_dir / "summary.json", summary)
     return summary
@@ -1218,6 +1223,12 @@ def _run_real_replay(
         if source_specs
         else strategy_factory_runner.run_strategy_factory_v2(factory_args)
     )
+    return _real_replay_result_from_factory_payload(factory_payload)
+
+
+def _real_replay_result_from_factory_payload(
+    factory_payload: Mapping[str, Any],
+) -> EpochReplayResult:
     evidence_bundles: list[CandidateEvidenceBundle] = []
     for item in _list_of_mappings(factory_payload.get("experiments")):
         result_path = str(item.get("result_path") or "")
@@ -1246,6 +1257,98 @@ def _run_real_replay(
     return EpochReplayResult(
         evidence_bundles=tuple(evidence_bundles), replay_results=(factory_payload,)
     )
+
+
+def _candidate_spec_id_from_experiment_result_path(path: Path) -> str:
+    name = path.parent.name
+    return name[:-4] if name.endswith("-exp") else name
+
+
+def _collect_partial_real_replay(
+    *,
+    output_dir: Path,
+    specs: Sequence[CandidateSpec],
+) -> EpochReplayResult:
+    strategy_factory_root = output_dir / "strategy-factory"
+    if not strategy_factory_root.exists():
+        return EpochReplayResult(evidence_bundles=(), replay_results=())
+    spec_by_id = {spec.candidate_spec_id: spec for spec in specs}
+    experiments: list[dict[str, Any]] = []
+    for result_path in sorted(strategy_factory_root.glob("*/result.json")):
+        try:
+            result_payload = json.loads(result_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        top = _list_of_mappings(result_payload.get("top"))
+        if not top:
+            continue
+        top_candidate = top[0]
+        candidate_spec_id = _string(
+            top_candidate.get("candidate_spec_id")
+        ) or _candidate_spec_id_from_experiment_result_path(result_path)
+        spec = spec_by_id.get(candidate_spec_id)
+        dataset_snapshot = _mapping(result_payload.get("dataset_snapshot_receipt"))
+        experiments.append(
+            {
+                "source_run_id": _string(spec.feature_contract.get("source_run_id"))
+                if spec is not None
+                else "",
+                "experiment_id": result_path.parent.name,
+                "candidate_spec_id": candidate_spec_id,
+                "family_template_id": _string(top_candidate.get("family_template_id"))
+                or (spec.family_template_id if spec is not None else ""),
+                "result_path": str(result_path),
+                "dataset_snapshot_id": str(dataset_snapshot.get("snapshot_id") or ""),
+                "top_candidate_id": _string(top_candidate.get("candidate_id")),
+                "promotion_readiness": {
+                    "stage": "research_candidate",
+                    "status": "partial_replay_interrupted",
+                    "promotable": False,
+                    "blockers": ["real_replay_interrupted_before_epoch_summary"],
+                },
+            }
+        )
+    if not experiments:
+        return EpochReplayResult(evidence_bundles=(), replay_results=())
+    return _real_replay_result_from_factory_payload(
+        {
+            "status": "partial_replay_artifacts_collected",
+            "count": len(experiments),
+            "experiments": experiments,
+        }
+    )
+
+
+def _run_replay_with_optional_timeout(
+    *,
+    args: argparse.Namespace,
+    output_dir: Path,
+    specs: Sequence[CandidateSpec],
+) -> EpochReplayResult:
+    timeout_seconds = max(0, int(getattr(args, "real_replay_timeout_seconds", 0) or 0))
+    if args.replay_mode == "synthetic" or timeout_seconds <= 0:
+        return (
+            _run_synthetic_replay(
+                specs=specs,
+                output_dir=output_dir,
+                max_candidates=len(specs),
+            )
+            if args.replay_mode == "synthetic"
+            else _run_real_replay(args, output_dir=output_dir, specs=specs)
+        )
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+
+    def _timeout_handler(_signum: int, _frame: Any) -> None:
+        raise TimeoutError(f"real_replay_timeout_seconds:{timeout_seconds}")
+
+    signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(timeout_seconds)
+    try:
+        return _run_real_replay(args, output_dir=output_dir, specs=specs)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous_handler)
 
 
 def _load_epoch_program(args: argparse.Namespace) -> StrategyAutoresearchProgram:
@@ -1484,33 +1587,68 @@ def run_whitepaper_autoresearch_profit_target(
         str(row.get("candidate_spec_id")): row
         for row in _list_of_mappings(candidate_selection.get("rows"))
     }
+    replay_args = argparse.Namespace(
+        **{
+            **vars(args),
+            "max_candidates": len(replay_candidate_specs),
+            "top_k": min(int(args.top_k), len(replay_candidate_specs)),
+        }
+    )
     try:
-        replay_result = (
-            _run_synthetic_replay(
-                specs=replay_candidate_specs,
-                output_dir=output_dir,
-                max_candidates=len(replay_candidate_specs),
-            )
-            if args.replay_mode == "synthetic"
-            else _run_real_replay(
-                argparse.Namespace(
-                    **{
-                        **vars(args),
-                        "max_candidates": len(replay_candidate_specs),
-                        "top_k": min(int(args.top_k), len(replay_candidate_specs)),
-                    }
-                ),
-                output_dir=output_dir,
-                specs=replay_candidate_specs,
-            )
+        replay_result = _run_replay_with_optional_timeout(
+            args=replay_args,
+            output_dir=output_dir,
+            specs=replay_candidate_specs,
         )
     except Exception as exc:
+        partial_replay_result = (
+            _collect_partial_real_replay(
+                output_dir=output_dir, specs=replay_candidate_specs
+            )
+            if args.replay_mode == "real"
+            else EpochReplayResult(evidence_bundles=(), replay_results=())
+        )
+        partial_artifact_path = output_dir / "candidate-evidence-bundles.partial.jsonl"
+        if partial_replay_result.evidence_bundles:
+            _write_jsonl(
+                partial_artifact_path,
+                [
+                    bundle.to_payload()
+                    for bundle in partial_replay_result.evidence_bundles
+                ],
+            )
         return _write_failure_summary(
             output_dir=output_dir,
             epoch_id=epoch_id,
             status="replay_failed",
             reason=f"{type(exc).__name__}:{exc}",
             started_at=started_at,
+            extra={
+                "partial_evidence_bundle_count": len(
+                    partial_replay_result.evidence_bundles
+                ),
+                "partial_replay_result_count": len(
+                    partial_replay_result.replay_results
+                ),
+                "partial_artifacts": {
+                    "candidate_evidence_bundles": str(partial_artifact_path)
+                    if partial_replay_result.evidence_bundles
+                    else None,
+                    "strategy_factory_dir": str(output_dir / "strategy-factory"),
+                },
+                "false_positive_table": _false_positive_table(
+                    proposal_rows=pre_replay_proposal_rows,
+                    evidence_bundles=partial_replay_result.evidence_bundles,
+                    oracle_policy=oracle_policy,
+                )
+                if partial_replay_result.evidence_bundles
+                else [],
+                "best_false_negative_table": _best_false_negative_table(
+                    candidate_selection=candidate_selection,
+                    pre_replay_proposal_rows=pre_replay_proposal_rows,
+                    evidence_bundles=partial_replay_result.evidence_bundles,
+                ),
+            },
         )
     proposal_model, proposal_rows = _proposal_model_and_rows(
         specs=candidate_specs,
