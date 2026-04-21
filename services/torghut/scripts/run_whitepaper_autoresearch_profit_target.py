@@ -887,7 +887,11 @@ def _select_candidate_specs_for_replay(
         1 if model_confidence["confidence"] == "low" else 0
     )
     requested_budget = max(0, int(top_k)) + effective_exploration_slots
-    replay_budget = min(max_budget, max(1, int(portfolio_size_min), requested_budget))
+    diversification_floor = min(len(specs), 3)
+    replay_budget = min(
+        max_budget,
+        max(1, int(portfolio_size_min), requested_budget, diversification_floor),
+    )
     ranked_ids = [
         str(row.get("candidate_spec_id"))
         for row in sorted(
@@ -911,9 +915,43 @@ def _select_candidate_specs_for_replay(
         spec_by_id[candidate_spec_id]
         for candidate_spec_id in ranked_ids[:exploitation_count]
     ]
+
+    def spec_source_run_id(spec: CandidateSpec) -> str:
+        return _string(spec.feature_contract.get("source_run_id")) or spec.hypothesis_id
+
+    def diversity_key(
+        spec: CandidateSpec, selected_so_far: Sequence[CandidateSpec]
+    ) -> tuple[bool, bool, int, str]:
+        selected_families = {item.family_template_id for item in selected_so_far}
+        selected_sources = {spec_source_run_id(item) for item in selected_so_far}
+        family_selection = _mapping(spec.feature_contract.get("family_selection"))
+        return (
+            spec.family_template_id in selected_families,
+            spec_source_run_id(spec) in selected_sources,
+            int(family_selection.get("rank") or 10**6),
+            spec.candidate_spec_id,
+        )
+
+    def take_diverse(
+        candidates: Sequence[CandidateSpec],
+        *,
+        count: int,
+        selected_so_far: Sequence[CandidateSpec],
+    ) -> list[CandidateSpec]:
+        pool = list(candidates)
+        picked: list[CandidateSpec] = []
+        while pool and len(picked) < count:
+            best = min(
+                pool,
+                key=lambda spec: diversity_key(spec, [*selected_so_far, *picked]),
+            )
+            picked.append(best)
+            pool.remove(best)
+        return picked
+
     remaining = [
         item
-        for item in sorted(specs, key=lambda value: value.candidate_spec_id)
+        for item in sorted(specs, key=lambda spec: diversity_key(spec, exploitation))
         if item.candidate_spec_id
         not in {spec.candidate_spec_id for spec in exploitation}
     ]
@@ -922,14 +960,23 @@ def _select_candidate_specs_for_replay(
         replay_budget - len(exploitation),
         len(remaining),
     )
-    exploration = remaining[:exploration_count]
+    exploration = take_diverse(
+        remaining,
+        count=exploration_count,
+        selected_so_far=exploitation,
+    )
     if len(exploitation) + len(exploration) < replay_budget:
         selected_ids = {
             item.candidate_spec_id for item in (*exploitation, *exploration)
         }
-        backfill = [
+        backfill_candidates = [
             item for item in ordered if item.candidate_spec_id not in selected_ids
-        ][: replay_budget - len(exploitation) - len(exploration)]
+        ]
+        backfill = take_diverse(
+            backfill_candidates,
+            count=replay_budget - len(exploitation) - len(exploration),
+            selected_so_far=[*exploitation, *exploration],
+        )
     else:
         backfill = []
     selected_reason = {

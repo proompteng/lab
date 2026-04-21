@@ -29,10 +29,25 @@ class TestWhitepaperCandidateCompiler(TestCase):
             seed_sweep_dir=Path("config/trading"),
         )
 
-        self.assertEqual(len(compilation.candidate_specs), 1)
-        self.assertEqual(len(compilation.executable_specs), 1)
-        self.assertEqual(len(compilation.whitepaper_experiment_payloads), 1)
-        self.assertEqual(len(compilation.vnext_experiment_payloads), 1)
+        self.assertEqual(len(compilation.candidate_specs), 3)
+        self.assertEqual(len(compilation.executable_specs), 3)
+        self.assertEqual(len(compilation.whitepaper_experiment_payloads), 3)
+        self.assertEqual(len(compilation.vnext_experiment_payloads), 3)
+        family_ids = {spec.family_template_id for spec in compilation.executable_specs}
+        self.assertEqual(
+            family_ids,
+            {
+                "intraday_tsmom_v2",
+                "microbar_cross_sectional_pairs_v1",
+                "microstructure_continuation_matched_filter_v1",
+            },
+        )
+        self.assertTrue(
+            all(
+                "family_selection" in spec.feature_contract
+                for spec in compilation.executable_specs
+            )
+        )
         self.assertEqual(
             compilation.whitepaper_experiment_payloads[0]["selection_objectives"][
                 "target_net_pnl_per_day"
@@ -41,7 +56,7 @@ class TestWhitepaperCandidateCompiler(TestCase):
         )
         self.assertEqual(
             compilation.vnext_experiment_payloads[0]["family_template_id"],
-            "microbar_cross_sectional_pairs_v1",
+            "microstructure_continuation_matched_filter_v1",
         )
 
     def test_missing_family_template_blocks_execution(self) -> None:
@@ -64,7 +79,7 @@ class TestWhitepaperCandidateCompiler(TestCase):
         )
 
         self.assertEqual(len(compilation.executable_specs), 0)
-        self.assertEqual(len(compilation.blocked_specs), 1)
+        self.assertEqual(len(compilation.blocked_specs), 3)
         self.assertEqual(compilation.blockers[0].reason, "family_template_missing")
 
     def test_missing_seed_sweep_blocks_execution(self) -> None:
@@ -89,5 +104,5 @@ class TestWhitepaperCandidateCompiler(TestCase):
             )
 
         self.assertEqual(compilation.executable_specs, ())
-        self.assertEqual(len(compilation.blocked_specs), 1)
+        self.assertEqual(len(compilation.blocked_specs), 3)
         self.assertEqual(compilation.blockers[0].reason, "seed_sweep_missing")

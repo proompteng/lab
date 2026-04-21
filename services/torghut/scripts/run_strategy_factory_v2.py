@@ -159,7 +159,20 @@ def _load_seed_sweep_config(
     *,
     seed_dir: Path,
 ) -> dict[str, Any] | None:
-    for candidate in sorted(seed_dir.glob("profitability-frontier-consistent-*.yaml")):
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    for pattern in (
+        "profitability-frontier-consistent-*.yaml",
+        "profitability-frontier-strict-daily-*.yaml",
+        "profitability-frontier-*.yaml",
+    ):
+        for candidate in sorted(seed_dir.glob(pattern)):
+            resolved = candidate.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            candidates.append(candidate)
+    for candidate in candidates:
         payload = yaml.safe_load(candidate.read_text(encoding="utf-8"))
         if not isinstance(payload, Mapping):
             continue
