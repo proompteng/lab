@@ -10,6 +10,7 @@ from unittest.mock import patch
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+import scripts.compile_whitepaper_claims as claim_compiler_script
 import scripts.run_whitepaper_autoresearch_profit_target as runner
 import scripts.train_mlx_autoresearch_ranker as ranker_trainer
 from app.models import (
@@ -152,6 +153,142 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(model_payload["backend"], "numpy-fallback")
         self.assertEqual(len(scores), 4)
         self.assertEqual(scores[0]["rank"], 1)
+
+    def test_train_ranker_script_main_writes_model_and_scores(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            runner.run_whitepaper_autoresearch_profit_target(self._args(output_dir))
+            model_output = Path(tmpdir) / "ranker" / "model.json"
+            scores_output = Path(tmpdir) / "ranker" / "scores.jsonl"
+
+            with (
+                patch(
+                    "sys.argv",
+                    [
+                        "train_mlx_autoresearch_ranker.py",
+                        "--candidate-specs",
+                        str(output_dir / "candidate-specs.jsonl"),
+                        "--evidence-bundles",
+                        str(output_dir / "candidate-evidence-bundles.jsonl"),
+                        "--model-output",
+                        str(model_output),
+                        "--scores-output",
+                        str(scores_output),
+                        "--backend-preference",
+                        "numpy-fallback",
+                    ],
+                ),
+                patch("builtins.print") as mock_print,
+            ):
+                exit_code = ranker_trainer.main()
+
+            model_payload = json.loads(model_output.read_text(encoding="utf-8"))
+            score_rows = scores_output.read_text(encoding="utf-8").splitlines()
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(model_payload["backend"], "numpy-fallback")
+        self.assertEqual(len(score_rows), 4)
+        self.assertTrue(mock_print.called)
+
+    def test_compile_claims_script_main_writes_recent_seed_cards(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "claims" / "hypothesis-cards.jsonl"
+            with (
+                patch(
+                    "sys.argv",
+                    [
+                        "compile_whitepaper_claims.py",
+                        "--output",
+                        str(output_path),
+                        "--seed-recent-whitepapers",
+                    ],
+                ),
+                patch("builtins.print") as mock_print,
+            ):
+                parsed = claim_compiler_script._parse_args()
+                exit_code = claim_compiler_script.main()
+
+            rows = output_path.read_text(encoding="utf-8").splitlines()
+
+        self.assertEqual(parsed.output, output_path)
+        self.assertTrue(parsed.seed_recent_whitepapers)
+        self.assertEqual(exit_code, 0)
+        self.assertGreaterEqual(len(rows), 4)
+        self.assertTrue(mock_print.called)
+
+    def test_runner_parse_args_covers_cli_defaults_and_flags(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            with patch(
+                "sys.argv",
+                [
+                    "run_whitepaper_autoresearch_profit_target.py",
+                    "--output-dir",
+                    str(output_dir),
+                    "--seed-recent-whitepapers",
+                    "--replay-mode",
+                    "synthetic",
+                    "--no-persist-results",
+                ],
+            ):
+                parsed = runner._parse_args()
+
+        self.assertEqual(parsed.output_dir, output_dir)
+        self.assertTrue(parsed.seed_recent_whitepapers)
+        self.assertEqual(parsed.replay_mode, "synthetic")
+        self.assertFalse(parsed.persist_results)
+
+    def test_real_replay_builds_evidence_and_skips_incomplete_results(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "real"
+            empty_result_path = Path(tmpdir) / "empty.json"
+            valid_result_path = Path(tmpdir) / "valid.json"
+            empty_result_path.write_text(json.dumps({"top": []}), encoding="utf-8")
+            valid_result_path.write_text(
+                json.dumps(
+                    {
+                        "top": [
+                            {
+                                "candidate_id": "cand-real",
+                                "objective_scorecard": {
+                                    "net_pnl_per_day": "250",
+                                    "active_day_ratio": "1.0",
+                                    "positive_day_ratio": "0.8",
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            factory_payload = {
+                "experiments": [
+                    {"experiment_id": "missing-path"},
+                    {
+                        "experiment_id": "empty-top",
+                        "result_path": str(empty_result_path),
+                    },
+                    {
+                        "experiment_id": "spec-real",
+                        "dataset_snapshot_id": "snap-real",
+                        "result_path": str(valid_result_path),
+                        "promotion_readiness": {"status": "blocked"},
+                    },
+                ]
+            }
+
+            with patch.object(
+                runner.strategy_factory_runner,
+                "run_strategy_factory_v2",
+                return_value=factory_payload,
+            ):
+                result = runner._run_real_replay(
+                    self._args(output_dir), output_dir=output_dir
+                )
+
+        self.assertEqual(len(result.evidence_bundles), 1)
+        self.assertEqual(result.evidence_bundles[0].candidate_spec_id, "spec-real")
+        self.assertEqual(result.evidence_bundles[0].dataset_snapshot_id, "snap-real")
 
     def test_main_returns_nonzero_without_sources(self) -> None:
         with (
