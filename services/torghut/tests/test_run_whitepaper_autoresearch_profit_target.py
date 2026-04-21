@@ -113,6 +113,42 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 float(portfolio["objective_scorecard"]["net_pnl_per_day"]), 500.0
             )
 
+    def test_main_returns_nonzero_when_no_oracle_candidate_found(self) -> None:
+        with (
+            TemporaryDirectory() as tmpdir,
+            patch.object(
+                runner,
+                "_parse_args",
+                return_value=Namespace(
+                    **{
+                        **vars(self._args(Path(tmpdir) / "epoch")),
+                        "target_net_pnl_per_day": "999999",
+                    }
+                ),
+            ),
+            patch("builtins.print"),
+        ):
+            exit_code = runner.main()
+            output_dir = Path(tmpdir) / "epoch"
+            summary = json.loads(
+                (output_dir / "summary.json").read_text(encoding="utf-8")
+            )
+            portfolio_report_exists = (
+                output_dir / "portfolio-optimizer-report.json"
+            ).exists()
+
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(summary["status"], "no_profit_target_candidate")
+        self.assertEqual(
+            summary["status_reason"], "portfolio_candidate_failed_profit_target_oracle"
+        )
+        self.assertFalse(summary["oracle_candidate_found"])
+        self.assertIn(
+            "portfolio_post_cost_net_pnl_per_day_failed",
+            summary["profit_target_oracle"]["blockers"],
+        )
+        self.assertTrue(portfolio_report_exists)
+
     def test_seed_recent_whitepapers_persists_epoch_ledgers(self) -> None:
         with (
             TemporaryDirectory() as tmpdir,

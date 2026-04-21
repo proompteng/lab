@@ -761,8 +761,25 @@ def run_whitepaper_autoresearch_profit_target(
     runtime_closure = _runtime_closure_payload(
         args=args, output_dir=output_dir, epoch_id=epoch_id, portfolio=portfolio
     )
+    oracle_candidate_found = bool(
+        portfolio is not None
+        and portfolio.objective_scorecard.get("oracle_passed") is True
+    )
+    profit_target_oracle = (
+        portfolio.objective_scorecard.get("profit_target_oracle")
+        if portfolio is not None
+        else None
+    )
+    status = "ok" if oracle_candidate_found else "no_profit_target_candidate"
+    status_reason = None
+    if not oracle_candidate_found:
+        if portfolio is None:
+            status_reason = "portfolio_optimizer_produced_no_candidate"
+        else:
+            status_reason = "portfolio_candidate_failed_profit_target_oracle"
     summary = {
-        "status": "ok",
+        "status": status,
+        "status_reason": status_reason,
         "epoch_id": epoch_id,
         "run_root": str(output_dir),
         "target_net_pnl_per_day": str(target),
@@ -780,15 +797,8 @@ def run_whitepaper_autoresearch_profit_target(
         "best_portfolio_candidate": portfolio.to_payload()
         if portfolio is not None
         else None,
-        "oracle_candidate_found": bool(
-            portfolio is not None
-            and portfolio.objective_scorecard.get("oracle_passed") is True
-        ),
-        "profit_target_oracle": portfolio.objective_scorecard.get(
-            "profit_target_oracle"
-        )
-        if portfolio is not None
-        else None,
+        "oracle_candidate_found": oracle_candidate_found,
+        "profit_target_oracle": profit_target_oracle,
         "promotion_readiness": {
             "status": "blocked_pending_runtime_parity"
             if portfolio is not None
@@ -824,7 +834,7 @@ def run_whitepaper_autoresearch_profit_target(
     if args.persist_results:
         _persist_epoch_ledgers(
             epoch_id=epoch_id,
-            status="ok",
+            status=status,
             target_net_pnl_per_day=target,
             paper_run_ids=[str(item) for item in args.paper_run_id],
             sources=sources,
