@@ -139,9 +139,7 @@ class Execution(Base, TimestampMixin):
     alpaca_account_label: Mapped[str] = mapped_column(
         String(length=64), nullable=False, server_default=text("'paper'")
     )
-    alpaca_order_id: Mapped[str] = mapped_column(
-        String(length=128), nullable=False
-    )
+    alpaca_order_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
     client_order_id: Mapped[Optional[str]] = mapped_column(
         String(length=128), nullable=True
     )
@@ -435,9 +433,7 @@ class ResearchCandidate(Base, CreatedAtMixin):
     valid_regime_envelope: Mapped[Optional[Any]] = mapped_column(
         JSONType, nullable=True
     )
-    invalidation_clauses: Mapped[Optional[Any]] = mapped_column(
-        JSONType, nullable=True
-    )
+    invalidation_clauses: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
     null_comparator_summary: Mapped[Optional[Any]] = mapped_column(
         JSONType, nullable=True
     )
@@ -729,13 +725,23 @@ class VNextDatasetSnapshot(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
-    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    candidate_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     dataset_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
     source: Mapped[str] = mapped_column(String(length=64), nullable=False)
-    dataset_version: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
-    dataset_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    dataset_to: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    artifact_ref: Mapped[Optional[str]] = mapped_column(String(length=255), nullable=True)
+    dataset_version: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    dataset_from: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    dataset_to: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    artifact_ref: Mapped[Optional[str]] = mapped_column(
+        String(length=255), nullable=True
+    )
     payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
 
     __table_args__ = (
@@ -758,9 +764,13 @@ class VNextFeatureViewSpec(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
-    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    candidate_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     strategy_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
-    feature_view_spec_ref: Mapped[str] = mapped_column(String(length=255), nullable=False)
+    feature_view_spec_ref: Mapped[str] = mapped_column(
+        String(length=255), nullable=False
+    )
     payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
 
     __table_args__ = (
@@ -783,7 +793,9 @@ class VNextModelArtifact(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
-    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    candidate_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     strategy_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
     artifact_ref: Mapped[str] = mapped_column(String(length=255), nullable=False)
     artifact_kind: Mapped[str] = mapped_column(String(length=64), nullable=False)
@@ -810,7 +822,9 @@ class VNextExperimentSpec(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
-    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    candidate_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     experiment_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
     payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
 
@@ -834,9 +848,15 @@ class VNextExperimentRun(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
-    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
-    experiment_id: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
-    stage_lineage_root: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    candidate_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    experiment_id: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    stage_lineage_root: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
 
     __table_args__ = (
@@ -859,7 +879,9 @@ class VNextSimulationCalibration(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
-    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    candidate_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     artifact_ref: Mapped[str] = mapped_column(String(length=255), nullable=False)
     status: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
     order_count: Mapped[Optional[int]] = mapped_column(BigInteger(), nullable=True)
@@ -884,7 +906,9 @@ class VNextShadowLiveDeviation(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
-    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    candidate_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     artifact_ref: Mapped[str] = mapped_column(String(length=255), nullable=False)
     status: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
     order_count: Mapped[Optional[int]] = mapped_column(BigInteger(), nullable=True)
@@ -911,11 +935,21 @@ class VNextPromotionDecision(Base, TimestampMixin):
     run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
     candidate_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
     promotion_target: Mapped[str] = mapped_column(String(length=16), nullable=False)
-    recommended_mode: Mapped[Optional[str]] = mapped_column(String(length=16), nullable=True)
-    decision_action: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
-    allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
-    gate_report_trace_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
-    recommendation_trace_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    recommended_mode: Mapped[Optional[str]] = mapped_column(
+        String(length=16), nullable=True
+    )
+    decision_action: Mapped[Optional[str]] = mapped_column(
+        String(length=32), nullable=True
+    )
+    allowed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    gate_report_trace_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    recommendation_trace_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
 
     __table_args__ = (
@@ -938,7 +972,9 @@ class VNextEmpiricalJobRun(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
-    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    candidate_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     job_name: Mapped[str] = mapped_column(String(length=128), nullable=False)
     job_type: Mapped[str] = mapped_column(String(length=64), nullable=False)
     job_run_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
@@ -973,18 +1009,32 @@ class VNextCompletionGateResult(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     gate_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
     run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
-    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    candidate_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     dataset_snapshot_ref: Mapped[Optional[str]] = mapped_column(
         String(length=255), nullable=True
     )
-    git_revision: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
-    image_digest: Mapped[Optional[str]] = mapped_column(String(length=255), nullable=True)
-    workflow_name: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    git_revision: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    image_digest: Mapped[Optional[str]] = mapped_column(
+        String(length=255), nullable=True
+    )
+    workflow_name: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     status: Mapped[str] = mapped_column(String(length=32), nullable=False)
-    artifact_ref: Mapped[Optional[str]] = mapped_column(String(length=1024), nullable=True)
-    blocked_reason: Mapped[Optional[str]] = mapped_column(String(length=255), nullable=True)
+    artifact_ref: Mapped[Optional[str]] = mapped_column(
+        String(length=1024), nullable=True
+    )
+    blocked_reason: Mapped[Optional[str]] = mapped_column(
+        String(length=255), nullable=True
+    )
     details_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    measured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    measured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
     __table_args__ = (
         Index("ix_vnext_completion_gate_results_gate_id", "gate_id"),
@@ -1006,11 +1056,17 @@ class StrategyHypothesis(Base, TimestampMixin):
     __tablename__ = "strategy_hypotheses"
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
-    hypothesis_id: Mapped[str] = mapped_column(String(length=128), nullable=False, unique=True)
+    hypothesis_id: Mapped[str] = mapped_column(
+        String(length=128), nullable=False, unique=True
+    )
     lane_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
     strategy_family: Mapped[str] = mapped_column(String(length=128), nullable=False)
-    source_manifest_ref: Mapped[Optional[str]] = mapped_column(String(length=255), nullable=True)
-    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    source_manifest_ref: Mapped[Optional[str]] = mapped_column(
+        String(length=255), nullable=True
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
     payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
 
     __table_args__ = (
@@ -1027,8 +1083,12 @@ class StrategyHypothesisVersion(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     hypothesis_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
     version_key: Mapped[str] = mapped_column(String(length=128), nullable=False)
-    source_manifest_ref: Mapped[Optional[str]] = mapped_column(String(length=255), nullable=True)
-    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    source_manifest_ref: Mapped[Optional[str]] = mapped_column(
+        String(length=255), nullable=True
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
     payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
 
     __table_args__ = (
@@ -1049,25 +1109,59 @@ class StrategyHypothesisMetricWindow(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
-    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    candidate_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     hypothesis_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
     observed_stage: Mapped[str] = mapped_column(String(length=32), nullable=False)
-    window_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    window_ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    market_session_count: Mapped[int] = mapped_column(BigInteger(), nullable=False, server_default=text("1"))
-    decision_count: Mapped[int] = mapped_column(BigInteger(), nullable=False, server_default=text("0"))
-    trade_count: Mapped[int] = mapped_column(BigInteger(), nullable=False, server_default=text("0"))
-    order_count: Mapped[int] = mapped_column(BigInteger(), nullable=False, server_default=text("0"))
-    evidence_provenance: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
-    evidence_maturity: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
-    decision_alignment_ratio: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
-    avg_abs_slippage_bps: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
-    slippage_budget_bps: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
-    post_cost_expectancy_bps: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
-    continuity_ok: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
-    drift_ok: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
-    dependency_quorum_decision: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
-    capital_stage: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
+    window_started_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    window_ended_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    market_session_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("1")
+    )
+    decision_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    trade_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    order_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    evidence_provenance: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    evidence_maturity: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    decision_alignment_ratio: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    avg_abs_slippage_bps: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    slippage_budget_bps: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    post_cost_expectancy_bps: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    continuity_ok: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    drift_ok: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    dependency_quorum_decision: Mapped[Optional[str]] = mapped_column(
+        String(length=32), nullable=True
+    )
+    capital_stage: Mapped[Optional[str]] = mapped_column(
+        String(length=32), nullable=True
+    )
     payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
 
     __table_args__ = (
@@ -1085,12 +1179,18 @@ class StrategyCapitalAllocation(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
-    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    candidate_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     hypothesis_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
     prior_stage: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
     stage: Mapped[str] = mapped_column(String(length=32), nullable=False)
-    capital_multiplier: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
-    rollback_target_stage: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
+    capital_multiplier: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    rollback_target_stage: Mapped[Optional[str]] = mapped_column(
+        String(length=32), nullable=True
+    )
     payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
 
     __table_args__ = (
@@ -1107,12 +1207,18 @@ class StrategyPromotionDecision(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[str] = mapped_column(String(length=64), nullable=False)
-    candidate_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    candidate_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     hypothesis_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
     promotion_target: Mapped[str] = mapped_column(String(length=16), nullable=False)
     state: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
-    allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
-    reason_summary: Mapped[Optional[str]] = mapped_column(String(length=255), nullable=True)
+    allowed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    reason_summary: Mapped[Optional[str]] = mapped_column(
+        String(length=255), nullable=True
+    )
     payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
 
     __table_args__ = (
@@ -1170,7 +1276,9 @@ class WhitepaperDocument(Base, TimestampMixin):
     )
     tags_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
     metadata_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    ingested_by: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    ingested_by: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     last_processed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -1242,7 +1350,9 @@ class WhitepaperDocumentVersion(Base, TimestampMixin):
     extraction_metadata_json: Mapped[Optional[Any]] = mapped_column(
         JSONType, nullable=True
     )
-    uploaded_by: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    uploaded_by: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     processed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -1307,7 +1417,9 @@ class WhitepaperContent(Base, CreatedAtMixin):
     extraction_warnings_json: Mapped[Optional[Any]] = mapped_column(
         JSONType, nullable=True
     )
-    quality_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 4), nullable=True)
+    quality_score: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(6, 4), nullable=True
+    )
 
     document_version: Mapped[WhitepaperDocumentVersion] = relationship(
         back_populates="content"
@@ -1347,8 +1459,12 @@ class WhitepaperAnalysisRun(Base, TimestampMixin):
         default="upload",
         server_default=text("'upload'"),
     )
-    trigger_actor: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
-    retry_of_run_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    trigger_actor: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    retry_of_run_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     inngest_event_id: Mapped[Optional[str]] = mapped_column(
         String(length=128), nullable=True
     )
@@ -1361,10 +1477,14 @@ class WhitepaperAnalysisRun(Base, TimestampMixin):
     orchestration_context_json: Mapped[Optional[Any]] = mapped_column(
         JSONType, nullable=True
     )
-    analysis_profile_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    analysis_profile_json: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
     request_payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
     result_payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    failure_code: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    failure_code: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     failure_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -1396,10 +1516,12 @@ class WhitepaperAnalysisRun(Base, TimestampMixin):
     design_pull_requests: Mapped[List["WhitepaperDesignPullRequest"]] = relationship(
         back_populates="analysis_run", cascade="all, delete-orphan"
     )
-    engineering_trigger: Mapped[Optional["WhitepaperEngineeringTrigger"]] = relationship(
-        back_populates="analysis_run",
-        uselist=False,
-        cascade="all, delete-orphan",
+    engineering_trigger: Mapped[Optional["WhitepaperEngineeringTrigger"]] = (
+        relationship(
+            back_populates="analysis_run",
+            uselist=False,
+            cascade="all, delete-orphan",
+        )
     )
     claims: Mapped[List["WhitepaperClaim"]] = relationship(
         back_populates="analysis_run", cascade="all, delete-orphan"
@@ -1423,9 +1545,7 @@ class WhitepaperAnalysisRun(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_whitepaper_analysis_runs_status", "status"),
         Index("ix_whitepaper_analysis_runs_document_id", "document_id"),
-        Index(
-            "ix_whitepaper_analysis_runs_document_version_id", "document_version_id"
-        ),
+        Index("ix_whitepaper_analysis_runs_document_version_id", "document_version_id"),
         Index("ix_whitepaper_analysis_runs_inngest_event_id", "inngest_event_id"),
         Index("ix_whitepaper_analysis_runs_created_at", "created_at"),
     )
@@ -1512,7 +1632,9 @@ class WhitepaperCodexAgentRun(Base, TimestampMixin):
     agentrun_namespace: Mapped[Optional[str]] = mapped_column(
         String(length=64), nullable=True
     )
-    agentrun_uid: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    agentrun_uid: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     status: Mapped[str] = mapped_column(
         String(length=32),
         nullable=False,
@@ -1525,11 +1647,15 @@ class WhitepaperCodexAgentRun(Base, TimestampMixin):
         default="default",
         server_default=text("'default'"),
     )
-    requested_by: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    requested_by: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     codex_session_id: Mapped[Optional[str]] = mapped_column(
         String(length=128), nullable=True
     )
-    vcs_provider: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
+    vcs_provider: Mapped[Optional[str]] = mapped_column(
+        String(length=32), nullable=True
+    )
     vcs_repository: Mapped[Optional[str]] = mapped_column(
         String(length=255), nullable=True
     )
@@ -1545,9 +1671,13 @@ class WhitepaperCodexAgentRun(Base, TimestampMixin):
     vcs_head_commit_sha: Mapped[Optional[str]] = mapped_column(
         String(length=128), nullable=True
     )
-    workspace_context_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    workspace_context_json: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
     prompt_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    prompt_hash: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    prompt_hash: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     input_context_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
     output_context_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
     patch_artifact_ref: Mapped[Optional[str]] = mapped_column(
@@ -1577,9 +1707,7 @@ class WhitepaperCodexAgentRun(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_whitepaper_codex_agentruns_run_id", "analysis_run_id"),
         Index("ix_whitepaper_codex_agentruns_status", "status"),
-        Index(
-            "ix_whitepaper_codex_agentruns_codex_session_id", "codex_session_id"
-        ),
+        Index("ix_whitepaper_codex_agentruns_codex_session_id", "codex_session_id"),
         Index("ix_whitepaper_codex_agentruns_head_branch", "vcs_head_branch"),
     )
 
@@ -1609,7 +1737,9 @@ class WhitepaperSynthesis(Base, TimestampMixin):
         server_default=text("'codex'"),
     )
     model_name: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
-    prompt_version: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    prompt_version: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     executive_summary: Mapped[str] = mapped_column(Text, nullable=False)
     problem_statement: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     methodology_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -1621,14 +1751,14 @@ class WhitepaperSynthesis(Base, TimestampMixin):
     confidence: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 4), nullable=True)
     synthesis_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
 
-    analysis_run: Mapped[WhitepaperAnalysisRun] = relationship(back_populates="synthesis")
+    analysis_run: Mapped[WhitepaperAnalysisRun] = relationship(
+        back_populates="synthesis"
+    )
     artifacts: Mapped[List["WhitepaperArtifact"]] = relationship(
         back_populates="synthesis"
     )
 
-    __table_args__ = (
-        Index("ix_whitepaper_syntheses_generated_by", "generated_by"),
-    )
+    __table_args__ = (Index("ix_whitepaper_syntheses_generated_by", "generated_by"),)
 
 
 class WhitepaperViabilityVerdict(Base, TimestampMixin):
@@ -1646,10 +1776,14 @@ class WhitepaperViabilityVerdict(Base, TimestampMixin):
     verdict: Mapped[str] = mapped_column(String(length=32), nullable=False)
     score: Mapped[Optional[Decimal]] = mapped_column(Numeric(8, 4), nullable=True)
     confidence: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 4), nullable=True)
-    decision_policy: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    decision_policy: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     gating_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
     rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    rejection_reasons_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    rejection_reasons_json: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
     recommendations_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
     requires_followup: Mapped[bool] = mapped_column(
         Boolean,
@@ -1657,7 +1791,9 @@ class WhitepaperViabilityVerdict(Base, TimestampMixin):
         default=False,
         server_default=func.false(),
     )
-    approved_by: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    approved_by: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     approved_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -1795,18 +1931,30 @@ class WhitepaperArtifact(Base, CreatedAtMixin):
         server_default=text("'run'"),
     )
     artifact_type: Mapped[str] = mapped_column(String(length=64), nullable=False)
-    artifact_role: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
-    ceph_bucket: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    artifact_role: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    ceph_bucket: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     ceph_object_key: Mapped[Optional[str]] = mapped_column(
         String(length=1024), nullable=True
     )
-    artifact_uri: Mapped[Optional[str]] = mapped_column(String(length=1024), nullable=True)
-    checksum_sha256: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    artifact_uri: Mapped[Optional[str]] = mapped_column(
+        String(length=1024), nullable=True
+    )
+    checksum_sha256: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     size_bytes: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    content_type: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    content_type: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     metadata_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
 
-    document: Mapped[Optional[WhitepaperDocument]] = relationship(back_populates="artifacts")
+    document: Mapped[Optional[WhitepaperDocument]] = relationship(
+        back_populates="artifacts"
+    )
     document_version: Mapped[Optional[WhitepaperDocumentVersion]] = relationship(
         back_populates="artifacts"
     )
@@ -1850,12 +1998,24 @@ class WhitepaperClaim(Base, TimestampMixin):
     claim_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
     claim_type: Mapped[str] = mapped_column(String(length=64), nullable=False)
     claim_text: Mapped[str] = mapped_column(Text, nullable=False)
-    asset_scope: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
-    horizon_scope: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
-    data_requirements_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    expected_direction: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
-    required_activity_conditions_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    liquidity_constraints_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    asset_scope: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    horizon_scope: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    data_requirements_json: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
+    expected_direction: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    required_activity_conditions_json: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
+    liquidity_constraints_json: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
     validation_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     confidence: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 4), nullable=True)
     metadata_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
@@ -1890,12 +2050,16 @@ class WhitepaperClaimRelation(Base, TimestampMixin):
     relation_type: Mapped[str] = mapped_column(String(length=64), nullable=False)
     source_claim_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
     target_claim_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
-    target_run_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    target_run_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     confidence: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 4), nullable=True)
     metadata_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
 
-    analysis_run: Mapped[WhitepaperAnalysisRun] = relationship(back_populates="claim_relations")
+    analysis_run: Mapped[WhitepaperAnalysisRun] = relationship(
+        back_populates="claim_relations"
+    )
 
     __table_args__ = (
         Index("ix_whitepaper_claim_relations_run_id", "analysis_run_id"),
@@ -1926,19 +2090,31 @@ class WhitepaperStrategyTemplate(Base, TimestampMixin):
     family_template_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
     economic_mechanism: Mapped[str] = mapped_column(Text, nullable=False)
     hypothesis: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    supported_markets_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    required_features_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    allowed_normalizations_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    supported_markets_json: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
+    required_features_json: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
+    allowed_normalizations_json: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
     entry_motifs_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
     exit_motifs_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
     risk_controls_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
     activity_model_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    liquidity_assumptions_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    regime_activation_rules_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    liquidity_assumptions_json: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
+    regime_activation_rules_json: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
     day_veto_rules_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
     metadata_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
 
-    analysis_run: Mapped[WhitepaperAnalysisRun] = relationship(back_populates="strategy_templates")
+    analysis_run: Mapped[WhitepaperAnalysisRun] = relationship(
+        back_populates="strategy_templates"
+    )
 
     __table_args__ = (
         Index("ix_whitepaper_strategy_templates_run_id", "analysis_run_id"),
@@ -1965,20 +2141,40 @@ class WhitepaperExperimentSpec(Base, TimestampMixin):
     )
     experiment_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
     family_template_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
-    template_id: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    template_id: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     hypothesis: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    paper_claim_links_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    dataset_snapshot_policy_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    template_overrides_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    feature_variants_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    veto_controller_variants_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    selection_objectives_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    paper_claim_links_json: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
+    dataset_snapshot_policy_json: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
+    template_overrides_json: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
+    feature_variants_json: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
+    veto_controller_variants_json: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
+    selection_objectives_json: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
     hard_vetoes_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    expected_failure_modes_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    promotion_contract_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    expected_failure_modes_json: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
+    promotion_contract_json: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
     payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
 
-    analysis_run: Mapped[WhitepaperAnalysisRun] = relationship(back_populates="experiment_specs")
+    analysis_run: Mapped[WhitepaperAnalysisRun] = relationship(
+        back_populates="experiment_specs"
+    )
 
     __table_args__ = (
         Index("ix_whitepaper_experiment_specs_run_id", "analysis_run_id"),
@@ -2005,19 +2201,27 @@ class WhitepaperContradictionEvent(Base, TimestampMixin):
     )
     event_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
     source_claim_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
-    target_claim_id: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
-    target_run_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    target_claim_id: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    target_run_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     status: Mapped[str] = mapped_column(
         String(length=32),
         nullable=False,
         default="open",
         server_default=text("'open'"),
     )
-    required_action: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    required_action: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     metadata_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
 
-    analysis_run: Mapped[WhitepaperAnalysisRun] = relationship(back_populates="contradiction_events")
+    analysis_run: Mapped[WhitepaperAnalysisRun] = relationship(
+        back_populates="contradiction_events"
+    )
 
     __table_args__ = (
         Index("ix_whitepaper_contradiction_events_run_id", "analysis_run_id"),
@@ -2038,7 +2242,9 @@ class WhitepaperEngineeringTrigger(Base, TimestampMixin):
     __tablename__ = "whitepaper_engineering_triggers"
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
-    trigger_id: Mapped[str] = mapped_column(String(length=64), nullable=False, unique=True)
+    trigger_id: Mapped[str] = mapped_column(
+        String(length=64), nullable=False, unique=True
+    )
     whitepaper_run_id: Mapped[str] = mapped_column(
         String(length=64), nullable=False, unique=True
     )
@@ -2053,11 +2259,15 @@ class WhitepaperEngineeringTrigger(Base, TimestampMixin):
         ForeignKey("whitepaper_viability_verdicts.id", ondelete="SET NULL"),
         nullable=True,
     )
-    hypothesis_id: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    hypothesis_id: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     implementation_grade: Mapped[str] = mapped_column(String(length=32), nullable=False)
     decision: Mapped[str] = mapped_column(String(length=32), nullable=False)
     reason_codes_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    approval_token: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    approval_token: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     dispatched_agentrun_name: Mapped[Optional[str]] = mapped_column(
         String(length=128), nullable=True
     )
@@ -2067,8 +2277,12 @@ class WhitepaperEngineeringTrigger(Base, TimestampMixin):
         default="manual",
         server_default=text("'manual'"),
     )
-    approval_source: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
-    approved_by: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    approval_source: Mapped[Optional[str]] = mapped_column(
+        String(length=32), nullable=True
+    )
+    approved_by: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     approved_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -2105,7 +2319,9 @@ class WhitepaperRolloutTransition(Base, CreatedAtMixin):
     __tablename__ = "whitepaper_rollout_transitions"
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
-    transition_id: Mapped[str] = mapped_column(String(length=64), nullable=False, unique=True)
+    transition_id: Mapped[str] = mapped_column(
+        String(length=64), nullable=False, unique=True
+    )
     trigger_id: Mapped[uuid.UUID] = mapped_column(
         GUID(),
         ForeignKey("whitepaper_engineering_triggers.id", ondelete="CASCADE"),
@@ -2118,8 +2334,12 @@ class WhitepaperRolloutTransition(Base, CreatedAtMixin):
     status: Mapped[str] = mapped_column(String(length=32), nullable=False)
     gate_results_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
     reason_codes_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    blocking_gate: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
-    evidence_hash: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    blocking_gate: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    evidence_hash: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
 
     engineering_trigger: Mapped[WhitepaperEngineeringTrigger] = relationship(
         back_populates="rollout_transitions"
@@ -2130,6 +2350,122 @@ class WhitepaperRolloutTransition(Base, CreatedAtMixin):
         Index("ix_whitepaper_rollout_transitions_run_id", "whitepaper_run_id"),
         Index("ix_whitepaper_rollout_transitions_status", "status"),
         Index("ix_whitepaper_rollout_transitions_created_at", "created_at"),
+    )
+
+
+class AutoresearchEpoch(Base, TimestampMixin):
+    """Durable execution record for whitepaper autoresearch epochs."""
+
+    __tablename__ = "autoresearch_epochs"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    epoch_id: Mapped[str] = mapped_column(
+        String(length=128), nullable=False, unique=True
+    )
+    status: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    target_net_pnl_per_day: Mapped[Decimal] = mapped_column(
+        Numeric(20, 8), nullable=False
+    )
+    paper_run_ids_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    snapshot_manifest_json: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
+    runner_config_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    summary_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    failure_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_autoresearch_epochs_status", "status"),
+        Index("ix_autoresearch_epochs_completed_at", "completed_at"),
+    )
+
+
+class AutoresearchCandidateSpec(Base, TimestampMixin):
+    """Normalized candidate spec ledger for autoresearch epochs."""
+
+    __tablename__ = "autoresearch_candidate_specs"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    candidate_spec_id: Mapped[str] = mapped_column(
+        String(length=128), nullable=False, unique=True
+    )
+    epoch_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    hypothesis_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    candidate_kind: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    family_template_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    payload_json: Mapped[Any] = mapped_column(JSONType, nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    status: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    blockers_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("ix_autoresearch_candidate_specs_epoch_id", "epoch_id"),
+        Index("ix_autoresearch_candidate_specs_hypothesis_id", "hypothesis_id"),
+        Index("ix_autoresearch_candidate_specs_family", "family_template_id"),
+        Index("ix_autoresearch_candidate_specs_status", "status"),
+    )
+
+
+class AutoresearchProposalScore(Base, TimestampMixin):
+    """MLX or fallback proposal score ledger for autoresearch candidate specs."""
+
+    __tablename__ = "autoresearch_proposal_scores"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    epoch_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    candidate_spec_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    model_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    backend: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    proposal_score: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
+    rank: Mapped[int] = mapped_column(BigInteger(), nullable=False)
+    selection_reason: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    feature_hash: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("ix_autoresearch_proposal_scores_epoch_id", "epoch_id"),
+        Index("ix_autoresearch_proposal_scores_candidate_spec", "candidate_spec_id"),
+        Index("ix_autoresearch_proposal_scores_rank", "epoch_id", "rank"),
+        Index(
+            "uq_autoresearch_proposal_scores_epoch_candidate_model",
+            "epoch_id",
+            "candidate_spec_id",
+            "model_id",
+            unique=True,
+        ),
+    )
+
+
+class AutoresearchPortfolioCandidate(Base, TimestampMixin):
+    """Portfolio assembly ledger for autoresearch epochs."""
+
+    __tablename__ = "autoresearch_portfolio_candidates"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    portfolio_candidate_id: Mapped[str] = mapped_column(
+        String(length=128), nullable=False, unique=True
+    )
+    epoch_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    source_candidate_ids_json: Mapped[Any] = mapped_column(JSONType, nullable=False)
+    target_net_pnl_per_day: Mapped[Decimal] = mapped_column(
+        Numeric(20, 8), nullable=False
+    )
+    objective_scorecard_json: Mapped[Any] = mapped_column(JSONType, nullable=False)
+    optimizer_report_json: Mapped[Any] = mapped_column(JSONType, nullable=False)
+    payload_json: Mapped[Any] = mapped_column(JSONType, nullable=False)
+    status: Mapped[str] = mapped_column(String(length=32), nullable=False)
+
+    __table_args__ = (
+        Index("ix_autoresearch_portfolio_candidates_epoch_id", "epoch_id"),
+        Index("ix_autoresearch_portfolio_candidates_status", "status"),
     )
 
 
@@ -2187,13 +2523,27 @@ class ExecutionTCAMetric(Base, TimestampMixin):
     signed_qty: Mapped[Decimal] = mapped_column(
         Numeric(20, 8), nullable=False, default=Decimal("0"), server_default=text("0")
     )
-    slippage_bps: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
-    shortfall_notional: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
-    expected_shortfall_bps_p50: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
-    expected_shortfall_bps_p95: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
-    realized_shortfall_bps: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
-    divergence_bps: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
-    simulator_version: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    slippage_bps: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    shortfall_notional: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    expected_shortfall_bps_p50: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    expected_shortfall_bps_p95: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    realized_shortfall_bps: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    divergence_bps: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    simulator_version: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     churn_qty: Mapped[Decimal] = mapped_column(
         Numeric(20, 8), nullable=False, default=Decimal("0"), server_default=text("0")
     )
@@ -2217,14 +2567,18 @@ class LeanBacktestRun(Base, TimestampMixin):
     __tablename__ = "lean_backtest_runs"
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
-    backtest_id: Mapped[str] = mapped_column(String(length=64), nullable=False, unique=True)
+    backtest_id: Mapped[str] = mapped_column(
+        String(length=64), nullable=False, unique=True
+    )
     status: Mapped[str] = mapped_column(
         String(length=32),
         nullable=False,
         default="queued",
         server_default=text("'queued'"),
     )
-    requested_by: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    requested_by: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     lane: Mapped[str] = mapped_column(
         String(length=32),
         nullable=False,
@@ -2234,11 +2588,21 @@ class LeanBacktestRun(Base, TimestampMixin):
     config_json: Mapped[Any] = mapped_column(JSONType, nullable=False)
     result_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
     artifacts_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    reproducibility_hash: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
-    replay_hash: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
-    deterministic_replay_passed: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
-    failure_taxonomy: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    reproducibility_hash: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    replay_hash: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    deterministic_replay_passed: Mapped[Optional[bool]] = mapped_column(
+        Boolean, nullable=True
+    )
+    failure_taxonomy: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     __table_args__ = (
         Index("ix_lean_backtest_runs_status", "status"),
@@ -2253,7 +2617,9 @@ class LeanExecutionShadowEvent(Base, CreatedAtMixin):
     __tablename__ = "lean_execution_shadow_events"
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
-    correlation_id: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    correlation_id: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     trade_decision_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         GUID(), ForeignKey("trade_decisions.id", ondelete="SET NULL"), nullable=True
     )
@@ -2263,17 +2629,27 @@ class LeanExecutionShadowEvent(Base, CreatedAtMixin):
     symbol: Mapped[str] = mapped_column(String(length=32), nullable=False)
     side: Mapped[str] = mapped_column(String(length=8), nullable=False)
     qty: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
-    intent_notional: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
-    simulated_fill_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
-    simulated_slippage_bps: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
-    parity_delta_bps: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    intent_notional: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    simulated_fill_price: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    simulated_slippage_bps: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    parity_delta_bps: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
     parity_status: Mapped[str] = mapped_column(
         String(length=64),
         nullable=False,
         default="unknown",
         server_default=text("'unknown'"),
     )
-    failure_taxonomy: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    failure_taxonomy: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     simulation_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
 
     __table_args__ = (
@@ -2290,7 +2666,9 @@ class LeanCanaryIncident(Base, CreatedAtMixin):
     __tablename__ = "lean_canary_incidents"
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
-    incident_key: Mapped[str] = mapped_column(String(length=96), nullable=False, unique=True)
+    incident_key: Mapped[str] = mapped_column(
+        String(length=96), nullable=False, unique=True
+    )
     breach_type: Mapped[str] = mapped_column(String(length=64), nullable=False)
     severity: Mapped[str] = mapped_column(
         String(length=16),
@@ -2306,7 +2684,9 @@ class LeanCanaryIncident(Base, CreatedAtMixin):
     )
     symbols: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
     evidence_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     __table_args__ = (
         Index("ix_lean_canary_incidents_breach_type", "breach_type"),
@@ -2393,11 +2773,19 @@ class SimulationRuntimeContext(Base, TimestampMixin):
     account_label: Mapped[str] = mapped_column(String(length=64), primary_key=True)
     run_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
     dataset_id: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
-    window_start: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    window_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    window_start: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    window_end: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     cache_key: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
-    cache_artifact_path: Mapped[Optional[str]] = mapped_column(String(length=512), nullable=True)
-    cache_manifest_path: Mapped[Optional[str]] = mapped_column(String(length=512), nullable=True)
+    cache_artifact_path: Mapped[Optional[str]] = mapped_column(
+        String(length=512), nullable=True
+    )
+    cache_manifest_path: Mapped[Optional[str]] = mapped_column(
+        String(length=512), nullable=True
+    )
     warm_lane_enabled: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -2431,17 +2819,27 @@ class SimulationRunProgress(Base, TimestampMixin):
         default="equity",
         server_default=text("'equity'"),
     )
-    workflow_name: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    workflow_name: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     status: Mapped[str] = mapped_column(
         String(length=32),
         nullable=False,
         default="pending",
         server_default=text("'pending'"),
     )
-    last_source_ts: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_signal_ts: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_price_ts: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    cursor_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_source_ts: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_signal_ts: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_price_ts: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    cursor_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     records_dumped: Mapped[int] = mapped_column(
         BigInteger(), nullable=False, default=0, server_default=text("0")
     )
@@ -2460,15 +2858,21 @@ class SimulationRunProgress(Base, TimestampMixin):
     execution_order_events: Mapped[int] = mapped_column(
         BigInteger(), nullable=False, default=0, server_default=text("0")
     )
-    strategy_type: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    strategy_type: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     legacy_path_count: Mapped[int] = mapped_column(
         BigInteger(), nullable=False, default=0, server_default=text("0")
     )
     fallback_count: Mapped[int] = mapped_column(
         BigInteger(), nullable=False, default=0, server_default=text("0")
     )
-    terminal_state: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
-    last_error_code: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    terminal_state: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    last_error_code: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     last_error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     payload_json: Mapped[Any] = mapped_column(
         JSONType,
@@ -2490,7 +2894,9 @@ class LLMDSPyWorkflowArtifact(Base, TimestampMixin):
     __tablename__ = "llm_dspy_workflow_artifacts"
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
-    run_key: Mapped[str] = mapped_column(String(length=128), nullable=False, unique=True)
+    run_key: Mapped[str] = mapped_column(
+        String(length=128), nullable=False, unique=True
+    )
     lane: Mapped[str] = mapped_column(String(length=32), nullable=False)
     status: Mapped[str] = mapped_column(
         String(length=32),
@@ -2501,14 +2907,22 @@ class LLMDSPyWorkflowArtifact(Base, TimestampMixin):
     implementation_spec_ref: Mapped[str] = mapped_column(
         String(length=128), nullable=False
     )
-    program_name: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    program_name: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     signature_version: Mapped[Optional[str]] = mapped_column(
         String(length=64), nullable=True
     )
     optimizer: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
-    artifact_uri: Mapped[Optional[str]] = mapped_column(String(length=1024), nullable=True)
-    artifact_hash: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
-    dataset_hash: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    artifact_uri: Mapped[Optional[str]] = mapped_column(
+        String(length=1024), nullable=True
+    )
+    artifact_hash: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    dataset_hash: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
     compiled_prompt_hash: Mapped[Optional[str]] = mapped_column(
         String(length=64), nullable=True
     )
@@ -2528,13 +2942,19 @@ class LLMDSPyWorkflowArtifact(Base, TimestampMixin):
     idempotency_key: Mapped[Optional[str]] = mapped_column(
         String(length=128), nullable=True
     )
-    agentrun_name: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    agentrun_name: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     agentrun_namespace: Mapped[Optional[str]] = mapped_column(
         String(length=64), nullable=True
     )
-    agentrun_uid: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    agentrun_uid: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
     request_payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    response_payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+    response_payload_json: Mapped[Optional[Any]] = mapped_column(
+        JSONType, nullable=True
+    )
     metadata_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
 
     __table_args__ = (
@@ -2591,6 +3011,10 @@ class LLMDecisionReview(Base, CreatedAtMixin):
 
 
 __all__ = [
+    "AutoresearchCandidateSpec",
+    "AutoresearchEpoch",
+    "AutoresearchPortfolioCandidate",
+    "AutoresearchProposalScore",
     "Strategy",
     "TradeDecision",
     "Execution",

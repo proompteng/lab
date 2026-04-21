@@ -29,6 +29,10 @@ from .db import SessionLocal, check_schema_current, ensure_schema, get_session, 
 from .db import check_account_scope_invariants
 from .metrics import render_trading_metrics
 from .models import (
+    AutoresearchCandidateSpec,
+    AutoresearchEpoch,
+    AutoresearchPortfolioCandidate,
+    AutoresearchProposalScore,
     Execution,
     ExecutionTCAMetric,
     Strategy,
@@ -74,7 +78,10 @@ from .trading.submission_council import (
     resolve_active_capital_stage,
 )
 from .trading.tca import build_tca_gate_inputs
-from .trading.simulation_progress import active_simulation_runtime_context, simulation_progress_snapshot
+from .trading.simulation_progress import (
+    active_simulation_runtime_context,
+    simulation_progress_snapshot,
+)
 from .trading.time_source import trading_time_status
 from .whitepapers import (
     WhitepaperKafkaWorker,
@@ -379,7 +386,9 @@ def _readiness_dependency_checks(
             list[str],
             database_contract.get("schema_graph_lineage_errors", []),
         )
-        detail = "ok" if bool(database_contract.get("ok")) else "database contract failed"
+        detail = (
+            "ok" if bool(database_contract.get("ok")) else "database contract failed"
+        )
         if lineage_errors:
             detail = lineage_errors[0]
         dependencies["database"] = {
@@ -537,9 +546,7 @@ def _evaluate_trading_health_payload(
         ):
             in_startup_grace = True
             scheduler_ok = True
-            scheduler_detail = (
-                f"trading loop starting (within {startup_grace_seconds}s readiness grace)"
-            )
+            scheduler_detail = f"trading loop starting (within {startup_grace_seconds}s readiness grace)"
         else:
             scheduler_ok = False
             scheduler_detail = (
@@ -566,16 +573,11 @@ def _evaluate_trading_health_payload(
     )
     dependencies = dict(dependencies)
     dependencies["universe"] = _evaluate_universe_dependency(scheduler)
-    cache_age_seconds = (
-        (now - checked_at).total_seconds() if checked_at else 0.0
-    )
-    cache_age_seconds = (
-        0.0 if cache_age_seconds < 0 else round(cache_age_seconds, 3)
-    )
+    cache_age_seconds = (now - checked_at).total_seconds() if checked_at else 0.0
+    cache_age_seconds = 0.0 if cache_age_seconds < 0 else round(cache_age_seconds, 3)
     cache_stale = (
         cache_used
-        and cache_age_seconds
-        > settings.trading_readiness_dependency_cache_ttl_seconds
+        and cache_age_seconds > settings.trading_readiness_dependency_cache_ttl_seconds
     )
     dependencies["readiness_cache"] = {
         "checked_at": checked_at.isoformat(),
@@ -659,7 +661,9 @@ def _evaluate_trading_health_payload(
             else ", ".join(
                 [
                     str(item).strip()
-                    for item in cast(list[object], dspy_runtime.get("readiness_reasons") or [])
+                    for item in cast(
+                        list[object], dspy_runtime.get("readiness_reasons") or []
+                    )
                     if str(item).strip()
                 ]
             )
@@ -1078,7 +1082,9 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
                 [],
             ),
             "schema_missing_heads": database_contract.get("schema_missing_heads", []),
-            "schema_unexpected_heads": database_contract.get("schema_unexpected_heads", []),
+            "schema_unexpected_heads": database_contract.get(
+                "schema_unexpected_heads", []
+            ),
             "schema_head_count_expected": database_contract.get(
                 "schema_head_count_expected",
             ),
@@ -1108,8 +1114,12 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
             detail={
                 "error": database_contract.get("error"),
                 "schema_current": False,
-                "schema_missing_heads": database_contract.get("schema_missing_heads", []),
-                "schema_unexpected_heads": database_contract.get("schema_unexpected_heads", []),
+                "schema_missing_heads": database_contract.get(
+                    "schema_missing_heads", []
+                ),
+                "schema_unexpected_heads": database_contract.get(
+                    "schema_unexpected_heads", []
+                ),
                 "schema_graph_lineage_ready": database_contract.get(
                     "schema_graph_lineage_ready",
                 ),
@@ -1136,8 +1146,12 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
             detail={
                 "error": "database schema mismatch",
                 "checked_at": database_contract.get("checked_at"),
-                "schema_missing_heads": database_contract.get("schema_missing_heads", []),
-                "schema_unexpected_heads": database_contract.get("schema_unexpected_heads", []),
+                "schema_missing_heads": database_contract.get(
+                    "schema_missing_heads", []
+                ),
+                "schema_unexpected_heads": database_contract.get(
+                    "schema_unexpected_heads", []
+                ),
                 "schema_head_count_expected": database_contract.get(
                     "schema_head_count_expected",
                 ),
@@ -1176,7 +1190,9 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
                 "error": "database account scope schema mismatch",
                 "checked_at": database_contract.get("checked_at"),
                 "schema_head_signature": database_contract.get("schema_head_signature"),
-                "schema_graph_signature": database_contract.get("schema_graph_signature"),
+                "schema_graph_signature": database_contract.get(
+                    "schema_graph_signature"
+                ),
                 "schema_graph_branch_count": database_contract.get(
                     "schema_graph_branch_count",
                 ),
@@ -1747,9 +1763,7 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
             "market_context_block_total": state.metrics.llm_market_context_block_total,
             "pre_llm_capacity_reject_total": state.metrics.pre_llm_capacity_reject_total,
             "pre_llm_qty_below_min_total": state.metrics.pre_llm_qty_below_min_total,
-            "runtime_fallback_ratio": rejection_alert_status[
-                "runtime_fallback_ratio"
-            ],
+            "runtime_fallback_ratio": rejection_alert_status["runtime_fallback_ratio"],
             "runtime_fallback_alert_ratio_threshold": rejection_alert_status[
                 "runtime_fallback_alert_ratio_threshold"
             ],
@@ -1793,14 +1807,17 @@ def trading_status(session: Session = Depends(get_session)) -> dict[str, object]
         "empirical_jobs": empirical_jobs,
         "simulation": {
             "enabled": settings.trading_simulation_enabled,
-            "run_id": (active_simulation_context or {}).get("run_id") or settings.trading_simulation_run_id,
+            "run_id": (active_simulation_context or {}).get("run_id")
+            or settings.trading_simulation_run_id,
             "dataset_id": (active_simulation_context or {}).get("dataset_id")
             or settings.trading_simulation_dataset_id,
             "window_start": (active_simulation_context or {}).get("window_start")
             or settings.trading_simulation_window_start,
             "window_end": (active_simulation_context or {}).get("window_end")
             or settings.trading_simulation_window_end,
-            "time_source": trading_time_status(account_label=settings.trading_account_label),
+            "time_source": trading_time_status(
+                account_label=settings.trading_account_label
+            ),
         },
         "control_plane_contract": control_plane_contract,
         "evidence_continuity": state.last_evidence_continuity_report,
@@ -1857,7 +1874,9 @@ def trading_simulation_progress(
     snapshot = simulation_progress_snapshot(session, run_id=run_id)
     active_runtime_context = active_simulation_runtime_context(session)
     snapshot["requested_run_id"] = run_id
-    snapshot["active_run_id"] = (active_runtime_context or {}).get("run_id") or settings.trading_simulation_run_id
+    snapshot["active_run_id"] = (active_runtime_context or {}).get(
+        "run_id"
+    ) or settings.trading_simulation_run_id
     snapshot["simulation_enabled"] = settings.trading_simulation_enabled
     return cast(dict[str, object], snapshot)
 
@@ -1981,14 +2000,17 @@ def trading_autonomy() -> dict[str, object]:
         "empirical_jobs": _empirical_jobs_status(),
         "simulation": {
             "enabled": settings.trading_simulation_enabled,
-            "run_id": (active_simulation_context or {}).get("run_id") or settings.trading_simulation_run_id,
+            "run_id": (active_simulation_context or {}).get("run_id")
+            or settings.trading_simulation_run_id,
             "dataset_id": (active_simulation_context or {}).get("dataset_id")
             or settings.trading_simulation_dataset_id,
             "window_start": (active_simulation_context or {}).get("window_start")
             or settings.trading_simulation_window_start,
             "window_end": (active_simulation_context or {}).get("window_end")
             or settings.trading_simulation_window_end,
-            "time_source": trading_time_status(account_label=settings.trading_account_label),
+            "time_source": trading_time_status(
+                account_label=settings.trading_account_label
+            ),
         },
         "bridge_status": _build_autonomy_bridge_status(scheduler),
         "signal_continuity": {
@@ -2035,6 +2057,119 @@ def trading_empirical_jobs() -> dict[str, object]:
     """Return freshness and authority status for empirical parity and Janus workflows."""
 
     return _empirical_jobs_status()
+
+
+@app.get("/trading/autoresearch/epochs")
+def trading_autoresearch_epochs(
+    status: str | None = Query(default=None),
+    limit: int = Query(default=25, ge=1, le=100),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    """Return persisted whitepaper autoresearch epochs."""
+
+    stmt = select(AutoresearchEpoch)
+    if status:
+        stmt = stmt.where(AutoresearchEpoch.status == status)
+    rows = session.execute(
+        stmt.order_by(AutoresearchEpoch.created_at.desc()).limit(limit)
+    ).scalars()
+    items: list[dict[str, object]] = [
+        {
+            "epoch_id": row.epoch_id,
+            "status": row.status,
+            "target_net_pnl_per_day": str(row.target_net_pnl_per_day),
+            "paper_run_ids": cast(object, row.paper_run_ids_json or []),
+            "started_at": row.started_at.isoformat() if row.started_at else None,
+            "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+            "failure_reason": row.failure_reason,
+            "summary": cast(object, row.summary_json or {}),
+        }
+        for row in rows
+    ]
+    return {"count": len(items), "epochs": items}
+
+
+@app.get("/trading/autoresearch/epochs/{epoch_id}")
+def trading_autoresearch_epoch(
+    epoch_id: str,
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    """Return one persisted whitepaper autoresearch epoch with child ledgers."""
+
+    epoch = session.execute(
+        select(AutoresearchEpoch).where(AutoresearchEpoch.epoch_id == epoch_id)
+    ).scalar_one_or_none()
+    if epoch is None:
+        raise HTTPException(
+            status_code=404, detail=f"autoresearch_epoch_not_found:{epoch_id}"
+        )
+    specs = session.execute(
+        select(AutoresearchCandidateSpec)
+        .where(AutoresearchCandidateSpec.epoch_id == epoch_id)
+        .order_by(AutoresearchCandidateSpec.created_at.asc())
+    ).scalars()
+    proposals = session.execute(
+        select(AutoresearchProposalScore)
+        .where(AutoresearchProposalScore.epoch_id == epoch_id)
+        .order_by(AutoresearchProposalScore.rank.asc())
+    ).scalars()
+    portfolios = session.execute(
+        select(AutoresearchPortfolioCandidate)
+        .where(AutoresearchPortfolioCandidate.epoch_id == epoch_id)
+        .order_by(AutoresearchPortfolioCandidate.created_at.asc())
+    ).scalars()
+    return {
+        "epoch": {
+            "epoch_id": epoch.epoch_id,
+            "status": epoch.status,
+            "target_net_pnl_per_day": str(epoch.target_net_pnl_per_day),
+            "paper_run_ids": epoch.paper_run_ids_json or [],
+            "snapshot_manifest": epoch.snapshot_manifest_json or {},
+            "runner_config": epoch.runner_config_json or {},
+            "summary": epoch.summary_json or {},
+            "started_at": epoch.started_at.isoformat() if epoch.started_at else None,
+            "completed_at": epoch.completed_at.isoformat()
+            if epoch.completed_at
+            else None,
+            "failure_reason": epoch.failure_reason,
+        },
+        "candidate_specs": [
+            {
+                "candidate_spec_id": row.candidate_spec_id,
+                "hypothesis_id": row.hypothesis_id,
+                "candidate_kind": row.candidate_kind,
+                "family_template_id": row.family_template_id,
+                "status": row.status,
+                "blockers": row.blockers_json or [],
+                "payload": row.payload_json,
+            }
+            for row in specs
+        ],
+        "proposal_scores": [
+            {
+                "candidate_spec_id": row.candidate_spec_id,
+                "model_id": row.model_id,
+                "backend": row.backend,
+                "proposal_score": str(row.proposal_score),
+                "rank": row.rank,
+                "selection_reason": row.selection_reason,
+                "feature_hash": row.feature_hash,
+            }
+            for row in proposals
+        ],
+        "portfolio_candidates": [
+            {
+                "portfolio_candidate_id": row.portfolio_candidate_id,
+                "status": row.status,
+                "target_net_pnl_per_day": str(row.target_net_pnl_per_day),
+                "source_candidate_ids": row.source_candidate_ids_json,
+                "objective_scorecard": row.objective_scorecard_json,
+                "optimizer_report": row.optimizer_report_json,
+                "payload": row.payload_json,
+            }
+            for row in portfolios
+        ],
+    }
 
 
 @app.get("/trading/completion/doc29")
@@ -2313,7 +2448,7 @@ def trading_runtime_profitability(
         empirical_jobs_status=empirical_jobs,
         dspy_runtime_status=cast(
             dict[str, object],
-            scheduler.llm_status().get('dspy_runtime', {}),
+            scheduler.llm_status().get("dspy_runtime", {}),
         ),
         quant_health_status=quant_evidence,
     )
@@ -2453,7 +2588,9 @@ def _build_control_plane_contract(
     market_session_open = getattr(state, "market_session_open", None)
     last_run_at = getattr(state, "last_run_at", None)
     last_reconcile_at = getattr(state, "last_reconcile_at", None)
-    summary: dict[str, Any] = dict(hypothesis_summary) if hypothesis_summary is not None else {}
+    summary: dict[str, Any] = (
+        dict(hypothesis_summary) if hypothesis_summary is not None else {}
+    )
     raw_state_totals = summary.get("state_totals")
     state_totals: dict[str, Any] = (
         dict(cast(Mapping[str, Any], raw_state_totals))
@@ -2577,7 +2714,12 @@ def _build_shadow_first_runtime_payload(
         "active_revision": _active_runtime_revision(),
         "capital_stage": _resolve_active_capital_stage(hypothesis_summary),
         "capital_stage_totals": (
-            dict(cast(Mapping[str, Any], hypothesis_summary.get("capital_stage_totals", {})))
+            dict(
+                cast(
+                    Mapping[str, Any],
+                    hypothesis_summary.get("capital_stage_totals", {}),
+                )
+            )
             if isinstance(hypothesis_summary, Mapping)
             and isinstance(hypothesis_summary.get("capital_stage_totals"), Mapping)
             else {}
@@ -2837,9 +2979,10 @@ def _check_alpaca() -> dict[str, object]:
     timeout_seconds = max(0.1, settings.trading_alpaca_healthcheck_timeout_seconds)
     retries = max(1, settings.trading_alpaca_healthcheck_retries)
     backoff_seconds = max(0.0, settings.trading_alpaca_healthcheck_backoff_seconds)
-    endpoint_class = str(
-        getattr(client, "endpoint_class", _alpaca_endpoint_class())
-    ).strip() or _alpaca_endpoint_class()
+    endpoint_class = (
+        str(getattr(client, "endpoint_class", _alpaca_endpoint_class())).strip()
+        or _alpaca_endpoint_class()
+    )
 
     last_failure: dict[str, object] | None = None
     for attempt in range(retries):
@@ -2871,7 +3014,9 @@ def _check_alpaca() -> dict[str, object]:
             time.sleep(backoff_seconds * float(attempt + 1))
 
     failure_status = str(last_failure.get("status") if last_failure else "broker_error")
-    failure_detail = str(last_failure.get("detail") if last_failure else "alpaca probe failed")
+    failure_detail = str(
+        last_failure.get("detail") if last_failure else "alpaca probe failed"
+    )
     cached = _alpaca_cached_last_good(
         failure_status=failure_status,
         failure_detail=failure_detail,
@@ -2994,7 +3139,10 @@ def _build_live_submission_gate_payload(
             getattr(state, "emergency_stop_active", False)
         ):
             blocked_reasons.append(
-                str(getattr(state, "emergency_stop_reason", "") or "emergency_stop_active")
+                str(
+                    getattr(state, "emergency_stop_reason", "")
+                    or "emergency_stop_active"
+                )
             )
         return {
             "allowed": len(blocked_reasons) == 0,
@@ -3549,7 +3697,9 @@ def _load_runtime_profitability_gate_rollback_attribution(
 def _build_autonomy_bridge_status(
     scheduler: TradingScheduler,
 ) -> dict[str, object]:
-    gate_artifact_path = str(getattr(scheduler.state, "last_autonomy_gates", "") or "").strip()
+    gate_artifact_path = str(
+        getattr(scheduler.state, "last_autonomy_gates", "") or ""
+    ).strip()
     gate_payload = _load_json_artifact_payload(gate_artifact_path)
     actuation_artifact_path = str(
         getattr(scheduler.state, "last_autonomy_actuation_intent", "") or ""
@@ -3557,7 +3707,9 @@ def _build_autonomy_bridge_status(
     actuation_payload = _load_json_artifact_payload(actuation_artifact_path)
     actuation_gates = _to_str_map(actuation_payload.get("gates"))
     provenance_payload = _to_str_map(gate_payload.get("provenance"))
-    drift_path = str(getattr(scheduler.state, "drift_last_outcome_path", "") or "").strip()
+    drift_path = str(
+        getattr(scheduler.state, "drift_last_outcome_path", "") or ""
+    ).strip()
     drift_payload = _load_json_artifact_payload(drift_path)
     drift_reasons_raw = drift_payload.get("reasons")
     drift_reason_codes_raw = drift_payload.get("reason_codes")
@@ -3582,15 +3734,15 @@ def _build_autonomy_bridge_status(
             },
             "simulation_calibration": None,
             "shadow_live_deviation": None,
-        "evidence_authority": {
-            "gate_report_trace_id": None,
-            "recommendation_trace_id": None,
-            "authoritative_count": 0,
-            "total_count": 0,
-            "missing": [],
-        },
-        "persisted_vnext_objects": None,
-    }
+            "evidence_authority": {
+                "gate_report_trace_id": None,
+                "recommendation_trace_id": None,
+                "authoritative_count": 0,
+                "total_count": 0,
+                "missing": [],
+            },
+            "persisted_vnext_objects": None,
+        }
 
     source = "gate_report"
     if (
@@ -3623,7 +3775,9 @@ def _build_autonomy_bridge_status(
         else {}
     )
     vnext_raw = gate_payload.get("vnext")
-    vnext_payload = cast(dict[str, object], vnext_raw) if isinstance(vnext_raw, dict) else {}
+    vnext_payload = (
+        cast(dict[str, object], vnext_raw) if isinstance(vnext_raw, dict) else {}
+    )
     strategy_compilation_raw = vnext_payload.get("strategy_compilation")
     portfolio_promotion_raw = vnext_payload.get("portfolio_promotion")
     strategy_compilation_items = (
@@ -3658,8 +3812,7 @@ def _build_autonomy_bridge_status(
 
     return {
         "source": source,
-        "run_id": str(gate_payload.get("run_id") or "").strip()
-        or None,
+        "run_id": str(gate_payload.get("run_id") or "").strip() or None,
         "strategy_compilation": {
             "total": len(strategy_compilation_items),
             "spec_compiled": spec_compiled,

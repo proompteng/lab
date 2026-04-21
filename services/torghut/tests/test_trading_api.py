@@ -35,6 +35,10 @@ from app.trading.completion import (
 from app.trading.execution import OrderExecutor
 from app.config import settings
 from app.models import (
+    AutoresearchCandidateSpec,
+    AutoresearchEpoch,
+    AutoresearchPortfolioCandidate,
+    AutoresearchProposalScore,
     Base,
     Execution,
     ExecutionTCAMetric,
@@ -195,6 +199,83 @@ class TestTradingApi(TestCase):
         self.assertEqual(len(payload), 1)
         self.assertEqual(payload[0]["symbol"], "AAPL")
 
+    def test_autoresearch_epoch_endpoints(self) -> None:
+        with self.session_local() as session:
+            session.add(
+                AutoresearchEpoch(
+                    epoch_id="epoch-1",
+                    status="ok",
+                    target_net_pnl_per_day=Decimal("500"),
+                    paper_run_ids_json=["paper-1"],
+                    snapshot_manifest_json={"source_count": 1},
+                    runner_config_json={"replay_mode": "synthetic"},
+                    summary_json={"best": "portfolio-1"},
+                    started_at=datetime.now(timezone.utc),
+                    completed_at=datetime.now(timezone.utc),
+                )
+            )
+            session.add(
+                AutoresearchCandidateSpec(
+                    candidate_spec_id="spec-1",
+                    epoch_id="epoch-1",
+                    hypothesis_id="hyp-1",
+                    candidate_kind="sleeve",
+                    family_template_id="microbar_cross_sectional_pairs_v1",
+                    payload_json={"candidate_spec_id": "spec-1"},
+                    payload_hash="hash",
+                    status="eligible",
+                    blockers_json=[],
+                )
+            )
+            session.add(
+                AutoresearchProposalScore(
+                    epoch_id="epoch-1",
+                    candidate_spec_id="spec-1",
+                    model_id="model-1",
+                    backend="numpy-fallback",
+                    proposal_score=Decimal("12.5"),
+                    rank=1,
+                    selection_reason="exploitation",
+                    feature_hash="feature-hash",
+                    payload_json={"rank": 1},
+                )
+            )
+            session.add(
+                AutoresearchPortfolioCandidate(
+                    portfolio_candidate_id="portfolio-1",
+                    epoch_id="epoch-1",
+                    source_candidate_ids_json=["cand-1"],
+                    target_net_pnl_per_day=Decimal("500"),
+                    objective_scorecard_json={"target_met": True},
+                    optimizer_report_json={"selected_count": 1},
+                    payload_json={"portfolio_candidate_id": "portfolio-1"},
+                    status="target_met",
+                )
+            )
+            session.commit()
+
+        list_response = self.client.get("/trading/autoresearch/epochs")
+        self.assertEqual(list_response.status_code, 200)
+        list_payload = list_response.json()
+        self.assertEqual(list_payload["count"], 1)
+        self.assertEqual(list_payload["epochs"][0]["epoch_id"], "epoch-1")
+
+        detail_response = self.client.get("/trading/autoresearch/epochs/epoch-1")
+        self.assertEqual(detail_response.status_code, 200)
+        detail_payload = detail_response.json()
+        self.assertEqual(detail_payload["epoch"]["epoch_id"], "epoch-1")
+        self.assertEqual(
+            detail_payload["candidate_specs"][0]["candidate_spec_id"], "spec-1"
+        )
+        self.assertEqual(detail_payload["proposal_scores"][0]["rank"], 1)
+        self.assertEqual(
+            detail_payload["portfolio_candidates"][0]["portfolio_candidate_id"],
+            "portfolio-1",
+        )
+
+        missing_response = self.client.get("/trading/autoresearch/epochs/missing")
+        self.assertEqual(missing_response.status_code, 404)
+
     def test_dspy_cutover_migration_guard_assertion_raises_for_legacy_toggles(
         self,
     ) -> None:
@@ -322,7 +403,9 @@ class TestTradingApi(TestCase):
 
         self.assertEqual(response.status_code, 503)
         payload = response.json()
-        self.assertEqual(payload["detail"]["error"], "database schema lineage divergence")
+        self.assertEqual(
+            payload["detail"]["error"], "database schema lineage divergence"
+        )
         self.assertFalse(payload["detail"]["schema_graph_lineage_ready"])
         self.assertIn("schema_graph_lineage_errors", payload["detail"])
         self.assertIn("schema_graph_branch_count", payload["detail"])
@@ -404,7 +487,9 @@ class TestTradingApi(TestCase):
                 "0011_autonomy_lifecycle_and_promotion_audit",
                 "0011_execution_tca_simulator_divergence",
             ],
-            "schema_unexpected_heads": ["0010_execution_provenance_and_governance_trace"],
+            "schema_unexpected_heads": [
+                "0010_execution_provenance_and_governance_trace"
+            ],
             "schema_head_count_expected": 2,
             "schema_head_count_current": 1,
             "schema_head_delta_count": 3,
@@ -689,7 +774,9 @@ class TestTradingApi(TestCase):
             self.assertIn("universe", payload["dependencies"])
             self.assertTrue(payload["dependencies"]["universe"]["ok"])
             self.assertEqual(payload["dependencies"]["universe"]["status"], "ok")
-            self.assertEqual(payload["dependencies"]["universe"]["detail"], "jangar universe fresh")
+            self.assertEqual(
+                payload["dependencies"]["universe"]["detail"], "jangar universe fresh"
+            )
         finally:
             settings.trading_enabled = original
             settings.trading_mode = original_mode
@@ -964,7 +1051,9 @@ class TestTradingApi(TestCase):
             universe_dependency = payload["dependencies"]["universe"]
             self.assertFalse(universe_dependency["ok"])
             self.assertEqual(universe_dependency["status"], "error")
-            self.assertEqual(universe_dependency["detail"], "jangar universe unavailable")
+            self.assertEqual(
+                universe_dependency["detail"], "jangar universe unavailable"
+            )
             self.assertEqual(
                 universe_dependency["reason"], "jangar_fetch_failed_cache_stale"
             )
@@ -1201,7 +1290,9 @@ class TestTradingApi(TestCase):
             payload = response.json()
             self.assertEqual(payload["status"], "ok")
             self.assertTrue(payload["dependencies"]["database"]["ok"])
-            self.assertTrue(payload["dependencies"]["database"]["schema_graph_lineage_ready"])
+            self.assertTrue(
+                payload["dependencies"]["database"]["schema_graph_lineage_ready"]
+            )
             self.assertEqual(
                 payload["dependencies"]["database"]["schema_graph_lineage_warnings"],
                 [
@@ -1509,7 +1600,9 @@ class TestTradingApi(TestCase):
             "expected_heads": ["0011_autonomy_lifecycle_and_promotion_audit"],
             "schema_head_signature": "7f8e4d0",
             "schema_missing_heads": ["0011_autonomy_lifecycle_and_promotion_audit"],
-            "schema_unexpected_heads": ["0010_execution_provenance_and_governance_trace"],
+            "schema_unexpected_heads": [
+                "0010_execution_provenance_and_governance_trace"
+            ],
             "schema_head_count_expected": 1,
             "schema_head_count_current": 1,
             "schema_head_delta_count": 2,
@@ -1556,7 +1649,9 @@ class TestTradingApi(TestCase):
             self.assertEqual(
                 payload["dependencies"]["database"]["schema_head_count_current"], 1
             )
-            self.assertEqual(payload["dependencies"]["database"]["schema_head_delta_count"], 2)
+            self.assertEqual(
+                payload["dependencies"]["database"]["schema_head_delta_count"], 2
+            )
             self.assertEqual(
                 payload["dependencies"]["database"]["schema_head_signature"], "7f8e4d0"
             )
@@ -1619,7 +1714,9 @@ class TestTradingApi(TestCase):
                 payload["dependencies"]["database"]["schema_head_count_current"],
                 1,
             )
-            self.assertEqual(payload["dependencies"]["database"]["schema_head_delta_count"], 2)
+            self.assertEqual(
+                payload["dependencies"]["database"]["schema_head_delta_count"], 2
+            )
         finally:
             settings.trading_enabled = original
 
@@ -1721,7 +1818,10 @@ class TestTradingApi(TestCase):
         self.assertEqual(control_plane_contract["alpha_readiness_shadow_total"], 2)
         self.assertIn(control_plane_contract["active_capital_stage"], {"shadow", None})
         self.assertIn("critical_toggle_parity", control_plane_contract)
-        self.assertIn(payload["shadow_first"]["critical_toggle_parity"]["status"], {"aligned", "diverged"})
+        self.assertIn(
+            payload["shadow_first"]["critical_toggle_parity"]["status"],
+            {"aligned", "diverged"},
+        )
         self.assertEqual(
             payload["build"]["active_revision"],
             control_plane_contract["active_revision"],
@@ -1730,7 +1830,9 @@ class TestTradingApi(TestCase):
             control_plane_contract["alpha_readiness_dependency_quorum_decision"],
             "unknown",
         )
-        self.assertIn(payload["forecast_service"]["authority"], {"empirical", "blocked"})
+        self.assertIn(
+            payload["forecast_service"]["authority"], {"empirical", "blocked"}
+        )
         self.assertIn(payload["lean_authority"]["authority"], {"empirical", "blocked"})
         self.assertIn(payload["empirical_jobs"]["authority"], {"empirical", "blocked"})
 
@@ -1773,23 +1875,28 @@ class TestTradingApi(TestCase):
                 },
             )
 
-            with patch(
-                "app.main._build_hypothesis_runtime_payload",
-                return_value=(
-                    {
-                        "registry_loaded": True,
-                        "registry_path": "test",
-                        "registry_errors": [],
-                        "dependency_quorum": hypothesis_summary["dependency_quorum"],
-                        "summary": hypothesis_summary,
-                        "items": [],
-                    },
-                    hypothesis_summary,
-                    dependency_quorum,
+            with (
+                patch(
+                    "app.main._build_hypothesis_runtime_payload",
+                    return_value=(
+                        {
+                            "registry_loaded": True,
+                            "registry_path": "test",
+                            "registry_errors": [],
+                            "dependency_quorum": hypothesis_summary[
+                                "dependency_quorum"
+                            ],
+                            "summary": hypothesis_summary,
+                            "items": [],
+                        },
+                        hypothesis_summary,
+                        dependency_quorum,
+                    ),
                 ),
-            ), patch(
-                "app.main._empirical_jobs_status",
-                return_value={"ready": True, "status": "healthy"},
+                patch(
+                    "app.main._empirical_jobs_status",
+                    return_value={"ready": True, "status": "healthy"},
+                ),
             ):
                 response = self.client.get("/trading/status")
 
@@ -1866,7 +1973,9 @@ class TestTradingApi(TestCase):
                             "registry_loaded": True,
                             "registry_path": "test",
                             "registry_errors": [],
-                            "dependency_quorum": hypothesis_summary["dependency_quorum"],
+                            "dependency_quorum": hypothesis_summary[
+                                "dependency_quorum"
+                            ],
                             "summary": hypothesis_summary,
                             "items": [],
                         },
@@ -2040,7 +2149,10 @@ class TestTradingApi(TestCase):
                         ),
                     ),
                 ),
-                patch("app.main._empirical_jobs_status", return_value={"ready": True, "status": "healthy"}),
+                patch(
+                    "app.main._empirical_jobs_status",
+                    return_value={"ready": True, "status": "healthy"},
+                ),
                 patch(
                     "app.main.load_quant_evidence_status",
                     return_value={
@@ -2055,7 +2167,10 @@ class TestTradingApi(TestCase):
                         "latest_metrics_updated_at": "2026-03-20T10:00:00Z",
                     },
                 ),
-                patch("app.main._build_live_submission_gate_payload", return_value=shared_gate),
+                patch(
+                    "app.main._build_live_submission_gate_payload",
+                    return_value=shared_gate,
+                ),
             ):
                 status_response = self.client.get("/trading/status")
                 health_response = self.client.get("/trading/health")
@@ -2066,8 +2181,12 @@ class TestTradingApi(TestCase):
             self.assertEqual(health_response.status_code, 503)
             self.assertEqual(ready_response.status_code, 503)
             self.assertEqual(runtime_response.status_code, 200)
-            self.assertEqual(status_response.json()["live_submission_gate"], shared_gate)
-            self.assertEqual(health_response.json()["live_submission_gate"], shared_gate)
+            self.assertEqual(
+                status_response.json()["live_submission_gate"], shared_gate
+            )
+            self.assertEqual(
+                health_response.json()["live_submission_gate"], shared_gate
+            )
             self.assertEqual(ready_response.json()["live_submission_gate"], shared_gate)
             self.assertEqual(
                 runtime_response.json()["live_submission_gate"],
@@ -2288,11 +2407,15 @@ class TestTradingApi(TestCase):
             self.assertEqual(payload["market_context"]["fail_mode"], "shadow_only")
             self.assertFalse(payload["market_context"]["required"])
             self.assertEqual(payload["market_context"]["last_symbol"], "AAPL")
-            self.assertEqual(payload["market_context"]["last_reason"], "market_context_stale")
+            self.assertEqual(
+                payload["market_context"]["last_reason"], "market_context_stale"
+            )
             self.assertTrue(payload["market_context"]["alert_active"])
             self.assertEqual(payload["rejections"]["policy_veto_total"], 3)
             self.assertEqual(payload["rejections"]["runtime_fallback_total"], 5)
-            self.assertAlmostEqual(payload["rejections"]["runtime_fallback_ratio"], 0.05)
+            self.assertAlmostEqual(
+                payload["rejections"]["runtime_fallback_ratio"], 0.05
+            )
             self.assertEqual(
                 payload["rejections"]["runtime_fallback_alert_ratio_threshold"], 0.01
             )
@@ -2391,7 +2514,9 @@ class TestTradingApi(TestCase):
                 metrics_payload,
             )
             self.assertIn("torghut_trading_llm_runtime_fallback_ratio", metrics_payload)
-            self.assertIn("torghut_trading_market_context_alert_active", metrics_payload)
+            self.assertIn(
+                "torghut_trading_market_context_alert_active", metrics_payload
+            )
         finally:
             if original_scheduler is None:
                 del app.state.trading_scheduler
@@ -2623,9 +2748,15 @@ class TestTradingApi(TestCase):
                 self.assertEqual(response.status_code, 200)
                 payload = response.json()
                 self.assertEqual(payload["bridge_status"]["source"], "gate_report")
-                self.assertIn(payload["forecast_service"]["authority"], {"empirical", "blocked"})
-                self.assertIn(payload["lean_authority"]["authority"], {"empirical", "blocked"})
-                self.assertIn(payload["empirical_jobs"]["authority"], {"empirical", "blocked"})
+                self.assertIn(
+                    payload["forecast_service"]["authority"], {"empirical", "blocked"}
+                )
+                self.assertIn(
+                    payload["lean_authority"]["authority"], {"empirical", "blocked"}
+                )
+                self.assertIn(
+                    payload["empirical_jobs"]["authority"], {"empirical", "blocked"}
+                )
                 self.assertEqual(
                     payload["bridge_status"]["strategy_compilation"]["spec_compiled"],
                     1,
@@ -2639,7 +2770,9 @@ class TestTradingApi(TestCase):
                     "stable",
                 )
                 self.assertEqual(
-                    payload["bridge_status"]["evidence_authority"]["authoritative_count"],
+                    payload["bridge_status"]["evidence_authority"][
+                        "authoritative_count"
+                    ],
                     2,
                 )
                 self.assertEqual(
@@ -2682,49 +2815,56 @@ class TestTradingApi(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertIn("jobs", payload)
-        self.assertEqual(payload["message"], "missing empirical jobs: foundation_router_parity, janus_event_car, janus_hgrm_reward")
+        self.assertEqual(
+            payload["message"],
+            "missing empirical jobs: foundation_router_parity, janus_event_car, janus_hgrm_reward",
+        )
         self.assertEqual(payload["eligible_jobs"], ["benchmark_parity"])
         self.assertEqual(
             payload["missing_jobs"],
             ["foundation_router_parity", "janus_event_car", "janus_hgrm_reward"],
         )
         self.assertEqual(payload["jobs"]["benchmark_parity"]["authority"], "empirical")
-        self.assertEqual(payload["jobs"]["benchmark_parity"]["job_run_id"], "job-benchmark-1")
+        self.assertEqual(
+            payload["jobs"]["benchmark_parity"]["job_run_id"], "job-benchmark-1"
+        )
 
-    def test_trading_completion_doc29_endpoint_exposes_traceable_gate_status(self) -> None:
+    def test_trading_completion_doc29_endpoint_exposes_traceable_gate_status(
+        self,
+    ) -> None:
         with self.session_local() as session:
             trace = build_completion_trace(
-                doc_id='doc29',
+                doc_id="doc29",
                 gate_ids_attempted=[DOC29_SIMULATION_FULL_DAY_GATE],
-                run_id='sim-2026-03-06-full-day',
-                dataset_snapshot_ref='snapshot-1',
-                candidate_id='cand-1',
-                workflow_name='torghut-historical-simulation',
+                run_id="sim-2026-03-06-full-day",
+                dataset_snapshot_ref="snapshot-1",
+                candidate_id="cand-1",
+                workflow_name="torghut-historical-simulation",
                 analysis_run_names=[],
-                artifact_refs=['s3://artifacts/run-full-lifecycle-manifest.json'],
+                artifact_refs=["s3://artifacts/run-full-lifecycle-manifest.json"],
                 db_row_refs={},
                 status_snapshot={},
                 result_by_gate={
                     DOC29_SIMULATION_FULL_DAY_GATE: {
-                        'status': TRACE_STATUS_SATISFIED,
-                        'artifact_ref': 's3://artifacts/run-full-lifecycle-manifest.json',
-                        'acceptance_snapshot': {
-                            'trade_decisions': 640,
-                            'executions': 320,
-                            'execution_tca_metrics': 320,
-                            'execution_order_events': 320,
-                            'coverage_ratio': 0.99,
+                        "status": TRACE_STATUS_SATISFIED,
+                        "artifact_ref": "s3://artifacts/run-full-lifecycle-manifest.json",
+                        "acceptance_snapshot": {
+                            "trade_decisions": 640,
+                            "executions": 320,
+                            "execution_tca_metrics": 320,
+                            "execution_order_events": 320,
+                            "coverage_ratio": 0.99,
                         },
                     }
                 },
                 blocked_reasons={},
-                git_revision='abc123',
-                image_digest='sha256:test',
+                git_revision="abc123",
+                image_digest="sha256:test",
             )
             persist_completion_trace(
                 session=session,
                 trace_payload=trace,
-                default_artifact_ref='s3://artifacts/completion-trace.json',
+                default_artifact_ref="s3://artifacts/completion-trace.json",
             )
             session.commit()
 
@@ -2737,7 +2877,9 @@ class TestTradingApi(TestCase):
         payload = response.json()
         self.assertEqual(payload["doc_id"], "doc29")
         gate = next(
-            item for item in payload["gates"] if item["gate_id"] == DOC29_SIMULATION_FULL_DAY_GATE
+            item
+            for item in payload["gates"]
+            if item["gate_id"] == DOC29_SIMULATION_FULL_DAY_GATE
         )
         self.assertEqual(gate["status"], "satisfied")
         self.assertEqual(gate["latest_run"], "sim-2026-03-06-full-day")
@@ -2746,9 +2888,13 @@ class TestTradingApi(TestCase):
             patch("app.main.SessionLocal", self.session_local),
             patch("app.main.BUILD_COMMIT", "abc123"),
         ):
-            gate_response = self.client.get(f"/trading/completion/doc29/{DOC29_SIMULATION_FULL_DAY_GATE}")
+            gate_response = self.client.get(
+                f"/trading/completion/doc29/{DOC29_SIMULATION_FULL_DAY_GATE}"
+            )
         self.assertEqual(gate_response.status_code, 200)
-        self.assertEqual(gate_response.json()["gate_id"], DOC29_SIMULATION_FULL_DAY_GATE)
+        self.assertEqual(
+            gate_response.json()["gate_id"], DOC29_SIMULATION_FULL_DAY_GATE
+        )
 
     def test_trading_autonomy_evidence_continuity_endpoint_returns_state_report(
         self,

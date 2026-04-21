@@ -147,6 +147,9 @@ Current source-state priority is narrower:
   lane: adapt the discipline of `karpathy/autoresearch` to Torghut, keep the mutation surface narrow and
   ledger-backed, use Apple MLX for GPU-accelerated candidate generation on Apple Silicon, and keep scheduler-v3
   parity, approval replay, and shadow validation as the only promotion authority.
+- `71-torghut-whitepaper-autoresearch-profit-target-strategy-factory-2026-04-21.md` now turns the whitepaper,
+  strategy-factory, MLX, portfolio-sleeve, and runtime-closure pieces into one implementation contract for a
+  production autoresearch epoch targeting a `$500/day` post-cost portfolio candidate.
 - `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md` now makes the next step
   explicit: non-observe capital depends on one certificate that consumes Jangar witness quorum, Jangar market-context
   and quant evidence, toggle parity, and typed options auth/bootstrap escrow rather than local gate optimism.
