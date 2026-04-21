@@ -2,6 +2,10 @@
 
 from .base import Base, GUID, JSONType, coerce_json_payload, metadata_obj
 from .entities import (
+    AutoresearchCandidateSpec,
+    AutoresearchEpoch,
+    AutoresearchPortfolioCandidate,
+    AutoresearchProposalScore,
     CreatedAtMixin,
     ExecutionTCAMetric,
     LeanBacktestRun,
@@ -69,6 +73,10 @@ __all__ = [
     "JSONType",
     "coerce_json_payload",
     "metadata_obj",
+    "AutoresearchCandidateSpec",
+    "AutoresearchEpoch",
+    "AutoresearchPortfolioCandidate",
+    "AutoresearchProposalScore",
     "CreatedAtMixin",
     "Execution",
     "ExecutionOrderEvent",

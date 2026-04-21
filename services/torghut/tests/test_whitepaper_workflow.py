@@ -635,6 +635,7 @@ https://example.com/paper.pdf
         compiled = service._compiled_experiment_specs_from_templates(  # type: ignore[attr-defined]
             run_id='run-1',
             claims=[{'claim_id': 'claim-1'}],
+            relations=[],
             templates=[
                 {
                     'template_id': 'template-1',
@@ -666,6 +667,25 @@ https://example.com/paper.pdf
         self.assertEqual(len(contradictions), 1)
         self.assertEqual(contradictions[0]['source_claim_id'], 'claim-2')
         self.assertEqual(merged, {'dspy_eval_report': {'score': 0.8}})
+
+    def test_structured_outputs_compile_claims_when_experiment_specs_are_absent(self) -> None:
+        service = WhitepaperWorkflowService()
+        compiled = service._compiled_experiment_specs_from_templates(  # type: ignore[attr-defined]
+            run_id='run-claim-compiler',
+            claims=[
+                {
+                    'claim_id': 'claim-flow',
+                    'claim_type': 'signal_mechanism',
+                    'claim_text': 'Clustered order flow imbalance improves short horizon LOB signals.',
+                    'confidence': '0.82',
+                }
+            ],
+            relations=[],
+            templates=[],
+        )
+
+        self.assertEqual(len(compiled), 1)
+        self.assertEqual(compiled[0]['selection_objectives']['target_net_pnl_per_day'], '500')
 
     def test_sync_structured_outputs_skips_incomplete_records(self) -> None:
         service = WhitepaperWorkflowService()
