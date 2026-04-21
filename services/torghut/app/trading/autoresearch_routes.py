@@ -30,8 +30,44 @@ def _json_list(value: Any) -> list[Any]:
     return list(cast(list[Any], value)) if isinstance(value, list) else []
 
 
+def _string_list(value: Any) -> list[str]:
+    resolved: list[str] = []
+    for item in _json_list(value):
+        text = str(item or "").strip()
+        if text:
+            resolved.append(text)
+    return resolved
+
+
+def _blocked_promotion_reasons(
+    *,
+    summary: Mapping[str, Any],
+    portfolio_payload: Mapping[str, Any],
+    scorecard: Mapping[str, Any],
+) -> list[str]:
+    reasons: list[str] = []
+
+    def extend(values: Any) -> None:
+        for item in _string_list(values):
+            if item not in reasons:
+                reasons.append(item)
+
+    extend(_json_object(portfolio_payload.get("promotion_readiness")).get("blockers"))
+    extend(_json_object(summary.get("promotion_readiness")).get("blockers"))
+    extend(_json_object(scorecard.get("profit_target_oracle")).get("blockers"))
+    extend(_json_object(summary.get("profit_target_oracle")).get("blockers"))
+    runtime_closure = _json_object(summary.get("runtime_closure"))
+    extend(_json_object(runtime_closure.get("promotion_prerequisites")).get("reasons"))
+    status_reason = str(summary.get("status_reason") or "").strip()
+    if status_reason and status_reason not in reasons:
+        reasons.append(status_reason)
+    return reasons
+
+
 def _best_portfolio_dashboard_fields(
     portfolio: AutoresearchPortfolioCandidate | None,
+    *,
+    summary: Mapping[str, Any],
 ) -> dict[str, Any]:
     if portfolio is None:
         return {
@@ -43,15 +79,16 @@ def _best_portfolio_dashboard_fields(
         }
     scorecard = _json_object(portfolio.objective_scorecard_json)
     payload = _json_object(portfolio.payload_json)
-    readiness = payload.get("promotion_readiness")
-    readiness_payload = _json_object(readiness)
-    blockers = readiness_payload.get("blockers")
     sleeve_payload = payload.get("sleeves")
     return {
         "best_portfolio_net_pnl_per_day": scorecard.get("net_pnl_per_day"),
         "best_portfolio_active_day_ratio": scorecard.get("active_day_ratio"),
         "best_portfolio_positive_day_ratio": scorecard.get("positive_day_ratio"),
-        "blocked_promotion_reasons": _json_list(blockers),
+        "blocked_promotion_reasons": _blocked_promotion_reasons(
+            summary=summary,
+            portfolio_payload=payload,
+            scorecard=scorecard,
+        ),
         "best_portfolio_sleeves": _json_list(sleeve_payload),
     }
 
@@ -113,7 +150,7 @@ def trading_autoresearch_epochs(
                 "source_count": snapshot.get("source_count"),
                 "summary": summary,
                 **_summary_dashboard_fields(summary),
-                **_best_portfolio_dashboard_fields(portfolio),
+                **_best_portfolio_dashboard_fields(portfolio, summary=summary),
             }
         )
     return {"count": len(items), "epochs": items}
@@ -157,7 +194,10 @@ def trading_autoresearch_epoch(
     summary = _json_object(epoch.summary_json)
     dashboard = {
         **_summary_dashboard_fields(summary),
-        **_best_portfolio_dashboard_fields(portfolios[0] if portfolios else None),
+        **_best_portfolio_dashboard_fields(
+            portfolios[0] if portfolios else None,
+            summary=summary,
+        ),
     }
     return {
         "epoch": {
