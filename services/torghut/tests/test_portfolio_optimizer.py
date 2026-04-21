@@ -29,12 +29,26 @@ class TestPortfolioOptimizer(TestCase):
                         "worst_day_loss": "0",
                         "max_drawdown": "0",
                         "best_day_share": "0.2",
+                        "avg_filled_notional_per_day": "350000",
+                        "regime_slice_pass_rate": "0.55",
+                        "posterior_edge_lower": "0.01",
+                        "shadow_parity_status": "within_budget",
                     },
                     "full_window": {
                         "daily_net": {
                             "2026-02-23": str(250 + index),
-                            "2026-02-24": str(300 + index),
-                        }
+                            "2026-02-24": str(260 + index),
+                            "2026-02-25": str(270 + index),
+                            "2026-02-26": str(280 + index),
+                            "2026-02-27": str(315 + index),
+                        },
+                        "daily_filled_notional": {
+                            "2026-02-23": "350000",
+                            "2026-02-24": "350000",
+                            "2026-02-25": "350000",
+                            "2026-02-26": "350000",
+                            "2026-02-27": "350000",
+                        },
                     },
                 },
                 dataset_snapshot_id="snapshot-1",
@@ -57,6 +71,10 @@ class TestPortfolioOptimizer(TestCase):
             reloaded.portfolio_candidate_id, portfolio.portfolio_candidate_id
         )
         self.assertTrue(reloaded.objective_scorecard["target_met"])
+        self.assertTrue(reloaded.objective_scorecard["oracle_passed"])
+        self.assertEqual(
+            reloaded.objective_scorecard["profit_target_oracle"]["blockers"], []
+        )
 
     def test_invalid_portfolio_candidate_payload_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "portfolio_candidate_schema_invalid"):

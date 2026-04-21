@@ -11,6 +11,7 @@ from app.trading.discovery.portfolio_candidates import (
     PortfolioCandidateSpec,
     portfolio_candidate_id_for_payload,
 )
+from app.trading.discovery.profit_target_oracle import evaluate_profit_target_oracle
 
 
 def _decimal(value: Any, *, default: str = "0") -> Decimal:
@@ -71,6 +72,15 @@ def _daily_net(bundle: CandidateEvidenceBundle) -> dict[str, Decimal]:
     return {"synthetic": _net_per_day(bundle)}
 
 
+def _daily_filled_notional(bundle: CandidateEvidenceBundle) -> dict[str, Decimal]:
+    raw_daily = _scorecard(bundle).get("daily_filled_notional")
+    if isinstance(raw_daily, Mapping):
+        daily_mapping = cast(Mapping[Any, Any], raw_daily)
+        return {str(day): _decimal(value) for day, value in daily_mapping.items()}
+    notional = _decimal(_scorecard(bundle).get("avg_filled_notional_per_day"))
+    return {"synthetic": notional} if notional > 0 else {}
+
+
 def _mean(values: Sequence[Decimal]) -> Decimal:
     if not values:
         return Decimal("0")
@@ -109,6 +119,16 @@ def _portfolio_daily_net(
     daily_totals: dict[str, Decimal] = {}
     for bundle in selected:
         for day, value in _daily_net(bundle).items():
+            daily_totals[day] = daily_totals.get(day, Decimal("0")) + value
+    return daily_totals
+
+
+def _portfolio_daily_filled_notional(
+    selected: Sequence[CandidateEvidenceBundle],
+) -> dict[str, Decimal]:
+    daily_totals: dict[str, Decimal] = {}
+    for bundle in selected:
+        for day, value in _daily_filled_notional(bundle).items():
             daily_totals[day] = daily_totals.get(day, Decimal("0")) + value
     return daily_totals
 
@@ -163,8 +183,21 @@ def _portfolio_scorecard(
     )
     min_day = min(values, default=Decimal("0"))
     worst_day_loss = abs(min_day) if min_day < 0 else Decimal("0")
-    return {
+    daily_notional = _portfolio_daily_filled_notional(selected)
+    notional_values = [daily_notional[day] for day in sorted(daily_notional)]
+    regime_pass_rates = [
+        _decimal(_scorecard(bundle).get("regime_slice_pass_rate"))
+        for bundle in selected
+    ]
+    posterior_lowers = [
+        _decimal(_scorecard(bundle).get("posterior_edge_lower")) for bundle in selected
+    ]
+    shadow_statuses = {
+        _string(_scorecard(bundle).get("shadow_parity_status")) for bundle in selected
+    }
+    scorecard = {
         "net_pnl_per_day": str(net_per_day),
+        "portfolio_post_cost_net_pnl_per_day": str(net_per_day),
         "target_net_pnl_per_day": str(target_net_pnl_per_day),
         "target_met": net_per_day >= target_net_pnl_per_day,
         "active_day_ratio": str(active_day_ratio),
@@ -172,8 +205,22 @@ def _portfolio_scorecard(
         "worst_day_loss": str(worst_day_loss),
         "max_drawdown": str(_max_drawdown_from_daily(daily_net)),
         "best_day_share": str(best_day_share),
+        "avg_filled_notional_per_day": str(_mean(notional_values)),
+        "regime_slice_pass_rate": str(_mean(regime_pass_rates)),
+        "posterior_edge_lower": str(min(posterior_lowers, default=Decimal("0"))),
+        "shadow_parity_status": "within_budget"
+        if shadow_statuses == {"within_budget"}
+        else "missing",
         "daily_net": {day: str(value) for day, value in sorted(daily_net.items())},
+        "daily_filled_notional": {
+            day: str(value) for day, value in sorted(daily_notional.items())
+        },
     }
+    scorecard["profit_target_oracle"] = evaluate_profit_target_oracle(
+        scorecard, target_net_pnl_per_day=target_net_pnl_per_day
+    )
+    scorecard["oracle_passed"] = bool(scorecard["profit_target_oracle"]["passed"])
+    return scorecard
 
 
 def _sleeve_score(bundle: CandidateEvidenceBundle) -> Decimal:

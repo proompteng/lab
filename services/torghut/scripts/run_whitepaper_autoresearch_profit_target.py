@@ -449,6 +449,13 @@ def _synthetic_candidate_payload(spec: CandidateSpec, *, rank: int) -> dict[str,
     net = _synthetic_net_for_spec(spec, rank=rank)
     active = Decimal("0.92") if rank <= 3 else Decimal("0.82")
     positive = Decimal("0.64") if rank <= 3 else Decimal("0.58")
+    daily_filled_notional = {
+        "2026-02-23": "350000",
+        "2026-02-24": "350000",
+        "2026-02-25": "350000",
+        "2026-02-26": "350000",
+        "2026-02-27": "350000",
+    }
     return {
         "candidate_id": f"cand-{spec.candidate_spec_id}",
         "candidate_spec_id": spec.candidate_spec_id,
@@ -464,6 +471,9 @@ def _synthetic_candidate_payload(spec: CandidateSpec, *, rank: int) -> dict[str,
             "max_drawdown": "520",
             "best_day_share": "0.20",
             "regime_slice_pass_rate": "0.55",
+            "posterior_edge_lower": "0.01",
+            "shadow_parity_status": "within_budget",
+            "daily_filled_notional": daily_filled_notional,
         },
         "full_window": {
             "net_per_day": str(net),
@@ -474,6 +484,7 @@ def _synthetic_candidate_payload(spec: CandidateSpec, *, rank: int) -> dict[str,
                 "2026-02-26": str(net * Decimal("1.05")),
                 "2026-02-27": str(net * Decimal("1.15")),
             },
+            "daily_filled_notional": daily_filled_notional,
         },
         "promotion_readiness": {
             "stage": "research_candidate",
@@ -767,6 +778,15 @@ def run_whitepaper_autoresearch_profit_target(
         "false_positive_table": [],
         "best_false_negative_table": [],
         "best_portfolio_candidate": portfolio.to_payload()
+        if portfolio is not None
+        else None,
+        "oracle_candidate_found": bool(
+            portfolio is not None
+            and portfolio.objective_scorecard.get("oracle_passed") is True
+        ),
+        "profit_target_oracle": portfolio.objective_scorecard.get(
+            "profit_target_oracle"
+        )
         if portfolio is not None
         else None,
         "promotion_readiness": {

@@ -106,6 +106,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
 
             portfolio = payload["best_portfolio_candidate"]
             self.assertTrue(portfolio["objective_scorecard"]["target_met"])
+            self.assertTrue(portfolio["objective_scorecard"]["oracle_passed"])
+            self.assertTrue(payload["oracle_candidate_found"])
+            self.assertEqual(payload["profit_target_oracle"]["blockers"], [])
             self.assertGreaterEqual(
                 float(portfolio["objective_scorecard"]["net_pnl_per_day"]), 500.0
             )
