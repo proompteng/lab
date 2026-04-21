@@ -448,6 +448,24 @@ data:
             self.assertEqual(
                 candidate_spec["portfolio_promotion_v2"]["strategy_count"], 4
             )
+            self.assertEqual(
+                candidate_spec["portfolio_promotion_v2"]["spec_compiled_count"], 4
+            )
+            self.assertEqual(
+                candidate_spec["portfolio_promotion_v2"]["missing_policy_refs"], []
+            )
+            self.assertEqual(
+                len(candidate_spec["portfolio_promotion_v2"]["promotion_policy_refs"]),
+                4,
+            )
+            self.assertTrue(
+                all(
+                    str(ref).startswith("torghut.autoresearch.portfolio/cand-pairs/")
+                    for ref in candidate_spec["portfolio_promotion_v2"][
+                        "promotion_policy_refs"
+                    ]
+                )
+            )
             self.assertEqual(candidate_spec["full_window_start_date"], "2026-03-25")
             self.assertEqual(candidate_spec["full_window_end_date"], "2026-04-02")
             gate_report = runtime_closure._gate_report(
@@ -460,6 +478,9 @@ data:
             )
             self.assertEqual(
                 gate_report["vnext"]["portfolio_promotion"]["strategy_count"], 4
+            )
+            self.assertEqual(
+                gate_report["vnext"]["portfolio_promotion"]["missing_policy_refs"], []
             )
 
     def test_materialize_candidate_configmap_supports_generic_portfolio_candidates(
@@ -550,7 +571,16 @@ data:
             )
             portfolio_contract = runtime_closure._portfolio_promotion_v2(best_candidate)
             self.assertEqual(portfolio_contract["strategy_count"], 2)
-            self.assertEqual(portfolio_contract["spec_compiled_count"], 0)
+            self.assertEqual(portfolio_contract["spec_compiled_count"], 2)
+            self.assertEqual(
+                portfolio_contract["strategy_compilation_source"],
+                "runtime_closure_materialized_portfolio_v1",
+            )
+            self.assertEqual(portfolio_contract["missing_policy_refs"], [])
+            self.assertEqual(len(portfolio_contract["promotion_policy_refs"]), 2)
+            self.assertEqual(len(portfolio_contract["risk_profile_refs"]), 2)
+            self.assertEqual(len(portfolio_contract["sizing_policy_refs"]), 2)
+            self.assertEqual(len(portfolio_contract["execution_policy_refs"]), 2)
 
     def test_replay_analysis_records_decomposition_errors(self) -> None:
         replay_payload = {

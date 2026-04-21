@@ -126,6 +126,8 @@ _MICROBAR_PORTFOLIO_SIGNAL_SETTINGS: dict[str, dict[str, str]] = {
     },
 }
 
+_PORTFOLIO_POLICY_REF_PREFIX = "torghut.autoresearch.portfolio"
+
 
 def _json_dumps(payload: Mapping[str, Any]) -> str:
     return json.dumps(payload, indent=2, sort_keys=True)
@@ -406,32 +408,67 @@ def _portfolio_runtime_strategy_names(
     return tuple(names)
 
 
+def _policy_ref_slug(value: str) -> str:
+    normalized = "".join(
+        character.lower() if character.isalnum() else "-" for character in value
+    ).strip("-")
+    while "--" in normalized:
+        normalized = normalized.replace("--", "-")
+    return normalized or "strategy"
+
+
+def _portfolio_policy_refs(
+    *,
+    best_candidate: Mapping[str, Any],
+    strategy_names: tuple[str, ...],
+) -> dict[str, list[str]]:
+    portfolio = _portfolio_payload(best_candidate)
+    prefix = _string(portfolio.get("policy_ref_prefix")) or _PORTFOLIO_POLICY_REF_PREFIX
+    candidate_slug = _policy_ref_slug(
+        _string(best_candidate.get("candidate_id")) or "candidate"
+    )
+
+    refs: dict[str, list[str]] = {
+        "promotion_policy_refs": [],
+        "risk_profile_refs": [],
+        "sizing_policy_refs": [],
+        "execution_policy_refs": [],
+    }
+    for strategy_name in strategy_names:
+        strategy_slug = _policy_ref_slug(strategy_name)
+        refs["promotion_policy_refs"].append(
+            f"{prefix}/{candidate_slug}/promotion/{strategy_slug}"
+        )
+        refs["risk_profile_refs"].append(
+            f"{prefix}/{candidate_slug}/risk/{strategy_slug}"
+        )
+        refs["sizing_policy_refs"].append(
+            f"{prefix}/{candidate_slug}/sizing/{strategy_slug}"
+        )
+        refs["execution_policy_refs"].append(
+            f"{prefix}/{candidate_slug}/execution/{strategy_slug}"
+        )
+    return {key: sorted(values) for key, values in refs.items()}
+
+
 def _portfolio_promotion_v2(best_candidate: Mapping[str, Any]) -> dict[str, Any]:
     strategy_names = _portfolio_runtime_strategy_names(best_candidate)
     if len(strategy_names) <= 1:
         return {}
     symbols = _portfolio_symbols(best_candidate)
-    missing_policy_refs: list[str] = []
-    for strategy_name in strategy_names:
-        missing_policy_refs.extend(
-            [
-                f"{strategy_name}:promotion_policy_ref",
-                f"{strategy_name}:risk_profile_ref",
-                f"{strategy_name}:sizing_policy_ref",
-                f"{strategy_name}:execution_policy_ref",
-            ]
-        )
+    policy_refs = _portfolio_policy_refs(
+        best_candidate=best_candidate,
+        strategy_names=strategy_names,
+    )
     return {
         "mode": "portfolio_aware",
         "strategy_count": len(strategy_names),
-        "spec_compiled_count": 0,
+        "spec_compiled_count": len(strategy_names),
+        "strategy_compilation_source": "runtime_closure_materialized_portfolio_v1",
         "unique_symbol_count": len(set(symbols)),
         "overlapping_symbols": list(symbols),
-        "promotion_policy_refs": [],
-        "risk_profile_refs": [],
-        "sizing_policy_refs": [],
-        "execution_policy_refs": [],
-        "missing_policy_refs": missing_policy_refs,
+        **policy_refs,
+        "missing_policy_refs": [],
     }
 
 
