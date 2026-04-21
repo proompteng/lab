@@ -18,7 +18,7 @@ from app.trading.discovery.evidence_bundles import (
 )
 from app.trading.discovery.mlx_training_data import (
     build_mlx_training_rows,
-    rank_training_rows,
+    rank_training_rows_with_lift_policy,
     train_mlx_ranker,
 )
 
@@ -63,6 +63,10 @@ def train_from_artifacts(
         evidence_bundles=evidence_bundles,
     )
     model = train_mlx_ranker(training_rows, backend_preference=backend_preference)
+    policy_result = rank_training_rows_with_lift_policy(
+        model=model,
+        rows=training_rows,
+    )
     feature_by_spec = {
         row.candidate_spec_id: row.to_payload()["features"] for row in training_rows
     }
@@ -70,11 +74,16 @@ def train_from_artifacts(
         {
             **item.to_payload(),
             "proposal_score": item.score,
+            "selection_reason": policy_result.selection_reason,
             "features": feature_by_spec.get(item.candidate_spec_id, {}),
         }
-        for item in rank_training_rows(model=model, rows=training_rows)
+        for item in policy_result.ranked_rows
     ]
-    return model.to_payload(), scores
+    return {
+        **model.to_payload(),
+        "rank_bucket_lift": policy_result.rank_bucket_lift.to_payload(),
+        "model_status": policy_result.model_status,
+    }, scores
 
 
 def main() -> int:
@@ -101,6 +110,7 @@ def main() -> int:
                 "model_id": model_payload["model_id"],
                 "backend": model_payload["backend"],
                 "row_count": model_payload["row_count"],
+                "model_status": model_payload["model_status"],
                 "model_output": str(args.model_output),
                 "scores_output": str(args.scores_output),
             },

@@ -364,8 +364,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
 
         self.assertEqual(model_payload["schema_version"], "torghut.mlx-ranker.v1")
         self.assertEqual(model_payload["backend"], "numpy-fallback")
+        self.assertIn("rank_bucket_lift", model_payload)
+        self.assertIn(model_payload["model_status"], {"active", "demoted_to_heuristic"})
         self.assertEqual(len(scores), payload["candidate_spec_count"])
         self.assertEqual(scores[0]["rank"], 1)
+        self.assertIn(
+            scores[0]["selection_reason"],
+            {"exploitation", "heuristic_negative_lift_fallback"},
+        )
 
     def test_replay_failures_write_error_summary_and_exit_code_three(self) -> None:
         with (
@@ -459,7 +465,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(model_payload["backend"], "numpy-fallback")
+        self.assertIn("rank_bucket_lift", model_payload)
         self.assertEqual(len(score_rows), payload["candidate_spec_count"])
+        self.assertIn("selection_reason", json.loads(score_rows[0]))
         self.assertTrue(mock_print.called)
 
     def test_compile_claims_script_main_writes_recent_seed_cards(self) -> None:

@@ -40,7 +40,11 @@ from app.trading.discovery.mlx_snapshot import build_mlx_snapshot_manifest
 from app.trading.discovery.mlx_snapshot import MlxSnapshotManifest
 from app.trading.discovery.mlx_snapshot import write_mlx_snapshot_manifest
 from app.trading.discovery.mlx_training_data import build_mlx_training_rows
-from app.trading.discovery.mlx_training_data import rank_training_rows, train_mlx_ranker
+from app.trading.discovery.mlx_training_data import (
+    rank_training_rows,
+    rank_training_rows_with_lift_policy,
+    train_mlx_ranker,
+)
 from app.trading.discovery.portfolio_optimizer import (
     PortfolioCandidateSpec,
     optimize_portfolio_candidate,
@@ -518,10 +522,21 @@ def _proposal_model_and_rows(
         candidate_specs=specs, evidence_bundles=evidence_bundles
     )
     model = train_mlx_ranker(training_rows, backend_preference="mlx")
-    ranked_rows = rank_training_rows(model=model, rows=training_rows)
     feature_by_spec = {
         row.candidate_spec_id: row.to_payload()["features"] for row in training_rows
     }
+    net_by_spec = {
+        bundle.candidate_spec_id: float(
+            _decimal(bundle.objective_scorecard.get("net_pnl_per_day"))
+        )
+        for bundle in evidence_bundles
+    }
+    policy_result = rank_training_rows_with_lift_policy(
+        model=model,
+        rows=training_rows,
+        metric_name="net_pnl_per_day",
+        outcome_by_spec=net_by_spec,
+    )
     proposal_rows = [
         {
             "candidate_spec_id": item.candidate_spec_id,
@@ -529,7 +544,7 @@ def _proposal_model_and_rows(
             "rank": item.rank,
             "backend": item.backend,
             "model_id": item.model_id,
-            "selection_reason": "exploitation",
+            "selection_reason": policy_result.selection_reason,
             "replay_selection_reason": _mapping(
                 replay_selection_by_spec.get(item.candidate_spec_id)
                 if replay_selection_by_spec is not None
@@ -545,50 +560,13 @@ def _proposal_model_and_rows(
             "feature_hash": item.feature_hash,
             "features": feature_by_spec.get(item.candidate_spec_id, {}),
         }
-        for item in ranked_rows
+        for item in policy_result.ranked_rows
     ]
-    net_by_spec = {
-        bundle.candidate_spec_id: _decimal(
-            bundle.objective_scorecard.get("net_pnl_per_day")
-        )
-        for bundle in evidence_bundles
-    }
-    ranked_nets = [
-        net_by_spec.get(str(row["candidate_spec_id"]), Decimal("0"))
-        for row in proposal_rows
-    ]
-    split_index = max(1, len(ranked_nets) // 2)
-    top_bucket = ranked_nets[:split_index]
-    bottom_bucket = ranked_nets[split_index:] or [Decimal("0")]
-    top_mean = sum(top_bucket, Decimal("0")) / Decimal(len(top_bucket))
-    bottom_mean = sum(bottom_bucket, Decimal("0")) / Decimal(len(bottom_bucket))
-    lift = top_mean - bottom_mean
     model_payload = {
         **model.to_payload(),
-        "rank_bucket_lift": {
-            "top_bucket_mean_net_pnl_per_day": str(top_mean),
-            "bottom_bucket_mean_net_pnl_per_day": str(bottom_mean),
-            "lift_net_pnl_per_day": str(lift),
-        },
-        "model_status": "active" if lift >= 0 else "demoted_to_heuristic",
+        "rank_bucket_lift": policy_result.rank_bucket_lift.to_payload(),
+        "model_status": policy_result.model_status,
     }
-    if lift < 0:
-        proposal_rows = sorted(
-            proposal_rows,
-            key=lambda row: (
-                _decimal(row.get("features", {}).get("history_net_pnl_per_day")),
-                str(row.get("candidate_spec_id") or ""),
-            ),
-            reverse=True,
-        )
-        proposal_rows = [
-            {
-                **row,
-                "rank": index,
-                "selection_reason": "heuristic_negative_lift_fallback",
-            }
-            for index, row in enumerate(proposal_rows, start=1)
-        ]
     return model_payload, proposal_rows
 
 
