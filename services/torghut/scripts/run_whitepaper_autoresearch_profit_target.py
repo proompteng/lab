@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -40,7 +40,10 @@ from app.trading.discovery.portfolio_optimizer import (
     PortfolioCandidateSpec,
     optimize_portfolio_candidate,
 )
-from app.trading.discovery.runtime_closure import write_runtime_closure_bundle
+from app.trading.discovery.runtime_closure import (
+    RuntimeClosureExecutionContext,
+    write_runtime_closure_bundle,
+)
 from app.trading.discovery.whitepaper_autoresearch_notebooks import (
     write_whitepaper_autoresearch_diagnostics_notebook,
 )
@@ -140,6 +143,17 @@ def _write_jsonl(path: Path, rows: Sequence[Mapping[str, Any]]) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def _resolve_existing_path(path: Path) -> Path:
+    resolved = path.expanduser().resolve()
+    if path.is_absolute() or resolved.exists():
+        return resolved
+    for parent in Path(__file__).resolve().parents:
+        candidate = (parent / path).resolve()
+        if candidate.exists():
+            return candidate
+    return resolved
 
 
 def _write_failure_summary(
@@ -594,8 +608,34 @@ def _runtime_closure_payload(
     portfolio: PortfolioCandidateSpec | None,
 ) -> Mapping[str, Any]:
     program = load_strategy_autoresearch_program(
-        args.program.resolve(), family_dir=args.family_template_dir.resolve()
+        _resolve_existing_path(args.program),
+        family_dir=_resolve_existing_path(args.family_template_dir),
     )
+    execution_context = RuntimeClosureExecutionContext(
+        strategy_configmap_path=_resolve_existing_path(args.strategy_configmap),
+        clickhouse_http_url=str(args.clickhouse_http_url),
+        clickhouse_username=str(args.clickhouse_username)
+        if args.clickhouse_username
+        else None,
+        clickhouse_password=str(args.clickhouse_password)
+        if args.clickhouse_password
+        else None,
+        start_equity=_decimal(args.start_equity, default="31590.02"),
+        chunk_minutes=int(args.chunk_minutes),
+        symbols=tuple(
+            symbol.strip() for symbol in str(args.symbols).split(",") if symbol.strip()
+        ),
+        progress_log_interval_seconds=int(args.progress_log_seconds),
+    )
+    if args.replay_mode == "synthetic":
+        program = replace(
+            program,
+            runtime_closure_policy=replace(
+                program.runtime_closure_policy,
+                execute_parity_replay=False,
+                execute_approval_replay=False,
+            ),
+        )
     manifest = build_mlx_snapshot_manifest(
         runner_run_id=epoch_id,
         program=program,
@@ -640,7 +680,7 @@ def _runtime_closure_payload(
         program=program,
         best_candidate=best_candidate,
         manifest=manifest,
-        execution_context=None,
+        execution_context=execution_context if portfolio is not None else None,
     ).to_payload()
 
 

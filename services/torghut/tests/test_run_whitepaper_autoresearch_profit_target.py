@@ -93,6 +93,36 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             self.assertTrue((output_dir / "portfolio-candidates.jsonl").exists())
             self.assertTrue((output_dir / "runtime-closure" / "summary.json").exists())
             self.assertTrue(
+                (
+                    output_dir
+                    / "runtime-closure"
+                    / "replay"
+                    / "candidate-configmap.yaml"
+                ).exists()
+            )
+            runtime_summary = json.loads(
+                (output_dir / "runtime-closure" / "summary.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(runtime_summary["status"], "pending_runtime_parity")
+            self.assertTrue(runtime_summary["candidate_configmap_path"])
+            replay_plan = json.loads(
+                (
+                    output_dir
+                    / "runtime-closure"
+                    / "replay"
+                    / "runtime-replay-plan.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertIsNotNone(replay_plan["execution_context"])
+            self.assertFalse(
+                replay_plan["runtime_closure_policy"]["execute_parity_replay"]
+            )
+            self.assertFalse(
+                replay_plan["runtime_closure_policy"]["execute_approval_replay"]
+            )
+            self.assertTrue(
                 (output_dir / "whitepaper-autoresearch-diagnostics.ipynb").exists()
             )
             model_payload = json.loads(
