@@ -5,7 +5,11 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Mapping, Sequence, cast
 
-from app.trading.discovery.evidence_bundles import CandidateEvidenceBundle
+from app.trading.discovery.evidence_bundles import (
+    CandidateEvidenceBundle,
+    evidence_bundle_blockers,
+    evidence_bundle_is_valid,
+)
 from app.trading.discovery.portfolio_candidates import (
     PORTFOLIO_CANDIDATE_SCHEMA_VERSION,
     PortfolioCandidateSpec,
@@ -58,6 +62,8 @@ def _worst_day_loss(bundle: CandidateEvidenceBundle) -> Decimal:
 
 
 def _candidate_passes_minimums(bundle: CandidateEvidenceBundle) -> bool:
+    if not evidence_bundle_is_valid(bundle):
+        return False
     if bool(bundle.promotion_readiness.get("promotable")):
         return True
     blockers = cast(Sequence[Any], bundle.promotion_readiness.get("blockers") or [])
@@ -328,6 +334,15 @@ def optimize_portfolio_candidate(
     portfolio_size_min: int = 2,
     portfolio_size_max: int = 8,
 ) -> PortfolioCandidateSpec | None:
+    invalid_evidence_rejections = [
+        {
+            "candidate_id": bundle.candidate_id,
+            "reason": "invalid_evidence_bundle",
+            "blockers": list(evidence_bundle_blockers(bundle)),
+        }
+        for bundle in evidence_bundles
+        if not evidence_bundle_is_valid(bundle)
+    ]
     eligible = [
         bundle for bundle in evidence_bundles if _candidate_passes_minimums(bundle)
     ]
@@ -338,7 +353,7 @@ def optimize_portfolio_candidate(
     )
     selected: list[CandidateEvidenceBundle] = []
     selected_clusters: set[str] = set()
-    rejected: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = list(invalid_evidence_rejections)
     max_allowed_correlation = MAX_ALLOWED_PAIRWISE_CORRELATION
     for bundle in ordered:
         cluster = _cluster_id(bundle)

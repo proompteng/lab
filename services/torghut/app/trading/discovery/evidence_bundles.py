@@ -9,6 +9,7 @@ from typing import Any, Literal, Mapping, Sequence, cast
 
 
 EVIDENCE_BUNDLE_SCHEMA_VERSION = "torghut.candidate-evidence-bundle.v1"
+VALID_COST_CALIBRATION_STATUSES = frozenset({"calibrated", "provisional"})
 
 
 def _stable_hash(payload: Mapping[str, Any]) -> str:
@@ -168,3 +169,38 @@ def evidence_bundle_from_payload(payload: Mapping[str, Any]) -> CandidateEvidenc
         null_comparator=_mapping(payload.get("null_comparator")),
         promotion_readiness=_mapping(payload.get("promotion_readiness")),
     )
+
+
+def evidence_bundle_blockers(bundle: CandidateEvidenceBundle) -> tuple[str, ...]:
+    blockers: list[str] = []
+    if not _string(bundle.dataset_snapshot_id):
+        blockers.append("dataset_snapshot_missing")
+    if not bundle.replay_artifact_refs or not any(
+        _string(item) for item in bundle.replay_artifact_refs
+    ):
+        blockers.append("replay_artifact_missing")
+
+    cost_status = _string(bundle.cost_calibration.get("status")).lower()
+    cost_source = _string(bundle.cost_calibration.get("source"))
+    if not bundle.cost_calibration:
+        blockers.append("cost_calibration_missing")
+    elif cost_status not in VALID_COST_CALIBRATION_STATUSES:
+        blockers.append("cost_calibration_status_invalid")
+    elif not cost_source:
+        blockers.append("cost_calibration_source_missing")
+
+    scorecard = bundle.objective_scorecard
+    if bool(scorecard.get("stale_tape")) or bool(scorecard.get("stale_override_used")):
+        blockers.append("stale_tape")
+    freshness = _string(
+        scorecard.get("dataset_freshness_status")
+        or scorecard.get("tape_freshness_status")
+        or scorecard.get("freshness_status")
+    ).lower()
+    if freshness in {"stale", "expired", "not_fresh"}:
+        blockers.append("stale_tape")
+    return tuple(dict.fromkeys(blockers))
+
+
+def evidence_bundle_is_valid(bundle: CandidateEvidenceBundle) -> bool:
+    return not evidence_bundle_blockers(bundle)
