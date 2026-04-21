@@ -66,6 +66,11 @@ def build_whitepaper_autoresearch_diagnostics_notebook(
                 "summary = json.loads(summary_path.read_text()) if summary_path.exists() else {}\n"
                 "summary.get('best_portfolio_candidate')\n"
             ),
+            _markdown_cell(
+                "## Proposal Diagnostics\n\nFalse-positive and best false-negative tables from the epoch summary."
+            ),
+            _code_cell("summary.get('false_positive_table', [])\n"),
+            _code_cell("summary.get('best_false_negative_table', [])\n"),
         ],
         "metadata": {
             "kernelspec": {

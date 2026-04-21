@@ -84,6 +84,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 (output_dir / "summary.json").read_text(encoding="utf-8")
             )
             self.assertEqual(summary["epoch_id"], payload["epoch_id"])
+            self.assertEqual(
+                summary["false_positive_table"], payload["false_positive_table"]
+            )
+            self.assertEqual(
+                summary["best_false_negative_table"],
+                payload["best_false_negative_table"],
+            )
             self.assertTrue((output_dir / "hypothesis-cards.jsonl").exists())
             self.assertTrue((output_dir / "candidate-specs.jsonl").exists())
             self.assertTrue((output_dir / "candidate-compiler-report.json").exists())
@@ -171,6 +178,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             self.assertGreaterEqual(
                 float(portfolio["objective_scorecard"]["net_pnl_per_day"]), 500.0
             )
+            self.assertTrue(payload["false_positive_table"])
+            false_positive_reasons = {
+                reason
+                for row in payload["false_positive_table"]
+                for reason in row["failure_reasons"]
+            }
+            self.assertIn("active_day_ratio_below_oracle", false_positive_reasons)
+            self.assertEqual(payload["best_false_negative_table"], [])
 
     def test_seed_recent_whitepapers_honors_top_k_and_exploration_budget(
         self,
@@ -210,6 +225,12 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(payload["replay_candidate_spec_count"], 3)
         self.assertEqual(payload["evidence_bundle_count"], 3)
         self.assertEqual(payload["candidate_spec_count"], 4)
+        self.assertEqual(payload["false_positive_table"], [])
+        self.assertEqual(len(payload["best_false_negative_table"]), 1)
+        self.assertEqual(
+            payload["best_false_negative_table"][0]["evidence_status"], "not_replayed"
+        )
+        self.assertFalse(payload["best_false_negative_table"][0]["selected_for_replay"])
         selected_rows = [row for row in selection["rows"] if row["selected_for_replay"]]
         self.assertEqual(
             {row["selection_reason"] for row in selected_rows},

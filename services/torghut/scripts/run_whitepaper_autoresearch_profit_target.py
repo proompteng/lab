@@ -197,12 +197,30 @@ def _mapping(value: Any) -> dict[str, Any]:
     )
 
 
+def _string(value: Any) -> str:
+    return str(value if value is not None else "").strip()
+
+
 def _list_of_mappings(value: Any) -> list[Mapping[str, Any]]:
     if not isinstance(value, list):
         return []
     return [
         cast(Mapping[str, Any], item) for item in value if isinstance(item, Mapping)
     ]
+
+
+def _rank_sort_value(value: Any) -> int:
+    try:
+        return int(str(value))
+    except Exception:
+        return 10**9
+
+
+def _proposal_sort_value(value: Any) -> float:
+    try:
+        return float(str(value))
+    except Exception:
+        return 0.0
 
 
 def _load_sources_from_db(
@@ -459,6 +477,149 @@ def _proposal_model_and_rows(
             for index, row in enumerate(proposal_rows, start=1)
         ]
     return model_payload, proposal_rows
+
+
+def _candidate_quality_gate_failures(scorecard: Mapping[str, Any]) -> list[str]:
+    failures: list[str] = []
+    if _decimal(scorecard.get("net_pnl_per_day")) <= 0:
+        failures.append("non_positive_net_pnl_per_day")
+    if _decimal(scorecard.get("active_day_ratio")) < Decimal("0.90"):
+        failures.append("active_day_ratio_below_oracle")
+    if _decimal(scorecard.get("positive_day_ratio")) < Decimal("0.60"):
+        failures.append("positive_day_ratio_below_oracle")
+    if _decimal(scorecard.get("best_day_share"), default="1") > Decimal("0.25"):
+        failures.append("best_day_share_above_oracle")
+    if _decimal(scorecard.get("worst_day_loss"), default="999999") > Decimal("350"):
+        failures.append("worst_day_loss_above_oracle")
+    if _decimal(scorecard.get("max_drawdown"), default="999999") > Decimal("900"):
+        failures.append("max_drawdown_above_oracle")
+    if _decimal(scorecard.get("avg_filled_notional_per_day")) < Decimal("300000"):
+        failures.append("avg_filled_notional_per_day_below_oracle")
+    if _decimal(scorecard.get("regime_slice_pass_rate")) < Decimal("0.45"):
+        failures.append("regime_slice_pass_rate_below_oracle")
+    if _decimal(scorecard.get("posterior_edge_lower")) <= 0:
+        failures.append("posterior_edge_lower_non_positive")
+    if _string(scorecard.get("shadow_parity_status")) != "within_budget":
+        failures.append("shadow_parity_status_not_within_budget")
+    return failures
+
+
+def _false_positive_table(
+    *,
+    proposal_rows: Sequence[Mapping[str, Any]],
+    evidence_bundles: Sequence[CandidateEvidenceBundle],
+    limit: int = 16,
+) -> list[dict[str, Any]]:
+    evidence_by_spec = {bundle.candidate_spec_id: bundle for bundle in evidence_bundles}
+    rows: list[dict[str, Any]] = []
+    for proposal in _list_of_mappings(list(proposal_rows)):
+        candidate_spec_id = _string(proposal.get("candidate_spec_id"))
+        if not candidate_spec_id or not bool(proposal.get("selected_for_replay")):
+            continue
+        evidence = evidence_by_spec.get(candidate_spec_id)
+        if evidence is None:
+            rows.append(
+                {
+                    "candidate_spec_id": candidate_spec_id,
+                    "candidate_id": None,
+                    "rank": _rank_sort_value(proposal.get("rank")),
+                    "proposal_score": proposal.get("proposal_score"),
+                    "replay_selection_reason": _string(
+                        proposal.get("replay_selection_reason")
+                    )
+                    or "selected_for_replay",
+                    "evidence_status": "missing",
+                    "failure_reasons": ["replay_evidence_missing"],
+                }
+            )
+            continue
+        scorecard = evidence.objective_scorecard
+        failure_reasons = _candidate_quality_gate_failures(scorecard)
+        if not failure_reasons:
+            continue
+        rows.append(
+            {
+                "candidate_spec_id": candidate_spec_id,
+                "candidate_id": evidence.candidate_id,
+                "rank": _rank_sort_value(proposal.get("rank")),
+                "proposal_score": proposal.get("proposal_score"),
+                "replay_selection_reason": _string(
+                    proposal.get("replay_selection_reason")
+                )
+                or "selected_for_replay",
+                "evidence_status": "replayed",
+                "net_pnl_per_day": _string(scorecard.get("net_pnl_per_day")),
+                "active_day_ratio": _string(scorecard.get("active_day_ratio")),
+                "positive_day_ratio": _string(scorecard.get("positive_day_ratio")),
+                "best_day_share": _string(scorecard.get("best_day_share")),
+                "worst_day_loss": _string(scorecard.get("worst_day_loss")),
+                "max_drawdown": _string(scorecard.get("max_drawdown")),
+                "avg_filled_notional_per_day": _string(
+                    scorecard.get("avg_filled_notional_per_day")
+                ),
+                "regime_slice_pass_rate": _string(
+                    scorecard.get("regime_slice_pass_rate")
+                ),
+                "posterior_edge_lower": _string(scorecard.get("posterior_edge_lower")),
+                "shadow_parity_status": _string(scorecard.get("shadow_parity_status")),
+                "failure_reasons": failure_reasons,
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            _rank_sort_value(row.get("rank")),
+            -_proposal_sort_value(row.get("proposal_score")),
+            _string(row.get("candidate_spec_id")),
+        )
+    )
+    return rows[: max(0, limit)]
+
+
+def _best_false_negative_table(
+    *,
+    candidate_selection: Mapping[str, Any],
+    pre_replay_proposal_rows: Sequence[Mapping[str, Any]],
+    evidence_bundles: Sequence[CandidateEvidenceBundle],
+    limit: int = 16,
+) -> list[dict[str, Any]]:
+    evidence_by_spec = {bundle.candidate_spec_id: bundle for bundle in evidence_bundles}
+    pre_replay_by_spec = {
+        _string(row.get("candidate_spec_id")): row
+        for row in _list_of_mappings(list(pre_replay_proposal_rows))
+        if _string(row.get("candidate_spec_id"))
+    }
+    rows: list[dict[str, Any]] = []
+    for selection in _list_of_mappings(candidate_selection.get("rows")):
+        candidate_spec_id = _string(selection.get("candidate_spec_id"))
+        if (
+            not candidate_spec_id
+            or bool(selection.get("selected_for_replay"))
+            or candidate_spec_id in evidence_by_spec
+        ):
+            continue
+        pre_replay = pre_replay_by_spec.get(candidate_spec_id, {})
+        rows.append(
+            {
+                "candidate_spec_id": candidate_spec_id,
+                "candidate_id": None,
+                "rank": _rank_sort_value(selection.get("rank")),
+                "pre_replay_score": _string(selection.get("pre_replay_score")),
+                "proposal_score": pre_replay.get("proposal_score"),
+                "selection_reason": _string(selection.get("selection_reason"))
+                or "not_selected_budget",
+                "selected_for_replay": False,
+                "evidence_status": "not_replayed",
+                "reason": "not_replayed_budget",
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            _rank_sort_value(row.get("rank")),
+            -_proposal_sort_value(row.get("proposal_score")),
+            _string(row.get("candidate_spec_id")),
+        )
+    )
+    return rows[: max(0, limit)]
 
 
 def _pre_replay_candidate_score(spec: CandidateSpec) -> Decimal:
@@ -1098,6 +1259,15 @@ def run_whitepaper_autoresearch_profit_target(
             status_reason = "portfolio_optimizer_produced_no_candidate"
         else:
             status_reason = "portfolio_candidate_failed_profit_target_oracle"
+    false_positive_table = _false_positive_table(
+        proposal_rows=proposal_rows,
+        evidence_bundles=replay_result.evidence_bundles,
+    )
+    best_false_negative_table = _best_false_negative_table(
+        candidate_selection=candidate_selection,
+        pre_replay_proposal_rows=pre_replay_proposal_rows,
+        evidence_bundles=replay_result.evidence_bundles,
+    )
     summary = {
         "status": status,
         "status_reason": status_reason,
@@ -1115,8 +1285,8 @@ def run_whitepaper_autoresearch_profit_target(
         "portfolio_candidate_count": len(portfolio_rows),
         "claim_count": sum(len(source.claims) for source in sources),
         "mlx_rank_bucket_lift": proposal_model.get("rank_bucket_lift", {}),
-        "false_positive_table": [],
-        "best_false_negative_table": [],
+        "false_positive_table": false_positive_table,
+        "best_false_negative_table": best_false_negative_table,
         "best_portfolio_candidate": portfolio.to_payload()
         if portfolio is not None
         else None,

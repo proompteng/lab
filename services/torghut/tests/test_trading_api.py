@@ -217,6 +217,8 @@ class TestTradingApi(TestCase):
                         "evidence_bundle_count": 1,
                         "portfolio_candidate_count": 1,
                         "mlx_rank_bucket_lift": {"lift_net_pnl_per_day": "10"},
+                        "false_positive_table": [{"candidate_spec_id": "spec-fp"}],
+                        "best_false_negative_table": [{"candidate_spec_id": "spec-fn"}],
                     },
                     started_at=datetime.now(timezone.utc),
                     completed_at=datetime.now(timezone.utc),
@@ -282,6 +284,10 @@ class TestTradingApi(TestCase):
             list_payload["epochs"][0]["best_portfolio_net_pnl_per_day"], "535"
         )
         self.assertEqual(list_payload["epochs"][0]["claim_count"], 2)
+        self.assertEqual(
+            list_payload["epochs"][0]["false_positive_table"][0]["candidate_spec_id"],
+            "spec-fp",
+        )
 
         detail_response = self.client.get("/trading/autoresearch/epochs/epoch-1")
         self.assertEqual(detail_response.status_code, 200)
@@ -298,6 +304,12 @@ class TestTradingApi(TestCase):
         self.assertEqual(
             detail_payload["dashboard"]["blocked_promotion_reasons"],
             ["scheduler_v3_parity_missing"],
+        )
+        self.assertEqual(
+            detail_payload["dashboard"]["best_false_negative_table"][0][
+                "candidate_spec_id"
+            ],
+            "spec-fn",
         )
 
         missing_response = self.client.get("/trading/autoresearch/epochs/missing")

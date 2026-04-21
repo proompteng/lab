@@ -56,6 +56,19 @@ def _best_portfolio_dashboard_fields(
     }
 
 
+def _summary_dashboard_fields(summary: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "claim_count": summary.get("claim_count"),
+        "hypothesis_count": summary.get("hypothesis_count"),
+        "candidate_spec_count": summary.get("candidate_spec_count"),
+        "replayed_candidate_count": summary.get("evidence_bundle_count"),
+        "portfolio_candidate_count": summary.get("portfolio_candidate_count"),
+        "mlx_rank_bucket_lift": summary.get("mlx_rank_bucket_lift"),
+        "false_positive_table": summary.get("false_positive_table", []),
+        "best_false_negative_table": summary.get("best_false_negative_table", []),
+    }
+
+
 @router.get("/epochs")
 def trading_autoresearch_epochs(
     status: str | None = Query(default=None),
@@ -92,16 +105,6 @@ def trading_autoresearch_epochs(
                 "target_net_pnl_per_day": str(row.target_net_pnl_per_day),
                 "paper_run_ids": row.paper_run_ids_json or [],
                 "paper_count": len(row.paper_run_ids_json or []),
-                "claim_count": summary.get("claim_count"),
-                "hypothesis_count": summary.get("hypothesis_count"),
-                "candidate_spec_count": summary.get("candidate_spec_count"),
-                "replayed_candidate_count": summary.get("evidence_bundle_count"),
-                "portfolio_candidate_count": summary.get("portfolio_candidate_count"),
-                "mlx_rank_bucket_lift": summary.get("mlx_rank_bucket_lift"),
-                "false_positive_table": summary.get("false_positive_table", []),
-                "best_false_negative_table": summary.get(
-                    "best_false_negative_table", []
-                ),
                 "started_at": row.started_at.isoformat() if row.started_at else None,
                 "completed_at": row.completed_at.isoformat()
                 if row.completed_at
@@ -109,6 +112,7 @@ def trading_autoresearch_epochs(
                 "failure_reason": row.failure_reason,
                 "source_count": snapshot.get("source_count"),
                 "summary": summary,
+                **_summary_dashboard_fields(summary),
                 **_best_portfolio_dashboard_fields(portfolio),
             }
         )
@@ -150,6 +154,11 @@ def trading_autoresearch_epoch(
             .order_by(AutoresearchPortfolioCandidate.created_at.asc())
         ).scalars()
     )
+    summary = _json_object(epoch.summary_json)
+    dashboard = {
+        **_summary_dashboard_fields(summary),
+        **_best_portfolio_dashboard_fields(portfolios[0] if portfolios else None),
+    }
     return {
         "epoch": {
             "epoch_id": epoch.epoch_id,
@@ -158,16 +167,14 @@ def trading_autoresearch_epoch(
             "paper_run_ids": epoch.paper_run_ids_json or [],
             "snapshot_manifest": epoch.snapshot_manifest_json or {},
             "runner_config": epoch.runner_config_json or {},
-            "summary": epoch.summary_json or {},
+            "summary": summary,
             "started_at": epoch.started_at.isoformat() if epoch.started_at else None,
             "completed_at": epoch.completed_at.isoformat()
             if epoch.completed_at
             else None,
             "failure_reason": epoch.failure_reason,
         },
-        "dashboard": _best_portfolio_dashboard_fields(
-            portfolios[0] if portfolios else None
-        ),
+        "dashboard": dashboard,
         "candidate_specs": [
             {
                 "candidate_spec_id": row.candidate_spec_id,
