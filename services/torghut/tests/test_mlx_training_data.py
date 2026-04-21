@@ -54,6 +54,7 @@ class TestMlxTrainingData(TestCase):
         model = train_mlx_ranker(rows, backend_preference="numpy-fallback", steps=4)
         ranked = rank_training_rows(model=model, rows=rows)
 
-        self.assertEqual(len(rows), 1)
+        self.assertEqual(len(rows), len(specs))
         self.assertEqual(model.backend, "numpy-fallback")
         self.assertEqual(ranked[0].rank, 1)
+        self.assertEqual(ranked[0].candidate_spec_id, specs[0].candidate_spec_id)

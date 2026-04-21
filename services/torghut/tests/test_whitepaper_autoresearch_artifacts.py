@@ -53,9 +53,10 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
         specs = compile_candidate_specs(
             hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
         )
-        self.assertEqual(len(specs), 1)
-        self.assertEqual(
-            specs[0].family_template_id, "microbar_cross_sectional_pairs_v1"
+        self.assertEqual(len(specs), 3)
+        self.assertIn(
+            "microbar_cross_sectional_pairs_v1",
+            {spec.family_template_id for spec in specs},
         )
         self.assertEqual(specs[0].objective["target_net_pnl_per_day"], "500")
 
@@ -63,7 +64,7 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
         self.assertEqual(reloaded_spec.candidate_spec_id, specs[0].candidate_spec_id)
         self.assertEqual(
             reloaded_spec.to_vnext_experiment_payload()["family_template_id"],
-            "microbar_cross_sectional_pairs_v1",
+            specs[0].family_template_id,
         )
 
     def test_evidence_training_rows_and_portfolio_optimizer(self) -> None:
@@ -108,7 +109,7 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
         ]
 
         rows = build_mlx_training_rows(candidate_specs=specs, evidence_bundles=bundles)
-        self.assertEqual(len(rows), 1)
+        self.assertEqual(len(rows), len(specs))
         self.assertEqual(rows[0].feature_names[0], "family_code")
 
         portfolio = optimize_portfolio_candidate(
@@ -273,8 +274,13 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
             hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
         )
 
+        primary_family_by_hypothesis = {
+            spec.hypothesis_id: spec.family_template_id
+            for spec in specs
+            if spec.feature_contract.get("family_selection", {}).get("rank") == 1
+        }
         self.assertEqual(
-            [spec.family_template_id for spec in specs],
+            [primary_family_by_hypothesis[card.hypothesis_id] for card in cards],
             [
                 "microstructure_continuation_matched_filter_v1",
                 "washout_rebound_v2",

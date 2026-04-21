@@ -7,7 +7,10 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from app.trading.discovery.autoresearch import ProposalModelPolicy
-from app.trading.discovery.mlx_features import MlxCandidateDescriptor, descriptor_numeric_vector
+from app.trading.discovery.mlx_features import (
+    MlxCandidateDescriptor,
+    descriptor_numeric_vector,
+)
 
 
 def _float(value: Any) -> float:
@@ -18,30 +21,35 @@ def _float(value: Any) -> float:
 
 
 def _candidate_target(row: Mapping[str, Any]) -> float:
-    net = _float(row.get('net_pnl_per_day'))
-    activity = _float(row.get('active_day_ratio'))
-    concentration_penalty = _float(row.get('best_day_share'))
-    veto_penalty = 1.0 if row.get('hard_vetoes') else 0.0
-    return net + (activity * 100.0) - (concentration_penalty * 100.0) - (veto_penalty * 250.0)
+    net = _float(row.get("net_pnl_per_day"))
+    activity = _float(row.get("active_day_ratio"))
+    concentration_penalty = _float(row.get("best_day_share"))
+    veto_penalty = 1.0 if row.get("hard_vetoes") else 0.0
+    return (
+        net
+        + (activity * 100.0)
+        - (concentration_penalty * 100.0)
+        - (veto_penalty * 250.0)
+    )
 
 
 def _import_mlx_backend() -> tuple[str, Any]:
     import mlx.core as mx  # type: ignore[import-not-found]
 
-    return 'mlx', mx
+    return "mlx", mx
 
 
 def _import_numpy_backend() -> tuple[str, Any]:
     import numpy as np
 
-    return 'numpy-fallback', np
+    return "numpy-fallback", np
 
 
 def _import_array_backend(preference: str) -> tuple[str, Any]:
     normalized = preference.strip().lower()
-    if normalized in {'numpy', 'numpy-fallback'}:
+    if normalized in {"numpy", "numpy-fallback"}:
         return _import_numpy_backend()
-    if normalized == 'mlx':
+    if normalized == "mlx":
         try:
             return _import_mlx_backend()
         except ModuleNotFoundError:
@@ -53,7 +61,7 @@ def _import_array_backend(preference: str) -> tuple[str, Any]:
 
 
 def _array(xp: Any, values: Sequence[Sequence[float]] | Sequence[float]) -> Any:
-    dtype = getattr(xp, 'float32', None)
+    dtype = getattr(xp, "float32", None)
     if dtype is not None:
         return xp.array(values, dtype=dtype)
     return xp.array(values, dtype=float)
@@ -70,12 +78,12 @@ class ProposalScore:
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            'candidate_id': self.candidate_id,
-            'descriptor_id': self.descriptor_id,
-            'score': self.score,
-            'rank': self.rank,
-            'backend': self.backend,
-            'mode': self.mode,
+            "candidate_id": self.candidate_id,
+            "descriptor_id": self.descriptor_id,
+            "score": self.score,
+            "rank": self.rank,
+            "backend": self.backend,
+            "mode": self.mode,
         }
 
 
@@ -91,13 +99,13 @@ class ProposalSelectionEntry:
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            'candidate_id': self.candidate_id,
-            'descriptor_id': self.descriptor_id,
-            'selection_reason': self.selection_reason,
-            'score': self.score,
-            'rank': self.rank,
-            'family_template_id': self.family_template_id,
-            'side_policy': self.side_policy,
+            "candidate_id": self.candidate_id,
+            "descriptor_id": self.descriptor_id,
+            "selection_reason": self.selection_reason,
+            "score": self.score,
+            "rank": self.rank,
+            "family_template_id": self.family_template_id,
+            "side_policy": self.side_policy,
         }
 
 
@@ -117,25 +125,91 @@ class ProposalDiagnostics:
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            'candidate_count': self.candidate_count,
-            'scored_candidate_count': self.scored_candidate_count,
-            'score_histogram': [dict(item) for item in self.score_histogram],
-            'family_volume': [dict(item) for item in self.family_volume],
-            'side_volume': [dict(item) for item in self.side_volume],
-            'selected_candidates': [item.to_payload() for item in self.selected_candidates],
-            'diversity_summary': dict(self.diversity_summary),
-            'rank_bucket_lift': [dict(item) for item in self.rank_bucket_lift],
-            'parity_matrix': dict(self.parity_matrix),
-            'worst_false_positives': [dict(item) for item in self.worst_false_positives],
-            'best_false_negatives': [dict(item) for item in self.best_false_negatives],
+            "candidate_count": self.candidate_count,
+            "scored_candidate_count": self.scored_candidate_count,
+            "score_histogram": [dict(item) for item in self.score_histogram],
+            "family_volume": [dict(item) for item in self.family_volume],
+            "side_volume": [dict(item) for item in self.side_volume],
+            "selected_candidates": [
+                item.to_payload() for item in self.selected_candidates
+            ],
+            "diversity_summary": dict(self.diversity_summary),
+            "rank_bucket_lift": [dict(item) for item in self.rank_bucket_lift],
+            "parity_matrix": dict(self.parity_matrix),
+            "worst_false_positives": [
+                dict(item) for item in self.worst_false_positives
+            ],
+            "best_false_negatives": [dict(item) for item in self.best_false_negatives],
         }
 
 
-def _score_by_candidate(proposal_scores: Sequence[ProposalScore]) -> dict[str, ProposalScore]:
+def _score_by_candidate(
+    proposal_scores: Sequence[ProposalScore],
+) -> dict[str, ProposalScore]:
     return {item.candidate_id: item for item in proposal_scores}
 
 
-def _descriptor_by_candidate(descriptors: Sequence[MlxCandidateDescriptor]) -> dict[str, MlxCandidateDescriptor]:
+def _target_by_candidate(history_rows: Sequence[Mapping[str, Any]]) -> dict[str, float]:
+    targets: dict[str, float] = {}
+    for row in history_rows:
+        candidate_id = str(row.get("candidate_id") or "").strip()
+        if candidate_id:
+            targets[candidate_id] = _candidate_target(row)
+    return targets
+
+
+def _rank_lift_for_scores(
+    proposal_scores: Sequence[ProposalScore],
+    history_rows: Sequence[Mapping[str, Any]],
+) -> float | None:
+    targets = _target_by_candidate(history_rows)
+    ranked_targets = [
+        targets[item.candidate_id]
+        for item in sorted(
+            proposal_scores,
+            key=lambda score: (score.rank, -score.score, score.candidate_id),
+        )
+        if item.candidate_id in targets
+    ]
+    if len(ranked_targets) < 2:
+        return None
+    split_index = max(1, len(ranked_targets) // 2)
+    top_mean = _mean(ranked_targets[:split_index])
+    bottom_mean = _mean(ranked_targets[split_index:] or [0.0])
+    return top_mean - bottom_mean
+
+
+def _heuristic_scores_from_history(
+    *,
+    descriptors: Sequence[MlxCandidateDescriptor],
+    history_rows: Sequence[Mapping[str, Any]],
+    backend: str,
+) -> list[ProposalScore]:
+    targets = _target_by_candidate(history_rows)
+    ordered = sorted(
+        descriptors,
+        key=lambda descriptor: (
+            targets.get(descriptor.candidate_id, 0.0),
+            descriptor.candidate_id,
+        ),
+        reverse=True,
+    )
+    return [
+        ProposalScore(
+            candidate_id=descriptor.candidate_id,
+            descriptor_id=descriptor.descriptor_id,
+            score=targets.get(descriptor.candidate_id, 0.0),
+            rank=index,
+            backend=backend,
+            mode="heuristic_negative_lift_fallback",
+        )
+        for index, descriptor in enumerate(ordered, start=1)
+    ]
+
+
+def _descriptor_by_candidate(
+    descriptors: Sequence[MlxCandidateDescriptor],
+) -> dict[str, MlxCandidateDescriptor]:
     return {item.candidate_id: item for item in descriptors}
 
 
@@ -157,7 +231,9 @@ def _pairwise_mean_distance(descriptors: Sequence[MlxCandidateDescriptor]) -> fl
     return _mean(distances)
 
 
-def _histogram(scores: Sequence[float], bucket_count: int = 5) -> tuple[Mapping[str, Any], ...]:
+def _histogram(
+    scores: Sequence[float], bucket_count: int = 5
+) -> tuple[Mapping[str, Any], ...]:
     if not scores:
         return ()
     minimum = min(scores)
@@ -165,10 +241,10 @@ def _histogram(scores: Sequence[float], bucket_count: int = 5) -> tuple[Mapping[
     if math.isclose(minimum, maximum):
         return (
             {
-                'bucket_label': f'{minimum:.4f}..{maximum:.4f}',
-                'min_score': minimum,
-                'max_score': maximum,
-                'count': len(scores),
+                "bucket_label": f"{minimum:.4f}..{maximum:.4f}",
+                "min_score": minimum,
+                "max_score": maximum,
+                "count": len(scores),
             },
         )
     width = (maximum - minimum) / max(1, bucket_count)
@@ -182,10 +258,10 @@ def _histogram(scores: Sequence[float], bucket_count: int = 5) -> tuple[Mapping[
             count = sum(1 for value in scores if lower <= value < upper)
         rows.append(
             {
-                'bucket_label': f'{lower:.2f}..{upper:.2f}',
-                'min_score': lower,
-                'max_score': upper,
-                'count': count,
+                "bucket_label": f"{lower:.2f}..{upper:.2f}",
+                "min_score": lower,
+                "max_score": upper,
+                "count": count,
             }
         )
     return tuple(rows)
@@ -196,7 +272,9 @@ def _volume(rows: Sequence[str], *, label_key: str) -> tuple[Mapping[str, Any], 
     for item in rows:
         counts[item] = counts.get(item, 0) + 1
     ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
-    return tuple({label_key: label, 'candidate_count': count} for label, count in ordered)
+    return tuple(
+        {label_key: label, "candidate_count": count} for label, count in ordered
+    )
 
 
 def select_proposal_batch(
@@ -210,7 +288,9 @@ def select_proposal_batch(
     if limit <= 0 or not descriptors or not proposal_scores:
         return []
     descriptor_by_candidate = _descriptor_by_candidate(descriptors)
-    ordered_scores = sorted(proposal_scores, key=lambda item: (item.rank, -item.score, item.candidate_id))
+    ordered_scores = sorted(
+        proposal_scores, key=lambda item: (item.rank, -item.score, item.candidate_id)
+    )
     selected: list[ProposalSelectionEntry] = []
     selected_ids: set[str] = set()
     selected_families: set[str] = set()
@@ -225,7 +305,7 @@ def select_proposal_batch(
             ProposalSelectionEntry(
                 candidate_id=item.candidate_id,
                 descriptor_id=item.descriptor_id,
-                selection_reason='exploitation',
+                selection_reason="exploitation",
                 score=item.score,
                 rank=item.rank,
                 family_template_id=descriptor.family_template_id,
@@ -244,14 +324,22 @@ def select_proposal_batch(
     )
     while remaining_slots > 0:
         best_item: tuple[float, ProposalScore, MlxCandidateDescriptor] | None = None
-        selected_descriptors = [descriptor_by_candidate[item.candidate_id] for item in selected if item.candidate_id in descriptor_by_candidate]
+        selected_descriptors = [
+            descriptor_by_candidate[item.candidate_id]
+            for item in selected
+            if item.candidate_id in descriptor_by_candidate
+        ]
         for score in ordered_scores:
             if score.candidate_id in selected_ids:
                 continue
             descriptor = descriptor_by_candidate.get(score.candidate_id)
             if descriptor is None:
                 continue
-            family_bonus = 1000.0 if descriptor.family_template_id not in selected_families else 0.0
+            family_bonus = (
+                1000.0
+                if descriptor.family_template_id not in selected_families
+                else 0.0
+            )
             side_bonus = 100.0 if descriptor.side_policy not in selected_sides else 0.0
             if selected_descriptors:
                 distances = [
@@ -270,11 +358,18 @@ def select_proposal_batch(
                 diversity_bonus = _mean(distances)
             else:
                 diversity_bonus = 0.0
-            combined = family_bonus + side_bonus + diversity_bonus + (score.score * 0.001)
+            combined = (
+                family_bonus + side_bonus + diversity_bonus + (score.score * 0.001)
+            )
             candidate = (combined, score, descriptor)
-            if best_item is None or candidate[0] > best_item[0] or (
-                math.isclose(candidate[0], best_item[0])
-                and (score.rank, score.candidate_id) < (best_item[1].rank, best_item[1].candidate_id)
+            if (
+                best_item is None
+                or candidate[0] > best_item[0]
+                or (
+                    math.isclose(candidate[0], best_item[0])
+                    and (score.rank, score.candidate_id)
+                    < (best_item[1].rank, best_item[1].candidate_id)
+                )
             ):
                 best_item = candidate
         if best_item is None:
@@ -284,7 +379,7 @@ def select_proposal_batch(
             ProposalSelectionEntry(
                 candidate_id=score.candidate_id,
                 descriptor_id=score.descriptor_id,
-                selection_reason='exploration',
+                selection_reason="exploration",
                 score=score.score,
                 rank=score.rank,
                 family_template_id=descriptor.family_template_id,
@@ -310,55 +405,73 @@ def build_proposal_diagnostics(
     unique_descriptors = list(descriptor_by_candidate.values())
     unique_scores = list(score_by_candidate.values())
     score_values = [item.score for item in unique_scores]
-    family_volume = _volume([item.family_template_id for item in unique_descriptors], label_key='family_template_id')
-    side_volume = _volume([item.side_policy for item in unique_descriptors], label_key='side_policy')
+    family_volume = _volume(
+        [item.family_template_id for item in unique_descriptors],
+        label_key="family_template_id",
+    )
+    side_volume = _volume(
+        [item.side_policy for item in unique_descriptors], label_key="side_policy"
+    )
 
     replay_rows: list[dict[str, Any]] = []
     for row in history_rows:
-        candidate_id = str(row.get('candidate_id') or '').strip()
+        candidate_id = str(row.get("candidate_id") or "").strip()
         score = score_by_candidate.get(candidate_id)
         if score is None:
             continue
         replay_rows.append(
             {
-                'candidate_id': candidate_id,
-                'proposal_rank': score.rank,
-                'proposal_score': score.score,
-                'net_pnl_per_day': _float(row.get('net_pnl_per_day')),
-                'active_day_ratio': _float(row.get('active_day_ratio')),
-                'objective_met': bool(row.get('objective_met')),
-                'promotion_status': str(row.get('promotion_status') or '').strip(),
-                'status': str(row.get('status') or '').strip(),
+                "candidate_id": candidate_id,
+                "proposal_rank": score.rank,
+                "proposal_score": score.score,
+                "net_pnl_per_day": _float(row.get("net_pnl_per_day")),
+                "active_day_ratio": _float(row.get("active_day_ratio")),
+                "objective_met": bool(row.get("objective_met")),
+                "promotion_status": str(row.get("promotion_status") or "").strip(),
+                "status": str(row.get("status") or "").strip(),
             }
         )
-    replay_rows.sort(key=lambda item: (item['proposal_rank'], item['candidate_id']))
+    replay_rows.sort(key=lambda item: (item["proposal_rank"], item["candidate_id"]))
 
     rank_bucket_lift: list[dict[str, Any]] = []
     if replay_rows:
         bucket_size = max(1, math.ceil(len(replay_rows) / min(4, len(replay_rows))))
         for bucket_index in range(0, len(replay_rows), bucket_size):
             bucket_rows = replay_rows[bucket_index : bucket_index + bucket_size]
-            label = f'rank_{bucket_index + 1}_to_{bucket_index + len(bucket_rows)}'
+            label = f"rank_{bucket_index + 1}_to_{bucket_index + len(bucket_rows)}"
             rank_bucket_lift.append(
                 {
-                    'bucket_label': label,
-                    'candidate_count': len(bucket_rows),
-                    'mean_proposal_score': _mean([float(item['proposal_score']) for item in bucket_rows]),
-                    'mean_net_pnl_per_day': _mean([float(item['net_pnl_per_day']) for item in bucket_rows]),
-                    'positive_rate': _mean([1.0 if float(item['net_pnl_per_day']) > 0 else 0.0 for item in bucket_rows]),
+                    "bucket_label": label,
+                    "candidate_count": len(bucket_rows),
+                    "mean_proposal_score": _mean(
+                        [float(item["proposal_score"]) for item in bucket_rows]
+                    ),
+                    "mean_net_pnl_per_day": _mean(
+                        [float(item["net_pnl_per_day"]) for item in bucket_rows]
+                    ),
+                    "positive_rate": _mean(
+                        [
+                            1.0 if float(item["net_pnl_per_day"]) > 0 else 0.0
+                            for item in bucket_rows
+                        ]
+                    ),
                 }
             )
 
     false_positives = sorted(
-        [item for item in replay_rows if float(item['net_pnl_per_day']) <= 0],
-        key=lambda item: (-float(item['proposal_score']), item['candidate_id']),
+        [item for item in replay_rows if float(item["net_pnl_per_day"]) <= 0],
+        key=lambda item: (-float(item["proposal_score"]), item["candidate_id"]),
     )[:5]
     false_negatives = sorted(
-        [item for item in replay_rows if float(item['net_pnl_per_day']) > 0],
-        key=lambda item: (-float(item['net_pnl_per_day']), int(item['proposal_rank'])),
+        [item for item in replay_rows if float(item["net_pnl_per_day"]) > 0],
+        key=lambda item: (-float(item["net_pnl_per_day"]), int(item["proposal_rank"])),
     )
     median_rank = math.ceil(len(replay_rows) / 2) if replay_rows else 0
-    false_negatives = [item for item in false_negatives if int(item['proposal_rank']) > max(1, median_rank)][:5]
+    false_negatives = [
+        item
+        for item in false_negatives
+        if int(item["proposal_rank"]) > max(1, median_rank)
+    ][:5]
 
     selected_descriptors = [
         descriptor_by_candidate[item.candidate_id]
@@ -366,16 +479,24 @@ def build_proposal_diagnostics(
         if item.candidate_id in descriptor_by_candidate
     ]
     parity_matrix = {
-        'proposed_count': len(unique_descriptors),
-        'replayed_count': len(replay_rows),
-        'keep_count': sum(1 for row in replay_rows if row['status'] == 'keep'),
-        'objective_met_count': sum(1 for row in replay_rows if row['objective_met']),
-        'blocked_promotion_count': sum(1 for row in replay_rows if row['promotion_status']),
+        "proposed_count": len(unique_descriptors),
+        "replayed_count": len(replay_rows),
+        "keep_count": sum(1 for row in replay_rows if row["status"] == "keep"),
+        "objective_met_count": sum(1 for row in replay_rows if row["objective_met"]),
+        "blocked_promotion_count": sum(
+            1 for row in replay_rows if row["promotion_status"]
+        ),
     }
     diversity_summary = {
-        'selected_unique_family_count': len({item.family_template_id for item in selected_candidates}),
-        'selected_unique_side_count': len({item.side_policy for item in selected_candidates}),
-        'selected_mean_pairwise_distance': _pairwise_mean_distance(selected_descriptors),
+        "selected_unique_family_count": len(
+            {item.family_template_id for item in selected_candidates}
+        ),
+        "selected_unique_side_count": len(
+            {item.side_policy for item in selected_candidates}
+        ),
+        "selected_mean_pairwise_distance": _pairwise_mean_distance(
+            selected_descriptors
+        ),
     }
     return ProposalDiagnostics(
         candidate_count=len(unique_descriptors),
@@ -401,7 +522,7 @@ def rank_candidate_descriptors(
     if not descriptors:
         return []
     backend_name, xp = _import_array_backend(policy.backend_preference)
-    if not policy.enabled or policy.mode != 'ranking_only':
+    if not policy.enabled or policy.mode != "ranking_only":
         return [
             ProposalScore(
                 candidate_id=descriptor.candidate_id,
@@ -414,7 +535,9 @@ def rank_candidate_descriptors(
             for index, descriptor in enumerate(descriptors)
         ]
 
-    proposal_vectors = _array(xp, [descriptor_numeric_vector(item) for item in descriptors])
+    proposal_vectors = _array(
+        xp, [descriptor_numeric_vector(item) for item in descriptors]
+    )
     if len(history_rows) < policy.minimum_history_rows:
         return [
             ProposalScore(
@@ -432,20 +555,28 @@ def rank_candidate_descriptors(
     history_targets: list[float] = []
     for row in history_rows:
         history_descriptor = [
-            float(row.get('entry_window_start_minute') or 0),
-            float(row.get('entry_window_end_minute') or 0),
-            float(row.get('max_hold_minutes') or 0),
-            float(row.get('rank_count') or 0),
-            float(bool(row.get('requires_prev_day_features'))),
-            float(bool(row.get('requires_cross_sectional_features'))),
-            float(bool(row.get('requires_quote_quality_gate'))),
+            float(row.get("entry_window_start_minute") or 0),
+            float(row.get("entry_window_end_minute") or 0),
+            float(row.get("max_hold_minutes") or 0),
+            float(row.get("rank_count") or 0),
+            float(bool(row.get("requires_prev_day_features"))),
+            float(bool(row.get("requires_cross_sectional_features"))),
+            float(bool(row.get("requires_quote_quality_gate"))),
         ]
         history_vectors.append(history_descriptor)
         history_targets.append(_candidate_target(row))
 
     history_matrix = _array(xp, history_vectors)
-    positive_rows = [row for row, target in zip(history_vectors, history_targets, strict=False) if target > 0]
-    negative_rows = [row for row, target in zip(history_vectors, history_targets, strict=False) if target <= 0]
+    positive_rows = [
+        row
+        for row, target in zip(history_vectors, history_targets, strict=False)
+        if target > 0
+    ]
+    negative_rows = [
+        row
+        for row, target in zip(history_vectors, history_targets, strict=False)
+        if target <= 0
+    ]
     if positive_rows:
         positive_centroid = _array(xp, positive_rows).mean(axis=0)
     else:
@@ -473,5 +604,12 @@ def rank_candidate_descriptors(
                 backend=backend_name,
                 mode=policy.mode,
             )
+        )
+    lift = _rank_lift_for_scores(results, history_rows)
+    if lift is not None and lift < 0:
+        return _heuristic_scores_from_history(
+            descriptors=descriptors,
+            history_rows=history_rows,
+            backend=backend_name,
         )
     return results
