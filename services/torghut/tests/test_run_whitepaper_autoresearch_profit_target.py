@@ -99,6 +99,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             self.assertTrue(
                 (output_dir / "pre-replay-mlx-proposal-scores.jsonl").exists()
             )
+            self.assertTrue((output_dir / "mlx-snapshot-manifest.json").exists())
             self.assertTrue((output_dir / "mlx-ranker-model.json").exists())
             self.assertTrue((output_dir / "mlx-proposal-scores.jsonl").exists())
             self.assertTrue((output_dir / "candidate-evidence-bundles.jsonl").exists())
@@ -133,6 +134,34 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             )
             self.assertFalse(
                 replay_plan["runtime_closure_policy"]["execute_approval_replay"]
+            )
+            snapshot_manifest = json.loads(
+                (output_dir / "mlx-snapshot-manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                replay_plan["dataset_snapshot_ref"], snapshot_manifest["snapshot_id"]
+            )
+            self.assertEqual(
+                snapshot_manifest["row_counts"]["candidate_specs"],
+                payload["candidate_spec_count"],
+            )
+            self.assertEqual(
+                snapshot_manifest["row_counts"]["candidate_evidence_bundles"],
+                payload["evidence_bundle_count"],
+            )
+            self.assertEqual(
+                snapshot_manifest["row_counts"]["pre_replay_proposal_scores"],
+                payload["pre_replay_proposal_score_count"],
+            )
+            self.assertEqual(
+                snapshot_manifest["tensor_bundle_paths"][
+                    "candidate_selection_manifest_json"
+                ],
+                str((output_dir / "candidate-selection-manifest.json").resolve()),
+            )
+            self.assertEqual(
+                payload["artifacts"]["mlx_snapshot_manifest"],
+                str((output_dir / "mlx-snapshot-manifest.json").resolve()),
             )
             self.assertTrue(
                 (output_dir / "whitepaper-autoresearch-diagnostics.ipynb").exists()

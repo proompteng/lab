@@ -24,6 +24,7 @@ from app.models import (
     VNextExperimentSpec,
 )
 from app.trading.discovery.autoresearch import (
+    StrategyAutoresearchProgram,
     load_strategy_autoresearch_program,
     run_id,
 )
@@ -34,6 +35,8 @@ from app.trading.discovery.evidence_bundles import (
 )
 from app.trading.discovery.hypothesis_cards import HypothesisCard
 from app.trading.discovery.mlx_snapshot import build_mlx_snapshot_manifest
+from app.trading.discovery.mlx_snapshot import MlxSnapshotManifest
+from app.trading.discovery.mlx_snapshot import write_mlx_snapshot_manifest
 from app.trading.discovery.mlx_training_data import build_mlx_training_rows
 from app.trading.discovery.mlx_training_data import rank_training_rows, train_mlx_ranker
 from app.trading.discovery.portfolio_optimizer import (
@@ -998,17 +1001,85 @@ def _run_real_replay(
     )
 
 
+def _load_epoch_program(args: argparse.Namespace) -> StrategyAutoresearchProgram:
+    program = load_strategy_autoresearch_program(
+        _resolve_existing_path(args.program),
+        family_dir=_resolve_existing_path(args.family_template_dir),
+    )
+    if args.replay_mode == "synthetic":
+        return replace(
+            program,
+            runtime_closure_policy=replace(
+                program.runtime_closure_policy,
+                execute_parity_replay=False,
+                execute_approval_replay=False,
+            ),
+        )
+    return program
+
+
+def _epoch_mlx_snapshot_manifest(
+    *,
+    args: argparse.Namespace,
+    output_dir: Path,
+    epoch_id: str,
+    program: StrategyAutoresearchProgram,
+    source_count: int,
+    hypothesis_count: int,
+    candidate_spec_count: int,
+    pre_replay_proposal_score_count: int,
+    replay_candidate_spec_count: int,
+    evidence_bundle_count: int,
+    proposal_score_count: int,
+    portfolio_candidate_count: int,
+) -> MlxSnapshotManifest:
+    return build_mlx_snapshot_manifest(
+        runner_run_id=epoch_id,
+        program=program,
+        symbols=str(args.symbols),
+        train_days=int(args.train_days),
+        holdout_days=int(args.holdout_days),
+        full_window_start_date=str(args.full_window_start_date),
+        full_window_end_date=str(args.full_window_end_date),
+        tensor_bundle_paths={
+            "hypothesis_cards_jsonl": str(output_dir / "hypothesis-cards.jsonl"),
+            "candidate_specs_jsonl": str(output_dir / "candidate-specs.jsonl"),
+            "candidate_selection_manifest_json": str(
+                output_dir / "candidate-selection-manifest.json"
+            ),
+            "pre_replay_proposal_scores_jsonl": str(
+                output_dir / "pre-replay-mlx-proposal-scores.jsonl"
+            ),
+            "proposal_scores_jsonl": str(output_dir / "mlx-proposal-scores.jsonl"),
+            "candidate_evidence_bundles_jsonl": str(
+                output_dir / "candidate-evidence-bundles.jsonl"
+            ),
+            "portfolio_candidates_jsonl": str(
+                output_dir / "portfolio-candidates.jsonl"
+            ),
+        },
+        row_counts={
+            "sources": source_count,
+            "hypothesis_cards": hypothesis_count,
+            "candidate_specs": candidate_spec_count,
+            "pre_replay_proposal_scores": pre_replay_proposal_score_count,
+            "replay_candidate_specs": replay_candidate_spec_count,
+            "candidate_evidence_bundles": evidence_bundle_count,
+            "proposal_scores": proposal_score_count,
+            "portfolio_candidates": portfolio_candidate_count,
+        },
+    )
+
+
 def _runtime_closure_payload(
     *,
     args: argparse.Namespace,
     output_dir: Path,
     epoch_id: str,
+    program: StrategyAutoresearchProgram,
+    manifest: MlxSnapshotManifest,
     portfolio: PortfolioCandidateSpec | None,
 ) -> Mapping[str, Any]:
-    program = load_strategy_autoresearch_program(
-        _resolve_existing_path(args.program),
-        family_dir=_resolve_existing_path(args.family_template_dir),
-    )
     execution_context = RuntimeClosureExecutionContext(
         strategy_configmap_path=_resolve_existing_path(args.strategy_configmap),
         clickhouse_http_url=str(args.clickhouse_http_url),
@@ -1024,32 +1095,6 @@ def _runtime_closure_payload(
             symbol.strip() for symbol in str(args.symbols).split(",") if symbol.strip()
         ),
         progress_log_interval_seconds=int(args.progress_log_seconds),
-    )
-    if args.replay_mode == "synthetic":
-        program = replace(
-            program,
-            runtime_closure_policy=replace(
-                program.runtime_closure_policy,
-                execute_parity_replay=False,
-                execute_approval_replay=False,
-            ),
-        )
-    manifest = build_mlx_snapshot_manifest(
-        runner_run_id=epoch_id,
-        program=program,
-        symbols=str(args.symbols),
-        train_days=int(args.train_days),
-        holdout_days=int(args.holdout_days),
-        full_window_start_date=str(args.full_window_start_date),
-        full_window_end_date=str(args.full_window_end_date),
-        tensor_bundle_paths={
-            "candidate_evidence_bundles_jsonl": str(
-                output_dir / "candidate-evidence-bundles.jsonl"
-            ),
-            "portfolio_candidates_jsonl": str(
-                output_dir / "portfolio-candidates.jsonl"
-            ),
-        },
     )
     best_candidate = None
     if portfolio is not None:
@@ -1240,8 +1285,31 @@ def run_whitepaper_autoresearch_profit_target(
         if portfolio is not None
         else {"status": "no_portfolio_candidate"},
     )
+    program = _load_epoch_program(args)
+    mlx_snapshot_manifest = _epoch_mlx_snapshot_manifest(
+        args=args,
+        output_dir=output_dir,
+        epoch_id=epoch_id,
+        program=program,
+        source_count=len(sources),
+        hypothesis_count=len(hypothesis_cards),
+        candidate_spec_count=len(candidate_specs),
+        pre_replay_proposal_score_count=len(pre_replay_proposal_rows),
+        replay_candidate_spec_count=len(replay_candidate_specs),
+        evidence_bundle_count=len(replay_result.evidence_bundles),
+        proposal_score_count=len(proposal_rows),
+        portfolio_candidate_count=len(portfolio_rows),
+    )
+    write_mlx_snapshot_manifest(
+        output_dir / "mlx-snapshot-manifest.json", mlx_snapshot_manifest
+    )
     runtime_closure = _runtime_closure_payload(
-        args=args, output_dir=output_dir, epoch_id=epoch_id, portfolio=portfolio
+        args=args,
+        output_dir=output_dir,
+        epoch_id=epoch_id,
+        program=program,
+        manifest=mlx_snapshot_manifest,
+        portfolio=portfolio,
     )
     oracle_candidate_found = bool(
         portfolio is not None
@@ -1315,6 +1383,7 @@ def run_whitepaper_autoresearch_profit_target(
             "pre_replay_proposal_model": str(
                 output_dir / "pre-replay-mlx-ranker-model.json"
             ),
+            "mlx_snapshot_manifest": str(output_dir / "mlx-snapshot-manifest.json"),
             "candidate_compiler_report": str(
                 output_dir / "candidate-compiler-report.json"
             ),
