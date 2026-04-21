@@ -19,6 +19,11 @@ from app.models import (
     AutoresearchPortfolioCandidate,
     AutoresearchProposalScore,
     Base,
+    WhitepaperAnalysisRun,
+    WhitepaperClaim,
+    WhitepaperClaimRelation,
+    WhitepaperDocument,
+    WhitepaperDocumentVersion,
 )
 
 
@@ -481,6 +486,102 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertTrue(parsed.seed_recent_whitepapers)
         self.assertEqual(exit_code, 0)
         self.assertGreaterEqual(len(rows), 4)
+        self.assertTrue(mock_print.called)
+
+    def test_compile_claims_script_loads_completed_persisted_run_claims(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            document = WhitepaperDocument(
+                source="arxiv",
+                source_identifier="2501.00001",
+                title="Persisted Claims Paper",
+                metadata_json={"source_url": "https://example.test/paper.pdf"},
+            )
+            version = WhitepaperDocumentVersion(
+                document=document,
+                version_number=1,
+                checksum_sha256="a" * 64,
+                ceph_bucket="whitepapers",
+                ceph_object_key="paper.pdf",
+            )
+            run = WhitepaperAnalysisRun(
+                run_id="paper-run-db",
+                document=document,
+                document_version=version,
+                status="completed",
+            )
+            session.add_all(
+                [
+                    document,
+                    version,
+                    run,
+                    WhitepaperClaim(
+                        analysis_run=run,
+                        claim_id="claim-flow",
+                        claim_type="signal_mechanism",
+                        claim_text="Order-flow bursts can predict short-horizon continuation.",
+                        data_requirements_json=["order_flow_imbalance"],
+                        confidence="0.82",
+                    ),
+                    WhitepaperClaim(
+                        analysis_run=run,
+                        claim_id="claim-validation",
+                        claim_type="validation_requirement",
+                        claim_text="The signal must pass held-out liquidity stress windows.",
+                        data_requirements_json=["spread_bps"],
+                        confidence="0.76",
+                    ),
+                    WhitepaperClaimRelation(
+                        analysis_run=run,
+                        relation_id="rel-supports",
+                        relation_type="supports",
+                        source_claim_id="claim-validation",
+                        target_claim_id="claim-flow",
+                    ),
+                ]
+            )
+            session.commit()
+
+        with (
+            TemporaryDirectory() as tmpdir,
+            patch(
+                "scripts.compile_whitepaper_claims.SessionLocal",
+                side_effect=lambda: Session(self.engine),
+            ),
+            patch(
+                "sys.argv",
+                [
+                    "compile_whitepaper_claims.py",
+                    "--paper-run-id",
+                    "paper-run-db",
+                    "--output",
+                    str(Path(tmpdir) / "hypothesis-cards.jsonl"),
+                    "--sources-output",
+                    str(Path(tmpdir) / "sources.jsonl"),
+                ],
+            ),
+            patch("builtins.print") as mock_print,
+        ):
+            exit_code = claim_compiler_script.main()
+            card_rows = (
+                (Path(tmpdir) / "hypothesis-cards.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            )
+            source_rows = (
+                (Path(tmpdir) / "sources.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(len(card_rows), 1)
+        self.assertEqual(len(source_rows), 1)
+        source_payload = json.loads(source_rows[0])
+        self.assertEqual(source_payload["run_id"], "paper-run-db")
+        self.assertEqual(len(source_payload["claims"]), 2)
+        self.assertEqual(len(source_payload["claim_relations"]), 1)
         self.assertTrue(mock_print.called)
 
     def test_runner_parse_args_covers_cli_defaults_and_flags(self) -> None:
