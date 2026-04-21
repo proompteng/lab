@@ -851,6 +851,10 @@ data:
             )
             self.assertEqual(manifest_payload["run_context"]["run_id"], "run-1")
             self.assertEqual(
+                manifest_payload["run_context"]["design_doc"],
+                "docs/torghut/design-system/v6/71-torghut-whitepaper-autoresearch-profit-target-strategy-factory-2026-04-21.md",
+            )
+            self.assertEqual(
                 manifest_payload["run_context"]["head"],
                 subprocess.run(
                     ["git", "rev-parse", "--abbrev-ref", "HEAD"],

@@ -176,7 +176,7 @@ def _runtime_run_context(*, root: Path, runner_run_id: str) -> dict[str, str]:
         "head": head,
         "artifact_path": str(root),
         "run_id": runner_run_id,
-        "design_doc": "docs/torghut/design-system/v6/70-torghut-mlx-autoresearch-and-apple-silicon-research-lane-2026-04-10.md",
+        "design_doc": "docs/torghut/design-system/v6/71-torghut-whitepaper-autoresearch-profit-target-strategy-factory-2026-04-21.md",
     }
 
 
