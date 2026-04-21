@@ -14,6 +14,11 @@ from app.trading.discovery.portfolio_optimizer import optimize_portfolio_candida
 
 class TestPortfolioOptimizer(TestCase):
     def test_portfolio_candidate_round_trips_from_optimizer_payload(self) -> None:
+        daily_profiles = [
+            ("210", "220", "230", "240", "250"),
+            ("240", "230", "220", "210", "200"),
+            ("230", "210", "250", "220", "240"),
+        ]
         bundles = [
             evidence_bundle_from_frontier_candidate(
                 candidate_spec_id=f"spec-{index}",
@@ -33,14 +38,21 @@ class TestPortfolioOptimizer(TestCase):
                         "regime_slice_pass_rate": "0.55",
                         "posterior_edge_lower": "0.01",
                         "shadow_parity_status": "within_budget",
+                        "correlation_cluster": f"cluster-{index}",
+                        "symbol_contribution_shares": {
+                            "AAPL": "0.25",
+                            "NVDA": "0.25",
+                            "MSFT": "0.25",
+                            "AMAT": "0.25",
+                        },
                     },
                     "full_window": {
                         "daily_net": {
-                            "2026-02-23": str(250 + index),
-                            "2026-02-24": str(260 + index),
-                            "2026-02-25": str(270 + index),
-                            "2026-02-26": str(280 + index),
-                            "2026-02-27": str(315 + index),
+                            "2026-02-23": daily_profiles[index][0],
+                            "2026-02-24": daily_profiles[index][1],
+                            "2026-02-25": daily_profiles[index][2],
+                            "2026-02-26": daily_profiles[index][3],
+                            "2026-02-27": daily_profiles[index][4],
                         },
                         "daily_filled_notional": {
                             "2026-02-23": "350000",
@@ -54,7 +66,7 @@ class TestPortfolioOptimizer(TestCase):
                 dataset_snapshot_id="snapshot-1",
                 result_path=f"/tmp/spec-{index}.json",
             )
-            for index in range(2)
+            for index in range(3)
         ]
 
         portfolio = optimize_portfolio_candidate(
@@ -72,6 +84,16 @@ class TestPortfolioOptimizer(TestCase):
         )
         self.assertTrue(reloaded.objective_scorecard["target_met"])
         self.assertTrue(reloaded.objective_scorecard["oracle_passed"])
+        self.assertLessEqual(
+            Decimal(reloaded.objective_scorecard["max_cluster_contribution_share"]),
+            Decimal("0.40"),
+        )
+        self.assertLessEqual(
+            Decimal(
+                reloaded.objective_scorecard["max_single_symbol_contribution_share"]
+            ),
+            Decimal("0.35"),
+        )
         self.assertEqual(
             reloaded.objective_scorecard["profit_target_oracle"]["blockers"], []
         )

@@ -77,6 +77,31 @@ def evaluate_profit_target_oracle(
             threshold=Decimal("0.25"),
         ),
         _numeric_check(
+            metric="max_single_day_contribution_share",
+            observed=_decimal(
+                scorecard.get("max_single_day_contribution_share")
+                or scorecard.get("best_day_share")
+            ),
+            operator="lte",
+            threshold=Decimal("0.25"),
+        ),
+        _numeric_check(
+            metric="max_cluster_contribution_share",
+            observed=_decimal(
+                scorecard.get("max_cluster_contribution_share"), default="1"
+            ),
+            operator="lte",
+            threshold=Decimal("0.40"),
+        ),
+        _numeric_check(
+            metric="max_single_symbol_contribution_share",
+            observed=_decimal(
+                scorecard.get("max_single_symbol_contribution_share"), default="1"
+            ),
+            operator="lte",
+            threshold=Decimal("0.35"),
+        ),
+        _numeric_check(
             metric="worst_day_loss",
             observed=_decimal(scorecard.get("worst_day_loss")),
             operator="lte",

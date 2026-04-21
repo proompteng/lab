@@ -13,6 +13,10 @@ from app.trading.discovery.portfolio_candidates import (
 )
 from app.trading.discovery.profit_target_oracle import evaluate_profit_target_oracle
 
+MAX_CLUSTER_CONTRIBUTION_SHARE = Decimal("0.40")
+MAX_SINGLE_SYMBOL_CONTRIBUTION_SHARE = Decimal("0.35")
+MAX_ALLOWED_PAIRWISE_CORRELATION = Decimal("0.85")
+
 
 def _decimal(value: Any, *, default: str = "0") -> Decimal:
     try:
@@ -133,6 +137,66 @@ def _portfolio_daily_filled_notional(
     return daily_totals
 
 
+def _positive_net_contribution(bundle: CandidateEvidenceBundle) -> Decimal:
+    return max(_net_per_day(bundle), Decimal("0"))
+
+
+def _cluster_id(bundle: CandidateEvidenceBundle) -> str:
+    return (
+        _string(_scorecard(bundle).get("correlation_cluster"))
+        or bundle.candidate_spec_id
+    )
+
+
+def _contribution_shares(values: Mapping[str, Decimal]) -> dict[str, Decimal]:
+    total = sum(values.values(), Decimal("0"))
+    if total <= 0:
+        return {}
+    return {key: value / total for key, value in values.items()}
+
+
+def _cluster_contribution_shares(
+    selected: Sequence[CandidateEvidenceBundle],
+) -> dict[str, Decimal]:
+    contributions: dict[str, Decimal] = {}
+    for bundle in selected:
+        cluster = _cluster_id(bundle)
+        contributions[cluster] = contributions.get(
+            cluster, Decimal("0")
+        ) + _positive_net_contribution(bundle)
+    return _contribution_shares(contributions)
+
+
+def _bundle_symbol_shares(bundle: CandidateEvidenceBundle) -> dict[str, Decimal]:
+    raw_symbol_shares = _scorecard(bundle).get("symbol_contribution_shares")
+    if isinstance(raw_symbol_shares, Mapping):
+        rows = cast(Mapping[Any, Any], raw_symbol_shares)
+        shares = {
+            _string(symbol).upper(): max(_decimal(value), Decimal("0"))
+            for symbol, value in rows.items()
+            if _string(symbol)
+        }
+        if shares:
+            return _contribution_shares(shares)
+    symbol = _string(_scorecard(bundle).get("symbol")).upper()
+    if symbol:
+        return {symbol: Decimal("1")}
+    return {"UNKNOWN": Decimal("1")}
+
+
+def _symbol_contribution_shares(
+    selected: Sequence[CandidateEvidenceBundle],
+) -> dict[str, Decimal]:
+    contributions: dict[str, Decimal] = {}
+    for bundle in selected:
+        bundle_positive_net = _positive_net_contribution(bundle)
+        for symbol, share in _bundle_symbol_shares(bundle).items():
+            contributions[symbol] = contributions.get(symbol, Decimal("0")) + (
+                bundle_positive_net * share
+            )
+    return _contribution_shares(contributions)
+
+
 def _max_pairwise_correlation(
     bundle: CandidateEvidenceBundle,
     selected: Sequence[CandidateEvidenceBundle],
@@ -144,6 +208,10 @@ def _max_pairwise_correlation(
         (_correlation(candidate_daily, _daily_net(item)) for item in selected),
         default=Decimal("0"),
     )
+
+
+def _max_share(shares: Mapping[str, Decimal]) -> Decimal:
+    return max(shares.values(), default=Decimal("0"))
 
 
 def _max_drawdown_from_daily(daily_net: Mapping[str, Decimal]) -> Decimal:
@@ -181,6 +249,8 @@ def _portfolio_scorecard(
         if positive_total > 0
         else Decimal("0")
     )
+    cluster_shares = _cluster_contribution_shares(selected)
+    symbol_shares = _symbol_contribution_shares(selected)
     min_day = min(values, default=Decimal("0"))
     worst_day_loss = abs(min_day) if min_day < 0 else Decimal("0")
     daily_notional = _portfolio_daily_filled_notional(selected)
@@ -205,6 +275,15 @@ def _portfolio_scorecard(
         "worst_day_loss": str(worst_day_loss),
         "max_drawdown": str(_max_drawdown_from_daily(daily_net)),
         "best_day_share": str(best_day_share),
+        "max_single_day_contribution_share": str(best_day_share),
+        "cluster_contribution_shares": {
+            cluster: str(share) for cluster, share in sorted(cluster_shares.items())
+        },
+        "max_cluster_contribution_share": str(_max_share(cluster_shares)),
+        "symbol_contribution_shares": {
+            symbol: str(share) for symbol, share in sorted(symbol_shares.items())
+        },
+        "max_single_symbol_contribution_share": str(_max_share(symbol_shares)),
         "avg_filled_notional_per_day": str(_mean(notional_values)),
         "regime_slice_pass_rate": str(_mean(regime_pass_rates)),
         "posterior_edge_lower": str(min(posterior_lowers, default=Decimal("0"))),
@@ -260,12 +339,9 @@ def optimize_portfolio_candidate(
     selected: list[CandidateEvidenceBundle] = []
     selected_clusters: set[str] = set()
     rejected: list[dict[str, Any]] = []
-    max_allowed_correlation = Decimal("0.85")
+    max_allowed_correlation = MAX_ALLOWED_PAIRWISE_CORRELATION
     for bundle in ordered:
-        cluster = (
-            _string(_scorecard(bundle).get("correlation_cluster"))
-            or bundle.candidate_spec_id
-        )
+        cluster = _cluster_id(bundle)
         if cluster in selected_clusters and len(selected) >= portfolio_size_min:
             rejected.append(
                 {
@@ -292,11 +368,13 @@ def optimize_portfolio_candidate(
         selected_clusters.add(cluster)
         if len(selected) >= max(1, portfolio_size_max):
             break
-        if (
-            len(selected) >= portfolio_size_min
-            and sum(_net_per_day(item) for item in selected) >= target_net_pnl_per_day
-        ):
-            break
+        if len(selected) >= portfolio_size_min:
+            candidate_scorecard = _portfolio_scorecard(
+                selected=selected,
+                target_net_pnl_per_day=target_net_pnl_per_day,
+            )
+            if bool(candidate_scorecard.get("oracle_passed")):
+                break
     if not selected:
         return None
 
@@ -350,8 +428,24 @@ def optimize_portfolio_candidate(
         "rejected_count": max(0, len(evidence_bundles) - len(selected)),
         "rejections": rejected,
         "pairwise_correlations": pairwise_correlations,
+        "cluster_contribution_shares": objective_scorecard.get(
+            "cluster_contribution_shares", {}
+        ),
+        "symbol_contribution_shares": objective_scorecard.get(
+            "symbol_contribution_shares", {}
+        ),
+        "max_cluster_contribution_share": objective_scorecard.get(
+            "max_cluster_contribution_share"
+        ),
+        "max_single_day_contribution_share": objective_scorecard.get(
+            "max_single_day_contribution_share"
+        ),
+        "max_single_symbol_contribution_share": objective_scorecard.get(
+            "max_single_symbol_contribution_share"
+        ),
         "method": "deterministic_greedy_pareto_v1",
         "target_met": bool(objective_scorecard["target_met"]),
+        "oracle_passed": bool(objective_scorecard["oracle_passed"]),
     }
     return PortfolioCandidateSpec(
         schema_version=PORTFOLIO_CANDIDATE_SCHEMA_VERSION,
@@ -369,6 +463,18 @@ def optimize_portfolio_candidate(
             "mode": "cluster_cap",
             "selected_cluster_count": len(selected_clusters),
             "max_allowed_pairwise_correlation": str(max_allowed_correlation),
+            "max_cluster_contribution_share": objective_scorecard.get(
+                "max_cluster_contribution_share"
+            ),
+            "max_single_symbol_contribution_share": objective_scorecard.get(
+                "max_single_symbol_contribution_share"
+            ),
+            "cluster_contribution_shares": objective_scorecard.get(
+                "cluster_contribution_shares", {}
+            ),
+            "symbol_contribution_shares": objective_scorecard.get(
+                "symbol_contribution_shares", {}
+            ),
         },
         drawdown_budget={"max_drawdown": str(max_drawdown)},
         evidence_refs=tuple(item.evidence_bundle_id for item in selected),

@@ -14,6 +14,9 @@ class TestProfitTargetOracle(TestCase):
                 "active_day_ratio": "1",
                 "positive_day_ratio": "1",
                 "best_day_share": "0.23",
+                "max_single_day_contribution_share": "0.23",
+                "max_cluster_contribution_share": "0.34",
+                "max_single_symbol_contribution_share": "0.25",
                 "worst_day_loss": "0",
                 "max_drawdown": "0",
                 "avg_filled_notional_per_day": "700000",
@@ -46,4 +49,6 @@ class TestProfitTargetOracle(TestCase):
 
         self.assertFalse(result["passed"])
         self.assertIn("portfolio_post_cost_net_pnl_per_day_failed", result["blockers"])
+        self.assertIn("max_cluster_contribution_share_failed", result["blockers"])
+        self.assertIn("max_single_symbol_contribution_share_failed", result["blockers"])
         self.assertIn("shadow_parity_status_failed", result["blockers"])

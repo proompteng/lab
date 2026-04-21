@@ -864,6 +864,45 @@ def _synthetic_candidate_payload(spec: CandidateSpec, *, rank: int) -> dict[str,
     net = _synthetic_net_for_spec(spec, rank=rank)
     active = Decimal("0.92") if rank <= 3 else Decimal("0.82")
     positive = Decimal("0.64") if rank <= 3 else Decimal("0.58")
+    daily_net_profile = {
+        1: (
+            Decimal("0.80"),
+            Decimal("1.10"),
+            Decimal("0.90"),
+            Decimal("1.05"),
+            Decimal("1.15"),
+        ),
+        2: (
+            Decimal("1.12"),
+            Decimal("0.86"),
+            Decimal("1.08"),
+            Decimal("0.94"),
+            Decimal("1.00"),
+        ),
+        3: (
+            Decimal("0.95"),
+            Decimal("1.14"),
+            Decimal("0.84"),
+            Decimal("1.10"),
+            Decimal("0.97"),
+        ),
+    }.get(
+        rank,
+        (
+            Decimal("1.05"),
+            Decimal("0.90"),
+            Decimal("1.15"),
+            Decimal("0.82"),
+            Decimal("1.08"),
+        ),
+    )
+    trading_days = (
+        "2026-02-23",
+        "2026-02-24",
+        "2026-02-25",
+        "2026-02-26",
+        "2026-02-27",
+    )
     daily_filled_notional = {
         "2026-02-23": "350000",
         "2026-02-24": "350000",
@@ -888,16 +927,19 @@ def _synthetic_candidate_payload(spec: CandidateSpec, *, rank: int) -> dict[str,
             "regime_slice_pass_rate": "0.55",
             "posterior_edge_lower": "0.01",
             "shadow_parity_status": "within_budget",
+            "symbol_contribution_shares": {
+                "AAPL": "0.25",
+                "NVDA": "0.25",
+                "MSFT": "0.25",
+                "AMAT": "0.25",
+            },
             "daily_filled_notional": daily_filled_notional,
         },
         "full_window": {
             "net_per_day": str(net),
             "daily_net": {
-                "2026-02-23": str(net * Decimal("0.80")),
-                "2026-02-24": str(net * Decimal("1.10")),
-                "2026-02-25": str(net * Decimal("0.90")),
-                "2026-02-26": str(net * Decimal("1.05")),
-                "2026-02-27": str(net * Decimal("1.15")),
+                day: str(net * multiplier)
+                for day, multiplier in zip(trading_days, daily_net_profile, strict=True)
             },
             "daily_filled_notional": daily_filled_notional,
         },
