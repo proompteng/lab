@@ -105,6 +105,9 @@ export type TorghutAutoresearchEpochSummary = {
   bestPortfolioPositiveDayRatio: string | null
   blockedPromotionReasons: string[]
   bestPortfolioSleeves: unknown[]
+  mlxRankBucketLift: Record<string, unknown>
+  falsePositiveTable: Record<string, unknown>[]
+  bestFalseNegativeTable: Record<string, unknown>[]
   startedAt: string | null
   completedAt: string | null
   failureReason: string | null
@@ -375,6 +378,9 @@ const numberOrZero = (value: unknown) => {
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
 
+const asRecordArray = (value: unknown): Record<string, unknown>[] =>
+  Array.isArray(value) ? value.map(asRecord).filter((item) => Object.keys(item).length > 0) : []
+
 export const listTorghutAutoresearchEpochs = async (params: {
   status?: string
   limit?: number
@@ -410,6 +416,9 @@ export const listTorghutAutoresearchEpochs = async (params: {
       bestPortfolioPositiveDayRatio: stringOrNull(item.best_portfolio_positive_day_ratio),
       blockedPromotionReasons: coerceStringArray(item.blocked_promotion_reasons),
       bestPortfolioSleeves: Array.isArray(item.best_portfolio_sleeves) ? item.best_portfolio_sleeves : [],
+      mlxRankBucketLift: asRecord(item.mlx_rank_bucket_lift),
+      falsePositiveTable: asRecordArray(item.false_positive_table),
+      bestFalseNegativeTable: asRecordArray(item.best_false_negative_table),
       startedAt: stringOrNull(item.started_at),
       completedAt: stringOrNull(item.completed_at),
       failureReason: stringOrNull(item.failure_reason),

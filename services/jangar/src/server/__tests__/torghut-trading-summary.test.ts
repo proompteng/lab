@@ -295,6 +295,14 @@ describe('torghut trading summary reason parsing', () => {
               best_portfolio_positive_day_ratio: '0.2',
               blocked_promotion_reasons: ['active_day_ratio_below_oracle'],
               best_portfolio_sleeves: [{ candidate_id: 'cand-1' }],
+              mlx_rank_bucket_lift: {
+                lift_net_pnl_per_day: '-15.25',
+                top_bucket_mean_net_pnl_per_day: '-0.26',
+              },
+              false_positive_table: [
+                { candidate_spec_id: 'spec-fp', failure_reasons: ['active_day_ratio_below_oracle'] },
+              ],
+              best_false_negative_table: [{ candidate_spec_id: 'spec-fn', reason: 'not_replayed_budget' }],
               started_at: '2026-04-21T16:00:00Z',
               completed_at: '2026-04-21T16:10:00Z',
               failure_reason: null,
@@ -329,6 +337,12 @@ describe('torghut trading summary reason parsing', () => {
           bestPortfolioPositiveDayRatio: '0.2',
           blockedPromotionReasons: ['active_day_ratio_below_oracle'],
           bestPortfolioSleeves: [{ candidate_id: 'cand-1' }],
+          mlxRankBucketLift: {
+            lift_net_pnl_per_day: '-15.25',
+            top_bucket_mean_net_pnl_per_day: '-0.26',
+          },
+          falsePositiveTable: [{ candidate_spec_id: 'spec-fp', failure_reasons: ['active_day_ratio_below_oracle'] }],
+          bestFalseNegativeTable: [{ candidate_spec_id: 'spec-fn', reason: 'not_replayed_budget' }],
           startedAt: '2026-04-21T16:00:00Z',
           completedAt: '2026-04-21T16:10:00Z',
           failureReason: null,
