@@ -65,6 +65,7 @@ from app.whitepapers.claim_compiler import (
     RECENT_WHITEPAPER_SEEDS,
     WhitepaperResearchSource,
     compile_sources_to_hypothesis_cards,
+    sources_from_jsonl,
 )
 
 import scripts.run_strategy_factory_v2 as strategy_factory_runner
@@ -77,6 +78,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--paper-run-id", action="append", default=[])
     parser.add_argument("--seed-recent-whitepapers", action="store_true")
+    parser.add_argument(
+        "--source-jsonl",
+        action="append",
+        default=[],
+        type=Path,
+        help="JSONL file of normalized WhitepaperResearchSource payloads.",
+    )
     parser.add_argument("--target-net-pnl-per-day", default="500")
     parser.add_argument("--max-candidates", type=int, default=64)
     parser.add_argument("--top-k", type=int, default=16)
@@ -1446,6 +1454,8 @@ def run_whitepaper_autoresearch_profit_target(
     sources = []
     if args.seed_recent_whitepapers:
         sources.extend(RECENT_WHITEPAPER_SEEDS)
+    for source_jsonl in getattr(args, "source_jsonl", []):
+        sources.extend(sources_from_jsonl(source_jsonl))
     sources.extend(_load_sources_from_db(args.paper_run_id))
     if not sources:
         return _write_failure_summary(
@@ -1492,6 +1502,10 @@ def run_whitepaper_autoresearch_profit_target(
             "source_count": len(sources),
             "paper_sources": [source.to_payload() for source in sources],
         },
+    )
+    _write_jsonl(
+        output_dir / "whitepaper-sources.jsonl",
+        [source.to_payload() for source in sources],
     )
     _write_jsonl(
         output_dir / "hypothesis-cards.jsonl",
@@ -1724,6 +1738,7 @@ def run_whitepaper_autoresearch_profit_target(
         "artifacts": {
             "epoch_manifest": str(output_dir / "epoch-manifest.json"),
             "hypothesis_cards": str(output_dir / "hypothesis-cards.jsonl"),
+            "whitepaper_sources": str(output_dir / "whitepaper-sources.jsonl"),
             "candidate_specs": str(output_dir / "candidate-specs.jsonl"),
             "candidate_selection_manifest": str(
                 output_dir / "candidate-selection-manifest.json"
@@ -1773,6 +1788,9 @@ def run_whitepaper_autoresearch_profit_target(
                 "replay_candidate_spec_count": len(replay_candidate_specs),
                 "portfolio_size_min": int(args.portfolio_size_min),
                 "portfolio_size_max": int(args.portfolio_size_max),
+                "source_jsonl": [
+                    str(path) for path in getattr(args, "source_jsonl", [])
+                ],
             },
             started_at=started_at,
             completed_at=datetime.now(UTC),

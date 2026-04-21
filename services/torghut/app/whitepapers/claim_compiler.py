@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
 
 from app.trading.discovery.hypothesis_cards import (
@@ -378,3 +380,20 @@ def source_from_payload(payload: Mapping[str, Any]) -> WhitepaperResearchSource:
             if isinstance(item, Mapping)
         ),
     )
+
+
+def sources_from_jsonl(path: Path) -> list[WhitepaperResearchSource]:
+    sources: list[WhitepaperResearchSource] = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"whitepaper_source_jsonl_invalid_json:{path}:{line_number}"
+            ) from exc
+        if not isinstance(payload, Mapping):
+            raise ValueError(f"whitepaper_source_jsonl_row_not_mapping:{path}:{line_number}")
+        sources.append(source_from_payload(cast(Mapping[str, Any], payload)))
+    return sources

@@ -27,6 +27,46 @@ from app.models import (
 )
 
 
+def _source_jsonl_payload() -> dict[str, object]:
+    return {
+        "run_id": "paper-jsonl-2026",
+        "title": "Fresh 2026 Microstructure Paper",
+        "source_url": "https://example.test/fresh-2026.pdf",
+        "published_at": "2026-04-01",
+        "claims": [
+            {
+                "claim_id": "claim-order-flow-signal",
+                "claim_type": "signal_mechanism",
+                "claim_text": "Order-flow clustering can predict short-horizon continuation.",
+                "data_requirements": ["order_flow_imbalance", "spread_bps"],
+                "confidence": "0.8",
+            },
+            {
+                "claim_id": "claim-liquidity-risk",
+                "claim_type": "risk_constraint",
+                "claim_text": "Sizing should be reduced during spread-widening regimes.",
+                "data_requirements": ["spread_bps"],
+                "confidence": "0.75",
+            },
+            {
+                "claim_id": "claim-holdout-validation",
+                "claim_type": "validation_requirement",
+                "claim_text": "Validate the signal on held-out liquidity stress windows.",
+                "data_requirements": ["spread_bps"],
+                "confidence": "0.7",
+            },
+        ],
+        "claim_relations": [
+            {
+                "relation_id": "rel-support",
+                "relation_type": "supports",
+                "source_claim_id": "claim-holdout-validation",
+                "target_claim_id": "claim-order-flow-signal",
+            }
+        ],
+    }
+
+
 class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
     def setUp(self) -> None:
         self.engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
@@ -39,6 +79,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         return Namespace(
             output_dir=output_dir,
             paper_run_id=[],
+            source_jsonl=[],
             seed_recent_whitepapers=True,
             target_net_pnl_per_day="500",
             max_candidates=8,
@@ -97,6 +138,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 payload["best_false_negative_table"],
             )
             self.assertTrue((output_dir / "hypothesis-cards.jsonl").exists())
+            self.assertTrue((output_dir / "whitepaper-sources.jsonl").exists())
             self.assertTrue((output_dir / "candidate-specs.jsonl").exists())
             self.assertTrue((output_dir / "candidate-compiler-report.json").exists())
             self.assertTrue((output_dir / "candidate-selection-manifest.json").exists())
@@ -496,6 +538,38 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertGreaterEqual(len(rows), 4)
         self.assertTrue(mock_print.called)
 
+    def test_compile_claims_script_reads_source_jsonl(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_path = root / "sources.jsonl"
+            source_path.write_text(
+                json.dumps(_source_jsonl_payload(), sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            output_path = root / "hypothesis-cards.jsonl"
+            with (
+                patch(
+                    "sys.argv",
+                    [
+                        "compile_whitepaper_claims.py",
+                        "--source-jsonl",
+                        str(source_path),
+                        "--output",
+                        str(output_path),
+                    ],
+                ),
+                patch("builtins.print") as mock_print,
+            ):
+                parsed = claim_compiler_script._parse_args()
+                exit_code = claim_compiler_script.main()
+
+            rows = output_path.read_text(encoding="utf-8").splitlines()
+
+        self.assertEqual(parsed.source_jsonl, [source_path])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(mock_print.called)
+
     def test_compile_claims_script_loads_completed_persisted_run_claims(
         self,
     ) -> None:
@@ -595,6 +669,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
     def test_runner_parse_args_covers_cli_defaults_and_flags(self) -> None:
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
+            source_path = Path(tmpdir) / "sources.jsonl"
             with patch(
                 "sys.argv",
                 [
@@ -604,6 +679,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     "--seed-recent-whitepapers",
                     "--replay-mode",
                     "synthetic",
+                    "--source-jsonl",
+                    str(source_path),
                     "--no-persist-results",
                 ],
             ):
@@ -612,7 +689,38 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(parsed.output_dir, output_dir)
         self.assertTrue(parsed.seed_recent_whitepapers)
         self.assertEqual(parsed.replay_mode, "synthetic")
+        self.assertEqual(parsed.source_jsonl, [source_path])
         self.assertFalse(parsed.persist_results)
+
+    def test_runner_reads_source_jsonl_end_to_end(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_path = root / "sources.jsonl"
+            source_path.write_text(
+                json.dumps(_source_jsonl_payload(), sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            output_dir = root / "epoch"
+            args = self._args(output_dir)
+            args.seed_recent_whitepapers = False
+            args.source_jsonl = [source_path]
+            args.persist_results = False
+            payload = runner.run_whitepaper_autoresearch_profit_target(args)
+
+            manifest = json.loads(
+                (output_dir / "epoch-manifest.json").read_text(encoding="utf-8")
+            )
+            sources = [
+                json.loads(line)
+                for line in (output_dir / "whitepaper-sources.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["source_count"], 1)
+        self.assertEqual(manifest["paper_sources"][0]["run_id"], "paper-jsonl-2026")
+        self.assertEqual(sources[0]["run_id"], "paper-jsonl-2026")
 
     def test_real_replay_builds_evidence_and_skips_incomplete_results(self) -> None:
         with TemporaryDirectory() as tmpdir:

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import TestCase
 
 from app.whitepapers.claim_compiler import (
@@ -8,6 +11,7 @@ from app.whitepapers.claim_compiler import (
     claim_subgraph_blockers,
     compile_sources_to_hypothesis_cards,
     source_from_payload,
+    sources_from_jsonl,
 )
 
 
@@ -155,3 +159,48 @@ class TestWhitepaperClaimCompiler(TestCase):
         self.assertEqual(source.run_id, "paper-1")
         self.assertEqual(len(source.claims), 1)
         self.assertEqual(len(source.claim_relations), 1)
+
+    def test_sources_from_jsonl_reads_normalized_source_payloads(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "sources.jsonl"
+            path.write_text(
+                json.dumps(
+                    {
+                        "run_id": "paper-jsonl",
+                        "title": "Fresh paper",
+                        "source_url": "https://example.test/fresh.pdf",
+                        "published_at": "2026-04-01",
+                        "claims": [
+                            {
+                                "claim_id": "claim-signal",
+                                "claim_type": "signal_mechanism",
+                                "claim_text": "Order-flow clustering can predict short-horizon continuation.",
+                                "data_requirements": ["order_flow_imbalance"],
+                            },
+                            {
+                                "claim_id": "claim-validation",
+                                "claim_type": "validation_requirement",
+                                "claim_text": "Validate against held-out liquidity stress windows.",
+                                "data_requirements": ["spread_bps"],
+                            },
+                        ],
+                        "claim_relations": [
+                            {
+                                "relation_id": "rel-support",
+                                "relation_type": "supports",
+                                "source_claim_id": "claim-validation",
+                                "target_claim_id": "claim-signal",
+                            }
+                        ],
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            sources = sources_from_jsonl(path)
+
+        self.assertEqual(len(sources), 1)
+        self.assertEqual(sources[0].run_id, "paper-jsonl")
+        self.assertEqual(len(compile_sources_to_hypothesis_cards(sources)), 1)

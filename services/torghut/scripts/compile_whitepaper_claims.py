@@ -16,6 +16,7 @@ from app.whitepapers.claim_compiler import (
     RECENT_WHITEPAPER_SEEDS,
     WhitepaperResearchSource,
     compile_sources_to_hypothesis_cards,
+    sources_from_jsonl,
 )
 
 
@@ -31,6 +32,13 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--paper-run-id", action="append", default=[])
     parser.add_argument("--seed-recent-whitepapers", action="store_true")
+    parser.add_argument(
+        "--source-jsonl",
+        action="append",
+        default=[],
+        type=Path,
+        help="JSONL file of normalized WhitepaperResearchSource payloads.",
+    )
     parser.add_argument(
         "--sources-output",
         type=Path,
@@ -127,6 +135,8 @@ def main() -> int:
     sources: list[WhitepaperResearchSource] = []
     if args.seed_recent_whitepapers:
         sources.extend(RECENT_WHITEPAPER_SEEDS)
+    for source_jsonl in args.source_jsonl:
+        sources.extend(sources_from_jsonl(source_jsonl))
     sources.extend(_load_sources_from_db(args.paper_run_id))
     cards = compile_sources_to_hypothesis_cards(sources)
     _write_jsonl(args.output, [card.to_payload() for card in cards])
@@ -149,6 +159,7 @@ def main() -> int:
                 "sources_output": str(args.sources_output)
                 if args.sources_output is not None
                 else None,
+                "source_jsonl": [str(path) for path in args.source_jsonl],
             },
             indent=2,
             sort_keys=True,
