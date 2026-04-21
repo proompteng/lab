@@ -544,6 +544,31 @@ def _pre_replay_proposal_model_and_rows(
     }, rows
 
 
+def _proposal_score_confidence(
+    proposal_rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    scores = [
+        Decimal(str(row.get("proposal_score")))
+        for row in _list_of_mappings(list(proposal_rows))
+        if row.get("proposal_score") is not None
+    ]
+    if len(scores) < 2:
+        return {
+            "confidence": "low",
+            "score_spread": "0",
+            "reason": "insufficient_ranked_candidates",
+        }
+    score_spread = max(scores) - min(scores)
+    confidence = "low" if score_spread < Decimal("5") else "normal"
+    return {
+        "confidence": confidence,
+        "score_spread": str(score_spread),
+        "reason": "low_score_dispersion"
+        if confidence == "low"
+        else "score_dispersion_sufficient",
+    }
+
+
 def _select_candidate_specs_for_replay(
     *,
     specs: Sequence[CandidateSpec],
@@ -561,7 +586,12 @@ def _select_candidate_specs_for_replay(
         }
     spec_by_id = {spec.candidate_spec_id: spec for spec in specs}
     max_budget = max(1, int(max_candidates))
-    requested_budget = max(0, int(top_k)) + max(0, int(exploration_slots))
+    model_confidence = _proposal_score_confidence(proposal_rows)
+    requested_exploration_slots = max(0, int(exploration_slots))
+    effective_exploration_slots = requested_exploration_slots + (
+        1 if model_confidence["confidence"] == "low" else 0
+    )
+    requested_budget = max(0, int(top_k)) + effective_exploration_slots
     replay_budget = min(max_budget, max(1, int(portfolio_size_min), requested_budget))
     ranked_ids = [
         str(row.get("candidate_spec_id"))
@@ -593,7 +623,7 @@ def _select_candidate_specs_for_replay(
         not in {spec.candidate_spec_id for spec in exploitation}
     ]
     exploration_count = min(
-        max(0, int(exploration_slots)),
+        effective_exploration_slots,
         replay_budget - len(exploitation),
         len(remaining),
     )
@@ -642,11 +672,14 @@ def _select_candidate_specs_for_replay(
         "budget": {
             "max_candidates": max_budget,
             "top_k": max(0, int(top_k)),
-            "exploration_slots": max(0, int(exploration_slots)),
+            "exploration_slots_requested": requested_exploration_slots,
+            "exploration_slots_effective": effective_exploration_slots,
+            "exploration_slots": effective_exploration_slots,
             "portfolio_size_min": max(1, int(portfolio_size_min)),
             "selected_count": len(selected),
             "compiled_candidate_count": len(specs),
         },
+        "proposal_score_confidence": model_confidence,
         "selected_candidate_spec_ids": [item.candidate_spec_id for item in selected],
         "rows": rows,
     }

@@ -203,9 +203,12 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             ]
 
         self.assertEqual(payload["status"], "ok")
-        self.assertEqual(selection["budget"]["selected_count"], 2)
-        self.assertEqual(payload["replay_candidate_spec_count"], 2)
-        self.assertEqual(payload["evidence_bundle_count"], 2)
+        self.assertEqual(selection["proposal_score_confidence"]["confidence"], "low")
+        self.assertEqual(selection["budget"]["exploration_slots_requested"], 1)
+        self.assertEqual(selection["budget"]["exploration_slots_effective"], 2)
+        self.assertEqual(selection["budget"]["selected_count"], 3)
+        self.assertEqual(payload["replay_candidate_spec_count"], 3)
+        self.assertEqual(payload["evidence_bundle_count"], 3)
         self.assertEqual(payload["candidate_spec_count"], 4)
         selected_rows = [row for row in selection["rows"] if row["selected_for_replay"]]
         self.assertEqual(
@@ -213,7 +216,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             {"exploitation", "exploration"},
         )
         proposal_selected = [row for row in proposal_rows if row["selected_for_replay"]]
-        self.assertEqual(len(proposal_selected), 2)
+        self.assertEqual(len(proposal_selected), 3)
         self.assertEqual(
             {row["replay_selection_reason"] for row in proposal_selected},
             {"exploitation", "exploration"},
