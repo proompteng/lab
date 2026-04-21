@@ -70,6 +70,14 @@ def _mapping(value: Any) -> dict[str, Any]:
     return {str(key): item for key, item in cast(Mapping[Any, Any], value).items()}
 
 
+def _list_of_mappings(value: Any) -> tuple[dict[str, Any], ...]:
+    if not isinstance(value, Sequence) or isinstance(value, str):
+        return ()
+    return tuple(
+        _mapping(item) for item in cast(Sequence[Any], value) if _mapping(item)
+    )
+
+
 def _hypothesis_haystack(card: HypothesisCard) -> str:
     return " ".join(
         [
@@ -294,7 +302,7 @@ def compile_candidate_specs(
             family_reasons,
         ) in enumerate(_families_for_hypothesis(card), start=1):
             runtime_family, runtime_strategy_name = _FAMILY_RUNTIME[family_template_id]
-            feature_contract = {
+            feature_contract: dict[str, Any] = {
                 "source_run_id": card.source_run_id,
                 "source_claim_ids": list(card.source_claim_ids),
                 "mechanism": card.mechanism,
@@ -309,6 +317,13 @@ def compile_candidate_specs(
                     "reasons": list(family_reasons),
                 },
             }
+            claim_relation_blockers = _list_of_mappings(
+                card.implementation_constraints.get("claim_relation_blockers")
+            )
+            if claim_relation_blockers:
+                feature_contract["claim_relation_blockers"] = [
+                    dict(item) for item in claim_relation_blockers
+                ]
             objective = {
                 "target_net_pnl_per_day": str(target_net_pnl_per_day),
                 "require_positive_day_ratio": "0.60",

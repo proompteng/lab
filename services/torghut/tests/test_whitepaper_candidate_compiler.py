@@ -106,3 +106,50 @@ class TestWhitepaperCandidateCompiler(TestCase):
         self.assertEqual(compilation.executable_specs, ())
         self.assertEqual(len(compilation.blocked_specs), 3)
         self.assertEqual(compilation.blockers[0].reason, "seed_sweep_missing")
+
+    def test_contradictory_claim_relation_blocks_dependent_candidate_specs(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-run-contradiction",
+            claims=[
+                {
+                    "claim_id": "claim-flow",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": "Clustered order flow imbalance improves short-horizon LOB signals.",
+                    "confidence": "0.82",
+                },
+                {
+                    "claim_id": "claim-validation",
+                    "claim_type": "validation_requirement",
+                    "claim_text": "The signal must pass liquidity-shock replay windows.",
+                    "confidence": "0.76",
+                },
+            ],
+            relations=[
+                {
+                    "relation_id": "rel-invalidates-flow",
+                    "relation_type": "invalidates",
+                    "source_claim_id": "claim-validation",
+                    "target_claim_id": "claim-flow",
+                    "rationale": "The validation claim invalidates direct execution.",
+                }
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        self.assertEqual(len(compilation.candidate_specs), 3)
+        self.assertEqual(compilation.executable_specs, ())
+        self.assertEqual(len(compilation.blocked_specs), 3)
+        self.assertTrue(
+            all(
+                blocker.reason == "contradictory_claim_relation"
+                for blocker in compilation.blockers
+            )
+        )
+        self.assertEqual(
+            compilation.blockers[0].detail["claim_relation_blockers"][0]["relation_id"],
+            "rel-invalidates-flow",
+        )

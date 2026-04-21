@@ -150,6 +150,32 @@ def _failure_modes(
     return tuple(dict.fromkeys(item for item in modes if item))
 
 
+def _claim_relation_blockers(
+    source_claim_ids: Sequence[str], relations: Sequence[Mapping[str, Any]]
+) -> tuple[Mapping[str, Any], ...]:
+    claim_id_set = {item for item in source_claim_ids if item}
+    blockers: list[dict[str, Any]] = []
+    for index, relation in enumerate(relations, start=1):
+        relation_type = _string(relation.get("relation_type")).lower()
+        if relation_type not in {"contradicts", "conflicts_with", "invalidates"}:
+            continue
+        source_claim_id = _string(relation.get("source_claim_id"))
+        target_claim_id = _string(relation.get("target_claim_id"))
+        if claim_id_set and not ({source_claim_id, target_claim_id} & claim_id_set):
+            continue
+        blockers.append(
+            {
+                "relation_id": _string(relation.get("relation_id"))
+                or f"relation-{index}",
+                "relation_type": relation_type,
+                "source_claim_id": source_claim_id,
+                "target_claim_id": target_claim_id,
+                "rationale": _string(relation.get("rationale")),
+            }
+        )
+    return tuple(blockers)
+
+
 @dataclass(frozen=True)
 class HypothesisCard:
     schema_version: Literal["torghut.hypothesis-card.v1"]
@@ -215,6 +241,7 @@ def build_hypothesis_cards(
     if confidence < min_confidence:
         return []
     first_claim = normalized_claims[0]
+    claim_relation_blockers = _claim_relation_blockers(source_claim_ids, relations)
     base_payload = {
         "source_run_id": source_run_id,
         "source_claim_ids": list(source_claim_ids),
@@ -223,6 +250,15 @@ def build_hypothesis_cards(
             _infer_terms(claims=normalized_claims, kind="required_features")
         ),
     }
+    implementation_constraints: dict[str, Any] = {
+        "requires_runtime_family": True,
+        "requires_scheduler_v3_replay": True,
+        "requires_shadow_validation": True,
+    }
+    if claim_relation_blockers:
+        implementation_constraints["claim_relation_blockers"] = [
+            dict(item) for item in claim_relation_blockers
+        ]
     return [
         HypothesisCard(
             schema_version=HYPOTHESIS_CARD_SCHEMA_VERSION,
@@ -244,11 +280,7 @@ def build_hypothesis_cards(
             expected_regimes=_string_tuple(first_claim.get("expected_regimes"))
             or ("liquid_regular_session",),
             failure_modes=_failure_modes(normalized_claims, relations),
-            implementation_constraints={
-                "requires_runtime_family": True,
-                "requires_scheduler_v3_replay": True,
-                "requires_shadow_validation": True,
-            },
+            implementation_constraints=implementation_constraints,
             confidence=confidence,
         )
     ]
