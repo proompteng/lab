@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from http.client import HTTPConnection, HTTPSConnection
+from pathlib import Path
 from subprocess import CalledProcessError, run
 from typing import Any, Mapping, cast
 from urllib.parse import quote, urljoin, urlparse
@@ -45,6 +46,9 @@ from ..models import (
     WhitepaperSynthesis,
     WhitepaperViabilityVerdict,
     coerce_json_payload,
+)
+from ..trading.discovery.whitepaper_candidate_compiler import (
+    compile_claim_payloads_to_whitepaper_experiments,
 )
 
 logger = logging.getLogger(__name__)
@@ -3621,8 +3625,26 @@ class WhitepaperWorkflowService:
         *,
         run_id: str,
         claims: list[dict[str, Any]],
+        relations: list[dict[str, Any]],
         templates: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
+        if not templates and claims:
+            family_template_dir = Path(
+                os.getenv(
+                    "TORGHUT_WHITEPAPER_FAMILY_TEMPLATE_DIR",
+                    "config/trading/families",
+                )
+            )
+            compilation = compile_claim_payloads_to_whitepaper_experiments(
+                run_id=run_id,
+                claims=claims,
+                relations=relations,
+                target_net_pnl_per_day=Decimal("500"),
+                family_template_dir=family_template_dir,
+            )
+            return [
+                dict(item) for item in compilation.whitepaper_experiment_payloads
+            ]
         if not templates:
             return []
         linked_claim_ids = [
@@ -3706,6 +3728,7 @@ class WhitepaperWorkflowService:
             experiment_specs = self._compiled_experiment_specs_from_templates(
                 run_id=run.run_id,
                 claims=claims,
+                relations=relations,
                 templates=templates,
             )
         contradiction_events = [

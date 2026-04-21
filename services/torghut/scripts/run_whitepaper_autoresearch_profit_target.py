@@ -27,7 +27,7 @@ from app.trading.discovery.autoresearch import (
     load_strategy_autoresearch_program,
     run_id,
 )
-from app.trading.discovery.candidate_specs import CandidateSpec, compile_candidate_specs
+from app.trading.discovery.candidate_specs import CandidateSpec
 from app.trading.discovery.evidence_bundles import (
     CandidateEvidenceBundle,
     evidence_bundle_from_frontier_candidate,
@@ -41,6 +41,13 @@ from app.trading.discovery.portfolio_optimizer import (
     optimize_portfolio_candidate,
 )
 from app.trading.discovery.runtime_closure import write_runtime_closure_bundle
+from app.trading.discovery.whitepaper_autoresearch_notebooks import (
+    write_whitepaper_autoresearch_diagnostics_notebook,
+)
+from app.trading.discovery.whitepaper_candidate_compiler import (
+    CandidateCompilationBlocker,
+    compile_whitepaper_candidate_specs,
+)
 from app.whitepapers.claim_compiler import (
     RECENT_WHITEPAPER_SEEDS,
     WhitepaperResearchSource,
@@ -133,6 +140,27 @@ def _write_jsonl(path: Path, rows: Sequence[Mapping[str, Any]]) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def _write_failure_summary(
+    *,
+    output_dir: Path,
+    epoch_id: str,
+    status: str,
+    reason: str,
+    started_at: datetime,
+) -> dict[str, Any]:
+    summary = {
+        "status": status,
+        "epoch_id": epoch_id,
+        "run_root": str(output_dir),
+        "failure_reason": reason,
+        "started_at": started_at.isoformat(),
+        "completed_at": datetime.now(UTC).isoformat(),
+    }
+    _write_json(output_dir / "error-summary.json", summary)
+    _write_json(output_dir / "summary.json", summary)
+    return summary
 
 
 def _stable_hash(payload: Mapping[str, Any]) -> str:
@@ -248,6 +276,8 @@ def _persist_epoch_ledgers(
     paper_run_ids: Sequence[str],
     sources: Sequence[WhitepaperResearchSource],
     candidate_specs: Sequence[CandidateSpec],
+    candidate_blockers: Mapping[str, Sequence[CandidateCompilationBlocker]]
+    | None = None,
     proposal_rows: Sequence[Mapping[str, Any]],
     portfolio: PortfolioCandidateSpec | None,
     summary: Mapping[str, Any],
@@ -256,6 +286,7 @@ def _persist_epoch_ledgers(
     completed_at: datetime,
     failure_reason: str | None = None,
 ) -> None:
+    candidate_blockers = candidate_blockers or {}
     with SessionLocal() as session:
         session.add(
             AutoresearchEpoch(
@@ -276,6 +307,10 @@ def _persist_epoch_ledgers(
         )
         for spec in candidate_specs:
             payload = spec.to_payload()
+            blockers = [
+                blocker.to_payload()
+                for blocker in candidate_blockers.get(spec.candidate_spec_id, ())
+            ]
             session.add(
                 AutoresearchCandidateSpec(
                     candidate_spec_id=spec.candidate_spec_id,
@@ -285,8 +320,8 @@ def _persist_epoch_ledgers(
                     family_template_id=spec.family_template_id,
                     payload_json=payload,
                     payload_hash=_stable_hash(payload),
-                    status="eligible",
-                    blockers_json=[],
+                    status="blocked" if blockers else "eligible",
+                    blockers_json=blockers,
                 )
             )
         for item in proposal_rows:
@@ -354,7 +389,49 @@ def _proposal_model_and_rows(
         }
         for item in ranked_rows
     ]
-    return model.to_payload(), proposal_rows
+    net_by_spec = {
+        bundle.candidate_spec_id: _decimal(
+            bundle.objective_scorecard.get("net_pnl_per_day")
+        )
+        for bundle in evidence_bundles
+    }
+    ranked_nets = [
+        net_by_spec.get(str(row["candidate_spec_id"]), Decimal("0"))
+        for row in proposal_rows
+    ]
+    split_index = max(1, len(ranked_nets) // 2)
+    top_bucket = ranked_nets[:split_index]
+    bottom_bucket = ranked_nets[split_index:] or [Decimal("0")]
+    top_mean = sum(top_bucket, Decimal("0")) / Decimal(len(top_bucket))
+    bottom_mean = sum(bottom_bucket, Decimal("0")) / Decimal(len(bottom_bucket))
+    lift = top_mean - bottom_mean
+    model_payload = {
+        **model.to_payload(),
+        "rank_bucket_lift": {
+            "top_bucket_mean_net_pnl_per_day": str(top_mean),
+            "bottom_bucket_mean_net_pnl_per_day": str(bottom_mean),
+            "lift_net_pnl_per_day": str(lift),
+        },
+        "model_status": "active" if lift >= 0 else "demoted_to_heuristic",
+    }
+    if lift < 0:
+        proposal_rows = sorted(
+            proposal_rows,
+            key=lambda row: (
+                _decimal(row.get("features", {}).get("history_net_pnl_per_day")),
+                str(row.get("candidate_spec_id") or ""),
+            ),
+            reverse=True,
+        )
+        proposal_rows = [
+            {
+                **row,
+                "rank": index,
+                "selection_reason": "heuristic_negative_lift_fallback",
+            }
+            for index, row in enumerate(proposal_rows, start=1)
+        ]
+    return model_payload, proposal_rows
 
 
 def _synthetic_net_for_spec(spec: CandidateSpec, *, rank: int) -> Decimal:
@@ -569,21 +646,27 @@ def run_whitepaper_autoresearch_profit_target(
         sources.extend(RECENT_WHITEPAPER_SEEDS)
     sources.extend(_load_sources_from_db(args.paper_run_id))
     if not sources:
-        summary = {
-            "status": "no_sources",
-            "epoch_id": epoch_id,
-            "run_root": str(output_dir),
-        }
-        _write_json(output_dir / "summary.json", summary)
-        return summary
+        return _write_failure_summary(
+            output_dir=output_dir,
+            epoch_id=epoch_id,
+            status="no_sources",
+            reason="no_whitepaper_sources",
+            started_at=started_at,
+        )
 
     hypothesis_cards: list[HypothesisCard] = compile_sources_to_hypothesis_cards(
         sources
     )
-    candidate_specs = compile_candidate_specs(
-        hypothesis_cards=hypothesis_cards, target_net_pnl_per_day=target
+    compilation = compile_whitepaper_candidate_specs(
+        hypothesis_cards=hypothesis_cards,
+        target_net_pnl_per_day=target,
+        family_template_dir=args.family_template_dir.resolve(),
     )
+    candidate_specs = list(compilation.executable_specs or compilation.candidate_specs)
     candidate_specs = candidate_specs[: max(1, int(args.max_candidates))]
+    blocker_by_spec: dict[str, list[CandidateCompilationBlocker]] = {}
+    for blocker in compilation.blockers:
+        blocker_by_spec.setdefault(blocker.candidate_spec_id, []).append(blocker)
     if args.persist_results and args.replay_mode == "real":
         for source in sources:
             source_specs = [
@@ -612,16 +695,34 @@ def run_whitepaper_autoresearch_profit_target(
         output_dir / "candidate-specs.jsonl",
         [spec.to_payload() for spec in candidate_specs],
     )
+    _write_json(output_dir / "candidate-compiler-report.json", compilation.to_payload())
 
-    replay_result = (
-        _run_synthetic_replay(
-            specs=candidate_specs,
+    if not candidate_specs:
+        return _write_failure_summary(
             output_dir=output_dir,
-            max_candidates=int(args.max_candidates),
+            epoch_id=epoch_id,
+            status="no_eligible_candidates",
+            reason="candidate_compiler_produced_no_executable_specs",
+            started_at=started_at,
         )
-        if args.replay_mode == "synthetic"
-        else _run_real_replay(args, output_dir=output_dir)
-    )
+    try:
+        replay_result = (
+            _run_synthetic_replay(
+                specs=candidate_specs,
+                output_dir=output_dir,
+                max_candidates=int(args.max_candidates),
+            )
+            if args.replay_mode == "synthetic"
+            else _run_real_replay(args, output_dir=output_dir)
+        )
+    except Exception as exc:
+        return _write_failure_summary(
+            output_dir=output_dir,
+            epoch_id=epoch_id,
+            status="replay_failed",
+            reason=f"{type(exc).__name__}:{exc}",
+            started_at=started_at,
+        )
     proposal_model, proposal_rows = _proposal_model_and_rows(
         specs=candidate_specs, evidence_bundles=replay_result.evidence_bundles
     )
@@ -657,8 +758,14 @@ def run_whitepaper_autoresearch_profit_target(
         "source_count": len(sources),
         "hypothesis_count": len(hypothesis_cards),
         "candidate_spec_count": len(candidate_specs),
+        "candidate_compiler_blocker_count": len(compilation.blockers),
         "evidence_bundle_count": len(replay_result.evidence_bundles),
         "proposal_score_count": len(proposal_rows),
+        "portfolio_candidate_count": len(portfolio_rows),
+        "claim_count": sum(len(source.claims) for source in sources),
+        "mlx_rank_bucket_lift": proposal_model.get("rank_bucket_lift", {}),
+        "false_positive_table": [],
+        "best_false_negative_table": [],
         "best_portfolio_candidate": portfolio.to_payload()
         if portfolio is not None
         else None,
@@ -676,6 +783,9 @@ def run_whitepaper_autoresearch_profit_target(
             "epoch_manifest": str(output_dir / "epoch-manifest.json"),
             "hypothesis_cards": str(output_dir / "hypothesis-cards.jsonl"),
             "candidate_specs": str(output_dir / "candidate-specs.jsonl"),
+            "candidate_compiler_report": str(
+                output_dir / "candidate-compiler-report.json"
+            ),
             "proposal_scores": str(output_dir / "mlx-proposal-scores.jsonl"),
             "proposal_model": str(output_dir / "mlx-ranker-model.json"),
             "candidate_evidence_bundles": str(
@@ -684,6 +794,10 @@ def run_whitepaper_autoresearch_profit_target(
             "portfolio_candidates": str(output_dir / "portfolio-candidates.jsonl"),
             "portfolio_optimizer_report": str(
                 output_dir / "portfolio-optimizer-report.json"
+            ),
+            "summary": str(output_dir / "summary.json"),
+            "diagnostics_notebook": str(
+                output_dir / "whitepaper-autoresearch-diagnostics.ipynb"
             ),
         },
     }
@@ -695,6 +809,7 @@ def run_whitepaper_autoresearch_profit_target(
             paper_run_ids=[str(item) for item in args.paper_run_id],
             sources=sources,
             candidate_specs=candidate_specs,
+            candidate_blockers=blocker_by_spec,
             proposal_rows=proposal_rows,
             portfolio=portfolio,
             summary=summary,
@@ -710,6 +825,10 @@ def run_whitepaper_autoresearch_profit_target(
             completed_at=datetime.now(UTC),
         )
     _write_json(output_dir / "summary.json", summary)
+    write_whitepaper_autoresearch_diagnostics_notebook(
+        output_dir / "whitepaper-autoresearch-diagnostics.ipynb",
+        summary=summary,
+    )
     return summary
 
 
@@ -717,7 +836,12 @@ def main() -> int:
     args = _parse_args()
     payload = run_whitepaper_autoresearch_profit_target(args)
     print(json.dumps(payload, indent=2, sort_keys=True))
-    return 0 if payload.get("status") == "ok" else 2
+    status = str(payload.get("status") or "")
+    if status == "ok":
+        return 0
+    if status == "replay_failed":
+        return 3
+    return 2
 
 
 if __name__ == "__main__":

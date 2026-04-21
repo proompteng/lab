@@ -86,11 +86,15 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             self.assertEqual(summary["epoch_id"], payload["epoch_id"])
             self.assertTrue((output_dir / "hypothesis-cards.jsonl").exists())
             self.assertTrue((output_dir / "candidate-specs.jsonl").exists())
+            self.assertTrue((output_dir / "candidate-compiler-report.json").exists())
             self.assertTrue((output_dir / "mlx-ranker-model.json").exists())
             self.assertTrue((output_dir / "mlx-proposal-scores.jsonl").exists())
             self.assertTrue((output_dir / "candidate-evidence-bundles.jsonl").exists())
             self.assertTrue((output_dir / "portfolio-candidates.jsonl").exists())
             self.assertTrue((output_dir / "runtime-closure" / "summary.json").exists())
+            self.assertTrue(
+                (output_dir / "whitepaper-autoresearch-diagnostics.ipynb").exists()
+            )
             model_payload = json.loads(
                 (output_dir / "mlx-ranker-model.json").read_text(encoding="utf-8")
             )
@@ -98,6 +102,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             self.assertEqual(
                 model_payload["row_count"], payload["candidate_spec_count"]
             )
+            self.assertIn("rank_bucket_lift", model_payload)
 
             portfolio = payload["best_portfolio_candidate"]
             self.assertTrue(portfolio["objective_scorecard"]["target_met"])
@@ -153,6 +158,36 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(model_payload["backend"], "numpy-fallback")
         self.assertEqual(len(scores), 4)
         self.assertEqual(scores[0]["rank"], 1)
+
+    def test_replay_failures_write_error_summary_and_exit_code_three(self) -> None:
+        with (
+            TemporaryDirectory() as tmpdir,
+            patch.object(
+                runner,
+                "_parse_args",
+                return_value=Namespace(
+                    **{
+                        **vars(self._args(Path(tmpdir) / "epoch")),
+                        "replay_mode": "real",
+                    }
+                ),
+            ),
+            patch.object(
+                runner,
+                "_run_real_replay",
+                side_effect=RuntimeError("forced replay failure"),
+            ),
+            patch("builtins.print"),
+        ):
+            exit_code = runner.main()
+            summary = json.loads(
+                (Path(tmpdir) / "epoch" / "error-summary.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+        self.assertEqual(exit_code, 3)
+        self.assertEqual(summary["status"], "replay_failed")
 
     def test_train_ranker_script_main_writes_model_and_scores(self) -> None:
         with TemporaryDirectory() as tmpdir:

@@ -29,10 +29,6 @@ from .db import SessionLocal, check_schema_current, ensure_schema, get_session, 
 from .db import check_account_scope_invariants
 from .metrics import render_trading_metrics
 from .models import (
-    AutoresearchCandidateSpec,
-    AutoresearchEpoch,
-    AutoresearchPortfolioCandidate,
-    AutoresearchProposalScore,
     Execution,
     ExecutionTCAMetric,
     Strategy,
@@ -57,6 +53,7 @@ from .trading.autonomy import (
     assert_runtime_gate_policy_contract,
     evaluate_evidence_continuity,
 )
+from .trading.autoresearch_routes import router as autoresearch_router
 from .trading.completion import build_doc29_completion_status
 from .trading.empirical_jobs import build_empirical_jobs_status
 from .trading.forecast_runtime import forecast_status
@@ -318,6 +315,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="torghut", lifespan=lifespan)
 app.state.settings = settings
 app.state.whitepaper_inngest_registered = False
+app.include_router(autoresearch_router)
 _register_whitepaper_inngest_routes(app)
 
 
@@ -2057,119 +2055,6 @@ def trading_empirical_jobs() -> dict[str, object]:
     """Return freshness and authority status for empirical parity and Janus workflows."""
 
     return _empirical_jobs_status()
-
-
-@app.get("/trading/autoresearch/epochs")
-def trading_autoresearch_epochs(
-    status: str | None = Query(default=None),
-    limit: int = Query(default=25, ge=1, le=100),
-    session: Session = Depends(get_session),
-) -> dict[str, object]:
-    """Return persisted whitepaper autoresearch epochs."""
-
-    stmt = select(AutoresearchEpoch)
-    if status:
-        stmt = stmt.where(AutoresearchEpoch.status == status)
-    rows = session.execute(
-        stmt.order_by(AutoresearchEpoch.created_at.desc()).limit(limit)
-    ).scalars()
-    items: list[dict[str, object]] = [
-        {
-            "epoch_id": row.epoch_id,
-            "status": row.status,
-            "target_net_pnl_per_day": str(row.target_net_pnl_per_day),
-            "paper_run_ids": cast(object, row.paper_run_ids_json or []),
-            "started_at": row.started_at.isoformat() if row.started_at else None,
-            "completed_at": row.completed_at.isoformat() if row.completed_at else None,
-            "failure_reason": row.failure_reason,
-            "summary": cast(object, row.summary_json or {}),
-        }
-        for row in rows
-    ]
-    return {"count": len(items), "epochs": items}
-
-
-@app.get("/trading/autoresearch/epochs/{epoch_id}")
-def trading_autoresearch_epoch(
-    epoch_id: str,
-    session: Session = Depends(get_session),
-) -> dict[str, object]:
-    """Return one persisted whitepaper autoresearch epoch with child ledgers."""
-
-    epoch = session.execute(
-        select(AutoresearchEpoch).where(AutoresearchEpoch.epoch_id == epoch_id)
-    ).scalar_one_or_none()
-    if epoch is None:
-        raise HTTPException(
-            status_code=404, detail=f"autoresearch_epoch_not_found:{epoch_id}"
-        )
-    specs = session.execute(
-        select(AutoresearchCandidateSpec)
-        .where(AutoresearchCandidateSpec.epoch_id == epoch_id)
-        .order_by(AutoresearchCandidateSpec.created_at.asc())
-    ).scalars()
-    proposals = session.execute(
-        select(AutoresearchProposalScore)
-        .where(AutoresearchProposalScore.epoch_id == epoch_id)
-        .order_by(AutoresearchProposalScore.rank.asc())
-    ).scalars()
-    portfolios = session.execute(
-        select(AutoresearchPortfolioCandidate)
-        .where(AutoresearchPortfolioCandidate.epoch_id == epoch_id)
-        .order_by(AutoresearchPortfolioCandidate.created_at.asc())
-    ).scalars()
-    return {
-        "epoch": {
-            "epoch_id": epoch.epoch_id,
-            "status": epoch.status,
-            "target_net_pnl_per_day": str(epoch.target_net_pnl_per_day),
-            "paper_run_ids": epoch.paper_run_ids_json or [],
-            "snapshot_manifest": epoch.snapshot_manifest_json or {},
-            "runner_config": epoch.runner_config_json or {},
-            "summary": epoch.summary_json or {},
-            "started_at": epoch.started_at.isoformat() if epoch.started_at else None,
-            "completed_at": epoch.completed_at.isoformat()
-            if epoch.completed_at
-            else None,
-            "failure_reason": epoch.failure_reason,
-        },
-        "candidate_specs": [
-            {
-                "candidate_spec_id": row.candidate_spec_id,
-                "hypothesis_id": row.hypothesis_id,
-                "candidate_kind": row.candidate_kind,
-                "family_template_id": row.family_template_id,
-                "status": row.status,
-                "blockers": row.blockers_json or [],
-                "payload": row.payload_json,
-            }
-            for row in specs
-        ],
-        "proposal_scores": [
-            {
-                "candidate_spec_id": row.candidate_spec_id,
-                "model_id": row.model_id,
-                "backend": row.backend,
-                "proposal_score": str(row.proposal_score),
-                "rank": row.rank,
-                "selection_reason": row.selection_reason,
-                "feature_hash": row.feature_hash,
-            }
-            for row in proposals
-        ],
-        "portfolio_candidates": [
-            {
-                "portfolio_candidate_id": row.portfolio_candidate_id,
-                "status": row.status,
-                "target_net_pnl_per_day": str(row.target_net_pnl_per_day),
-                "source_candidate_ids": row.source_candidate_ids_json,
-                "objective_scorecard": row.objective_scorecard_json,
-                "optimizer_report": row.optimizer_report_json,
-                "payload": row.payload_json,
-            }
-            for row in portfolios
-        ],
-    }
 
 
 @app.get("/trading/completion/doc29")

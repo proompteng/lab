@@ -209,7 +209,15 @@ class TestTradingApi(TestCase):
                     paper_run_ids_json=["paper-1"],
                     snapshot_manifest_json={"source_count": 1},
                     runner_config_json={"replay_mode": "synthetic"},
-                    summary_json={"best": "portfolio-1"},
+                    summary_json={
+                        "best": "portfolio-1",
+                        "claim_count": 2,
+                        "hypothesis_count": 1,
+                        "candidate_spec_count": 1,
+                        "evidence_bundle_count": 1,
+                        "portfolio_candidate_count": 1,
+                        "mlx_rank_bucket_lift": {"lift_net_pnl_per_day": "10"},
+                    },
                     started_at=datetime.now(timezone.utc),
                     completed_at=datetime.now(timezone.utc),
                 )
@@ -246,9 +254,20 @@ class TestTradingApi(TestCase):
                     epoch_id="epoch-1",
                     source_candidate_ids_json=["cand-1"],
                     target_net_pnl_per_day=Decimal("500"),
-                    objective_scorecard_json={"target_met": True},
+                    objective_scorecard_json={
+                        "target_met": True,
+                        "net_pnl_per_day": "535",
+                        "active_day_ratio": "1",
+                        "positive_day_ratio": "1",
+                    },
                     optimizer_report_json={"selected_count": 1},
-                    payload_json={"portfolio_candidate_id": "portfolio-1"},
+                    payload_json={
+                        "portfolio_candidate_id": "portfolio-1",
+                        "sleeves": [{"candidate_id": "cand-1"}],
+                        "promotion_readiness": {
+                            "blockers": ["scheduler_v3_parity_missing"]
+                        },
+                    },
                     status="target_met",
                 )
             )
@@ -259,6 +278,10 @@ class TestTradingApi(TestCase):
         list_payload = list_response.json()
         self.assertEqual(list_payload["count"], 1)
         self.assertEqual(list_payload["epochs"][0]["epoch_id"], "epoch-1")
+        self.assertEqual(
+            list_payload["epochs"][0]["best_portfolio_net_pnl_per_day"], "535"
+        )
+        self.assertEqual(list_payload["epochs"][0]["claim_count"], 2)
 
         detail_response = self.client.get("/trading/autoresearch/epochs/epoch-1")
         self.assertEqual(detail_response.status_code, 200)
@@ -271,6 +294,10 @@ class TestTradingApi(TestCase):
         self.assertEqual(
             detail_payload["portfolio_candidates"][0]["portfolio_candidate_id"],
             "portfolio-1",
+        )
+        self.assertEqual(
+            detail_payload["dashboard"]["blocked_promotion_reasons"],
+            ["scheduler_v3_parity_missing"],
         )
 
         missing_response = self.client.get("/trading/autoresearch/epochs/missing")
