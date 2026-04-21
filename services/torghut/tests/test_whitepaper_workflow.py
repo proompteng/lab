@@ -684,8 +684,11 @@ https://example.com/paper.pdf
             templates=[],
         )
 
-        self.assertEqual(len(compiled), 1)
-        self.assertEqual(compiled[0]['selection_objectives']['target_net_pnl_per_day'], '500')
+        self.assertEqual(len(compiled), 3)
+        self.assertEqual(
+            {item['selection_objectives']['target_net_pnl_per_day'] for item in compiled},
+            {'500'},
+        )
 
     def test_sync_structured_outputs_skips_incomplete_records(self) -> None:
         service = WhitepaperWorkflowService()
