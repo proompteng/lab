@@ -6,6 +6,11 @@ const startTorghutQuantRuntime = vi.fn()
 const getTorghutQuantRuntimeStatus = vi.fn()
 const materializeTorghutQuantFrameOnDemand = vi.fn()
 const isTorghutQuantMaterializationNotFoundError = vi.fn()
+const listTorghutAutoresearchEpochs = vi.fn()
+
+vi.mock('~/server/torghut-trading', () => ({
+  listTorghutAutoresearchEpochs,
+}))
 
 vi.mock('~/server/torghut-quant-metrics-store', () => ({
   listQuantLatestMetrics,
@@ -27,8 +32,15 @@ describe('getQuantSnapshotHandler', () => {
     getTorghutQuantRuntimeStatus.mockReset()
     materializeTorghutQuantFrameOnDemand.mockReset()
     isTorghutQuantMaterializationNotFoundError.mockReset()
+    listTorghutAutoresearchEpochs.mockReset()
     getTorghutQuantRuntimeStatus.mockReturnValue({ enabled: true })
     isTorghutQuantMaterializationNotFoundError.mockReturnValue(false)
+    listTorghutAutoresearchEpochs.mockResolvedValue({
+      available: true,
+      count: 0,
+      epochs: [],
+      error: null,
+    })
   })
 
   it('returns 400 when strategy_id is invalid', async () => {
@@ -95,6 +107,13 @@ describe('getQuantSnapshotHandler', () => {
     expect(body.frame.frameAsOf).toBe('2026-02-19T12:00:05.000Z')
     expect(body.frame.metrics).toHaveLength(2)
     expect(body.frame.alerts).toEqual([{ alertId: 'a-open', account: 'paper', window: '1d', state: 'open' }])
+    expect(body.frame.autoresearch).toEqual({
+      available: true,
+      count: 0,
+      epochs: [],
+      error: null,
+    })
+    expect(listTorghutAutoresearchEpochs).toHaveBeenCalledWith({ limit: 5 })
   })
 
   it('materializes and reloads metrics when latest store is empty', async () => {
@@ -176,6 +195,26 @@ describe('getQuantSnapshotHandler', () => {
     expect(body.ok).toBe(true)
     expect(body.frame.metrics).toEqual([])
     expect(body.frame.account).toBe('paper-live')
+  })
+
+  it('keeps snapshot response successful when autoresearch summary query fails', async () => {
+    const { getQuantSnapshotHandler } = await import('./snapshot')
+
+    getTorghutQuantRuntimeStatus.mockReturnValueOnce({ enabled: false })
+    listQuantLatestMetrics.mockResolvedValueOnce([])
+    listQuantAlerts.mockResolvedValueOnce([])
+    listTorghutAutoresearchEpochs.mockRejectedValueOnce(new Error('Torghut autoresearch offline'))
+
+    const url =
+      'http://localhost/api/torghut/trading/control-plane/quant/snapshot?strategy_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&account=&window=1d'
+    const response = await getQuantSnapshotHandler(new Request(url))
+
+    expect(response.status).toBe(200)
+
+    const body = await response.json()
+    expect(body.ok).toBe(true)
+    expect(body.frame.autoresearch.available).toBe(false)
+    expect(body.frame.autoresearch.error).toBe('Torghut autoresearch offline')
   })
 
   it('returns 503 when fallback materialization fails for non-not-found errors', async () => {
