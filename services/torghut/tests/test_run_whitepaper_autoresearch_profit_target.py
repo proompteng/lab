@@ -708,6 +708,84 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(len(source_payload["claim_relations"]), 1)
         self.assertTrue(mock_print.called)
 
+    def test_runner_db_source_loader_ignores_incomplete_whitepaper_runs(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            completed_document = WhitepaperDocument(
+                source="arxiv",
+                source_identifier="2501.00002",
+                title="Completed Claims Paper",
+                metadata_json={"source_url": "https://example.test/completed.pdf"},
+            )
+            completed_version = WhitepaperDocumentVersion(
+                document=completed_document,
+                version_number=1,
+                checksum_sha256="b" * 64,
+                ceph_bucket="whitepapers",
+                ceph_object_key="completed.pdf",
+            )
+            completed_run = WhitepaperAnalysisRun(
+                run_id="paper-completed",
+                document=completed_document,
+                document_version=completed_version,
+                status="completed",
+            )
+            running_document = WhitepaperDocument(
+                source="arxiv",
+                source_identifier="2501.00003",
+                title="Running Claims Paper",
+                metadata_json={"source_url": "https://example.test/running.pdf"},
+            )
+            running_version = WhitepaperDocumentVersion(
+                document=running_document,
+                version_number=1,
+                checksum_sha256="c" * 64,
+                ceph_bucket="whitepapers",
+                ceph_object_key="running.pdf",
+            )
+            running_run = WhitepaperAnalysisRun(
+                run_id="paper-running",
+                document=running_document,
+                document_version=running_version,
+                status="running",
+            )
+            session.add_all(
+                [
+                    completed_document,
+                    completed_version,
+                    completed_run,
+                    WhitepaperClaim(
+                        analysis_run=completed_run,
+                        claim_id="claim-completed",
+                        claim_type="signal_mechanism",
+                        claim_text="Completed paper claim.",
+                        data_requirements_json=["order_flow_imbalance"],
+                    ),
+                    running_document,
+                    running_version,
+                    running_run,
+                    WhitepaperClaim(
+                        analysis_run=running_run,
+                        claim_id="claim-running",
+                        claim_type="signal_mechanism",
+                        claim_text="Running paper claim.",
+                        data_requirements_json=["order_flow_imbalance"],
+                    ),
+                ]
+            )
+            session.commit()
+
+        with patch(
+            "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+            side_effect=lambda: Session(self.engine),
+        ):
+            sources = runner._load_sources_from_db(
+                ["paper-completed", "paper-running"]
+            )
+
+        self.assertEqual([source.run_id for source in sources], ["paper-completed"])
+
     def test_runner_parse_args_covers_cli_defaults_and_flags(self) -> None:
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"

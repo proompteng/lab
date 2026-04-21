@@ -357,7 +357,8 @@ def _load_sources_from_db(
     with SessionLocal() as session:
         rows = session.execute(
             select(WhitepaperAnalysisRun).where(
-                WhitepaperAnalysisRun.run_id.in_(sorted(run_id_set))
+                WhitepaperAnalysisRun.run_id.in_(sorted(run_id_set)),
+                WhitepaperAnalysisRun.status == "completed",
             )
         ).scalars()
         sources: list[WhitepaperResearchSource] = []
