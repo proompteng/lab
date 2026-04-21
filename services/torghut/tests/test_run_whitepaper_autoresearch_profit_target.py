@@ -87,6 +87,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             self.assertTrue((output_dir / "hypothesis-cards.jsonl").exists())
             self.assertTrue((output_dir / "candidate-specs.jsonl").exists())
             self.assertTrue((output_dir / "candidate-compiler-report.json").exists())
+            self.assertTrue((output_dir / "candidate-selection-manifest.json").exists())
             self.assertTrue((output_dir / "mlx-ranker-model.json").exists())
             self.assertTrue((output_dir / "mlx-proposal-scores.jsonl").exists())
             self.assertTrue((output_dir / "candidate-evidence-bundles.jsonl").exists())
@@ -133,6 +134,18 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 model_payload["row_count"], payload["candidate_spec_count"]
             )
             self.assertIn("rank_bucket_lift", model_payload)
+            selection = json.loads(
+                (output_dir / "candidate-selection-manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                selection["budget"]["selected_count"],
+                payload["replay_candidate_spec_count"],
+            )
+            self.assertEqual(
+                payload["evidence_bundle_count"], payload["replay_candidate_spec_count"]
+            )
 
             portfolio = payload["best_portfolio_candidate"]
             self.assertTrue(portfolio["objective_scorecard"]["target_met"])
@@ -142,6 +155,46 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             self.assertGreaterEqual(
                 float(portfolio["objective_scorecard"]["net_pnl_per_day"]), 500.0
             )
+
+    def test_seed_recent_whitepapers_honors_top_k_and_exploration_budget(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            args = self._args(output_dir)
+            args.top_k = 1
+            args.exploration_slots = 1
+            payload = runner.run_whitepaper_autoresearch_profit_target(args)
+
+            selection = json.loads(
+                (output_dir / "candidate-selection-manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            proposal_rows = [
+                json.loads(line)
+                for line in (output_dir / "mlx-proposal-scores.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line
+            ]
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(selection["budget"]["selected_count"], 2)
+        self.assertEqual(payload["replay_candidate_spec_count"], 2)
+        self.assertEqual(payload["evidence_bundle_count"], 2)
+        self.assertEqual(payload["candidate_spec_count"], 4)
+        selected_rows = [row for row in selection["rows"] if row["selected_for_replay"]]
+        self.assertEqual(
+            {row["selection_reason"] for row in selected_rows},
+            {"exploitation", "exploration"},
+        )
+        proposal_selected = [row for row in proposal_rows if row["selected_for_replay"]]
+        self.assertEqual(len(proposal_selected), 2)
+        self.assertEqual(
+            {row["replay_selection_reason"] for row in proposal_selected},
+            {"exploitation", "exploration"},
+        )
 
     def test_main_returns_nonzero_when_no_oracle_candidate_found(self) -> None:
         with (

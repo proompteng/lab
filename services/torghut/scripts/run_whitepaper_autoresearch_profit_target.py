@@ -381,6 +381,7 @@ def _proposal_model_and_rows(
     *,
     specs: Sequence[CandidateSpec],
     evidence_bundles: Sequence[CandidateEvidenceBundle],
+    replay_selection_by_spec: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[Mapping[str, Any], list[dict[str, Any]]]:
     training_rows = build_mlx_training_rows(
         candidate_specs=specs, evidence_bundles=evidence_bundles
@@ -398,6 +399,18 @@ def _proposal_model_and_rows(
             "backend": item.backend,
             "model_id": item.model_id,
             "selection_reason": "exploitation",
+            "replay_selection_reason": _mapping(
+                replay_selection_by_spec.get(item.candidate_spec_id)
+                if replay_selection_by_spec is not None
+                else None
+            ).get("selection_reason", "not_selected_budget"),
+            "selected_for_replay": bool(
+                _mapping(
+                    replay_selection_by_spec.get(item.candidate_spec_id)
+                    if replay_selection_by_spec is not None
+                    else None
+                ).get("selected_for_replay")
+            ),
             "feature_hash": item.feature_hash,
             "features": feature_by_spec.get(item.candidate_spec_id, {}),
         }
@@ -446,6 +459,116 @@ def _proposal_model_and_rows(
             for index, row in enumerate(proposal_rows, start=1)
         ]
     return model_payload, proposal_rows
+
+
+def _pre_replay_candidate_score(spec: CandidateSpec) -> Decimal:
+    family_score = {
+        "microbar_cross_sectional_pairs_v1": Decimal("70"),
+        "microstructure_continuation_matched_filter_v1": Decimal("65"),
+        "momentum_pullback_v1": Decimal("60"),
+        "washout_rebound_v2": Decimal("55"),
+        "breakout_reclaim_v2": Decimal("50"),
+        "mean_reversion_rebound_v1": Decimal("45"),
+    }.get(spec.family_template_id, Decimal("40"))
+    required_features = spec.feature_contract.get("required_features")
+    feature_count = (
+        len(cast(Sequence[Any], required_features))
+        if isinstance(required_features, Sequence)
+        and not isinstance(required_features, str)
+        else 0
+    )
+    failure_penalty = Decimal(len(spec.expected_failure_modes)) * Decimal("0.25")
+    return family_score + Decimal(feature_count) - failure_penalty
+
+
+def _select_candidate_specs_for_replay(
+    *,
+    specs: Sequence[CandidateSpec],
+    top_k: int,
+    exploration_slots: int,
+    max_candidates: int,
+    portfolio_size_min: int,
+) -> tuple[list[CandidateSpec], dict[str, Any]]:
+    if not specs:
+        return [], {
+            "schema_version": "torghut.whitepaper-autoresearch-selection.v1",
+            "selected_candidate_spec_ids": [],
+            "rows": [],
+        }
+    max_budget = max(1, int(max_candidates))
+    requested_budget = max(0, int(top_k)) + max(0, int(exploration_slots))
+    replay_budget = min(max_budget, max(1, int(portfolio_size_min), requested_budget))
+    ordered = sorted(
+        specs,
+        key=lambda item: (_pre_replay_candidate_score(item), item.candidate_spec_id),
+        reverse=True,
+    )
+    exploitation_count = min(max(0, int(top_k)), replay_budget, len(ordered))
+    exploitation = ordered[:exploitation_count]
+    remaining = [
+        item
+        for item in sorted(specs, key=lambda value: value.candidate_spec_id)
+        if item.candidate_spec_id
+        not in {spec.candidate_spec_id for spec in exploitation}
+    ]
+    exploration_count = min(
+        max(0, int(exploration_slots)),
+        replay_budget - len(exploitation),
+        len(remaining),
+    )
+    exploration = remaining[:exploration_count]
+    if len(exploitation) + len(exploration) < replay_budget:
+        selected_ids = {
+            item.candidate_spec_id for item in (*exploitation, *exploration)
+        }
+        backfill = [
+            item for item in ordered if item.candidate_spec_id not in selected_ids
+        ][: replay_budget - len(exploitation) - len(exploration)]
+    else:
+        backfill = []
+    selected_reason = {
+        item.candidate_spec_id: "exploitation" for item in exploitation
+    } | {item.candidate_spec_id: "exploration" for item in exploration}
+    selected_reason.update(
+        {item.candidate_spec_id: "budget_backfill" for item in backfill}
+    )
+    selected_ids = {
+        item.candidate_spec_id for item in (*exploitation, *exploration, *backfill)
+    }
+    selected = [item for item in specs if item.candidate_spec_id in selected_ids]
+    rows = [
+        {
+            "candidate_spec_id": spec.candidate_spec_id,
+            "family_template_id": spec.family_template_id,
+            "pre_replay_score": str(_pre_replay_candidate_score(spec)),
+            "rank": index,
+            "selected_for_replay": spec.candidate_spec_id in selected_ids,
+            "selection_reason": selected_reason.get(
+                spec.candidate_spec_id, "not_selected_budget"
+            ),
+            "selection_hash": _stable_hash(
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "score": str(_pre_replay_candidate_score(spec)),
+                    "selected": spec.candidate_spec_id in selected_ids,
+                }
+            ),
+        }
+        for index, spec in enumerate(ordered, start=1)
+    ]
+    return selected, {
+        "schema_version": "torghut.whitepaper-autoresearch-selection.v1",
+        "budget": {
+            "max_candidates": max_budget,
+            "top_k": max(0, int(top_k)),
+            "exploration_slots": max(0, int(exploration_slots)),
+            "portfolio_size_min": max(1, int(portfolio_size_min)),
+            "selected_count": len(selected),
+            "compiled_candidate_count": len(specs),
+        },
+        "selected_candidate_spec_ids": [item.candidate_spec_id for item in selected],
+        "rows": rows,
+    }
 
 
 def _synthetic_net_for_spec(spec: CandidateSpec, *, rank: int) -> Decimal:
@@ -756,15 +879,36 @@ def run_whitepaper_autoresearch_profit_target(
             reason="candidate_compiler_produced_no_executable_specs",
             started_at=started_at,
         )
+    replay_candidate_specs, candidate_selection = _select_candidate_specs_for_replay(
+        specs=candidate_specs,
+        top_k=int(args.top_k),
+        exploration_slots=int(args.exploration_slots),
+        max_candidates=int(args.max_candidates),
+        portfolio_size_min=int(args.portfolio_size_min),
+    )
+    _write_json(output_dir / "candidate-selection-manifest.json", candidate_selection)
+    selection_by_spec = {
+        str(row.get("candidate_spec_id")): row
+        for row in _list_of_mappings(candidate_selection.get("rows"))
+    }
     try:
         replay_result = (
             _run_synthetic_replay(
-                specs=candidate_specs,
+                specs=replay_candidate_specs,
                 output_dir=output_dir,
-                max_candidates=int(args.max_candidates),
+                max_candidates=len(replay_candidate_specs),
             )
             if args.replay_mode == "synthetic"
-            else _run_real_replay(args, output_dir=output_dir)
+            else _run_real_replay(
+                argparse.Namespace(
+                    **{
+                        **vars(args),
+                        "max_candidates": len(replay_candidate_specs),
+                        "top_k": min(int(args.top_k), len(replay_candidate_specs)),
+                    }
+                ),
+                output_dir=output_dir,
+            )
         )
     except Exception as exc:
         return _write_failure_summary(
@@ -775,7 +919,9 @@ def run_whitepaper_autoresearch_profit_target(
             started_at=started_at,
         )
     proposal_model, proposal_rows = _proposal_model_and_rows(
-        specs=candidate_specs, evidence_bundles=replay_result.evidence_bundles
+        specs=candidate_specs,
+        evidence_bundles=replay_result.evidence_bundles,
+        replay_selection_by_spec=selection_by_spec,
     )
     _write_json(output_dir / "mlx-ranker-model.json", proposal_model)
     _write_jsonl(output_dir / "mlx-proposal-scores.jsonl", proposal_rows)
@@ -828,6 +974,7 @@ def run_whitepaper_autoresearch_profit_target(
         "candidate_spec_count": len(candidate_specs),
         "candidate_compiler_blocker_count": len(compilation.blockers),
         "evidence_bundle_count": len(replay_result.evidence_bundles),
+        "replay_candidate_spec_count": len(replay_candidate_specs),
         "proposal_score_count": len(proposal_rows),
         "portfolio_candidate_count": len(portfolio_rows),
         "claim_count": sum(len(source.claims) for source in sources),
@@ -853,6 +1000,9 @@ def run_whitepaper_autoresearch_profit_target(
             "epoch_manifest": str(output_dir / "epoch-manifest.json"),
             "hypothesis_cards": str(output_dir / "hypothesis-cards.jsonl"),
             "candidate_specs": str(output_dir / "candidate-specs.jsonl"),
+            "candidate_selection_manifest": str(
+                output_dir / "candidate-selection-manifest.json"
+            ),
             "candidate_compiler_report": str(
                 output_dir / "candidate-compiler-report.json"
             ),
@@ -888,6 +1038,7 @@ def run_whitepaper_autoresearch_profit_target(
                 "max_candidates": int(args.max_candidates),
                 "top_k": int(args.top_k),
                 "exploration_slots": int(args.exploration_slots),
+                "replay_candidate_spec_count": len(replay_candidate_specs),
                 "portfolio_size_min": int(args.portfolio_size_min),
                 "portfolio_size_max": int(args.portfolio_size_max),
             },
