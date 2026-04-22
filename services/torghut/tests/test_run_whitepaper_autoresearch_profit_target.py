@@ -322,6 +322,32 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             {"pre_replay_mlx_rank"},
         )
 
+    def test_seed_recent_whitepapers_diversifies_exploitation_slots(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            args = self._args(output_dir)
+            args.top_k = 3
+            args.exploration_slots = 0
+            payload = runner.run_whitepaper_autoresearch_profit_target(args)
+
+            selection = json.loads(
+                (output_dir / "candidate-selection-manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+        self.assertEqual(payload["status"], "ok")
+        exploitation_rows = [
+            row
+            for row in selection["rows"]
+            if row["selected_for_replay"] and row["selection_reason"] == "exploitation"
+        ]
+        self.assertEqual(len(exploitation_rows), 3)
+        self.assertGreater(
+            len({row["family_template_id"] for row in exploitation_rows}),
+            1,
+        )
+
     def test_main_returns_nonzero_when_no_oracle_candidate_found(self) -> None:
         with (
             TemporaryDirectory() as tmpdir,
@@ -342,6 +368,11 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             summary = json.loads(
                 (output_dir / "summary.json").read_text(encoding="utf-8")
             )
+            remediation = json.loads(
+                (output_dir / "candidate-search-remediation.json").read_text(
+                    encoding="utf-8"
+                )
+            )
             portfolio_report_exists = (
                 output_dir / "portfolio-optimizer-report.json"
             ).exists()
@@ -356,6 +387,12 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "portfolio_post_cost_net_pnl_per_day_failed",
             summary["profit_target_oracle"]["blockers"],
         )
+        self.assertEqual(
+            remediation["schema_version"],
+            "torghut.whitepaper-autoresearch-remediation.v1",
+        )
+        self.assertTrue(remediation["next_actions"])
+        self.assertIn("candidate_search_remediation", summary["artifacts"])
         self.assertTrue(portfolio_report_exists)
 
     def test_seed_recent_whitepapers_persists_epoch_ledgers(self) -> None:
@@ -517,6 +554,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             partial_artifact_exists = (
                 Path(tmpdir) / "epoch" / "candidate-evidence-bundles.partial.jsonl"
             ).exists()
+            remediation_path = (
+                Path(tmpdir) / "epoch" / "candidate-search-remediation.json"
+            )
+            remediation_exists = remediation_path.exists()
+            remediation = json.loads(remediation_path.read_text(encoding="utf-8"))
+            notebook_exists = (
+                Path(tmpdir) / "epoch" / "whitepaper-autoresearch-diagnostics.ipynb"
+            ).exists()
             summary = json.loads(
                 (Path(tmpdir) / "epoch" / "error-summary.json").read_text(
                     encoding="utf-8"
@@ -527,6 +572,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(summary["status"], "replay_failed")
         self.assertEqual(summary["partial_evidence_bundle_count"], 1)
         self.assertTrue(partial_artifact_exists)
+        self.assertTrue(remediation_exists)
+        self.assertTrue(notebook_exists)
+        self.assertEqual(
+            remediation["schema_version"],
+            "torghut.whitepaper-autoresearch-remediation.v1",
+        )
+        self.assertTrue(remediation["next_actions"])
+        self.assertIn("candidate_search_remediation", summary)
 
     def test_train_ranker_script_main_writes_model_and_scores(self) -> None:
         with TemporaryDirectory() as tmpdir:
