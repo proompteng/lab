@@ -33,6 +33,7 @@ from app.trading.discovery.objectives import (
     build_scorecard,
     evaluate_vetoes,
 )
+from app.trading.discovery.portfolio_candidates import PortfolioCandidateSpec
 from app.trading.reporting import summarize_replay_profitability
 import scripts.local_intraday_tsmom_replay as replay_mod
 from scripts.search_consistent_profitability_frontier import (
@@ -175,13 +176,20 @@ def _runtime_run_context(*, root: Path, runner_run_id: str) -> dict[str, str]:
         "head": head,
         "artifact_path": str(root),
         "run_id": runner_run_id,
-        "design_doc": "docs/torghut/design-system/v6/70-torghut-mlx-autoresearch-and-apple-silicon-research-lane-2026-04-10.md",
+        "design_doc": "docs/torghut/design-system/v6/71-torghut-whitepaper-autoresearch-profit-target-strategy-factory-2026-04-21.md",
     }
 
 
-def _runtime_closure_policy() -> dict[str, Any]:
-    return {
+def _runtime_closure_policy(
+    *, best_candidate: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
+    portfolio_optimizer_evidence_required = bool(
+        _portfolio_optimizer_evidence(best_candidate) if best_candidate is not None else {}
+    )
+    policy = {
         "promotion_require_profitability_stage_manifest": True,
+        "promotion_require_portfolio_optimizer_evidence": portfolio_optimizer_evidence_required,
+        "promotion_portfolio_optimizer_evidence_artifact": "promotion/portfolio-optimizer-evidence.json",
         "promotion_require_alpha_readiness_contract": True,
         "promotion_require_jangar_dependency_quorum": True,
         "promotion_require_benchmark_parity": False,
@@ -200,6 +208,7 @@ def _runtime_closure_policy() -> dict[str, Any]:
         "rollback_require_human_approval": True,
         "rollback_dry_run_max_age_hours": 72,
     }
+    return policy
 
 
 @dataclass(frozen=True)
@@ -340,6 +349,115 @@ def _portfolio_payload(best_candidate: Mapping[str, Any]) -> dict[str, Any]:
         return direct
     replay_config = _mapping(best_candidate.get("replay_config"))
     return _mapping(replay_config.get("portfolio"))
+
+
+def _text_tuple(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(str(item) for item in cast(list[Any], value) if str(item).strip())
+
+
+def _portfolio_candidate_runtime_payload(portfolio: PortfolioCandidateSpec) -> dict[str, Any]:
+    payload = portfolio.to_payload()
+    objective_scorecard = _mapping(payload.get("objective_scorecard"))
+    return {
+        "candidate_id": portfolio.portfolio_candidate_id,
+        "portfolio_candidate_id": portfolio.portfolio_candidate_id,
+        "source_candidate_ids": list(portfolio.source_candidate_ids),
+        "family_template_id": "portfolio_whitepaper_autoresearch_v1",
+        "objective_scope": "research_only",
+        "objective_met": bool(objective_scorecard.get("target_met")),
+        "status": "keep",
+        "target_net_pnl_per_day": str(portfolio.target_net_pnl_per_day),
+        "net_pnl_per_day": _string(objective_scorecard.get("net_pnl_per_day")),
+        "active_day_ratio": _string(objective_scorecard.get("active_day_ratio")),
+        "positive_day_ratio": _string(objective_scorecard.get("positive_day_ratio")),
+        "best_day_share": _string(objective_scorecard.get("best_day_share")),
+        "worst_day_loss": _string(objective_scorecard.get("worst_day_loss")),
+        "max_drawdown": _string(objective_scorecard.get("max_drawdown")),
+        "objective_scorecard": objective_scorecard,
+        "optimizer_report": dict(portfolio.optimizer_report),
+        "capital_budget": dict(portfolio.capital_budget),
+        "correlation_budget": dict(portfolio.correlation_budget),
+        "drawdown_budget": dict(portfolio.drawdown_budget),
+        "evidence_refs": list(portfolio.evidence_refs),
+        "portfolio": {
+            "source_candidate_ids": list(portfolio.source_candidate_ids),
+            "target_net_pnl_per_day": str(portfolio.target_net_pnl_per_day),
+            "base_per_leg_notional": "50000",
+            "sleeves": [dict(item) for item in portfolio.sleeves],
+            "capital_budget": dict(portfolio.capital_budget),
+            "correlation_budget": dict(portfolio.correlation_budget),
+            "drawdown_budget": dict(portfolio.drawdown_budget),
+            "evidence_refs": list(portfolio.evidence_refs),
+        },
+        "promotion_status": "blocked_pending_runtime_parity",
+        "promotion_stage": "research_candidate",
+        "promotion_reason": "portfolio runtime closure requires parity, approval replay, and shadow validation",
+        "promotion_blockers": [
+            "scheduler_v3_parity_missing",
+            "scheduler_v3_approval_missing",
+            "shadow_validation_missing",
+        ],
+        "promotion_required_evidence": [
+            "portfolio_optimizer_evidence",
+            "scheduler_v3_parity_replay",
+            "scheduler_v3_approval_replay",
+            "live_shadow_validation",
+        ],
+    }
+
+
+def _runtime_best_candidate_payload(
+    best_candidate: Mapping[str, Any] | PortfolioCandidateSpec,
+) -> dict[str, Any]:
+    if isinstance(best_candidate, PortfolioCandidateSpec):
+        return _portfolio_candidate_runtime_payload(best_candidate)
+    return dict(best_candidate)
+
+
+def _portfolio_optimizer_evidence(
+    best_candidate: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    if best_candidate is None:
+        return {}
+    portfolio = _portfolio_payload(best_candidate)
+    optimizer_report = _mapping(best_candidate.get("optimizer_report"))
+    objective_scorecard = _mapping(best_candidate.get("objective_scorecard"))
+    if not portfolio and not optimizer_report:
+        return {}
+    source_candidate_ids = _text_tuple(best_candidate.get("source_candidate_ids"))
+    if not source_candidate_ids:
+        source_candidate_ids = _text_tuple(portfolio.get("source_candidate_ids"))
+    evidence_refs = _text_tuple(best_candidate.get("evidence_refs"))
+    if not evidence_refs:
+        evidence_refs = _text_tuple(portfolio.get("evidence_refs"))
+    sleeves = _list_of_mappings(portfolio.get("sleeves"))
+    return {
+        "schema_version": "torghut.portfolio-optimizer-evidence.v1",
+        "portfolio_candidate_id": _string(
+            best_candidate.get("portfolio_candidate_id")
+        )
+        or _string(best_candidate.get("candidate_id")),
+        "candidate_id": _string(best_candidate.get("candidate_id")),
+        "source_candidate_ids": list(source_candidate_ids),
+        "target_net_pnl_per_day": _string(
+            best_candidate.get("target_net_pnl_per_day")
+        )
+        or _string(portfolio.get("target_net_pnl_per_day")),
+        "sleeve_count": len(sleeves),
+        "evidence_refs": list(evidence_refs),
+        "objective_scorecard": objective_scorecard,
+        "optimizer_report": optimizer_report,
+        "capital_budget": _mapping(best_candidate.get("capital_budget"))
+        or _mapping(portfolio.get("capital_budget")),
+        "correlation_budget": _mapping(best_candidate.get("correlation_budget"))
+        or _mapping(portfolio.get("correlation_budget")),
+        "drawdown_budget": _mapping(best_candidate.get("drawdown_budget"))
+        or _mapping(portfolio.get("drawdown_budget")),
+        "target_met": bool(objective_scorecard.get("target_met")),
+        "oracle_passed": bool(objective_scorecard.get("oracle_passed")),
+    }
 
 
 def _portfolio_symbols(best_candidate: Mapping[str, Any]) -> tuple[str, ...]:
@@ -1049,6 +1167,7 @@ def _candidate_spec(
 ) -> dict[str, Any]:
     replay_config = _mapping(best_candidate.get("replay_config"))
     portfolio_promotion_v2 = _portfolio_promotion_v2(best_candidate)
+    portfolio_optimizer_evidence = _portfolio_optimizer_evidence(best_candidate)
     return {
         "schema_version": "torghut.runtime-closure-candidate-spec.v1",
         "candidate_id": _string(best_candidate.get("candidate_id")),
@@ -1129,6 +1248,11 @@ def _candidate_spec(
             ),
         },
         **(
+            {"portfolio_optimizer_evidence": portfolio_optimizer_evidence}
+            if portfolio_optimizer_evidence
+            else {}
+        ),
+        **(
             {"portfolio_promotion_v2": portfolio_promotion_v2}
             if portfolio_promotion_v2
             else {}
@@ -1172,6 +1296,7 @@ def _gate_report(
     parity_report: Mapping[str, Any] | None,
     approval_report: Mapping[str, Any] | None,
     shadow_plan: Mapping[str, Any],
+    portfolio_optimizer_evidence_ref: str | None = None,
 ) -> dict[str, Any]:
     runtime_family = _runtime_family(best_candidate) or "unknown"
     parity_pass = (
@@ -1188,6 +1313,7 @@ def _gate_report(
     shadow_status = _string(shadow_plan.get("status"))
     shadow_ready = shadow_status == "within_budget"
     portfolio_promotion_v2 = _portfolio_promotion_v2(best_candidate)
+    portfolio_optimizer_evidence = _portfolio_optimizer_evidence(best_candidate)
     promotion_reasons: list[str] = []
     if parity_report is None:
         promotion_reasons.append("research_candidate_pending_scheduler_v3_parity")
@@ -1275,7 +1401,25 @@ def _gate_report(
                 "gate_reasons": list(promotion_reasons),
                 "shadow_validation_status": shadow_status,
                 "rationale_text": "Runtime closure replays executed, but promotion stays blocked until parity, approval, and shadow requirements are satisfied.",
-            }
+            },
+            **(
+                {
+                    "portfolio_optimizer": {
+                        "artifact_ref": portfolio_optimizer_evidence_ref,
+                        "schema_version": portfolio_optimizer_evidence[
+                            "schema_version"
+                        ],
+                        "portfolio_candidate_id": portfolio_optimizer_evidence[
+                            "portfolio_candidate_id"
+                        ],
+                        "target_met": portfolio_optimizer_evidence["target_met"],
+                        "oracle_passed": portfolio_optimizer_evidence["oracle_passed"],
+                        "sleeve_count": portfolio_optimizer_evidence["sleeve_count"],
+                    }
+                }
+                if portfolio_optimizer_evidence
+                else {}
+            ),
         },
         "uncertainty_gate_action": "abstain",
         "coverage_error": (
@@ -1411,6 +1555,7 @@ def _profitability_stage_manifest(
     evaluation_report_path: Path,
     gate_report_path: Path,
     rollback_readiness_path: Path,
+    portfolio_optimizer_evidence_path: Path | None,
     parity_replay_path: Path | None,
     approval_replay_path: Path | None,
     shadow_validation_path: Path | None,
@@ -1454,6 +1599,13 @@ def _profitability_stage_manifest(
         artifact_hashes[str(shadow_validation_path.relative_to(root))] = _sha256_path(
             shadow_validation_path
         )
+    if (
+        portfolio_optimizer_evidence_path is not None
+        and portfolio_optimizer_evidence_path.exists()
+    ):
+        artifact_hashes[
+            str(portfolio_optimizer_evidence_path.relative_to(root))
+        ] = _sha256_path(portfolio_optimizer_evidence_path)
     payload = {
         "schema_version": "profitability-stage-manifest-v1",
         "candidate_id": candidate_id,
@@ -1472,6 +1624,17 @@ def _profitability_stage_manifest(
                     },
                     {"check": "walkforward_results_present", "status": "pass"},
                     {"check": "baseline_evaluation_report_present", "status": "pass"},
+                    *(
+                        [
+                            {
+                                "check": "portfolio_optimizer_evidence_present",
+                                "status": "pass",
+                            }
+                        ]
+                        if portfolio_optimizer_evidence_path is not None
+                        and portfolio_optimizer_evidence_path.exists()
+                        else []
+                    ),
                 ],
                 "artifacts": {
                     "candidate_spec": _artifact(
@@ -1493,6 +1656,18 @@ def _profitability_stage_manifest(
                         evaluation_report_path,
                         stage="research",
                         check="baseline_evaluation_report_present",
+                    ),
+                    **(
+                        {
+                            "portfolio_optimizer_evidence": _artifact(
+                                portfolio_optimizer_evidence_path,
+                                stage="research",
+                                check="portfolio_optimizer_evidence_present",
+                            )
+                        }
+                        if portfolio_optimizer_evidence_path is not None
+                        and portfolio_optimizer_evidence_path.exists()
+                        else {}
                     ),
                 },
                 "owner": "autoresearch-loop",
@@ -1676,6 +1851,7 @@ class RuntimeClosureBundleSummary:
     rollback_readiness_artifact_path: str
     rollback_readiness_evaluation_path: str
     policy_path: str
+    portfolio_optimizer_evidence_path: str
     profitability_stage_manifest_path: str
     promotion_prerequisites_path: str
     replay_plan_path: str
@@ -1701,6 +1877,7 @@ class RuntimeClosureBundleSummary:
             "rollback_readiness_artifact_path": self.rollback_readiness_artifact_path,
             "rollback_readiness_evaluation_path": self.rollback_readiness_evaluation_path,
             "policy_path": self.policy_path,
+            "portfolio_optimizer_evidence_path": self.portfolio_optimizer_evidence_path,
             "profitability_stage_manifest_path": self.profitability_stage_manifest_path,
             "promotion_prerequisites_path": self.promotion_prerequisites_path,
             "replay_plan_path": self.replay_plan_path,
@@ -1715,7 +1892,7 @@ def write_runtime_closure_bundle(
     run_root: Path,
     runner_run_id: str,
     program: StrategyAutoresearchProgram,
-    best_candidate: Mapping[str, Any] | None,
+    best_candidate: Mapping[str, Any] | PortfolioCandidateSpec | None,
     manifest: MlxSnapshotManifest,
     execution_context: RuntimeClosureExecutionContext | None = None,
     replay_executor: Any | None = None,
@@ -1739,6 +1916,7 @@ def write_runtime_closure_bundle(
             rollback_readiness_artifact_path="",
             rollback_readiness_evaluation_path="",
             policy_path="",
+            portfolio_optimizer_evidence_path="",
             profitability_stage_manifest_path="",
             promotion_prerequisites_path="",
             replay_plan_path="",
@@ -1749,6 +1927,7 @@ def write_runtime_closure_bundle(
         _write_json(closure_root / "summary.json", summary.to_payload())
         return summary
 
+    best_candidate = _runtime_best_candidate_payload(best_candidate)
     candidate_id = _string(best_candidate.get("candidate_id"))
     candidate_spec_path = closure_root / "research" / "candidate-spec.json"
     candidate_generation_manifest_path = (
@@ -1769,6 +1948,9 @@ def write_runtime_closure_bundle(
         closure_root / "promotion" / "rollback-readiness-evaluation.json"
     )
     policy_path = closure_root / "promotion" / "policy.json"
+    portfolio_optimizer_evidence_path = (
+        closure_root / "promotion" / "portfolio-optimizer-evidence.json"
+    )
     profitability_stage_manifest_path = (
         closure_root / "profitability" / "profitability-stage-manifest-v1.json"
     )
@@ -1791,11 +1973,14 @@ def write_runtime_closure_bundle(
         best_candidate=best_candidate,
         manifest=manifest,
     )
-    policy_payload = _runtime_closure_policy()
+    portfolio_optimizer_evidence = _portfolio_optimizer_evidence(best_candidate)
+    policy_payload = _runtime_closure_policy(best_candidate=best_candidate)
 
     _write_json(candidate_spec_path, candidate_spec)
     _write_json(candidate_generation_manifest_path, candidate_generation_manifest)
     _write_json(policy_path, policy_payload)
+    if portfolio_optimizer_evidence:
+        _write_json(portfolio_optimizer_evidence_path, portfolio_optimizer_evidence)
 
     replay_plan = {
         "schema_version": "torghut.runtime-closure-replay-plan.v1",
@@ -1884,6 +2069,11 @@ def write_runtime_closure_bundle(
         parity_report=parity_report,
         approval_report=approval_report,
         shadow_plan=shadow_plan,
+        portfolio_optimizer_evidence_ref=(
+            str(portfolio_optimizer_evidence_path.relative_to(closure_root))
+            if portfolio_optimizer_evidence
+            else None
+        ),
     )
     _write_json(gate_report_path, gate_report)
     candidate_state = _candidate_state(
@@ -1927,6 +2117,9 @@ def write_runtime_closure_bundle(
         evaluation_report_path=evaluation_report_path,
         gate_report_path=gate_report_path,
         rollback_readiness_path=rollback_readiness_artifact_path,
+        portfolio_optimizer_evidence_path=portfolio_optimizer_evidence_path
+        if portfolio_optimizer_evidence_path.exists()
+        else None,
         parity_replay_path=parity_replay_path if parity_replay_path.exists() else None,
         approval_replay_path=approval_replay_path
         if approval_replay_path.exists()
@@ -1988,6 +2181,9 @@ def write_runtime_closure_bundle(
         rollback_readiness_artifact_path=str(rollback_readiness_artifact_path),
         rollback_readiness_evaluation_path=str(rollback_readiness_evaluation_path),
         policy_path=str(policy_path),
+        portfolio_optimizer_evidence_path=str(portfolio_optimizer_evidence_path)
+        if portfolio_optimizer_evidence_path.exists()
+        else "",
         profitability_stage_manifest_path=str(profitability_stage_manifest_path),
         promotion_prerequisites_path=str(promotion_prerequisites_path),
         replay_plan_path=str(replay_plan_path),

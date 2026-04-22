@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import signal
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -29,6 +30,7 @@ from app.trading.discovery.autoresearch import (
     run_id,
 )
 from app.trading.discovery.candidate_specs import CandidateSpec
+from app.trading.discovery.candidate_specs import candidate_spec_id_for_payload
 from app.trading.discovery.evidence_bundles import (
     CandidateEvidenceBundle,
     evidence_bundle_from_frontier_candidate,
@@ -38,11 +40,16 @@ from app.trading.discovery.mlx_snapshot import build_mlx_snapshot_manifest
 from app.trading.discovery.mlx_snapshot import MlxSnapshotManifest
 from app.trading.discovery.mlx_snapshot import write_mlx_snapshot_manifest
 from app.trading.discovery.mlx_training_data import build_mlx_training_rows
-from app.trading.discovery.mlx_training_data import rank_training_rows, train_mlx_ranker
+from app.trading.discovery.mlx_training_data import (
+    rank_training_rows,
+    rank_training_rows_with_lift_policy,
+    train_mlx_ranker,
+)
 from app.trading.discovery.portfolio_optimizer import (
     PortfolioCandidateSpec,
     optimize_portfolio_candidate,
 )
+from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy
 from app.trading.discovery.runtime_closure import (
     RuntimeClosureExecutionContext,
     write_runtime_closure_bundle,
@@ -58,6 +65,7 @@ from app.whitepapers.claim_compiler import (
     RECENT_WHITEPAPER_SEEDS,
     WhitepaperResearchSource,
     compile_sources_to_hypothesis_cards,
+    sources_from_jsonl,
 )
 
 import scripts.run_strategy_factory_v2 as strategy_factory_runner
@@ -70,6 +78,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--paper-run-id", action="append", default=[])
     parser.add_argument("--seed-recent-whitepapers", action="store_true")
+    parser.add_argument(
+        "--source-jsonl",
+        action="append",
+        default=[],
+        type=Path,
+        help="JSONL file of normalized WhitepaperResearchSource payloads.",
+    )
     parser.add_argument("--target-net-pnl-per-day", default="500")
     parser.add_argument("--max-candidates", type=int, default=64)
     parser.add_argument("--top-k", type=int, default=16)
@@ -109,6 +124,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--chunk-minutes", type=int, default=10)
     parser.add_argument("--symbols", default="AAPL,NVDA,MSFT,AMAT")
     parser.add_argument("--progress-log-seconds", type=int, default=30)
+    parser.add_argument("--max-frontier-candidates-per-spec", type=int, default=64)
+    parser.add_argument("--real-replay-timeout-seconds", type=int, default=0)
     parser.add_argument("--train-days", type=int, default=6)
     parser.add_argument("--holdout-days", type=int, default=3)
     parser.add_argument("--full-window-start-date", default="")
@@ -116,6 +133,20 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--expected-last-trading-day", default="")
     parser.add_argument("--allow-stale-tape", action="store_true")
     parser.add_argument("--prefetch-full-window-rows", action="store_true")
+    parser.add_argument("--min-active-day-ratio", default="0.90")
+    parser.add_argument("--min-positive-day-ratio", default="0.60")
+    parser.add_argument("--max-worst-day-loss", default="350")
+    parser.add_argument("--max-drawdown", default="900")
+    parser.add_argument("--max-best-day-share", default="0.25")
+    parser.add_argument("--max-cluster-contribution-share", default="0.40")
+    parser.add_argument("--max-single-symbol-contribution-share", default="0.35")
+    parser.add_argument("--min-avg-filled-notional-per-day", default="300000")
+    parser.add_argument("--min-regime-slice-pass-rate", default="0.45")
+    parser.add_argument(
+        "--require-no-flat-days",
+        action="store_true",
+        help="Require every evaluated trading day to be active and positive at portfolio oracle time.",
+    )
     parser.add_argument(
         "--persist-results", dest="persist_results", action="store_true"
     )
@@ -166,6 +197,7 @@ def _write_failure_summary(
     status: str,
     reason: str,
     started_at: datetime,
+    extra: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     summary = {
         "status": status,
@@ -175,6 +207,8 @@ def _write_failure_summary(
         "started_at": started_at.isoformat(),
         "completed_at": datetime.now(UTC).isoformat(),
     }
+    if extra:
+        summary.update(dict(extra))
     _write_json(output_dir / "error-summary.json", summary)
     _write_json(output_dir / "summary.json", summary)
     return summary
@@ -226,6 +260,94 @@ def _proposal_sort_value(value: Any) -> float:
         return 0.0
 
 
+def _oracle_policy_from_args(args: argparse.Namespace) -> ProfitTargetOraclePolicy:
+    min_active_day_ratio = _decimal(
+        getattr(args, "min_active_day_ratio", "0.90"), default="0.90"
+    )
+    min_positive_day_ratio = _decimal(
+        getattr(args, "min_positive_day_ratio", "0.60"), default="0.60"
+    )
+    max_worst_day_loss = _decimal(
+        getattr(args, "max_worst_day_loss", "350"), default="350"
+    )
+    max_drawdown = _decimal(getattr(args, "max_drawdown", "900"), default="900")
+    if bool(getattr(args, "require_no_flat_days", False)):
+        min_active_day_ratio = max(min_active_day_ratio, Decimal("1"))
+        min_positive_day_ratio = max(min_positive_day_ratio, Decimal("1"))
+        max_worst_day_loss = min(max_worst_day_loss, Decimal("0"))
+        max_drawdown = min(max_drawdown, Decimal("0"))
+    return ProfitTargetOraclePolicy(
+        min_active_day_ratio=min_active_day_ratio,
+        min_positive_day_ratio=min_positive_day_ratio,
+        max_worst_day_loss=max_worst_day_loss,
+        max_drawdown=max_drawdown,
+        max_best_day_share=_decimal(
+            getattr(args, "max_best_day_share", "0.25"), default="0.25"
+        ),
+        max_cluster_contribution_share=_decimal(
+            getattr(args, "max_cluster_contribution_share", "0.40"), default="0.40"
+        ),
+        max_single_symbol_contribution_share=_decimal(
+            getattr(args, "max_single_symbol_contribution_share", "0.35"),
+            default="0.35",
+        ),
+        min_avg_filled_notional_per_day=_decimal(
+            getattr(args, "min_avg_filled_notional_per_day", "300000"),
+            default="300000",
+        ),
+        min_regime_slice_pass_rate=_decimal(
+            getattr(args, "min_regime_slice_pass_rate", "0.45"), default="0.45"
+        ),
+    )
+
+
+def _candidate_spec_with_oracle_policy(
+    spec: CandidateSpec, *, oracle_policy: ProfitTargetOraclePolicy
+) -> CandidateSpec:
+    objective = {
+        **dict(spec.objective),
+        "require_positive_day_ratio": str(oracle_policy.min_positive_day_ratio),
+    }
+    hard_vetoes = {
+        **dict(spec.hard_vetoes),
+        "required_min_active_day_ratio": str(oracle_policy.min_active_day_ratio),
+        "required_min_daily_notional": str(
+            oracle_policy.min_avg_filled_notional_per_day
+        ),
+        "required_max_best_day_share": str(oracle_policy.max_best_day_share),
+        "required_max_worst_day_loss": str(oracle_policy.max_worst_day_loss),
+        "required_max_drawdown": str(oracle_policy.max_drawdown),
+        "required_min_regime_slice_pass_rate": str(
+            oracle_policy.min_regime_slice_pass_rate
+        ),
+    }
+    base_payload = {
+        "hypothesis_id": spec.hypothesis_id,
+        "family_template_id": spec.family_template_id,
+        "feature_contract": dict(spec.feature_contract),
+        "objective": objective,
+    }
+    return replace(
+        spec,
+        candidate_spec_id=candidate_spec_id_for_payload(base_payload),
+        objective=objective,
+        hard_vetoes=hard_vetoes,
+        promotion_contract={
+            **dict(spec.promotion_contract),
+            "profit_target_oracle_policy": oracle_policy.to_payload(),
+        },
+    )
+
+
+def _candidate_specs_with_oracle_policy(
+    specs: Sequence[CandidateSpec], *, oracle_policy: ProfitTargetOraclePolicy
+) -> list[CandidateSpec]:
+    return [
+        _candidate_spec_with_oracle_policy(spec, oracle_policy=oracle_policy)
+        for spec in specs
+    ]
+
+
 def _load_sources_from_db(
     paper_run_ids: Sequence[str],
 ) -> list[WhitepaperResearchSource]:
@@ -235,7 +357,8 @@ def _load_sources_from_db(
     with SessionLocal() as session:
         rows = session.execute(
             select(WhitepaperAnalysisRun).where(
-                WhitepaperAnalysisRun.run_id.in_(sorted(run_id_set))
+                WhitepaperAnalysisRun.run_id.in_(sorted(run_id_set)),
+                WhitepaperAnalysisRun.status == "completed",
             )
         ).scalars()
         sources: list[WhitepaperResearchSource] = []
@@ -408,10 +531,21 @@ def _proposal_model_and_rows(
         candidate_specs=specs, evidence_bundles=evidence_bundles
     )
     model = train_mlx_ranker(training_rows, backend_preference="mlx")
-    ranked_rows = rank_training_rows(model=model, rows=training_rows)
     feature_by_spec = {
         row.candidate_spec_id: row.to_payload()["features"] for row in training_rows
     }
+    net_by_spec = {
+        bundle.candidate_spec_id: float(
+            _decimal(bundle.objective_scorecard.get("net_pnl_per_day"))
+        )
+        for bundle in evidence_bundles
+    }
+    policy_result = rank_training_rows_with_lift_policy(
+        model=model,
+        rows=training_rows,
+        metric_name="net_pnl_per_day",
+        outcome_by_spec=net_by_spec,
+    )
     proposal_rows = [
         {
             "candidate_spec_id": item.candidate_spec_id,
@@ -419,7 +553,7 @@ def _proposal_model_and_rows(
             "rank": item.rank,
             "backend": item.backend,
             "model_id": item.model_id,
-            "selection_reason": "exploitation",
+            "selection_reason": policy_result.selection_reason,
             "replay_selection_reason": _mapping(
                 replay_selection_by_spec.get(item.candidate_spec_id)
                 if replay_selection_by_spec is not None
@@ -435,72 +569,58 @@ def _proposal_model_and_rows(
             "feature_hash": item.feature_hash,
             "features": feature_by_spec.get(item.candidate_spec_id, {}),
         }
-        for item in ranked_rows
+        for item in policy_result.ranked_rows
     ]
-    net_by_spec = {
-        bundle.candidate_spec_id: _decimal(
-            bundle.objective_scorecard.get("net_pnl_per_day")
-        )
-        for bundle in evidence_bundles
-    }
-    ranked_nets = [
-        net_by_spec.get(str(row["candidate_spec_id"]), Decimal("0"))
-        for row in proposal_rows
-    ]
-    split_index = max(1, len(ranked_nets) // 2)
-    top_bucket = ranked_nets[:split_index]
-    bottom_bucket = ranked_nets[split_index:] or [Decimal("0")]
-    top_mean = sum(top_bucket, Decimal("0")) / Decimal(len(top_bucket))
-    bottom_mean = sum(bottom_bucket, Decimal("0")) / Decimal(len(bottom_bucket))
-    lift = top_mean - bottom_mean
     model_payload = {
         **model.to_payload(),
-        "rank_bucket_lift": {
-            "top_bucket_mean_net_pnl_per_day": str(top_mean),
-            "bottom_bucket_mean_net_pnl_per_day": str(bottom_mean),
-            "lift_net_pnl_per_day": str(lift),
-        },
-        "model_status": "active" if lift >= 0 else "demoted_to_heuristic",
+        "rank_bucket_lift": policy_result.rank_bucket_lift.to_payload(),
+        "model_status": policy_result.model_status,
     }
-    if lift < 0:
-        proposal_rows = sorted(
-            proposal_rows,
-            key=lambda row: (
-                _decimal(row.get("features", {}).get("history_net_pnl_per_day")),
-                str(row.get("candidate_spec_id") or ""),
-            ),
-            reverse=True,
-        )
-        proposal_rows = [
-            {
-                **row,
-                "rank": index,
-                "selection_reason": "heuristic_negative_lift_fallback",
-            }
-            for index, row in enumerate(proposal_rows, start=1)
-        ]
     return model_payload, proposal_rows
 
 
-def _candidate_quality_gate_failures(scorecard: Mapping[str, Any]) -> list[str]:
+def _candidate_quality_gate_failures(
+    scorecard: Mapping[str, Any], *, oracle_policy: ProfitTargetOraclePolicy
+) -> list[str]:
     failures: list[str] = []
     if _decimal(scorecard.get("net_pnl_per_day")) <= 0:
         failures.append("non_positive_net_pnl_per_day")
-    if _decimal(scorecard.get("active_day_ratio")) < Decimal("0.90"):
+    if _decimal(scorecard.get("active_day_ratio")) < oracle_policy.min_active_day_ratio:
         failures.append("active_day_ratio_below_oracle")
-    if _decimal(scorecard.get("positive_day_ratio")) < Decimal("0.60"):
+    if (
+        _decimal(scorecard.get("positive_day_ratio"))
+        < oracle_policy.min_positive_day_ratio
+    ):
         failures.append("positive_day_ratio_below_oracle")
-    if _decimal(scorecard.get("best_day_share"), default="1") > Decimal("0.25"):
+    if (
+        _decimal(scorecard.get("best_day_share"), default="1")
+        > oracle_policy.max_best_day_share
+    ):
         failures.append("best_day_share_above_oracle")
-    if _decimal(scorecard.get("worst_day_loss"), default="999999") > Decimal("350"):
+    if (
+        _decimal(scorecard.get("worst_day_loss"), default="999999")
+        > oracle_policy.max_worst_day_loss
+    ):
         failures.append("worst_day_loss_above_oracle")
-    if _decimal(scorecard.get("max_drawdown"), default="999999") > Decimal("900"):
+    if (
+        _decimal(scorecard.get("max_drawdown"), default="999999")
+        > oracle_policy.max_drawdown
+    ):
         failures.append("max_drawdown_above_oracle")
-    if _decimal(scorecard.get("avg_filled_notional_per_day")) < Decimal("300000"):
+    if (
+        _decimal(scorecard.get("avg_filled_notional_per_day"))
+        < oracle_policy.min_avg_filled_notional_per_day
+    ):
         failures.append("avg_filled_notional_per_day_below_oracle")
-    if _decimal(scorecard.get("regime_slice_pass_rate")) < Decimal("0.45"):
+    if (
+        _decimal(scorecard.get("regime_slice_pass_rate"))
+        < oracle_policy.min_regime_slice_pass_rate
+    ):
         failures.append("regime_slice_pass_rate_below_oracle")
-    if _decimal(scorecard.get("posterior_edge_lower")) <= 0:
+    if (
+        _decimal(scorecard.get("posterior_edge_lower"))
+        <= oracle_policy.min_posterior_edge_lower
+    ):
         failures.append("posterior_edge_lower_non_positive")
     if _string(scorecard.get("shadow_parity_status")) != "within_budget":
         failures.append("shadow_parity_status_not_within_budget")
@@ -511,6 +631,7 @@ def _false_positive_table(
     *,
     proposal_rows: Sequence[Mapping[str, Any]],
     evidence_bundles: Sequence[CandidateEvidenceBundle],
+    oracle_policy: ProfitTargetOraclePolicy,
     limit: int = 16,
 ) -> list[dict[str, Any]]:
     evidence_by_spec = {bundle.candidate_spec_id: bundle for bundle in evidence_bundles}
@@ -537,7 +658,9 @@ def _false_positive_table(
             )
             continue
         scorecard = evidence.objective_scorecard
-        failure_reasons = _candidate_quality_gate_failures(scorecard)
+        failure_reasons = _candidate_quality_gate_failures(
+            scorecard, oracle_policy=oracle_policy
+        )
         if not failure_reasons:
             continue
         rows.append(
@@ -756,7 +879,11 @@ def _select_candidate_specs_for_replay(
         1 if model_confidence["confidence"] == "low" else 0
     )
     requested_budget = max(0, int(top_k)) + effective_exploration_slots
-    replay_budget = min(max_budget, max(1, int(portfolio_size_min), requested_budget))
+    diversification_floor = min(len(specs), 3)
+    replay_budget = min(
+        max_budget,
+        max(1, int(portfolio_size_min), requested_budget, diversification_floor),
+    )
     ranked_ids = [
         str(row.get("candidate_spec_id"))
         for row in sorted(
@@ -780,9 +907,43 @@ def _select_candidate_specs_for_replay(
         spec_by_id[candidate_spec_id]
         for candidate_spec_id in ranked_ids[:exploitation_count]
     ]
+
+    def spec_source_run_id(spec: CandidateSpec) -> str:
+        return _string(spec.feature_contract.get("source_run_id")) or spec.hypothesis_id
+
+    def diversity_key(
+        spec: CandidateSpec, selected_so_far: Sequence[CandidateSpec]
+    ) -> tuple[bool, bool, int, str]:
+        selected_families = {item.family_template_id for item in selected_so_far}
+        selected_sources = {spec_source_run_id(item) for item in selected_so_far}
+        family_selection = _mapping(spec.feature_contract.get("family_selection"))
+        return (
+            spec.family_template_id in selected_families,
+            spec_source_run_id(spec) in selected_sources,
+            int(family_selection.get("rank") or 10**6),
+            spec.candidate_spec_id,
+        )
+
+    def take_diverse(
+        candidates: Sequence[CandidateSpec],
+        *,
+        count: int,
+        selected_so_far: Sequence[CandidateSpec],
+    ) -> list[CandidateSpec]:
+        pool = list(candidates)
+        picked: list[CandidateSpec] = []
+        while pool and len(picked) < count:
+            best = min(
+                pool,
+                key=lambda spec: diversity_key(spec, [*selected_so_far, *picked]),
+            )
+            picked.append(best)
+            pool.remove(best)
+        return picked
+
     remaining = [
         item
-        for item in sorted(specs, key=lambda value: value.candidate_spec_id)
+        for item in sorted(specs, key=lambda spec: diversity_key(spec, exploitation))
         if item.candidate_spec_id
         not in {spec.candidate_spec_id for spec in exploitation}
     ]
@@ -791,14 +952,23 @@ def _select_candidate_specs_for_replay(
         replay_budget - len(exploitation),
         len(remaining),
     )
-    exploration = remaining[:exploration_count]
+    exploration = take_diverse(
+        remaining,
+        count=exploration_count,
+        selected_so_far=exploitation,
+    )
     if len(exploitation) + len(exploration) < replay_budget:
         selected_ids = {
             item.candidate_spec_id for item in (*exploitation, *exploration)
         }
-        backfill = [
+        backfill_candidates = [
             item for item in ordered if item.candidate_spec_id not in selected_ids
-        ][: replay_budget - len(exploitation) - len(exploration)]
+        ]
+        backfill = take_diverse(
+            backfill_candidates,
+            count=replay_budget - len(exploitation) - len(exploration),
+            selected_so_far=[*exploitation, *exploration],
+        )
     else:
         backfill = []
     selected_reason = {
@@ -988,35 +1158,64 @@ def _run_synthetic_replay(
 
 
 def _run_real_replay(
-    args: argparse.Namespace, *, output_dir: Path
+    args: argparse.Namespace,
+    *,
+    output_dir: Path,
+    specs: Sequence[CandidateSpec] = (),
 ) -> EpochReplayResult:
-    factory_payload = strategy_factory_runner.run_strategy_factory_v2(
-        argparse.Namespace(
-            output_dir=output_dir / "strategy-factory",
-            experiment_id=[],
-            paper_run_id=args.paper_run_id,
-            limit=max(1, int(args.max_candidates)),
-            strategy_configmap=args.strategy_configmap,
-            family_template_dir=args.family_template_dir,
-            seed_sweep_dir=args.seed_sweep_dir,
-            clickhouse_http_url=args.clickhouse_http_url,
-            clickhouse_username=args.clickhouse_username,
-            clickhouse_password=args.clickhouse_password,
-            start_equity=args.start_equity,
-            chunk_minutes=args.chunk_minutes,
-            symbols=args.symbols,
-            progress_log_seconds=args.progress_log_seconds,
-            train_days=args.train_days,
-            holdout_days=args.holdout_days,
-            full_window_start_date=args.full_window_start_date,
-            full_window_end_date=args.full_window_end_date,
-            expected_last_trading_day=args.expected_last_trading_day,
-            allow_stale_tape=args.allow_stale_tape,
-            prefetch_full_window_rows=args.prefetch_full_window_rows,
-            top_n=args.top_k,
-            persist_results=args.persist_results,
+    source_specs = [
+        strategy_factory_runner.InMemoryExperimentSpec(
+            run_id=_string(spec.feature_contract.get("source_run_id"))
+            or "whitepaper-autoresearch",
+            experiment_id=f"{spec.candidate_spec_id}-exp",
+            payload_json=spec.to_vnext_experiment_payload(
+                experiment_id=f"{spec.candidate_spec_id}-exp"
+            ),
         )
+        for spec in specs
+    ]
+    factory_args = argparse.Namespace(
+        output_dir=output_dir / "strategy-factory",
+        experiment_id=[],
+        paper_run_id=args.paper_run_id,
+        limit=max(1, int(args.max_candidates)),
+        strategy_configmap=_resolve_existing_path(args.strategy_configmap),
+        family_template_dir=_resolve_existing_path(args.family_template_dir),
+        seed_sweep_dir=_resolve_existing_path(args.seed_sweep_dir),
+        clickhouse_http_url=args.clickhouse_http_url,
+        clickhouse_username=args.clickhouse_username,
+        clickhouse_password=args.clickhouse_password,
+        start_equity=args.start_equity,
+        chunk_minutes=args.chunk_minutes,
+        symbols=args.symbols,
+        progress_log_seconds=args.progress_log_seconds,
+        train_days=args.train_days,
+        holdout_days=args.holdout_days,
+        full_window_start_date=args.full_window_start_date,
+        full_window_end_date=args.full_window_end_date,
+        expected_last_trading_day=args.expected_last_trading_day,
+        allow_stale_tape=args.allow_stale_tape,
+        prefetch_full_window_rows=args.prefetch_full_window_rows,
+        top_n=args.top_k,
+        max_candidates_to_evaluate=getattr(
+            args, "max_frontier_candidates_per_spec", 64
+        ),
+        persist_results=args.persist_results,
     )
+    factory_payload = (
+        strategy_factory_runner.run_strategy_factory_v2_from_specs(
+            factory_args,
+            source_specs=source_specs,
+        )
+        if source_specs
+        else strategy_factory_runner.run_strategy_factory_v2(factory_args)
+    )
+    return _real_replay_result_from_factory_payload(factory_payload)
+
+
+def _real_replay_result_from_factory_payload(
+    factory_payload: Mapping[str, Any],
+) -> EpochReplayResult:
     evidence_bundles: list[CandidateEvidenceBundle] = []
     for item in _list_of_mappings(factory_payload.get("experiments")):
         result_path = str(item.get("result_path") or "")
@@ -1027,12 +1226,16 @@ def _run_real_replay(
         if not top:
             continue
         candidate = dict(top[0])
+        candidate_spec_id = _string(item.get("candidate_spec_id")) or _string(
+            candidate.get("candidate_spec_id")
+        )
+        if candidate_spec_id:
+            candidate["candidate_spec_id"] = candidate_spec_id
         candidate["promotion_readiness"] = item.get("promotion_readiness")
         evidence_bundles.append(
             evidence_bundle_from_frontier_candidate(
-                candidate_spec_id=str(
-                    item.get("experiment_id") or item.get("top_candidate_id") or ""
-                ),
+                candidate_spec_id=candidate_spec_id
+                or str(item.get("experiment_id") or item.get("top_candidate_id") or ""),
                 candidate=candidate,
                 dataset_snapshot_id=str(item.get("dataset_snapshot_id") or ""),
                 result_path=result_path,
@@ -1041,6 +1244,98 @@ def _run_real_replay(
     return EpochReplayResult(
         evidence_bundles=tuple(evidence_bundles), replay_results=(factory_payload,)
     )
+
+
+def _candidate_spec_id_from_experiment_result_path(path: Path) -> str:
+    name = path.parent.name
+    return name[:-4] if name.endswith("-exp") else name
+
+
+def _collect_partial_real_replay(
+    *,
+    output_dir: Path,
+    specs: Sequence[CandidateSpec],
+) -> EpochReplayResult:
+    strategy_factory_root = output_dir / "strategy-factory"
+    if not strategy_factory_root.exists():
+        return EpochReplayResult(evidence_bundles=(), replay_results=())
+    spec_by_id = {spec.candidate_spec_id: spec for spec in specs}
+    experiments: list[dict[str, Any]] = []
+    for result_path in sorted(strategy_factory_root.glob("*/result.json")):
+        try:
+            result_payload = json.loads(result_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        top = _list_of_mappings(result_payload.get("top"))
+        if not top:
+            continue
+        top_candidate = top[0]
+        candidate_spec_id = _string(
+            top_candidate.get("candidate_spec_id")
+        ) or _candidate_spec_id_from_experiment_result_path(result_path)
+        spec = spec_by_id.get(candidate_spec_id)
+        dataset_snapshot = _mapping(result_payload.get("dataset_snapshot_receipt"))
+        experiments.append(
+            {
+                "source_run_id": _string(spec.feature_contract.get("source_run_id"))
+                if spec is not None
+                else "",
+                "experiment_id": result_path.parent.name,
+                "candidate_spec_id": candidate_spec_id,
+                "family_template_id": _string(top_candidate.get("family_template_id"))
+                or (spec.family_template_id if spec is not None else ""),
+                "result_path": str(result_path),
+                "dataset_snapshot_id": str(dataset_snapshot.get("snapshot_id") or ""),
+                "top_candidate_id": _string(top_candidate.get("candidate_id")),
+                "promotion_readiness": {
+                    "stage": "research_candidate",
+                    "status": "partial_replay_interrupted",
+                    "promotable": False,
+                    "blockers": ["real_replay_interrupted_before_epoch_summary"],
+                },
+            }
+        )
+    if not experiments:
+        return EpochReplayResult(evidence_bundles=(), replay_results=())
+    return _real_replay_result_from_factory_payload(
+        {
+            "status": "partial_replay_artifacts_collected",
+            "count": len(experiments),
+            "experiments": experiments,
+        }
+    )
+
+
+def _run_replay_with_optional_timeout(
+    *,
+    args: argparse.Namespace,
+    output_dir: Path,
+    specs: Sequence[CandidateSpec],
+) -> EpochReplayResult:
+    timeout_seconds = max(0, int(getattr(args, "real_replay_timeout_seconds", 0) or 0))
+    if args.replay_mode == "synthetic" or timeout_seconds <= 0:
+        return (
+            _run_synthetic_replay(
+                specs=specs,
+                output_dir=output_dir,
+                max_candidates=len(specs),
+            )
+            if args.replay_mode == "synthetic"
+            else _run_real_replay(args, output_dir=output_dir, specs=specs)
+        )
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+
+    def _timeout_handler(_signum: int, _frame: Any) -> None:
+        raise TimeoutError(f"real_replay_timeout_seconds:{timeout_seconds}")
+
+    signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(timeout_seconds)
+    try:
+        return _run_real_replay(args, output_dir=output_dir, specs=specs)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous_handler)
 
 
 def _load_epoch_program(args: argparse.Namespace) -> StrategyAutoresearchProgram:
@@ -1138,32 +1433,11 @@ def _runtime_closure_payload(
         ),
         progress_log_interval_seconds=int(args.progress_log_seconds),
     )
-    best_candidate = None
-    if portfolio is not None:
-        best_candidate = {
-            "candidate_id": portfolio.portfolio_candidate_id,
-            "family_template_id": "portfolio_whitepaper_autoresearch_v1",
-            "objective_scorecard": dict(portfolio.objective_scorecard),
-            "portfolio": {
-                "base_per_leg_notional": "50000",
-                "sleeves": [dict(item) for item in portfolio.sleeves],
-            },
-            "promotion_status": "blocked_pending_runtime_parity",
-            "promotion_stage": "research_candidate",
-            "promotion_blockers": [
-                "scheduler_v3_parity_missing",
-                "shadow_validation_missing",
-            ],
-            "promotion_required_evidence": [
-                "scheduler_v3_parity_replay",
-                "shadow_validation",
-            ],
-        }
     return write_runtime_closure_bundle(
         run_root=output_dir,
         runner_run_id=epoch_id,
         program=program,
-        best_candidate=best_candidate,
+        best_candidate=portfolio,
         manifest=manifest,
         execution_context=execution_context if portfolio is not None else None,
     ).to_payload()
@@ -1177,9 +1451,12 @@ def run_whitepaper_autoresearch_profit_target(
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     target = _decimal(args.target_net_pnl_per_day, default="500")
+    oracle_policy = _oracle_policy_from_args(args)
     sources = []
     if args.seed_recent_whitepapers:
         sources.extend(RECENT_WHITEPAPER_SEEDS)
+    for source_jsonl in getattr(args, "source_jsonl", []):
+        sources.extend(sources_from_jsonl(source_jsonl))
     sources.extend(_load_sources_from_db(args.paper_run_id))
     if not sources:
         return _write_failure_summary(
@@ -1200,6 +1477,9 @@ def run_whitepaper_autoresearch_profit_target(
         seed_sweep_dir=args.seed_sweep_dir.resolve(),
     )
     candidate_specs = list(compilation.executable_specs)
+    candidate_specs = _candidate_specs_with_oracle_policy(
+        candidate_specs, oracle_policy=oracle_policy
+    )
     candidate_specs = candidate_specs[: max(1, int(args.max_candidates))]
     blocker_by_spec: dict[str, list[CandidateCompilationBlocker]] = {}
     for blocker in compilation.blockers:
@@ -1223,6 +1503,10 @@ def run_whitepaper_autoresearch_profit_target(
             "source_count": len(sources),
             "paper_sources": [source.to_payload() for source in sources],
         },
+    )
+    _write_jsonl(
+        output_dir / "whitepaper-sources.jsonl",
+        [source.to_payload() for source in sources],
     )
     _write_jsonl(
         output_dir / "hypothesis-cards.jsonl",
@@ -1275,32 +1559,68 @@ def run_whitepaper_autoresearch_profit_target(
         str(row.get("candidate_spec_id")): row
         for row in _list_of_mappings(candidate_selection.get("rows"))
     }
+    replay_args = argparse.Namespace(
+        **{
+            **vars(args),
+            "max_candidates": len(replay_candidate_specs),
+            "top_k": min(int(args.top_k), len(replay_candidate_specs)),
+        }
+    )
     try:
-        replay_result = (
-            _run_synthetic_replay(
-                specs=replay_candidate_specs,
-                output_dir=output_dir,
-                max_candidates=len(replay_candidate_specs),
-            )
-            if args.replay_mode == "synthetic"
-            else _run_real_replay(
-                argparse.Namespace(
-                    **{
-                        **vars(args),
-                        "max_candidates": len(replay_candidate_specs),
-                        "top_k": min(int(args.top_k), len(replay_candidate_specs)),
-                    }
-                ),
-                output_dir=output_dir,
-            )
+        replay_result = _run_replay_with_optional_timeout(
+            args=replay_args,
+            output_dir=output_dir,
+            specs=replay_candidate_specs,
         )
     except Exception as exc:
+        partial_replay_result = (
+            _collect_partial_real_replay(
+                output_dir=output_dir, specs=replay_candidate_specs
+            )
+            if args.replay_mode == "real"
+            else EpochReplayResult(evidence_bundles=(), replay_results=())
+        )
+        partial_artifact_path = output_dir / "candidate-evidence-bundles.partial.jsonl"
+        if partial_replay_result.evidence_bundles:
+            _write_jsonl(
+                partial_artifact_path,
+                [
+                    bundle.to_payload()
+                    for bundle in partial_replay_result.evidence_bundles
+                ],
+            )
         return _write_failure_summary(
             output_dir=output_dir,
             epoch_id=epoch_id,
             status="replay_failed",
             reason=f"{type(exc).__name__}:{exc}",
             started_at=started_at,
+            extra={
+                "partial_evidence_bundle_count": len(
+                    partial_replay_result.evidence_bundles
+                ),
+                "partial_replay_result_count": len(
+                    partial_replay_result.replay_results
+                ),
+                "partial_artifacts": {
+                    "candidate_evidence_bundles": str(partial_artifact_path)
+                    if partial_replay_result.evidence_bundles
+                    else None,
+                    "strategy_factory_dir": str(output_dir / "strategy-factory"),
+                },
+                "false_positive_table": _false_positive_table(
+                    proposal_rows=pre_replay_proposal_rows,
+                    evidence_bundles=partial_replay_result.evidence_bundles,
+                    oracle_policy=oracle_policy,
+                )
+                if partial_replay_result.evidence_bundles
+                else [],
+                "best_false_negative_table": _best_false_negative_table(
+                    candidate_selection=candidate_selection,
+                    pre_replay_proposal_rows=pre_replay_proposal_rows,
+                    evidence_bundles=partial_replay_result.evidence_bundles,
+                ),
+            },
         )
     proposal_model, proposal_rows = _proposal_model_and_rows(
         specs=candidate_specs,
@@ -1317,6 +1637,7 @@ def run_whitepaper_autoresearch_profit_target(
     portfolio = optimize_portfolio_candidate(
         evidence_bundles=replay_result.evidence_bundles,
         target_net_pnl_per_day=target,
+        oracle_policy=oracle_policy,
         portfolio_size_min=int(args.portfolio_size_min),
         portfolio_size_max=int(args.portfolio_size_max),
     )
@@ -1373,6 +1694,7 @@ def run_whitepaper_autoresearch_profit_target(
     false_positive_table = _false_positive_table(
         proposal_rows=proposal_rows,
         evidence_bundles=replay_result.evidence_bundles,
+        oracle_policy=oracle_policy,
     )
     best_false_negative_table = _best_false_negative_table(
         candidate_selection=candidate_selection,
@@ -1385,6 +1707,7 @@ def run_whitepaper_autoresearch_profit_target(
         "epoch_id": epoch_id,
         "run_root": str(output_dir),
         "target_net_pnl_per_day": str(target),
+        "profit_target_oracle_policy": oracle_policy.to_payload(),
         "source_count": len(sources),
         "hypothesis_count": len(hypothesis_cards),
         "candidate_spec_count": len(candidate_specs),
@@ -1416,6 +1739,7 @@ def run_whitepaper_autoresearch_profit_target(
         "artifacts": {
             "epoch_manifest": str(output_dir / "epoch-manifest.json"),
             "hypothesis_cards": str(output_dir / "hypothesis-cards.jsonl"),
+            "whitepaper_sources": str(output_dir / "whitepaper-sources.jsonl"),
             "candidate_specs": str(output_dir / "candidate-specs.jsonl"),
             "candidate_selection_manifest": str(
                 output_dir / "candidate-selection-manifest.json"
@@ -1445,35 +1769,54 @@ def run_whitepaper_autoresearch_profit_target(
             ),
         },
     }
-    if args.persist_results:
-        _persist_epoch_ledgers(
-            epoch_id=epoch_id,
-            status=status,
-            target_net_pnl_per_day=target,
-            paper_run_ids=[str(item) for item in args.paper_run_id],
-            sources=sources,
-            candidate_specs=candidate_specs,
-            candidate_blockers=blocker_by_spec,
-            proposal_rows=proposal_rows,
-            portfolio=portfolio,
-            summary=summary,
-            runner_config={
-                "replay_mode": args.replay_mode,
-                "max_candidates": int(args.max_candidates),
-                "top_k": int(args.top_k),
-                "exploration_slots": int(args.exploration_slots),
-                "replay_candidate_spec_count": len(replay_candidate_specs),
-                "portfolio_size_min": int(args.portfolio_size_min),
-                "portfolio_size_max": int(args.portfolio_size_max),
-            },
-            started_at=started_at,
-            completed_at=datetime.now(UTC),
-        )
     _write_json(output_dir / "summary.json", summary)
     write_whitepaper_autoresearch_diagnostics_notebook(
         output_dir / "whitepaper-autoresearch-diagnostics.ipynb",
         summary=summary,
     )
+    if args.persist_results:
+        runner_config = {
+            "replay_mode": args.replay_mode,
+            "max_candidates": int(args.max_candidates),
+            "top_k": int(args.top_k),
+            "exploration_slots": int(args.exploration_slots),
+            "replay_candidate_spec_count": len(replay_candidate_specs),
+            "portfolio_size_min": int(args.portfolio_size_min),
+            "portfolio_size_max": int(args.portfolio_size_max),
+            "source_jsonl": [str(path) for path in getattr(args, "source_jsonl", [])],
+        }
+        try:
+            _persist_epoch_ledgers(
+                epoch_id=epoch_id,
+                status=status,
+                target_net_pnl_per_day=target,
+                paper_run_ids=[str(item) for item in args.paper_run_id],
+                sources=sources,
+                candidate_specs=candidate_specs,
+                candidate_blockers=blocker_by_spec,
+                proposal_rows=proposal_rows,
+                portfolio=portfolio,
+                summary=summary,
+                runner_config=runner_config,
+                started_at=started_at,
+                completed_at=datetime.now(UTC),
+            )
+            summary["persistence_status"] = "persisted"
+            _write_json(output_dir / "summary.json", summary)
+        except Exception as exc:
+            summary["pre_persistence_status"] = status
+            summary["status"] = "persistence_failed"
+            summary["status_reason"] = "epoch_ledger_persistence_failed"
+            summary["persistence_status"] = "failed"
+            summary["persistence_error"] = str(exc)
+            summary["persistence_runner_config"] = runner_config
+            _write_json(output_dir / "persistence-error-summary.json", summary)
+            _write_json(output_dir / "error-summary.json", summary)
+            _write_json(output_dir / "summary.json", summary)
+            write_whitepaper_autoresearch_diagnostics_notebook(
+                output_dir / "whitepaper-autoresearch-diagnostics.ipynb",
+                summary=summary,
+            )
     return summary
 
 
@@ -1484,6 +1827,8 @@ def main() -> int:
     status = str(payload.get("status") or "")
     if status == "ok":
         return 0
+    if status == "persistence_failed":
+        return 1
     if status == "replay_failed":
         return 3
     return 2

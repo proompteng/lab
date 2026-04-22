@@ -54,6 +54,34 @@ type QuantAlert = {
   state: 'open' | 'resolved'
 }
 
+type AutoresearchEpoch = {
+  epochId: string
+  status: string
+  targetNetPnlPerDay: string | null
+  paperCount: number
+  candidateSpecCount: number
+  replayedCandidateCount: number
+  portfolioCandidateCount: number
+  bestPortfolioNetPnlPerDay: string | null
+  bestPortfolioActiveDayRatio: string | null
+  bestPortfolioPositiveDayRatio: string | null
+  blockedPromotionReasons: string[]
+  bestPortfolioSleeves: unknown[]
+  mlxRankBucketLift: Record<string, unknown>
+  falsePositiveTable: Record<string, unknown>[]
+  bestFalseNegativeTable: Record<string, unknown>[]
+  startedAt: string | null
+  completedAt: string | null
+  failureReason: string | null
+}
+
+type AutoresearchSummary = {
+  available: boolean
+  count: number
+  epochs: AutoresearchEpoch[]
+  error: string | null
+}
+
 type SnapshotFrame = {
   strategyId: string
   account: string
@@ -61,6 +89,7 @@ type SnapshotFrame = {
   frameAsOf: string
   metrics: QuantMetric[]
   alerts: QuantAlert[]
+  autoresearch?: AutoresearchSummary
 }
 
 const WINDOWS = ['1m', '5m', '15m', '1h', '1d', '5d', '20d'] as const
@@ -124,6 +153,43 @@ const formatMetric = (metric: QuantMetric) => {
   if (metric.unit === 'ratio') return ratio.format(metric.valueNumeric)
   return ratio.format(metric.valueNumeric)
 }
+
+const formatOptionalCurrency = (value: string | null) => {
+  if (!value) return 'n/a'
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? currency.format(numeric) : value
+}
+
+const formatOptionalRatio = (value: string | null) => {
+  if (!value) return 'n/a'
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? ratio.format(numeric) : value
+}
+
+const stringField = (record: Record<string, unknown>, key: string) => {
+  const value = record[key]
+  if (typeof value === 'string' && value.trim()) return value
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  return null
+}
+
+const evidenceLabel = (row: Record<string, unknown>) =>
+  stringField(row, 'candidate_spec_id') ?? stringField(row, 'candidate_id') ?? 'candidate'
+
+const evidenceReason = (row: Record<string, unknown>) => {
+  const failureReasons = row.failure_reasons
+  if (Array.isArray(failureReasons)) {
+    const rendered = failureReasons
+      .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      .slice(0, 2)
+      .map(humanizeToken)
+      .join(', ')
+    if (rendered) return rendered
+  }
+  return stringField(row, 'reason') ?? stringField(row, 'evidence_status') ?? 'review'
+}
+
+const shortId = (value: string) => (value.length > 18 ? `${value.slice(0, 18)}...` : value)
 
 const severityColor = (severity: QuantAlert['severity']) => (severity === 'critical' ? 'bg-red-600' : 'bg-amber-600')
 
@@ -407,6 +473,8 @@ function TorghutQuantControlPlane() {
           </div>
         ) : null}
 
+        <AutoresearchEpochsPanel summary={frame?.autoresearch ?? null} loading={loading} />
+
         <div className="mt-6 grid grid-cols-1 gap-3">
           <MetricGroup
             title="Performance"
@@ -473,6 +541,135 @@ function TorghutQuantControlPlane() {
             </CardContent>
           </Card>
         ) : null}
+      </div>
+    </div>
+  )
+}
+
+function AutoresearchEpochsPanel({ summary, loading }: { summary: AutoresearchSummary | null; loading: boolean }) {
+  const epochs = summary?.epochs ?? []
+  return (
+    <Card className="mt-6 border-zinc-800/80 bg-zinc-950/70">
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <CardTitle className="text-sm">Whitepaper Autoresearch</CardTitle>
+            <CardDescription className="text-zinc-400">
+              Latest persisted epochs, candidate coverage, and promotion blockers.
+            </CardDescription>
+          </div>
+          <Badge variant="outline" className="text-[0.7rem]">
+            {summary?.available === false ? 'unavailable' : `${summary?.count ?? epochs.length} epochs`}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {loading && !summary ? (
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+            {['epoch-a', 'epoch-b', 'epoch-c'].map((key) => (
+              <Skeleton key={key} className="h-28 w-full" />
+            ))}
+          </div>
+        ) : summary?.available === false ? (
+          <div className="rounded-md border border-amber-500/35 bg-amber-500/10 p-3 text-sm text-amber-100">
+            {summary.error ?? 'Autoresearch epochs unavailable'}
+          </div>
+        ) : epochs.length === 0 ? (
+          <div className="text-sm text-zinc-400">No persisted autoresearch epochs available.</div>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            {epochs.map((epoch) => {
+              const lift = stringField(epoch.mlxRankBucketLift, 'lift_net_pnl_per_day')
+              return (
+                <div key={epoch.epochId} className="rounded-md border border-zinc-800 bg-zinc-900/70 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="font-mono text-xs text-zinc-300">{shortId(epoch.epochId)}</div>
+                      <div className="mt-1 text-sm font-medium text-zinc-100">
+                        {formatOptionalCurrency(epoch.bestPortfolioNetPnlPerDay)} / day
+                      </div>
+                    </div>
+                    <Badge variant="outline" className="text-[0.7rem]">
+                      {epoch.status}
+                    </Badge>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                    <div className="rounded border border-zinc-800 bg-zinc-950/70 p-2">
+                      <div className="text-zinc-500">Specs</div>
+                      <div className="font-mono text-zinc-100">
+                        {epoch.replayedCandidateCount}/{epoch.candidateSpecCount}
+                      </div>
+                    </div>
+                    <div className="rounded border border-zinc-800 bg-zinc-950/70 p-2">
+                      <div className="text-zinc-500">Sleeves</div>
+                      <div className="font-mono text-zinc-100">{epoch.bestPortfolioSleeves.length}</div>
+                    </div>
+                    <div className="rounded border border-zinc-800 bg-zinc-950/70 p-2">
+                      <div className="text-zinc-500">Active</div>
+                      <div className="font-mono text-zinc-100">
+                        {formatOptionalRatio(epoch.bestPortfolioActiveDayRatio)}
+                      </div>
+                    </div>
+                    <div className="rounded border border-zinc-800 bg-zinc-950/70 p-2">
+                      <div className="text-zinc-500">Positive</div>
+                      <div className="font-mono text-zinc-100">
+                        {formatOptionalRatio(epoch.bestPortfolioPositiveDayRatio)}
+                      </div>
+                    </div>
+                    <div className="rounded border border-zinc-800 bg-zinc-950/70 p-2">
+                      <div className="text-zinc-500">MLX lift</div>
+                      <div className="font-mono text-zinc-100">{formatOptionalCurrency(lift)}</div>
+                    </div>
+                    <div className="rounded border border-zinc-800 bg-zinc-950/70 p-2">
+                      <div className="text-zinc-500">Evidence</div>
+                      <div className="font-mono text-zinc-100">
+                        {epoch.falsePositiveTable.length}/{epoch.bestFalseNegativeTable.length}
+                      </div>
+                    </div>
+                  </div>
+
+                  {epoch.blockedPromotionReasons.length > 0 ? (
+                    <div className="mt-3 flex flex-wrap gap-1">
+                      {epoch.blockedPromotionReasons.slice(0, 4).map((reason) => (
+                        <Badge
+                          key={reason}
+                          variant="outline"
+                          className="border-amber-500/40 text-[0.65rem] text-amber-200"
+                        >
+                          {humanizeToken(reason)}
+                        </Badge>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  <AutoresearchEvidenceRows title="False positives" rows={epoch.falsePositiveTable} />
+                  <AutoresearchEvidenceRows title="False negatives" rows={epoch.bestFalseNegativeTable} />
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function AutoresearchEvidenceRows({ title, rows }: { title: string; rows: Record<string, unknown>[] }) {
+  if (rows.length === 0) return null
+  return (
+    <div className="mt-3 border-t border-zinc-800 pt-2">
+      <div className="mb-1 text-[0.65rem] uppercase tracking-normal text-zinc-500">{title}</div>
+      <div className="space-y-1">
+        {rows.slice(0, 2).map((row, index) => (
+          <div
+            key={`${title}-${evidenceLabel(row)}-${index}`}
+            className="flex items-start justify-between gap-2 text-xs"
+          >
+            <span className="font-mono text-zinc-300">{shortId(evidenceLabel(row))}</span>
+            <span className="max-w-[60%] text-right text-zinc-400">{evidenceReason(row)}</span>
+          </div>
+        ))}
       </div>
     </div>
   )

@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { listTorghutAutoresearchEpochs } from '../torghut-autoresearch'
 import { __private } from '../torghut-trading'
 
 const rollingTrendInterval = {
@@ -7,6 +8,10 @@ const rollingTrendInterval = {
   startUtc: '2026-01-15T05:00:00.000Z',
   endUtc: '2026-01-16T05:00:00.000Z',
 }
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe('torghut trading summary reason parsing', () => {
   it('splits semicolon-delimited risk reasons into individual tokens', () => {
@@ -268,6 +273,82 @@ describe('torghut trading summary reason parsing', () => {
         status: 'aligned',
         mismatches: [],
       },
+      error: null,
+    })
+  })
+
+  it('proxies and normalizes Torghut autoresearch epoch summaries', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          count: 1,
+          epochs: [
+            {
+              epoch_id: 'epoch-1',
+              status: 'no_profit_target_candidate',
+              target_net_pnl_per_day: '500',
+              paper_count: 4,
+              candidate_spec_count: 8,
+              replayed_candidate_count: 3,
+              portfolio_candidate_count: 1,
+              best_portfolio_net_pnl_per_day: '-0.26',
+              best_portfolio_active_day_ratio: '0.4',
+              best_portfolio_positive_day_ratio: '0.2',
+              blocked_promotion_reasons: ['active_day_ratio_below_oracle'],
+              best_portfolio_sleeves: [{ candidate_id: 'cand-1' }],
+              mlx_rank_bucket_lift: {
+                lift_net_pnl_per_day: '-15.25',
+                top_bucket_mean_net_pnl_per_day: '-0.26',
+              },
+              false_positive_table: [
+                { candidate_spec_id: 'spec-fp', failure_reasons: ['active_day_ratio_below_oracle'] },
+              ],
+              best_false_negative_table: [{ candidate_spec_id: 'spec-fn', reason: 'not_replayed_budget' }],
+              started_at: '2026-04-21T16:00:00Z',
+              completed_at: '2026-04-21T16:10:00Z',
+              failure_reason: null,
+            },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const payload = await listTorghutAutoresearchEpochs({ status: 'no_profit_target_candidate', limit: 5 })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://torghut.torghut.svc.cluster.local/trading/autoresearch/epochs?limit=5&status=no_profit_target_candidate',
+      { headers: { accept: 'application/json' } },
+    )
+    expect(payload).toEqual({
+      available: true,
+      count: 1,
+      epochs: [
+        {
+          epochId: 'epoch-1',
+          status: 'no_profit_target_candidate',
+          targetNetPnlPerDay: '500',
+          paperCount: 4,
+          candidateSpecCount: 8,
+          replayedCandidateCount: 3,
+          portfolioCandidateCount: 1,
+          bestPortfolioNetPnlPerDay: '-0.26',
+          bestPortfolioActiveDayRatio: '0.4',
+          bestPortfolioPositiveDayRatio: '0.2',
+          blockedPromotionReasons: ['active_day_ratio_below_oracle'],
+          bestPortfolioSleeves: [{ candidate_id: 'cand-1' }],
+          mlxRankBucketLift: {
+            lift_net_pnl_per_day: '-15.25',
+            top_bucket_mean_net_pnl_per_day: '-0.26',
+          },
+          falsePositiveTable: [{ candidate_spec_id: 'spec-fp', failure_reasons: ['active_day_ratio_below_oracle'] }],
+          bestFalseNegativeTable: [{ candidate_spec_id: 'spec-fn', reason: 'not_replayed_budget' }],
+          startedAt: '2026-04-21T16:00:00Z',
+          completedAt: '2026-04-21T16:10:00Z',
+          failureReason: null,
+        },
+      ],
       error: null,
     })
   })

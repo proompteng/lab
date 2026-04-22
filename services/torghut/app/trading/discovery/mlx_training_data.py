@@ -113,11 +113,42 @@ class MlxRankedCandidate:
         }
 
 
+@dataclass(frozen=True)
+class MlxRankBucketLift:
+    metric_name: str
+    top_bucket_mean: float
+    bottom_bucket_mean: float
+    lift: float
+    status: str = "computed"
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            f"top_bucket_mean_{self.metric_name}": _format_float(self.top_bucket_mean),
+            f"bottom_bucket_mean_{self.metric_name}": _format_float(
+                self.bottom_bucket_mean
+            ),
+            f"lift_{self.metric_name}": _format_float(self.lift),
+        }
+
+
+@dataclass(frozen=True)
+class MlxRankedRowsPolicyResult:
+    ranked_rows: tuple[MlxRankedCandidate, ...]
+    rank_bucket_lift: MlxRankBucketLift
+    model_status: str
+    selection_reason: str
+
+
 def _float(value: Any) -> float:
     try:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _format_float(value: float) -> str:
+    return format(value, ".12g")
 
 
 def _family_code(family_template_id: str) -> float:
@@ -338,6 +369,106 @@ def rank_training_rows(
         )
         for index, (row, score, feature_hash) in enumerate(ordered, start=1)
     ]
+
+
+def compute_rank_bucket_lift(
+    *,
+    ranked_rows: Sequence[MlxRankedCandidate],
+    rows: Sequence[MlxTrainingRow],
+    metric_name: str = "replay_target",
+    outcome_by_spec: Mapping[str, Any] | None = None,
+) -> MlxRankBucketLift:
+    if not ranked_rows:
+        return MlxRankBucketLift(
+            metric_name=metric_name,
+            top_bucket_mean=0.0,
+            bottom_bucket_mean=0.0,
+            lift=0.0,
+            status="no_ranked_rows",
+        )
+    row_target_by_spec = {row.candidate_spec_id: row.target for row in rows}
+    outcomes = [
+        _float(
+            outcome_by_spec.get(item.candidate_spec_id)
+            if outcome_by_spec is not None
+            else row_target_by_spec.get(item.candidate_spec_id, 0.0)
+        )
+        for item in ranked_rows
+    ]
+    split_index = max(1, len(outcomes) // 2)
+    top_bucket = outcomes[:split_index]
+    bottom_bucket = outcomes[split_index:] or [0.0]
+    top_mean = _mean(top_bucket)
+    bottom_mean = _mean(bottom_bucket)
+    return MlxRankBucketLift(
+        metric_name=metric_name,
+        top_bucket_mean=top_mean,
+        bottom_bucket_mean=bottom_mean,
+        lift=top_mean - bottom_mean,
+    )
+
+
+def rank_training_rows_with_lift_policy(
+    *,
+    model: MlxRankerModel,
+    rows: Sequence[MlxTrainingRow],
+    metric_name: str = "replay_target",
+    outcome_by_spec: Mapping[str, Any] | None = None,
+) -> MlxRankedRowsPolicyResult:
+    ranked_rows = rank_training_rows(model=model, rows=rows)
+    rank_lift = compute_rank_bucket_lift(
+        ranked_rows=ranked_rows,
+        rows=rows,
+        metric_name=metric_name,
+        outcome_by_spec=outcome_by_spec,
+    )
+    if rank_lift.lift >= 0:
+        return MlxRankedRowsPolicyResult(
+            ranked_rows=tuple(ranked_rows),
+            rank_bucket_lift=rank_lift,
+            model_status="active",
+            selection_reason="exploitation",
+        )
+
+    feature_hash_by_spec = {
+        item.candidate_spec_id: item.feature_hash for item in ranked_rows
+    }
+    ranked_by_fallback = sorted(
+        rows,
+        key=lambda row: (
+            _float(
+                outcome_by_spec.get(row.candidate_spec_id)
+                if outcome_by_spec is not None
+                else row.target
+            ),
+            row.candidate_spec_id,
+        ),
+        reverse=True,
+    )
+    fallback_rows = tuple(
+        MlxRankedCandidate(
+            candidate_spec_id=row.candidate_spec_id,
+            score=_float(
+                outcome_by_spec.get(row.candidate_spec_id)
+                if outcome_by_spec is not None
+                else row.target
+            ),
+            rank=index,
+            model_id=model.model_id,
+            backend=model.backend,
+            feature_hash=feature_hash_by_spec.get(
+                row.candidate_spec_id,
+                _stable_hash({"features": row.to_payload()["features"]}),
+            ),
+        )
+        for index, row in enumerate(ranked_by_fallback, start=1)
+    )
+    return MlxRankedRowsPolicyResult(
+        ranked_rows=fallback_rows,
+        rank_bucket_lift=rank_lift,
+        model_status="demoted_to_heuristic",
+        selection_reason="heuristic_negative_lift_fallback",
+    )
 
 
 def mlx_ranker_model_from_payload(payload: Mapping[str, Any]) -> MlxRankerModel:

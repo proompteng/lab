@@ -18,6 +18,10 @@ from app.trading.discovery.autoresearch import (
     StrategyObjective,
 )
 from app.trading.discovery.mlx_snapshot import build_mlx_snapshot_manifest
+from app.trading.discovery.portfolio_candidates import (
+    PORTFOLIO_CANDIDATE_SCHEMA_VERSION,
+    PortfolioCandidateSpec,
+)
 from app.trading.discovery.runtime_closure import (
     RuntimeClosureExecutionContext,
     write_runtime_closure_bundle,
@@ -582,6 +586,112 @@ data:
             self.assertEqual(len(portfolio_contract["sizing_policy_refs"]), 2)
             self.assertEqual(len(portfolio_contract["execution_policy_refs"]), 2)
 
+    def test_runtime_closure_accepts_portfolio_spec_and_requires_optimizer_evidence(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            run_root = Path(tmpdir)
+            manifest = build_mlx_snapshot_manifest(
+                runner_run_id="run-1",
+                program=_program(),
+                symbols="AAPL,NVDA",
+                train_days=6,
+                holdout_days=2,
+                full_window_start_date="2026-03-20",
+                full_window_end_date="2026-04-09",
+            )
+            portfolio = PortfolioCandidateSpec(
+                schema_version=PORTFOLIO_CANDIDATE_SCHEMA_VERSION,
+                portfolio_candidate_id="portfolio-direct",
+                source_candidate_ids=("cand-a", "cand-b"),
+                target_net_pnl_per_day=Decimal("500"),
+                sleeves=(
+                    {
+                        "candidate_id": "cand-a",
+                        "candidate_spec_id": "spec-a",
+                        "runtime_family": "momentum_pullback_consistent",
+                        "runtime_strategy_name": "momentum-pullback-long-v1",
+                        "weight": "0.55",
+                        "expected_net_pnl_per_day": "310",
+                        "correlation_cluster": "momentum",
+                    },
+                    {
+                        "candidate_id": "cand-b",
+                        "candidate_spec_id": "spec-b",
+                        "runtime_family": "washout_rebound_consistent",
+                        "runtime_strategy_name": "washout-rebound-long-v1",
+                        "weight": "0.45",
+                        "expected_net_pnl_per_day": "245",
+                        "correlation_cluster": "rebound",
+                    },
+                ),
+                capital_budget={"mode": "equal_weight_initial", "max_sleeves": 4},
+                correlation_budget={
+                    "max_cluster_contribution_share": "0.40",
+                    "max_single_symbol_contribution_share": "0.35",
+                },
+                drawdown_budget={"max_drawdown": "400"},
+                evidence_refs=("evidence-a", "evidence-b"),
+                objective_scorecard={
+                    "net_pnl_per_day": "555",
+                    "target_met": True,
+                    "oracle_passed": True,
+                    "active_day_ratio": "1.0",
+                    "positive_day_ratio": "0.8",
+                    "best_day_share": "0.22",
+                    "worst_day_loss": "120",
+                    "max_drawdown": "400",
+                },
+                optimizer_report={
+                    "method": "deterministic_greedy_pareto_v1",
+                    "selected_count": 2,
+                    "target_met": True,
+                    "oracle_passed": True,
+                },
+            )
+
+            summary = write_runtime_closure_bundle(
+                run_root=run_root,
+                runner_run_id="run-1",
+                program=_program(),
+                best_candidate=portfolio,
+                manifest=manifest,
+            )
+
+            self.assertEqual(summary.status, "pending_runtime_parity")
+            self.assertTrue(Path(summary.portfolio_optimizer_evidence_path).exists())
+            candidate_spec = json.loads(
+                Path(summary.candidate_spec_path).read_text(encoding="utf-8")
+            )
+            self.assertEqual(candidate_spec["candidate_id"], "portfolio-direct")
+            self.assertEqual(
+                candidate_spec["portfolio_optimizer_evidence"][
+                    "portfolio_candidate_id"
+                ],
+                "portfolio-direct",
+            )
+            gate_report = json.loads(
+                Path(summary.gate_report_path).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                gate_report["promotion_evidence"]["portfolio_optimizer"][
+                    "artifact_ref"
+                ],
+                "promotion/portfolio-optimizer-evidence.json",
+            )
+            prerequisites = summary.promotion_prerequisites
+            self.assertIn(
+                "promotion/portfolio-optimizer-evidence.json",
+                prerequisites["required_artifacts"],
+            )
+            self.assertIn(
+                str(Path(summary.portfolio_optimizer_evidence_path)),
+                prerequisites["artifact_refs"],
+            )
+            self.assertNotIn(
+                "portfolio_optimizer_evidence_missing", prerequisites["reasons"]
+            )
+
     def test_replay_analysis_records_decomposition_errors(self) -> None:
         replay_payload = {
             "start_date": "2026-03-20",
@@ -740,6 +850,10 @@ data:
                 "validation_stage_incomplete", manifest_payload["failure_reasons"]
             )
             self.assertEqual(manifest_payload["run_context"]["run_id"], "run-1")
+            self.assertEqual(
+                manifest_payload["run_context"]["design_doc"],
+                "docs/torghut/design-system/v6/71-torghut-whitepaper-autoresearch-profit-target-strategy-factory-2026-04-21.md",
+            )
             self.assertEqual(
                 manifest_payload["run_context"]["head"],
                 subprocess.run(

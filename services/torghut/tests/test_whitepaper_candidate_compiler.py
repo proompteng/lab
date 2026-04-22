@@ -29,10 +29,25 @@ class TestWhitepaperCandidateCompiler(TestCase):
             seed_sweep_dir=Path("config/trading"),
         )
 
-        self.assertEqual(len(compilation.candidate_specs), 1)
-        self.assertEqual(len(compilation.executable_specs), 1)
-        self.assertEqual(len(compilation.whitepaper_experiment_payloads), 1)
-        self.assertEqual(len(compilation.vnext_experiment_payloads), 1)
+        self.assertEqual(len(compilation.candidate_specs), 3)
+        self.assertEqual(len(compilation.executable_specs), 3)
+        self.assertEqual(len(compilation.whitepaper_experiment_payloads), 3)
+        self.assertEqual(len(compilation.vnext_experiment_payloads), 3)
+        family_ids = {spec.family_template_id for spec in compilation.executable_specs}
+        self.assertEqual(
+            family_ids,
+            {
+                "intraday_tsmom_v2",
+                "microbar_cross_sectional_pairs_v1",
+                "microstructure_continuation_matched_filter_v1",
+            },
+        )
+        self.assertTrue(
+            all(
+                "family_selection" in spec.feature_contract
+                for spec in compilation.executable_specs
+            )
+        )
         self.assertEqual(
             compilation.whitepaper_experiment_payloads[0]["selection_objectives"][
                 "target_net_pnl_per_day"
@@ -41,7 +56,7 @@ class TestWhitepaperCandidateCompiler(TestCase):
         )
         self.assertEqual(
             compilation.vnext_experiment_payloads[0]["family_template_id"],
-            "microbar_cross_sectional_pairs_v1",
+            "microstructure_continuation_matched_filter_v1",
         )
 
     def test_missing_family_template_blocks_execution(self) -> None:
@@ -64,7 +79,7 @@ class TestWhitepaperCandidateCompiler(TestCase):
         )
 
         self.assertEqual(len(compilation.executable_specs), 0)
-        self.assertEqual(len(compilation.blocked_specs), 1)
+        self.assertEqual(len(compilation.blocked_specs), 3)
         self.assertEqual(compilation.blockers[0].reason, "family_template_missing")
 
     def test_missing_seed_sweep_blocks_execution(self) -> None:
@@ -89,5 +104,52 @@ class TestWhitepaperCandidateCompiler(TestCase):
             )
 
         self.assertEqual(compilation.executable_specs, ())
-        self.assertEqual(len(compilation.blocked_specs), 1)
+        self.assertEqual(len(compilation.blocked_specs), 3)
         self.assertEqual(compilation.blockers[0].reason, "seed_sweep_missing")
+
+    def test_contradictory_claim_relation_blocks_dependent_candidate_specs(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-run-contradiction",
+            claims=[
+                {
+                    "claim_id": "claim-flow",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": "Clustered order flow imbalance improves short-horizon LOB signals.",
+                    "confidence": "0.82",
+                },
+                {
+                    "claim_id": "claim-validation",
+                    "claim_type": "validation_requirement",
+                    "claim_text": "The signal must pass liquidity-shock replay windows.",
+                    "confidence": "0.76",
+                },
+            ],
+            relations=[
+                {
+                    "relation_id": "rel-invalidates-flow",
+                    "relation_type": "invalidates",
+                    "source_claim_id": "claim-validation",
+                    "target_claim_id": "claim-flow",
+                    "rationale": "The validation claim invalidates direct execution.",
+                }
+            ],
+            target_net_pnl_per_day=Decimal("500"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        self.assertEqual(len(compilation.candidate_specs), 3)
+        self.assertEqual(compilation.executable_specs, ())
+        self.assertEqual(len(compilation.blocked_specs), 3)
+        self.assertTrue(
+            all(
+                blocker.reason == "contradictory_claim_relation"
+                for blocker in compilation.blockers
+            )
+        )
+        self.assertEqual(
+            compilation.blockers[0].detail["claim_relation_blockers"][0]["relation_id"],
+            "rel-invalidates-flow",
+        )

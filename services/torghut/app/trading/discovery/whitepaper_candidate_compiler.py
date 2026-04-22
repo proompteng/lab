@@ -146,6 +146,19 @@ def _sequence_strings(value: Any) -> tuple[str, ...]:
     return tuple(str(item) for item in rows if str(item).strip())
 
 
+def _mapping_sequence(value: Any) -> tuple[dict[str, Any], ...]:
+    if not isinstance(value, Sequence) or isinstance(value, str):
+        return ()
+    resolved: list[dict[str, Any]] = []
+    for item in cast(Sequence[Any], value):
+        if not isinstance(item, Mapping):
+            continue
+        resolved.append(
+            {str(key): row for key, row in cast(Mapping[Any, Any], item).items()}
+        )
+    return tuple(resolved)
+
+
 def _blockers_for_spec(
     spec: CandidateSpec,
     *,
@@ -153,6 +166,17 @@ def _blockers_for_spec(
     seed_sweep_dir: Path | None,
 ) -> tuple[CandidateCompilationBlocker, ...]:
     blockers: list[CandidateCompilationBlocker] = []
+    claim_relation_blockers = _mapping_sequence(
+        spec.feature_contract.get("claim_relation_blockers")
+    )
+    if claim_relation_blockers:
+        blockers.append(
+            CandidateCompilationBlocker(
+                candidate_spec_id=spec.candidate_spec_id,
+                reason="contradictory_claim_relation",
+                detail={"claim_relation_blockers": list(claim_relation_blockers)},
+            )
+        )
     if spec.family_template_id not in EXECUTABLE_FAMILY_IDS:
         blockers.append(
             CandidateCompilationBlocker(

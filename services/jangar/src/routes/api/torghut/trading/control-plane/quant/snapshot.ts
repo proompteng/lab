@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { listTorghutAutoresearchEpochs } from '~/server/torghut-autoresearch'
 import { parseQuantAccount, parseQuantStrategyId, parseQuantWindow } from '~/server/torghut-quant-http'
 import { listQuantAlerts, listQuantLatestMetrics } from '~/server/torghut-quant-metrics-store'
 import {
@@ -39,6 +40,13 @@ export const getQuantSnapshotHandler = async (request: Request) => {
   if (!windowResult.ok) return jsonResponse({ ok: false, message: windowResult.message }, 400)
 
   try {
+    const autoresearchPromise = listTorghutAutoresearchEpochs({ limit: 5 }).catch((error) => ({
+      available: false,
+      count: 0,
+      epochs: [],
+      error: error instanceof Error ? error.message : 'autoresearch_epoch_query_failed',
+    }))
+
     let metrics = await listQuantLatestMetrics({
       strategyId: strategyIdResult.value,
       account: accountResult.value,
@@ -77,6 +85,7 @@ export const getQuantSnapshotHandler = async (request: Request) => {
       frameAsOf,
       metrics,
       alerts: alerts.filter((alert) => alert.window === windowResult.value && alert.account === accountResult.value),
+      autoresearch: await autoresearchPromise,
     }
 
     return jsonResponse({ ok: true, frame })

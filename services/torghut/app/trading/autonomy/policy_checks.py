@@ -306,6 +306,13 @@ def evaluate_promotion_prerequisites(
             policy_payload=policy_payload,
             artifact_root=artifact_root,
         )
+    if bool(policy_payload.get("promotion_require_portfolio_optimizer_evidence", False)):
+        _append_portfolio_optimizer_evidence_reasons(
+            reasons=reasons,
+            reason_details=reason_details,
+            policy_payload=policy_payload,
+            artifact_root=artifact_root,
+        )
 
     evidence_reasons, evidence_details, evidence_refs = _evaluate_promotion_evidence(
         policy_payload=policy_payload,
@@ -1114,6 +1121,94 @@ def _append_profitability_stage_manifest_reasons(
         )
 
 
+def _append_portfolio_optimizer_evidence_reasons(
+    *,
+    reasons: list[str],
+    reason_details: list[dict[str, object]],
+    policy_payload: dict[str, Any],
+    artifact_root: Path,
+) -> None:
+    evidence_relpath = str(
+        policy_payload.get(
+            "promotion_portfolio_optimizer_evidence_artifact",
+            "promotion/portfolio-optimizer-evidence.json",
+        )
+    )
+    evidence_path = artifact_root / evidence_relpath
+    evidence_payload = _load_json_if_exists(evidence_path)
+    if evidence_payload is None:
+        reason = (
+            "portfolio_optimizer_evidence_invalid_json"
+            if evidence_path.exists()
+            else "portfolio_optimizer_evidence_missing"
+        )
+        reasons.append(reason)
+        reason_details.append({"reason": reason, "artifact_ref": str(evidence_path)})
+        return
+
+    schema_version = str(evidence_payload.get("schema_version", "")).strip()
+    if schema_version != "torghut.portfolio-optimizer-evidence.v1":
+        reasons.append("portfolio_optimizer_evidence_schema_invalid")
+        reason_details.append(
+            {
+                "reason": "portfolio_optimizer_evidence_schema_invalid",
+                "artifact_ref": str(evidence_path),
+                "schema_version": schema_version,
+            }
+        )
+    if not str(evidence_payload.get("portfolio_candidate_id", "")).strip():
+        reasons.append("portfolio_optimizer_evidence_candidate_id_missing")
+        reason_details.append(
+            {
+                "reason": "portfolio_optimizer_evidence_candidate_id_missing",
+                "artifact_ref": str(evidence_path),
+            }
+        )
+    if _int_or_default(evidence_payload.get("sleeve_count"), 0) < 2:
+        reasons.append("portfolio_optimizer_evidence_sleeve_count_insufficient")
+        reason_details.append(
+            {
+                "reason": "portfolio_optimizer_evidence_sleeve_count_insufficient",
+                "artifact_ref": str(evidence_path),
+                "sleeve_count": _int_or_default(
+                    evidence_payload.get("sleeve_count"), 0
+                ),
+            }
+        )
+    if not _as_dict(evidence_payload.get("optimizer_report")):
+        reasons.append("portfolio_optimizer_report_missing")
+        reason_details.append(
+            {
+                "reason": "portfolio_optimizer_report_missing",
+                "artifact_ref": str(evidence_path),
+            }
+        )
+    if not _as_dict(evidence_payload.get("objective_scorecard")):
+        reasons.append("portfolio_optimizer_scorecard_missing")
+        reason_details.append(
+            {
+                "reason": "portfolio_optimizer_scorecard_missing",
+                "artifact_ref": str(evidence_path),
+            }
+        )
+    if not bool(evidence_payload.get("target_met", False)):
+        reasons.append("portfolio_optimizer_target_not_met")
+        reason_details.append(
+            {
+                "reason": "portfolio_optimizer_target_not_met",
+                "artifact_ref": str(evidence_path),
+            }
+        )
+    if not bool(evidence_payload.get("oracle_passed", False)):
+        reasons.append("portfolio_optimizer_oracle_not_passed")
+        reason_details.append(
+            {
+                "reason": "portfolio_optimizer_oracle_not_passed",
+                "artifact_ref": str(evidence_path),
+            }
+        )
+
+
 def _is_valid_design_doc_reference(value: str) -> bool:
     value = value.strip()
     if not value:
@@ -1566,6 +1661,15 @@ def _required_artifacts_for_target(
                 policy_payload.get(
                     "promotion_profitability_stage_manifest_artifact",
                     "profitability/profitability-stage-manifest-v1.json",
+                )
+            )
+        )
+    if bool(policy_payload.get("promotion_require_portfolio_optimizer_evidence", False)):
+        required.append(
+            str(
+                policy_payload.get(
+                    "promotion_portfolio_optimizer_evidence_artifact",
+                    "promotion/portfolio-optimizer-evidence.json",
                 )
             )
         )
