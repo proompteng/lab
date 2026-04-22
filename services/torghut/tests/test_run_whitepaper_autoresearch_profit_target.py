@@ -433,6 +433,20 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertTrue(portfolio_artifact_exists)
         self.assertTrue(notebook_exists)
 
+    def test_main_returns_infra_failure_when_persistence_fails(self) -> None:
+        with (
+            patch.object(runner, "_parse_args", return_value=Namespace()),
+            patch.object(
+                runner,
+                "run_whitepaper_autoresearch_profit_target",
+                return_value={"status": "persistence_failed"},
+            ),
+            patch("builtins.print"),
+        ):
+            exit_code = runner.main()
+
+        self.assertEqual(exit_code, 1)
+
     def test_train_ranker_script_helper_reads_runner_artifacts(self) -> None:
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
@@ -780,9 +794,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
             side_effect=lambda: Session(self.engine),
         ):
-            sources = runner._load_sources_from_db(
-                ["paper-completed", "paper-running"]
-            )
+            sources = runner._load_sources_from_db(["paper-completed", "paper-running"])
 
         self.assertEqual([source.run_id for source in sources], ["paper-completed"])
 

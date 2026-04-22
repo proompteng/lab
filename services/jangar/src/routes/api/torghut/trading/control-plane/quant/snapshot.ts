@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { listTorghutAutoresearchEpochs } from '~/server/torghut-trading'
+import { listTorghutAutoresearchEpochs } from '~/server/torghut-autoresearch'
 import { parseQuantAccount, parseQuantStrategyId, parseQuantWindow } from '~/server/torghut-quant-http'
 import { listQuantAlerts, listQuantLatestMetrics } from '~/server/torghut-quant-metrics-store'
 import {

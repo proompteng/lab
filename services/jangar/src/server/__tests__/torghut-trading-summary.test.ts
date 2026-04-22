@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { __private, listTorghutAutoresearchEpochs } from '../torghut-trading'
+import { listTorghutAutoresearchEpochs } from '../torghut-autoresearch'
+import { __private } from '../torghut-trading'
 
 const rollingTrendInterval = {
   tz: 'America/New_York',

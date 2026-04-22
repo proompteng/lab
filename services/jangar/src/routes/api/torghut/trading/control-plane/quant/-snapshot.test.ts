@@ -8,7 +8,7 @@ const materializeTorghutQuantFrameOnDemand = vi.fn()
 const isTorghutQuantMaterializationNotFoundError = vi.fn()
 const listTorghutAutoresearchEpochs = vi.fn()
 
-vi.mock('~/server/torghut-trading', () => ({
+vi.mock('~/server/torghut-autoresearch', () => ({
   listTorghutAutoresearchEpochs,
 }))
 

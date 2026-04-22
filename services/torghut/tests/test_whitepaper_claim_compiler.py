@@ -204,3 +204,22 @@ class TestWhitepaperClaimCompiler(TestCase):
         self.assertEqual(len(sources), 1)
         self.assertEqual(sources[0].run_id, "paper-jsonl")
         self.assertEqual(len(compile_sources_to_hypothesis_cards(sources)), 1)
+
+    def test_sources_from_jsonl_rejects_invalid_rows(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            invalid_json_path = Path(tmpdir) / "invalid-json.jsonl"
+            invalid_json_path.write_text("{invalid-json\n", encoding="utf-8")
+            non_mapping_path = Path(tmpdir) / "non-mapping.jsonl"
+            non_mapping_path.write_text("[]\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "whitepaper_source_jsonl_invalid_json",
+            ):
+                sources_from_jsonl(invalid_json_path)
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "whitepaper_source_jsonl_row_not_mapping",
+            ):
+                sources_from_jsonl(non_mapping_path)
