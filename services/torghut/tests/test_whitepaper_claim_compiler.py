@@ -164,7 +164,8 @@ class TestWhitepaperClaimCompiler(TestCase):
         with TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "sources.jsonl"
             path.write_text(
-                json.dumps(
+                "\n"
+                + json.dumps(
                     {
                         "run_id": "paper-jsonl",
                         "title": "Fresh paper",
@@ -195,7 +196,7 @@ class TestWhitepaperClaimCompiler(TestCase):
                     },
                     sort_keys=True,
                 )
-                + "\n",
+                + "\n\n",
                 encoding="utf-8",
             )
 
