@@ -741,6 +741,8 @@ def _best_false_negative_table(
             not candidate_spec_id
             or bool(selection.get("selected_for_replay"))
             or candidate_spec_id in evidence_by_spec
+            or _string(selection.get("selection_reason"))
+            == "duplicate_execution_signature"
         ):
             continue
         pre_replay = pre_replay_by_spec.get(candidate_spec_id, {})
@@ -1013,6 +1015,24 @@ def _proposal_score_confidence(
     }
 
 
+def _candidate_spec_execution_signature(spec: CandidateSpec) -> str:
+    vnext_payload = spec.to_vnext_experiment_payload()
+    return _stable_hash(
+        {
+            "family_template_id": spec.family_template_id,
+            "runtime_family": spec.runtime_family,
+            "runtime_strategy_name": spec.runtime_strategy_name,
+            "template_overrides": vnext_payload.get("template_overrides", {}),
+            "feature_variants": vnext_payload.get("feature_variants", []),
+            "veto_controller_variants": vnext_payload.get(
+                "veto_controller_variants", []
+            ),
+            "selection_objectives": vnext_payload.get("selection_objectives", {}),
+            "hard_vetoes": vnext_payload.get("hard_vetoes", {}),
+        }
+    )
+
+
 def _select_candidate_specs_for_replay(
     *,
     specs: Sequence[CandidateSpec],
@@ -1029,6 +1049,10 @@ def _select_candidate_specs_for_replay(
             "rows": [],
         }
     spec_by_id = {spec.candidate_spec_id: spec for spec in specs}
+    execution_signature_by_spec = {
+        spec.candidate_spec_id: _candidate_spec_execution_signature(spec)
+        for spec in specs
+    }
     max_budget = max(1, int(max_candidates))
     model_confidence = _proposal_score_confidence(proposal_rows)
     requested_exploration_slots = max(0, int(exploration_slots))
@@ -1059,10 +1083,19 @@ def _select_candidate_specs_for_replay(
         if spec.candidate_spec_id not in set(ranked_ids)
     )
     ordered = [spec_by_id[candidate_spec_id] for candidate_spec_id in ranked_ids]
+    representative_by_signature: dict[str, CandidateSpec] = {}
+    ordered_unique: list[CandidateSpec] = []
+    for spec in ordered:
+        execution_signature = execution_signature_by_spec[spec.candidate_spec_id]
+        if execution_signature in representative_by_signature:
+            continue
+        representative_by_signature[execution_signature] = spec
+        ordered_unique.append(spec)
     rank_position_by_spec = {
         spec.candidate_spec_id: index for index, spec in enumerate(ordered, start=1)
     }
-    exploitation_count = min(max(0, int(top_k)), replay_budget, len(ranked_ids))
+    replay_budget = min(replay_budget, len(ordered_unique))
+    exploitation_count = min(max(0, int(top_k)), replay_budget, len(ordered_unique))
 
     def spec_source_run_id(spec: CandidateSpec) -> str:
         return _string(spec.feature_contract.get("source_run_id")) or spec.hypothesis_id
@@ -1099,13 +1132,15 @@ def _select_candidate_specs_for_replay(
         return picked
 
     exploitation = take_diverse(
-        ordered,
+        ordered_unique,
         count=exploitation_count,
         selected_so_far=(),
     )
     remaining = [
         item
-        for item in sorted(specs, key=lambda spec: diversity_key(spec, exploitation))
+        for item in sorted(
+            ordered_unique, key=lambda spec: diversity_key(spec, exploitation)
+        )
         if item.candidate_spec_id
         not in {spec.candidate_spec_id for spec in exploitation}
     ]
@@ -1124,7 +1159,9 @@ def _select_candidate_specs_for_replay(
             item.candidate_spec_id for item in (*exploitation, *exploration)
         }
         backfill_candidates = [
-            item for item in ordered if item.candidate_spec_id not in selected_ids
+            item
+            for item in ordered_unique
+            if item.candidate_spec_id not in selected_ids
         ]
         backfill = take_diverse(
             backfill_candidates,
@@ -1142,17 +1179,37 @@ def _select_candidate_specs_for_replay(
     selected_ids = {
         item.candidate_spec_id for item in (*exploitation, *exploration, *backfill)
     }
-    selected = [item for item in specs if item.candidate_spec_id in selected_ids]
+    selected = [
+        item for item in ordered_unique if item.candidate_spec_id in selected_ids
+    ]
+
+    def row_selection_reason(spec: CandidateSpec) -> str:
+        if spec.candidate_spec_id in selected_reason:
+            return selected_reason[spec.candidate_spec_id]
+        representative = representative_by_signature[
+            execution_signature_by_spec[spec.candidate_spec_id]
+        ]
+        if representative.candidate_spec_id != spec.candidate_spec_id:
+            return "duplicate_execution_signature"
+        return "not_selected_budget"
+
     rows = [
         {
             "candidate_spec_id": spec.candidate_spec_id,
             "family_template_id": spec.family_template_id,
+            "execution_signature": execution_signature_by_spec[spec.candidate_spec_id],
+            "duplicate_of_candidate_spec_id": representative_by_signature[
+                execution_signature_by_spec[spec.candidate_spec_id]
+            ].candidate_spec_id
+            if representative_by_signature[
+                execution_signature_by_spec[spec.candidate_spec_id]
+            ].candidate_spec_id
+            != spec.candidate_spec_id
+            else None,
             "pre_replay_score": str(_pre_replay_candidate_score(spec)),
             "rank": index,
             "selected_for_replay": spec.candidate_spec_id in selected_ids,
-            "selection_reason": selected_reason.get(
-                spec.candidate_spec_id, "not_selected_budget"
-            ),
+            "selection_reason": row_selection_reason(spec),
             "selection_hash": _stable_hash(
                 {
                     "candidate_spec_id": spec.candidate_spec_id,
@@ -1174,6 +1231,7 @@ def _select_candidate_specs_for_replay(
             "portfolio_size_min": max(1, int(portfolio_size_min)),
             "selected_count": len(selected),
             "compiled_candidate_count": len(specs),
+            "unique_execution_signature_count": len(ordered_unique),
         },
         "proposal_score_confidence": model_confidence,
         "selected_candidate_spec_ids": [item.candidate_spec_id for item in selected],

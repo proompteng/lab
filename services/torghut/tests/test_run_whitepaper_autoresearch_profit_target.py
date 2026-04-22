@@ -261,7 +261,16 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 for reason in row["failure_reasons"]
             }
             self.assertIn("active_day_ratio_below_oracle", false_positive_reasons)
-            self.assertTrue(payload["best_false_negative_table"])
+            self.assertLess(
+                selection["budget"]["unique_execution_signature_count"],
+                payload["candidate_spec_count"],
+            )
+            self.assertTrue(
+                any(
+                    row["selection_reason"] == "duplicate_execution_signature"
+                    for row in selection["rows"]
+                )
+            )
 
     def test_seed_recent_whitepapers_honors_top_k_and_exploration_budget(
         self,
@@ -347,6 +356,38 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             len({row["family_template_id"] for row in exploitation_rows}),
             1,
         )
+
+    def test_seed_recent_whitepapers_dedupes_execution_signatures(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            args = self._args(output_dir)
+            args.top_k = 6
+            args.exploration_slots = 4
+            payload = runner.run_whitepaper_autoresearch_profit_target(args)
+
+            selection = json.loads(
+                (output_dir / "candidate-selection-manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+        self.assertEqual(payload["status"], "ok")
+        selected_rows = [row for row in selection["rows"] if row["selected_for_replay"]]
+        duplicate_rows = [
+            row
+            for row in selection["rows"]
+            if row["selection_reason"] == "duplicate_execution_signature"
+        ]
+        self.assertEqual(
+            len({row["execution_signature"] for row in selected_rows}),
+            len(selected_rows),
+        )
+        self.assertGreater(len(duplicate_rows), 0)
+        self.assertEqual(
+            selection["budget"]["unique_execution_signature_count"],
+            len(selected_rows),
+        )
+        self.assertEqual(payload["replay_candidate_spec_count"], len(selected_rows))
 
     def test_main_returns_nonzero_when_no_oracle_candidate_found(self) -> None:
         with (
