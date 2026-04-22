@@ -1610,8 +1610,14 @@ def _build_runtime_position_exit_overlay(
 ) -> StrategyDecision | None:
     if price is None or positions is None:
         return None
+
+    position_qty = _position_qty_for_symbol(positions, signal.symbol)
+    if position_qty is None or position_qty == 0:
+        return None
+    position_side: Literal["long", "short"] = "long" if position_qty > 0 else "short"
+    exit_action: Literal["buy", "sell"] = "sell" if position_side == "long" else "buy"
     if any(
-        decision.symbol == signal.symbol and decision.action == "sell"
+        decision.symbol == signal.symbol and decision.action == exit_action
         for decision in decisions
     ):
         return None
@@ -1621,13 +1627,13 @@ def _build_runtime_position_exit_overlay(
         for strategy in strategies
         if strategy.enabled
         and strategy.base_timeframe == timeframe
-        and _treats_sell_as_exit_only(strategy)
+        and (
+            _treats_sell_as_exit_only(strategy)
+            if position_side == "long"
+            else _treats_buy_as_exit_only(strategy)
+        )
     ]
     if not eligible_strategies:
-        return None
-
-    position_qty = _position_qty_for_symbol(positions, signal.symbol)
-    if position_qty is None or position_qty <= 0:
         return None
 
     avg_entry_price = _position_avg_entry_price_for_symbol(positions, signal.symbol)
@@ -1639,36 +1645,46 @@ def _build_runtime_position_exit_overlay(
 
     hard_stop_loss_bps = _resolve_min_positive_strategy_param(
         strategies=eligible_strategies,
-        key="long_stop_loss_bps",
+        key=f"{position_side}_stop_loss_bps",
     )
+    if hard_stop_loss_bps is None and position_side == "short":
+        hard_stop_loss_bps = _resolve_min_positive_strategy_param(
+            strategies=eligible_strategies,
+            key="long_stop_loss_bps",
+        )
     hard_stop_threshold_bps = _resolve_dynamic_exit_threshold_bps(
         strategies=eligible_strategies,
         base_bps=hard_stop_loss_bps,
         spread_bps=spread_bps,
-        spread_multiplier_key="long_stop_loss_spread_bps_multiplier",
+        spread_multiplier_key=f"{position_side}_stop_loss_spread_bps_multiplier",
         volatility_bps=volatility_bps,
-        volatility_multiplier_key="long_stop_loss_volatility_bps_multiplier",
+        volatility_multiplier_key=f"{position_side}_stop_loss_volatility_bps_multiplier",
     )
     entry_drawdown_bps = Decimal("0")
-    if price < avg_entry_price:
+    if position_side == "long" and price < avg_entry_price:
         entry_drawdown_bps = ((avg_entry_price - price) / avg_entry_price) * Decimal("10000")
+    elif position_side == "short" and price > avg_entry_price:
+        entry_drawdown_bps = ((price - avg_entry_price) / avg_entry_price) * Decimal("10000")
 
-    trailing_activation_profit_bps = _resolve_min_positive_strategy_param(
-        strategies=eligible_strategies,
-        key="long_trailing_stop_activation_profit_bps",
-    )
-    trailing_drawdown_bps = _resolve_min_positive_strategy_param(
-        strategies=eligible_strategies,
-        key="long_trailing_stop_drawdown_bps",
-    )
-    trailing_stop_threshold_bps = _resolve_dynamic_exit_threshold_bps(
-        strategies=eligible_strategies,
-        base_bps=trailing_drawdown_bps,
-        spread_bps=spread_bps,
-        spread_multiplier_key="long_trailing_stop_spread_bps_multiplier",
-        volatility_bps=volatility_bps,
-        volatility_multiplier_key="long_trailing_stop_volatility_bps_multiplier",
-    )
+    trailing_activation_profit_bps: Decimal | None = None
+    trailing_stop_threshold_bps: Decimal | None = None
+    if position_side == "long":
+        trailing_activation_profit_bps = _resolve_min_positive_strategy_param(
+            strategies=eligible_strategies,
+            key="long_trailing_stop_activation_profit_bps",
+        )
+        trailing_drawdown_bps = _resolve_min_positive_strategy_param(
+            strategies=eligible_strategies,
+            key="long_trailing_stop_drawdown_bps",
+        )
+        trailing_stop_threshold_bps = _resolve_dynamic_exit_threshold_bps(
+            strategies=eligible_strategies,
+            base_bps=trailing_drawdown_bps,
+            spread_bps=spread_bps,
+            spread_multiplier_key="long_trailing_stop_spread_bps_multiplier",
+            volatility_bps=volatility_bps,
+            volatility_multiplier_key="long_trailing_stop_volatility_bps_multiplier",
+        )
     trailing_stop_requires_structure_loss = _resolve_bool_strategy_param(
         strategies=eligible_strategies,
         key="long_trailing_stop_requires_structure_loss",
@@ -1731,7 +1747,7 @@ def _build_runtime_position_exit_overlay(
     ):
         exit_candidates.append(
             (
-                "long_stop_loss_bps",
+                f"{position_side}_stop_loss_bps",
                 "position_stop_loss_exit",
                 hard_stop_threshold_bps,
                 entry_drawdown_bps,
@@ -1767,11 +1783,12 @@ def _build_runtime_position_exit_overlay(
     reference_exit_price = _reference_exit_price(
         price=price,
         signal=signal,
-        action="sell",
+        action=exit_action,
     )
     realized_bps = _realized_exit_bps(
         avg_entry_price=avg_entry_price,
         exit_price=reference_exit_price,
+        position_side=position_side,
     )
     exit_type: str | None = None
     exit_rationale: str | None = None
@@ -1785,7 +1802,12 @@ def _build_runtime_position_exit_overlay(
     ) in exit_candidates:
         if (
             candidate_exit_type
-            not in {"long_stop_loss_bps", "max_hold_seconds", "session_flatten_minute_utc"}
+            not in {
+                "long_stop_loss_bps",
+                "short_stop_loss_bps",
+                "max_hold_seconds",
+                "session_flatten_minute_utc",
+            }
             and not _passes_exit_profit_policy(
                 strategies=eligible_strategies,
                 realized_bps=realized_bps,
@@ -1803,7 +1825,7 @@ def _build_runtime_position_exit_overlay(
     qty, sizing_meta = _resolve_qty_for_aggregated(
         eligible_strategies,
         symbol=signal.symbol,
-        action="sell",
+        action=exit_action,
         price=price,
         equity=equity,
         positions=positions,
@@ -1858,7 +1880,7 @@ def _build_runtime_position_exit_overlay(
         symbol=signal.symbol,
         event_ts=signal.event_ts,
         timeframe=timeframe,
-        action="sell",
+        action=exit_action,
         qty=qty,
         order_type="market",
         time_in_force="day",
@@ -2003,6 +2025,7 @@ def _treats_buy_as_exit_only(strategy: Strategy) -> bool:
     normalized = str(strategy.universe_type or "").strip().lower()
     return normalized in {
         "mean_reversion_exhaustion_short_v1",
+        "microbar_cross_sectional_pairs_v1",
         "microbar_cross_sectional_short_v1",
     }
 
@@ -2741,6 +2764,7 @@ def _position_exit_bypasses_min_hold(position_exit_type: str | None) -> bool:
     normalized = str(position_exit_type or "").strip().lower()
     return normalized in {
         "long_stop_loss_bps",
+        "short_stop_loss_bps",
         "max_hold_seconds",
         "session_flatten_minute_utc",
     }
@@ -2844,7 +2868,7 @@ def _record_runtime_trade_policy_decision(
         if isinstance(position_exit, Mapping)
         else ""
     )
-    if position_exit_type == "long_stop_loss_bps":
+    if position_exit_type in {"long_stop_loss_bps", "short_stop_loss_bps"}:
         state.stop_loss_exit_count += 1
         state.last_stop_loss_exit_at = signal_ts
 

@@ -45,6 +45,11 @@ class TestCandidateSpecs(TestCase):
         self.assertIn("params", first[0].strategy_overrides)
         self.assertIn("execution_profile", first[0].feature_contract)
         self.assertIn("execution_profile_id", first[0].parameter_space)
+        if first[0].family_template_id == "microbar_cross_sectional_pairs_v1":
+            params = first[0].strategy_overrides["params"]
+            self.assertIn("long_stop_loss_bps", params)
+            self.assertIn("long_trailing_stop_drawdown_bps", params)
+            self.assertIn("max_session_negative_exit_bps", params)
         self.assertNotIn("live_runtime_config_path", first[0].to_payload())
         reloaded = candidate_spec_from_payload(first[0].to_payload())
         self.assertEqual(reloaded.candidate_spec_id, first[0].candidate_spec_id)
@@ -100,6 +105,42 @@ class TestCandidateSpecs(TestCase):
             ],
             "45",
         )
+
+    def test_microbar_whitepaper_profiles_include_runtime_risk_controls(self) -> None:
+        card = HypothesisCard(
+            schema_version=HYPOTHESIS_CARD_SCHEMA_VERSION,
+            hypothesis_id="hyp-microbar-risk-controls",
+            source_run_id="paper-microbar-risk",
+            source_claim_ids=("claim-microbar-risk",),
+            mechanism="Order-flow LOB imbalance continuation with execution shortfall controls.",
+            asset_scope="us_equities_intraday",
+            horizon_scope="intraday",
+            expected_direction="positive",
+            required_features=("order_flow_imbalance", "spread_bps"),
+            entry_motifs=("microbar_rank",),
+            exit_motifs=("time_exit",),
+            risk_controls=("quote_quality", "stop_loss", "max_drawdown"),
+            expected_regimes=("liquid_regular_session",),
+            failure_modes=("cost_stress",),
+            implementation_constraints={"execution_profile_index": 1},
+            confidence=Decimal("0.8"),
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=[card], target_net_pnl_per_day=Decimal("500")
+        )
+        microbar = next(
+            spec
+            for spec in specs
+            if spec.family_template_id == "microbar_cross_sectional_pairs_v1"
+        )
+
+        params = microbar.to_vnext_experiment_payload()["template_overrides"]["params"]
+        self.assertEqual(params["long_stop_loss_bps"], "10")
+        self.assertEqual(params["long_trailing_stop_activation_profit_bps"], "8")
+        self.assertEqual(params["long_trailing_stop_drawdown_bps"], "4")
+        self.assertEqual(params["max_session_negative_exit_bps"], "8")
+        self.assertEqual(params["max_stop_loss_exits_per_session"], "1")
 
     def test_missing_features_and_invalid_payloads_are_blocked(self) -> None:
         cards = build_hypothesis_cards(
