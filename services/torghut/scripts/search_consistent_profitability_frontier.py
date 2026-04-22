@@ -196,6 +196,34 @@ def _parse_args() -> argparse.Namespace:
         default=2,
         help='Do not prune below this many symbols in the candidate universe.',
     )
+    parser.add_argument(
+        '--train-screening',
+        dest='train_screening',
+        action='store_true',
+        help='Skip holdout/full-window replay for candidates that fail the cheap train screen.',
+    )
+    parser.add_argument(
+        '--no-train-screening',
+        dest='train_screening',
+        action='store_false',
+        help='Disable cheap train-screen early rejection and always run all replay windows.',
+    )
+    parser.set_defaults(train_screening=True)
+    parser.add_argument(
+        '--min-train-screen-net-per-day',
+        default='0',
+        help='Minimum train net PnL/day required before holdout/full-window replay.',
+    )
+    parser.add_argument(
+        '--min-train-screen-active-ratio',
+        default='0.50',
+        help='Minimum active train-day ratio required before holdout/full-window replay.',
+    )
+    parser.add_argument(
+        '--max-train-screen-worst-day-loss',
+        default='',
+        help='Optional max train worst-day loss before holdout/full-window replay. Defaults to the consistency max worst-day loss.',
+    )
     return parser.parse_args()
 
 
@@ -635,6 +663,57 @@ def _consistency_penalty(
     )
 
 
+def _empty_replay_payload(*, start_date: date, end_date: date) -> dict[str, Any]:
+    return {
+        'start_date': start_date.isoformat(),
+        'end_date': end_date.isoformat(),
+        'net_pnl': '0',
+        'gross_pnl': '0',
+        'total_cost': '0',
+        'decision_count': 0,
+        'filled_count': 0,
+        'wins': 0,
+        'losses': 0,
+        'daily': {},
+        'funnel': {'buckets': []},
+    }
+
+
+def _train_screen_failures(
+    *,
+    train_payload: Mapping[str, Any],
+    holdout_policy: ProfitabilityConstraintPolicy,
+    consistency_policy: FullWindowConsistencyPolicy,
+    min_train_net_per_day: Decimal,
+    min_train_active_ratio: Decimal,
+    max_train_worst_day_loss: Decimal,
+) -> list[str]:
+    summary = summarize_replay_profitability(train_payload)
+    failures: list[str] = []
+    active_ratio = (
+        Decimal(summary.active_days) / Decimal(summary.trading_day_count)
+        if summary.trading_day_count > 0
+        else Decimal('0')
+    )
+    if holdout_policy.require_training_decisions and summary.decision_count <= 0:
+        failures.append('train_no_decisions')
+    if summary.active_days <= 0:
+        failures.append('train_no_active_days')
+    if active_ratio < min_train_active_ratio:
+        failures.append('train_active_ratio_below_screen')
+    if summary.net_per_day < min_train_net_per_day:
+        failures.append('train_net_per_day_below_screen')
+    if summary.worst_day_net < -max_train_worst_day_loss:
+        failures.append('train_worst_day_loss_above_screen')
+    if (
+        consistency_policy.require_every_day_active
+        and summary.trading_day_count > 0
+        and summary.active_days == 0
+    ):
+        failures.append('train_every_day_active_impossible')
+    return list(dict.fromkeys(failures))
+
+
 def _symbol_contributions_from_replay_payload(
     payload: Mapping[str, Any],
 ) -> dict[str, dict[str, Any]]:
@@ -977,6 +1056,18 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         max_symbol_concentration_share=Decimal(str(consistency_constraints.get('max_symbol_concentration_share', '1'))),
         max_entry_family_contribution_share=Decimal(str(consistency_constraints.get('max_entry_family_contribution_share', '1'))),
     )
+    max_train_screen_worst_day_loss = Decimal(
+        str(
+            getattr(args, 'max_train_screen_worst_day_loss', '')
+            or consistency_policy.max_worst_day_loss
+        )
+    )
+    min_train_screen_net_per_day = Decimal(
+        str(getattr(args, 'min_train_screen_net_per_day', '0') or '0')
+    )
+    min_train_screen_active_ratio = Decimal(
+        str(getattr(args, 'min_train_screen_active_ratio', '0.50') or '0.50')
+    )
     expected_last_trading_day = (
         date.fromisoformat(str(args.expected_last_trading_day))
         if str(args.expected_last_trading_day or '').strip()
@@ -1089,34 +1180,55 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                         progress_log_interval_seconds=max(1, int(args.progress_log_seconds)),
                     )
                 )
-                holdout_payload = run_replay(
-                    _build_replay_config(
-                        strategy_configmap_path=candidate_configmap_path,
-                        clickhouse_http_url=str(args.clickhouse_http_url),
-                        clickhouse_username=(str(args.clickhouse_username).strip() or None),
-                        clickhouse_password=clickhouse_password,
+                train_screen_failures = (
+                    _train_screen_failures(
+                        train_payload=train_payload,
+                        holdout_policy=holdout_policy,
+                        consistency_policy=consistency_policy,
+                        min_train_net_per_day=min_train_screen_net_per_day,
+                        min_train_active_ratio=min_train_screen_active_ratio,
+                        max_train_worst_day_loss=max_train_screen_worst_day_loss,
+                    )
+                    if bool(getattr(args, 'train_screening', True))
+                    else []
+                )
+                holdout_replay_skipped = bool(train_screen_failures)
+                full_window_replay_skipped = bool(train_screen_failures)
+                if train_screen_failures:
+                    holdout_payload = _empty_replay_payload(
                         start_date=window.holdout_start,
                         end_date=window.holdout_end,
-                        start_equity=Decimal(str(args.start_equity)),
-                        chunk_minutes=max(1, int(args.chunk_minutes)),
-                        symbols=candidate_symbols,
-                        progress_log_interval_seconds=max(1, int(args.progress_log_seconds)),
                     )
-                )
-                full_window_payload = run_replay(
-                    _build_replay_config(
-                        strategy_configmap_path=candidate_configmap_path,
-                        clickhouse_http_url=str(args.clickhouse_http_url),
-                        clickhouse_username=(str(args.clickhouse_username).strip() or None),
-                        clickhouse_password=clickhouse_password,
-                        start_date=full_window_start,
-                        end_date=full_window_end,
-                        start_equity=Decimal(str(args.start_equity)),
-                        chunk_minutes=max(1, int(args.chunk_minutes)),
-                        symbols=candidate_symbols,
-                        progress_log_interval_seconds=max(1, int(args.progress_log_seconds)),
+                    full_window_payload = train_payload
+                else:
+                    holdout_payload = run_replay(
+                        _build_replay_config(
+                            strategy_configmap_path=candidate_configmap_path,
+                            clickhouse_http_url=str(args.clickhouse_http_url),
+                            clickhouse_username=(str(args.clickhouse_username).strip() or None),
+                            clickhouse_password=clickhouse_password,
+                            start_date=window.holdout_start,
+                            end_date=window.holdout_end,
+                            start_equity=Decimal(str(args.start_equity)),
+                            chunk_minutes=max(1, int(args.chunk_minutes)),
+                            symbols=candidate_symbols,
+                            progress_log_interval_seconds=max(1, int(args.progress_log_seconds)),
+                        )
                     )
-                )
+                    full_window_payload = run_replay(
+                        _build_replay_config(
+                            strategy_configmap_path=candidate_configmap_path,
+                            clickhouse_http_url=str(args.clickhouse_http_url),
+                            clickhouse_username=(str(args.clickhouse_username).strip() or None),
+                            clickhouse_password=clickhouse_password,
+                            start_date=full_window_start,
+                            end_date=full_window_end,
+                            start_equity=Decimal(str(args.start_equity)),
+                            chunk_minutes=max(1, int(args.chunk_minutes)),
+                            symbols=candidate_symbols,
+                            progress_log_interval_seconds=max(1, int(args.progress_log_seconds)),
+                        )
+                    )
 
                 base_result = score_replay_profitability_candidate(
                     family=family,
@@ -1148,6 +1260,20 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                 candidate_payload['search_iteration'] = prune_iteration
                 candidate_payload['family_template_id'] = family_template.family_id
                 candidate_payload['dataset_snapshot_id'] = dataset_snapshot_receipt.snapshot_id
+                candidate_payload['screening'] = {
+                    'schema_version': 'torghut.frontier-train-screen.v1',
+                    'enabled': bool(getattr(args, 'train_screening', True)),
+                    'status': 'rejected'
+                    if train_screen_failures
+                    else 'passed',
+                    'stage': 'train',
+                    'reasons': train_screen_failures,
+                    'min_train_net_per_day': str(min_train_screen_net_per_day),
+                    'min_train_active_ratio': str(min_train_screen_active_ratio),
+                    'max_train_worst_day_loss': str(max_train_screen_worst_day_loss),
+                    'holdout_replay_skipped': holdout_replay_skipped,
+                    'full_window_replay_skipped': full_window_replay_skipped,
+                }
                 if pruned_symbol is not None:
                     candidate_payload['pruned_symbol'] = pruned_symbol
                 if parent_candidate_id is not None:
@@ -1207,6 +1333,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                         is_fresh=(dataset_snapshot_receipt.is_fresh or bool(args.allow_stale_tape)),
                     )
                 )
+                hard_vetoes.extend(train_screen_failures)
                 if objective_scorecard.symbol_concentration_share > consistency_policy.max_symbol_concentration_share:
                     hard_vetoes.append('symbol_concentration_above_max')
                 if objective_scorecard.entry_family_contribution_share > consistency_policy.max_entry_family_contribution_share:
