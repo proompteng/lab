@@ -209,6 +209,75 @@ def _work_item_candidate_id(work_item: WorkItem) -> str:
     )
 
 
+def _runtime_missing_candidate_payload(
+    *,
+    candidate_id: str,
+    family_plan: FamilyAutoresearchPlan,
+    sweep_config: Mapping[str, Any],
+    reason: str,
+) -> dict[str, Any]:
+    runtime_harness = _mapping(family_plan.family_template.runtime_harness)
+    return {
+        'candidate_id': candidate_id,
+        'family_template_id': family_plan.family_template.family_id,
+        'hard_vetoes': ['runtime_strategy_missing'],
+        'ranking': {
+            'method': 'runtime_availability_preflight',
+            'pareto_tier': 999,
+            'tie_breaker_score': '0',
+            'vetoed': True,
+        },
+        'objective_scorecard': {
+            'net_pnl_per_day': '0',
+            'active_day_ratio': '0',
+            'positive_day_ratio': '0',
+            'avg_filled_notional_per_day': '0',
+            'avg_filled_notional_per_active_day': '0',
+            'best_day_share': '1',
+            'worst_day_loss': '0',
+            'max_drawdown': '0',
+            'regime_slice_pass_rate': '0',
+        },
+        'full_window': {
+            'net_per_day': '0',
+            'trading_day_count': 0,
+            'active_days': 0,
+            'daily_net': {},
+            'daily_filled_notional': {},
+        },
+        'replay_config': {
+            'params': _mapping(sweep_config.get('parameters')),
+            'strategy_overrides': _mapping(sweep_config.get('strategy_overrides')),
+        },
+        'runtime_availability': {
+            'schema_version': 'torghut.runtime-availability.v1',
+            'status': 'missing',
+            'reason': reason,
+            'runtime_family': _string(runtime_harness.get('family')),
+            'runtime_strategy_name': _string(runtime_harness.get('strategy_name')),
+        },
+    }
+
+
+def _runtime_missing_frontier_payload(
+    *,
+    candidate_payload: Mapping[str, Any],
+    family_plan: FamilyAutoresearchPlan,
+    status_reason: str,
+) -> dict[str, Any]:
+    return {
+        'schema_version': 'torghut.replay-frontier-sweep.v1',
+        'status': 'skipped_runtime_strategy_missing',
+        'status_reason': status_reason,
+        'family': _string(family_plan.family_template.runtime_harness.get('family')),
+        'strategy_name': _string(family_plan.family_template.runtime_harness.get('strategy_name')),
+        'family_template': family_plan.family_template.to_payload(),
+        'candidate_count': 1,
+        'progress': {'evaluated_candidates': 0, 'pending_candidates': 0},
+        'top': [dict(candidate_payload)],
+    }
+
+
 def _promotion_readiness_payload(*, family_plan: FamilyAutoresearchPlan) -> dict[str, Any]:
     return blocked_research_candidate_promotion_readiness(
         candidate_id='',
@@ -905,15 +974,74 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                 selected_descriptor=current_descriptor,
                 closure_execution_context=closure_execution_context,
             )
-            frontier_payload = run_consistent_profitability_frontier(
-                _frontier_args(
-                    args=args,
-                    program=program,
-                    family_plan=current.family_plan,
-                    sweep_config_path=sweep_config_path,
-                    json_output_path=result_path,
+            try:
+                frontier_payload = run_consistent_profitability_frontier(
+                    _frontier_args(
+                        args=args,
+                        program=program,
+                        family_plan=current.family_plan,
+                        sweep_config_path=sweep_config_path,
+                        json_output_path=result_path,
+                    )
                 )
-            )
+            except ValueError as exc:
+                status_reason = str(exc)
+                if not status_reason.startswith('strategy_not_found:'):
+                    raise
+                candidate_payload = _runtime_missing_candidate_payload(
+                    candidate_id=current_descriptor.candidate_id,
+                    family_plan=current.family_plan,
+                    sweep_config=current.sweep_config,
+                    reason=status_reason,
+                )
+                frontier_payload = _runtime_missing_frontier_payload(
+                    candidate_payload=candidate_payload,
+                    family_plan=current.family_plan,
+                    status_reason=status_reason,
+                )
+                history.append(
+                    _history_record(
+                        runner_run_id=runner_run_id,
+                        experiment_index=experiment_index,
+                        family_plan=current.family_plan,
+                        iteration=current.iteration,
+                        mutation_label=current.mutation_label,
+                        parent_candidate_id=current.parent_candidate_id,
+                        sweep_config_path=sweep_config_path,
+                        result_path=result_path,
+                        candidate_payload=candidate_payload,
+                        rank=1,
+                        status='skip',
+                        objective_met=False,
+                        dataset_snapshot_id='',
+                        descriptor=current_descriptor,
+                        proposal_score=selected_score,
+                        proposal_selected=False,
+                        proposal_selection_reason='runtime_strategy_missing',
+                        disable_other_strategies=bool(current.sweep_config.get('disable_other_strategies', True)),
+                    )
+                )
+                result_path.write_text(
+                    json.dumps(frontier_payload, indent=2, sort_keys=True),
+                    encoding='utf-8',
+                )
+                _persist_run_outputs(
+                    run_root=run_root,
+                    program=program,
+                    program_payload=program.to_payload(),
+                    runner_run_id=runner_run_id,
+                    program_id=program.program_id,
+                    frontier_runs=frontier_runs,
+                    objective_met=objective_met,
+                    history=history,
+                    manifest=manifest,
+                    descriptors=descriptors,
+                    proposal_scores=proposal_scores,
+                    worklist=worklist,
+                    status='running',
+                    closure_execution_context=closure_execution_context,
+                )
+                continue
             result_path.write_text(
                 json.dumps(frontier_payload, indent=2, sort_keys=True),
                 encoding='utf-8',

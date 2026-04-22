@@ -927,6 +927,74 @@ class TestStrategyAutoresearch(TestCase):
             self.assertEqual(promotion_readiness['candidate_id'], 'mutated-1')
             self.assertFalse(promotion_readiness['promotable'])
 
+    def test_run_strategy_autoresearch_loop_records_missing_runtime_strategy_as_skip(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            program_path, family_dir = self._write_program_fixture(root)
+            configmap_path = root / 'strategy-configmap.yaml'
+            configmap_path.write_text(
+                yaml.safe_dump(
+                    {
+                        'apiVersion': 'v1',
+                        'kind': 'ConfigMap',
+                        'data': {'strategies.yaml': 'strategies: []\n'},
+                    },
+                    sort_keys=False,
+                ),
+                encoding='utf-8',
+            )
+            output_dir = root / 'out'
+            args = Namespace(
+                program=program_path,
+                output_dir=output_dir,
+                strategy_configmap=configmap_path,
+                family_template_dir=family_dir,
+                clickhouse_http_url='http://example.invalid:8123',
+                clickhouse_username='torghut',
+                clickhouse_password='secret',
+                start_equity='31590.02',
+                chunk_minutes=10,
+                symbols='',
+                progress_log_seconds=30,
+                shadow_validation_artifact=None,
+                train_days=6,
+                holdout_days=3,
+                full_window_start_date='',
+                full_window_end_date='',
+                expected_last_trading_day='',
+                allow_stale_tape=False,
+                prefetch_full_window_rows=False,
+                max_frontier_runs=0,
+                json_output=None,
+            )
+
+            with patch(
+                'scripts.run_strategy_autoresearch_loop.run_consistent_profitability_frontier',
+                side_effect=ValueError('strategy_not_found:breakout-continuation-long-v1'),
+            ):
+                payload = runner.run_strategy_autoresearch_loop(args)
+
+            self.assertEqual(payload['status'], 'ok')
+            self.assertEqual(payload['frontier_run_count'], 1)
+            self.assertFalse(payload['objective_met'])
+            run_root = Path(payload['run_root'])
+            history_rows = [
+                json.loads(line)
+                for line in (run_root / 'history.jsonl').read_text(encoding='utf-8').splitlines()
+            ]
+            self.assertEqual(len(history_rows), 1)
+            self.assertEqual(history_rows[0]['status'], 'skip')
+            self.assertIn('runtime_strategy_missing', history_rows[0]['hard_vetoes'])
+            self.assertEqual(history_rows[0]['proposal_selection_reason'], 'runtime_strategy_missing')
+            result_payload = json.loads(
+                next((run_root / 'experiments').glob('*/result.json')).read_text(encoding='utf-8')
+            )
+            self.assertEqual(result_payload['status'], 'skipped_runtime_strategy_missing')
+            self.assertEqual(
+                result_payload['top'][0]['runtime_availability']['reason'],
+                'strategy_not_found:breakout-continuation-long-v1',
+            )
+
     def test_run_strategy_autoresearch_loop_applies_replay_budget_and_candidate_specific_scores(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
