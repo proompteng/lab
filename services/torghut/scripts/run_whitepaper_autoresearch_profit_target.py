@@ -721,6 +721,37 @@ def _false_positive_table(
     return rows[: max(0, limit)]
 
 
+def _replay_diagnostic_proposal_rows(
+    *,
+    candidate_selection: Mapping[str, Any],
+    pre_replay_proposal_rows: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    pre_replay_by_spec = {
+        _string(row.get("candidate_spec_id")): row
+        for row in _list_of_mappings(list(pre_replay_proposal_rows))
+        if _string(row.get("candidate_spec_id"))
+    }
+    rows: list[dict[str, Any]] = []
+    for selection in _list_of_mappings(candidate_selection.get("rows")):
+        candidate_spec_id = _string(selection.get("candidate_spec_id"))
+        if not candidate_spec_id:
+            continue
+        pre_replay = pre_replay_by_spec.get(candidate_spec_id, {})
+        rows.append(
+            {
+                **dict(pre_replay),
+                "candidate_spec_id": candidate_spec_id,
+                "proposal_score": pre_replay.get("proposal_score"),
+                "rank": _rank_sort_value(selection.get("rank")),
+                "pre_replay_score": _string(selection.get("pre_replay_score")),
+                "selected_for_replay": bool(selection.get("selected_for_replay")),
+                "replay_selection_reason": _string(selection.get("selection_reason"))
+                or "not_selected_budget",
+            }
+        )
+    return rows
+
+
 def _best_false_negative_table(
     *,
     candidate_selection: Mapping[str, Any],
@@ -1816,14 +1847,14 @@ def run_whitepaper_autoresearch_profit_target(
                     for bundle in partial_replay_result.evidence_bundles
                 ],
             )
-        false_positive_table = (
-            _false_positive_table(
-                proposal_rows=pre_replay_proposal_rows,
-                evidence_bundles=partial_replay_result.evidence_bundles,
-                oracle_policy=oracle_policy,
-            )
-            if partial_replay_result.evidence_bundles
-            else []
+        replay_diagnostic_rows = _replay_diagnostic_proposal_rows(
+            candidate_selection=candidate_selection,
+            pre_replay_proposal_rows=pre_replay_proposal_rows,
+        )
+        false_positive_table = _false_positive_table(
+            proposal_rows=replay_diagnostic_rows,
+            evidence_bundles=partial_replay_result.evidence_bundles,
+            oracle_policy=oracle_policy,
         )
         best_false_negative_table = _best_false_negative_table(
             candidate_selection=candidate_selection,

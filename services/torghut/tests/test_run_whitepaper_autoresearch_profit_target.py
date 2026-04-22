@@ -615,6 +615,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertTrue(partial_artifact_exists)
         self.assertTrue(remediation_exists)
         self.assertTrue(notebook_exists)
+        self.assertGreater(remediation["selected_missing_evidence_count"], 0)
+        self.assertTrue(
+            any(
+                row.get("evidence_status") == "missing"
+                for row in summary["false_positive_table"]
+            )
+        )
         self.assertEqual(
             remediation["schema_version"],
             "torghut.whitepaper-autoresearch-remediation.v1",
