@@ -137,6 +137,11 @@ def _parse_args() -> argparse.Namespace:
             os.environ.get('CLICKHOUSE_PASSWORD', ''),
         ),
     )
+    parser.add_argument(
+        '--clickhouse-password-env',
+        default='',
+        help='Environment variable that contains the ClickHouse password; ignored when --clickhouse-password is set.',
+    )
     parser.add_argument('--start-equity', default='31590.02')
     parser.add_argument('--chunk-minutes', type=int, default=10)
     parser.add_argument('--symbols', default='')
@@ -876,12 +881,23 @@ def _selected_normalization_regime(
     return template_allowed_normalizations[0] if template_allowed_normalizations else None
 
 
+def _resolved_clickhouse_password(args: argparse.Namespace) -> str | None:
+    direct_password = str(getattr(args, 'clickhouse_password', '') or '').strip()
+    if direct_password:
+        return direct_password
+    password_env = str(getattr(args, 'clickhouse_password_env', '') or '').strip()
+    if not password_env:
+        return None
+    return os.environ.get(password_env) or None
+
+
 def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str, Any]:
+    clickhouse_password = _resolved_clickhouse_password(args)
     sweep_config = _load_sweep_config(args.sweep_config.resolve())
     recent_days = _resolve_recent_trading_days(
         clickhouse_http_url=str(args.clickhouse_http_url),
         clickhouse_username=(str(args.clickhouse_username).strip() or None),
-        clickhouse_password=(str(args.clickhouse_password).strip() or None),
+        clickhouse_password=clickhouse_password,
         limit=max(1, int(args.train_days)) + max(1, int(args.holdout_days)),
     )
     window = resolve_sweep_window(
@@ -969,7 +985,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
     dataset_snapshot_receipt = build_dataset_snapshot_receipt(
         clickhouse_http_url=str(args.clickhouse_http_url),
         clickhouse_username=(str(args.clickhouse_username).strip() or None),
-        clickhouse_password=(str(args.clickhouse_password).strip() or None),
+        clickhouse_password=clickhouse_password,
         start_day=full_window_start,
         end_day=full_window_end,
         expected_last_trading_day=expected_last_trading_day,
@@ -1011,7 +1027,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                 strategy_configmap_path=args.strategy_configmap.resolve(),
                 clickhouse_http_url=str(args.clickhouse_http_url),
                 clickhouse_username=(str(args.clickhouse_username).strip() or None),
-                clickhouse_password=(str(args.clickhouse_password).strip() or None),
+                clickhouse_password=clickhouse_password,
                 start_date=full_window_start,
                 end_date=full_window_end,
                 start_equity=Decimal(str(args.start_equity)),
@@ -1064,7 +1080,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                         strategy_configmap_path=candidate_configmap_path,
                         clickhouse_http_url=str(args.clickhouse_http_url),
                         clickhouse_username=(str(args.clickhouse_username).strip() or None),
-                        clickhouse_password=(str(args.clickhouse_password).strip() or None),
+                        clickhouse_password=clickhouse_password,
                         start_date=window.train_start,
                         end_date=window.train_end,
                         start_equity=Decimal(str(args.start_equity)),
@@ -1078,7 +1094,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                         strategy_configmap_path=candidate_configmap_path,
                         clickhouse_http_url=str(args.clickhouse_http_url),
                         clickhouse_username=(str(args.clickhouse_username).strip() or None),
-                        clickhouse_password=(str(args.clickhouse_password).strip() or None),
+                        clickhouse_password=clickhouse_password,
                         start_date=window.holdout_start,
                         end_date=window.holdout_end,
                         start_equity=Decimal(str(args.start_equity)),
@@ -1092,7 +1108,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                         strategy_configmap_path=candidate_configmap_path,
                         clickhouse_http_url=str(args.clickhouse_http_url),
                         clickhouse_username=(str(args.clickhouse_username).strip() or None),
-                        clickhouse_password=(str(args.clickhouse_password).strip() or None),
+                        clickhouse_password=clickhouse_password,
                         start_date=full_window_start,
                         end_date=full_window_end,
                         start_equity=Decimal(str(args.start_equity)),

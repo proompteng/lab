@@ -813,6 +813,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     "synthetic",
                     "--source-jsonl",
                     str(source_path),
+                    "--clickhouse-password-env",
+                    "TORGHUT_CLICKHOUSE_PASSWORD",
                     "--no-persist-results",
                 ],
             ):
@@ -822,7 +824,28 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertTrue(parsed.seed_recent_whitepapers)
         self.assertEqual(parsed.replay_mode, "synthetic")
         self.assertEqual(parsed.source_jsonl, [source_path])
+        self.assertEqual(parsed.clickhouse_password_env, "TORGHUT_CLICKHOUSE_PASSWORD")
         self.assertFalse(parsed.persist_results)
+
+    def test_clickhouse_password_env_resolution_keeps_secret_out_of_argv(
+        self,
+    ) -> None:
+        with patch.dict("os.environ", {"TORGHUT_TEST_CLICKHOUSE_PASSWORD": "from-env"}):
+            resolved = runner._resolved_clickhouse_password(
+                Namespace(
+                    clickhouse_password="",
+                    clickhouse_password_env="TORGHUT_TEST_CLICKHOUSE_PASSWORD",
+                )
+            )
+            direct = runner._resolved_clickhouse_password(
+                Namespace(
+                    clickhouse_password="direct",
+                    clickhouse_password_env="TORGHUT_TEST_CLICKHOUSE_PASSWORD",
+                )
+            )
+
+        self.assertEqual(resolved, "from-env")
+        self.assertEqual(direct, "direct")
 
     def test_runner_reads_source_jsonl_end_to_end(self) -> None:
         with TemporaryDirectory() as tmpdir:

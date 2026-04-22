@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, ROUND_CEILING
@@ -70,6 +71,11 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--clickhouse-username", default="torghut")
     parser.add_argument("--clickhouse-password", default="")
+    parser.add_argument(
+        "--clickhouse-password-env",
+        default="",
+        help="Environment variable that contains the ClickHouse password; ignored when --clickhouse-password is set.",
+    )
     parser.add_argument("--start-equity", default="31590.02")
     parser.add_argument("--chunk-minutes", type=int, default=10)
     parser.add_argument("--symbols", default="")
@@ -139,6 +145,16 @@ def _coerce_decimal(value: Any, *, default: str) -> Decimal:
         return Decimal(str(value))
     text = str(value or "").strip()
     return Decimal(text or default)
+
+
+def _resolved_clickhouse_password(args: argparse.Namespace) -> str:
+    direct_password = str(getattr(args, "clickhouse_password", "") or "").strip()
+    if direct_password:
+        return direct_password
+    password_env = str(getattr(args, "clickhouse_password_env", "") or "").strip()
+    if not password_env:
+        return ""
+    return os.environ.get(password_env, "")
 
 
 def _coerce_ratio_days(*, ratio: Decimal, total_days: int) -> int:
@@ -493,6 +509,12 @@ def run_strategy_factory_v2_from_specs(
     *,
     source_specs: Sequence[ExperimentSpecRow] | None = None,
 ) -> dict[str, Any]:
+    args = argparse.Namespace(
+        **{
+            **vars(args),
+            "clickhouse_password": _resolved_clickhouse_password(args),
+        }
+    )
     source_specs = (
         list(source_specs)
         if source_specs is not None

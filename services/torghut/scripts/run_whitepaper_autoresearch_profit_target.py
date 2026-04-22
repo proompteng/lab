@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import signal
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -120,6 +121,11 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--clickhouse-username", default="torghut")
     parser.add_argument("--clickhouse-password", default="")
+    parser.add_argument(
+        "--clickhouse-password-env",
+        default="",
+        help="Environment variable that contains the ClickHouse password; ignored when --clickhouse-password is set.",
+    )
     parser.add_argument("--start-equity", default="31590.02")
     parser.add_argument("--chunk-minutes", type=int, default=10)
     parser.add_argument("--symbols", default="AAPL,NVDA,MSFT,AMAT")
@@ -224,6 +230,16 @@ def _decimal(value: Any, *, default: str = "0") -> Decimal:
         return Decimal(str(value if value is not None else default))
     except Exception:
         return Decimal(default)
+
+
+def _resolved_clickhouse_password(args: argparse.Namespace) -> str:
+    direct_password = str(getattr(args, "clickhouse_password", "") or "").strip()
+    if direct_password:
+        return direct_password
+    password_env = str(getattr(args, "clickhouse_password_env", "") or "").strip()
+    if not password_env:
+        return ""
+    return os.environ.get(password_env, "")
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -1446,6 +1462,12 @@ def _runtime_closure_payload(
 def run_whitepaper_autoresearch_profit_target(
     args: argparse.Namespace,
 ) -> dict[str, Any]:
+    args = argparse.Namespace(
+        **{
+            **vars(args),
+            "clickhouse_password": _resolved_clickhouse_password(args),
+        }
+    )
     epoch_id = run_id("whitepaper-autoresearch")
     started_at = datetime.now(UTC)
     output_dir = args.output_dir.resolve()

@@ -39,6 +39,8 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                     str(sweep_config),
                     '--expected-last-trading-day',
                     '2026-04-07',
+                    '--clickhouse-password-env',
+                    'TORGHUT_CLICKHOUSE_PASSWORD',
                     '--allow-stale-tape',
                     '--family-template-dir',
                     str(family_dir),
@@ -49,9 +51,22 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 args = frontier._parse_args()
 
         self.assertEqual(args.expected_last_trading_day, '2026-04-07')
+        self.assertEqual(args.clickhouse_password_env, 'TORGHUT_CLICKHOUSE_PASSWORD')
         self.assertTrue(args.allow_stale_tape)
         self.assertEqual(args.family_template_dir, family_dir)
         self.assertEqual(args.max_candidates_to_evaluate, 12)
+
+    def test_clickhouse_password_env_resolution_keeps_secret_out_of_argv(self) -> None:
+        with patch.dict('os.environ', {'TORGHUT_CLICKHOUSE_PASSWORD': 'from-env'}):
+            resolved = frontier._resolved_clickhouse_password(
+                Namespace(clickhouse_password='', clickhouse_password_env='TORGHUT_CLICKHOUSE_PASSWORD')
+            )
+            direct = frontier._resolved_clickhouse_password(
+                Namespace(clickhouse_password='direct', clickhouse_password_env='TORGHUT_CLICKHOUSE_PASSWORD')
+            )
+
+        self.assertEqual(resolved, 'from-env')
+        self.assertEqual(direct, 'direct')
 
     def test_rolling_lower_bound_handles_empty_and_short_windows(self) -> None:
         self.assertEqual(frontier._rolling_lower_bound({}, window=3), Decimal('0'))
