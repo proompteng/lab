@@ -241,11 +241,11 @@ spec:
             - name: WHITEPAPER_INNGEST_FINALIZE_FUNCTION_ID
               value: torghut-whitepaper-synthesis-index-v1
             - name: WHITEPAPER_SEMANTIC_INDEXING_ENABLED
-              value: "false"
+              value: "true"
             - name: WHITEPAPER_SEMANTIC_REQUIRED
               value: "false"
             - name: WHITEPAPER_EMBEDDING_API_BASE_URL
-              value: http://saigak.saigak.svc.cluster.local:11435/api
+              value: http://saigak.saigak.svc.cluster.local:11434/v1
             - name: WHITEPAPER_EMBEDDING_MODEL
               value: qwen3-embedding-saigak:8b
             - name: WHITEPAPER_EMBEDDING_DIMENSION

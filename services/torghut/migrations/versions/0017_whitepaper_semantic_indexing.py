@@ -108,14 +108,15 @@ def upgrade() -> None:
         "whitepaper_semantic_embeddings",
         ["model", "dimension"],
     )
-    op.execute(
-        """
-        CREATE INDEX IF NOT EXISTS ix_whitepaper_semantic_embeddings_embedding_ivfflat
-        ON whitepaper_semantic_embeddings
-        USING ivfflat (embedding vector_cosine_ops)
-        WITH (lists = 100)
-        """
-    )
+    if embedding_dimension <= 2000:
+        op.execute(
+            """
+            CREATE INDEX IF NOT EXISTS ix_whitepaper_semantic_embeddings_embedding_ivfflat
+            ON whitepaper_semantic_embeddings
+            USING ivfflat (embedding vector_cosine_ops)
+            WITH (lists = 100)
+            """
+        )
 
 
 def downgrade() -> None:
