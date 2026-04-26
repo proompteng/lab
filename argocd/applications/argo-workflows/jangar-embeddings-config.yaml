@@ -4,7 +4,7 @@ metadata:
   name: jangar-embeddings-config
   namespace: argo-workflows
 data:
-  openaiApiBaseUrl: http://saigak.saigak.svc.cluster.local:11435/api
+  openaiApiBaseUrl: http://saigak.saigak.svc.cluster.local:11434/v1
   openaiEmbeddingModel: qwen3-embedding-saigak:8b
   openaiEmbeddingDimension: "4096"
   openaiEmbeddingTimeoutMs: "120000"

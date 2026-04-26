@@ -1,0 +1,70 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: torghut-whitepaper-semantic-backfill
+  namespace: torghut
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 1800
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: torghut-whitepaper-semantic-backfill
+        app.kubernetes.io/part-of: lab
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: torghut-runtime
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backfill
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:e36878bbac4be215f8fda81d928dfb0acf78c85e5760838c463d066194c71014
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          command:
+            - /bin/bash
+            - -lc
+          args:
+            - |
+              set -euo pipefail
+              cd /app
+              /opt/venv/bin/python scripts/backfill_whitepaper_semantic_index.py --limit 500 --concurrency 2
+          env:
+            - name: DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: uri
+            - name: WHITEPAPER_EMBEDDING_API_BASE_URL
+              value: http://saigak.saigak.svc.cluster.local:11434/v1
+            - name: WHITEPAPER_EMBEDDING_MODEL
+              value: qwen3-embedding-saigak:8b
+            - name: WHITEPAPER_EMBEDDING_DIMENSION
+              value: "4096"
+            - name: WHITEPAPER_EMBEDDING_TIMEOUT_MS
+              value: "120000"
+            - name: WHITEPAPER_CHUNK_SIZE_CHARS
+              value: "2400"
+            - name: WHITEPAPER_CHUNK_OVERLAP_CHARS
+              value: "300"
+            - name: WHITEPAPER_EMBEDDING_BATCH_SIZE
+              value: "32"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi

@@ -5,7 +5,7 @@ import { resolveEmbeddingConfig } from '~/server/memory-config'
 describe('memory-config', () => {
   it('defaults self-hosted embeddings to 4096 dimensions', () => {
     const config = resolveEmbeddingConfig({
-      OPENAI_EMBEDDING_API_BASE_URL: 'http://saigak.saigak.svc.cluster.local:11435/api',
+      OPENAI_EMBEDDING_API_BASE_URL: 'http://saigak.saigak.svc.cluster.local:11434/v1',
     })
 
     expect(config).toMatchObject({
