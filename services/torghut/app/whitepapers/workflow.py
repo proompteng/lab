@@ -1962,9 +1962,9 @@ class WhitepaperWorkflowService:
                 JOIN whitepaper_documents d ON d.id = r.document_id
                 WHERE se.model = :embedding_model
                   AND se.dimension = :embedding_dimension
-                  AND (:status_filter IS NULL OR r.status = :status_filter)
-                  AND (:scope_filter IS NULL OR sc.source_scope = :scope_filter)
-                  AND (:subject_filter IS NULL OR (d.metadata_json ->> 'subject') = :subject_filter)
+                  AND (CAST(:status_filter AS text) IS NULL OR r.status = CAST(:status_filter AS text))
+                  AND (CAST(:scope_filter AS text) IS NULL OR sc.source_scope = CAST(:scope_filter AS text))
+                  AND (CAST(:subject_filter AS text) IS NULL OR (d.metadata_json ->> 'subject') = CAST(:subject_filter AS text))
                 ORDER BY se.embedding <=> CAST(:query_vector AS vector) ASC
                 LIMIT :semantic_limit
                 """
@@ -2003,9 +2003,9 @@ class WhitepaperWorkflowService:
                 FROM whitepaper_semantic_chunks sc
                 JOIN whitepaper_analysis_runs r ON r.id = sc.analysis_run_id
                 JOIN whitepaper_documents d ON d.id = r.document_id
-                WHERE (:status_filter IS NULL OR r.status = :status_filter)
-                  AND (:scope_filter IS NULL OR sc.source_scope = :scope_filter)
-                  AND (:subject_filter IS NULL OR (d.metadata_json ->> 'subject') = :subject_filter)
+                WHERE (CAST(:status_filter AS text) IS NULL OR r.status = CAST(:status_filter AS text))
+                  AND (CAST(:scope_filter AS text) IS NULL OR sc.source_scope = CAST(:scope_filter AS text))
+                  AND (CAST(:subject_filter AS text) IS NULL OR (d.metadata_json ->> 'subject') = CAST(:subject_filter AS text))
                   AND sc.text_tsvector @@ websearch_to_tsquery('simple', :lexical_query)
                 ORDER BY lexical_score DESC
                 LIMIT :lexical_limit
