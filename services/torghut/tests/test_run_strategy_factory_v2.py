@@ -147,6 +147,7 @@ class TestRunStrategyFactoryV2(TestCase):
             clickhouse_http_url="http://example.invalid:8123",
             clickhouse_username="torghut",
             clickhouse_password="secret",
+            clickhouse_password_env="",
             start_equity="31590.02",
             chunk_minutes=10,
             symbols="",
@@ -191,6 +192,8 @@ class TestRunStrategyFactoryV2(TestCase):
                     "paper-1",
                     "--limit",
                     "2",
+                    "--clickhouse-password-env",
+                    "TORGHUT_CLICKHOUSE_PASSWORD",
                     "--allow-stale-tape",
                     "--prefetch-full-window-rows",
                     "--no-persist-results",
@@ -208,6 +211,7 @@ class TestRunStrategyFactoryV2(TestCase):
         self.assertEqual(parsed.experiment_id, ["exp-1"])
         self.assertEqual(parsed.paper_run_id, ["paper-1"])
         self.assertEqual(parsed.limit, 2)
+        self.assertEqual(parsed.clickhouse_password_env, "TORGHUT_CLICKHOUSE_PASSWORD")
         self.assertTrue(parsed.allow_stale_tape)
         self.assertTrue(parsed.prefetch_full_window_rows)
         self.assertFalse(parsed.persist_results)
@@ -217,6 +221,16 @@ class TestRunStrategyFactoryV2(TestCase):
         )
         self.assertEqual(runner._coerce_decimal(7, default="0"), Decimal("7"))
         self.assertEqual(runner._coerce_ratio_days(ratio=Decimal("0"), total_days=5), 0)
+        with patch.dict("os.environ", {"TORGHUT_CLICKHOUSE_PASSWORD": "from-env"}):
+            self.assertEqual(
+                runner._resolved_clickhouse_password(
+                    Namespace(
+                        clickhouse_password="",
+                        clickhouse_password_env="TORGHUT_CLICKHOUSE_PASSWORD",
+                    )
+                ),
+                "from-env",
+            )
         self.assertIsNone(missing_seed)
         assert fallback is not None
         self.assertEqual(fallback["family_template_id"], "strict-family")

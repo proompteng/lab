@@ -2847,6 +2847,76 @@ class TestDecisionEngine(TestCase):
         assert isinstance(position_exit, dict)
         self.assertEqual(position_exit.get("type"), "long_stop_loss_bps")
 
+    def test_scheduler_runtime_microbar_pairs_emits_short_stop_loss_cover_overlay(
+        self,
+    ) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="microbar-pairs-short-stop",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="microbar-pairs-short-stop",
+                    strategy_id="microbar_cross_sectional_pairs_v1@research",
+                    strategy_type="microbar_cross_sectional_long_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="microbar_cross_sectional_pairs_v1",
+                    universe_symbols=["META"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("50000"),
+                    params={"long_stop_loss_bps": "25"},
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="microbar_cross_sectional_pairs_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("50000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 18, 29, 10, tzinfo=timezone.utc),
+            symbol="META",
+            timeframe="1Sec",
+            seq=12,
+            payload={
+                "price": 101.00,
+                "spread": 0.02,
+                "macd": 0.010,
+                "macd_signal": 0.008,
+                "rsi14": 56.4,
+                "vol_realized_w60s": 0.00018,
+            },
+        )
+
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+            patch.object(settings, "trading_fractional_equities_enabled", True),
+        ):
+            decisions = engine.evaluate(
+                signal,
+                [strategy],
+                positions=[
+                    {
+                        "symbol": "META",
+                        "qty": "10",
+                        "side": "short",
+                        "market_value": "-1010",
+                        "avg_entry_price": "100",
+                    }
+                ],
+            )
+
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0].action, "buy")
+        self.assertEqual(decisions[0].qty, Decimal("10"))
+        self.assertEqual(decisions[0].rationale, "position_stop_loss_exit")
+        position_exit = decisions[0].params.get("position_exit")
+        assert isinstance(position_exit, dict)
+        self.assertEqual(position_exit.get("type"), "short_stop_loss_bps")
+
     def test_scheduler_runtime_position_exit_overlay_skips_hard_stop_on_wide_spread(
         self,
     ) -> None:

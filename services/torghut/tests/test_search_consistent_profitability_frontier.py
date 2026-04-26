@@ -39,19 +39,45 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                     str(sweep_config),
                     '--expected-last-trading-day',
                     '2026-04-07',
+                    '--clickhouse-password-env',
+                    'TORGHUT_CLICKHOUSE_PASSWORD',
                     '--allow-stale-tape',
                     '--family-template-dir',
                     str(family_dir),
                     '--max-candidates-to-evaluate',
                     '12',
+                    '--no-train-screening',
+                    '--min-train-screen-net-per-day',
+                    '-50',
+                    '--min-train-screen-active-ratio',
+                    '0.25',
+                    '--max-train-screen-worst-day-loss',
+                    '125',
                 ],
             ):
                 args = frontier._parse_args()
 
         self.assertEqual(args.expected_last_trading_day, '2026-04-07')
+        self.assertEqual(args.clickhouse_password_env, 'TORGHUT_CLICKHOUSE_PASSWORD')
         self.assertTrue(args.allow_stale_tape)
         self.assertEqual(args.family_template_dir, family_dir)
         self.assertEqual(args.max_candidates_to_evaluate, 12)
+        self.assertFalse(args.train_screening)
+        self.assertEqual(args.min_train_screen_net_per_day, '-50')
+        self.assertEqual(args.min_train_screen_active_ratio, '0.25')
+        self.assertEqual(args.max_train_screen_worst_day_loss, '125')
+
+    def test_clickhouse_password_env_resolution_keeps_secret_out_of_argv(self) -> None:
+        with patch.dict('os.environ', {'TORGHUT_CLICKHOUSE_PASSWORD': 'from-env'}):
+            resolved = frontier._resolved_clickhouse_password(
+                Namespace(clickhouse_password='', clickhouse_password_env='TORGHUT_CLICKHOUSE_PASSWORD')
+            )
+            direct = frontier._resolved_clickhouse_password(
+                Namespace(clickhouse_password='direct', clickhouse_password_env='TORGHUT_CLICKHOUSE_PASSWORD')
+            )
+
+        self.assertEqual(resolved, 'from-env')
+        self.assertEqual(direct, 'direct')
 
     def test_rolling_lower_bound_handles_empty_and_short_windows(self) -> None:
         self.assertEqual(frontier._rolling_lower_bound({}, window=3), Decimal('0'))
@@ -241,6 +267,10 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             symbol_prune_iterations=0,
             symbol_prune_candidates=1,
             symbol_prune_min_universe_size=2,
+            train_screening=True,
+            min_train_screen_net_per_day='0',
+            min_train_screen_active_ratio='0.50',
+            max_train_screen_worst_day_loss='',
         )
 
     def test_strategy_universe_symbols_reads_target_strategy_universe(self) -> None:
@@ -704,6 +734,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 sweep_config=sweep_config,
                 json_output=json_output,
             )
+            args.min_train_screen_net_per_day = '1'
             recent_days = tuple(date(2026, 3, 18) + timedelta(days=index) for index in range(6))
             snapshot_receipt = SimpleNamespace(
                 snapshot_id='snap-partial',
@@ -800,6 +831,104 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             persisted = json.loads(json_output.read_text(encoding='utf-8'))
             self.assertEqual(persisted['status'], 'completed')
             self.assertEqual(persisted['candidate_count'], 2)
+
+    def test_run_frontier_train_screen_skips_dead_candidate_expensive_replays(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            strategy_configmap = self._write_strategy_configmap(root)
+            sweep_config = root / 'sweep.yaml'
+            sweep_config.write_text(
+                yaml.safe_dump(
+                    {
+                        'schema_version': 'torghut.replay-frontier-sweep.v1',
+                        'family': 'intraday_tsmom_consistent',
+                        'strategy_name': 'intraday-tsmom-profit-v3',
+                        'disable_other_strategies': True,
+                        'constraints': {
+                            'holdout_target_net_per_day': '200',
+                            'min_active_holdout_days': 2,
+                            'max_worst_holdout_day_loss': '200',
+                            'min_profit_factor': '1.0',
+                        },
+                        'consistency_constraints': {
+                            'target_net_per_day': '200',
+                            'min_active_days': 2,
+                            'max_worst_day_loss': '300',
+                            'max_negative_days': 1,
+                            'max_drawdown': '400',
+                            'require_every_day_active': True,
+                        },
+                        'strategy_overrides': {
+                            'universe_symbols': [['NVDA']],
+                        },
+                        'parameters': {
+                            'long_stop_loss_bps': ['12'],
+                        },
+                    },
+                    sort_keys=False,
+                ),
+                encoding='utf-8',
+            )
+            json_output = root / 'frontier.json'
+            args = self._make_args(
+                strategy_configmap=strategy_configmap,
+                sweep_config=sweep_config,
+                json_output=json_output,
+            )
+            args.min_train_screen_net_per_day = '1'
+            recent_days = tuple(date(2026, 3, 18) + timedelta(days=index) for index in range(6))
+            snapshot_receipt = SimpleNamespace(
+                snapshot_id='snap-screen',
+                is_fresh=True,
+                stale_override_used=False,
+                to_payload=lambda: {
+                    'snapshot_id': 'snap-screen',
+                    'source': 'ta',
+                    'window_size': 'PT1S',
+                    'start_day': '2026-03-18',
+                    'end_day': '2026-03-23',
+                    'expected_last_trading_day': '2026-03-23',
+                    'is_fresh': True,
+                    'missing_days': [],
+                    'row_count': 123,
+                    'stale_override_used': False,
+                    'witnesses': [],
+                },
+            )
+            replay_calls: list[tuple[str, str]] = []
+
+            def fake_run_replay(config: object) -> dict[str, object]:
+                replay_calls.append((str(getattr(config, 'start_date')), str(getattr(config, 'end_date'))))
+                return self._payload(
+                    start_date='2026-03-18',
+                    end_date='2026-03-20',
+                    daily_net={
+                        '2026-03-18': '0',
+                        '2026-03-19': '0',
+                        '2026-03-20': '0',
+                    },
+                    decision_count=0,
+                    filled_count=0,
+                    wins=0,
+                    losses=0,
+                )
+
+            with (
+                patch('scripts.search_consistent_profitability_frontier._resolve_recent_trading_days', return_value=recent_days),
+                patch('scripts.search_consistent_profitability_frontier.build_dataset_snapshot_receipt', return_value=snapshot_receipt),
+                patch('scripts.search_consistent_profitability_frontier.ensure_fresh_snapshot'),
+                patch('scripts.search_consistent_profitability_frontier.run_replay', side_effect=fake_run_replay),
+            ):
+                payload = frontier.run_consistent_profitability_frontier(args)
+
+            self.assertEqual(replay_calls, [('2026-03-18', '2026-03-20')])
+            self.assertEqual(payload['candidate_count'], 1)
+            top = payload['top'][0]
+            self.assertEqual(top['screening']['status'], 'rejected')
+            self.assertTrue(top['screening']['holdout_replay_skipped'])
+            self.assertTrue(top['screening']['full_window_replay_skipped'])
+            self.assertIn('train_no_decisions', top['hard_vetoes'])
+            self.assertIn('train_net_per_day_below_screen', top['hard_vetoes'])
 
     def test_run_frontier_respects_candidate_budget(self) -> None:
         with TemporaryDirectory() as tmpdir:

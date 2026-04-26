@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import signal
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -120,6 +121,11 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--clickhouse-username", default="torghut")
     parser.add_argument("--clickhouse-password", default="")
+    parser.add_argument(
+        "--clickhouse-password-env",
+        default="",
+        help="Environment variable that contains the ClickHouse password; ignored when --clickhouse-password is set.",
+    )
     parser.add_argument("--start-equity", default="31590.02")
     parser.add_argument("--chunk-minutes", type=int, default=10)
     parser.add_argument("--symbols", default="AAPL,NVDA,MSFT,AMAT")
@@ -211,6 +217,10 @@ def _write_failure_summary(
         summary.update(dict(extra))
     _write_json(output_dir / "error-summary.json", summary)
     _write_json(output_dir / "summary.json", summary)
+    write_whitepaper_autoresearch_diagnostics_notebook(
+        output_dir / "whitepaper-autoresearch-diagnostics.ipynb",
+        summary=summary,
+    )
     return summary
 
 
@@ -224,6 +234,16 @@ def _decimal(value: Any, *, default: str = "0") -> Decimal:
         return Decimal(str(value if value is not None else default))
     except Exception:
         return Decimal(default)
+
+
+def _resolved_clickhouse_password(args: argparse.Namespace) -> str:
+    direct_password = str(getattr(args, "clickhouse_password", "") or "").strip()
+    if direct_password:
+        return direct_password
+    password_env = str(getattr(args, "clickhouse_password_env", "") or "").strip()
+    if not password_env:
+        return ""
+    return os.environ.get(password_env, "")
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -701,6 +721,37 @@ def _false_positive_table(
     return rows[: max(0, limit)]
 
 
+def _replay_diagnostic_proposal_rows(
+    *,
+    candidate_selection: Mapping[str, Any],
+    pre_replay_proposal_rows: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    pre_replay_by_spec = {
+        _string(row.get("candidate_spec_id")): row
+        for row in _list_of_mappings(list(pre_replay_proposal_rows))
+        if _string(row.get("candidate_spec_id"))
+    }
+    rows: list[dict[str, Any]] = []
+    for selection in _list_of_mappings(candidate_selection.get("rows")):
+        candidate_spec_id = _string(selection.get("candidate_spec_id"))
+        if not candidate_spec_id:
+            continue
+        pre_replay = pre_replay_by_spec.get(candidate_spec_id, {})
+        rows.append(
+            {
+                **dict(pre_replay),
+                "candidate_spec_id": candidate_spec_id,
+                "proposal_score": pre_replay.get("proposal_score"),
+                "rank": _rank_sort_value(selection.get("rank")),
+                "pre_replay_score": _string(selection.get("pre_replay_score")),
+                "selected_for_replay": bool(selection.get("selected_for_replay")),
+                "replay_selection_reason": _string(selection.get("selection_reason"))
+                or "not_selected_budget",
+            }
+        )
+    return rows
+
+
 def _best_false_negative_table(
     *,
     candidate_selection: Mapping[str, Any],
@@ -721,6 +772,8 @@ def _best_false_negative_table(
             not candidate_spec_id
             or bool(selection.get("selected_for_replay"))
             or candidate_spec_id in evidence_by_spec
+            or _string(selection.get("selection_reason"))
+            == "duplicate_execution_signature"
         ):
             continue
         pre_replay = pre_replay_by_spec.get(candidate_spec_id, {})
@@ -746,6 +799,143 @@ def _best_false_negative_table(
         )
     )
     return rows[: max(0, limit)]
+
+
+def _candidate_search_remediation(
+    *,
+    failure_reason: str,
+    candidate_selection: Mapping[str, Any],
+    evidence_bundles: Sequence[CandidateEvidenceBundle],
+    false_positive_table: Sequence[Mapping[str, Any]],
+    best_false_negative_table: Sequence[Mapping[str, Any]],
+    replay_timeout_seconds: int,
+    max_frontier_candidates_per_spec: int,
+) -> dict[str, Any]:
+    failure_counts: dict[str, int] = {}
+    for row in _list_of_mappings(list(false_positive_table)):
+        for reason in cast(Sequence[Any], row.get("failure_reasons") or ()):
+            reason_text = _string(reason)
+            if reason_text:
+                failure_counts[reason_text] = failure_counts.get(reason_text, 0) + 1
+
+    partial_scorecards = [
+        dict(bundle.objective_scorecard) for bundle in evidence_bundles
+    ]
+    selected_rows = [
+        row
+        for row in _list_of_mappings(candidate_selection.get("rows"))
+        if bool(row.get("selected_for_replay"))
+    ]
+    selected_but_missing = [
+        row
+        for row in _list_of_mappings(list(false_positive_table))
+        if row.get("evidence_status") == "missing"
+    ]
+    next_actions: list[dict[str, Any]] = []
+    if "TimeoutError:real_replay_timeout_seconds" in failure_reason:
+        next_actions.append(
+            {
+                "priority": 1,
+                "action": "shrink_per_spec_frontier_or_extend_timeout",
+                "reason": "real replay timed out before all selected candidate specs emitted evidence",
+                "recommended_flags": {
+                    "--max-frontier-candidates-per-spec": str(
+                        max(1, min(max_frontier_candidates_per_spec, 8))
+                    ),
+                    "--real-replay-timeout-seconds": str(
+                        max(replay_timeout_seconds * 2, 900)
+                        if replay_timeout_seconds > 0
+                        else 900
+                    ),
+                },
+            }
+        )
+    if selected_but_missing:
+        next_actions.append(
+            {
+                "priority": 2,
+                "action": "replay_missing_selected_specs_individually",
+                "reason": "some high-ranked specs were selected but did not produce replay evidence",
+                "candidate_spec_ids": [
+                    _string(row.get("candidate_spec_id"))
+                    for row in selected_but_missing[:8]
+                    if _string(row.get("candidate_spec_id"))
+                ],
+            }
+        )
+    if any(
+        reason in failure_counts
+        for reason in (
+            "active_day_ratio_below_oracle",
+            "positive_day_ratio_below_oracle",
+        )
+    ):
+        next_actions.append(
+            {
+                "priority": 3,
+                "action": "increase_breadth_and_portfolio_diversity",
+                "reason": "replayed candidates had flat or non-positive days",
+                "recommended_flags": {
+                    "--top-k": str(max(4, len(selected_rows))),
+                    "--exploration-slots": "4",
+                    "--portfolio-size-min": "3",
+                },
+            }
+        )
+    if any(
+        reason in failure_counts
+        for reason in (
+            "non_positive_net_pnl_per_day",
+            "worst_day_loss_above_oracle",
+            "max_drawdown_above_oracle",
+        )
+    ):
+        next_actions.append(
+            {
+                "priority": 4,
+                "action": "pivot_family_mix_away_from_failed_exposures",
+                "reason": "partial replay evidence failed profit or risk gates",
+                "recommended_review_fields": [
+                    "family_template_id",
+                    "runtime_strategy_name",
+                    "daily_net",
+                    "symbol_contribution_shares",
+                ],
+            }
+        )
+    if best_false_negative_table:
+        next_actions.append(
+            {
+                "priority": 5,
+                "action": "expand_exploration_for_unreplayed_high_ranked_specs",
+                "reason": "ranked specs were not replayed because of budget",
+                "candidate_spec_ids": [
+                    _string(row.get("candidate_spec_id"))
+                    for row in _list_of_mappings(list(best_false_negative_table))[:8]
+                    if _string(row.get("candidate_spec_id"))
+                ],
+            }
+        )
+    if not next_actions:
+        next_actions.append(
+            {
+                "priority": 1,
+                "action": "inspect_partial_artifacts_before_next_epoch",
+                "reason": "failure did not match a known replay remediation pattern",
+            }
+        )
+
+    next_actions.sort(key=lambda row: int(row.get("priority") or 10**6))
+    return {
+        "schema_version": "torghut.whitepaper-autoresearch-remediation.v1",
+        "failure_reason": failure_reason,
+        "partial_evidence_bundle_count": len(evidence_bundles),
+        "selected_for_replay_count": len(selected_rows),
+        "selected_missing_evidence_count": len(selected_but_missing),
+        "failure_reason_counts": dict(sorted(failure_counts.items())),
+        "partial_scorecards": partial_scorecards,
+        "next_actions": next_actions,
+    }
 
 
 def _pre_replay_candidate_score(spec: CandidateSpec) -> Decimal:
@@ -856,6 +1046,24 @@ def _proposal_score_confidence(
     }
 
 
+def _candidate_spec_execution_signature(spec: CandidateSpec) -> str:
+    vnext_payload = spec.to_vnext_experiment_payload()
+    return _stable_hash(
+        {
+            "family_template_id": spec.family_template_id,
+            "runtime_family": spec.runtime_family,
+            "runtime_strategy_name": spec.runtime_strategy_name,
+            "template_overrides": vnext_payload.get("template_overrides", {}),
+            "feature_variants": vnext_payload.get("feature_variants", []),
+            "veto_controller_variants": vnext_payload.get(
+                "veto_controller_variants", []
+            ),
+            "selection_objectives": vnext_payload.get("selection_objectives", {}),
+            "hard_vetoes": vnext_payload.get("hard_vetoes", {}),
+        }
+    )
+
+
 def _select_candidate_specs_for_replay(
     *,
     specs: Sequence[CandidateSpec],
@@ -872,6 +1080,10 @@ def _select_candidate_specs_for_replay(
             "rows": [],
         }
     spec_by_id = {spec.candidate_spec_id: spec for spec in specs}
+    execution_signature_by_spec = {
+        spec.candidate_spec_id: _candidate_spec_execution_signature(spec)
+        for spec in specs
+    }
     max_budget = max(1, int(max_candidates))
     model_confidence = _proposal_score_confidence(proposal_rows)
     requested_exploration_slots = max(0, int(exploration_slots))
@@ -902,11 +1114,19 @@ def _select_candidate_specs_for_replay(
         if spec.candidate_spec_id not in set(ranked_ids)
     )
     ordered = [spec_by_id[candidate_spec_id] for candidate_spec_id in ranked_ids]
-    exploitation_count = min(max(0, int(top_k)), replay_budget, len(ranked_ids))
-    exploitation = [
-        spec_by_id[candidate_spec_id]
-        for candidate_spec_id in ranked_ids[:exploitation_count]
-    ]
+    representative_by_signature: dict[str, CandidateSpec] = {}
+    ordered_unique: list[CandidateSpec] = []
+    for spec in ordered:
+        execution_signature = execution_signature_by_spec[spec.candidate_spec_id]
+        if execution_signature in representative_by_signature:
+            continue
+        representative_by_signature[execution_signature] = spec
+        ordered_unique.append(spec)
+    rank_position_by_spec = {
+        spec.candidate_spec_id: index for index, spec in enumerate(ordered, start=1)
+    }
+    replay_budget = min(replay_budget, len(ordered_unique))
+    exploitation_count = min(max(0, int(top_k)), replay_budget, len(ordered_unique))
 
     def spec_source_run_id(spec: CandidateSpec) -> str:
         return _string(spec.feature_contract.get("source_run_id")) or spec.hypothesis_id
@@ -920,6 +1140,7 @@ def _select_candidate_specs_for_replay(
         return (
             spec.family_template_id in selected_families,
             spec_source_run_id(spec) in selected_sources,
+            rank_position_by_spec.get(spec.candidate_spec_id, 10**6),
             int(family_selection.get("rank") or 10**6),
             spec.candidate_spec_id,
         )
@@ -941,9 +1162,16 @@ def _select_candidate_specs_for_replay(
             pool.remove(best)
         return picked
 
+    exploitation = take_diverse(
+        ordered_unique,
+        count=exploitation_count,
+        selected_so_far=(),
+    )
     remaining = [
         item
-        for item in sorted(specs, key=lambda spec: diversity_key(spec, exploitation))
+        for item in sorted(
+            ordered_unique, key=lambda spec: diversity_key(spec, exploitation)
+        )
         if item.candidate_spec_id
         not in {spec.candidate_spec_id for spec in exploitation}
     ]
@@ -962,7 +1190,9 @@ def _select_candidate_specs_for_replay(
             item.candidate_spec_id for item in (*exploitation, *exploration)
         }
         backfill_candidates = [
-            item for item in ordered if item.candidate_spec_id not in selected_ids
+            item
+            for item in ordered_unique
+            if item.candidate_spec_id not in selected_ids
         ]
         backfill = take_diverse(
             backfill_candidates,
@@ -980,17 +1210,37 @@ def _select_candidate_specs_for_replay(
     selected_ids = {
         item.candidate_spec_id for item in (*exploitation, *exploration, *backfill)
     }
-    selected = [item for item in specs if item.candidate_spec_id in selected_ids]
+    selected = [
+        item for item in ordered_unique if item.candidate_spec_id in selected_ids
+    ]
+
+    def row_selection_reason(spec: CandidateSpec) -> str:
+        if spec.candidate_spec_id in selected_reason:
+            return selected_reason[spec.candidate_spec_id]
+        representative = representative_by_signature[
+            execution_signature_by_spec[spec.candidate_spec_id]
+        ]
+        if representative.candidate_spec_id != spec.candidate_spec_id:
+            return "duplicate_execution_signature"
+        return "not_selected_budget"
+
     rows = [
         {
             "candidate_spec_id": spec.candidate_spec_id,
             "family_template_id": spec.family_template_id,
+            "execution_signature": execution_signature_by_spec[spec.candidate_spec_id],
+            "duplicate_of_candidate_spec_id": representative_by_signature[
+                execution_signature_by_spec[spec.candidate_spec_id]
+            ].candidate_spec_id
+            if representative_by_signature[
+                execution_signature_by_spec[spec.candidate_spec_id]
+            ].candidate_spec_id
+            != spec.candidate_spec_id
+            else None,
             "pre_replay_score": str(_pre_replay_candidate_score(spec)),
             "rank": index,
             "selected_for_replay": spec.candidate_spec_id in selected_ids,
-            "selection_reason": selected_reason.get(
-                spec.candidate_spec_id, "not_selected_budget"
-            ),
+            "selection_reason": row_selection_reason(spec),
             "selection_hash": _stable_hash(
                 {
                     "candidate_spec_id": spec.candidate_spec_id,
@@ -1012,6 +1262,7 @@ def _select_candidate_specs_for_replay(
             "portfolio_size_min": max(1, int(portfolio_size_min)),
             "selected_count": len(selected),
             "compiled_candidate_count": len(specs),
+            "unique_execution_signature_count": len(ordered_unique),
         },
         "proposal_score_confidence": model_confidence,
         "selected_candidate_spec_ids": [item.candidate_spec_id for item in selected],
@@ -1446,6 +1697,12 @@ def _runtime_closure_payload(
 def run_whitepaper_autoresearch_profit_target(
     args: argparse.Namespace,
 ) -> dict[str, Any]:
+    args = argparse.Namespace(
+        **{
+            **vars(args),
+            "clickhouse_password": _resolved_clickhouse_password(args),
+        }
+    )
     epoch_id = run_id("whitepaper-autoresearch")
     started_at = datetime.now(UTC)
     output_dir = args.output_dir.resolve()
@@ -1573,6 +1830,7 @@ def run_whitepaper_autoresearch_profit_target(
             specs=replay_candidate_specs,
         )
     except Exception as exc:
+        failure_reason = f"{type(exc).__name__}:{exc}"
         partial_replay_result = (
             _collect_partial_real_replay(
                 output_dir=output_dir, specs=replay_candidate_specs
@@ -1589,11 +1847,40 @@ def run_whitepaper_autoresearch_profit_target(
                     for bundle in partial_replay_result.evidence_bundles
                 ],
             )
+        replay_diagnostic_rows = _replay_diagnostic_proposal_rows(
+            candidate_selection=candidate_selection,
+            pre_replay_proposal_rows=pre_replay_proposal_rows,
+        )
+        false_positive_table = _false_positive_table(
+            proposal_rows=replay_diagnostic_rows,
+            evidence_bundles=partial_replay_result.evidence_bundles,
+            oracle_policy=oracle_policy,
+        )
+        best_false_negative_table = _best_false_negative_table(
+            candidate_selection=candidate_selection,
+            pre_replay_proposal_rows=pre_replay_proposal_rows,
+            evidence_bundles=partial_replay_result.evidence_bundles,
+        )
+        remediation = _candidate_search_remediation(
+            failure_reason=failure_reason,
+            candidate_selection=candidate_selection,
+            evidence_bundles=partial_replay_result.evidence_bundles,
+            false_positive_table=false_positive_table,
+            best_false_negative_table=best_false_negative_table,
+            replay_timeout_seconds=int(
+                getattr(args, "real_replay_timeout_seconds", 0) or 0
+            ),
+            max_frontier_candidates_per_spec=int(
+                getattr(args, "max_frontier_candidates_per_spec", 64) or 64
+            ),
+        )
+        remediation_path = output_dir / "candidate-search-remediation.json"
+        _write_json(remediation_path, remediation)
         return _write_failure_summary(
             output_dir=output_dir,
             epoch_id=epoch_id,
             status="replay_failed",
-            reason=f"{type(exc).__name__}:{exc}",
+            reason=failure_reason,
             started_at=started_at,
             extra={
                 "partial_evidence_bundle_count": len(
@@ -1608,18 +1895,22 @@ def run_whitepaper_autoresearch_profit_target(
                     else None,
                     "strategy_factory_dir": str(output_dir / "strategy-factory"),
                 },
-                "false_positive_table": _false_positive_table(
-                    proposal_rows=pre_replay_proposal_rows,
-                    evidence_bundles=partial_replay_result.evidence_bundles,
-                    oracle_policy=oracle_policy,
-                )
-                if partial_replay_result.evidence_bundles
-                else [],
-                "best_false_negative_table": _best_false_negative_table(
-                    candidate_selection=candidate_selection,
-                    pre_replay_proposal_rows=pre_replay_proposal_rows,
-                    evidence_bundles=partial_replay_result.evidence_bundles,
-                ),
+                "false_positive_table": false_positive_table,
+                "best_false_negative_table": best_false_negative_table,
+                "candidate_search_remediation": remediation,
+                "artifacts": {
+                    "candidate_search_remediation": str(remediation_path),
+                    "candidate_selection_manifest": str(
+                        output_dir / "candidate-selection-manifest.json"
+                    ),
+                    "partial_candidate_evidence_bundles": str(partial_artifact_path)
+                    if partial_replay_result.evidence_bundles
+                    else None,
+                    "summary": str(output_dir / "summary.json"),
+                    "diagnostics_notebook": str(
+                        output_dir / "whitepaper-autoresearch-diagnostics.ipynb"
+                    ),
+                },
             },
         )
     proposal_model, proposal_rows = _proposal_model_and_rows(
@@ -1701,6 +1992,23 @@ def run_whitepaper_autoresearch_profit_target(
         pre_replay_proposal_rows=pre_replay_proposal_rows,
         evidence_bundles=replay_result.evidence_bundles,
     )
+    candidate_search_remediation: dict[str, Any] | None = None
+    remediation_path = output_dir / "candidate-search-remediation.json"
+    if not oracle_candidate_found:
+        candidate_search_remediation = _candidate_search_remediation(
+            failure_reason=status_reason or status,
+            candidate_selection=candidate_selection,
+            evidence_bundles=replay_result.evidence_bundles,
+            false_positive_table=false_positive_table,
+            best_false_negative_table=best_false_negative_table,
+            replay_timeout_seconds=int(
+                getattr(args, "real_replay_timeout_seconds", 0) or 0
+            ),
+            max_frontier_candidates_per_spec=int(
+                getattr(args, "max_frontier_candidates_per_spec", 64) or 64
+            ),
+        )
+        _write_json(remediation_path, candidate_search_remediation)
     summary = {
         "status": status,
         "status_reason": status_reason,
@@ -1721,6 +2029,7 @@ def run_whitepaper_autoresearch_profit_target(
         "mlx_rank_bucket_lift": proposal_model.get("rank_bucket_lift", {}),
         "false_positive_table": false_positive_table,
         "best_false_negative_table": best_false_negative_table,
+        "candidate_search_remediation": candidate_search_remediation,
         "best_portfolio_candidate": portfolio.to_payload()
         if portfolio is not None
         else None,
@@ -1763,6 +2072,9 @@ def run_whitepaper_autoresearch_profit_target(
             "portfolio_optimizer_report": str(
                 output_dir / "portfolio-optimizer-report.json"
             ),
+            "candidate_search_remediation": str(remediation_path)
+            if candidate_search_remediation is not None
+            else None,
             "summary": str(output_dir / "summary.json"),
             "diagnostics_notebook": str(
                 output_dir / "whitepaper-autoresearch-diagnostics.ipynb"
