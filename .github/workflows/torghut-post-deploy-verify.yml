@@ -6,7 +6,6 @@ on:
       - main
     paths:
       - 'argocd/applications/torghut/**'
-      - 'argocd/applications/torghut-forecast/**'
   workflow_dispatch:
     inputs:
       expected_revision:
@@ -105,7 +104,7 @@ jobs:
             EXPECTED_REVISION="${EXPECTED_REVISION_INPUT}"
           fi
 
-          for app in torghut torghut-forecast; do
+          for app in torghut; do
             for attempt in $(seq 1 90); do
               STATUS="$(kubectl get application "${app}" -n argocd -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision} {.status.operationState.phase} {.status.operationState.syncResult.revision} {.status.history[-1].revision}')"
               SYNC_STATUS="$(echo "${STATUS}" | awk '{print $1}')"
@@ -146,7 +145,6 @@ jobs:
           done
 
           kubectl rollout status deployment/torghut-ws -n torghut --timeout=10m
-          kubectl rollout status deployment/torghut-forecast -n torghut --timeout=10m
 
           set +e
           KNSVC_READY="$(kubectl get ksvc torghut -n torghut -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}' 2> /tmp/torghut-ksvc-ready.err)"
@@ -171,7 +169,6 @@ jobs:
 
           curl -fsS http://torghut.torghut.svc.cluster.local/trading/status >/tmp/torghut-status.json
           curl -fsS http://torghut-ws.torghut.svc.cluster.local/readyz >/tmp/torghut-ws-ready.json
-          curl -fsS http://torghut-forecast.torghut.svc.cluster.local:8089/readyz >/tmp/torghut-forecast-ready.json
 
       - name: Prepare rollback manifests
         if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -194,12 +191,10 @@ jobs:
           fi
 
           git checkout --quiet HEAD^ -- \
-            argocd/applications/torghut \
-            argocd/applications/torghut-forecast
+            argocd/applications/torghut
 
           if git diff --quiet -- \
-            argocd/applications/torghut \
-            argocd/applications/torghut-forecast; then
+            argocd/applications/torghut; then
             echo "No rollback diff detected"
             echo "should_rollback=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -219,7 +214,6 @@ jobs:
           delete-branch: true
           add-paths: |
             argocd/applications/torghut
-            argocd/applications/torghut-forecast
           body: |
             ## Summary
             Automatic rollback created because `torghut-post-deploy-verify` failed on `main`.
