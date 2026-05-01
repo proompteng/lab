@@ -560,12 +560,16 @@ class ClickHouseSignalIngestor:
             f"{time_column} >= {to_datetime64(start)}",
             f"{time_column} <= {to_datetime64(end)}",
         ]
+        source_clause = self._source_where_clause()
+        if source_clause is not None:
+            where_parts.append(source_clause)
         if normalized_symbol:
             where_parts.append(f"symbol = {_quote_literal(normalized_symbol)}")
 
+        selected_columns, select_expr = self._select_columns_and_expression(time_column)
         query_parts = [
             'SELECT',
-            self._select_expression(time_column),
+            select_expr,
             'FROM',
             self.table,
             'WHERE',
@@ -578,8 +582,12 @@ class ClickHouseSignalIngestor:
             query_parts.extend(['ORDER BY', order_clause])
         if limit:
             query_parts.extend(['LIMIT', str(max(int(limit), 1))])
-        query_parts.append('FORMAT JSONEachRow')
-        return ' '.join(query_parts)
+        query = self._maybe_join_microbar_volume(
+            ' '.join(query_parts),
+            time_column=time_column,
+            selected_columns=selected_columns,
+        )
+        return f'{query} FORMAT JSONEachRow'
 
     def _build_simulation_query(
         self,
@@ -596,6 +604,9 @@ class ClickHouseSignalIngestor:
             f'{time_column} >= {to_datetime64(start)}',
             f'{time_column} <= {to_datetime64(end)}',
         ]
+        source_clause = self._source_where_clause()
+        if source_clause is not None:
+            where_parts.append(source_clause)
         supports_seq = self._supports_seq_for_time_column(time_column)
         if supports_seq:
             if cursor_seq is not None or cursor_symbol is not None:
@@ -632,10 +643,11 @@ class ClickHouseSignalIngestor:
         elif time_column == 'ts':
             order_clause = f'{time_column} ASC, symbol ASC'
 
-        return ' '.join(
+        selected_columns, select_expr = self._select_columns_and_expression(time_column)
+        query = ' '.join(
             [
                 'SELECT',
-                self._select_expression(time_column),
+                select_expr,
                 'FROM',
                 self.table,
                 'WHERE',
@@ -644,9 +656,14 @@ class ClickHouseSignalIngestor:
                 order_clause,
                 'LIMIT',
                 str(max(int(self.batch_size), 1)),
-                'FORMAT JSONEachRow',
             ]
         )
+        query = self._maybe_join_microbar_volume(
+            query,
+            time_column=time_column,
+            selected_columns=selected_columns,
+        )
+        return f'{query} FORMAT JSONEachRow'
 
     def _signals_from_rows(self, rows: list[dict[str, Any]]) -> list[SignalEnvelope]:
         signals: list[SignalEnvelope] = []
@@ -736,15 +753,18 @@ class ClickHouseSignalIngestor:
             'FROM',
             self.table,
         ]
+        where_parts: list[str] = []
+        source_clause = self._source_where_clause()
+        if source_clause is not None:
+            where_parts.append(source_clause)
         if self.simulation_mode:
             window_start, window_end = simulation_window_bounds()
-            where_parts: list[str] = []
             if window_start is not None:
                 where_parts.append(f'{safe_time_column} >= {to_datetime64(window_start)}')
             if window_end is not None:
                 where_parts.append(f'{safe_time_column} <= {to_datetime64(window_end)}')
-            if where_parts:
-                query_parts.extend(['WHERE', ' AND '.join(where_parts)])
+        if where_parts:
+            query_parts.extend(['WHERE', ' AND '.join(where_parts)])
         query_parts.extend(
             [
                 'ORDER BY',
@@ -792,7 +812,7 @@ class ClickHouseSignalIngestor:
         limit = self.batch_size
         time_column = _safe_identifier(self._resolve_time_column(), kind='column')
         supports_seq = self._supports_seq_for_time_column(time_column)
-        select_expr = self._select_expression(time_column)
+        selected_columns, select_expr = self._select_columns_and_expression(time_column)
         where_clause = f"{time_column} > {cursor_expr}"
         order_clause = f"{time_column} ASC"
         if supports_seq:
@@ -818,7 +838,10 @@ class ClickHouseSignalIngestor:
             overlap_cursor = cursor_at - FLAT_CURSOR_OVERLAP
             where_clause = f"{time_column} >= {to_datetime64(overlap_cursor)}"
             order_clause = f"{time_column} ASC, symbol ASC"
-        return ' '.join(
+        source_clause = self._source_where_clause()
+        if source_clause is not None:
+            where_clause = f"({where_clause}) AND {source_clause}"
+        query = ' '.join(
             [
                 'SELECT',
                 select_expr,
@@ -830,9 +853,14 @@ class ClickHouseSignalIngestor:
                 order_clause,
                 'LIMIT',
                 str(max(int(limit), 1)),
-                'FORMAT JSONEachRow',
             ]
         )
+        query = self._maybe_join_microbar_volume(
+            query,
+            time_column=time_column,
+            selected_columns=selected_columns,
+        )
+        return f'{query} FORMAT JSONEachRow'
 
     def fetch_signals_between(
         self,
@@ -851,11 +879,14 @@ class ClickHouseSignalIngestor:
                 logger.warning("Invalid symbol for signal replay: %s", symbol)
                 return []
         time_column = _safe_identifier(self._resolve_time_column(), kind='column')
-        select_expr = self._select_expression(time_column)
+        selected_columns, select_expr = self._select_columns_and_expression(time_column)
         where_parts = [
             f"{time_column} >= {to_datetime64(start)}",
             f"{time_column} <= {to_datetime64(end)}",
         ]
+        source_clause = self._source_where_clause()
+        if source_clause is not None:
+            where_parts.append(source_clause)
         if normalized_symbol:
             where_parts.append(f"symbol = {_quote_literal(normalized_symbol)}")
         order_clause = f"{time_column} ASC"
@@ -873,8 +904,12 @@ class ClickHouseSignalIngestor:
         ]
         if limit:
             query_parts.extend(['LIMIT', str(max(int(limit), 1))])
-        query_parts.append('FORMAT JSONEachRow')
-        query = ' '.join(query_parts)
+        query = self._maybe_join_microbar_volume(
+            ' '.join(query_parts),
+            time_column=time_column,
+            selected_columns=selected_columns,
+        )
+        query = f'{query} FORMAT JSONEachRow'
         rows = self._query_clickhouse(query)
         signals: list[SignalEnvelope] = []
         for row in rows:
@@ -992,9 +1027,68 @@ class ClickHouseSignalIngestor:
             filtered.append(signal)
         return filtered
 
-    def _select_expression(self, time_column: str) -> str:
+    def _select_columns_and_expression(self, time_column: str) -> tuple[list[str], str]:
         select_columns = self._select_columns_for_schema(time_column)
-        return ', '.join(_safe_identifier(column, kind='column') for column in select_columns)
+        return (
+            select_columns,
+            ', '.join(_safe_identifier(column, kind='column') for column in select_columns),
+        )
+
+    def _select_expression(self, time_column: str) -> str:
+        return self._select_columns_and_expression(time_column)[1]
+
+    def _maybe_join_microbar_volume(
+        self,
+        query: str,
+        *,
+        time_column: str,
+        selected_columns: list[str],
+    ) -> str:
+        if not self._should_join_microbar_volume(selected_columns):
+            return query
+        join_conditions = [
+            's.symbol = m.symbol',
+            f's.{_safe_identifier(time_column, kind="column")} = m.event_ts',
+        ]
+        if 'source' in selected_columns:
+            join_conditions.append('s.source = m.source')
+        if 'window_size' in selected_columns:
+            join_conditions.append('s.window_size = m.window_size')
+        return ' '.join(
+            [
+                'SELECT',
+                "s.*, if(m.symbol = '', NULL, m.v) AS microbar_volume",
+                'FROM',
+                f'({query}) AS s',
+                'ANY LEFT JOIN',
+                f'{_qualified_table_name(settings.trading_price_table)} AS m',
+                'ON',
+                ' AND '.join(join_conditions),
+            ]
+        )
+
+    def _should_join_microbar_volume(self, selected_columns: list[str]) -> bool:
+        if 'microbar_volume' in selected_columns:
+            return False
+        price_table = (settings.trading_price_table or '').strip()
+        if not price_table:
+            return False
+        try:
+            qualified_price_table = _qualified_table_name(price_table)
+        except ValueError:
+            logger.warning("Invalid ClickHouse price table for microbar volume join: %s", price_table)
+            return False
+        return qualified_price_table != self.table
+
+    def _source_where_clause(self) -> str | None:
+        allowed_sources = _normalized_signal_sources(settings.trading_signal_allowed_sources_raw)
+        if not allowed_sources:
+            return None
+        columns = self._resolve_columns()
+        if columns is not None and 'source' not in columns:
+            return None
+        rendered = ', '.join(_quote_literal(source) for source in sorted(allowed_sources))
+        return f'lower(source) IN ({rendered})'
 
     def _select_columns_for_schema(self, time_column: str) -> list[str]:
         if self.schema == "flat":
@@ -1361,6 +1455,7 @@ def _copy_extended_ta_fields(payload: dict[str, Any], row: dict[str, Any]) -> No
         "boll_lower",
         "imbalance_spread",
         "vol_realized_w60s",
+        "microbar_volume",
     ):
         _copy_row_value_if_missing(payload, row, key)
 

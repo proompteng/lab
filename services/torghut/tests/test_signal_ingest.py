@@ -134,6 +134,7 @@ class TestSignalIngest(TestCase):
             "ema12": 351.2,
             "ema26": 349.9,
             "vol_realized_w60s": 0.009,
+            "microbar_volume": 18200,
             "signal_json": '{"vwap": 350.1}',
         }
         signal = ingestor.parse_row(row)
@@ -146,6 +147,7 @@ class TestSignalIngest(TestCase):
         self.assertEqual(signal.payload.get("ema12"), 351.2)
         self.assertEqual(signal.payload.get("ema26"), 349.9)
         self.assertEqual(signal.payload.get("vol_realized_w60s"), 0.009)
+        self.assertEqual(signal.payload.get("microbar_volume"), 18200)
 
     def test_parse_flat_row_merges_deeplob_microstructure_signal_v1(self) -> None:
         ingestor = ClickHouseSignalIngestor(schema="flat", fast_forward_stale_cursor=False)
@@ -591,6 +593,26 @@ class TestSignalIngest(TestCase):
         self.assertIn("WHERE event_ts > toDateTime64", query)
         self.assertIn("ORDER BY event_ts ASC, symbol ASC, seq ASC", query)
         self.assertNotIn("signal_json", query)
+
+    def test_build_query_joins_microbar_volume_from_price_table(self) -> None:
+        with (
+            patch.object(settings, "trading_price_table", "torghut.ta_microbars"),
+            patch.object(settings, "trading_signal_allowed_sources_raw", "ta"),
+        ):
+            ingestor = SchemaDiscoveringIngestor(
+                schema="envelope",
+                table="torghut.ta_signals",
+                url="http://example",
+                fast_forward_stale_cursor=False,
+                columns={"event_ts", "symbol", "window_size", "seq", "source", "payload"},
+            )
+            query = ingestor._build_query(datetime(2026, 1, 1, tzinfo=timezone.utc), None, None)
+
+        self.assertIn("ANY LEFT JOIN torghut.ta_microbars AS m", query)
+        self.assertIn("if(m.symbol = '', NULL, m.v) AS microbar_volume", query)
+        self.assertIn("s.source = m.source", query)
+        self.assertIn("s.window_size = m.window_size", query)
+        self.assertIn("lower(source) IN ('ta')", query)
 
     def test_build_query_envelope_schema_with_cursor_seq(self) -> None:
         ingestor = ClickHouseSignalIngestor(

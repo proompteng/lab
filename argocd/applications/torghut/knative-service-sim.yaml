@@ -140,6 +140,8 @@ spec:
               value: torghut_sim_default.ta_signals
             - name: TRADING_PRICE_TABLE
               value: torghut_sim_default.ta_microbars
+            - name: TRADING_SIGNAL_ALLOWED_SOURCES
+              value: ta
             - name: TRADING_SIGNAL_LOOKBACK_MINUTES
               value: "15"
             - name: TRADING_PLANNED_DECISION_TIMEOUT_SECONDS
