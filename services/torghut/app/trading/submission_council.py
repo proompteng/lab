@@ -193,12 +193,16 @@ def load_quant_evidence_status(
     configured_url = _safe_text(settings.trading_jangar_quant_health_url)
     base_url = resolve_quant_health_url()
     if configured_url is not None and not base_url:
+        blocking_reasons = ["quant_health_invalid_endpoint"] if required else []
         return {
-            "required": True,
-            "ok": False,
+            "required": required,
+            "ok": not required,
             "status": "unknown",
             "reason": "quant_health_invalid_endpoint",
-            "blocking_reasons": ["quant_health_invalid_endpoint"],
+            "blocking_reasons": blocking_reasons,
+            "informational_reasons": []
+            if required
+            else ["quant_health_invalid_endpoint"],
             "account": account or None,
             "window": window,
             "source_url": configured_url,
@@ -215,6 +219,9 @@ def load_quant_evidence_status(
             "status": "unknown" if required else "not_required",
             "reason": "quant_health_not_configured",
             "blocking_reasons": blocking_reasons,
+            "informational_reasons": []
+            if required
+            else ["quant_health_not_configured"],
             "account": account or None,
             "window": window,
             "source_url": None,
@@ -225,12 +232,13 @@ def load_quant_evidence_status(
         account=account,
         window=window,
     )
+    cache_key = f"{request_url}|required={int(required)}"
     ttl_seconds = max(0, int(settings.trading_jangar_control_plane_cache_ttl_seconds))
     now = datetime.now(timezone.utc)
 
     if ttl_seconds > 0:
         with _QUANT_HEALTH_CACHE_LOCK:
-            cached = cast(dict[str, Any] | None, _QUANT_HEALTH_CACHE.get(request_url))
+            cached = cast(dict[str, Any] | None, _QUANT_HEALTH_CACHE.get(cache_key))
             if cached is not None:
                 checked_at = cast(datetime | None, cached.get("checked_at"))
                 if checked_at is not None and now - checked_at <= timedelta(
@@ -289,11 +297,12 @@ def load_quant_evidence_status(
             blocking_reasons.append("quant_health_degraded")
 
         status_payload = {
-            "required": True,
-            "ok": len(blocking_reasons) == 0,
+            "required": required,
+            "ok": len(blocking_reasons) == 0 or not required,
             "status": "healthy" if len(blocking_reasons) == 0 else "degraded",
             "reason": "ready" if len(blocking_reasons) == 0 else blocking_reasons[0],
-            "blocking_reasons": blocking_reasons,
+            "blocking_reasons": blocking_reasons if required else [],
+            "informational_reasons": [] if required else blocking_reasons,
             "account": account or None,
             "window": window,
             "source_url": request_url,
@@ -308,12 +317,14 @@ def load_quant_evidence_status(
             "as_of": payload.get("asOf"),
         }
     except Exception as exc:
+        blocking_reasons = ["quant_health_fetch_failed"] if required else []
         status_payload = {
-            "required": True,
-            "ok": False,
+            "required": required,
+            "ok": not required,
             "status": "unknown",
             "reason": "quant_health_fetch_failed",
-            "blocking_reasons": ["quant_health_fetch_failed"],
+            "blocking_reasons": blocking_reasons,
+            "informational_reasons": [] if required else ["quant_health_fetch_failed"],
             "account": account or None,
             "window": window,
             "source_url": request_url,
@@ -331,7 +342,7 @@ def load_quant_evidence_status(
 
     if ttl_seconds > 0:
         with _QUANT_HEALTH_CACHE_LOCK:
-            _QUANT_HEALTH_CACHE[request_url] = {
+            _QUANT_HEALTH_CACHE[cache_key] = {
                 "checked_at": now,
                 "payload": dict(status_payload),
             }

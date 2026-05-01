@@ -404,10 +404,12 @@ class TestSubmissionCouncil(TestCase):
         settings.trading_jangar_quant_health_url = (
             "https://jangar.example/api/agents/control-plane/status?namespace=agents"
         )
+        settings.trading_jangar_quant_health_required = True
 
         status = load_quant_evidence_status(account_label="paper")
 
         self.assertFalse(status["ok"])
+        self.assertTrue(status["required"])
         self.assertEqual(status["reason"], "quant_health_invalid_endpoint")
         self.assertEqual(status["blocking_reasons"], ["quant_health_invalid_endpoint"])
         self.assertEqual(
@@ -417,6 +419,24 @@ class TestSubmissionCouncil(TestCase):
         self.assertIn(
             "/api/torghut/trading/control-plane/quant/health",
             str(status["message"]),
+        )
+
+    def test_load_quant_evidence_status_keeps_invalid_endpoint_informational_when_not_required(
+        self,
+    ) -> None:
+        settings.trading_jangar_quant_health_url = (
+            "https://jangar.example/api/agents/control-plane/status?namespace=agents"
+        )
+        settings.trading_jangar_quant_health_required = False
+
+        status = load_quant_evidence_status(account_label="paper")
+
+        self.assertTrue(status["ok"])
+        self.assertFalse(status["required"])
+        self.assertEqual(status["reason"], "quant_health_invalid_endpoint")
+        self.assertEqual(status["blocking_reasons"], [])
+        self.assertEqual(
+            status["informational_reasons"], ["quant_health_invalid_endpoint"]
         )
 
     def test_load_quant_evidence_status_reads_typed_endpoint_and_uses_cache(
@@ -518,3 +538,66 @@ class TestSubmissionCouncil(TestCase):
         )
         self.assertEqual(stage_status["blocking_reasons"], ["quant_pipeline_degraded"])
         self.assertEqual(stale_status["blocking_reasons"], ["quant_health_degraded"])
+
+    def test_load_quant_evidence_status_keeps_configured_degraded_endpoint_informational_when_not_required(
+        self,
+    ) -> None:
+        settings.trading_jangar_quant_health_url = (
+            "https://jangar.example/api/torghut/trading/control-plane/quant/health"
+        )
+        settings.trading_jangar_quant_health_required = False
+        settings.trading_jangar_control_plane_cache_ttl_seconds = 0
+
+        def fake_urlopen(request: object, timeout: object) -> _FakeQuantHealthResponse:
+            del request, timeout
+            return _FakeQuantHealthResponse(
+                {
+                    "ok": True,
+                    "status": "healthy",
+                    "latestMetricsCount": 0,
+                    "emptyLatestStoreAlarm": True,
+                    "missingUpdateAlarm": False,
+                    "stages": [],
+                }
+            )
+
+        with patch("app.trading.submission_council.urlopen", fake_urlopen):
+            status = load_quant_evidence_status(account_label="paper")
+
+        self.assertTrue(status["ok"])
+        self.assertFalse(status["required"])
+        self.assertEqual(status["status"], "degraded")
+        self.assertEqual(status["reason"], "quant_latest_metrics_empty")
+        self.assertEqual(status["blocking_reasons"], [])
+        self.assertEqual(
+            status["informational_reasons"],
+            [
+                "quant_latest_metrics_empty",
+                "quant_latest_store_alarm",
+                "quant_pipeline_stages_missing",
+            ],
+        )
+
+    def test_load_quant_evidence_status_keeps_configured_fetch_failure_informational_when_not_required(
+        self,
+    ) -> None:
+        settings.trading_jangar_quant_health_url = (
+            "https://jangar.example/api/torghut/trading/control-plane/quant/health"
+        )
+        settings.trading_jangar_quant_health_required = False
+        settings.trading_jangar_control_plane_cache_ttl_seconds = 0
+
+        def fake_urlopen(request: object, timeout: object) -> _FakeQuantHealthResponse:
+            del request, timeout
+            raise RuntimeError("network unavailable")
+
+        with patch("app.trading.submission_council.urlopen", fake_urlopen):
+            status = load_quant_evidence_status(account_label="paper")
+
+        self.assertTrue(status["ok"])
+        self.assertFalse(status["required"])
+        self.assertEqual(status["status"], "unknown")
+        self.assertEqual(status["reason"], "quant_health_fetch_failed")
+        self.assertEqual(status["blocking_reasons"], [])
+        self.assertEqual(status["informational_reasons"], ["quant_health_fetch_failed"])
+        self.assertEqual(status["message"], "network unavailable")
