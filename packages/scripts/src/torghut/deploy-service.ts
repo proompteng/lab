@@ -325,7 +325,6 @@ const updateManifest = (image: string, version: string, commit: string) => {
   doc.spec.template.metadata.annotations ??= {}
   doc.metadata ??= {}
   doc.metadata.annotations ??= {}
-  delete doc.metadata.annotations['serving.knative.dev/creator']
   delete doc.metadata.annotations['serving.knative.dev/lastModifier']
   doc.spec.template.metadata.annotations['client.knative.dev/updateTimestamp'] = new Date().toISOString()
 
