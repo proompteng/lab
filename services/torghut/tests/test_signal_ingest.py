@@ -614,6 +614,84 @@ class TestSignalIngest(TestCase):
         self.assertIn("s.window_size = m.window_size", query)
         self.assertIn("lower(source) IN ('ta')", query)
 
+    def test_build_replay_query_filters_allowed_sources(self) -> None:
+        with (
+            patch.object(settings, "trading_price_table", ""),
+            patch.object(settings, "trading_signal_allowed_sources_raw", "ta"),
+        ):
+            ingestor = ClickHouseSignalIngestor(
+                schema="envelope",
+                table="torghut.ta_signals",
+                fast_forward_stale_cursor=False,
+            )
+            query = ingestor._build_replay_query(
+                start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                end=datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+                normalized_symbol=None,
+                limit=None,
+                time_column="event_ts",
+            )
+
+        self.assertIn("lower(source) IN ('ta')", query)
+
+    def test_build_simulation_query_filters_allowed_sources(self) -> None:
+        with (
+            patch.object(settings, "trading_price_table", ""),
+            patch.object(settings, "trading_signal_allowed_sources_raw", "ta"),
+        ):
+            ingestor = ClickHouseSignalIngestor(
+                schema="envelope",
+                table="torghut.ta_signals",
+                fast_forward_stale_cursor=False,
+            )
+            query = ingestor._build_simulation_query(
+                start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                end=datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+                cursor_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                cursor_seq=None,
+                cursor_symbol=None,
+                time_column="event_ts",
+            )
+
+        self.assertIn("lower(source) IN ('ta')", query)
+
+    def test_latest_signal_timestamp_query_filters_allowed_sources(self) -> None:
+        with patch.object(settings, "trading_signal_allowed_sources_raw", "ta"):
+            ingestor = ClickHouseSignalIngestor(
+                schema="envelope",
+                table="torghut.ta_signals",
+                fast_forward_stale_cursor=False,
+            )
+            queries = ingestor._latest_signal_timestamp_queries("event_ts")
+
+        self.assertTrue(any("lower(source) IN ('ta')" in query for query in queries))
+
+    def test_source_filter_skips_when_source_column_missing(self) -> None:
+        with patch.object(settings, "trading_signal_allowed_sources_raw", "ta"):
+            ingestor = SchemaDiscoveringIngestor(
+                schema="auto",
+                table="torghut.ta_signals",
+                url="http://example",
+                fast_forward_stale_cursor=False,
+                columns={"event_ts", "symbol", "payload"},
+            )
+            clause = ingestor._source_where_clause()
+
+        self.assertIsNone(clause)
+
+    def test_microbar_join_skips_invalid_price_table(self) -> None:
+        with patch.object(settings, "trading_price_table", "torghut..ta_microbars"):
+            ingestor = ClickHouseSignalIngestor(
+                schema="envelope",
+                table="torghut.ta_signals",
+                fast_forward_stale_cursor=False,
+            )
+            with self.assertLogs("app.trading.ingest", level="WARNING") as logs:
+                should_join = ingestor._should_join_microbar_volume(["event_ts", "symbol", "payload"])
+
+        self.assertFalse(should_join)
+        self.assertTrue(any("Invalid ClickHouse price table" in item for item in logs.output))
+
     def test_build_query_envelope_schema_with_cursor_seq(self) -> None:
         ingestor = ClickHouseSignalIngestor(
             schema="envelope",
