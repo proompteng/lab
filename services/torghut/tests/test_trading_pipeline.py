@@ -77,6 +77,46 @@ class FakeIngestor:
         return None
 
 
+class WarmupIngestor(FakeIngestor):
+    def __init__(
+        self,
+        *,
+        warmup_signals: list[SignalEnvelope],
+        signals: list[SignalEnvelope],
+        cursor_at: datetime,
+    ) -> None:
+        super().__init__(signals)
+        self.warmup_signals = warmup_signals
+        self.cursor_at = cursor_at
+        self.warmup_ranges: list[tuple[datetime, datetime]] = []
+
+    def _get_cursor(self, session: Session) -> tuple[datetime, int | None, str | None]:
+        return self.cursor_at, None, None
+
+    def fetch_signals_with_reason(
+        self, *, start: datetime, end: datetime
+    ) -> SignalBatch:
+        self.warmup_ranges.append((start, end))
+        return SignalBatch(
+            signals=self.warmup_signals,
+            cursor_at=end,
+            cursor_seq=None,
+            cursor_symbol=None,
+            query_start=start,
+            query_end=end,
+        )
+
+
+class RecordingDecisionEngine(DecisionEngine):
+    def __init__(self) -> None:
+        super().__init__()
+        self.observed_symbols: list[str] = []
+
+    def observe_signal(self, signal: SignalEnvelope) -> None:
+        self.observed_symbols.append(signal.symbol)
+        super().observe_signal(signal)
+
+
 class FakeAlpacaClient:
     def __init__(self) -> None:
         self.submitted: list[dict[str, str]] = []
@@ -191,26 +231,26 @@ class SellInventoryConflictAlpacaClient(FakeAlpacaClient):
     def list_positions(self) -> list[dict[str, str]]:
         return [
             {
-                'symbol': 'AAPL',
-                'qty': '1',
-                'side': 'long',
+                "symbol": "AAPL",
+                "qty": "1",
+                "side": "long",
             },
         ]
 
-    def list_orders(self, status: str = 'all') -> list[dict[str, str]]:
-        if status != 'open':
+    def list_orders(self, status: str = "all") -> list[dict[str, str]]:
+        if status != "open":
             return []
         return [
             {
-                'id': 'existing-sell-order',
-                'client_order_id': 'existing-sell-order',
-                'symbol': 'AAPL',
-                'side': 'sell',
-                'type': 'limit',
-                'time_in_force': 'day',
-                'qty': '1',
-                'filled_qty': '0',
-                'status': 'accepted',
+                "id": "existing-sell-order",
+                "client_order_id": "existing-sell-order",
+                "symbol": "AAPL",
+                "side": "sell",
+                "type": "limit",
+                "time_in_force": "day",
+                "qty": "1",
+                "filled_qty": "0",
+                "status": "accepted",
             },
         ]
 
@@ -577,19 +617,19 @@ class TestTradingPipeline(TestCase):
     def _seed_promotion_certificate_evidence(
         self,
         *,
-        hypothesis_id: str = 'H-CONT-01',
-        candidate_id: str = 'cand-1',
-        capital_stage: str = '0.10x canary',
-        strategy_family: str = 'demo',
+        hypothesis_id: str = "H-CONT-01",
+        candidate_id: str = "cand-1",
+        capital_stage: str = "0.10x canary",
+        strategy_family: str = "demo",
     ) -> None:
         evidence_at = datetime.now(timezone.utc)
         with self.session_local() as session:
             session.add(
                 StrategyHypothesisMetricWindow(
-                    run_id='run-1',
+                    run_id="run-1",
                     candidate_id=candidate_id,
                     hypothesis_id=hypothesis_id,
-                    observed_stage='live',
+                    observed_stage="live",
                     window_started_at=evidence_at - timedelta(minutes=15),
                     window_ended_at=evidence_at,
                     market_session_count=1,
@@ -598,60 +638,62 @@ class TestTradingPipeline(TestCase):
                     order_count=1,
                     continuity_ok=True,
                     drift_ok=True,
-                    dependency_quorum_decision='allow',
+                    dependency_quorum_decision="allow",
                     capital_stage=capital_stage,
                 )
             )
             session.add(
                 StrategyPromotionDecision(
-                    run_id='run-1',
+                    run_id="run-1",
                     candidate_id=candidate_id,
                     hypothesis_id=hypothesis_id,
-                    promotion_target='live',
+                    promotion_target="live",
                     state=capital_stage,
                     allowed=True,
-                    reason_summary='ready',
+                    reason_summary="ready",
                 )
             )
             session.add(
                 StrategyHypothesis(
                     hypothesis_id=hypothesis_id,
-                    lane_id=f'lane-{candidate_id}',
+                    lane_id=f"lane-{candidate_id}",
                     strategy_family=strategy_family,
                     active=True,
                 )
             )
             session.add(
                 VNextDatasetSnapshot(
-                    run_id='run-1',
+                    run_id="run-1",
                     candidate_id=candidate_id,
-                    dataset_id=f'dataset-{candidate_id}',
-                    source='historical_market_replay',
-                    dataset_version='run-1',
-                    artifact_ref=f's3://torghut/empirical/{candidate_id}',
+                    dataset_id=f"dataset-{candidate_id}",
+                    source="historical_market_replay",
+                    dataset_version="run-1",
+                    artifact_ref=f"s3://torghut/empirical/{candidate_id}",
                 )
             )
             session.commit()
 
-    def _healthy_quant_status(self, *, account_label: str = 'live') -> dict[str, object]:
+    def _healthy_quant_status(
+        self, *, account_label: str = "live"
+    ) -> dict[str, object]:
         return {
-            'required': True,
-            'ok': True,
-            'status': 'healthy',
-            'reason': 'ready',
-            'blocking_reasons': [],
-            'account': account_label,
-            'window': '15m',
-            'source_url': (
-                'http://jangar.test/api/torghut/trading/control-plane/quant/health'
-                f'?account={account_label}&window=15m'
+            "required": True,
+            "ok": True,
+            "status": "healthy",
+            "reason": "ready",
+            "blocking_reasons": [],
+            "account": account_label,
+            "window": "15m",
+            "source_url": (
+                "http://jangar.test/api/torghut/trading/control-plane/quant/health"
+                f"?account={account_label}&window=15m"
             ),
-            'latest_metrics_count': 12,
-            'latest_metrics_updated_at': '2026-03-20T10:00:00Z',
+            "latest_metrics_count": 12,
+            "latest_metrics_updated_at": "2026-03-20T10:00:00Z",
         }
 
     def _healthy_live_quant_status(self) -> dict[str, object]:
-        return self._healthy_quant_status(account_label='live')
+        return self._healthy_quant_status(account_label="live")
 
     def test_pipeline_empty_signal_batch_commits_cursor(self) -> None:
         from app import config
@@ -705,6 +747,88 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
+
+    def test_pipeline_warms_session_context_from_regular_open_to_cursor(self) -> None:
+        from app import config
+
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="warmup-demo",
+                description="session warmup regression",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+
+        warmup_signals = [
+            SignalEnvelope(
+                event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+                ingest_ts=datetime(2026, 3, 26, 13, 30, 1, tzinfo=timezone.utc),
+                symbol="AAPL",
+                timeframe="1Min",
+                seq=1,
+                payload={"feature_schema_version": "3.0.0", "price": 100},
+            ),
+            SignalEnvelope(
+                event_ts=datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
+                ingest_ts=datetime(2026, 3, 26, 14, 0, 1, tzinfo=timezone.utc),
+                symbol="AAPL",
+                timeframe="1Min",
+                seq=2,
+                payload={"feature_schema_version": "3.0.0", "price": 101},
+            ),
+        ]
+        cursor_at = datetime(2026, 3, 26, 14, 30, tzinfo=timezone.utc)
+        ingestor = WarmupIngestor(
+            warmup_signals=warmup_signals,
+            signals=[],
+            cursor_at=cursor_at,
+        )
+        decision_engine = RecordingDecisionEngine()
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=ingestor,
+            decision_engine=decision_engine,
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+        with patch(
+            "app.trading.scheduler.pipeline.trading_now",
+            return_value=datetime(2026, 3, 26, 15, 0, tzinfo=timezone.utc),
+        ):
+            pipeline.run_once()
+            pipeline.run_once()
+
+        self.assertEqual(
+            ingestor.warmup_ranges,
+            [
+                (
+                    datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+                    cursor_at,
+                )
+            ],
+        )
+        self.assertEqual(decision_engine.observed_symbols, ["AAPL", "AAPL"])
+        self.assertEqual(ingestor.committed_batches, 2)
 
     def test_simple_pipeline_submits_live_order_without_shadow_gate_and_persists_lane_metadata(
         self,
@@ -773,7 +897,9 @@ class TestTradingPipeline(TestCase):
             execution = session.execute(select(Execution)).scalar_one()
             decision_json = cast(dict[str, Any], decision.decision_json)
             params = cast(dict[str, Any], decision_json.get("params"))
-            control_plane = cast(dict[str, Any], decision_json.get("control_plane_snapshot"))
+            control_plane = cast(
+                dict[str, Any], decision_json.get("control_plane_snapshot")
+            )
             execution_audit = cast(dict[str, Any], execution.execution_audit_json)
             self.assertEqual(decision.status, "submitted")
             self.assertEqual(params.get("execution_lane"), "simple")
@@ -1271,7 +1397,9 @@ class TestTradingPipeline(TestCase):
             self.assertFalse(state.signal_continuity_alert_active)
             self.assertEqual(state.metrics.signal_continuity_actionable, 0)
             self.assertEqual(
-                state.metrics.signal_expected_staleness_total.get("no_signals_in_window"),
+                state.metrics.signal_expected_staleness_total.get(
+                    "no_signals_in_window"
+                ),
                 1,
             )
         finally:
@@ -1348,7 +1476,9 @@ class TestTradingPipeline(TestCase):
 
             alpaca_client = FakeAlpacaClient()
             execution_adapter = FakeAlpacaClient()
-            ingestor = FakeIngestor([fresh_allowed_signal, stale_out_of_universe_signal])
+            ingestor = FakeIngestor(
+                [fresh_allowed_signal, stale_out_of_universe_signal]
+            )
             state = TradingState()
             pipeline = TradingPipeline(
                 alpaca_client=alpaca_client,
@@ -1396,7 +1526,9 @@ class TestTradingPipeline(TestCase):
                 "trading_kill_switch_enabled"
             ]
 
-    def test_pipeline_continues_when_feature_quality_has_warning_only_null_rate(self) -> None:
+    def test_pipeline_continues_when_feature_quality_has_warning_only_null_rate(
+        self,
+    ) -> None:
         from app import config
 
         original = {
@@ -1618,7 +1750,9 @@ class TestTradingPipeline(TestCase):
             "trading_simulation_window_start": config.settings.trading_simulation_window_start,
             "trading_account_label": config.settings.trading_account_label,
         }
-        original_load_cursor = time_source_module.TradingTimeSource._load_clickhouse_cursor
+        original_load_cursor = (
+            time_source_module.TradingTimeSource._load_clickhouse_cursor
+        )
         config.settings.trading_planned_decision_timeout_seconds = 60
         config.settings.trading_simulation_enabled = True
         config.settings.trading_simulation_clock_mode = "cursor"
@@ -1655,7 +1789,9 @@ class TestTradingPipeline(TestCase):
                 decision_row = executor.ensure_decision(
                     session, decision, strategy, "paper"
                 )
-                decision_row.created_at = datetime(2026, 2, 10, 15, 0, 30, tzinfo=timezone.utc)
+                decision_row.created_at = datetime(
+                    2026, 2, 10, 15, 0, 30, tzinfo=timezone.utc
+                )
                 session.add(decision_row)
                 session.commit()
 
@@ -1687,7 +1823,9 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(
                     pipeline.state.metrics.planned_decisions_timeout_rejected_total, 0
                 )
-                self.assertEqual(pipeline.state.metrics.planned_decisions_stale_total, 0)
+                self.assertEqual(
+                    pipeline.state.metrics.planned_decisions_stale_total, 0
+                )
         finally:
             config.settings.trading_planned_decision_timeout_seconds = original[
                 "trading_planned_decision_timeout_seconds"
@@ -1779,15 +1917,19 @@ class TestTradingPipeline(TestCase):
                 session_factory=self.session_local,
             )
 
-            with patch(
-                "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
-                return_value=eligible_summary,
-            ), patch(
-                "app.trading.scheduler.pipeline.build_empirical_jobs_status",
-                return_value={"ready": True, "status": "healthy"},
-            ), patch(
-                "app.trading.scheduler.pipeline.load_quant_evidence_status",
-                return_value=self._healthy_quant_status(account_label='paper'),
+            with (
+                patch(
+                    "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                    return_value=eligible_summary,
+                ),
+                patch(
+                    "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                    return_value={"ready": True, "status": "healthy"},
+                ),
+                patch(
+                    "app.trading.scheduler.pipeline.load_quant_evidence_status",
+                    return_value=self._healthy_quant_status(account_label="paper"),
+                ),
             ):
                 pipeline.run_once()
 
@@ -1810,12 +1952,12 @@ class TestTradingPipeline(TestCase):
                 assert isinstance(control_plane_snapshot, dict)
                 self.assertEqual(control_plane_snapshot.get("capital_stage"), "shadow")
                 self.assertEqual(
-                    control_plane_snapshot.get(
-                        "trading_autonomy_allow_live_promotion"
-                    ),
+                    control_plane_snapshot.get("trading_autonomy_allow_live_promotion"),
                     False,
                 )
-                live_submission_gate = control_plane_snapshot.get("live_submission_gate")
+                live_submission_gate = control_plane_snapshot.get(
+                    "live_submission_gate"
+                )
                 assert isinstance(live_submission_gate, dict)
                 self.assertEqual(live_submission_gate.get("allowed"), False)
                 self.assertEqual(
@@ -1968,15 +2110,19 @@ class TestTradingPipeline(TestCase):
                 session_factory=self.session_local,
             )
 
-            with patch(
-                "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
-                return_value=eligible_summary,
-            ), patch(
-                "app.trading.scheduler.pipeline.build_empirical_jobs_status",
-                return_value={"ready": True, "status": "healthy"},
-            ), patch(
-                "app.trading.scheduler.pipeline.load_quant_evidence_status",
-                return_value=self._healthy_live_quant_status(),
+            with (
+                patch(
+                    "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                    return_value=eligible_summary,
+                ),
+                patch(
+                    "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                    return_value={"ready": True, "status": "healthy"},
+                ),
+                patch(
+                    "app.trading.scheduler.pipeline.load_quant_evidence_status",
+                    return_value=self._healthy_live_quant_status(),
+                ),
             ):
                 pipeline.run_once()
 
@@ -1988,7 +2134,9 @@ class TestTradingPipeline(TestCase):
                 assert isinstance(decision_json, dict)
                 control_plane_snapshot = decision_json.get("control_plane_snapshot")
                 assert isinstance(control_plane_snapshot, dict)
-                live_submission_gate = control_plane_snapshot.get("live_submission_gate")
+                live_submission_gate = control_plane_snapshot.get(
+                    "live_submission_gate"
+                )
                 assert isinstance(live_submission_gate, dict)
                 self.assertEqual(live_submission_gate.get("allowed"), True)
                 self.assertEqual(
@@ -2099,12 +2247,15 @@ class TestTradingPipeline(TestCase):
                 session_factory=self.session_local,
             )
 
-            with patch(
-                "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
-                return_value=blocked_summary,
-            ), patch(
-                "app.trading.scheduler.pipeline.build_empirical_jobs_status",
-                return_value={"ready": True, "status": "healthy"},
+            with (
+                patch(
+                    "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                    return_value=blocked_summary,
+                ),
+                patch(
+                    "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                    return_value={"ready": True, "status": "healthy"},
+                ),
             ):
                 pipeline.run_once()
 
@@ -2116,7 +2267,9 @@ class TestTradingPipeline(TestCase):
                 assert isinstance(decision_json, dict)
                 control_plane_snapshot = decision_json.get("control_plane_snapshot")
                 assert isinstance(control_plane_snapshot, dict)
-                live_submission_gate = control_plane_snapshot.get("live_submission_gate")
+                live_submission_gate = control_plane_snapshot.get(
+                    "live_submission_gate"
+                )
                 assert isinstance(live_submission_gate, dict)
                 self.assertEqual(live_submission_gate.get("allowed"), False)
                 self.assertEqual(
@@ -2271,7 +2424,9 @@ class TestTradingPipeline(TestCase):
                 assert isinstance(decision_json, dict)
                 control_plane_snapshot = decision_json.get("control_plane_snapshot")
                 assert isinstance(control_plane_snapshot, dict)
-                live_submission_gate = control_plane_snapshot.get("live_submission_gate")
+                live_submission_gate = control_plane_snapshot.get(
+                    "live_submission_gate"
+                )
                 assert isinstance(live_submission_gate, dict)
                 self.assertEqual(live_submission_gate.get("allowed"), False)
                 self.assertEqual(
@@ -2583,7 +2738,9 @@ class TestTradingPipeline(TestCase):
                 "trading_static_symbols_raw"
             ]
 
-    def test_pipeline_runtime_uncertainty_saturated_fail_sentinel_degrades(self) -> None:
+    def test_pipeline_runtime_uncertainty_saturated_fail_sentinel_degrades(
+        self,
+    ) -> None:
         from app import config
 
         original = {
@@ -2980,9 +3137,7 @@ class TestTradingPipeline(TestCase):
             self.assertEqual(gate.action, "pass")
             self.assertEqual(gate.source, "regime_hmm")
         finally:
-            config.settings.trading_runtime_regime_confidence_thresholds_by_entropy_band = (
-                original_thresholds
-            )
+            config.settings.trading_runtime_regime_confidence_thresholds_by_entropy_band = original_thresholds
 
     def test_pipeline_runtime_regime_gate_invalid_regime_gate_action_fails_closed(
         self,
@@ -4572,9 +4727,11 @@ class TestTradingPipeline(TestCase):
                 },
             )
 
-            updated_decision, payload, reason = pipeline._apply_runtime_uncertainty_gate(
-                decision,
-                positions=[],
+            updated_decision, payload, reason = (
+                pipeline._apply_runtime_uncertainty_gate(
+                    decision,
+                    positions=[],
+                )
             )
 
             self.assertIsNone(reason)
@@ -4631,8 +4788,12 @@ class TestTradingPipeline(TestCase):
             gate = pipeline._resolve_runtime_uncertainty_gate_from_inputs(decision)
 
             self.assertEqual(gate.action, "degrade")
-            self.assertEqual(gate.source, "autonomy_gate_report_saturated_fail_sentinel")
-            self.assertEqual(gate.reason, "autonomy_gate_report_saturated_fail_sentinel")
+            self.assertEqual(
+                gate.source, "autonomy_gate_report_saturated_fail_sentinel"
+            )
+            self.assertEqual(
+                gate.reason, "autonomy_gate_report_saturated_fail_sentinel"
+            )
 
     def test_pipeline_runtime_uncertainty_uses_projected_positions_within_run(
         self,
@@ -4803,11 +4964,14 @@ class TestTradingPipeline(TestCase):
         )
 
         self.assertEqual(projected, 1)
-        self.assertEqual(positions, [
-            {"symbol": "AAPL", "qty": "2", "side": "long", "market_value": "200"}
-        ])
+        self.assertEqual(
+            positions,
+            [{"symbol": "AAPL", "qty": "2", "side": "long", "market_value": "200"}],
+        )
 
-    def test_project_open_orders_onto_positions_projects_sell_against_existing_long(self) -> None:
+    def test_project_open_orders_onto_positions_projects_sell_against_existing_long(
+        self,
+    ) -> None:
         positions: list[dict[str, Any]] = [
             {"symbol": "AAPL", "qty": "5", "side": "long", "market_value": "500"}
         ]
@@ -4828,9 +4992,10 @@ class TestTradingPipeline(TestCase):
         )
 
         self.assertEqual(projected, 1)
-        self.assertEqual(positions, [
-            {"symbol": "AAPL", "qty": "2", "side": "long", "market_value": "200"}
-        ])
+        self.assertEqual(
+            positions,
+            [{"symbol": "AAPL", "qty": "2", "side": "long", "market_value": "200"}],
+        )
 
     def test_resolve_execution_context_positions_projects_open_orders(self) -> None:
         pipeline = TradingPipeline.__new__(TradingPipeline)
@@ -4858,9 +5023,10 @@ class TestTradingPipeline(TestCase):
 
         positions = pipeline._resolve_execution_context_positions([])
 
-        self.assertEqual(positions, [
-            {"symbol": "AAPL", "qty": "2", "side": "long", "market_value": "200"}
-        ])
+        self.assertEqual(
+            positions,
+            [{"symbol": "AAPL", "qty": "2", "side": "long", "market_value": "200"}],
+        )
 
     def test_pipeline_runtime_uncertainty_rechecks_after_llm_adjustment(self) -> None:
         from app import config
@@ -5005,26 +5171,30 @@ class TestTradingPipeline(TestCase):
                 "llm_adjustment_approved"
             ]
 
-    def test_maybe_record_lean_strategy_shadow_rolls_back_session_on_failure(self) -> None:
+    def test_maybe_record_lean_strategy_shadow_rolls_back_session_on_failure(
+        self,
+    ) -> None:
         pipeline = object.__new__(TradingPipeline)
         metrics = Mock()
         pipeline.state = SimpleNamespace(metrics=metrics)
         pipeline.lean_lane_manager = Mock()
-        pipeline.lean_lane_manager.record_strategy_shadow.side_effect = RuntimeError('boom')
+        pipeline.lean_lane_manager.record_strategy_shadow.side_effect = RuntimeError(
+            "boom"
+        )
 
         session = Mock()
         execution_client = Mock()
         execution_client.evaluate_strategy_shadow.return_value = {
-            'run_id': 'run-1',
-            'parity_status': 'blocked_missing_empirical_authority',
+            "run_id": "run-1",
+            "parity_status": "blocked_missing_empirical_authority",
         }
         decision = SimpleNamespace(
-            strategy_id='strategy-1',
-            symbol='AAPL',
-            action='buy',
-            qty=Decimal('1'),
-            order_type='market',
-            time_in_force='day',
+            strategy_id="strategy-1",
+            symbol="AAPL",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
         )
 
         original_enabled = config.settings.trading_lean_strategy_shadow_enabled
@@ -5037,14 +5207,14 @@ class TestTradingPipeline(TestCase):
                 session=session,
                 decision=decision,
                 execution_client=execution_client,
-                selected_adapter_name='lean',
+                selected_adapter_name="lean",
             )
         finally:
             config.settings.trading_lean_strategy_shadow_enabled = original_enabled
             config.settings.trading_lean_lane_disable_switch = original_disable_switch
 
         session.rollback.assert_called_once()
-        metrics.record_lean_strategy_shadow.assert_any_call('error')
+        metrics.record_lean_strategy_shadow.assert_any_call("error")
 
     def test_runtime_uncertainty_gate_records_uncertainty_sub_gate_action(self) -> None:
         pipeline = TradingPipeline(
@@ -5943,7 +6113,9 @@ class TestTradingPipeline(TestCase):
                 params={"price": Decimal("100")},
             )
             executor = OrderExecutor()
-            decision_row = executor.ensure_decision(session, decision, strategy, "paper")
+            decision_row = executor.ensure_decision(
+                session, decision, strategy, "paper"
+            )
 
             alpaca = SellInventoryConflictAlpacaClient()
             pipeline = TradingPipeline(
@@ -6392,15 +6564,19 @@ class TestTradingPipeline(TestCase):
                 },
             }
             self._seed_promotion_certificate_evidence()
-            with patch(
-                "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
-                return_value=eligible_summary,
-            ), patch(
-                "app.trading.scheduler.pipeline.build_empirical_jobs_status",
-                return_value={"ready": True, "status": "healthy"},
-            ), patch(
-                "app.trading.scheduler.pipeline.load_quant_evidence_status",
-                return_value=self._healthy_live_quant_status(),
+            with (
+                patch(
+                    "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                    return_value=eligible_summary,
+                ),
+                patch(
+                    "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                    return_value={"ready": True, "status": "healthy"},
+                ),
+                patch(
+                    "app.trading.scheduler.pipeline.load_quant_evidence_status",
+                    return_value=self._healthy_live_quant_status(),
+                ),
             ):
                 pipeline_live.run_once()
 
@@ -6712,15 +6888,19 @@ class TestTradingPipeline(TestCase):
                     },
                 }
                 self._seed_promotion_certificate_evidence()
-                with patch(
-                    "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
-                    return_value=eligible_summary,
-                ), patch(
-                    "app.trading.scheduler.pipeline.build_empirical_jobs_status",
-                    return_value={"ready": True, "status": "healthy"},
-                ), patch(
-                    "app.trading.scheduler.pipeline.load_quant_evidence_status",
-                    return_value=self._healthy_live_quant_status(),
+                with (
+                    patch(
+                        "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                        return_value=eligible_summary,
+                    ),
+                    patch(
+                        "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                        return_value={"ready": True, "status": "healthy"},
+                    ),
+                    patch(
+                        "app.trading.scheduler.pipeline.load_quant_evidence_status",
+                        return_value=self._healthy_live_quant_status(),
+                    ),
                 ):
                     pipeline.run_once()
 
@@ -6886,19 +7066,23 @@ class TestTradingPipeline(TestCase):
                     "dependency_quorum": {
                         "decision": "allow",
                         "reasons": [],
-                "message": "ready",
-                },
-            }
+                        "message": "ready",
+                    },
+                }
             self._seed_promotion_certificate_evidence()
-            with patch(
-                "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
-                return_value=eligible_summary,
-            ), patch(
-                "app.trading.scheduler.pipeline.build_empirical_jobs_status",
-                return_value={"ready": True, "status": "healthy"},
-            ), patch(
-                "app.trading.scheduler.pipeline.load_quant_evidence_status",
-                return_value=self._healthy_live_quant_status(),
+            with (
+                patch(
+                    "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                    return_value=eligible_summary,
+                ),
+                patch(
+                    "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                    return_value={"ready": True, "status": "healthy"},
+                ),
+                patch(
+                    "app.trading.scheduler.pipeline.load_quant_evidence_status",
+                    return_value=self._healthy_live_quant_status(),
+                ),
             ):
                 pipeline.run_once()
 
@@ -7936,19 +8120,23 @@ class TestTradingPipeline(TestCase):
                 "dependency_quorum": {
                     "decision": "allow",
                     "reasons": [],
-                "message": "ready",
+                    "message": "ready",
                 },
             }
             self._seed_promotion_certificate_evidence()
-            with patch(
-                "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
-                return_value=eligible_summary,
-            ), patch(
-                "app.trading.scheduler.pipeline.build_empirical_jobs_status",
-                return_value={"ready": True, "status": "healthy"},
-            ), patch(
-                "app.trading.scheduler.pipeline.load_quant_evidence_status",
-                return_value=self._healthy_live_quant_status(),
+            with (
+                patch(
+                    "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                    return_value=eligible_summary,
+                ),
+                patch(
+                    "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                    return_value={"ready": True, "status": "healthy"},
+                ),
+                patch(
+                    "app.trading.scheduler.pipeline.load_quant_evidence_status",
+                    return_value=self._healthy_live_quant_status(),
+                ),
             ):
                 pipeline.run_once()
 
@@ -8113,19 +8301,23 @@ class TestTradingPipeline(TestCase):
                 "dependency_quorum": {
                     "decision": "allow",
                     "reasons": [],
-                "message": "ready",
+                    "message": "ready",
                 },
             }
             self._seed_promotion_certificate_evidence()
-            with patch(
-                "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
-                return_value=eligible_summary,
-            ), patch(
-                "app.trading.scheduler.pipeline.build_empirical_jobs_status",
-                return_value={"ready": True, "status": "healthy"},
-            ), patch(
-                "app.trading.scheduler.pipeline.load_quant_evidence_status",
-                return_value=self._healthy_live_quant_status(),
+            with (
+                patch(
+                    "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                    return_value=eligible_summary,
+                ),
+                patch(
+                    "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                    return_value={"ready": True, "status": "healthy"},
+                ),
+                patch(
+                    "app.trading.scheduler.pipeline.load_quant_evidence_status",
+                    return_value=self._healthy_live_quant_status(),
+                ),
             ):
                 pipeline.run_once()
 
@@ -8311,25 +8503,31 @@ class TestTradingPipeline(TestCase):
                 "dependency_quorum": {
                     "decision": "allow",
                     "reasons": [],
-                "message": "ready",
+                    "message": "ready",
                 },
             }
             self._seed_promotion_certificate_evidence()
-            with patch(
-                "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
-                return_value=eligible_summary,
-            ), patch(
-                "app.trading.scheduler.pipeline.build_empirical_jobs_status",
-                return_value={"ready": True, "status": "healthy"},
-            ), patch(
-                "app.trading.scheduler.pipeline.load_quant_evidence_status",
-                return_value=self._healthy_live_quant_status(),
-            ), patch(
-                "app.trading.scheduler.pipeline.trading_now",
-                return_value=signal.event_ts,
-            ), patch(
-                "app.trading.execution_adapters.active_simulation_runtime_context",
-                return_value={"run_id": "sim-test", "dataset_id": "dataset-a"},
+            with (
+                patch(
+                    "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                    return_value=eligible_summary,
+                ),
+                patch(
+                    "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                    return_value={"ready": True, "status": "healthy"},
+                ),
+                patch(
+                    "app.trading.scheduler.pipeline.load_quant_evidence_status",
+                    return_value=self._healthy_live_quant_status(),
+                ),
+                patch(
+                    "app.trading.scheduler.pipeline.trading_now",
+                    return_value=signal.event_ts,
+                ),
+                patch(
+                    "app.trading.execution_adapters.active_simulation_runtime_context",
+                    return_value={"run_id": "sim-test", "dataset_id": "dataset-a"},
+                ),
             ):
                 pipeline.run_once()
 
@@ -8639,24 +8837,24 @@ class TestTradingPipeline(TestCase):
                 },
             }
             self._seed_promotion_certificate_evidence()
-            with patch(
-                "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
-                return_value=eligible_summary,
-            ), patch(
-                "app.trading.scheduler.pipeline.build_empirical_jobs_status",
-                return_value={"ready": True, "status": "healthy"},
-            ), patch(
-                "app.trading.scheduler.pipeline.load_quant_evidence_status",
-                return_value=self._healthy_live_quant_status(),
+            with (
+                patch(
+                    "app.trading.scheduler.pipeline.build_hypothesis_runtime_summary",
+                    return_value=eligible_summary,
+                ),
+                patch(
+                    "app.trading.scheduler.pipeline.build_empirical_jobs_status",
+                    return_value={"ready": True, "status": "healthy"},
+                ),
+                patch(
+                    "app.trading.scheduler.pipeline.load_quant_evidence_status",
+                    return_value=self._healthy_live_quant_status(),
+                ),
             ):
                 pipeline.run_once()
 
             with self.session_local() as session:
-                llm_reviews = (
-                    session.execute(select(LLMDecisionReview))
-                    .scalars()
-                    .all()
-                )
+                llm_reviews = session.execute(select(LLMDecisionReview)).scalars().all()
                 executions = session.execute(select(Execution)).scalars().all()
 
             self.assertEqual(llm_reviews, [])

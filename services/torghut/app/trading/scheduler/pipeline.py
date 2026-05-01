@@ -9,7 +9,7 @@ import inspect
 import logging
 import os
 from collections.abc import Callable, Mapping
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Optional, Sequence, cast
@@ -42,15 +42,27 @@ from ..firewall import OrderFirewall, OrderFirewallBlocked
 from ..ingest import ClickHouseSignalIngestor, SignalBatch
 from ..lean_lanes import LeanLaneManager
 from ..llm import LLMReviewEngine, apply_policy
-from ..llm.dspy_programs.runtime import DSPyReviewRuntime, DSPyRuntimeUnsupportedStateError
+from ..llm.dspy_programs.runtime import (
+    DSPyReviewRuntime,
+    DSPyRuntimeUnsupportedStateError,
+)
 from ..llm.guardrails import evaluate_llm_guardrails
 from ..llm.policy import allowed_order_types
 from ..llm.schema import MarketContextBundle
 from ..llm.schema import MarketSnapshot as LLMMarketSnapshot
-from ..market_context import MarketContextClient, MarketContextStatus, evaluate_market_context
+from ..market_context import (
+    MarketContextClient,
+    MarketContextStatus,
+    evaluate_market_context,
+)
 from ..models import SignalEnvelope, StrategyDecision
 from ..order_feed import OrderFeedIngestor
-from ..portfolio import AllocationResult, PortfolioSizingResult, allocator_from_settings, sizer_from_settings
+from ..portfolio import (
+    AllocationResult,
+    PortfolioSizingResult,
+    allocator_from_settings,
+    sizer_from_settings,
+)
 from ..prices import ClickHousePriceFetcher, MarketSnapshot, PriceFetcher
 from ..quote_quality import QuoteQualityPolicy, SignalQuoteQualityTracker
 from ..quantity_rules import (
@@ -59,8 +71,13 @@ from ..quantity_rules import (
     resolve_quantity_resolution,
 )
 from ..reconcile import Reconciler
-from ..regime_hmm import HMMRegimeContext, resolve_hmm_context, resolve_regime_context_authority_reason
+from ..regime_hmm import (
+    HMMRegimeContext,
+    resolve_hmm_context,
+    resolve_regime_context_authority_reason,
+)
 from ..risk import RiskEngine
+from ..session_context import REGULAR_OPEN_UTC
 from ..tca import derive_adaptive_execution_policy
 from ..time_source import trading_now
 from ..universe import UniverseResolver
@@ -123,6 +140,7 @@ _RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE = Decimal("0.05")
 _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS = 120
 _RUNTIME_REGIME_CONFIDENCE_DEFAULT_THRESHOLDS = (Decimal("0.75"), Decimal("0.55"))
 
+
 class TradingPipeline:
     """Orchestrate ingest -> decide -> risk -> execute for one cycle."""
 
@@ -177,6 +195,7 @@ class TradingPipeline:
                 max_jump_with_wide_spread_bps=settings.trading_signal_max_jump_with_wide_spread_bps,
             )
         )
+        self._session_context_warmup_day: date | None = None
 
     def run_once(self) -> None:
         with self.session_factory() as session:
@@ -184,11 +203,14 @@ class TradingPipeline:
             strategies = self._prepare_run_once(session)
             if not strategies:
                 return
+            self._warm_session_context_from_open(session)
 
             batch = self.ingestor.fetch_signals(session)
             self._record_ingest_window(batch)
             if not batch.signals:
-                if not self._prepare_batch_for_decisions(session, batch, quality_signals=batch.signals):
+                if not self._prepare_batch_for_decisions(
+                    session, batch, quality_signals=batch.signals
+                ):
                     return
             context = self._build_run_context(session)
             if context is None:
@@ -226,6 +248,76 @@ class TradingPipeline:
         if not strategies:
             logger.info("No enabled strategies found; skipping trading cycle")
         return strategies
+
+    def _warm_session_context_from_open(self, session: Session) -> None:
+        fetch_with_reason = getattr(self.ingestor, "fetch_signals_with_reason", None)
+        get_cursor = getattr(self.ingestor, "_get_cursor", None)
+        if not callable(fetch_with_reason) or not callable(get_cursor):
+            return
+
+        now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
+        session_day = now.date()
+        if self._session_context_warmup_day == session_day:
+            return
+
+        session_open = datetime.combine(
+            session_day,
+            REGULAR_OPEN_UTC,
+            tzinfo=timezone.utc,
+        )
+        if now < session_open:
+            return
+
+        try:
+            cursor_at, _cursor_seq, _cursor_symbol = cast(
+                tuple[datetime, Optional[int], Optional[str]],
+                get_cursor(session),
+            )
+        except Exception:
+            logger.exception("Failed to read trade cursor for session context warmup")
+            return
+        if cursor_at.tzinfo is None:
+            cursor_at = cursor_at.replace(tzinfo=timezone.utc)
+        cursor_at = cursor_at.astimezone(timezone.utc)
+        warmup_end = min(cursor_at, now)
+        if warmup_end <= session_open:
+            return
+
+        try:
+            warmup_batch = cast(
+                SignalBatch,
+                fetch_with_reason(start=session_open, end=warmup_end),
+            )
+        except Exception:
+            logger.exception(
+                "Failed to fetch session context warmup signals start=%s end=%s",
+                session_open.isoformat(),
+                warmup_end.isoformat(),
+            )
+            return
+
+        warmed = 0
+        for signal in warmup_batch.signals:
+            try:
+                warmed_signal = self._ensure_signal_executable_price(signal)
+                self._signal_quote_quality.assess(warmed_signal)
+                self.decision_engine.observe_signal(warmed_signal)
+                warmed += 1
+            except Exception:
+                logger.debug(
+                    "Skipping session context warmup signal symbol=%s ts=%s",
+                    signal.symbol,
+                    signal.event_ts,
+                    exc_info=True,
+                )
+        self._session_context_warmup_day = session_day
+        logger.info(
+            "Session context warmup complete account=%s start=%s end=%s signals=%s",
+            self.account_label,
+            session_open.isoformat(),
+            warmup_end.isoformat(),
+            warmed,
+        )
 
     def _record_ingest_window(self, batch: SignalBatch) -> None:
         self.state.last_ingest_signals_total = len(batch.signals)
@@ -448,7 +540,9 @@ class TradingPipeline:
                                 normalized_positions.append(
                                     {
                                         str(key): value
-                                        for key, value in cast(Mapping[object, Any], raw_position).items()
+                                        for key, value in cast(
+                                            Mapping[object, Any], raw_position
+                                        ).items()
                                     }
                                 )
         projected_open_orders = self._resolve_execution_context_open_orders()
@@ -565,7 +659,9 @@ class TradingPipeline:
             evaluate_signature = inspect.signature(self.decision_engine.evaluate)
             if "positions" in evaluate_signature.parameters:
                 evaluate_kwargs["positions"] = positions
-            decisions = self.decision_engine.evaluate(signal, strategies, **evaluate_kwargs)
+            decisions = self.decision_engine.evaluate(
+                signal, strategies, **evaluate_kwargs
+            )
             self.state.metrics.record_strategy_runtime(
                 self.decision_engine.consume_runtime_telemetry()
             )
@@ -636,7 +732,9 @@ class TradingPipeline:
         positions: list[dict[str, Any]],
     ) -> None:
         sizing = decision.params.get("sizing")
-        sizing_map = cast(Mapping[str, Any], sizing) if isinstance(sizing, Mapping) else None
+        sizing_map = (
+            cast(Mapping[str, Any], sizing) if isinstance(sizing, Mapping) else None
+        )
         resolution_payload = (
             dict(cast(Mapping[str, Any], sizing_map.get("quantity_resolution")))
             if sizing_map is not None
@@ -1215,13 +1313,19 @@ class TradingPipeline:
         self.state.metrics.observe_planned_decision_age(age_seconds)
         if self.executor.execution_exists(session, decision_row):
             self.state.metrics.planned_decisions_with_execution_total += 1
-            execution_status = session.execute(
-                select(Execution.status)
-                .where(Execution.trade_decision_id == decision_row.id)
-                .order_by(Execution.created_at.desc())
-                .limit(1)
-            ).scalars().first()
-            resolved_status = str(execution_status or "submitted").strip() or "submitted"
+            execution_status = (
+                session.execute(
+                    select(Execution.status)
+                    .where(Execution.trade_decision_id == decision_row.id)
+                    .order_by(Execution.created_at.desc())
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
+            resolved_status = (
+                str(execution_status or "submitted").strip() or "submitted"
+            )
             decision_json = _coerce_json(decision_row.decision_json)
             decision_json["submission_stage"] = "execution_backfilled"
             decision_json["control_plane_snapshot"] = coerce_json_payload(
@@ -1528,7 +1632,10 @@ class TradingPipeline:
     def _should_degrade_runtime_uncertainty_fail_from_payload(
         gate_payload: Mapping[str, Any],
     ) -> bool:
-        if str(gate_payload.get("source") or "").strip().lower() != "autonomy_gate_report":
+        if (
+            str(gate_payload.get("source") or "").strip().lower()
+            != "autonomy_gate_report"
+        ):
             return False
         action = _coerce_runtime_uncertainty_gate_action(gate_payload.get("action"))
         if action is None:
@@ -2193,7 +2300,9 @@ class TradingPipeline:
                         self.state.metrics.execution_validation_mismatch_total += 1
             existing_order_id = payload.get("existing_order_id")
             existing_order_code = str(payload.get("code") or "").strip().lower()
-            existing_order_reason = str(payload.get("reject_reason") or "").strip().lower()
+            existing_order_reason = (
+                str(payload.get("reject_reason") or "").strip().lower()
+            )
             if existing_order_id and (
                 existing_order_code == "precheck_opposite_side_open_order"
                 or "opposite side market/stop order exists" in existing_order_reason
@@ -2263,7 +2372,10 @@ class TradingPipeline:
                 if not isinstance(raw_position, Mapping):
                     continue
                 position = cast(Mapping[str, Any], raw_position)
-                if str(position.get("symbol") or "").strip().upper() != normalized_symbol:
+                if (
+                    str(position.get("symbol") or "").strip().upper()
+                    != normalized_symbol
+                ):
                     continue
                 side = str(position.get("side") or "").strip().lower()
                 if side == "short":
@@ -2495,7 +2607,9 @@ class TradingPipeline:
                         gate_map.get("uncertainty_gate_action")
                     )
                     if gate_action is not None:
-                        coverage_error = _optional_decimal(gate_map.get("coverage_error"))
+                        coverage_error = _optional_decimal(
+                            gate_map.get("coverage_error")
+                        )
                         shift_score = _optional_decimal(gate_map.get("shift_score"))
                         conformal_interval_width = _optional_decimal(
                             gate_map.get("conformal_interval_width")
@@ -3215,7 +3329,9 @@ class TradingPipeline:
     def _classify_dspy_live_runtime_block(
         reasons: Sequence[str] | tuple[str, ...],
     ) -> tuple[str, str]:
-        normalized = tuple(str(reason).strip() for reason in reasons if str(reason).strip())
+        normalized = tuple(
+            str(reason).strip() for reason in reasons if str(reason).strip()
+        )
         if any(
             reason.startswith("dspy_live_readiness_error:")
             or reason == "dspy_live_runtime_not_ready"
@@ -3420,7 +3536,9 @@ class TradingPipeline:
                 decision_row,
                 {"llm_runtime": outcome.runtime_fallback},
             )
-            runtime_error = str(outcome.runtime_fallback.get("error") or "dspy_runtime_error")
+            runtime_error = str(
+                outcome.runtime_fallback.get("error") or "dspy_runtime_error"
+            )
             runtime_subtype = str(
                 outcome.runtime_fallback.get("subtype") or "dspy_runtime_error"
             )
@@ -3556,18 +3674,16 @@ class TradingPipeline:
             self.state.last_market_context_domain_states = {}
             self.state.last_market_context_risk_flags = []
             allow_llm = not settings.trading_market_context_required
-            reason = (
-                market_context_error
-                or (
-                    "market_context_required_missing"
-                    if settings.trading_market_context_required
-                    else None
-                )
+            reason = market_context_error or (
+                "market_context_required_missing"
+                if settings.trading_market_context_required
+                else None
             )
             self.state.last_market_context_allow_llm = allow_llm
             self.state.last_market_context_reason = reason
-            self.state.market_context_alert_active = market_context_error is not None or (
-                settings.trading_market_context_required and not allow_llm
+            self.state.market_context_alert_active = (
+                market_context_error is not None
+                or (settings.trading_market_context_required and not allow_llm)
             )
             self.state.market_context_alert_reason = reason
             return
@@ -3998,7 +4114,9 @@ class TradingPipeline:
             return None
         output_mapping = cast(Mapping[str, Any], output)
 
-        limiting_constraint = str(output_mapping.get("limiting_constraint") or "").strip()
+        limiting_constraint = str(
+            output_mapping.get("limiting_constraint") or ""
+        ).strip()
         caps = output_mapping.get("caps")
         per_symbol_cap = None
         if isinstance(caps, Mapping):
