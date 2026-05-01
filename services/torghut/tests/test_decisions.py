@@ -2241,6 +2241,80 @@ class TestDecisionEngine(TestCase):
         self.assertEqual(qty, Decimal("0"))
         self.assertEqual(sizing_meta.get("reason"), "exit_only_sell_without_long_position")
 
+    def test_microbar_pairs_uses_catalog_strategy_type_for_directional_exit_semantics(
+        self,
+    ) -> None:
+        long_strategy = Strategy(
+            id=uuid.uuid4(),
+            name="microbar-pairs-long-leg",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="microbar-pairs-long-leg",
+                    strategy_id="microbar_cross_sectional_pairs_v1@research:long",
+                    strategy_type="microbar_cross_sectional_long_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="microbar_cross_sectional_pairs_v1",
+                    universe_symbols=["META"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("50000"),
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="microbar_cross_sectional_pairs_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("50000"),
+        )
+        short_strategy = Strategy(
+            id=uuid.uuid4(),
+            name="microbar-pairs-short-leg",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="microbar-pairs-short-leg",
+                    strategy_id="microbar_cross_sectional_pairs_v1@research:short",
+                    strategy_type="microbar_cross_sectional_short_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="microbar_cross_sectional_pairs_v1",
+                    universe_symbols=["META"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("50000"),
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="microbar_cross_sectional_pairs_v1",
+            universe_symbols=["META"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("50000"),
+        )
+
+        self.assertTrue(
+            _is_entry_action_for_strategies(strategies=[long_strategy], action="buy")
+        )
+        self.assertFalse(
+            _is_exit_action_for_strategies(strategies=[long_strategy], action="buy")
+        )
+        self.assertTrue(
+            _is_exit_action_for_strategies(strategies=[long_strategy], action="sell")
+        )
+        self.assertEqual(
+            _exit_position_side_for_strategies(strategies=[long_strategy], action="sell"),
+            "long",
+        )
+        self.assertTrue(
+            _is_entry_action_for_strategies(strategies=[short_strategy], action="sell")
+        )
+        self.assertTrue(
+            _is_exit_action_for_strategies(strategies=[short_strategy], action="buy")
+        )
+        self.assertEqual(
+            _exit_position_side_for_strategies(strategies=[short_strategy], action="buy"),
+            "short",
+        )
+
     def test_scheduler_runtime_isolated_buy_cooldown_is_scoped_per_strategy(self) -> None:
         first_strategy_id = uuid.uuid4()
         second_strategy_id = uuid.uuid4()
@@ -2858,14 +2932,14 @@ class TestDecisionEngine(TestCase):
                 StrategyConfig(
                     name="microbar-pairs-short-stop",
                     strategy_id="microbar_cross_sectional_pairs_v1@research",
-                    strategy_type="microbar_cross_sectional_long_v1",
+                    strategy_type="microbar_cross_sectional_short_v1",
                     version="1.0.0",
                     base_timeframe="1Sec",
                     universe_type="microbar_cross_sectional_pairs_v1",
                     universe_symbols=["META"],
                     max_position_pct_equity=Decimal("1.0"),
                     max_notional_per_trade=Decimal("50000"),
-                    params={"long_stop_loss_bps": "25"},
+                    params={"short_stop_loss_bps": "25"},
                 )
             ),
             enabled=True,

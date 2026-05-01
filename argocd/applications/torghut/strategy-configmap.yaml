@@ -225,6 +225,74 @@ data:
           max_hold_seconds: "420"
           max_concurrent_positions: "1"
           require_positive_price_for_signal_exit: "true"
+      - name: mean-reversion-exhaustion-short-v1
+        strategy_id: mean_reversion_exhaustion_short_v1@research
+        strategy_type: mean_reversion_exhaustion_short_v1
+        version: 1.0.0
+        description: Research-backed intraday short fade after controlled upside exhaustion, version=1.0.0
+        enabled: false
+        base_timeframe: "1Sec"
+        universe_type: mean_reversion_exhaustion_short_v1
+        universe_symbols: ["AAPL", "AMAT", "AMD", "AVGO", "GOOG", "INTC", "META", "MSFT", "MU", "NVDA", "PLTR", "SHOP"]
+        max_notional_per_trade: 30000
+        max_position_pct_equity: 1.0
+        params:
+          min_price_vs_session_open_bps: "20"
+          min_opening_window_return_bps: "5"
+          min_session_range_position: "0.68"
+          min_session_range_bps: "30"
+          min_price_vs_opening_range_high_bps: "-8"
+          max_price_vs_opening_range_high_bps: "12"
+          min_price_above_vwap_bps: "8"
+          max_price_above_vwap_bps: "70"
+          min_price_above_ema12_bps: "2"
+          max_price_above_ema12_bps: "35"
+          min_bear_rsi: "52"
+          max_bear_rsi: "64"
+          min_macd_hist: "-0.010"
+          max_macd_hist: "0.012"
+          vol_floor: "0.00005"
+          vol_ceil: "0.00055"
+          max_spread_bps: "8"
+          max_recent_spread_bps: "8"
+          max_recent_spread_bps_max: "16"
+          max_recent_quote_invalid_ratio: "0.18"
+          max_recent_quote_jump_bps: "55"
+          max_imbalance_pressure: "-0.02"
+          max_recent_imbalance_pressure: "-0.02"
+          max_recent_microprice_bias_bps: "-0.10"
+          min_cross_section_reversal_rank: "0.65"
+          max_cross_section_continuation_rank: "0.45"
+          rank_feature: "cross_section_reversal_rank"
+          selection_mode: "reversal"
+          top_n: "1"
+          universe_size: "12"
+          entry_notional_min_multiplier: "0.20"
+          entry_notional_rank_floor: "0.65"
+          entry_notional_rank_ceiling: "0.95"
+          exit_rsi_max: "42"
+          exit_macd_hist_min: "0.003"
+          exit_recent_imbalance_pressure_min: "0.03"
+          exit_session_range_position_max: "0.44"
+          entry_start_minute_utc: "840"
+          entry_end_minute_utc: "1080"
+          session_flatten_start_minute_utc: "1170"
+          max_gross_exposure_pct_equity: "3.0"
+          position_isolation_mode: "per_strategy"
+          short_stop_loss_bps: "24"
+          short_stop_loss_spread_bps_multiplier: "0.20"
+          short_stop_loss_volatility_bps_multiplier: "3"
+          entry_cooldown_seconds: "1200"
+          exit_cooldown_seconds: "120"
+          min_hold_seconds: "120"
+          max_hold_seconds: "600"
+          max_concurrent_positions: "1"
+          max_entries_per_session: "1"
+          max_negative_exits_per_session: "1"
+          stop_loss_lockout_seconds: "14400"
+          negative_exit_lockout_seconds: "7200"
+          negative_exit_loss_bps: "8"
+          max_session_negative_exit_bps: "24"
       - name: washout-rebound-long-v1
         strategy_id: washout_rebound_long_v1@research
         strategy_type: washout_rebound_long_v1
@@ -323,6 +391,71 @@ data:
           max_pair_legs: "2"
           max_entries_per_session: "1"
           entry_cooldown_seconds: "600"
+      - name: microbar-volume-continuation-long-top2-v11
+        strategy_id: microbar_volume_continuation_long_top2@prod
+        strategy_type: microbar_cross_sectional_long_v1
+        version: 1.0.0
+        description: Promoted strict-daily-profit microbar volume continuation sleeve, version=1.0.0
+        enabled: true
+        base_timeframe: "1Sec"
+        universe_type: microbar_cross_sectional_long_v1
+        universe_symbols: ["AAPL", "AMAT", "AMD", "AVGO", "GOOG", "INTC", "META", "MSFT", "MU", "NVDA", "PLTR", "SHOP"]
+        max_notional_per_trade: 157950.10
+        max_position_pct_equity: 8.0
+        params:
+          entry_minute_after_open: "235"
+          exit_minute_after_open: "265"
+          signal_motif: "high_volume_intraday_continuation_long_top2"
+          rank_feature: "cross_section_microbar_volume_rank"
+          selection_mode: "continuation"
+          top_n: "2"
+          max_concurrent_positions: "2"
+          max_entries_per_session: "2"
+          position_isolation_mode: "per_strategy"
+      - name: microbar-prev-day-open60-short-top1-breadth-gated-v11
+        strategy_id: microbar_prev_day_open60_short_top1_breadth_gated@prod
+        strategy_type: microbar_cross_sectional_short_v1
+        version: 1.0.0
+        description: Promoted strict-daily-profit previous-day open60 reversal short gated by prior open60 breadth, version=1.0.0
+        enabled: true
+        base_timeframe: "1Sec"
+        universe_type: microbar_cross_sectional_short_v1
+        universe_symbols: ["AAPL", "AMAT", "AMD", "AVGO", "GOOG", "INTC", "META", "MSFT", "MU", "NVDA", "PLTR", "SHOP"]
+        max_notional_per_trade: 157950.10
+        max_position_pct_equity: 8.0
+        params:
+          entry_minute_after_open: "0"
+          exit_minute_after_open: "45"
+          signal_motif: "prev_day_open60_high_reversal_short_top1_breadth_gated"
+          rank_feature: "cross_section_prev_day_open60_return_rank"
+          selection_mode: "reversal"
+          top_n: "1"
+          gate_feature: "cross_section_positive_prev_day_open60_return_ratio"
+          gate_min: "0.6666666666666666666666666667"
+          max_concurrent_positions: "1"
+          max_entries_per_session: "1"
+          position_isolation_mode: "per_strategy"
+      - name: microbar-prev-day-open45-reversal-long-top1-v11
+        strategy_id: microbar_prev_day_open45_reversal_long_top1@prod
+        strategy_type: microbar_cross_sectional_long_v1
+        version: 1.0.0
+        description: Promoted strict-daily-profit previous-day open45 low-rank reversal long sleeve, version=1.0.0
+        enabled: true
+        base_timeframe: "1Sec"
+        universe_type: microbar_cross_sectional_long_v1
+        universe_symbols: ["AAPL", "AMAT", "AMD", "AVGO", "GOOG", "INTC", "META", "MSFT", "MU", "NVDA", "PLTR", "SHOP"]
+        max_notional_per_trade: 157950.10
+        max_position_pct_equity: 8.0
+        params:
+          entry_minute_after_open: "60"
+          exit_minute_after_open: "270"
+          signal_motif: "prev_day_open45_low_reversal_long_top1"
+          rank_feature: "cross_section_prev_day_open45_return_rank"
+          selection_mode: "reversal"
+          top_n: "1"
+          max_concurrent_positions: "1"
+          max_entries_per_session: "1"
+          position_isolation_mode: "per_strategy"
       - name: late-day-continuation-long-v1
         strategy_id: late_day_continuation_long_v1@research
         strategy_type: late_day_continuation_long_v1

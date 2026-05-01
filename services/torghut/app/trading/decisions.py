@@ -12,6 +12,7 @@ from typing import Any, Iterable, Literal, Optional, cast
 
 from ..config import settings
 from ..models import Strategy
+from ..strategies.catalog import extract_catalog_metadata
 from .features import (
     FeatureNormalizationError,
     SignalFeatures,
@@ -50,6 +51,25 @@ _SAME_DIRECTION_REENTRY_REASON = "same_direction_reentry"
 _EXIT_ONLY_SELL_FLAT_REASON = "exit_only_sell_without_long_position"
 _EXIT_ONLY_BUY_FLAT_REASON = "exit_only_buy_without_short_position"
 _RUNTIME_TRADE_POLICY_SHARED_OWNER = "__shared__"
+_SELL_EXIT_ONLY_STRATEGY_TYPES = {
+    "intraday_tsmom_v1",
+    "intraday_tsmom",
+    "tsmom_intraday",
+    "momentum_pullback_long_v1",
+    "microbar_cross_sectional_long_v1",
+    "breakout_continuation_long_v1",
+    "washout_rebound_long_v1",
+    "mean_reversion_rebound_long_v1",
+    "late_day_continuation_long_v1",
+    "end_of_day_reversal_long_v1",
+}
+_BUY_EXIT_ONLY_STRATEGY_TYPES = {
+    "mean_reversion_exhaustion_short_v1",
+    "microbar_cross_sectional_short_v1",
+}
+_LEGACY_BUY_EXIT_ONLY_UNIVERSE_TYPES = {
+    "microbar_cross_sectional_pairs_v1",
+}
 
 
 @dataclass(frozen=True)
@@ -1056,8 +1076,12 @@ def _resolve_execution_feature_payload(
     feature_keys = (
         "recent_imbalance_pressure_avg",
         "recent_microprice_bias_bps_avg",
+        "recent_15m_return_bps",
+        "microbar_volume",
         "cross_section_continuation_rank",
         "cross_section_reversal_rank",
+        "cross_section_recent_15m_return_rank",
+        "cross_section_microbar_volume_rank",
         "cross_section_recent_imbalance_rank",
         "cross_section_opening_window_return_rank",
         "cross_section_session_open_rank",
@@ -2006,28 +2030,43 @@ def _actual_positions_only(
 
 
 def _treats_sell_as_exit_only(strategy: Strategy) -> bool:
-    normalized = str(strategy.universe_type or "").strip().lower()
-    return normalized in {
-        "intraday_tsmom_v1",
-        "intraday_tsmom",
-        "tsmom_intraday",
-        "momentum_pullback_long_v1",
-        "microbar_cross_sectional_long_v1",
-        "breakout_continuation_long_v1",
-        "washout_rebound_long_v1",
-        "mean_reversion_rebound_long_v1",
-        "late_day_continuation_long_v1",
-        "end_of_day_reversal_long_v1",
-    }
+    return _strategy_exit_semantics_type(strategy) in _SELL_EXIT_ONLY_STRATEGY_TYPES
 
 
 def _treats_buy_as_exit_only(strategy: Strategy) -> bool:
-    normalized = str(strategy.universe_type or "").strip().lower()
-    return normalized in {
-        "mean_reversion_exhaustion_short_v1",
-        "microbar_cross_sectional_pairs_v1",
-        "microbar_cross_sectional_short_v1",
-    }
+    return _strategy_exit_semantics_type(strategy) in (
+        _BUY_EXIT_ONLY_STRATEGY_TYPES | _LEGACY_BUY_EXIT_ONLY_UNIVERSE_TYPES
+    )
+
+
+def _strategy_exit_semantics_type(strategy: Strategy) -> str:
+    runtime_type = _strategy_catalog_runtime_type(strategy)
+    if runtime_type in _SELL_EXIT_ONLY_STRATEGY_TYPES | _BUY_EXIT_ONLY_STRATEGY_TYPES:
+        return runtime_type
+
+    universe_type = str(strategy.universe_type or "").strip().lower()
+    if universe_type in (
+        _SELL_EXIT_ONLY_STRATEGY_TYPES
+        | _BUY_EXIT_ONLY_STRATEGY_TYPES
+        | _LEGACY_BUY_EXIT_ONLY_UNIVERSE_TYPES
+    ):
+        return universe_type
+    return runtime_type
+
+
+def _strategy_catalog_runtime_type(strategy: Strategy) -> str:
+    metadata = extract_catalog_metadata(
+        str(strategy.description) if strategy.description is not None else None
+    )
+    metadata_type = str(metadata.get("strategy_type") or "").strip().lower()
+    if metadata_type:
+        return metadata_type
+    universe_type = str(strategy.universe_type or "").strip().lower()
+    if universe_type in {"static", "legacy_macd_rsi"}:
+        return "legacy_macd_rsi"
+    if universe_type in {"intraday_tsmom", "intraday_tsmom_v1", "tsmom_intraday"}:
+        return "intraday_tsmom_v1"
+    return universe_type
 
 
 def _blocks_same_direction_reentry_any(strategies: list[Strategy]) -> bool:

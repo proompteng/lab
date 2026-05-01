@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 
 PROFIT_TARGET_ORACLE_SCHEMA_VERSION = "torghut.profit-target-oracle.v1"
@@ -14,6 +14,7 @@ PROFIT_TARGET_ORACLE_SCHEMA_VERSION = "torghut.profit-target-oracle.v1"
 class ProfitTargetOraclePolicy:
     min_active_day_ratio: Decimal = Decimal("0.90")
     min_positive_day_ratio: Decimal = Decimal("0.60")
+    min_daily_net_pnl: Decimal = Decimal("0")
     max_best_day_share: Decimal = Decimal("0.25")
     max_cluster_contribution_share: Decimal = Decimal("0.40")
     max_single_symbol_contribution_share: Decimal = Decimal("0.35")
@@ -28,6 +29,7 @@ class ProfitTargetOraclePolicy:
         return {
             "min_active_day_ratio": str(self.min_active_day_ratio),
             "min_positive_day_ratio": str(self.min_positive_day_ratio),
+            "min_daily_net_pnl": str(self.min_daily_net_pnl),
             "max_best_day_share": str(self.max_best_day_share),
             "max_cluster_contribution_share": str(self.max_cluster_contribution_share),
             "max_single_symbol_contribution_share": str(
@@ -49,6 +51,13 @@ def _decimal(value: Any, *, default: str = "0") -> Decimal:
         return Decimal(str(value if value is not None else default))
     except Exception:
         return Decimal(default)
+
+
+def _nonnegative_int(value: Any, *, default: int = 0) -> int:
+    try:
+        return max(0, int(Decimal(str(value if value is not None else default))))
+    except Exception:
+        return default
 
 
 def _numeric_check(
@@ -88,6 +97,22 @@ def evaluate_profit_target_oracle(
         scorecard.get("portfolio_post_cost_net_pnl_per_day")
         or scorecard.get("net_pnl_per_day")
     )
+    daily_net_payload = scorecard.get("daily_net")
+    if isinstance(daily_net_payload, Mapping) and daily_net_payload:
+        daily_net = cast(Mapping[str, Any], daily_net_payload)
+        min_daily_net_pnl = min(_decimal(value) for value in daily_net.values())
+        daily_net_observed_day_count = len(daily_net)
+    else:
+        min_daily_net_pnl = Decimal("0")
+        daily_net_observed_day_count = 0
+    trading_day_count = _nonnegative_int(
+        scorecard.get("trading_day_count"),
+        default=daily_net_observed_day_count,
+    )
+    if trading_day_count < daily_net_observed_day_count:
+        trading_day_count = daily_net_observed_day_count
+    if policy.min_daily_net_pnl > 0 and daily_net_observed_day_count < trading_day_count:
+        min_daily_net_pnl = min(min_daily_net_pnl, Decimal("0"))
     checks = [
         _numeric_check(
             metric="portfolio_post_cost_net_pnl_per_day",
@@ -106,6 +131,18 @@ def evaluate_profit_target_oracle(
             observed=_decimal(scorecard.get("positive_day_ratio")),
             operator="gte",
             threshold=policy.min_positive_day_ratio,
+        ),
+        _numeric_check(
+            metric="min_daily_net_pnl",
+            observed=min_daily_net_pnl,
+            operator="gte",
+            threshold=policy.min_daily_net_pnl,
+        ),
+        _numeric_check(
+            metric="daily_net_observed_day_count",
+            observed=Decimal(daily_net_observed_day_count),
+            operator="gte",
+            threshold=Decimal(trading_day_count),
         ),
         _numeric_check(
             metric="best_day_share",

@@ -18,6 +18,9 @@ def _signal(
     bid_sz: str,
     ask_sz: str,
     vwap_w5m: str | None = None,
+    rsi14: str | None = None,
+    macd_hist: str | None = None,
+    microbar_volume: str | None = None,
 ) -> SignalEnvelope:
     price_value = Decimal(price)
     spread_value = Decimal(spread)
@@ -37,6 +40,9 @@ def _signal(
             'imbalance_bid_sz': Decimal(bid_sz),
             'imbalance_ask_sz': Decimal(ask_sz),
             'vwap_w5m': Decimal(vwap_w5m) if vwap_w5m is not None else None,
+            'rsi14': Decimal(rsi14) if rsi14 is not None else None,
+            'macd_hist': Decimal(macd_hist) if macd_hist is not None else None,
+            'microbar_volume': Decimal(microbar_volume) if microbar_volume is not None else None,
         },
     )
 
@@ -329,6 +335,7 @@ class TestSessionContextTracker(TestCase):
                 bid_sz='5200',
                 ask_sz='4100',
                 vwap_w5m='100.00',
+                microbar_volume='1000',
             )
         )
         tracker.enrich_signal_payload(
@@ -340,6 +347,7 @@ class TestSessionContextTracker(TestCase):
                 bid_sz='4200',
                 ask_sz='4300',
                 vwap_w5m='100.00',
+                microbar_volume='1200',
             )
         )
 
@@ -352,6 +360,9 @@ class TestSessionContextTracker(TestCase):
                 bid_sz='5500',
                 ask_sz='4000',
                 vwap_w5m='100.80',
+                rsi14='66',
+                macd_hist='0.040',
+                microbar_volume='1800',
             )
         )
         tracker.enrich_signal_payload(
@@ -363,6 +374,9 @@ class TestSessionContextTracker(TestCase):
                 bid_sz='4300',
                 ask_sz='4400',
                 vwap_w5m='99.40',
+                rsi14='38',
+                macd_hist='-0.020',
+                microbar_volume='1100',
             )
         )
 
@@ -375,6 +389,9 @@ class TestSessionContextTracker(TestCase):
                 bid_sz='5600',
                 ask_sz='3900',
                 vwap_w5m='101.90',
+                rsi14='71',
+                macd_hist='0.055',
+                microbar_volume='2100',
             )
         )
         loser_payload = tracker.enrich_signal_payload(
@@ -386,6 +403,9 @@ class TestSessionContextTracker(TestCase):
                 bid_sz='5400',
                 ask_sz='3600',
                 vwap_w5m='99.30',
+                rsi14='35',
+                macd_hist='-0.030',
+                microbar_volume='900',
             )
         )
         leader_payload = tracker.enrich_signal_payload(
@@ -397,6 +417,9 @@ class TestSessionContextTracker(TestCase):
                 bid_sz='5700',
                 ask_sz='3800',
                 vwap_w5m='102.00',
+                rsi14='73',
+                macd_hist='0.060',
+                microbar_volume='2400',
             )
         )
 
@@ -409,6 +432,20 @@ class TestSessionContextTracker(TestCase):
         self.assertEqual(leader_payload['cross_section_above_vwap_w5m_ratio'], Decimal('0.5'))
         self.assertEqual(leader_payload['cross_section_positive_recent_imbalance_ratio'], Decimal('1'))
         self.assertEqual(leader_payload['cross_section_continuation_breadth'], Decimal('0.625'))
+        self.assertEqual(loser_payload['cross_section_rsi14_rank'], Decimal('0'))
+        self.assertEqual(loser_payload['cross_section_macd_hist_rank'], Decimal('0'))
+        self.assertEqual(loser_payload['cross_section_recent_15m_return_rank'], Decimal('0'))
+        self.assertEqual(loser_payload['cross_section_microbar_volume_rank'], Decimal('0'))
+        self.assertLess(cast(Decimal, loser_payload['recent_15m_return_bps']), Decimal('0'))
+        self.assertEqual(leader_payload['cross_section_rsi14_rank'], Decimal('1'))
+        self.assertEqual(leader_payload['cross_section_macd_hist_rank'], Decimal('1'))
+        self.assertEqual(leader_payload['cross_section_recent_15m_return_rank'], Decimal('1'))
+        self.assertEqual(leader_payload['cross_section_microbar_volume_rank'], Decimal('1'))
+        self.assertGreater(cast(Decimal, leader_payload['recent_15m_return_bps']), Decimal('200'))
+        self.assertGreater(
+            cast(Decimal, leader_payload['cross_section_vwap_w5m_stretch_rank']),
+            cast(Decimal, loser_payload['cross_section_vwap_w5m_stretch_rank']),
+        )
         self.assertLess(
             cast(Decimal, loser_payload['cross_section_continuation_rank']),
             cast(Decimal, leader_payload['cross_section_continuation_rank']),
@@ -650,6 +687,26 @@ class TestSessionContextTracker(TestCase):
                 ask_sz='4300',
             )
         )
+        tracker.enrich_signal_payload(
+            _signal(
+                event_ts=datetime(2026, 3, 24, 14, 30, 0, tzinfo=timezone.utc),
+                symbol='AAPL',
+                price='103.00',
+                spread='0.03',
+                bid_sz='5200',
+                ask_sz='3900',
+            )
+        )
+        tracker.enrich_signal_payload(
+            _signal(
+                event_ts=datetime(2026, 3, 24, 14, 30, 1, tzinfo=timezone.utc),
+                symbol='META',
+                price='97.00',
+                spread='0.03',
+                bid_sz='4800',
+                ask_sz='4300',
+            )
+        )
 
         aapl_open_payload = tracker.enrich_signal_payload(
             _signal(
@@ -676,5 +733,11 @@ class TestSessionContextTracker(TestCase):
         self.assertEqual(meta_open_payload['cross_section_prev_day_open45_return_rank'], Decimal('0'))
         self.assertEqual(
             aapl_open_payload['cross_section_positive_prev_day_open45_return_ratio'],
+            Decimal('0.5'),
+        )
+        self.assertEqual(aapl_open_payload['cross_section_prev_day_open60_return_rank'], Decimal('1'))
+        self.assertEqual(meta_open_payload['cross_section_prev_day_open60_return_rank'], Decimal('0'))
+        self.assertEqual(
+            aapl_open_payload['cross_section_positive_prev_day_open60_return_ratio'],
             Decimal('0.5'),
         )

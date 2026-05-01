@@ -104,6 +104,73 @@ class TestPortfolioOptimizer(TestCase):
         with self.assertRaisesRegex(ValueError, "portfolio_candidate_schema_invalid"):
             portfolio_candidate_from_payload({"schema_version": "bad"})
 
+    def test_portfolio_optimizer_counts_missing_trading_days_against_oracle(
+        self,
+    ) -> None:
+        bundles = [
+            evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=f"spec-missing-day-{index}",
+                candidate={
+                    "candidate_id": f"cand-missing-day-{index}",
+                    "runtime_family": "microbar_cross_sectional_pairs",
+                    "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "family_template_id": "microbar_cross_sectional_pairs_v1",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "900",
+                        "active_day_ratio": "1.0",
+                        "positive_day_ratio": "1.0",
+                        "worst_day_loss": "0",
+                        "max_drawdown": "0",
+                        "best_day_share": "0.5",
+                        "avg_filled_notional_per_day": "350000",
+                        "regime_slice_pass_rate": "0.55",
+                        "posterior_edge_lower": "0.01",
+                        "shadow_parity_status": "within_budget",
+                        "correlation_cluster": f"missing-day-{index}",
+                        "symbol_contribution_shares": {
+                            "AAPL": "0.25",
+                            "NVDA": "0.25",
+                            "MSFT": "0.25",
+                            "AMAT": "0.25",
+                        },
+                    },
+                    "full_window": {
+                        "trading_day_count": 3,
+                        "daily_net": {
+                            "2026-02-23": "900",
+                            "2026-02-24": "900",
+                        },
+                        "daily_filled_notional": {
+                            "2026-02-23": "350000",
+                            "2026-02-24": "350000",
+                        },
+                    },
+                },
+                dataset_snapshot_id="snapshot-missing-day",
+                result_path=f"/tmp/missing-day-{index}.json",
+            )
+            for index in range(2)
+        ]
+
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=bundles,
+            target_net_pnl_per_day=Decimal("500"),
+            portfolio_size_min=2,
+            portfolio_size_max=2,
+        )
+
+        self.assertIsNotNone(portfolio)
+        assert portfolio is not None
+        scorecard = portfolio.objective_scorecard
+        self.assertEqual(scorecard["trading_day_count"], 3)
+        self.assertEqual(scorecard["daily_net_observed_day_count"], 2)
+        self.assertEqual(scorecard["missing_daily_net_count"], 1)
+        self.assertFalse(scorecard["oracle_passed"])
+        self.assertIn(
+            "daily_net_observed_day_count_failed",
+            scorecard["profit_target_oracle"]["blockers"],
+        )
+
     def test_invalid_evidence_bundles_are_not_admitted_to_portfolios(self) -> None:
         invalid = evidence_bundle_from_frontier_candidate(
             candidate_spec_id="spec-invalid",

@@ -59,16 +59,21 @@ def _claim_text(claim: Mapping[str, Any]) -> str:
     return _string(claim.get("claim_text")) or _string(claim.get("claim"))
 
 
-def _metadata_terms(claim: Mapping[str, Any]) -> tuple[str, ...]:
+def _metadata_terms(claim: Mapping[str, Any], *, kind: str) -> tuple[str, ...]:
     metadata = _mapping(claim.get("metadata"))
+    keys_by_kind: dict[str, tuple[str, ...]] = {
+        "required_features": (
+            "required_features",
+            "features",
+            "feature_family_ids",
+            "data_requirements",
+        ),
+        "entry_motifs": ("entry_motifs",),
+        "exit_motifs": ("exit_motifs",),
+        "risk_controls": ("risk_controls",),
+    }
     terms: list[str] = []
-    for key in (
-        "required_features",
-        "features",
-        "entry_motifs",
-        "exit_motifs",
-        "risk_controls",
-    ):
+    for key in keys_by_kind.get(kind, (kind,)):
         terms.extend(_string_tuple(claim.get(key)))
         terms.extend(_string_tuple(metadata.get(key)))
     return tuple(dict.fromkeys(item for item in terms if item))
@@ -78,9 +83,11 @@ def _infer_terms(*, claims: Sequence[Mapping[str, Any]], kind: str) -> tuple[str
     terms: list[str] = []
     joined = " ".join(_claim_text(claim).lower() for claim in claims)
     for claim in claims:
-        terms.extend(_metadata_terms(claim))
+        terms.extend(_metadata_terms(claim, kind=kind))
         terms.extend(_string_tuple(claim.get(f"{kind}_json")))
         terms.extend(_string_tuple(claim.get(kind)))
+    if kind == "required_features" and terms:
+        return tuple(dict.fromkeys(item for item in terms if item))
     if kind == "required_features":
         if any(
             token in joined

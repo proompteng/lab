@@ -141,6 +141,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--prefetch-full-window-rows", action="store_true")
     parser.add_argument("--min-active-day-ratio", default="0.90")
     parser.add_argument("--min-positive-day-ratio", default="0.60")
+    parser.add_argument("--min-daily-net-pnl", default="0")
     parser.add_argument("--max-worst-day-loss", default="350")
     parser.add_argument("--max-drawdown", default="900")
     parser.add_argument("--max-best-day-share", default="0.25")
@@ -281,11 +282,17 @@ def _proposal_sort_value(value: Any) -> float:
 
 
 def _oracle_policy_from_args(args: argparse.Namespace) -> ProfitTargetOraclePolicy:
+    target_net_pnl_per_day = _decimal(
+        getattr(args, "target_net_pnl_per_day", "500"), default="500"
+    )
     min_active_day_ratio = _decimal(
         getattr(args, "min_active_day_ratio", "0.90"), default="0.90"
     )
     min_positive_day_ratio = _decimal(
         getattr(args, "min_positive_day_ratio", "0.60"), default="0.60"
+    )
+    min_daily_net_pnl = _decimal(
+        getattr(args, "min_daily_net_pnl", "0"), default="0"
     )
     max_worst_day_loss = _decimal(
         getattr(args, "max_worst_day_loss", "350"), default="350"
@@ -294,11 +301,13 @@ def _oracle_policy_from_args(args: argparse.Namespace) -> ProfitTargetOraclePoli
     if bool(getattr(args, "require_no_flat_days", False)):
         min_active_day_ratio = max(min_active_day_ratio, Decimal("1"))
         min_positive_day_ratio = max(min_positive_day_ratio, Decimal("1"))
+        min_daily_net_pnl = max(min_daily_net_pnl, target_net_pnl_per_day)
         max_worst_day_loss = min(max_worst_day_loss, Decimal("0"))
         max_drawdown = min(max_drawdown, Decimal("0"))
     return ProfitTargetOraclePolicy(
         min_active_day_ratio=min_active_day_ratio,
         min_positive_day_ratio=min_positive_day_ratio,
+        min_daily_net_pnl=min_daily_net_pnl,
         max_worst_day_loss=max_worst_day_loss,
         max_drawdown=max_drawdown,
         max_best_day_share=_decimal(
@@ -1707,6 +1716,43 @@ def run_whitepaper_autoresearch_profit_target(
     started_at = datetime.now(UTC)
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    program = _load_epoch_program(args)
+    objective = program.objective
+    args = argparse.Namespace(
+        **{
+            **vars(args),
+            "min_active_day_ratio": str(
+                max(
+                    _decimal(getattr(args, "min_active_day_ratio", "0.90")),
+                    objective.min_active_day_ratio,
+                )
+            ),
+            "min_positive_day_ratio": str(
+                max(
+                    _decimal(getattr(args, "min_positive_day_ratio", "0.60")),
+                    objective.min_positive_day_ratio,
+                )
+            ),
+            "min_daily_net_pnl": str(
+                max(_decimal(getattr(args, "min_daily_net_pnl", "0")), objective.min_daily_net_pnl)
+            ),
+            "max_worst_day_loss": str(
+                min(_decimal(getattr(args, "max_worst_day_loss", "350")), objective.max_worst_day_loss)
+            ),
+            "max_drawdown": str(
+                min(_decimal(getattr(args, "max_drawdown", "900")), objective.max_drawdown)
+            ),
+            "max_best_day_share": str(
+                min(_decimal(getattr(args, "max_best_day_share", "0.25")), objective.max_best_day_share)
+            ),
+            "min_avg_filled_notional_per_day": str(
+                max(
+                    _decimal(getattr(args, "min_avg_filled_notional_per_day", "300000")),
+                    objective.min_daily_notional,
+                )
+            ),
+        }
+    )
     target = _decimal(args.target_net_pnl_per_day, default="500")
     oracle_policy = _oracle_policy_from_args(args)
     sources = []
@@ -1940,7 +1986,6 @@ def run_whitepaper_autoresearch_profit_target(
         if portfolio is not None
         else {"status": "no_portfolio_candidate"},
     )
-    program = _load_epoch_program(args)
     mlx_snapshot_manifest = _epoch_mlx_snapshot_manifest(
         args=args,
         output_dir=output_dir,

@@ -69,6 +69,8 @@ FEATURE_VECTOR_V3_VALUE_FIELDS = (
     'recent_above_opening_range_high_ratio',
     'recent_above_opening_window_close_ratio',
     'recent_above_vwap_w5m_ratio',
+    'recent_15m_return_bps',
+    'microbar_volume',
     'cross_section_session_open_rank',
     'cross_section_prev_session_close_rank',
     'cross_section_opening_window_return_rank',
@@ -77,7 +79,12 @@ FEATURE_VECTOR_V3_VALUE_FIELDS = (
     'cross_section_prev_day_open60_return_rank',
     'cross_section_range_position_rank',
     'cross_section_vwap_w5m_rank',
+    'cross_section_vwap_w5m_stretch_rank',
+    'cross_section_recent_15m_return_rank',
+    'cross_section_microbar_volume_rank',
     'cross_section_recent_imbalance_rank',
+    'cross_section_rsi14_rank',
+    'cross_section_macd_hist_rank',
     'cross_section_positive_session_open_ratio',
     'cross_section_positive_prev_session_close_ratio',
     'cross_section_positive_opening_window_return_ratio',
@@ -411,6 +418,8 @@ def map_feature_values_v3(signal: SignalEnvelope) -> dict[str, Any]:
         'recent_above_vwap_w5m_ratio': optional_decimal(
             payload.get('recent_above_vwap_w5m_ratio')
         ),
+        'recent_15m_return_bps': optional_decimal(payload.get('recent_15m_return_bps')),
+        'microbar_volume': optional_decimal(payload.get('microbar_volume')),
         'cross_section_session_open_rank': optional_decimal(payload.get('cross_section_session_open_rank')),
         'cross_section_prev_session_close_rank': optional_decimal(
             payload.get('cross_section_prev_session_close_rank')
@@ -427,7 +436,18 @@ def map_feature_values_v3(signal: SignalEnvelope) -> dict[str, Any]:
         ),
         'cross_section_range_position_rank': optional_decimal(payload.get('cross_section_range_position_rank')),
         'cross_section_vwap_w5m_rank': optional_decimal(payload.get('cross_section_vwap_w5m_rank')),
+        'cross_section_vwap_w5m_stretch_rank': optional_decimal(
+            payload.get('cross_section_vwap_w5m_stretch_rank')
+        ),
+        'cross_section_recent_15m_return_rank': optional_decimal(
+            payload.get('cross_section_recent_15m_return_rank')
+        ),
+        'cross_section_microbar_volume_rank': optional_decimal(
+            payload.get('cross_section_microbar_volume_rank')
+        ),
         'cross_section_recent_imbalance_rank': optional_decimal(payload.get('cross_section_recent_imbalance_rank')),
+        'cross_section_rsi14_rank': optional_decimal(payload.get('cross_section_rsi14_rank')),
+        'cross_section_macd_hist_rank': optional_decimal(payload.get('cross_section_macd_hist_rank')),
         'cross_section_positive_session_open_ratio': optional_decimal(payload.get('cross_section_positive_session_open_ratio')),
         'cross_section_positive_prev_session_close_ratio': optional_decimal(
             payload.get('cross_section_positive_prev_session_close_ratio')

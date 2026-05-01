@@ -853,12 +853,14 @@ class TestLocalIntradayTsmomReplay(TestCase):
                 "522.95",
                 "523.05",
                 "0.00018",
+                "18200",
             ]
         )
 
         assert parsed is not None
         self.assertEqual(parsed.payload["vwap_session"], Decimal("522.95"))
         self.assertEqual(parsed.payload["vwap_w5m"], Decimal("523.05"))
+        self.assertEqual(parsed.payload["microbar_volume"], Decimal("18200"))
         self.assertEqual(parsed.payload["imbalance_bid_sz"], Decimal("1200"))
         self.assertEqual(parsed.payload["imbalance_ask_sz"], Decimal("800"))
         imbalance = parsed.payload["imbalance"]

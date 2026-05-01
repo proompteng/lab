@@ -10,6 +10,8 @@ from urllib import error
 from unittest import TestCase
 from unittest.mock import patch
 
+import yaml
+
 import app.trading.alpha as alpha_module
 import app.trading.discovery as discovery_module
 from app.trading.discovery.dataset_snapshot import (
@@ -228,10 +230,37 @@ class TestDiscoveryHarnessV2(TestCase):
             portfolio_template.allowed_normalizations,
             ('market_neutral_gross_scaled',),
         )
+        late_day_template = load_family_template('late_day_continuation_v1', directory=root)
+        self.assertEqual(late_day_template.family_id, 'late_day_continuation_v1')
+        self.assertEqual(
+            late_day_template.runtime_harness['strategy_name'],
+            'late-day-continuation-long-v1',
+        )
         self.assertEqual(
             derive_family_template_id(explicit_id=' custom ', family='ignored'),
             'custom',
         )
+
+    def test_strategy_configmap_contains_family_runtime_harness_strategies(self) -> None:
+        service_root = Path(__file__).resolve().parents[1]
+        repo_root = Path(__file__).resolve().parents[3]
+        family_dir = service_root / 'config' / 'trading' / 'families'
+        configmap_path = repo_root / 'argocd' / 'applications' / 'torghut' / 'strategy-configmap.yaml'
+
+        configmap = yaml.safe_load(configmap_path.read_text(encoding='utf-8'))
+        strategies_yaml = configmap['data']['strategies.yaml']
+        strategies = yaml.safe_load(strategies_yaml)['strategies']
+        strategy_names = {str(item['name']) for item in strategies}
+
+        missing: list[str] = []
+        for template_path in sorted(family_dir.glob('*.yaml')):
+            template = yaml.safe_load(template_path.read_text(encoding='utf-8'))
+            runtime_harness = template.get('runtime_harness') or {}
+            strategy_name = str(runtime_harness.get('strategy_name') or '').strip()
+            if strategy_name and strategy_name not in strategy_names:
+                missing.append(f'{template_path.name}:{strategy_name}')
+
+        self.assertEqual(missing, [])
 
     def test_family_template_loader_validation_branches(self) -> None:
         with TemporaryDirectory() as tmpdir:

@@ -15,7 +15,7 @@ spec:
   template:
     metadata:
       annotations:
-        client.knative.dev/updateTimestamp: "2026-04-26T21:33:35Z"
+        client.knative.dev/updateTimestamp: "2026-05-01T16:57:43Z"
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/target: "80"
@@ -25,7 +25,7 @@ spec:
       containers:
         - name: user-container
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:f321791352a15cac9ff8ca8c4899872c084ce30b09078cfce525e5ef6a9609a8
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:58877b2ddb44efcac642e92049a52cd9663a1945c7f5027c358056767b068a4b
           ports:
             - name: http1
               containerPort: 8181
@@ -140,6 +140,8 @@ spec:
               value: torghut_sim_default.ta_signals
             - name: TRADING_PRICE_TABLE
               value: torghut_sim_default.ta_microbars
+            - name: TRADING_SIGNAL_ALLOWED_SOURCES
+              value: ta
             - name: TRADING_SIGNAL_LOOKBACK_MINUTES
               value: "15"
             - name: TRADING_PLANNED_DECISION_TIMEOUT_SECONDS
@@ -495,9 +497,9 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.566.0-461-g9e3f0214c
+              value: v0.566.0-598-g1ccae8b7b
             - name: TORGHUT_COMMIT
-              value: 9e3f0214c20fc57ca981ac15a2fd87d7747e07fd
+              value: 1ccae8b7b219f2692eed16d43c292e40896bbfa5
           envFrom:
             - configMapRef:
                 name: torghut-autonomy-config
@@ -519,10 +521,10 @@ spec:
           resources:
             requests:
               cpu: 100m
-              memory: 128Mi
+              memory: 256Mi
             limits:
               cpu: 500m
-              memory: 512Mi
+              memory: 1Gi
           volumeMounts:
             - name: strategy-config
               mountPath: /etc/torghut

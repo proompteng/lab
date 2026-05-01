@@ -532,6 +532,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             ),
             policy=frontier.FullWindowConsistencyPolicy(
                 target_net_per_day=frontier.Decimal('300'),
+                min_daily_net_pnl=frontier.Decimal('0'),
                 min_active_days=6,
                 min_active_ratio=frontier.Decimal('0.75'),
                 min_positive_days=4,
@@ -935,7 +936,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             root = Path(tmpdir)
             strategy_configmap = self._write_strategy_configmap(root)
             sweep_config = self._write_sweep_config(root)
-            json_output = root / 'frontier.json'
+            json_output = root / 'nested' / 'frontier.json'
             args = self._make_args(
                 strategy_configmap=strategy_configmap,
                 sweep_config=sweep_config,
@@ -986,6 +987,47 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             self.assertGreater(payload['progress']['pending_candidates'], 0)
             persisted = json.loads(json_output.read_text(encoding='utf-8'))
             self.assertEqual(persisted['status'], 'candidate_budget_exhausted')
+
+    def test_initial_worklist_streams_large_parameter_product(self) -> None:
+        candidates = frontier._iter_initial_worklist_candidates(
+            parameter_grid={
+                'min_recent_microprice_bias_bps': list(range(10_000)),
+                'min_late_day_continuation_bps': list(range(10_000)),
+            },
+            override_candidates=[{'universe_symbols': ['NVDA']}],
+        )
+
+        first_params, first_overrides, first_iteration, first_pruned_symbol, first_parent_id = next(candidates)
+        second_params, second_overrides, second_iteration, second_pruned_symbol, second_parent_id = next(candidates)
+
+        self.assertEqual(first_params, {'min_recent_microprice_bias_bps': 0, 'min_late_day_continuation_bps': 0})
+        self.assertEqual(second_params, {'min_recent_microprice_bias_bps': 1, 'min_late_day_continuation_bps': 0})
+        self.assertEqual(first_overrides, {'universe_symbols': ['NVDA']})
+        self.assertEqual(second_overrides, {'universe_symbols': ['NVDA']})
+        self.assertEqual(first_iteration, 0)
+        self.assertEqual(second_iteration, 0)
+        self.assertIsNone(first_pruned_symbol)
+        self.assertIsNone(second_pruned_symbol)
+        self.assertIsNone(first_parent_id)
+        self.assertIsNone(second_parent_id)
+
+    def test_parameter_stream_prioritizes_entry_gates_for_small_budgets(self) -> None:
+        candidates = frontier._iter_parameter_candidates(
+            {
+                'long_stop_loss_bps': ['20', '24'],
+                'min_cross_section_continuation_rank': ['0.60', '0.70'],
+                'entry_cooldown_seconds': ['3600', '7200'],
+            }
+        )
+
+        first = next(candidates)
+        second = next(candidates)
+        third = next(candidates)
+
+        self.assertEqual(first['min_cross_section_continuation_rank'], '0.60')
+        self.assertEqual(second['min_cross_section_continuation_rank'], '0.70')
+        self.assertEqual(second['long_stop_loss_bps'], '20')
+        self.assertEqual(third['long_stop_loss_bps'], '24')
 
     def test_main_symbol_pruning_promotes_pruned_universe(self) -> None:
         with TemporaryDirectory() as tmpdir:

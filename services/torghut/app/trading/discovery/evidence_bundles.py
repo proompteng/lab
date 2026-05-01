@@ -92,6 +92,8 @@ def evidence_bundle_from_frontier_candidate(
     daily_filled_notional = _mapping(full_window.get("daily_filled_notional"))
     if daily_filled_notional and "daily_filled_notional" not in scorecard:
         scorecard = {**scorecard, "daily_filled_notional": daily_filled_notional}
+    if "trading_day_count" in full_window and "trading_day_count" not in scorecard:
+        scorecard = {**scorecard, "trading_day_count": full_window["trading_day_count"]}
     for key in ("family_template_id", "runtime_family", "runtime_strategy_name"):
         value = _string(candidate.get(key))
         if value and key not in scorecard:

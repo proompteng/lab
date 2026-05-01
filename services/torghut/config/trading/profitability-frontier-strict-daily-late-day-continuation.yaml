@@ -1,0 +1,178 @@
+schema_version: torghut.replay-frontier-sweep.v1
+family: late_day_continuation_consistent
+family_template_id: late_day_continuation_v1
+strategy_name: late-day-continuation-long-v1
+disable_other_strategies: true
+constraints:
+  holdout_target_net_per_day: '300'
+  min_active_holdout_days: 3
+  max_worst_holdout_day_loss: '0'
+  min_profit_factor: '1.05'
+  require_training_decisions: true
+  require_holdout_decisions: true
+consistency_constraints:
+  target_net_per_day: '300'
+  min_daily_net_pnl: '300'
+  min_active_days: 8
+  min_active_ratio: '1.0'
+  min_positive_days: 8
+  max_worst_day_loss: '0'
+  max_negative_days: 0
+  max_drawdown: '900'
+  max_best_day_share_of_total_pnl: '0.30'
+  min_avg_filled_notional_per_day: '300000'
+  min_avg_filled_notional_per_active_day: '350000'
+  min_regime_slice_pass_rate: '0.45'
+  require_every_day_active: true
+strategy_overrides:
+  universe_symbols:
+    - ['AAPL', 'AMAT', 'AMD', 'AVGO', 'GOOG', 'INTC', 'META', 'MSFT', 'MU', 'NVDA', 'PLTR', 'SHOP']
+    - ['AMAT', 'GOOG', 'INTC', 'META', 'MSFT', 'MU', 'NVDA', 'PLTR', 'SHOP']
+  max_position_pct_equity:
+    - '4.0'
+    - '3.0'
+  max_notional_per_trade:
+    - '126360'
+    - '94770'
+parameters:
+  bullish_hist_min:
+    - '0.003'
+    - '0.004'
+  bullish_hist_cap:
+    - '0.060'
+    - '0.070'
+  min_bull_rsi:
+    - '52'
+    - '54'
+  max_bull_rsi:
+    - '74'
+    - '78'
+  vol_floor:
+    - '0.00004'
+    - '0.00005'
+  vol_ceil:
+    - '0.00030'
+    - '0.00040'
+  min_price_above_ema12_bps:
+    - '-8'
+    - '-4'
+  max_price_above_ema12_bps:
+    - '14'
+    - '22'
+  min_price_vs_vwap_w5m_bps:
+    - '-6'
+    - '0'
+  max_price_vs_vwap_w5m_bps:
+    - '14'
+    - '20'
+  min_session_open_drive_bps:
+    - '24'
+    - '35'
+  min_opening_window_return_bps:
+    - '10'
+    - '20'
+  min_session_range_position:
+    - '0.56'
+    - '0.62'
+  min_cross_section_continuation_breadth:
+    - '0.32'
+    - '0.40'
+  min_cross_section_opening_window_return_rank:
+    - '0.55'
+    - '0.65'
+  min_cross_section_continuation_rank:
+    - '0.60'
+    - '0.70'
+  min_recent_imbalance_pressure:
+    - '-0.08'
+    - '-0.02'
+    - '0.02'
+  min_imbalance_pressure:
+    - '-0.08'
+    - '-0.04'
+    - '-0.01'
+    - '0.02'
+  min_recent_microprice_bias_bps:
+    - '-0.50'
+    - '-0.20'
+    - '0.00'
+    - '0.20'
+  max_spread_bps:
+    - '12'
+    - '8'
+  max_recent_spread_bps:
+    - '12'
+    - '8'
+  max_recent_quote_invalid_ratio:
+    - '0.25'
+    - '0.18'
+  max_recent_quote_jump_bps:
+    - '80'
+    - '55'
+  min_session_high_above_opening_range_high_bps:
+    - '-10'
+    - '0'
+    - '4'
+  min_price_vs_opening_range_high_bps:
+    - '-24'
+    - '-10'
+  min_price_vs_opening_window_close_bps:
+    - '-12'
+    - '-4'
+  max_price_vs_opening_window_close_bps:
+    - '18'
+    - '40'
+  min_recent_above_opening_range_high_ratio:
+    - '0.35'
+    - '0.45'
+    - '0.55'
+  min_recent_above_opening_window_close_ratio:
+    - '0.35'
+    - '0.45'
+    - '0.55'
+  min_recent_above_vwap_w5m_ratio:
+    - '0.35'
+    - '0.45'
+    - '0.55'
+  isolated_same_day_min_session_open_rank:
+    - '0.72'
+    - '0.80'
+  isolated_same_day_min_opening_window_return_rank:
+    - '0.70'
+    - '0.75'
+  isolated_same_day_min_continuation_rank:
+    - '0.72'
+    - '0.78'
+  isolated_same_day_min_microprice_bias_bps:
+    - '0.08'
+    - '0.12'
+  entry_start_minute_utc:
+    - '1050'
+    - '1080'
+  entry_end_minute_utc:
+    - '1170'
+  session_flatten_start_minute_utc:
+    - '1170'
+  min_entry_minutes_before_flatten:
+    - '8'
+  long_stop_loss_bps:
+    - '20'
+    - '24'
+  long_trailing_stop_activation_profit_bps:
+    - '12'
+    - '15'
+  long_trailing_stop_drawdown_bps:
+    - '6'
+    - '8'
+  entry_cooldown_seconds:
+    - '600'
+    - '3600'
+    - '7200'
+  max_entries_per_session:
+    - '3'
+    - '1'
+  max_concurrent_positions:
+    - '3'
+    - '2'
+  require_positive_price_for_signal_exit:
+    - 'true'

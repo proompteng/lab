@@ -205,6 +205,8 @@ class TestFeatureContractV3(TestCase):
                 'recent_quote_jump_bps_avg': '12.5',
                 'recent_quote_jump_bps_max': '18.2',
                 'recent_microprice_bias_bps_avg': '0.85',
+                'recent_15m_return_bps': '54',
+                'microbar_volume': '18200',
                 'cross_section_prev_session_close_rank': '0.91',
                 'cross_section_positive_session_open_ratio': '0.58',
                 'cross_section_positive_prev_session_close_ratio': '0.75',
@@ -213,6 +215,11 @@ class TestFeatureContractV3(TestCase):
                 'cross_section_above_vwap_w5m_ratio': '0.50',
                 'cross_section_positive_recent_imbalance_ratio': '0.75',
                 'cross_section_continuation_breadth': '0.6225',
+                'cross_section_vwap_w5m_stretch_rank': '0.14',
+                'cross_section_recent_15m_return_rank': '0.76',
+                'cross_section_microbar_volume_rank': '0.88',
+                'cross_section_rsi14_rank': '0.67',
+                'cross_section_macd_hist_rank': '0.42',
                 'cross_section_opening_window_return_rank': '0.83',
                 'cross_section_opening_window_return_from_prev_close_rank': '0.87',
                 'session_minutes_elapsed': 95,
@@ -244,6 +251,8 @@ class TestFeatureContractV3(TestCase):
         self.assertEqual(fv.values['recent_quote_invalid_ratio'], Decimal('0.04'))
         self.assertEqual(fv.values['recent_quote_jump_bps_max'], Decimal('18.2'))
         self.assertEqual(fv.values['recent_microprice_bias_bps_avg'], Decimal('0.85'))
+        self.assertEqual(fv.values['recent_15m_return_bps'], Decimal('54'))
+        self.assertEqual(fv.values['microbar_volume'], Decimal('18200'))
         self.assertEqual(fv.values['cross_section_prev_session_close_rank'], Decimal('0.91'))
         self.assertEqual(fv.values['cross_section_positive_session_open_ratio'], Decimal('0.58'))
         self.assertEqual(fv.values['cross_section_positive_prev_session_close_ratio'], Decimal('0.75'))
@@ -255,6 +264,11 @@ class TestFeatureContractV3(TestCase):
         self.assertEqual(fv.values['cross_section_above_vwap_w5m_ratio'], Decimal('0.50'))
         self.assertEqual(fv.values['cross_section_positive_recent_imbalance_ratio'], Decimal('0.75'))
         self.assertEqual(fv.values['cross_section_continuation_breadth'], Decimal('0.6225'))
+        self.assertEqual(fv.values['cross_section_vwap_w5m_stretch_rank'], Decimal('0.14'))
+        self.assertEqual(fv.values['cross_section_recent_15m_return_rank'], Decimal('0.76'))
+        self.assertEqual(fv.values['cross_section_microbar_volume_rank'], Decimal('0.88'))
+        self.assertEqual(fv.values['cross_section_rsi14_rank'], Decimal('0.67'))
+        self.assertEqual(fv.values['cross_section_macd_hist_rank'], Decimal('0.42'))
         self.assertEqual(fv.values['cross_section_opening_window_return_rank'], Decimal('0.83'))
         self.assertEqual(
             fv.values['cross_section_opening_window_return_from_prev_close_rank'],

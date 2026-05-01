@@ -1,0 +1,338 @@
+schema_version: torghut.strategy-autoresearch.v1
+program_id: strict_daily_profit_autoresearch_300_v1
+description: >
+  Strict outer loop for a $300/day post-cost net profit target. This profile keeps
+  the objective explicitly daily, not cumulative, and uses runtime-closure gates before
+  any promotion beyond research-candidate artifacts.
+snapshot_policy:
+  bar_interval: PT1S
+  feature_set_id: torghut.mlx-autoresearch.v1
+  quote_quality_policy_id: scheduler_v3_default
+  symbol_policy: args_or_sweep
+  allow_prior_day_features: true
+  allow_cross_sectional_features: true
+forbidden_mutations:
+  - runtime_code_path
+  - evaluator_logic
+  - live_strategy_config
+proposal_model_policy:
+  enabled: true
+  mode: ranking_only
+  backend_preference: mlx
+  top_k: 4
+  exploration_slots: 2
+  minimum_history_rows: 2
+replay_budget:
+  max_candidates_per_round: 8
+  exploration_slots: 2
+  max_candidates_per_frontier_run: 96
+runtime_closure_policy:
+  enabled: true
+  execute_parity_replay: true
+  execute_approval_replay: true
+  parity_window: full_window
+  approval_window: holdout
+  shadow_validation_mode: require_live_evidence
+  promotion_target: shadow
+parity_requirements:
+  - checked_in_runtime_family
+  - scheduler_v3_parity_replay
+  - scheduler_v3_approval_replay
+  - live_shadow_validation
+promotion_policy: research_only
+ledger_policy:
+  append_only: true
+objective:
+  target_net_pnl_per_day: '300'
+  min_daily_net_pnl: '300'
+  min_active_day_ratio: '1.0'
+  min_positive_day_ratio: '1.0'
+  min_daily_notional: '300000'
+  max_best_day_share: '0.30'
+  max_worst_day_loss: '0'
+  max_drawdown: '900'
+  require_every_day_active: true
+  min_regime_slice_pass_rate: '0.45'
+  stop_when_objective_met: true
+research_sources:
+  - source_id: tradefm_market_microstructure_2026
+    title: 'TradeFM: A Generative Foundation Model for Trade-flow and Market Microstructure'
+    url: https://arxiv.org/abs/2602.23784
+    published_at: '2026-02-27'
+    claims:
+      - claim_id: scale_invariant_trade_flow
+        summary: Scale-invariant trade-flow representations can transfer across equities.
+        implication: Prefer normalization sweeps that avoid asset-specific calibration.
+      - claim_id: synthetic_rollout_stress
+        summary: Generated trade-flow rollouts are useful for stress testing.
+        implication: Treat model-generated signals as research evidence only until replay and shadow gates pass.
+  - source_id: ofi_response_ratio_2025
+    title: 'Stochastic Price Dynamics in Response to Order Flow Imbalance: Evidence from CSI 300 Index Futures'
+    url: https://arxiv.org/abs/2505.17388
+    published_at: '2025-05-23'
+    claims:
+      - claim_id: ofi_memory_response
+        summary: Order-flow imbalance can behave like a persistent shock with horizon-dependent response.
+        implication: Test order-flow continuation and mean-reversion sleeves separately by replay horizon.
+      - claim_id: regime_dependent_ofi_power
+        summary: Forecasting power depends on market regime.
+        implication: Keep regime-slice pass rate as a hard promotion criterion.
+  - source_id: intraday_ofi_news_dynamics_2025
+    title: 'Returns and Order Flow Imbalances: Intraday Dynamics and Macroeconomic News Effects'
+    url: https://arxiv.org/abs/2508.06788
+    published_at: '2025-10-08'
+    claims:
+      - claim_id: one_second_price_flow_decay
+        summary: One-second price-flow shocks dissipate quickly and vary by interval.
+        implication: Prefer bounded intraday windows and reject candidates that depend on one broad aggregate effect.
+      - claim_id: news_liquidity_regime
+        summary: Macroeconomic announcements reshape price impact, order flow impact, and volatility.
+        implication: Require held-out replay and live shadow evidence before promotion.
+  - source_id: intraday_order_transition_2025
+    title: 'Intraday order transition dynamics in high, medium, and low market cap stocks: A Markov chain approach'
+    url: https://arxiv.org/abs/2502.07625
+    published_at: '2025-02-11'
+    claims:
+      - claim_id: opening_order_inertia
+        summary: Limit-order inertia is stronger in the opening hour and order transitions vary intraday.
+        implication: Separate opening-drive and mid-session sleeves instead of pooling all minutes.
+      - claim_id: market_cap_order_transition
+        summary: Intraday order transitions differ across stock market-cap buckets.
+        implication: Keep symbol-universe and concentration constraints visible in candidate evidence.
+  - source_id: order_flow_filtration_2025
+    title: 'Order-Flow Filtration and Directional Association with Short-Horizon Returns'
+    url: https://arxiv.org/abs/2507.22712
+    published_at: '2025-12-08'
+    claims:
+      - claim_id: executed_trade_obi
+        summary: OBI built from executed-trade parent orders has stronger directional association than broad unfiltered order flow.
+        implication: Prefer recent executed-flow and quote-quality confirmation over raw aggregate imbalance.
+      - claim_id: causal_filtration_ladder
+        summary: Filtration can improve correlation without improving causal coherence.
+        implication: Keep regime-sliced replay, excitation-like stress windows, and shadow validation as gates.
+  - source_id: volume_imbalance_secret_2026
+    title: 'Understanding the worst-kept secret of high-frequency trading'
+    url: https://link.springer.com/article/10.1007/s00780-026-00585-9
+    published_at: '2026-01-13'
+    claims:
+      - claim_id: predictive_volume_imbalance
+        summary: LOB volume imbalance is predictive of future mid-price moves through efficient-price and microprice interpretation.
+        implication: Test weighted microprice and imbalance-confirmed continuation, but keep inventory and tick-size risk controls.
+      - claim_id: market_maker_response
+        summary: Predictive imbalance is endogenous to market-maker inventory and quote response.
+        implication: Reject candidates that pass only by stale imbalance without spread, quote-quality, and cost controls.
+  - source_id: weighted_microprice_momentum_2026
+    title: 'A Novel Weighted Microprice Momentum for High-Frequency Trading: Integrating Order Book Dynamics with Execution Flow'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5806502
+    published_at: '2026-01-05'
+    claims:
+      - claim_id: weighted_microprice_momentum
+        summary: Multi-level order book state, execution volume, and decay weighting can improve short-term direction prediction.
+        implication: Include microprice-confirmed continuation profiles and require multi-window confirmation.
+      - claim_id: high_frequency_noise_filter
+        summary: Multiple rolling windows are needed to filter noisy high-frequency microprice signals.
+        implication: Penalize one-tick-only entries and favor persistent late-session continuation.
+  - source_id: optimized_intraday_momentum_exits_2025
+    title: 'Improvements to Intraday Momentum Strategies Using Parameter Optimization and Different Exit Strategies'
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5095349
+    published_at: '2025-01-27'
+    claims:
+      - claim_id: vwap_ladder_exits
+        summary: VWAP and ladder-style exits improved noise-boundary intraday momentum results in the paper.
+        implication: Sweep VWAP-close, trailing-stop, and close-flatten exits rather than only fixed time exits.
+  - source_id: macro_announcement_intraday_momentum_2025
+    title: "Stock's Macro Announcement Incremental Information and Intraday Momentum"
+    url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5413265
+    published_at: '2025-08-28'
+    claims:
+      - claim_id: macro_information_momentum
+        summary: Intraday momentum is stronger around macro-announcement information windows.
+        implication: Treat late-day continuation as regime conditional and require non-announcement held-out validation.
+families:
+  - family_template_id: microstructure_continuation_matched_filter_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-microstructure.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: true
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 4
+    parameter_mutations:
+      max_entries_per_session:
+        mode: numeric_step
+        deltas: ['-1', '0', '1']
+        minimum: '1'
+        maximum: '4'
+      entry_cooldown_seconds:
+        mode: numeric_step
+        deltas: ['-300', '0', '300']
+        minimum: '300'
+        maximum: '1500'
+    strategy_override_mutations:
+      normalization_regime:
+        mode: allowed_normalizations
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['157950.10', '236925.15', '315900.20']
+  - family_template_id: microbar_cross_sectional_pairs_v1
+    seed_sweep_config: ../profitability-frontier-consistent-microbar-cross-sectional-pairs.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: true
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 4
+    parameter_mutations:
+      min_cross_section_continuation_rank:
+        mode: numeric_step
+        deltas: ['-0.05', '0', '0.05']
+        minimum: '0.45'
+        maximum: '0.75'
+      max_entries_per_session:
+        mode: numeric_step
+        deltas: ['-1', '0', '1']
+        minimum: '1'
+        maximum: '3'
+    strategy_override_mutations:
+      normalization_regime:
+        mode: allowed_normalizations
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['157950.10', '236925.15', '315900.20']
+  - family_template_id: intraday_tsmom_v2
+    seed_sweep_config: ../profitability-frontier-strict-daily-tsmom.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: true
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 3
+    parameter_mutations:
+      long_stop_loss_bps:
+        mode: numeric_step
+        deltas: ['-2', '0', '2']
+        minimum: '8'
+        maximum: '20'
+      min_cross_section_continuation_rank:
+        mode: numeric_step
+        deltas: ['-0.05', '0', '0.05']
+        minimum: '0.45'
+        maximum: '0.75'
+    strategy_override_mutations:
+      normalization_regime:
+        mode: allowed_normalizations
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['63180', '126360', '189540']
+  - family_template_id: momentum_pullback_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-momentum-pullback.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: true
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    parameter_mutations:
+      exit_macd_hist_max:
+        mode: numeric_step
+        deltas: ['-0.002', '0', '0.002']
+        minimum: '-0.010'
+        maximum: '-0.001'
+      max_hold_seconds:
+        mode: numeric_step
+        deltas: ['-120', '0', '120']
+        minimum: '300'
+        maximum: '1200'
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['63180', '126360', '189540']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['2.0', '4.0']
+  - family_template_id: late_day_continuation_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-late-day-continuation.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: true
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    parameter_mutations:
+      min_cross_section_continuation_rank:
+        mode: numeric_step
+        deltas: ['-0.05', '0', '0.05']
+        minimum: '0.55'
+        maximum: '0.80'
+      min_cross_section_continuation_breadth:
+        mode: numeric_step
+        deltas: ['-0.05', '0', '0.05']
+        minimum: '0.30'
+        maximum: '0.50'
+      long_trailing_stop_activation_profit_bps:
+        mode: numeric_step
+        deltas: ['-3', '0', '3']
+        minimum: '8'
+        maximum: '18'
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['94770', '126360', '189540']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['3.0', '4.0']
+  - family_template_id: breakout_reclaim_v2
+    seed_sweep_config: ../profitability-frontier-strict-daily-breakout-reclaim.yaml
+    max_iterations: 2
+    keep_top_candidates: 1
+    frontier_top_n: 4
+    force_keep_top_candidate_if_all_vetoed: true
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 1
+    symbol_prune_min_universe_size: 5
+    parameter_mutations:
+      max_entries_per_session:
+        mode: numeric_step
+        deltas: ['-1', '0', '1']
+        minimum: '1'
+        maximum: '4'
+      long_stop_loss_bps:
+        mode: numeric_step
+        deltas: ['-2', '0', '2']
+        minimum: '8'
+        maximum: '16'
+    strategy_override_mutations:
+      normalization_regime:
+        mode: allowed_normalizations
+  - family_template_id: mean_reversion_rebound_v1
+    seed_sweep_config: ../profitability-frontier-strict-daily-mean-reversion.yaml
+    max_iterations: 2
+    keep_top_candidates: 2
+    frontier_top_n: 5
+    force_keep_top_candidate_if_all_vetoed: true
+    symbol_prune_iterations: 1
+    symbol_prune_candidates: 2
+    symbol_prune_min_universe_size: 5
+    parameter_mutations:
+      min_bull_rsi:
+        mode: numeric_step
+        deltas: ['-2', '0', '2']
+        minimum: '34'
+        maximum: '48'
+      min_cross_section_reversal_rank:
+        mode: numeric_step
+        deltas: ['-0.05', '0', '0.05']
+        minimum: '0.60'
+        maximum: '0.90'
+    strategy_override_mutations:
+      max_notional_per_trade:
+        mode: explicit_values
+        values: ['63180', '126360', '189540']
+      max_position_pct_equity:
+        mode: explicit_values
+        values: ['2.0', '4.0']

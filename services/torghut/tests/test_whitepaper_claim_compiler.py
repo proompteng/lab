@@ -206,6 +206,20 @@ class TestWhitepaperClaimCompiler(TestCase):
         self.assertEqual(sources[0].run_id, "paper-jsonl")
         self.assertEqual(len(compile_sources_to_hypothesis_cards(sources)), 1)
 
+    def test_checked_in_300_daily_profit_sources_compile_to_hypotheses(self) -> None:
+        path = Path("config/trading/research-sources/300-daily-profit-2025-2026.jsonl")
+
+        sources = sources_from_jsonl(path)
+        cards = compile_sources_to_hypothesis_cards(sources)
+
+        self.assertGreaterEqual(len(sources), 5)
+        self.assertTrue(
+            all(source.published_at.startswith(("2025", "2026")) for source in sources)
+        )
+        self.assertGreaterEqual(len(cards), len(sources))
+        self.assertTrue(all(card.required_features for card in cards))
+        self.assertTrue(all(card.risk_controls for card in cards))
+
     def test_sources_from_jsonl_rejects_invalid_rows(self) -> None:
         with TemporaryDirectory() as tmpdir:
             invalid_json_path = Path(tmpdir) / "invalid-json.jsonl"
