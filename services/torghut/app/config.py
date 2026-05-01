@@ -566,6 +566,14 @@ class Settings(BaseSettings):
         alias="TRADING_EMPIRICAL_JOB_STALE_AFTER_SECONDS",
         description="Freshness budget for empirical parity and Janus workflow outputs.",
     )
+    trading_empirical_jobs_health_required: bool = Field(
+        default=False,
+        alias="TRADING_EMPIRICAL_JOBS_HEALTH_REQUIRED",
+        description=(
+            "Require fresh empirical jobs for /trading/health. Leave false for live local-strategy execution; "
+            "promotion evidence is reported separately."
+        ),
+    )
     trading_forecast_router_refinement_enabled: bool = Field(
         default=True,
         alias="TRADING_FORECAST_ROUTER_REFINEMENT_ENABLED",
@@ -1358,6 +1366,14 @@ class Settings(BaseSettings):
         alias="TRADING_JANGAR_QUANT_HEALTH_URL",
         description=(
             "Explicit Jangar quant health endpoint consumed by the shared live submission gate and live/sim lane authority."
+        ),
+    )
+    trading_jangar_quant_health_required: bool = Field(
+        default=False,
+        alias="TRADING_JANGAR_QUANT_HEALTH_REQUIRED",
+        description=(
+            "Require the external Jangar quant health endpoint before live submission gates and /trading/health can pass. "
+            "Leave false for Torghut-owned local strategy execution."
         ),
     )
     trading_jangar_control_plane_timeout_seconds: float = Field(

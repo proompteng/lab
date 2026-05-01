@@ -16,7 +16,7 @@ spec:
   template:
     metadata:
       annotations:
-        client.knative.dev/updateTimestamp: "2026-04-26T21:33:35Z"
+        client.knative.dev/updateTimestamp: 2026-05-01T01:25:51.182Z
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/target: "80"
@@ -26,7 +26,7 @@ spec:
       containers:
         - name: user-container
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:f321791352a15cac9ff8ca8c4899872c084ce30b09078cfce525e5ef6a9609a8
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:98a08e40c34cdcfc1ad54c914cc73fe81f0983b9d9d90221f1ebe2560c14512f
           ports:
             - name: http1
               containerPort: 8181
@@ -105,10 +105,14 @@ spec:
               value: "false"
             - name: TRADING_EVIDENCE_CONTINUITY_ENABLED
               value: "false"
+            - name: TRADING_EMPIRICAL_JOBS_HEALTH_REQUIRED
+              value: "false"
+            - name: TRADING_JANGAR_QUANT_HEALTH_REQUIRED
+              value: "false"
             - name: TRADING_ACCOUNT_LABEL
               value: PA3SX7FYNUTF
             - name: TRADING_ACCOUNTS_JSON
-              value: >
+              value: |
                 [{"label":"PA3SX7FYNUTF","mode":"live","enabled":true}]
             - name: TRADING_ALLOW_SHORTS
               value: "true"
@@ -276,9 +280,9 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.566.0-461-g9e3f0214c
+              value: v0.566.0-590-g6846e10b9
             - name: TORGHUT_COMMIT
-              value: 9e3f0214c20fc57ca981ac15a2fd87d7747e07fd
+              value: 6846e10b99e72e56c905f6c0236cc12688c386b2
           livenessProbe:
             httpGet:
               path: /healthz

@@ -15,7 +15,7 @@ data:
         strategy_type: intraday_tsmom_v1
         version: 1.1.0
         description: Intraday momentum strategy promoted from the March 30, 2026 through April 2, 2026 liquid-open simulation winner, version=1.1.0
-        enabled: false
+        enabled: true
         base_timeframe: "1Sec"
         universe_type: intraday_tsmom_v1
         universe_symbols: ["NVDA", "AAPL", "MSFT", "AMAT", "META", "AVGO", "AMD", "GOOG", "PLTR", "INTC"]
@@ -99,8 +99,8 @@ data:
         base_timeframe: "1Sec"
         universe_type: breakout_continuation_long_v1
         universe_symbols: ["AMAT", "GOOG", "INTC", "MSFT", "MU", "NVDA", "PLTR", "SHOP"]
-        max_notional_per_trade: 315900.2
-        max_position_pct_equity: 10.0
+        max_notional_per_trade: 50000
+        max_position_pct_equity: 3.0
         params:
           bullish_hist_min: "0.003"
           min_bull_rsi: "54"
@@ -144,7 +144,7 @@ data:
           entry_end_minute_utc: "990"
           session_flatten_start_minute_utc: "1170"
           min_entry_minutes_before_flatten: "20"
-          max_gross_exposure_pct_equity: "10.0"
+          max_gross_exposure_pct_equity: "3.0"
           position_isolation_mode: "per_strategy"
           long_stop_loss_bps: "35"
           long_stop_loss_spread_bps_multiplier: "0.20"
@@ -164,7 +164,7 @@ data:
           negative_exit_lockout_seconds: "7200"
           negative_exit_loss_bps: "8"
           max_session_negative_exit_bps: "8"
-          entry_notional_max_multiplier: "1.50"
+          entry_notional_max_multiplier: "1.00"
           isolated_same_day_min_session_open_rank: "0.80"
           isolated_same_day_min_opening_window_return_rank: "0.75"
           isolated_same_day_min_continuation_rank: "0.78"
@@ -230,7 +230,7 @@ data:
         strategy_type: washout_rebound_long_v1
         version: 1.0.0
         description: Promoted washout rebound sleeve paired with the March 24, 2026 through April 2, 2026 replay composite winner, version=1.0.0
-        enabled: true
+        enabled: false
         base_timeframe: "1Sec"
         universe_type: washout_rebound_long_v1
         universe_symbols: ["AMD", "INTC", "SHOP", "AMAT", "MU", "GOOG", "MSFT"]
