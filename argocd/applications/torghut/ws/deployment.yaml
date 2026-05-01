@@ -17,7 +17,7 @@ spec:
       labels:
         app: torghut-ws
       annotations:
-        kubectl.kubernetes.io/restartedAt: 2026-05-01T01:16:05.164Z
+        kubectl.kubernetes.io/restartedAt: 2026-05-01T01:25:51.190Z
     spec:
       serviceAccountName: torghut-runtime
       securityContext:
@@ -53,9 +53,9 @@ spec:
                   name: torghut-ws
                   key: password
             - name: TORGHUT_WS_VERSION
-              value: v0.566.0-588-g60859037d
+              value: v0.566.0-590-g6846e10b9
             - name: TORGHUT_WS_COMMIT
-              value: 60859037d4d61309769b0df260b1f22a008e0d69
+              value: 6846e10b99e72e56c905f6c0236cc12688c386b2
             - name: JAVA_TOOL_OPTIONS
               value: -XX:+UseContainerSupport -XX:InitialRAMPercentage=40.0 -XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError
           ports:

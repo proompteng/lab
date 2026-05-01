@@ -157,9 +157,9 @@ spec:
                   name: flink-checkpoints
                   key: AWS_SECRET_ACCESS_KEY
             - name: TORGHUT_TA_VERSION
-              value: v0.566.0-588-g60859037d
+              value: v0.566.0-590-g6846e10b9
             - name: TORGHUT_TA_COMMIT
-              value: 60859037d4d61309769b0df260b1f22a008e0d69
+              value: 6846e10b99e72e56c905f6c0236cc12688c386b2
           ports:
             - containerPort: 9249
               name: metrics
