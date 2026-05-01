@@ -895,6 +895,88 @@ class TestTradingApi(TestCase):
             settings.trading_universe_source = original_source
 
     @patch(
+        "app.main._build_live_submission_gate_payload",
+        return_value={
+            "allowed": True,
+            "reason": "ready",
+            "blocked_reasons": [],
+            "capital_stage": "live",
+        },
+    )
+    @patch("app.main._empirical_jobs_status")
+    @patch("app.main.load_quant_evidence_status")
+    @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
+    @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
+    @patch(
+        "app.main.check_account_scope_invariants",
+        return_value={"account_scope_ready": True, "account_scope_errors": []},
+    )
+    @patch(
+        "app.main.check_schema_current",
+        return_value={
+            "schema_current": True,
+            "current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
+        },
+    )
+    def test_trading_health_live_external_authorities_are_informational_when_not_required(
+        self,
+        _mock_schema: object,
+        _mock_account_scope: object,
+        _mock_clickhouse: object,
+        _mock_alpaca: object,
+        mock_quant_evidence: object,
+        mock_empirical_jobs: object,
+        _mock_submission_gate: object,
+    ) -> None:
+        original_enabled = settings.trading_enabled
+        original_mode = settings.trading_mode
+        original_source = settings.trading_universe_source
+        original_empirical_required = settings.trading_empirical_jobs_health_required
+        settings.trading_enabled = True
+        settings.trading_mode = "live"
+        settings.trading_universe_source = "static"
+        settings.trading_empirical_jobs_health_required = False
+        try:
+            mock_empirical_jobs.return_value = {
+                "ready": False,
+                "status": "degraded",
+                "authority": "blocked",
+            }
+            mock_quant_evidence.return_value = {
+                "required": False,
+                "ok": True,
+                "status": "not_required",
+                "reason": "quant_health_not_configured",
+                "blocking_reasons": [],
+                "account": "live",
+                "window": "15m",
+                "source_url": None,
+            }
+            scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            app.state.trading_scheduler = scheduler
+
+            response = self.client.get("/trading/health")
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["status"], "ok")
+            self.assertTrue(payload["dependencies"]["empirical_jobs"]["ok"])
+            self.assertFalse(payload["dependencies"]["empirical_jobs"]["required"])
+            self.assertTrue(payload["dependencies"]["quant_evidence"]["ok"])
+            self.assertFalse(payload["dependencies"]["quant_evidence"]["required"])
+        finally:
+            settings.trading_enabled = original_enabled
+            settings.trading_mode = original_mode
+            settings.trading_universe_source = original_source
+            settings.trading_empirical_jobs_health_required = (
+                original_empirical_required
+            )
+
+    @patch(
         "app.main._evaluate_database_contract",
         return_value={
             "ok": True,

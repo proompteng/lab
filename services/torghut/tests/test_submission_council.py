@@ -21,6 +21,7 @@ class TestSubmissionCouncil(TestCase):
             "trading_autonomy_allow_live_promotion": settings.trading_autonomy_allow_live_promotion,
             "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
             "trading_jangar_quant_health_url": settings.trading_jangar_quant_health_url,
+            "trading_jangar_quant_health_required": settings.trading_jangar_quant_health_required,
             "trading_jangar_control_plane_status_url": settings.trading_jangar_control_plane_status_url,
             "trading_market_context_url": settings.trading_market_context_url,
         }
@@ -45,6 +46,9 @@ class TestSubmissionCouncil(TestCase):
         settings.trading_jangar_quant_health_url = self._settings_snapshot[
             "trading_jangar_quant_health_url"
         ]
+        settings.trading_jangar_quant_health_required = self._settings_snapshot[
+            "trading_jangar_quant_health_required"
+        ]
         settings.trading_jangar_control_plane_status_url = self._settings_snapshot[
             "trading_jangar_control_plane_status_url"
         ]
@@ -65,7 +69,9 @@ class TestSubmissionCouncil(TestCase):
             dependency_quorum_decision="allow",
         )
 
-    def _promotion_decision(self, capital_stage: str = "0.10x canary") -> SimpleNamespace:
+    def _promotion_decision(
+        self, capital_stage: str = "0.10x canary"
+    ) -> SimpleNamespace:
         return SimpleNamespace(
             id="promo-1",
             candidate_id="cand-1",
@@ -294,9 +300,7 @@ class TestSubmissionCouncil(TestCase):
         self.assertIn("quant_health_not_configured", result["blocked_reasons"])
 
     def test_resolve_quant_health_url_accepts_typed_endpoint_with_query(self) -> None:
-        settings.trading_jangar_quant_health_url = (
-            " https://jangar.example/api/torghut/trading/control-plane/quant/health?window=1h "
-        )
+        settings.trading_jangar_quant_health_url = " https://jangar.example/api/torghut/trading/control-plane/quant/health?window=1h "
         settings.trading_jangar_control_plane_status_url = (
             "https://jangar.example/status"
         )
@@ -340,6 +344,34 @@ class TestSubmissionCouncil(TestCase):
 
         self.assertIsNone(resolve_quant_health_url())
 
+    def test_load_quant_evidence_status_is_informational_when_quant_health_is_not_required(
+        self,
+    ) -> None:
+        settings.trading_jangar_quant_health_url = ""
+        settings.trading_jangar_quant_health_required = False
+
+        status = load_quant_evidence_status(account_label="paper")
+
+        self.assertTrue(status["ok"])
+        self.assertFalse(status["required"])
+        self.assertEqual(status["status"], "not_required")
+        self.assertEqual(status["reason"], "quant_health_not_configured")
+        self.assertEqual(status["blocking_reasons"], [])
+
+    def test_load_quant_evidence_status_blocks_when_quant_health_is_required(
+        self,
+    ) -> None:
+        settings.trading_jangar_quant_health_url = ""
+        settings.trading_jangar_quant_health_required = True
+
+        status = load_quant_evidence_status(account_label="paper")
+
+        self.assertFalse(status["ok"])
+        self.assertTrue(status["required"])
+        self.assertEqual(status["status"], "unknown")
+        self.assertEqual(status["reason"], "quant_health_not_configured")
+        self.assertEqual(status["blocking_reasons"], ["quant_health_not_configured"])
+
     def test_load_quant_evidence_status_rejects_wrong_endpoint_authority(self) -> None:
         settings.trading_jangar_quant_health_url = (
             "https://jangar.example/api/agents/control-plane/status?namespace=agents"
@@ -349,9 +381,7 @@ class TestSubmissionCouncil(TestCase):
 
         self.assertFalse(status["ok"])
         self.assertEqual(status["reason"], "quant_health_invalid_endpoint")
-        self.assertEqual(
-            status["blocking_reasons"], ["quant_health_invalid_endpoint"]
-        )
+        self.assertEqual(status["blocking_reasons"], ["quant_health_invalid_endpoint"])
         self.assertEqual(
             status["source_url"],
             "https://jangar.example/api/agents/control-plane/status?namespace=agents",

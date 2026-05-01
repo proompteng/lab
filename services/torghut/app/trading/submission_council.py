@@ -30,30 +30,30 @@ from .hypotheses import (
 from .tca import build_tca_gate_inputs
 
 _CAPITAL_STAGE_ORDER = (
-    'shadow',
-    '0.10x canary',
-    '0.25x canary',
-    '0.50x live',
-    '1.00x live',
+    "shadow",
+    "0.10x canary",
+    "0.25x canary",
+    "0.50x live",
+    "1.00x live",
 )
 _LIVE_SUBMISSION_BLOCKING_TOGGLE_MISMATCHES = frozenset(
     {
-        'TRADING_ENABLED',
-        'TRADING_KILL_SWITCH_ENABLED',
-        'TRADING_MODE',
+        "TRADING_ENABLED",
+        "TRADING_KILL_SWITCH_ENABLED",
+        "TRADING_MODE",
     }
 )
-_TYPED_QUANT_HEALTH_PATH = '/api/torghut/trading/control-plane/quant/health'
+_TYPED_QUANT_HEALTH_PATH = "/api/torghut/trading/control-plane/quant/health"
 _QUANT_HEALTH_CACHE_LOCK = Lock()
 _QUANT_HEALTH_CACHE: dict[str, object] = {}
-_STALE_SEGMENT_STATES = frozenset({'stale', 'down', 'degraded', 'error', 'blocked'})
+_STALE_SEGMENT_STATES = frozenset({"stale", "down", "degraded", "error", "blocked"})
 _TA_CORE_REASON_CODES = frozenset(
     {
-        'feature_rows_missing',
-        'no_signal_streak_exceeded',
-        'required_feature_set_unavailable',
-        'signal_continuity_alert_active',
-        'signal_lag_exceeded',
+        "feature_rows_missing",
+        "no_signal_streak_exceeded",
+        "required_feature_set_unavailable",
+        "signal_continuity_alert_active",
+        "signal_lag_exceeded",
     }
 )
 
@@ -80,9 +80,9 @@ def _safe_bool(value: object) -> bool | None:
         return bool(value)
     if isinstance(value, str):
         normalized = value.strip().lower()
-        if normalized in {'true', '1', 'yes', 'y', 'on'}:
+        if normalized in {"true", "1", "yes", "y", "on"}:
             return True
-        if normalized in {'false', '0', 'no', 'n', 'off'}:
+        if normalized in {"false", "0", "no", "n", "off"}:
             return False
     return None
 
@@ -121,18 +121,18 @@ def _derive_quant_health_url(
     *,
     preserve_path: bool = False,
 ) -> str | None:
-    raw = (value or '').strip()
+    raw = (value or "").strip()
     if not raw:
         return None
     parsed = urlsplit(raw)
     if not parsed.scheme or not parsed.netloc:
         return None
-    path = parsed.path if preserve_path else ''
-    query = parsed.query if preserve_path else ''
+    path = parsed.path if preserve_path else ""
+    query = parsed.query if preserve_path else ""
     if preserve_path and path:
-        normalized_path = path if path.startswith('/') else f'/{path}'
+        normalized_path = path if path.startswith("/") else f"/{path}"
         normalized_path = (
-            normalized_path.rstrip('/') if normalized_path != '/' else normalized_path
+            normalized_path.rstrip("/") if normalized_path != "/" else normalized_path
         )
         if not (
             normalized_path == _TYPED_QUANT_HEALTH_PATH
@@ -148,7 +148,7 @@ def _derive_quant_health_url(
             parsed.netloc,
             resolved_path,
             query,
-            '',
+            "",
         )
     )
 
@@ -169,9 +169,9 @@ def _build_quant_health_request_url(
     parsed = urlsplit(base_url)
     query_params = dict(parse_qsl(parsed.query, keep_blank_values=True))
     if account:
-        query_params['account'] = account
+        query_params["account"] = account
     if window:
-        query_params['window'] = window
+        query_params["window"] = window
     query = urlencode(query_params)
     return urlunsplit(
         (
@@ -179,7 +179,7 @@ def _build_quant_health_request_url(
             parsed.netloc,
             parsed.path,
             query,
-            '',
+            "",
         )
     )
 
@@ -188,34 +188,36 @@ def load_quant_evidence_status(
     *, account_label: str | None = None
 ) -> dict[str, object]:
     window = settings.trading_jangar_quant_window
-    account = (account_label or settings.trading_account_label or '').strip()
+    account = (account_label or settings.trading_account_label or "").strip()
+    required = bool(settings.trading_jangar_quant_health_required)
     configured_url = _safe_text(settings.trading_jangar_quant_health_url)
     base_url = resolve_quant_health_url()
     if configured_url is not None and not base_url:
         return {
-            'required': True,
-            'ok': False,
-            'status': 'unknown',
-            'reason': 'quant_health_invalid_endpoint',
-            'blocking_reasons': ['quant_health_invalid_endpoint'],
-            'account': account or None,
-            'window': window,
-            'source_url': configured_url,
-            'message': (
-                'TRADING_JANGAR_QUANT_HEALTH_URL must target the typed '
-                f'{_TYPED_QUANT_HEALTH_PATH} surface'
+            "required": True,
+            "ok": False,
+            "status": "unknown",
+            "reason": "quant_health_invalid_endpoint",
+            "blocking_reasons": ["quant_health_invalid_endpoint"],
+            "account": account or None,
+            "window": window,
+            "source_url": configured_url,
+            "message": (
+                "TRADING_JANGAR_QUANT_HEALTH_URL must target the typed "
+                f"{_TYPED_QUANT_HEALTH_PATH} surface"
             ),
         }
     if not base_url:
+        blocking_reasons = ["quant_health_not_configured"] if required else []
         return {
-            'required': True,
-            'ok': False,
-            'status': 'unknown',
-            'reason': 'quant_health_not_configured',
-            'blocking_reasons': ['quant_health_not_configured'],
-            'account': account or None,
-            'window': window,
-            'source_url': None,
+            "required": required,
+            "ok": not required,
+            "status": "unknown" if required else "not_required",
+            "reason": "quant_health_not_configured",
+            "blocking_reasons": blocking_reasons,
+            "account": account or None,
+            "window": window,
+            "source_url": None,
         }
 
     request_url = _build_quant_health_request_url(
@@ -230,36 +232,36 @@ def load_quant_evidence_status(
         with _QUANT_HEALTH_CACHE_LOCK:
             cached = cast(dict[str, Any] | None, _QUANT_HEALTH_CACHE.get(request_url))
             if cached is not None:
-                checked_at = cast(datetime | None, cached.get('checked_at'))
+                checked_at = cast(datetime | None, cached.get("checked_at"))
                 if checked_at is not None and now - checked_at <= timedelta(
                     seconds=ttl_seconds
                 ):
-                    return dict(cast(Mapping[str, Any], cached['payload']))
+                    return dict(cast(Mapping[str, Any], cached["payload"]))
 
     status_payload: dict[str, object]
     try:
         request = Request(
-            request_url, method='GET', headers={'accept': 'application/json'}
+            request_url, method="GET", headers={"accept": "application/json"}
         )
         with urlopen(
             request, timeout=settings.trading_jangar_control_plane_timeout_seconds
         ) as response:
-            status_code = int(getattr(response, 'status', 200))
+            status_code = int(getattr(response, "status", 200))
             if status_code < 200 or status_code >= 300:
-                raise RuntimeError(f'quant_health_http_{status_code}')
-            decoded = json.loads(response.read().decode('utf-8'))
+                raise RuntimeError(f"quant_health_http_{status_code}")
+            decoded = json.loads(response.read().decode("utf-8"))
         if not isinstance(decoded, Mapping):
-            raise RuntimeError('quant_health_payload_invalid')
+            raise RuntimeError("quant_health_payload_invalid")
         payload = cast(Mapping[str, Any], decoded)
-        if payload.get('ok') is not True:
+        if payload.get("ok") is not True:
             message = str(
-                payload.get('message') or 'quant_health_request_failed'
+                payload.get("message") or "quant_health_request_failed"
             ).strip()
             raise RuntimeError(message)
-        latest_metrics_count = _safe_int(payload.get('latestMetricsCount'))
-        empty_latest_store_alarm = bool(payload.get('emptyLatestStoreAlarm'))
-        missing_update_alarm = bool(payload.get('missingUpdateAlarm'))
-        stages_raw = payload.get('stages')
+        latest_metrics_count = _safe_int(payload.get("latestMetricsCount"))
+        empty_latest_store_alarm = bool(payload.get("emptyLatestStoreAlarm"))
+        missing_update_alarm = bool(payload.get("missingUpdateAlarm"))
+        stages_raw = payload.get("stages")
         stages = (
             list(cast(Sequence[object], stages_raw))
             if isinstance(stages_raw, Sequence)
@@ -268,91 +270,91 @@ def load_quant_evidence_status(
         )
         blocking_reasons: list[str] = []
         if latest_metrics_count <= 0:
-            blocking_reasons.append('quant_latest_metrics_empty')
+            blocking_reasons.append("quant_latest_metrics_empty")
         if empty_latest_store_alarm:
-            blocking_reasons.append('quant_latest_store_alarm')
+            blocking_reasons.append("quant_latest_store_alarm")
         if missing_update_alarm:
-            blocking_reasons.append('quant_metrics_update_missing')
+            blocking_reasons.append("quant_metrics_update_missing")
         if len(stages) == 0:
-            blocking_reasons.append('quant_pipeline_stages_missing')
+            blocking_reasons.append("quant_pipeline_stages_missing")
         elif any(
-            _safe_bool(cast(Mapping[str, Any], stage).get('ok')) is False
+            _safe_bool(cast(Mapping[str, Any], stage).get("ok")) is False
             for stage in stages
             if isinstance(stage, Mapping)
         ):
-            blocking_reasons.append('quant_pipeline_degraded')
+            blocking_reasons.append("quant_pipeline_degraded")
 
-        raw_status = str(payload.get('status') or '').strip().lower()
-        if not blocking_reasons and raw_status not in {'ok', 'healthy'}:
-            blocking_reasons.append('quant_health_degraded')
+        raw_status = str(payload.get("status") or "").strip().lower()
+        if not blocking_reasons and raw_status not in {"ok", "healthy"}:
+            blocking_reasons.append("quant_health_degraded")
 
         status_payload = {
-            'required': True,
-            'ok': len(blocking_reasons) == 0,
-            'status': 'healthy' if len(blocking_reasons) == 0 else 'degraded',
-            'reason': 'ready' if len(blocking_reasons) == 0 else blocking_reasons[0],
-            'blocking_reasons': blocking_reasons,
-            'account': account or None,
-            'window': window,
-            'source_url': request_url,
-            'latest_metrics_count': latest_metrics_count,
-            'latest_metrics_updated_at': payload.get('latestMetricsUpdatedAt'),
-            'empty_latest_store_alarm': empty_latest_store_alarm,
-            'missing_update_alarm': missing_update_alarm,
-            'metrics_pipeline_lag_seconds': payload.get('metricsPipelineLagSeconds'),
-            'stage_count': len(stages),
-            'max_stage_lag_seconds': payload.get('maxStageLagSeconds'),
-            'stages': stages,
-            'as_of': payload.get('asOf'),
+            "required": True,
+            "ok": len(blocking_reasons) == 0,
+            "status": "healthy" if len(blocking_reasons) == 0 else "degraded",
+            "reason": "ready" if len(blocking_reasons) == 0 else blocking_reasons[0],
+            "blocking_reasons": blocking_reasons,
+            "account": account or None,
+            "window": window,
+            "source_url": request_url,
+            "latest_metrics_count": latest_metrics_count,
+            "latest_metrics_updated_at": payload.get("latestMetricsUpdatedAt"),
+            "empty_latest_store_alarm": empty_latest_store_alarm,
+            "missing_update_alarm": missing_update_alarm,
+            "metrics_pipeline_lag_seconds": payload.get("metricsPipelineLagSeconds"),
+            "stage_count": len(stages),
+            "max_stage_lag_seconds": payload.get("maxStageLagSeconds"),
+            "stages": stages,
+            "as_of": payload.get("asOf"),
         }
     except Exception as exc:
         status_payload = {
-            'required': True,
-            'ok': False,
-            'status': 'unknown',
-            'reason': 'quant_health_fetch_failed',
-            'blocking_reasons': ['quant_health_fetch_failed'],
-            'account': account or None,
-            'window': window,
-            'source_url': request_url,
-            'message': str(exc),
-            'latest_metrics_count': None,
-            'latest_metrics_updated_at': None,
-            'empty_latest_store_alarm': None,
-            'missing_update_alarm': None,
-            'metrics_pipeline_lag_seconds': None,
-            'stage_count': None,
-            'max_stage_lag_seconds': None,
-            'stages': [],
-            'as_of': None,
+            "required": True,
+            "ok": False,
+            "status": "unknown",
+            "reason": "quant_health_fetch_failed",
+            "blocking_reasons": ["quant_health_fetch_failed"],
+            "account": account or None,
+            "window": window,
+            "source_url": request_url,
+            "message": str(exc),
+            "latest_metrics_count": None,
+            "latest_metrics_updated_at": None,
+            "empty_latest_store_alarm": None,
+            "missing_update_alarm": None,
+            "metrics_pipeline_lag_seconds": None,
+            "stage_count": None,
+            "max_stage_lag_seconds": None,
+            "stages": [],
+            "as_of": None,
         }
 
     if ttl_seconds > 0:
         with _QUANT_HEALTH_CACHE_LOCK:
             _QUANT_HEALTH_CACHE[request_url] = {
-                'checked_at': now,
-                'payload': dict(status_payload),
+                "checked_at": now,
+                "payload": dict(status_payload),
             }
     return dict(status_payload)
 
 
 def critical_trading_toggle_snapshot() -> dict[str, object]:
     return {
-        'TRADING_ENABLED': settings.trading_enabled,
-        'TRADING_AUTONOMY_ENABLED': settings.trading_autonomy_enabled,
-        'TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION': settings.trading_autonomy_allow_live_promotion,
-        'TRADING_KILL_SWITCH_ENABLED': settings.trading_kill_switch_enabled,
-        'TRADING_MODE': settings.trading_mode,
+        "TRADING_ENABLED": settings.trading_enabled,
+        "TRADING_AUTONOMY_ENABLED": settings.trading_autonomy_enabled,
+        "TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION": settings.trading_autonomy_allow_live_promotion,
+        "TRADING_KILL_SWITCH_ENABLED": settings.trading_kill_switch_enabled,
+        "TRADING_MODE": settings.trading_mode,
     }
 
 
 def build_shadow_first_toggle_parity() -> dict[str, object]:
     expected = {
-        'TRADING_ENABLED': True,
-        'TRADING_AUTONOMY_ENABLED': False,
-        'TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION': False,
-        'TRADING_KILL_SWITCH_ENABLED': False,
-        'TRADING_MODE': 'live',
+        "TRADING_ENABLED": True,
+        "TRADING_AUTONOMY_ENABLED": False,
+        "TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION": False,
+        "TRADING_KILL_SWITCH_ENABLED": False,
+        "TRADING_MODE": "live",
     }
     effective = critical_trading_toggle_snapshot()
     mismatches = [
@@ -361,10 +363,10 @@ def build_shadow_first_toggle_parity() -> dict[str, object]:
         if effective.get(key) != expected_value
     ]
     return {
-        'status': 'aligned' if not mismatches else 'diverged',
-        'mismatches': mismatches,
-        'expected': expected,
-        'effective': effective,
+        "status": "aligned" if not mismatches else "diverged",
+        "mismatches": mismatches,
+        "expected": expected,
+        "effective": effective,
     }
 
 
@@ -373,7 +375,7 @@ def resolve_active_capital_stage(
 ) -> str | None:
     if not isinstance(hypothesis_summary, Mapping):
         return None
-    totals_raw = hypothesis_summary.get('capital_stage_totals')
+    totals_raw = hypothesis_summary.get("capital_stage_totals")
     if not isinstance(totals_raw, Mapping):
         return None
     totals = cast(Mapping[str, Any], totals_raw)
@@ -381,7 +383,7 @@ def resolve_active_capital_stage(
         count = totals.get(stage)
         if isinstance(count, int) and count > 0:
             return stage
-    return 'shadow' if totals else None
+    return "shadow" if totals else None
 
 
 def build_hypothesis_runtime_summary(
@@ -404,7 +406,7 @@ def build_hypothesis_runtime_summary(
         registry=registry,
         dependency_quorum=dependency_quorum,
     )
-    summary['items'] = items
+    summary["items"] = items
     return summary
 
 
@@ -413,9 +415,9 @@ def _extract_runtime_summary(
 ) -> tuple[Mapping[str, Any], list[Mapping[str, Any]]]:
     if not isinstance(hypothesis_summary, Mapping):
         return {}, []
-    nested_summary = hypothesis_summary.get('summary')
+    nested_summary = hypothesis_summary.get("summary")
     if isinstance(nested_summary, Mapping):
-        items_raw = hypothesis_summary.get('items')
+        items_raw = hypothesis_summary.get("items")
         items = (
             [
                 cast(Mapping[str, Any], item)
@@ -427,7 +429,7 @@ def _extract_runtime_summary(
             else []
         )
         return cast(Mapping[str, Any], nested_summary), items
-    items_raw = hypothesis_summary.get('items')
+    items_raw = hypothesis_summary.get("items")
     items = (
         [
             cast(Mapping[str, Any], item)
@@ -443,23 +445,23 @@ def _extract_runtime_summary(
 
 def build_submission_gate_market_context_status(state: object) -> dict[str, object]:
     return {
-        'last_symbol': getattr(state, 'last_market_context_symbol', None),
-        'last_checked_at': getattr(state, 'last_market_context_checked_at', None),
-        'last_as_of': getattr(state, 'last_market_context_as_of', None),
-        'last_freshness_seconds': getattr(
-            state, 'last_market_context_freshness_seconds', None
+        "last_symbol": getattr(state, "last_market_context_symbol", None),
+        "last_checked_at": getattr(state, "last_market_context_checked_at", None),
+        "last_as_of": getattr(state, "last_market_context_as_of", None),
+        "last_freshness_seconds": getattr(
+            state, "last_market_context_freshness_seconds", None
         ),
-        'last_domain_states': dict(
+        "last_domain_states": dict(
             cast(
                 Mapping[str, str],
-                getattr(state, 'last_market_context_domain_states', {}),
+                getattr(state, "last_market_context_domain_states", {}),
             )
         ),
-        'last_risk_flags': list(
-            cast(Sequence[str], getattr(state, 'last_market_context_risk_flags', []))
+        "last_risk_flags": list(
+            cast(Sequence[str], getattr(state, "last_market_context_risk_flags", []))
         ),
-        'alert_active': bool(getattr(state, 'market_context_alert_active', False)),
-        'alert_reason': getattr(state, 'market_context_alert_reason', None),
+        "alert_active": bool(getattr(state, "market_context_alert_active", False)),
+        "alert_reason": getattr(state, "market_context_alert_reason", None),
     }
 
 
@@ -468,7 +470,9 @@ def _load_latest_certificate_evidence(
     *,
     hypothesis_ids: Sequence[str],
 ) -> list[dict[str, object]]:
-    normalized_ids = [hypothesis_id for hypothesis_id in hypothesis_ids if hypothesis_id]
+    normalized_ids = [
+        hypothesis_id for hypothesis_id in hypothesis_ids if hypothesis_id
+    ]
     if not normalized_ids:
         return []
 
@@ -506,9 +510,9 @@ def _load_latest_certificate_evidence(
         promotion_decision = latest_promotions.get(hypothesis_id)
         evidence.append(
             {
-                'hypothesis_id': hypothesis_id,
-                'metric_window': metric_window,
-                'promotion_decision': promotion_decision,
+                "hypothesis_id": hypothesis_id,
+                "metric_window": metric_window,
+                "promotion_decision": promotion_decision,
             }
         )
     return evidence
@@ -527,14 +531,14 @@ def _segment_summary(
     domain_states = {
         str(key): str(value).strip().lower()
         for key, value in cast(
-            Mapping[str, Any], market_context_ref.get('last_domain_states', {})
+            Mapping[str, Any], market_context_ref.get("last_domain_states", {})
         ).items()
         if str(key).strip()
     }
     market_context_reasons: list[str] = []
-    if bool(market_context_ref.get('alert_active')):
+    if bool(market_context_ref.get("alert_active")):
         market_context_reasons.append(
-            str(market_context_ref.get('alert_reason') or 'market_context_alert_active')
+            str(market_context_ref.get("alert_reason") or "market_context_alert_active")
         )
     stale_domains = [
         domain
@@ -542,43 +546,55 @@ def _segment_summary(
         if segment_state in _STALE_SEGMENT_STATES
     ]
     market_context_reasons.extend(
-        [f'market_context_domain_{domain}_{domain_states[domain]}' for domain in stale_domains]
+        [
+            f"market_context_domain_{domain}_{domain_states[domain]}"
+            for domain in stale_domains
+        ]
     )
 
     ta_core_reasons: list[str] = []
-    if bool(getattr(state, 'signal_continuity_alert_active', False)):
-        ta_core_reasons.append('signal_continuity_alert_active')
-    if _safe_int(getattr(getattr(state, 'metrics', None), 'signal_lag_seconds', None)) > 0:
-        signal_lag = _safe_int(getattr(getattr(state, 'metrics', None), 'signal_lag_seconds', None))
-        if signal_lag > 0 and bool(getattr(state, 'signal_continuity_alert_active', False)):
-            ta_core_reasons.append('signal_lag_exceeded')
+    if bool(getattr(state, "signal_continuity_alert_active", False)):
+        ta_core_reasons.append("signal_continuity_alert_active")
+    if (
+        _safe_int(getattr(getattr(state, "metrics", None), "signal_lag_seconds", None))
+        > 0
+    ):
+        signal_lag = _safe_int(
+            getattr(getattr(state, "metrics", None), "signal_lag_seconds", None)
+        )
+        if signal_lag > 0 and bool(
+            getattr(state, "signal_continuity_alert_active", False)
+        ):
+            ta_core_reasons.append("signal_lag_exceeded")
     for item in runtime_items:
         item_reasons = [
             str(reason).strip()
-            for reason in cast(Sequence[object], item.get('reasons') or [])
+            for reason in cast(Sequence[object], item.get("reasons") or [])
             if str(reason).strip() in _TA_CORE_REASON_CODES
         ]
         ta_core_reasons.extend(item_reasons)
 
     execution_reasons = (
-        ['critical_toggle_parity_diverged'] if list(blocking_toggle_mismatches) else []
+        ["critical_toggle_parity_diverged"] if list(blocking_toggle_mismatches) else []
     )
-    empirical_reasons = [] if empirical_ready is not False else ['empirical_jobs_not_ready']
+    empirical_reasons = (
+        [] if empirical_ready is not False else ["empirical_jobs_not_ready"]
+    )
     llm_review_reasons: list[str] = []
-    if dspy_mode == 'active' and dspy_live_ready is False:
-        llm_review_reasons.append('dspy_live_runtime_not_ready')
+    if dspy_mode == "active" and dspy_live_ready is False:
+        llm_review_reasons.append("dspy_live_runtime_not_ready")
 
     raw_segments = {
-        'market-context': market_context_reasons,
-        'ta-core': ta_core_reasons,
-        'execution': execution_reasons,
-        'empirical': empirical_reasons,
-        'llm-review': llm_review_reasons,
+        "market-context": market_context_reasons,
+        "ta-core": ta_core_reasons,
+        "execution": execution_reasons,
+        "empirical": empirical_reasons,
+        "llm-review": llm_review_reasons,
     }
     return {
         segment: {
-            'state': 'ok' if not reasons else 'blocked',
-            'reason_codes': _normalize_reason_codes(reasons),
+            "state": "ok" if not reasons else "blocked",
+            "reason_codes": _normalize_reason_codes(reasons),
         }
         for segment, reasons in sorted(raw_segments.items())
     }
@@ -596,28 +612,30 @@ def _evaluate_certificate_candidates(
     account: str | None,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     manifests = {
-        str(item.get('hypothesis_id') or ''): item
+        str(item.get("hypothesis_id") or ""): item
         for item in registry_items
-        if str(item.get('hypothesis_id') or '').strip()
+        if str(item.get("hypothesis_id") or "").strip()
     }
     runtime_by_hypothesis = {
-        str(item.get('hypothesis_id') or ''): item
+        str(item.get("hypothesis_id") or ""): item
         for item in runtime_items
-        if str(item.get('hypothesis_id') or '').strip()
+        if str(item.get("hypothesis_id") or "").strip()
     }
     evaluated: list[dict[str, object]] = []
     valid: list[dict[str, object]] = []
     for row in evidence:
-        hypothesis_id = str(row.get('hypothesis_id') or '').strip()
+        hypothesis_id = str(row.get("hypothesis_id") or "").strip()
         if not hypothesis_id:
             continue
         manifest = cast(Mapping[str, Any], manifests.get(hypothesis_id) or {})
-        runtime_item = cast(Mapping[str, Any], runtime_by_hypothesis.get(hypothesis_id) or {})
+        runtime_item = cast(
+            Mapping[str, Any], runtime_by_hypothesis.get(hypothesis_id) or {}
+        )
         metric_window = cast(
-            StrategyHypothesisMetricWindow | None, row.get('metric_window')
+            StrategyHypothesisMetricWindow | None, row.get("metric_window")
         )
         promotion_decision = cast(
-            StrategyPromotionDecision | None, row.get('promotion_decision')
+            StrategyPromotionDecision | None, row.get("promotion_decision")
         )
         reasons: list[str] = []
         metric_window_id: str | None = None
@@ -627,7 +645,7 @@ def _evaluate_certificate_candidates(
         issued_at = None
 
         if metric_window is None:
-            reasons.append('hypothesis_window_evidence_missing')
+            reasons.append("hypothesis_window_evidence_missing")
         else:
             metric_window_id = str(metric_window.id)
             candidate_id = metric_window.candidate_id
@@ -635,14 +653,16 @@ def _evaluate_certificate_candidates(
             issued_at = metric_window.window_ended_at or metric_window.created_at
             if issued_at.tzinfo is None:
                 issued_at = issued_at.replace(tzinfo=timezone.utc)
-            if max_age_seconds > 0 and issued_at < now - timedelta(seconds=max_age_seconds):
-                reasons.append('hypothesis_window_evidence_stale')
+            if max_age_seconds > 0 and issued_at < now - timedelta(
+                seconds=max_age_seconds
+            ):
+                reasons.append("hypothesis_window_evidence_stale")
             if not bool(metric_window.continuity_ok):
-                reasons.append('hypothesis_window_continuity_failed')
+                reasons.append("hypothesis_window_continuity_failed")
             if not bool(metric_window.drift_ok):
-                reasons.append('hypothesis_window_drift_failed')
-            if _safe_text(metric_window.dependency_quorum_decision) != 'allow':
-                reasons.append('hypothesis_window_dependency_quorum_not_allow')
+                reasons.append("hypothesis_window_drift_failed")
+            if _safe_text(metric_window.dependency_quorum_decision) != "allow":
+                reasons.append("hypothesis_window_dependency_quorum_not_allow")
 
         if promotion_decision is not None:
             promotion_decision_id = str(promotion_decision.id)
@@ -650,80 +670,82 @@ def _evaluate_certificate_candidates(
                 candidate_id = promotion_decision.candidate_id
             if capital_stage is None:
                 capital_stage = promotion_decision.state
-        if _safe_text(capital_stage) in {None, 'shadow'}:
-            reasons.append('promotion_certificate_shadow_only')
+        if _safe_text(capital_stage) in {None, "shadow"}:
+            reasons.append("promotion_certificate_shadow_only")
 
         segment_dependencies = [
             str(segment).strip()
             for segment in cast(
-                Sequence[object], manifest.get('segment_dependencies') or []
+                Sequence[object], manifest.get("segment_dependencies") or []
             )
             if str(segment).strip()
         ]
         blocked_segments: list[str] = []
         if runtime_item:
-            if not bool(runtime_item.get('promotion_eligible')):
-                reasons.append('alpha_hypothesis_not_promotion_eligible')
-            runtime_stage = _safe_text(runtime_item.get('capital_stage'))
-            if runtime_stage in {None, 'shadow'}:
-                reasons.append('alpha_hypothesis_shadow_only')
+            if not bool(runtime_item.get("promotion_eligible")):
+                reasons.append("alpha_hypothesis_not_promotion_eligible")
+            runtime_stage = _safe_text(runtime_item.get("capital_stage"))
+            if runtime_stage in {None, "shadow"}:
+                reasons.append("alpha_hypothesis_shadow_only")
         elif runtime_items:
-            reasons.append('alpha_hypothesis_runtime_missing')
+            reasons.append("alpha_hypothesis_runtime_missing")
         for segment in segment_dependencies:
-            segment_payload = cast(Mapping[str, Any], segment_summary.get(segment) or {})
-            if str(segment_payload.get('state') or '').strip() != 'ok':
+            segment_payload = cast(
+                Mapping[str, Any], segment_summary.get(segment) or {}
+            )
+            if str(segment_payload.get("state") or "").strip() != "ok":
                 blocked_segments.append(segment)
                 reasons.extend(
                     [
-                        f'segment_{segment}_blocked',
-                        *cast(Sequence[str], segment_payload.get('reason_codes') or []),
+                        f"segment_{segment}_blocked",
+                        *cast(Sequence[str], segment_payload.get("reason_codes") or []),
                     ]
                 )
 
         evaluated_row: dict[str, object] = {
-            'hypothesis_id': hypothesis_id,
-            'candidate_id': candidate_id,
-            'strategy_id': manifest.get('strategy_family'),
-            'account': account,
-            'window': window,
-            'capital_state': capital_stage or 'observe',
-            'capital_stage': capital_stage or 'shadow',
-            'segment_dependencies': segment_dependencies,
-            'blocked_segments': sorted(set(blocked_segments)),
-            'reason_codes': _normalize_reason_codes(reasons),
-            'metric_window_id': metric_window_id,
-            'promotion_decision_id': promotion_decision_id,
-            'issued_at': issued_at,
-            'expires_at': (
+            "hypothesis_id": hypothesis_id,
+            "candidate_id": candidate_id,
+            "strategy_id": manifest.get("strategy_family"),
+            "account": account,
+            "window": window,
+            "capital_state": capital_stage or "observe",
+            "capital_stage": capital_stage or "shadow",
+            "segment_dependencies": segment_dependencies,
+            "blocked_segments": sorted(set(blocked_segments)),
+            "reason_codes": _normalize_reason_codes(reasons),
+            "metric_window_id": metric_window_id,
+            "promotion_decision_id": promotion_decision_id,
+            "issued_at": issued_at,
+            "expires_at": (
                 issued_at + timedelta(seconds=max_age_seconds)
                 if issued_at is not None and max_age_seconds > 0
                 else None
             ),
         }
         evaluated.append(evaluated_row)
-        if not evaluated_row['reason_codes']:
+        if not evaluated_row["reason_codes"]:
             valid.append(evaluated_row)
     return evaluated, valid
 
 
 def _default_lineage_ref(
     *,
-    status: str = 'unverified',
+    status: str = "unverified",
     candidate_id: str | None = None,
     hypothesis_id: str | None = None,
 ) -> dict[str, object]:
     return {
-        'status': status,
-        'candidate_id': candidate_id,
-        'hypothesis_id': hypothesis_id,
-        'dataset_snapshot_count': 0,
-        'dataset_snapshot_id': None,
-        'dataset_snapshot_ref': None,
-        'dataset_snapshot_run_id': None,
-        'strategy_hypothesis_count': 0,
-        'strategy_hypothesis_id': None,
-        'lane_id': None,
-        'strategy_family': None,
+        "status": status,
+        "candidate_id": candidate_id,
+        "hypothesis_id": hypothesis_id,
+        "dataset_snapshot_count": 0,
+        "dataset_snapshot_id": None,
+        "dataset_snapshot_ref": None,
+        "dataset_snapshot_run_id": None,
+        "strategy_hypothesis_count": 0,
+        "strategy_hypothesis_id": None,
+        "lane_id": None,
+        "strategy_family": None,
     }
 
 
@@ -736,24 +758,28 @@ def _attach_lineage_refs(
         {
             candidate_id
             for row in evaluated_rows
-            if (candidate_id := _safe_text(row.get('candidate_id'))) is not None
+            if (candidate_id := _safe_text(row.get("candidate_id"))) is not None
         }
     )
     hypothesis_ids = sorted(
         {
             hypothesis_id
             for row in evaluated_rows
-            if (hypothesis_id := _safe_text(row.get('hypothesis_id'))) is not None
+            if (hypothesis_id := _safe_text(row.get("hypothesis_id"))) is not None
         }
     )
 
     dataset_snapshots_by_candidate: dict[str, list[VNextDatasetSnapshot]] = {}
     if candidate_ids:
-        dataset_rows = session.execute(
-            select(VNextDatasetSnapshot)
-            .where(VNextDatasetSnapshot.candidate_id.in_(candidate_ids))
-            .order_by(VNextDatasetSnapshot.created_at.desc())
-        ).scalars().all()
+        dataset_rows = (
+            session.execute(
+                select(VNextDatasetSnapshot)
+                .where(VNextDatasetSnapshot.candidate_id.in_(candidate_ids))
+                .order_by(VNextDatasetSnapshot.created_at.desc())
+            )
+            .scalars()
+            .all()
+        )
         for row in dataset_rows:
             candidate_id = _safe_text(row.candidate_id)
             if candidate_id is None:
@@ -762,14 +788,18 @@ def _attach_lineage_refs(
 
     hypotheses_by_id: dict[str, list[StrategyHypothesis]] = {}
     if hypothesis_ids:
-        hypothesis_rows = session.execute(
-            select(StrategyHypothesis)
-            .where(
-                StrategyHypothesis.hypothesis_id.in_(hypothesis_ids),
-                StrategyHypothesis.active.is_(True),
+        hypothesis_rows = (
+            session.execute(
+                select(StrategyHypothesis)
+                .where(
+                    StrategyHypothesis.hypothesis_id.in_(hypothesis_ids),
+                    StrategyHypothesis.active.is_(True),
+                )
+                .order_by(StrategyHypothesis.created_at.desc())
             )
-            .order_by(StrategyHypothesis.created_at.desc())
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         for row in hypothesis_rows:
             hypothesis_id = _safe_text(row.hypothesis_id)
             if hypothesis_id is None:
@@ -779,10 +809,10 @@ def _attach_lineage_refs(
     attached_rows: list[dict[str, object]] = []
     for row in evaluated_rows:
         evaluated_row = dict(row)
-        candidate_id = _safe_text(evaluated_row.get('candidate_id'))
-        hypothesis_id = _safe_text(evaluated_row.get('hypothesis_id'))
+        candidate_id = _safe_text(evaluated_row.get("candidate_id"))
+        hypothesis_id = _safe_text(evaluated_row.get("hypothesis_id"))
         reason_codes = list(
-            cast(Sequence[str], evaluated_row.get('reason_codes') or [])
+            cast(Sequence[str], evaluated_row.get("reason_codes") or [])
         )
 
         dataset_rows = (
@@ -791,52 +821,53 @@ def _attach_lineage_refs(
             else []
         )
         hypothesis_rows = (
-            hypotheses_by_id.get(hypothesis_id, [])
-            if hypothesis_id is not None
-            else []
+            hypotheses_by_id.get(hypothesis_id, []) if hypothesis_id is not None else []
         )
 
         if candidate_id is not None and not dataset_rows:
-            reason_codes.append('dataset_snapshot_missing')
+            reason_codes.append("dataset_snapshot_missing")
         if hypothesis_id is not None and not hypothesis_rows:
-            reason_codes.append('strategy_hypothesis_missing')
+            reason_codes.append("strategy_hypothesis_missing")
 
         dataset_row = dataset_rows[0] if dataset_rows else None
         hypothesis_row = hypothesis_rows[0] if hypothesis_rows else None
-        lineage_missing = (
-            (candidate_id is not None and not dataset_rows)
-            or (hypothesis_id is not None and not hypothesis_rows)
+        lineage_missing = (candidate_id is not None and not dataset_rows) or (
+            hypothesis_id is not None and not hypothesis_rows
         )
         lineage_ref = _default_lineage_ref(
-            status='missing' if lineage_missing else 'ready',
+            status="missing" if lineage_missing else "ready",
             candidate_id=candidate_id,
             hypothesis_id=hypothesis_id,
         )
         lineage_ref.update(
             {
-                'dataset_snapshot_count': len(dataset_rows),
-                'dataset_snapshot_id': (
+                "dataset_snapshot_count": len(dataset_rows),
+                "dataset_snapshot_id": (
                     str(dataset_row.id) if dataset_row is not None else None
                 ),
-                'dataset_snapshot_ref': (
+                "dataset_snapshot_ref": (
                     dataset_row.artifact_ref if dataset_row is not None else None
                 ),
-                'dataset_snapshot_run_id': (
+                "dataset_snapshot_run_id": (
                     dataset_row.run_id if dataset_row is not None else None
                 ),
-                'strategy_hypothesis_count': len(hypothesis_rows),
-                'strategy_hypothesis_id': (
+                "strategy_hypothesis_count": len(hypothesis_rows),
+                "strategy_hypothesis_id": (
                     str(hypothesis_row.id) if hypothesis_row is not None else None
                 ),
-                'lane_id': hypothesis_row.lane_id if hypothesis_row is not None else None,
-                'strategy_family': (
-                    hypothesis_row.strategy_family if hypothesis_row is not None else None
+                "lane_id": hypothesis_row.lane_id
+                if hypothesis_row is not None
+                else None,
+                "strategy_family": (
+                    hypothesis_row.strategy_family
+                    if hypothesis_row is not None
+                    else None
                 ),
             }
         )
 
-        evaluated_row['reason_codes'] = _normalize_reason_codes(reason_codes)
-        evaluated_row['lineage_ref'] = lineage_ref
+        evaluated_row["reason_codes"] = _normalize_reason_codes(reason_codes)
+        evaluated_row["lineage_ref"] = lineage_ref
         attached_rows.append(evaluated_row)
 
     return attached_rows
@@ -856,54 +887,54 @@ def build_live_submission_gate_payload(
     summary: Mapping[str, Any] = hypothesis_summary or {}
     summary, runtime_items = _extract_runtime_summary(hypothesis_summary)
     dependency_quorum_payload: dict[str, Any] = (
-        dict(cast(Mapping[str, Any], summary.get('dependency_quorum')))
-        if isinstance(summary.get('dependency_quorum'), Mapping)
+        dict(cast(Mapping[str, Any], summary.get("dependency_quorum")))
+        if isinstance(summary.get("dependency_quorum"), Mapping)
         else {}
     )
     dependency_decision = (
-        str(dependency_quorum_payload.get('decision') or '').strip().lower()
-        or 'unknown'
+        str(dependency_quorum_payload.get("decision") or "").strip().lower()
+        or "unknown"
     )
-    promotion_eligible_total = _safe_int(summary.get('promotion_eligible_total'))
+    promotion_eligible_total = _safe_int(summary.get("promotion_eligible_total"))
     empirical_ready = (
-        bool(empirical_jobs_status.get('ready'))
+        bool(empirical_jobs_status.get("ready"))
         if isinstance(empirical_jobs_status, Mapping)
         else None
     )
     dspy_mode = (
-        str(dspy_runtime_status.get('mode') or '').strip().lower()
+        str(dspy_runtime_status.get("mode") or "").strip().lower()
         if isinstance(dspy_runtime_status, Mapping)
-        else ''
+        else ""
     )
     dspy_live_ready = (
-        bool(dspy_runtime_status.get('live_ready'))
-        if isinstance(dspy_runtime_status, Mapping) and dspy_mode == 'active'
+        bool(dspy_runtime_status.get("live_ready"))
+        if isinstance(dspy_runtime_status, Mapping) and dspy_mode == "active"
         else None
     )
     configured_live_promotion = bool(settings.trading_autonomy_allow_live_promotion)
     autonomy_promotion_eligible = bool(
-        getattr(state, 'last_autonomy_promotion_eligible', False)
+        getattr(state, "last_autonomy_promotion_eligible", False)
     )
-    autonomy_promotion_action = getattr(state, 'last_autonomy_promotion_action', None)
+    autonomy_promotion_action = getattr(state, "last_autonomy_promotion_action", None)
     drift_live_promotion_eligible = bool(
-        getattr(state, 'drift_live_promotion_eligible', False)
+        getattr(state, "drift_live_promotion_eligible", False)
     )
     active_capital_stage = resolve_active_capital_stage(summary)
     critical_toggle_parity = build_shadow_first_toggle_parity()
     critical_toggle_mismatches = list(
-        cast(list[str], critical_toggle_parity.get('mismatches') or [])
+        cast(list[str], critical_toggle_parity.get("mismatches") or [])
     )
     quant_evidence = (
         dict(quant_health_status)
         if isinstance(quant_health_status, Mapping)
         else load_quant_evidence_status(account_label=quant_account_label)
     )
-    quant_required = bool(quant_evidence.get('required'))
-    quant_ready = bool(quant_evidence.get('ok'))
-    quant_reason = str(quant_evidence.get('reason') or '').strip() or 'unknown'
+    quant_required = bool(quant_evidence.get("required"))
+    quant_ready = bool(quant_evidence.get("ok"))
+    quant_reason = str(quant_evidence.get("reason") or "").strip() or "unknown"
     quant_blocking_reasons = [
         str(item).strip()
-        for item in cast(Sequence[object], quant_evidence.get('blocking_reasons') or [])
+        for item in cast(Sequence[object], quant_evidence.get("blocking_reasons") or [])
         if str(item).strip()
     ]
     blocking_toggle_mismatches = [
@@ -926,70 +957,68 @@ def build_live_submission_gate_payload(
         dspy_live_ready=dspy_live_ready,
     )
 
-    if settings.trading_mode != 'live':
+    if settings.trading_mode != "live":
         return {
-            'allowed': True,
-            'reason': 'non_live_mode',
-            'blocked_reasons': [],
-            'certificate_id': None,
-            'capital_stage': settings.trading_mode,
-            'capital_state': settings.trading_mode,
-            'issued_at': None,
-            'expires_at': None,
-            'configured_live_promotion': configured_live_promotion,
-            'autonomy_promotion_eligible': autonomy_promotion_eligible,
-            'autonomy_promotion_action': autonomy_promotion_action,
-            'drift_live_promotion_eligible': drift_live_promotion_eligible,
-            'promotion_eligible_total': promotion_eligible_total,
-            'dependency_quorum_decision': dependency_decision,
-            'empirical_jobs_ready': empirical_ready,
-            'dspy_live_ready': dspy_live_ready,
-            'critical_toggle_parity': critical_toggle_parity,
-            'critical_toggle_parity_blocking_mismatches': blocking_toggle_mismatches,
-            'active_capital_stage': active_capital_stage,
-            'reason_codes': ['non_live_mode'],
-            'quant_evidence': quant_evidence,
-            'segment_summary': segment_summary,
-            'quant_health_ref': {
-                'account': quant_evidence.get('account'),
-                'window': quant_evidence.get('window'),
-                'status': quant_evidence.get('status'),
-                'source_url': quant_evidence.get('source_url'),
-                'latest_metrics_updated_at': quant_evidence.get(
-                    'latest_metrics_updated_at'
+            "allowed": True,
+            "reason": "non_live_mode",
+            "blocked_reasons": [],
+            "certificate_id": None,
+            "capital_stage": settings.trading_mode,
+            "capital_state": settings.trading_mode,
+            "issued_at": None,
+            "expires_at": None,
+            "configured_live_promotion": configured_live_promotion,
+            "autonomy_promotion_eligible": autonomy_promotion_eligible,
+            "autonomy_promotion_action": autonomy_promotion_action,
+            "drift_live_promotion_eligible": drift_live_promotion_eligible,
+            "promotion_eligible_total": promotion_eligible_total,
+            "dependency_quorum_decision": dependency_decision,
+            "empirical_jobs_ready": empirical_ready,
+            "dspy_live_ready": dspy_live_ready,
+            "critical_toggle_parity": critical_toggle_parity,
+            "critical_toggle_parity_blocking_mismatches": blocking_toggle_mismatches,
+            "active_capital_stage": active_capital_stage,
+            "reason_codes": ["non_live_mode"],
+            "quant_evidence": quant_evidence,
+            "segment_summary": segment_summary,
+            "quant_health_ref": {
+                "account": quant_evidence.get("account"),
+                "window": quant_evidence.get("window"),
+                "status": quant_evidence.get("status"),
+                "source_url": quant_evidence.get("source_url"),
+                "latest_metrics_updated_at": quant_evidence.get(
+                    "latest_metrics_updated_at"
                 ),
             },
-            'market_context_ref': market_context_ref,
-            'evidence_tuple': {
-                'hypothesis_id': None,
-                'candidate_id': None,
-                'strategy_id': None,
-                'account': quant_evidence.get('account'),
-                'window': quant_evidence.get('window'),
-                'capital_state': settings.trading_mode,
+            "market_context_ref": market_context_ref,
+            "evidence_tuple": {
+                "hypothesis_id": None,
+                "candidate_id": None,
+                "strategy_id": None,
+                "account": quant_evidence.get("account"),
+                "window": quant_evidence.get("window"),
+                "capital_state": settings.trading_mode,
             },
-            'lineage_ref': _default_lineage_ref(),
-            'evaluated_tuples': [],
+            "lineage_ref": _default_lineage_ref(),
+            "evaluated_tuples": [],
         }
 
     blocked_reasons: list[str] = []
     if blocking_toggle_mismatches:
-        blocked_reasons.append('critical_toggle_parity_diverged')
+        blocked_reasons.append("critical_toggle_parity_diverged")
     if promotion_eligible_total <= 0:
-        blocked_reasons.append('alpha_readiness_not_promotion_eligible')
+        blocked_reasons.append("alpha_readiness_not_promotion_eligible")
     if empirical_ready is False:
-        blocked_reasons.append('empirical_jobs_not_ready')
+        blocked_reasons.append("empirical_jobs_not_ready")
     if dspy_live_ready is False:
-        blocked_reasons.append('dspy_live_runtime_not_ready')
-    if dependency_decision != 'allow':
-        blocked_reasons.append(f'dependency_quorum_{dependency_decision}')
+        blocked_reasons.append("dspy_live_runtime_not_ready")
+    if dependency_decision != "allow":
+        blocked_reasons.append(f"dependency_quorum_{dependency_decision}")
     if quant_required and not quant_ready:
         blocked_reasons.extend(quant_blocking_reasons or [quant_reason])
 
     evidence_rows = (
-        [
-            dict(item) for item in promotion_certificate_evidence
-        ]
+        [dict(item) for item in promotion_certificate_evidence]
         if promotion_certificate_evidence is not None
         else _load_latest_certificate_evidence(
             session,
@@ -1002,11 +1031,11 @@ def build_live_submission_gate_payload(
         evidence=evidence_rows,
         segment_summary=segment_summary,
         runtime_items=runtime_items,
-        registry_items=[item.model_dump(mode='json') for item in registry.items],
+        registry_items=[item.model_dump(mode="json") for item in registry.items],
         max_age_seconds=max_age_seconds,
         now=now,
-        window=_safe_text(quant_evidence.get('window')),
-        account=_safe_text(quant_evidence.get('account')),
+        window=_safe_text(quant_evidence.get("window")),
+        account=_safe_text(quant_evidence.get("account")),
     )
     if session is not None and evaluated_tuples:
         evaluated_tuples = _attach_lineage_refs(
@@ -1014,26 +1043,26 @@ def build_live_submission_gate_payload(
             evaluated_rows=evaluated_tuples,
         )
         valid_candidates = [
-            item for item in evaluated_tuples if not item.get('reason_codes')
+            item for item in evaluated_tuples if not item.get("reason_codes")
         ]
 
     if promotion_eligible_total > 0 and not valid_candidates:
         if not evaluated_tuples:
-            blocked_reasons.append('promotion_certificate_missing')
-            blocked_reasons.append('hypothesis_window_evidence_missing')
+            blocked_reasons.append("promotion_certificate_missing")
+            blocked_reasons.append("hypothesis_window_evidence_missing")
         else:
             candidate_reason_codes = [
                 reason
                 for item in evaluated_tuples
-                for reason in cast(Sequence[str], item.get('reason_codes') or [])
+                for reason in cast(Sequence[str], item.get("reason_codes") or [])
             ]
             blocked_reasons.extend(candidate_reason_codes)
-            blocked_reasons.append('promotion_certificate_missing')
+            blocked_reasons.append("promotion_certificate_missing")
 
     blocked_reasons = _normalize_reason_codes(blocked_reasons)
 
     chosen_candidate = (
-        max(valid_candidates, key=lambda item: _stage_rank(item.get('capital_stage')))
+        max(valid_candidates, key=lambda item: _stage_rank(item.get("capital_stage")))
         if valid_candidates
         else None
     )
@@ -1042,105 +1071,115 @@ def build_live_submission_gate_payload(
     certificate_id: str | None = None
     issued_at = None
     expires_at = None
-    capital_stage = 'shadow'
-    capital_state = 'observe'
+    capital_stage = "shadow"
+    capital_state = "observe"
     reason_codes: list[str]
-    reason = blocked_reasons[0] if blocked_reasons else 'promotion_certificate_missing'
+    reason = blocked_reasons[0] if blocked_reasons else "promotion_certificate_missing"
     if allowed and chosen_candidate is not None:
-        capital_stage = str(chosen_candidate.get('capital_stage') or 'shadow')
+        capital_stage = str(chosen_candidate.get("capital_stage") or "shadow")
         capital_state = capital_stage
-        issued_at = chosen_candidate.get('issued_at')
-        expires_at = chosen_candidate.get('expires_at')
-        certificate_basis = '|'.join(
+        issued_at = chosen_candidate.get("issued_at")
+        expires_at = chosen_candidate.get("expires_at")
+        certificate_basis = "|".join(
             [
-                str(chosen_candidate.get('hypothesis_id') or ''),
-                str(chosen_candidate.get('candidate_id') or ''),
-                str(chosen_candidate.get('strategy_id') or ''),
-                str(chosen_candidate.get('account') or ''),
-                str(chosen_candidate.get('window') or ''),
+                str(chosen_candidate.get("hypothesis_id") or ""),
+                str(chosen_candidate.get("candidate_id") or ""),
+                str(chosen_candidate.get("strategy_id") or ""),
+                str(chosen_candidate.get("account") or ""),
+                str(chosen_candidate.get("window") or ""),
                 capital_state,
-                str(chosen_candidate.get('metric_window_id') or ''),
-                str(chosen_candidate.get('promotion_decision_id') or ''),
+                str(chosen_candidate.get("metric_window_id") or ""),
+                str(chosen_candidate.get("promotion_decision_id") or ""),
             ]
         )
-        certificate_id = hashlib.sha256(certificate_basis.encode('utf-8')).hexdigest()[:24]
-        reason = 'promotion_certificate_valid'
-        reason_codes = ['promotion_certificate_valid']
+        certificate_id = hashlib.sha256(certificate_basis.encode("utf-8")).hexdigest()[
+            :24
+        ]
+        reason = "promotion_certificate_valid"
+        reason_codes = ["promotion_certificate_valid"]
     else:
-        reason_codes = blocked_reasons or ['promotion_certificate_missing']
+        reason_codes = blocked_reasons or ["promotion_certificate_missing"]
 
     evidence_tuple = {
-        'hypothesis_id': chosen_candidate.get('hypothesis_id') if chosen_candidate else None,
-        'candidate_id': chosen_candidate.get('candidate_id') if chosen_candidate else None,
-        'strategy_id': chosen_candidate.get('strategy_id') if chosen_candidate else None,
-        'account': quant_evidence.get('account'),
-        'window': quant_evidence.get('window'),
-        'capital_state': capital_state,
+        "hypothesis_id": chosen_candidate.get("hypothesis_id")
+        if chosen_candidate
+        else None,
+        "candidate_id": chosen_candidate.get("candidate_id")
+        if chosen_candidate
+        else None,
+        "strategy_id": chosen_candidate.get("strategy_id")
+        if chosen_candidate
+        else None,
+        "account": quant_evidence.get("account"),
+        "window": quant_evidence.get("window"),
+        "capital_state": capital_state,
     }
     lineage_ref = _default_lineage_ref(
-        status='missing' if evaluated_tuples else 'unverified',
+        status="missing" if evaluated_tuples else "unverified",
     )
     if chosen_candidate is not None and isinstance(
-        chosen_candidate.get('lineage_ref'),
+        chosen_candidate.get("lineage_ref"),
         Mapping,
     ):
         lineage_ref = dict(
-            cast(Mapping[str, object], chosen_candidate.get('lineage_ref'))
+            cast(Mapping[str, object], chosen_candidate.get("lineage_ref"))
         )
-    elif evaluated_tuples and isinstance(evaluated_tuples[0].get('lineage_ref'), Mapping):
+    elif evaluated_tuples and isinstance(
+        evaluated_tuples[0].get("lineage_ref"), Mapping
+    ):
         lineage_ref = dict(
-            cast(Mapping[str, object], evaluated_tuples[0].get('lineage_ref'))
+            cast(Mapping[str, object], evaluated_tuples[0].get("lineage_ref"))
         )
 
     return {
-        'allowed': allowed,
-        'reason': reason,
-        'blocked_reasons': blocked_reasons,
-        'certificate_id': certificate_id,
-        'capital_stage': capital_stage,
-        'capital_state': capital_state,
-        'issued_at': issued_at,
-        'expires_at': expires_at,
-        'configured_live_promotion': configured_live_promotion,
-        'autonomy_promotion_eligible': autonomy_promotion_eligible,
-        'autonomy_promotion_action': autonomy_promotion_action,
-        'drift_live_promotion_eligible': drift_live_promotion_eligible,
-        'promotion_eligible_total': promotion_eligible_total,
-        'dependency_quorum_decision': dependency_decision,
-        'empirical_jobs_ready': empirical_ready,
-        'dspy_live_ready': dspy_live_ready,
-        'critical_toggle_parity': critical_toggle_parity,
-        'critical_toggle_parity_blocking_mismatches': blocking_toggle_mismatches,
-        'active_capital_stage': active_capital_stage,
-        'reason_codes': reason_codes,
-        'quant_evidence': quant_evidence,
-        'segment_summary': {
-            'segments': segment_summary,
-            'evaluated_hypotheses': evaluated_tuples,
+        "allowed": allowed,
+        "reason": reason,
+        "blocked_reasons": blocked_reasons,
+        "certificate_id": certificate_id,
+        "capital_stage": capital_stage,
+        "capital_state": capital_state,
+        "issued_at": issued_at,
+        "expires_at": expires_at,
+        "configured_live_promotion": configured_live_promotion,
+        "autonomy_promotion_eligible": autonomy_promotion_eligible,
+        "autonomy_promotion_action": autonomy_promotion_action,
+        "drift_live_promotion_eligible": drift_live_promotion_eligible,
+        "promotion_eligible_total": promotion_eligible_total,
+        "dependency_quorum_decision": dependency_decision,
+        "empirical_jobs_ready": empirical_ready,
+        "dspy_live_ready": dspy_live_ready,
+        "critical_toggle_parity": critical_toggle_parity,
+        "critical_toggle_parity_blocking_mismatches": blocking_toggle_mismatches,
+        "active_capital_stage": active_capital_stage,
+        "reason_codes": reason_codes,
+        "quant_evidence": quant_evidence,
+        "segment_summary": {
+            "segments": segment_summary,
+            "evaluated_hypotheses": evaluated_tuples,
         },
-        'quant_health_ref': {
-            'account': quant_evidence.get('account'),
-            'window': quant_evidence.get('window'),
-            'status': quant_evidence.get('status'),
-            'source_url': quant_evidence.get('source_url'),
-            'latest_metrics_updated_at': quant_evidence.get(
-                'latest_metrics_updated_at'
+        "quant_health_ref": {
+            "account": quant_evidence.get("account"),
+            "window": quant_evidence.get("window"),
+            "status": quant_evidence.get("status"),
+            "source_url": quant_evidence.get("source_url"),
+            "latest_metrics_updated_at": quant_evidence.get(
+                "latest_metrics_updated_at"
             ),
         },
-        'market_context_ref': market_context_ref,
-        'evidence_tuple': evidence_tuple,
-        'lineage_ref': lineage_ref,
-        'evaluated_tuples': evaluated_tuples,
+        "market_context_ref": market_context_ref,
+        "evidence_tuple": evidence_tuple,
+        "lineage_ref": lineage_ref,
+        "evaluated_tuples": evaluated_tuples,
     }
 
 
 __all__ = [
-    'build_hypothesis_runtime_summary',
-    'build_live_submission_gate_payload',
-    'build_shadow_first_toggle_parity',
-    'build_submission_gate_market_context_status',
-    'critical_trading_toggle_snapshot',
-    'load_quant_evidence_status',
-    'resolve_active_capital_stage',
-    'resolve_quant_health_url',
+    "build_hypothesis_runtime_summary",
+    "build_live_submission_gate_payload",
+    "build_shadow_first_toggle_parity",
+    "build_submission_gate_market_context_status",
+    "critical_trading_toggle_snapshot",
+    "load_quant_evidence_status",
+    "resolve_active_capital_stage",
+    "resolve_quant_health_url",
 ]

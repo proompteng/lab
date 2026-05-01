@@ -1009,6 +1009,8 @@ class TestConfig(TestCase):
             "trading_lean_live_canary_hard_rollback_enabled",
             "trading_simple_submit_enabled",
             "trading_simple_order_feed_telemetry_enabled",
+            "trading_empirical_jobs_health_required",
+            "trading_jangar_quant_health_required",
         }
         self.assertEqual(
             set(FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD),
