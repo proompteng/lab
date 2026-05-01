@@ -117,8 +117,6 @@ spec:
               value: "true"
             - name: TRADING_MODE
               value: paper
-            - name: TRADING_SIGNAL_ALLOWED_SOURCES
-              value: ta
             - name: TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION
               value: "false"
             - name: TRADING_ACCOUNT_LABEL
