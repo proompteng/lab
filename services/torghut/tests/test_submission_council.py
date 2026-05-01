@@ -1,15 +1,33 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest import TestCase
+from unittest.mock import patch
 
 from app.config import settings
 from app.trading.submission_council import (
+    _QUANT_HEALTH_CACHE,
     build_live_submission_gate_payload,
     load_quant_evidence_status,
     resolve_quant_health_url,
 )
+
+
+class _FakeQuantHealthResponse:
+    def __init__(self, payload: dict[str, object], *, status: int = 200) -> None:
+        self._payload = payload
+        self.status = status
+
+    def __enter__(self) -> "_FakeQuantHealthResponse":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return json.dumps(self._payload).encode("utf-8")
 
 
 class TestSubmissionCouncil(TestCase):
@@ -22,9 +40,12 @@ class TestSubmissionCouncil(TestCase):
             "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
             "trading_jangar_quant_health_url": settings.trading_jangar_quant_health_url,
             "trading_jangar_quant_health_required": settings.trading_jangar_quant_health_required,
+            "trading_jangar_quant_window": settings.trading_jangar_quant_window,
+            "trading_jangar_control_plane_cache_ttl_seconds": settings.trading_jangar_control_plane_cache_ttl_seconds,
             "trading_jangar_control_plane_status_url": settings.trading_jangar_control_plane_status_url,
             "trading_market_context_url": settings.trading_market_context_url,
         }
+        _QUANT_HEALTH_CACHE.clear()
         settings.trading_enabled = True
         settings.trading_mode = "live"
         settings.trading_autonomy_enabled = False
@@ -49,12 +70,19 @@ class TestSubmissionCouncil(TestCase):
         settings.trading_jangar_quant_health_required = self._settings_snapshot[
             "trading_jangar_quant_health_required"
         ]
+        settings.trading_jangar_quant_window = self._settings_snapshot[
+            "trading_jangar_quant_window"
+        ]
+        settings.trading_jangar_control_plane_cache_ttl_seconds = (
+            self._settings_snapshot["trading_jangar_control_plane_cache_ttl_seconds"]
+        )
         settings.trading_jangar_control_plane_status_url = self._settings_snapshot[
             "trading_jangar_control_plane_status_url"
         ]
         settings.trading_market_context_url = self._settings_snapshot[
             "trading_market_context_url"
         ]
+        _QUANT_HEALTH_CACHE.clear()
 
     def _metric_window(self, capital_stage: str = "0.10x canary") -> SimpleNamespace:
         observed_at = datetime.now(timezone.utc)
@@ -390,3 +418,103 @@ class TestSubmissionCouncil(TestCase):
             "/api/torghut/trading/control-plane/quant/health",
             str(status["message"]),
         )
+
+    def test_load_quant_evidence_status_reads_typed_endpoint_and_uses_cache(
+        self,
+    ) -> None:
+        settings.trading_jangar_quant_health_url = "https://jangar.example/api/torghut/trading/control-plane/quant/health?source=typed"
+        settings.trading_jangar_quant_health_required = True
+        settings.trading_jangar_quant_window = "15m"
+        settings.trading_jangar_control_plane_cache_ttl_seconds = 60
+        calls: list[str] = []
+
+        def fake_urlopen(request: object, timeout: object) -> _FakeQuantHealthResponse:
+            calls.append(str(getattr(request, "full_url")))
+            self.assertEqual(
+                timeout, settings.trading_jangar_control_plane_timeout_seconds
+            )
+            return _FakeQuantHealthResponse(
+                {
+                    "ok": True,
+                    "status": "healthy",
+                    "latestMetricsCount": 4,
+                    "emptyLatestStoreAlarm": False,
+                    "missingUpdateAlarm": False,
+                    "stages": [{"name": "metrics", "ok": "yes"}],
+                    "latestMetricsUpdatedAt": "2026-04-30T20:59:00Z",
+                    "metricsPipelineLagSeconds": 3,
+                    "maxStageLagSeconds": 5,
+                    "asOf": "2026-04-30T20:59:03Z",
+                }
+            )
+
+        with patch("app.trading.submission_council.urlopen", fake_urlopen):
+            status = load_quant_evidence_status(account_label="paper")
+            cached_status = load_quant_evidence_status(account_label="paper")
+
+        self.assertEqual(len(calls), 1)
+        self.assertIn("source=typed", calls[0])
+        self.assertIn("account=paper", calls[0])
+        self.assertIn("window=15m", calls[0])
+        self.assertTrue(status["ok"])
+        self.assertTrue(status["required"])
+        self.assertEqual(status["reason"], "ready")
+        self.assertEqual(status["stage_count"], 1)
+        self.assertEqual(cached_status, status)
+
+    def test_load_quant_evidence_status_reports_quant_pipeline_blockers(
+        self,
+    ) -> None:
+        settings.trading_jangar_quant_health_url = (
+            "https://jangar.example/api/torghut/trading/control-plane/quant/health"
+        )
+        settings.trading_jangar_quant_health_required = True
+        settings.trading_jangar_control_plane_cache_ttl_seconds = 0
+
+        payloads = [
+            {
+                "ok": True,
+                "status": "healthy",
+                "latestMetricsCount": 0,
+                "emptyLatestStoreAlarm": True,
+                "missingUpdateAlarm": True,
+                "stages": [],
+            },
+            {
+                "ok": True,
+                "status": "healthy",
+                "latestMetricsCount": 1,
+                "emptyLatestStoreAlarm": False,
+                "missingUpdateAlarm": False,
+                "stages": [{"name": "metrics", "ok": "false"}],
+            },
+            {
+                "ok": True,
+                "status": "stale",
+                "latestMetricsCount": 1,
+                "emptyLatestStoreAlarm": False,
+                "missingUpdateAlarm": False,
+                "stages": [{"name": "metrics", "ok": True}],
+            },
+        ]
+
+        def fake_urlopen(request: object, timeout: object) -> _FakeQuantHealthResponse:
+            del request, timeout
+            return _FakeQuantHealthResponse(payloads.pop(0))
+
+        with patch("app.trading.submission_council.urlopen", fake_urlopen):
+            empty_status = load_quant_evidence_status(account_label="paper")
+            stage_status = load_quant_evidence_status(account_label="paper")
+            stale_status = load_quant_evidence_status(account_label="paper")
+
+        self.assertEqual(
+            empty_status["blocking_reasons"],
+            [
+                "quant_latest_metrics_empty",
+                "quant_latest_store_alarm",
+                "quant_metrics_update_missing",
+                "quant_pipeline_stages_missing",
+            ],
+        )
+        self.assertEqual(stage_status["blocking_reasons"], ["quant_pipeline_degraded"])
+        self.assertEqual(stale_status["blocking_reasons"], ["quant_health_degraded"])

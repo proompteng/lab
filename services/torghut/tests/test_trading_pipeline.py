@@ -107,6 +107,20 @@ class WarmupIngestor(FakeIngestor):
         )
 
 
+class CursorErrorWarmupIngestor(WarmupIngestor):
+    def _get_cursor(self, session: Session) -> tuple[datetime, int | None, str | None]:
+        del session
+        raise RuntimeError("cursor failed")
+
+
+class FetchErrorWarmupIngestor(WarmupIngestor):
+    def fetch_signals_with_reason(
+        self, *, start: datetime, end: datetime
+    ) -> SignalBatch:
+        del start, end
+        raise RuntimeError("warmup fetch failed")
+
+
 class RecordingDecisionEngine(DecisionEngine):
     def __init__(self) -> None:
         super().__init__()
@@ -115,6 +129,12 @@ class RecordingDecisionEngine(DecisionEngine):
     def observe_signal(self, signal: SignalEnvelope) -> None:
         self.observed_symbols.append(signal.symbol)
         super().observe_signal(signal)
+
+
+class RaisingObserveDecisionEngine(DecisionEngine):
+    def observe_signal(self, signal: SignalEnvelope) -> None:
+        del signal
+        raise RuntimeError("observe failed")
 
 
 class FakeAlpacaClient:
@@ -673,6 +693,27 @@ class TestTradingPipeline(TestCase):
             )
             session.commit()
 
+    def _build_warmup_pipeline(
+        self,
+        *,
+        ingestor: WarmupIngestor,
+        decision_engine: DecisionEngine | None = None,
+    ) -> TradingPipeline:
+        return TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=ingestor,
+            decision_engine=decision_engine or DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+
     def _healthy_quant_status(
         self, *, account_label: str = "live"
     ) -> dict[str, object]:
@@ -829,6 +870,97 @@ class TestTradingPipeline(TestCase):
         )
         self.assertEqual(decision_engine.observed_symbols, ["AAPL", "AAPL"])
         self.assertEqual(ingestor.committed_batches, 2)
+
+    def test_session_context_warmup_ignores_preopen_and_empty_cursor_windows(
+        self,
+    ) -> None:
+        ingestor = WarmupIngestor(
+            warmup_signals=[],
+            signals=[],
+            cursor_at=datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
+        )
+        pipeline = self._build_warmup_pipeline(ingestor=ingestor)
+
+        with self.session_local() as session:
+            with patch(
+                "app.trading.scheduler.pipeline.trading_now",
+                return_value=datetime(2026, 3, 26, 12, 0, tzinfo=timezone.utc),
+            ):
+                pipeline._warm_session_context_from_open(session)
+
+            ingestor.cursor_at = datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc)
+            with patch(
+                "app.trading.scheduler.pipeline.trading_now",
+                return_value=datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
+            ):
+                pipeline._warm_session_context_from_open(session)
+
+        self.assertEqual(ingestor.warmup_ranges, [])
+
+    def test_session_context_warmup_handles_cursor_and_fetch_errors(self) -> None:
+        for ingestor in (
+            CursorErrorWarmupIngestor(
+                warmup_signals=[],
+                signals=[],
+                cursor_at=datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
+            ),
+            FetchErrorWarmupIngestor(
+                warmup_signals=[],
+                signals=[],
+                cursor_at=datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
+            ),
+        ):
+            pipeline = self._build_warmup_pipeline(ingestor=ingestor)
+            with self.session_local() as session:
+                with patch(
+                    "app.trading.scheduler.pipeline.trading_now",
+                    return_value=datetime(2026, 3, 26, 15, 0, tzinfo=timezone.utc),
+                ):
+                    pipeline._warm_session_context_from_open(session)
+
+            self.assertIsNone(pipeline._session_context_warmup_day)
+
+    def test_session_context_warmup_normalizes_naive_cursor_and_skips_bad_signals(
+        self,
+    ) -> None:
+        warmup_signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 13, 45, tzinfo=timezone.utc),
+            ingest_ts=datetime(2026, 3, 26, 13, 45, 1, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Min",
+            seq=1,
+            payload={"feature_schema_version": "3.0.0", "price": 100},
+        )
+        ingestor = WarmupIngestor(
+            warmup_signals=[warmup_signal],
+            signals=[],
+            cursor_at=datetime(2026, 3, 26, 14, 0),
+        )
+        pipeline = self._build_warmup_pipeline(
+            ingestor=ingestor,
+            decision_engine=RaisingObserveDecisionEngine(),
+        )
+
+        with self.session_local() as session:
+            with patch(
+                "app.trading.scheduler.pipeline.trading_now",
+                return_value=datetime(2026, 3, 26, 15, 0, tzinfo=timezone.utc),
+            ):
+                pipeline._warm_session_context_from_open(session)
+
+        self.assertEqual(
+            ingestor.warmup_ranges,
+            [
+                (
+                    datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
+                )
+            ],
+        )
+        self.assertEqual(
+            pipeline._session_context_warmup_day,
+            datetime(2026, 3, 26, tzinfo=timezone.utc).date(),
+        )
 
     def test_simple_pipeline_submits_live_order_without_shadow_gate_and_persists_lane_metadata(
         self,
