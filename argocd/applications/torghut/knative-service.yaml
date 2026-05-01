@@ -284,9 +284,9 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.566.0-595-g4ea112d72
+              value: v0.566.0-598-g1ccae8b7b
             - name: TORGHUT_COMMIT
-              value: 4ea112d72b60f1987da65dd88050ac4392ace8de
+              value: 1ccae8b7b219f2692eed16d43c292e40896bbfa5
           livenessProbe:
             httpGet:
               path: /healthz
