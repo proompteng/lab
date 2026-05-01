@@ -82,6 +82,54 @@ class TestWhitepaperCandidateCompiler(TestCase):
         self.assertEqual(len(compilation.blocked_specs), 3)
         self.assertEqual(compilation.blockers[0].reason, "family_template_missing")
 
+    def test_late_day_continuation_family_is_executable_from_fresh_momentum_claim(
+        self,
+    ) -> None:
+        compilation = compile_claim_payloads_to_whitepaper_experiments(
+            run_id="paper-run-late-day",
+            claims=[
+                {
+                    "claim_id": "claim-late-momentum",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Macro announcement information strengthens late-day intraday momentum "
+                        "into the close with VWAP exit confirmation."
+                    ),
+                    "required_features": [
+                        "macro_announcement_window",
+                        "weighted_microprice_momentum",
+                        "spread_bps",
+                    ],
+                    "confidence": "0.74",
+                },
+                {
+                    "claim_id": "claim-late-validation",
+                    "claim_type": "validation_requirement",
+                    "claim_text": "The sleeve must pass non-announcement held-out days and transaction-cost stress.",
+                    "required_features": ["transaction_cost_stress"],
+                    "confidence": "0.72",
+                },
+            ],
+            target_net_pnl_per_day=Decimal("300"),
+            family_template_dir=Path("config/trading/families"),
+            seed_sweep_dir=Path("config/trading"),
+        )
+
+        late_day_specs = [
+            spec
+            for spec in compilation.executable_specs
+            if spec.family_template_id == "late_day_continuation_v1"
+        ]
+        self.assertEqual(len(late_day_specs), 1)
+        self.assertEqual(
+            late_day_specs[0].runtime_strategy_name,
+            "late-day-continuation-long-v1",
+        )
+        self.assertEqual(
+            late_day_specs[0].objective["target_net_pnl_per_day"],
+            "300",
+        )
+
     def test_missing_seed_sweep_blocks_execution(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-run-3",

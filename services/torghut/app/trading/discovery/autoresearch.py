@@ -119,10 +119,12 @@ class StrategyObjective:
     require_every_day_active: bool
     min_regime_slice_pass_rate: Decimal
     stop_when_objective_met: bool
+    min_daily_net_pnl: Decimal = Decimal('0')
 
     def to_payload(self) -> dict[str, Any]:
         return {
             'target_net_pnl_per_day': str(self.target_net_pnl_per_day),
+            'min_daily_net_pnl': str(self.min_daily_net_pnl),
             'min_active_day_ratio': str(self.min_active_day_ratio),
             'min_positive_day_ratio': str(self.min_positive_day_ratio),
             'min_daily_notional': str(self.min_daily_notional),
@@ -423,6 +425,10 @@ def load_strategy_autoresearch_program(
             objective_payload.get('target_net_pnl_per_day'),
             default='500',
         ),
+        min_daily_net_pnl=_coerce_decimal(
+            objective_payload.get('min_daily_net_pnl'),
+            default='0',
+        ),
         min_active_day_ratio=_coerce_decimal(
             objective_payload.get('min_active_day_ratio'),
             default='0.80',
@@ -621,6 +627,7 @@ def apply_program_objective(
     constraints['holdout_target_net_per_day'] = str(objective.target_net_pnl_per_day)
     constraints['min_active_holdout_days'] = min_holdout_active_days
     consistency['target_net_per_day'] = str(objective.target_net_pnl_per_day)
+    consistency['min_daily_net_pnl'] = str(objective.min_daily_net_pnl)
     consistency['min_active_ratio'] = str(objective.min_active_day_ratio)
     consistency['max_worst_day_loss'] = str(objective.max_worst_day_loss)
     consistency['max_drawdown'] = str(objective.max_drawdown)
@@ -799,6 +806,17 @@ def candidate_meets_objective(
     active_days = int(full_window.get('active_days') or 0)
     if objective.require_every_day_active and trading_day_count > 0 and active_days != trading_day_count:
         return False
+    if objective.min_daily_net_pnl > 0:
+        daily_net_payload = _mapping(full_window.get('daily_net')) or _mapping(scorecard.get('daily_net'))
+        if not daily_net_payload:
+            return False
+        if trading_day_count > 0 and len(daily_net_payload) < trading_day_count:
+            return False
+        if any(
+            _coerce_decimal(value, default='-999999999') < objective.min_daily_net_pnl
+            for value in daily_net_payload.values()
+        ):
+            return False
     return all(
         (
             net_pnl_per_day >= objective.target_net_pnl_per_day,

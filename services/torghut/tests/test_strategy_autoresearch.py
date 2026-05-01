@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import sys
 from argparse import Namespace
@@ -269,8 +270,35 @@ class TestStrategyAutoresearch(TestCase):
                 full_window_day_count=9,
             )
             self.assertEqual(updated['constraints']['holdout_target_net_per_day'], '500')
+            self.assertEqual(updated['consistency_constraints']['min_daily_net_pnl'], '0')
             self.assertEqual(updated['consistency_constraints']['max_best_day_share_of_total_pnl'], '0.35')
             self.assertEqual(updated['consistency_constraints']['min_active_days'], 8)
+
+    def test_checked_in_300_daily_profit_program_targets_daily_net(self) -> None:
+        program_path = Path(
+            'config/trading/research-programs/strict-daily-profit-autoresearch-300-v1.yaml'
+        )
+
+        program = load_strategy_autoresearch_program(
+            program_path,
+            family_dir=Path('config/trading/families'),
+        )
+
+        self.assertEqual(program.program_id, 'strict_daily_profit_autoresearch_300_v1')
+        self.assertEqual(program.objective.target_net_pnl_per_day, Decimal('300'))
+        self.assertEqual(program.objective.min_daily_net_pnl, Decimal('300'))
+        self.assertEqual(program.objective.min_positive_day_ratio, Decimal('1.0'))
+        self.assertEqual(program.objective.max_worst_day_loss, Decimal('0'))
+        self.assertTrue(program.objective.require_every_day_active)
+        self.assertEqual(program.runtime_closure_policy.promotion_target, 'shadow')
+        self.assertIn('scheduler_v3_parity_replay', program.parity_requirements)
+        self.assertGreaterEqual(len(program.research_sources), 4)
+        self.assertTrue(
+            all(
+                source.published_at.startswith(('2025', '2026'))
+                for source in program.research_sources
+            )
+        )
 
     def test_load_program_rejects_non_mapping_schema_and_missing_families(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -589,6 +617,48 @@ class TestStrategyAutoresearch(TestCase):
         vetoed = dict(candidate)
         vetoed['hard_vetoes'] = ['best_day_share_above_max']
         self.assertFalse(candidate_meets_objective(vetoed, objective=objective))
+
+    def test_candidate_meets_objective_requires_daily_minimum_when_configured(self) -> None:
+        objective = StrategyObjective(
+            target_net_pnl_per_day=Decimal('300'),
+            min_daily_net_pnl=Decimal('300'),
+            min_active_day_ratio=Decimal('1.0'),
+            min_positive_day_ratio=Decimal('1.0'),
+            min_daily_notional=Decimal('300000'),
+            max_best_day_share=Decimal('0.60'),
+            max_worst_day_loss=Decimal('0'),
+            max_drawdown=Decimal('0'),
+            require_every_day_active=True,
+            min_regime_slice_pass_rate=Decimal('0.40'),
+            stop_when_objective_met=False,
+        )
+        candidate = {
+            'hard_vetoes': [],
+            'objective_scorecard': {
+                'net_pnl_per_day': '500',
+                'active_day_ratio': '1',
+                'positive_day_ratio': '1',
+                'avg_filled_notional_per_day': '350000',
+                'best_day_share': '0.40',
+                'worst_day_loss': '0',
+                'max_drawdown': '0',
+                'regime_slice_pass_rate': '0.45',
+            },
+            'full_window': {
+                'trading_day_count': 3,
+                'active_days': 3,
+                'daily_net': {
+                    '2026-04-01': '900',
+                    '2026-04-02': '300',
+                    '2026-04-03': '300',
+                },
+            },
+        }
+        self.assertTrue(candidate_meets_objective(candidate, objective=objective))
+
+        weak_day = copy.deepcopy(candidate)
+        weak_day['full_window']['daily_net']['2026-04-02'] = '299.99'
+        self.assertFalse(candidate_meets_objective(weak_day, objective=objective))
 
     def test_write_autoresearch_notebooks_outputs_ipynb_files(self) -> None:
         with TemporaryDirectory() as tmpdir:

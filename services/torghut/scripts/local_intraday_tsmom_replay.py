@@ -340,35 +340,41 @@ def _fetch_chunk(
     symbol_filter = ''
     if symbols:
         rendered_symbols = ', '.join(f"'{symbol}'" for symbol in symbols)
-        symbol_filter = f'\n  AND symbol IN ({rendered_symbols})'
+        symbol_filter = f'\n  AND s.symbol IN ({rendered_symbols})'
     query = f"""
 SELECT
-  symbol,
-  event_ts,
-  seq,
-  toString(macd) AS macd,
-  toString(macd_signal) AS macd_signal,
-  toString(ema12) AS ema12,
-  toString(ema26) AS ema26,
-  toString(rsi14) AS rsi14,
-  toString((imbalance_bid_px + imbalance_ask_px) / 2) AS price,
-  toString(imbalance_bid_px) AS bid_px,
-  toString(imbalance_ask_px) AS ask_px,
-  toString(imbalance_ask_px - imbalance_bid_px) AS spread,
-  toString(imbalance_bid_sz) AS bid_sz,
-  toString(imbalance_ask_sz) AS ask_sz,
-  toString(imbalance_spread) AS imbalance_spread,
-  toString(vwap_session) AS vwap_session,
-  toString(vwap_w5m) AS vwap_w5m,
-  toString(vol_realized_w60s) AS vol_realized_w60s
-FROM torghut.ta_signals
-WHERE source = 'ta'
-  AND window_size = 'PT1S'
-  AND event_ts >= toDateTime64('{chunk_start.strftime('%Y-%m-%d %H:%M:%S')}', 3, 'UTC')
-  AND event_ts < toDateTime64('{chunk_end.strftime('%Y-%m-%d %H:%M:%S')}', 3, 'UTC')
+  s.symbol,
+  s.event_ts,
+  s.seq,
+  toString(s.macd) AS macd,
+  toString(s.macd_signal) AS macd_signal,
+  toString(s.ema12) AS ema12,
+  toString(s.ema26) AS ema26,
+  toString(s.rsi14) AS rsi14,
+  toString((s.imbalance_bid_px + s.imbalance_ask_px) / 2) AS price,
+  toString(s.imbalance_bid_px) AS bid_px,
+  toString(s.imbalance_ask_px) AS ask_px,
+  toString(s.imbalance_ask_px - s.imbalance_bid_px) AS spread,
+  toString(s.imbalance_bid_sz) AS bid_sz,
+  toString(s.imbalance_ask_sz) AS ask_sz,
+  toString(s.imbalance_spread) AS imbalance_spread,
+  toString(s.vwap_session) AS vwap_session,
+  toString(s.vwap_w5m) AS vwap_w5m,
+  toString(s.vol_realized_w60s) AS vol_realized_w60s,
+  toString(m.v) AS microbar_volume
+FROM torghut.ta_signals AS s
+ANY LEFT JOIN torghut.ta_microbars AS m
+  ON s.symbol = m.symbol
+  AND s.event_ts = m.event_ts
+  AND s.source = m.source
+  AND s.window_size = m.window_size
+WHERE s.source = 'ta'
+  AND s.window_size = 'PT1S'
+  AND s.event_ts >= toDateTime64('{chunk_start.strftime('%Y-%m-%d %H:%M:%S')}', 3, 'UTC')
+  AND s.event_ts < toDateTime64('{chunk_end.strftime('%Y-%m-%d %H:%M:%S')}', 3, 'UTC')
   {symbol_filter}
-  AND isNotNull(imbalance_bid_px)
-  AND isNotNull(imbalance_ask_px)
+  AND isNotNull(s.imbalance_bid_px)
+  AND isNotNull(s.imbalance_ask_px)
 FORMAT TSVRaw
 """.strip()
     raw = _http_query(
@@ -387,7 +393,7 @@ FORMAT TSVRaw
 
 
 def _parse_signal_row(parts: list[str]) -> SignalEnvelope | None:
-    if len(parts) != 18:
+    if len(parts) != 19:
         return None
     (
         symbol,
@@ -408,6 +414,7 @@ def _parse_signal_row(parts: list[str]) -> SignalEnvelope | None:
         vwap_session,
         vwap_w5m,
         vol,
+        microbar_volume,
     ) = parts
     price_value = _to_decimal(price)
     bid_px_value = _to_decimal(bid_px)
@@ -427,6 +434,7 @@ def _parse_signal_row(parts: list[str]) -> SignalEnvelope | None:
         'vwap_session': _to_decimal(vwap_session),
         'vwap_w5m': _to_decimal(vwap_w5m),
         'vol_realized_w60s': _to_decimal(vol),
+        'microbar_volume': _to_decimal(microbar_volume),
         'imbalance_bid_px': bid_px_value,
         'imbalance_ask_px': ask_px_value,
         'imbalance_bid_sz': bid_sz_value,

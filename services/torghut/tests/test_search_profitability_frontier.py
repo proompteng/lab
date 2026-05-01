@@ -6,6 +6,7 @@ import sys
 from argparse import Namespace
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import date, timedelta
+from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
@@ -13,6 +14,7 @@ from unittest.mock import patch
 
 import yaml
 
+import scripts.search_consistent_profitability_frontier as consistent_frontier
 import scripts.search_profitability_frontier as frontier
 from scripts.search_profitability_frontier import (
     apply_candidate_to_configmap,
@@ -22,6 +24,38 @@ from scripts.search_profitability_frontier import (
 
 
 class TestSearchProfitabilityFrontier(TestCase):
+    def test_consistency_penalty_marks_days_below_min_daily_net(self) -> None:
+        penalty, summary = consistent_frontier._consistency_penalty(
+            full_window_payload={
+                "start_date": "2026-04-01",
+                "end_date": "2026-04-03",
+                "net_pnl": "1200",
+                "daily": {
+                    "2026-04-01": {"net_pnl": "600", "filled_count": 1},
+                    "2026-04-02": {"net_pnl": "299.99", "filled_count": 1},
+                    "2026-04-03": {"net_pnl": "300.01", "filled_count": 1},
+                },
+            },
+            policy=consistent_frontier.FullWindowConsistencyPolicy(
+                target_net_per_day=Decimal("300"),
+                min_daily_net_pnl=Decimal("300"),
+                min_active_days=3,
+                min_active_ratio=Decimal("1"),
+                min_positive_days=3,
+                max_worst_day_loss=Decimal("0"),
+                max_negative_days=0,
+                max_drawdown=Decimal("0"),
+                max_best_day_share_of_total_pnl=Decimal("0.60"),
+                min_avg_filled_notional_per_day=Decimal("0"),
+                min_avg_filled_notional_per_active_day=Decimal("0"),
+                require_every_day_active=True,
+            ),
+        )
+
+        self.assertGreater(penalty, Decimal("0"))
+        self.assertEqual(summary["daily_net_below_min_count"], 1)
+        self.assertEqual(summary["min_daily_net_pnl"], "299.99")
+
     def _write_strategy_configmap(self, root: Path) -> Path:
         path = root / "strategy-configmap.yaml"
         path.write_text(

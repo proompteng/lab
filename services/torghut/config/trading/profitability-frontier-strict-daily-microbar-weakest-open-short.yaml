@@ -1,0 +1,58 @@
+schema_version: torghut.replay-frontier-sweep.v1
+family: microbar_cross_sectional_pairs
+family_template_id: microbar_cross_sectional_pairs_v1
+strategy_name: microbar-cross-sectional-pairs-v1
+disable_other_strategies: true
+constraints:
+  holdout_target_net_per_day: '300'
+  min_active_holdout_days: 3
+  max_worst_holdout_day_loss: '0'
+  min_profit_factor: '1.0'
+  require_training_decisions: true
+  require_holdout_decisions: true
+consistency_constraints:
+  target_net_per_day: '300'
+  min_daily_net_pnl: '300'
+  min_active_days: 9
+  min_active_ratio: '1.0'
+  min_positive_days: 9
+  max_worst_day_loss: '0'
+  max_negative_days: 0
+  max_drawdown: '900'
+  max_best_day_share_of_total_pnl: '0.35'
+  min_avg_filled_notional_per_day: '300000'
+  min_avg_filled_notional_per_active_day: '300000'
+  min_regime_slice_pass_rate: '0'
+  require_every_day_active: true
+strategy_overrides:
+  strategy_type:
+    - microbar_cross_sectional_short_v1
+  universe_type:
+    - microbar_cross_sectional_short_v1
+  universe_symbols:
+    - ['AAPL', 'AMAT', 'AMD', 'AVGO', 'GOOG', 'INTC', 'META', 'MSFT', 'MU', 'NVDA', 'PLTR', 'SHOP']
+  normalization_regime:
+    - market_neutral_gross_scaled
+  max_position_pct_equity:
+    - '8.0'
+  max_notional_per_trade:
+    - '157950.10'
+parameters:
+  entry_minute_after_open:
+    - '90'
+  exit_minute_after_open:
+    - '210'
+  signal_motif:
+    - weakest_open_continuation_short
+  rank_feature:
+    - cross_section_session_open_rank
+  selection_mode:
+    - continuation
+  top_n:
+    - '1'
+  max_concurrent_positions:
+    - '1'
+  max_entries_per_session:
+    - '1'
+  position_isolation_mode:
+    - per_strategy

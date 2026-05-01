@@ -142,6 +142,54 @@ class TestCandidateSpecs(TestCase):
         self.assertEqual(params["max_session_negative_exit_bps"], "8")
         self.assertEqual(params["max_stop_loss_exits_per_session"], "1")
 
+    def test_late_day_whitepaper_hypothesis_gets_late_day_runtime_profile(self) -> None:
+        card = HypothesisCard(
+            schema_version=HYPOTHESIS_CARD_SCHEMA_VERSION,
+            hypothesis_id="hyp-late-day-momentum",
+            source_run_id="paper-late-day-alpha",
+            source_claim_ids=("claim-late-day-alpha",),
+            mechanism=(
+                "Macro announcement incremental information strengthens late-day intraday "
+                "momentum into the close with VWAP exit and microprice confirmation."
+            ),
+            asset_scope="us_equities_intraday",
+            horizon_scope="intraday_momentum",
+            expected_direction="positive",
+            required_features=(
+                "macro_announcement_window",
+                "weighted_microprice_momentum",
+                "spread_bps",
+            ),
+            entry_motifs=("late_day_continuation",),
+            exit_motifs=("vwap_ladder_exit",),
+            risk_controls=("quote_quality", "stop_loss", "close_flatten"),
+            expected_regimes=("late_session_information_arrival",),
+            failure_modes=("event_overfit", "cost_stress"),
+            implementation_constraints={"execution_profile_index": 0},
+            confidence=Decimal("0.74"),
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=[card], target_net_pnl_per_day=Decimal("300")
+        )
+        late_day = next(
+            spec
+            for spec in specs
+            if spec.family_template_id == "late_day_continuation_v1"
+        )
+
+        self.assertEqual(late_day.runtime_family, "late_day_continuation_consistent")
+        self.assertEqual(late_day.runtime_strategy_name, "late-day-continuation-long-v1")
+        self.assertEqual(late_day.objective["target_net_pnl_per_day"], "300")
+        self.assertEqual(
+            late_day.feature_contract["execution_profile"]["profile_id"],
+            "late_day_continuation_v1:profile-1",
+        )
+        params = late_day.strategy_overrides["params"]
+        self.assertEqual(params["entry_start_minute_utc"], "1080")
+        self.assertEqual(params["entry_end_minute_utc"], "1170")
+        self.assertIn("min_cross_section_continuation_breadth", params)
+
     def test_missing_features_and_invalid_payloads_are_blocked(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-2",

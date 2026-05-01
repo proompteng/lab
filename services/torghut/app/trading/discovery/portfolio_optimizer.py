@@ -92,6 +92,14 @@ def _daily_filled_notional(bundle: CandidateEvidenceBundle) -> dict[str, Decimal
     return {"synthetic": notional} if notional > 0 else {}
 
 
+def _trading_day_count(bundle: CandidateEvidenceBundle) -> int:
+    try:
+        expected = int(_decimal(_scorecard(bundle).get("trading_day_count")))
+    except Exception:
+        expected = 0
+    return max(expected, len(_daily_net(bundle)))
+
+
 def _mean(values: Sequence[Decimal]) -> Decimal:
     if not values:
         return Decimal("0")
@@ -232,6 +240,14 @@ def _max_drawdown_from_daily(daily_net: Mapping[str, Decimal]) -> Decimal:
     return drawdown
 
 
+def _portfolio_trading_day_count(
+    selected: Sequence[CandidateEvidenceBundle],
+    daily_net: Mapping[str, Decimal],
+) -> int:
+    expected = max((_trading_day_count(bundle) for bundle in selected), default=0)
+    return max(expected, len(daily_net))
+
+
 def _portfolio_scorecard(
     *,
     selected: Sequence[CandidateEvidenceBundle],
@@ -239,7 +255,11 @@ def _portfolio_scorecard(
     oracle_policy: ProfitTargetOraclePolicy,
 ) -> dict[str, Any]:
     daily_net = _portfolio_daily_net(selected)
-    values = [daily_net[day] for day in sorted(daily_net)]
+    trading_day_count = _portfolio_trading_day_count(selected, daily_net)
+    missing_day_count = max(0, trading_day_count - len(daily_net))
+    values = [daily_net[day] for day in sorted(daily_net)] + (
+        [Decimal("0")] * missing_day_count
+    )
     net_per_day = _mean(values)
     active_day_ratio = (
         Decimal(sum(1 for value in values if value != 0)) / Decimal(len(values))
@@ -262,7 +282,10 @@ def _portfolio_scorecard(
     min_day = min(values, default=Decimal("0"))
     worst_day_loss = abs(min_day) if min_day < 0 else Decimal("0")
     daily_notional = _portfolio_daily_filled_notional(selected)
-    notional_values = [daily_notional[day] for day in sorted(daily_notional)]
+    notional_missing_day_count = max(0, trading_day_count - len(daily_notional))
+    notional_values = [daily_notional[day] for day in sorted(daily_notional)] + (
+        [Decimal("0")] * notional_missing_day_count
+    )
     regime_pass_rates = [
         _decimal(_scorecard(bundle).get("regime_slice_pass_rate"))
         for bundle in selected
@@ -293,6 +316,9 @@ def _portfolio_scorecard(
         },
         "max_single_symbol_contribution_share": str(_max_share(symbol_shares)),
         "avg_filled_notional_per_day": str(_mean(notional_values)),
+        "trading_day_count": trading_day_count,
+        "daily_net_observed_day_count": len(daily_net),
+        "missing_daily_net_count": missing_day_count,
         "regime_slice_pass_rate": str(_mean(regime_pass_rates)),
         "posterior_edge_lower": str(min(posterior_lowers, default=Decimal("0"))),
         "shadow_parity_status": "within_budget"

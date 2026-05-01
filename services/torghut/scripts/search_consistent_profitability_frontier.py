@@ -10,6 +10,7 @@ import json
 import os
 import sys
 import tempfile
+from collections import deque
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -53,7 +54,6 @@ from scripts.search_profitability_frontier import (
     _load_sweep_config,
     _resolve_recent_trading_days,
     apply_candidate_to_configmap,
-    iter_parameter_candidates,
     resolve_sweep_window,
 )
 
@@ -63,6 +63,7 @@ _LOCAL_ONLY_OVERRIDE_KEYS = frozenset({'normalization_regime'})
 @dataclass(frozen=True)
 class FullWindowConsistencyPolicy:
     target_net_per_day: Decimal
+    min_daily_net_pnl: Decimal
     min_active_days: int
     min_active_ratio: Decimal
     min_positive_days: int
@@ -80,6 +81,7 @@ class FullWindowConsistencyPolicy:
     def to_payload(self) -> dict[str, Any]:
         return {
             'target_net_per_day': str(self.target_net_per_day),
+            'min_daily_net_pnl': str(self.min_daily_net_pnl),
             'min_active_days': self.min_active_days,
             'min_active_ratio': str(self.min_active_ratio),
             'min_positive_days': self.min_positive_days,
@@ -100,6 +102,11 @@ def _optional_int(value: Any, *, default: int) -> int:
     if value is None:
         return default
     return int(value)
+
+
+def _write_json_output(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding='utf-8')
 
 
 def _parse_args() -> argparse.Namespace:
@@ -282,7 +289,106 @@ def _iter_strategy_override_candidates(
 ) -> list[dict[str, Any]]:
     if strategy_override_grid is None:
         return [{}]
-    return iter_parameter_candidates(strategy_override_grid)
+    return list(_iter_parameter_candidates(strategy_override_grid))
+
+
+def _parameter_grid_items(
+    parameter_grid: Mapping[str, Iterable[Any]],
+) -> list[tuple[str, list[Any]]]:
+    items: list[tuple[str, list[Any]]] = []
+    for key, values in parameter_grid.items():
+        if isinstance(values, (str, bytes)):
+            raise ValueError(f'parameter_values_not_sequence:{key}')
+        if isinstance(values, Mapping):
+            raise ValueError(f'parameter_values_not_sequence:{key}')
+        if not isinstance(values, Iterable):
+            raise ValueError(f'parameter_values_not_iterable:{key}')
+        items.append((str(key), list(values)))
+    return items
+
+
+def _parameter_exploration_priority(name: str) -> int:
+    lowered = name.lower()
+    if any(token in lowered for token in ('imbalance', 'microprice', 'recent_above', 'spread', 'quote')):
+        return 0
+    if any(
+        token in lowered
+        for token in (
+            'cross_section',
+            'session_open',
+            'opening_window',
+            'range_position',
+            'price_vs_vwap',
+            'price_vs_opening',
+            'price_above_ema',
+            'entry_start',
+            'entry_end',
+        )
+    ):
+        return 1
+    if any(token in lowered for token in ('bullish_hist', 'bull_rsi', 'vol_floor', 'vol_ceil')):
+        return 2
+    if any(token in lowered for token in ('universe_symbols', 'max_notional', 'position_pct')):
+        return 3
+    if any(token in lowered for token in ('stop', 'trailing', 'flatten', 'cooldown', 'max_entries', 'max_concurrent')):
+        return 4
+    return 5
+
+
+def _candidate_payload_key(candidate: Mapping[str, Any]) -> str:
+    return json.dumps(candidate, sort_keys=True, default=str)
+
+
+def _iter_parameter_candidates(
+    parameter_grid: Mapping[str, Iterable[Any]],
+) -> Iterator[dict[str, Any]]:
+    items = _parameter_grid_items(parameter_grid)
+    if not items:
+        yield {}
+        return
+    base_candidate = {name: values[0] for name, values in items if values}
+    seen_candidates: set[str] = set()
+
+    def emit(candidate: Mapping[str, Any]) -> dict[str, Any] | None:
+        key = _candidate_payload_key(candidate)
+        if key in seen_candidates:
+            return None
+        seen_candidates.add(key)
+        return dict(candidate)
+
+    emitted = emit(base_candidate)
+    if emitted is not None:
+        yield emitted
+
+    priority_items = sorted(
+        enumerate(items),
+        key=lambda item: (_parameter_exploration_priority(item[1][0]), item[0]),
+    )
+    for _index, (name, values) in priority_items:
+        for value in values[1:]:
+            candidate = dict(base_candidate)
+            candidate[name] = value
+            emitted = emit(candidate)
+            if emitted is not None:
+                yield emitted
+
+    names = [name for name, _ in items]
+    value_sets = [values for _, values in items]
+    for combination in itertools.product(*value_sets):
+        candidate = {name: value for name, value in zip(names, combination, strict=True)}
+        emitted = emit(candidate)
+        if emitted is not None:
+            yield emitted
+
+
+def _iter_initial_worklist_candidates(
+    *,
+    parameter_grid: Mapping[str, Iterable[Any]],
+    override_candidates: Iterable[Mapping[str, Any]],
+) -> Iterator[tuple[dict[str, Any], dict[str, Any], int, str | None, str | None]]:
+    for override_candidate in override_candidates:
+        for params_candidate in _iter_parameter_candidates(parameter_grid):
+            yield (dict(params_candidate), dict(override_candidate), 0, None, None)
 
 
 def _candidate_symbols(
@@ -608,10 +714,22 @@ def _consistency_penalty(
         daily_net=summary.daily_net,
         total_net_pnl=summary.net_pnl,
     )
+    min_daily_net_pnl = min(summary.daily_net.values(), default=Decimal('0'))
+    daily_net_below_min_count = sum(
+        1 for value in summary.daily_net.values() if value < policy.min_daily_net_pnl
+    )
+    if policy.min_daily_net_pnl > 0 and len(summary.daily_net) < summary.trading_day_count:
+        daily_net_below_min_count += summary.trading_day_count - len(summary.daily_net)
     penalties = Decimal('0')
 
     if summary.net_per_day < policy.target_net_per_day:
         penalties += policy.target_net_per_day - summary.net_per_day
+    if policy.min_daily_net_pnl > 0 and daily_net_below_min_count > 0:
+        penalties += sum(
+            max(Decimal('0'), policy.min_daily_net_pnl - value)
+            for value in summary.daily_net.values()
+        )
+        penalties += Decimal(max(0, summary.trading_day_count - len(summary.daily_net))) * policy.min_daily_net_pnl
     if summary.active_days < policy.min_active_days:
         penalties += Decimal(policy.min_active_days - summary.active_days) * Decimal('250')
     if active_ratio < policy.min_active_ratio:
@@ -647,6 +765,9 @@ def _consistency_penalty(
             'trading_day_count': summary.trading_day_count,
             'net_pnl': str(summary.net_pnl),
             'net_per_day': str(summary.net_per_day),
+            'min_daily_net_pnl': str(min_daily_net_pnl),
+            'min_daily_net_pnl_required': str(policy.min_daily_net_pnl),
+            'daily_net_below_min_count': daily_net_below_min_count,
             'active_days': summary.active_days,
             'active_ratio': str(active_ratio),
             'positive_days': positive_days,
@@ -1040,6 +1161,7 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
     )
     consistency_policy = FullWindowConsistencyPolicy(
         target_net_per_day=Decimal(str(consistency_constraints.get('target_net_per_day', '200'))),
+        min_daily_net_pnl=Decimal(str(consistency_constraints.get('min_daily_net_pnl', '0'))),
         # Widened full-window evaluations intentionally omit count-based activity thresholds
         # because train+holdout counts are not authoritative for the larger window.
         min_active_days=_optional_int(consistency_constraints.get('min_active_days'), default=0),
@@ -1098,7 +1220,6 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         for symbol in str(args.symbols or '').split(',')
         if symbol.strip()
     )
-    param_candidates = iter_parameter_candidates(parameter_grid)
     override_candidates = _iter_strategy_override_candidates(
         cast(Mapping[str, Iterable[Any]] | None, strategy_override_grid)
     )
@@ -1127,20 +1248,32 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                 progress_log_interval_seconds=max(1, int(args.progress_log_seconds)),
             )
         candidate_index = 0
-        worklist: list[tuple[dict[str, Any], dict[str, Any], int, str | None, str | None]] = [
-            (dict(params_candidate), dict(override_candidate), 0, None, None)
-            for params_candidate, override_candidate in itertools.product(param_candidates, override_candidates)
-        ]
+        candidate_budget = int(args.max_candidates_to_evaluate)
+        initial_candidates = _iter_initial_worklist_candidates(
+            parameter_grid=parameter_grid,
+            override_candidates=override_candidates,
+        )
+        initial_candidates_exhausted = False
+        worklist: deque[
+            tuple[dict[str, Any], dict[str, Any], int, str | None, str | None]
+        ] = deque()
         seen_candidate_keys: set[str] = set()
         cache_context: contextlib.AbstractContextManager[None]
         cache_context = _cached_signal_rows_patch(cached_rows) if cached_rows is not None else contextlib.nullcontext()
         with cache_context:
             budget_exhausted = False
-            while worklist:
-                if int(args.max_candidates_to_evaluate) > 0 and len(scored) >= int(args.max_candidates_to_evaluate):
+            while True:
+                if not worklist and not initial_candidates_exhausted:
+                    try:
+                        worklist.append(next(initial_candidates))
+                    except StopIteration:
+                        initial_candidates_exhausted = True
+                if not worklist:
+                    break
+                if candidate_budget > 0 and len(scored) >= candidate_budget:
                     budget_exhausted = True
                     break
-                params_candidate, override_candidate, prune_iteration, pruned_symbol, parent_candidate_id = worklist.pop(0)
+                params_candidate, override_candidate, prune_iteration, pruned_symbol, parent_candidate_id = worklist.popleft()
                 candidate_key = _candidate_search_key(
                     params_candidate=params_candidate,
                     strategy_overrides=override_candidate,
@@ -1334,6 +1467,11 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     )
                 )
                 hard_vetoes.extend(train_screen_failures)
+                if (
+                    consistency_policy.min_daily_net_pnl > 0
+                    and int(full_window_summary.get('daily_net_below_min_count') or 0) > 0
+                ):
+                    hard_vetoes.append('daily_net_below_min')
                 if objective_scorecard.symbol_concentration_share > consistency_policy.max_symbol_concentration_share:
                     hard_vetoes.append('symbol_concentration_above_max')
                 if objective_scorecard.entry_family_contribution_share > consistency_policy.max_entry_family_contribution_share:
@@ -1380,12 +1518,10 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                         objective_veto_policy=objective_veto_policy,
                         top_n=max(1, int(args.top_n)),
                         status='running',
-                        pending_candidates=len(worklist),
+                        pending_candidates=len(worklist)
+                        + (0 if initial_candidates_exhausted else 1),
                     )
-                    args.json_output.write_text(
-                        json.dumps(partial_payload, indent=2, sort_keys=True),
-                        encoding='utf-8',
-                    )
+                    _write_json_output(args.json_output, partial_payload)
 
     payload = _build_frontier_payload(
         scored=scored,
@@ -1400,11 +1536,13 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
         consistency_policy=consistency_policy,
         objective_veto_policy=objective_veto_policy,
         top_n=max(1, int(args.top_n)),
-        status='candidate_budget_exhausted' if budget_exhausted and worklist else 'completed',
-        pending_candidates=len(worklist),
+        status='candidate_budget_exhausted'
+        if budget_exhausted and (worklist or not initial_candidates_exhausted)
+        else 'completed',
+        pending_candidates=len(worklist) + (0 if initial_candidates_exhausted else 1),
     )
     if args.json_output is not None:
-        args.json_output.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding='utf-8')
+        _write_json_output(args.json_output, payload)
     return payload
 
 
@@ -1412,7 +1550,7 @@ def main() -> int:
     args = _parse_args()
     payload = run_consistent_profitability_frontier(args)
     if args.json_output:
-        args.json_output.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding='utf-8')
+        _write_json_output(args.json_output, payload)
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 

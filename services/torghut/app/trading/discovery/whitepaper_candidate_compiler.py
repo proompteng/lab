@@ -24,6 +24,7 @@ EXECUTABLE_FAMILY_IDS = {
     "microbar_cross_sectional_pairs_v1",
     "microstructure_continuation_matched_filter_v1",
     "intraday_tsmom_v2",
+    "late_day_continuation_v1",
 }
 
 FEATURE_ALIASES = {
@@ -35,6 +36,12 @@ FEATURE_ALIASES = {
     "order_arrival_clustering": "information_arrival_rate",
     "volatility_state": "realized_volatility",
     "spread_bps": "max_spread_bps",
+    "executed_trade_obi": "order_flow_imbalance",
+    "signed_trade_volume": "order_flow_imbalance",
+    "weighted_microprice_momentum": "order_flow_imbalance",
+    "multi_level_order_book": "order_flow_imbalance",
+    "macro_announcement_window": "information_arrival_rate",
+    "dvar": "realized_volatility",
 }
 
 

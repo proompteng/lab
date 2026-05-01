@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -15,6 +15,7 @@ from .quote_quality import QuoteQualityPolicy, assess_signal_quote_quality
 REGULAR_OPEN_UTC = time(hour=13, minute=30)
 DEFAULT_OPENING_RANGE_MINUTES = 30
 DEFAULT_RECENT_WINDOW = 30
+DEFAULT_PRICE_HISTORY_WINDOW = 7200
 DEFAULT_POSITION_IN_RANGE = Decimal('0.5')
 
 
@@ -86,6 +87,20 @@ def _bps_delta(price: Decimal | None, reference: Decimal | None) -> Decimal | No
     if price is None or reference is None or reference == 0:
         return None
     return ((price - reference) / reference) * Decimal('10000')
+
+
+def _recent_return_bps(
+    price_history: deque[tuple[datetime, Decimal]],
+    *,
+    current_ts: datetime,
+    current_price: Decimal,
+    lookback_minutes: int,
+) -> Decimal | None:
+    cutoff_ts = current_ts - timedelta(minutes=lookback_minutes)
+    for sample_ts, sample_price in reversed(price_history):
+        if sample_ts <= cutoff_ts and sample_price > 0:
+            return _bps_delta(current_price, sample_price)
+    return None
 
 
 def _mean_decimal(values: deque[Decimal]) -> Decimal | None:
@@ -162,9 +177,14 @@ class _SymbolSessionState:
     above_vwap_w5m_window: deque[Decimal] = field(
         default_factory=lambda: deque(maxlen=DEFAULT_RECENT_WINDOW)
     )
+    price_history: deque[tuple[datetime, Decimal]] = field(
+        default_factory=lambda: deque(maxlen=DEFAULT_PRICE_HISTORY_WINDOW)
+    )
     latest_price_vs_session_open_bps: Decimal | None = None
     latest_price_vs_prev_session_close_bps: Decimal | None = None
     latest_price_position_in_session_range: Decimal | None = None
+    latest_recent_15m_return_bps: Decimal | None = None
+    latest_microbar_volume: Decimal | None = None
     latest_price_vs_vwap_w5m_bps: Decimal | None = None
     latest_opening_window_return_bps: Decimal | None = None
     latest_opening_window_return_from_prev_close_bps: Decimal | None = None
@@ -173,6 +193,9 @@ class _SymbolSessionState:
     latest_recent_quote_jump_bps_avg: Decimal | None = None
     latest_recent_quote_jump_bps_max: Decimal | None = None
     latest_recent_microprice_bias_bps_avg: Decimal | None = None
+    latest_vwap_w5m_stretch_bps: Decimal | None = None
+    latest_rsi14: Decimal | None = None
+    latest_macd_hist: Decimal | None = None
     last_valid_quote_price: Decimal | None = None
     opening_45_return_bps: Decimal | None = None
     opening_60_return_bps: Decimal | None = None
@@ -241,6 +264,7 @@ class SessionContextTracker:
                 above_opening_range_high_window=deque(maxlen=self.recent_window),
                 above_opening_window_close_window=deque(maxlen=self.recent_window),
                 above_vwap_w5m_window=deque(maxlen=self.recent_window),
+                price_history=deque(maxlen=DEFAULT_PRICE_HISTORY_WINDOW),
             )
             self._state_by_symbol[symbol] = state
 
@@ -249,6 +273,11 @@ class SessionContextTracker:
         spread_bps = _extract_spread_bps(payload, price)
         imbalance_pressure = _extract_imbalance_pressure(payload)
         microprice_bias_bps = _extract_microprice_bias_bps(payload)
+        rsi14 = optional_decimal(payload_value(payload, 'rsi14', nested_key='rsi'))
+        macd_hist = optional_decimal(payload_value(payload, 'macd_hist', block='macd', nested_key='hist'))
+        microbar_volume = optional_decimal(payload_value(payload, 'microbar_volume'))
+        if microbar_volume is None:
+            microbar_volume = optional_decimal(payload_value(payload, 'volume'))
         vwap_w5m = optional_decimal(
             payload_value(payload, 'vwap_w5m', block='vwap', nested_key='w5m')
         )
@@ -288,6 +317,7 @@ class SessionContextTracker:
                 state.above_vwap_w5m_window.append(
                     Decimal('1') if price >= vwap_w5m else Decimal('0')
                 )
+            state.price_history.append((signal_ts_utc, price))
             state.last_valid_quote_price = price
 
         session_range = state.session_high_price - state.session_low_price
@@ -337,11 +367,24 @@ class SessionContextTracker:
             state.above_opening_window_close_window
         )
         recent_above_vwap_w5m_ratio = _mean_decimal(state.above_vwap_w5m_window)
+        recent_15m_return_bps = _recent_return_bps(
+            state.price_history,
+            current_ts=signal_ts_utc,
+            current_price=price,
+            lookback_minutes=15,
+        )
         price_vs_vwap_w5m_bps = _bps_delta(price, vwap_w5m)
+        vwap_w5m_stretch_bps = (
+            price_vs_vwap_w5m_bps - microprice_bias_bps
+            if price_vs_vwap_w5m_bps is not None and microprice_bias_bps is not None
+            else None
+        )
 
         state.latest_price_vs_session_open_bps = price_vs_session_open_bps
         state.latest_price_vs_prev_session_close_bps = price_vs_prev_session_close_bps
         state.latest_price_position_in_session_range = position_in_range
+        state.latest_recent_15m_return_bps = recent_15m_return_bps
+        state.latest_microbar_volume = microbar_volume
         state.latest_price_vs_vwap_w5m_bps = price_vs_vwap_w5m_bps
         state.latest_opening_window_return_bps = opening_window_return_bps
         state.latest_opening_window_return_from_prev_close_bps = (
@@ -352,6 +395,9 @@ class SessionContextTracker:
         state.latest_recent_quote_jump_bps_avg = recent_quote_jump_bps_avg
         state.latest_recent_quote_jump_bps_max = recent_quote_jump_bps_max
         state.latest_recent_microprice_bias_bps_avg = recent_microprice_bias_bps_avg
+        state.latest_vwap_w5m_stretch_bps = vwap_w5m_stretch_bps
+        state.latest_rsi14 = rsi14
+        state.latest_macd_hist = macd_hist
         if minutes_elapsed >= 45 and state.opening_45_return_bps is None:
             state.opening_45_return_bps = price_vs_session_open_bps
         if minutes_elapsed >= 60 and state.opening_60_return_bps is None:
@@ -372,10 +418,35 @@ class SessionContextTracker:
             symbol=symbol,
             accessor='latest_price_vs_vwap_w5m_bps',
         )
+        vwap_w5m_stretch_rank = self._rank_latest_metric(
+            current_day=session_day,
+            symbol=symbol,
+            accessor='latest_vwap_w5m_stretch_bps',
+        )
+        recent_15m_return_rank = self._rank_latest_metric(
+            current_day=session_day,
+            symbol=symbol,
+            accessor='latest_recent_15m_return_bps',
+        )
+        microbar_volume_rank = self._rank_latest_metric(
+            current_day=session_day,
+            symbol=symbol,
+            accessor='latest_microbar_volume',
+        )
         recent_imbalance_rank = self._rank_latest_metric(
             current_day=session_day,
             symbol=symbol,
             accessor='latest_recent_imbalance_pressure_avg',
+        )
+        rsi14_rank = self._rank_latest_metric(
+            current_day=session_day,
+            symbol=symbol,
+            accessor='latest_rsi14',
+        )
+        macd_hist_rank = self._rank_latest_metric(
+            current_day=session_day,
+            symbol=symbol,
+            accessor='latest_macd_hist',
         )
         opening_window_return_rank = self._rank_latest_metric(
             current_day=session_day,
@@ -526,6 +597,8 @@ class SessionContextTracker:
                 'recent_above_opening_range_high_ratio': recent_above_opening_range_high_ratio,
                 'recent_above_opening_window_close_ratio': recent_above_opening_window_close_ratio,
                 'recent_above_vwap_w5m_ratio': recent_above_vwap_w5m_ratio,
+                'recent_15m_return_bps': recent_15m_return_bps,
+                'microbar_volume': microbar_volume,
                 'cross_section_session_open_rank': session_open_rank,
                 'cross_section_prev_session_close_rank': prev_session_close_rank,
                 'cross_section_opening_window_return_rank': opening_window_return_rank,
@@ -536,7 +609,12 @@ class SessionContextTracker:
                 'cross_section_prev_day_open60_return_rank': prev_day_open60_return_rank,
                 'cross_section_range_position_rank': range_position_rank,
                 'cross_section_vwap_w5m_rank': vwap_w5m_rank,
+                'cross_section_vwap_w5m_stretch_rank': vwap_w5m_stretch_rank,
+                'cross_section_recent_15m_return_rank': recent_15m_return_rank,
+                'cross_section_microbar_volume_rank': microbar_volume_rank,
                 'cross_section_recent_imbalance_rank': recent_imbalance_rank,
+                'cross_section_rsi14_rank': rsi14_rank,
+                'cross_section_macd_hist_rank': macd_hist_rank,
                 'cross_section_positive_session_open_ratio': positive_session_open_ratio,
                 'cross_section_positive_prev_session_close_ratio': positive_prev_session_close_ratio,
                 'cross_section_positive_opening_window_return_ratio': positive_opening_window_return_ratio,
