@@ -1589,6 +1589,33 @@ const hasMergeEvidenceText = (text: string | null | undefined) => {
   return mentionsMerge && hasReference
 }
 
+const extractMergedPullRequestNumbers = (text: string | null | undefined) => {
+  if (!text) {
+    return []
+  }
+
+  const numbers = new Set<number>()
+  const positiveMergeLine = /\b(?:merged|squash[- ]merged)\b/i
+  const negativeMergeLine =
+    /\b(?:blocked|held|no-go|did not merge|do not merge|not merge|without merge|missing merge|merge gate|review gate|until)\b/i
+  for (const line of text.replace(/\r/g, '').split('\n')) {
+    if (!positiveMergeLine.test(line) || negativeMergeLine.test(line)) {
+      continue
+    }
+    for (const match of line.matchAll(/(?:github\.com\/[^/\s]+\/[^/\s]+\/pull\/|(?:PR\s*)?#)(\d+)\b/gi)) {
+      const raw = match[1]
+      if (!raw) {
+        continue
+      }
+      const parsed = Number.parseInt(raw, 10)
+      if (Number.isFinite(parsed) && parsed > 0) {
+        numbers.add(parsed)
+      }
+    }
+  }
+  return Array.from(numbers)
+}
+
 const hasRolloutEvidenceText = (text: string | null | undefined) => {
   if (!text) {
     return false
@@ -1796,6 +1823,92 @@ const verifyPullRequestMergedWithGh = async ({
   }
 }
 
+const verifyMergedPullRequestNumbersWithGh = async ({
+  repository,
+  prNumbers,
+  worktree,
+  logger,
+}: {
+  repository: string
+  prNumbers: number[]
+  worktree: string
+  logger: CodexLogger
+}): Promise<PullRequestMergeVerification> => {
+  for (const prNumber of prNumbers) {
+    const verification = await verifyPullRequestMergedWithGh({
+      repository,
+      prUrl: `https://github.com/${repository}/pull/${prNumber}`,
+      worktree,
+      logger,
+    })
+    if (verification.verified && verification.merged) {
+      return verification
+    }
+  }
+  return {
+    verified: prNumbers.length > 0,
+    merged: false,
+    source: prNumbers.length > 0 ? 'gh-pr-view' : 'none',
+  }
+}
+
+const verifyArgocdApplicationsHealthy = async ({
+  appNames,
+  namespace,
+  worktree,
+  logger,
+}: {
+  appNames: string[]
+  namespace: string
+  worktree: string
+  logger: CodexLogger
+}): Promise<ReleaseRolloutVerification> => {
+  if (appNames.length === 0) {
+    return { verified: false, healthy: false, source: 'none' }
+  }
+
+  for (const appName of appNames) {
+    const result = await runCommand(
+      'kubectl',
+      ['get', 'applications.argoproj.io', appName, '-n', namespace, '-o', 'json'],
+      { cwd: worktree },
+    )
+    if (result.exitCode !== 0) {
+      logger.warn(
+        `Failed to verify ArgoCD application health via kubectl: ${result.stderr.trim() || result.stdout.trim()}`,
+      )
+      return { verified: true, healthy: false, source: 'argocd-app' }
+    }
+
+    try {
+      const payload = JSON.parse(result.stdout) as {
+        status?: { sync?: { status?: string | null }; health?: { status?: string | null } }
+      }
+      const syncStatus = normalizeNullableStringValue(payload.status?.sync?.status ?? undefined)
+      const healthStatus = normalizeNullableStringValue(payload.status?.health?.status ?? undefined)
+      if (syncStatus !== 'Synced' || healthStatus !== 'Healthy') {
+        return { verified: true, healthy: false, source: 'argocd-app' }
+      }
+    } catch (error) {
+      logger.warn('Failed to parse ArgoCD application health payload', error)
+      return { verified: true, healthy: false, source: 'argocd-app' }
+    }
+  }
+
+  return { verified: true, healthy: true, source: 'argocd-app' }
+}
+
+const resolveSwarmReleaseArgocdApps = (event: ImplementationEventPayload) => {
+  const swarmName = readEvidenceValue(event, ['swarmName', 'swarm'])?.toLowerCase()
+  if (swarmName === 'jangar-control-plane') {
+    return ['agents', 'jangar']
+  }
+  if (swarmName === 'torghut-quant') {
+    return ['torghut', 'torghut-options']
+  }
+  return []
+}
+
 const verifyReleaseRolloutWithCluster = async ({
   event,
   worktree,
@@ -1808,28 +1921,22 @@ const verifyReleaseRolloutWithCluster = async ({
   const argocdAppName = readEvidenceValue(event, ['argocdAppName', 'argoAppName', 'rolloutAppName'])
   const argocdAppNamespace = readEvidenceValue(event, ['argocdAppNamespace']) ?? 'argocd'
   if (argocdAppName) {
-    const result = await runCommand(
-      'kubectl',
-      ['get', 'applications.argoproj.io', argocdAppName, '-n', argocdAppNamespace, '-o', 'json'],
-      { cwd: worktree },
-    )
-    if (result.exitCode === 0) {
-      try {
-        const payload = JSON.parse(result.stdout) as {
-          status?: { sync?: { status?: string | null }; health?: { status?: string | null } }
-        }
-        const syncStatus = normalizeNullableStringValue(payload.status?.sync?.status ?? undefined)
-        const healthStatus = normalizeNullableStringValue(payload.status?.health?.status ?? undefined)
-        const healthy = syncStatus === 'Synced' && healthStatus === 'Healthy'
-        return { verified: true, healthy, source: 'argocd-app' }
-      } catch (error) {
-        logger.warn('Failed to parse ArgoCD application health payload', error)
-      }
-    } else {
-      logger.warn(
-        `Failed to verify ArgoCD application health via kubectl: ${result.stderr.trim() || result.stdout.trim()}`,
-      )
-    }
+    return await verifyArgocdApplicationsHealthy({
+      appNames: [argocdAppName],
+      namespace: argocdAppNamespace,
+      worktree,
+      logger,
+    })
+  }
+
+  const swarmArgocdApps = resolveSwarmReleaseArgocdApps(event)
+  if (swarmArgocdApps.length > 0) {
+    return await verifyArgocdApplicationsHealthy({
+      appNames: swarmArgocdApps,
+      namespace: argocdAppNamespace,
+      worktree,
+      logger,
+    })
   }
 
   const rolloutNamespace = readEvidenceValue(event, ['rolloutNamespace', 'deploymentNamespace']) ?? 'default'
@@ -1911,6 +2018,22 @@ const evaluateRoleCompletionEvidence = async ({
       mergeEvidence = ghMerge.merged
     } else if (strictRoleEvidence) {
       mergeEvidence = false
+    }
+  }
+  if (lane === 'release' && verifyMergeWithGh && !mergeEvidence) {
+    const mergedPrNumbers = extractMergedPullRequestNumbers(lastAssistantMessage)
+    if (mergedPrNumbers.length > 0) {
+      const ghMerge = await verifyMergedPullRequestNumbersWithGh({
+        repository,
+        prNumbers: mergedPrNumbers,
+        worktree,
+        logger,
+      })
+      if (ghMerge.verified) {
+        mergeEvidence = ghMerge.merged
+      } else if (strictRoleEvidence) {
+        mergeEvidence = false
+      }
     }
   }
 
