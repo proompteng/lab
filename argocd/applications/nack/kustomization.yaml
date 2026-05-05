@@ -12,5 +12,5 @@ helmCharts:
 
 images:
   - name: natsio/jetstream-controller
-    newName: docker.io/natsio/jetstream-controller
+    newName: registry.ide-newton.ts.net/lab/jetstream-controller
     digest: sha256:940b1bc0ac23ea62b7daf1c26568acca6e606351d0950902d5e76e36dffc91cd
