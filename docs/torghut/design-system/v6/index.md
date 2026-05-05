@@ -86,6 +86,8 @@
 - `80-torghut-capital-proof-reclocking-and-live-submission-fuses-2026-05-05.md`
 - `81-torghut-capital-proof-reconciliation-and-jangar-settlement-consumer-2026-05-05.md`
 - Cross-system source of truth:
+  - `docs/agents/designs/79-jangar-control-plane-proof-runway-and-consumer-gated-rollout-2026-05-05.md`
+  - `83-torghut-profit-runway-consumer-and-hypothesis-capital-auction-2026-05-05.md`
   - `docs/agents/designs/78-jangar-capital-warrant-issuer-and-route-independent-order-admission-2026-05-05.md`
   - `82-torghut-order-admission-warrants-and-replay-capital-auction-2026-05-05.md`
   - `docs/agents/designs/77-jangar-evidence-settlement-authority-and-data-proof-handoff-2026-05-05.md`
