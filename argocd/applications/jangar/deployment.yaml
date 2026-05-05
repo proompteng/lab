@@ -23,6 +23,8 @@ spec:
         app.kubernetes.io/name: jangar
         app.kubernetes.io/part-of: lab
     spec:
+      nodeSelector:
+        kubernetes.io/arch: arm64
       serviceAccountName: jangar-inspector
       initContainers:
         - name: bootstrap-workspace

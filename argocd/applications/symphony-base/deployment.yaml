@@ -21,6 +21,8 @@ spec:
         app.kubernetes.io/name: symphony
         app.kubernetes.io/part-of: lab
     spec:
+      nodeSelector:
+        kubernetes.io/arch: arm64
       serviceAccountName: symphony
       containers:
         - name: symphony

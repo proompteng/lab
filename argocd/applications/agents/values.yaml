@@ -6,6 +6,8 @@ image:
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
+nodeSelector:
+  kubernetes.io/arch: arm64
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/jangar-control-plane
@@ -85,6 +87,9 @@ resources:
 readinessProbe:
   timeoutSeconds: 5
 controller:
+  defaultWorkload:
+    nodeSelector:
+      kubernetes.io/arch: arm64
   namespaces:
     - agents
   concurrency:

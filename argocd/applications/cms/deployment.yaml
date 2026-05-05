@@ -12,6 +12,8 @@ spec:
       labels:
         app: cms
     spec:
+      nodeSelector:
+        kubernetes.io/arch: arm64
       containers:
         - name: cms
           image: registry.ide-newton.ts.net/lab/cms

@@ -30,7 +30,7 @@ FROM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=deps-prod /app/node_modules ./node_modules
-COPY --from=deps-prod /app/services/khoshut/node_modules ./services/khoshut/node_modules
 COPY --from=build /app/services/khoshut ./services/khoshut
+COPY --from=deps-prod /app/services/khoshut/node_modules ./services/khoshut/node_modules
 COPY --from=build /app/tsconfig.base.json ./tsconfig.base.json
 CMD ["bun", "services/khoshut/src/index.ts"]

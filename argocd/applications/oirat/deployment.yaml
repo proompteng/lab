@@ -18,6 +18,8 @@ spec:
       annotations:
         kubectl.kubernetes.io/restartedAt: "2026-05-05T11:10:50Z"
     spec:
+      nodeSelector:
+        kubernetes.io/arch: arm64
       containers:
         - name: oirat
           image: registry.ide-newton.ts.net/lab/oirat
