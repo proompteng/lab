@@ -27,18 +27,40 @@ spec:
           imagePullPolicy: IfNotPresent
           image: registry.ide-newton.ts.net/lab/torghut@sha256:23adc234f54e682c190a0afe55e799c16d18e4a9811c9f1d95ee27bfcfb31682
           command:
-            - /opt/venv/bin/alembic
+            - /bin/sh
+            - -ec
           args:
-            - -c
-            - /app/alembic.ini
-            - upgrade
-            - heads
+            - |
+              /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads
+              DB_DSN="${TORGHUT_SIM_DB_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads
           env:
             - name: DB_DSN
               valueFrom:
                 secretKeyRef:
                   name: torghut-db-app
                   key: uri
+            - name: TORGHUT_SIM_DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: host
+            - name: TORGHUT_SIM_DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: port
+            - name: TORGHUT_SIM_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: username
+            - name: TORGHUT_SIM_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: password
+            - name: TORGHUT_SIM_DB_DSN
+              value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
           resources:
             requests:
               cpu: 50m
