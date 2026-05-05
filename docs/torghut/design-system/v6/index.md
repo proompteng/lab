@@ -6,7 +6,8 @@
 - Date: `2026-03-03`
 - Maturity: `production-quality design pack`
 - Scope: intraday strategy architecture upgrade beyond static TSMOM, with regime-adaptive routing, DSPy-governed LLM reasoning, contamination-safe evaluation, and production rollout controls
-- Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on `2026-03-09`)
+- Implementation status: `Mixed` (historical program closure recorded on `2026-03-03`; source-state refreshed on
+  `2026-03-09`; active proof/capital authority evidence refreshed on `2026-05-05T18:21Z`)
 - Implementation status (strict, core 01-13 docs, source-state refresh `2026-03-09`): `Implemented=7`, `Partial=5`, `Completed=1`
 - Evidence (historical closure): `13-production-gap-closure-master-plan-2026-03-03.md` (Wave 0-6 closure + DoD)
 - Evidence (current next-work priority):
@@ -181,6 +182,20 @@ Current source-state priority is narrower:
 - deterministic runtime closure is materially landed;
 - freshness discovery and proof persistence are still too brittle;
 - recurring empirical prove-and-promote automation remains blocked on those truth surfaces.
+
+## May 5, 2026 Proof Authority Refresh
+
+The current source-of-truth pair for the Torghut quant discover lane is:
+
+- `85-torghut-proof-fresh-profitability-governor-and-causal-replay-quarantine-2026-05-05.md`
+- `docs/agents/designs/81-jangar-action-class-proof-fuses-and-quant-health-quarantine-2026-05-05.md`
+
+Read these as the active handoff contract before using older May 5 proof-ledger variants. The refreshed evidence is
+more precise than the early-day snapshot: Torghut live and sim revisions are serving, schema proof is current, and
+runtime liveness is good, but readiness remains degraded, Jangar quant-health still times out, empirical proof jobs are
+stale, and runtime profitability has decisions without execution or TCA samples. The design consequence is unchanged
+but sharper: repair and replay stay open, while paper/live widening requires fresh action-class authority and fresh
+profit proof.
 
 ## Recent Updates
 
