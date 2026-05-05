@@ -1,4 +1,4 @@
-import { readdirSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -13,6 +13,18 @@ describe('migration registration', () => {
       .sort()
 
     expect(__test__.getRegisteredMigrations()).toEqual(migrationFiles)
+  })
+
+  it('keeps the Torghut quant pipeline health account/window index registered', () => {
+    const migrationPath = new URL(
+      '../migrations/20260505_torghut_quant_pipeline_health_window_index.ts',
+      import.meta.url,
+    )
+    const normalized = readFileSync(fileURLToPath(migrationPath), 'utf8').toLowerCase().replace(/\s+/g, ' ')
+
+    expect(normalized).toContain('create index if not exists torghut_quant_pipeline_health_account_window_latest_idx')
+    expect(normalized).toContain('on torghut_control_plane.quant_pipeline_health')
+    expect(normalized).toContain("(account, ((details->>'window')), strategy_id, stage, as_of desc)")
   })
 })
 
