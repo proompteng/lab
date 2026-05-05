@@ -410,11 +410,17 @@ spec:
             {{- if .Values.controllers.enabled }}
             - name: JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED
               value: "true"
+            {{- if and .Values.agentComms.enabled (not (hasKey $envVars "NATS_URL")) }}
+            - name: NATS_URL
+              value: {{ .Values.agentComms.nats.url | default "nats://nats.nats.svc.cluster.local:4222" | quote }}
+            {{- end }}
             {{- else if .Values.agentComms.enabled }}
             - name: JANGAR_AGENT_COMMS_SUBSCRIBER_DISABLED
               value: "false"
+            {{- if not (hasKey $envVars "NATS_URL") }}
             - name: NATS_URL
               value: {{ .Values.agentComms.nats.url | default "nats://nats.nats.svc.cluster.local:4222" | quote }}
+            {{- end }}
             {{- if .Values.agentComms.nats.userSecret.name }}
             - name: NATS_USER
               valueFrom:
